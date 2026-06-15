@@ -25,7 +25,9 @@ pub use identity::{
 };
 pub use routes::{
     ApiCompatibilityFamily, AuthSource, BillingAccountSource, ModelRoute, ModelRouteCapabilities,
-    RouteEndpoint, RoutePolicy,
+    ModelRouteInheritancePolicy, ModelRouteOverride, ModelRouteOverrideEffect,
+    ModelRouteOverrideField, ModelRouteOverrideScope, ResolvedModelRoute, RouteEndpoint,
+    RoutePolicy,
 };
 pub use runtime::{
     AdapterCommandState, AdapterCommandStreamState, AdapterEventStreamState,

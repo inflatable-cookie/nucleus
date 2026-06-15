@@ -4,12 +4,12 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/014-model-route-override-semantics.md`
+- `docs/roadmaps/g01/batch-cards/015-task-agent-assignment-and-model-preferences.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/014-model-route-override-semantics.md`
+- `docs/roadmaps/g01/batch-cards/015-task-agent-assignment-and-model-preferences.md`
 
 ## Next Task
 
-Draft project and session model-route override semantics.
+Draft task-level agent assignment and model preference semantics.

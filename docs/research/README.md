@@ -16,4 +16,4 @@ Provider implementation readiness, continuing with Claude Code CLI and SDK evide
 
 ## Next Task
 
-Draft project and session model-route override semantics.
+Draft task-level agent assignment and model preference semantics.

@@ -78,3 +78,63 @@ pub enum RoutePolicy {
     GatewayRouted,
     Unknown,
 }
+
+/// Scoped override applied to a base model route.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelRouteOverride {
+    pub override_id: String,
+    pub base_route_id: String,
+    pub scope: ModelRouteOverrideScope,
+    pub effect: ModelRouteOverrideEffect,
+    pub fields: Vec<ModelRouteOverrideField>,
+    pub inheritance: ModelRouteInheritancePolicy,
+    pub reason: Option<String>,
+}
+
+/// Scope where a model route override applies.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModelRouteOverrideScope {
+    Project(String),
+    Session(String),
+    TaskPreference(String),
+}
+
+/// Whether an override affects adapter selection or only runtime config.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModelRouteOverrideEffect {
+    SelectionInput,
+    RuntimeConfigOnly,
+    DisableRouteInScope,
+}
+
+/// Field-level override for route metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModelRouteOverrideField {
+    Endpoint(RouteEndpoint),
+    ModelId(String),
+    AuthSource(AuthSource),
+    BillingAccountSource(BillingAccountSource),
+    Enabled(bool),
+    FallbackPolicy(RoutePolicy),
+    ProviderSelectionHints(Vec<String>),
+    RegionalConstraints(Vec<String>),
+}
+
+/// Which base-route fields are inherited by a scoped override.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelRouteInheritancePolicy {
+    pub inherit_capabilities: bool,
+    pub inherit_auth_source: bool,
+    pub inherit_billing_account_source: bool,
+    pub inherit_endpoint: bool,
+    pub inherit_provider_selection_hints: bool,
+}
+
+/// Result of resolving a base route plus scoped overrides.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedModelRoute {
+    pub base_route_id: String,
+    pub applied_override_ids: Vec<String>,
+    pub route: ModelRoute,
+    pub selection_notes: Vec<String>,
+}

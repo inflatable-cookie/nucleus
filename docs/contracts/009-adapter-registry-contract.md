@@ -246,6 +246,11 @@ Model route selection is not adapter identity. A model route may describe the
 model, endpoint, account source, policy, or compatibility family for a
 configured instance. The selected adapter instance remains the routing target.
 
+Scoped route overrides may narrow selection. They must not replace the adapter
+instance id or mutate adapter instance defaults. A session route override may
+change runtime config only when the selected harness supports in-session model
+or route changes.
+
 Selection explanations should preserve the reason an instance was chosen. This
 is required for project debugging, task audit trails, and later UI review.
 
@@ -385,11 +390,10 @@ behavior.
 
 ## Research Gaps
 
-- How model routes are overridden per project or session.
 - Sidecar protocol shape for Claude Agent SDK.
 - Whether Kimi Wire should become a first-class Rust adapter path after ACP.
 - Whether Pi SDK sidecar is needed after the first RPC adapter exists.
 
 ## Next Task
 
-Draft project and session model-route override semantics.
+Draft task-level agent assignment and model preference semantics.

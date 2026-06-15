@@ -155,6 +155,46 @@ Rules:
 - route-level failures should be surfaced separately from harness transport
   failures where possible
 
+## Scoped Route Overrides
+
+Model routes may be overridden at project, session, or task-preference scope.
+
+Override scopes:
+
+- project override: durable project preference
+- session override: temporary session preference
+- task preference: selection input attached to a unit of work
+
+Session overrides must not mutate project overrides or adapter instance
+defaults. Task preferences may influence selection, but they do not become
+durable route config unless promoted by an explicit project/session action.
+
+Allowed first-pass override fields:
+
+- endpoint
+- model id
+- auth source
+- billing/account source
+- enabled state
+- fallback policy
+- provider selection hints
+- regional constraints
+
+Capability metadata is inherited from the base route unless a later evidence
+pass defines a safe capability override rule. Unknown values remain unknown.
+
+Overrides may affect selection or runtime config:
+
+- selection input: narrows which configured adapter instance and route may
+  receive work
+- runtime config only: sent to a selected harness when the harness supports it
+- disable route in scope: prevents that route from being selected in the
+  scoped context
+
+The selected adapter instance remains the authority for harness identity.
+Resolved route state must retain base route id and applied override ids for
+audit and recovery.
+
 ## Current Rust Surface
 
 `nucleus-agent-protocol` now contains the first draft of:
@@ -166,9 +206,16 @@ Rules:
 - `BillingAccountSource`
 - `ModelRouteCapabilities`
 - `RoutePolicy`
+- `ModelRouteOverride`
+- `ModelRouteOverrideScope`
+- `ModelRouteOverrideEffect`
+- `ModelRouteOverrideField`
+- `ModelRouteInheritancePolicy`
+- `ResolvedModelRoute`
 
-These types describe routes only. They do not create sessions, issue requests,
-or imply direct model invocation outside a harness runtime.
+These types describe routes and scoped route overrides only. They do not create
+sessions, issue requests, implement override resolution, or imply direct model
+invocation outside a harness runtime.
 
 ## Research Gaps
 
@@ -179,7 +226,8 @@ or imply direct model invocation outside a harness runtime.
   Kimi, Pi, and OpenCode.
 - How OpenCode provider/model routes should reflect provider-selected gateway
   attribution when OpenRouter or OpenCode Zen route internally.
+- Whether capability overrides are ever safe outside provider discovery.
 
 ## Next Task
 
-Draft project and session model-route override semantics.
+Draft task-level agent assignment and model preference semantics.

@@ -1,6 +1,6 @@
 # 014 Model Route Override Semantics
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -56,4 +56,4 @@ cargo test --workspace
 
 ## Next Task
 
-Draft project and session model-route override semantics.
+Draft task-level agent assignment and model preference semantics.

@@ -16,4 +16,4 @@ Architecture records the system shape once planning starts to settle.
 
 ## Next Task
 
-Draft project and session model-route override semantics.
+Draft task-level agent assignment and model preference semantics.

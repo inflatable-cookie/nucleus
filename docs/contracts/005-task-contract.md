@@ -106,4 +106,4 @@ execution, and agent delegation remain out of scope.
 
 ## Next Task
 
-Draft project and session model-route override semantics.
+Draft task-level agent assignment and model preference semantics.

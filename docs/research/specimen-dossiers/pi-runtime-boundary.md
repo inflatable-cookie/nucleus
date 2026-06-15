@@ -209,4 +209,4 @@ PTY bridge remains a fallback for visual terminal rendering only.
 
 ## Next Task
 
-Draft project and session model-route override semantics.
+Draft task-level agent assignment and model preference semantics.

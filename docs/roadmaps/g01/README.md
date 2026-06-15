@@ -14,4 +14,4 @@ Updated: 2026-06-15
 
 ## Next Task
 
-Draft project and session model-route override semantics.
+Draft task-level agent assignment and model preference semantics.

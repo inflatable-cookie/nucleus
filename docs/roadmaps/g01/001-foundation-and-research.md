@@ -68,6 +68,7 @@ contracts before app behavior begins.
 - Adapter registry health and readiness batch card exists.
 - Adapter secret reference and credential boundary batch card exists.
 - Project and session model-route override batch card exists.
+- Task agent assignment and model preference batch card exists.
 
 ## Batch Queue
 
@@ -85,7 +86,8 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/012-adapter-registry-health-and-readiness.md`
 - `docs/roadmaps/g01/batch-cards/013-adapter-secret-reference-and-credential-boundary.md`
 - `docs/roadmaps/g01/batch-cards/014-model-route-override-semantics.md`
+- `docs/roadmaps/g01/batch-cards/015-task-agent-assignment-and-model-preferences.md`
 
 ## Next Task
 
-Draft project and session model-route override semantics.
+Draft task-level agent assignment and model preference semantics.
