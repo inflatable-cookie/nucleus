@@ -27,4 +27,4 @@ model contracts are specific enough to validate.
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

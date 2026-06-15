@@ -7,6 +7,7 @@ pub mod capabilities;
 pub mod events;
 pub mod identity;
 pub mod routes;
+pub mod runtime;
 pub mod sessions;
 pub mod traits;
 
@@ -25,6 +26,13 @@ pub use identity::{
 pub use routes::{
     ApiCompatibilityFamily, AuthSource, BillingAccountSource, ModelRoute, ModelRouteCapabilities,
     RouteEndpoint, RoutePolicy,
+};
+pub use runtime::{
+    AdapterCommandState, AdapterCommandStreamState, AdapterEventStreamState,
+    AdapterRuntimeOwnership, AdapterRuntimeOwnershipMode, BackpressureOverflow, BackpressurePolicy,
+    CommandAcknowledgementSemantics, CommandCompletionSemantics, CommandStreamSemantics,
+    DisconnectSemantics, EventOrderingSemantics, EventStreamSemantics, RecoveryAction,
+    RuntimeProcessOwner, RuntimeRecoveryPolicy,
 };
 pub use sessions::{
     AgentSessionId, AgentSessionLifecycleState, AgentSessionRecord, AgentSessionRecoveryState,

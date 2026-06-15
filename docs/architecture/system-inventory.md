@@ -72,4 +72,4 @@ Updated: 2026-06-15
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

@@ -209,4 +209,4 @@ PTY bridge remains a fallback for visual terminal rendering only.
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

@@ -14,4 +14,4 @@ Specimen dossiers capture deep reads of concrete projects or implementations.
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

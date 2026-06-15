@@ -224,4 +224,4 @@ environments that reject sidecars, and native terminal rendering.
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

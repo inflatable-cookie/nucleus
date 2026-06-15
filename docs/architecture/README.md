@@ -16,4 +16,4 @@ Architecture records the system shape once planning starts to settle.
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

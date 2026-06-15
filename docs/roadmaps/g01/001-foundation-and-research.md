@@ -64,6 +64,7 @@ contracts before app behavior begins.
 - Adapter trait requirements batch card exists.
 - Runtime event payload schema batch card exists.
 - Adapter runtime ownership and stream semantics batch card exists.
+- Adapter registry selection and persistence batch card exists.
 
 ## Batch Queue
 
@@ -77,7 +78,8 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/008-adapter-trait-requirements.md`
 - `docs/roadmaps/g01/batch-cards/009-runtime-event-payload-schema.md`
 - `docs/roadmaps/g01/batch-cards/010-adapter-runtime-ownership-and-streams.md`
+- `docs/roadmaps/g01/batch-cards/011-adapter-registry-selection-and-persistence.md`
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

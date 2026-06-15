@@ -1,6 +1,6 @@
 # 010 Adapter Runtime Ownership And Streams
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-15
 
@@ -60,4 +60,4 @@ cargo test --workspace
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

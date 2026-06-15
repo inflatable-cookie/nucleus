@@ -182,4 +182,4 @@ or imply direct model invocation outside a harness runtime.
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

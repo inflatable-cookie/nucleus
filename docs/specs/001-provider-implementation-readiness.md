@@ -102,4 +102,4 @@ Durable findings should promote into:
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

@@ -16,4 +16,4 @@ Provider implementation readiness, continuing with Claude Code CLI and SDK evide
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

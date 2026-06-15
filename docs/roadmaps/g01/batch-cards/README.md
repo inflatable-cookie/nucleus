@@ -4,12 +4,12 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/010-adapter-runtime-ownership-and-streams.md`
+- `docs/roadmaps/g01/batch-cards/011-adapter-registry-selection-and-persistence.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/010-adapter-runtime-ownership-and-streams.md`
+- `docs/roadmaps/g01/batch-cards/011-adapter-registry-selection-and-persistence.md`
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

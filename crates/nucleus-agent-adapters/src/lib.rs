@@ -1,7 +1,7 @@
 //! Adapter registry and configured adapter instance types.
 //!
 //! This crate names adapter registration state only. It does not implement
-//! provider adapters, process spawning, SDK bridges, ACP clients, or CLI/PTTY
+//! provider adapters, process spawning, SDK bridges, ACP clients, or CLI/PTY
 //! control yet.
 
 pub mod config;

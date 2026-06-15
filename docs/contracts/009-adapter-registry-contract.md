@@ -30,6 +30,7 @@ Each configured adapter instance record must expose:
 - capability snapshot
 - configuration entries
 - model routes available to the instance
+- runtime ownership record
 - readiness state
 - lifecycle status
 - health snapshot
@@ -140,14 +141,33 @@ capability.
 - `AdapterConfigEntry`
 - `AdapterConfigValue`
 - `AdapterConfigScope`
+- `AdapterRuntimeOwnership`
 - `AdapterReadiness`
 - `AdapterLifecycleStatus`
 - `AdapterHealth`
 - `AdapterHealthStatus`
 
-These are descriptive registry types only. Provider implementations, process
-spawning, SDK bridges, ACP clients, CLI/PTY control, health probes, and secret
-storage remain out of scope.
+These are descriptive registry and runtime ownership types only. Provider
+implementations, process spawning, SDK bridges, ACP clients, CLI/PTY control,
+health probes, and secret storage remain out of scope.
+
+## Runtime Ownership Rule
+
+Each adapter instance record must store runtime ownership metadata separately
+from adapter identity.
+
+Registry records must preserve:
+
+- ownership mode
+- process owner
+- endpoint label where useful
+- command stream semantics
+- event stream semantics
+- recovery policy
+
+This is required so two instances of the same driver can differ by external
+server URL, sidecar boundary, owned stdio process, PTY fallback, or recovery
+behavior.
 
 ## Research Gaps
 
@@ -164,4 +184,4 @@ storage remain out of scope.
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

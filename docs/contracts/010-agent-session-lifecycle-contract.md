@@ -250,4 +250,4 @@ control remain out of scope.
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

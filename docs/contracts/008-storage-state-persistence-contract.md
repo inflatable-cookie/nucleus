@@ -114,4 +114,4 @@ serialization format, migration system, transactions, replay, or sync.
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

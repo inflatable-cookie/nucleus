@@ -1,6 +1,8 @@
 //! Adapter registry records.
 
-use nucleus_agent_protocol::{AdapterCapabilities, AdapterIdentity, ModelRoute};
+use nucleus_agent_protocol::{
+    AdapterCapabilities, AdapterIdentity, AdapterRuntimeOwnership, ModelRoute,
+};
 
 use crate::config::AdapterConfigEntry;
 use crate::status::{AdapterHealth, AdapterLifecycleStatus, AdapterReadiness};
@@ -23,6 +25,7 @@ pub struct AdapterInstanceRecord {
     pub capabilities: AdapterCapabilities,
     pub config: Vec<AdapterConfigEntry>,
     pub model_routes: Vec<ModelRoute>,
+    pub runtime_ownership: AdapterRuntimeOwnership,
     pub readiness: AdapterReadiness,
     pub lifecycle_status: AdapterLifecycleStatus,
     pub health: AdapterHealth,

@@ -21,4 +21,4 @@ contracts, roadmaps, or logs carry the durable truth.
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.

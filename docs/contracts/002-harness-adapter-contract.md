@@ -165,6 +165,22 @@ must consume canonical events.
 - `RuntimeDiagnosticPayload`
 - `ProviderExtensionPayload`
 - `RawProviderPayload`
+- `AdapterRuntimeOwnership`
+- `AdapterRuntimeOwnershipMode`
+- `RuntimeProcessOwner`
+- `CommandStreamSemantics`
+- `CommandAcknowledgementSemantics`
+- `CommandCompletionSemantics`
+- `EventStreamSemantics`
+- `EventOrderingSemantics`
+- `DisconnectSemantics`
+- `BackpressurePolicy`
+- `BackpressureOverflow`
+- `RuntimeRecoveryPolicy`
+- `RecoveryAction`
+- `AdapterCommandStreamState`
+- `AdapterEventStreamState`
+- `AdapterCommandState`
 - `AdapterRuntimeMetadata`
 - `AdapterLifecycleBoundary`
 - `AdapterEventBoundary`
@@ -184,9 +200,10 @@ must consume canonical events.
 - `AgentTurnStatus`
 
 These are descriptive boundary, lifecycle, and payload types only. The first
-trait split and canonical payload families are now named, but provider
-implementations, process spawning, stream parsing, network clients, sidecar
-protocols, and async runtime behavior remain out of scope.
+trait split, canonical payload families, and runtime ownership semantics are
+now named, but provider implementations, process spawning, stream parsing,
+network clients, sidecar protocols, and async runtime behavior remain out of
+scope.
 
 ## Adapter Trait Split
 
@@ -241,6 +258,42 @@ Payload rules:
 - replayed transcript entries must not pretend to be live stream events
 - terminal-only adapters may emit diagnostic or provider-extension payloads
   without pretending structured message payloads exist
+
+## Runtime Ownership And Streams
+
+Runtime ownership modes:
+
+- external server
+- nucleus-owned local server
+- SDK sidecar
+- ACP stdio process
+- Wire stdio process
+- RPC stdio process
+- PTY process
+- unavailable/unknown
+
+Ownership rules:
+
+- ownership mode is independent of provider driver kind
+- external servers are reached but not process-owned by nucleus
+- nucleus-owned local servers and stdio/PTY processes are child runtime
+  resources owned by the server
+- SDK sidecars are explicit runtime boundaries, not hidden implementation
+  details
+- remote control-plane access is not adapter runtime ownership
+
+Stream rules:
+
+- command acknowledgement means accepted or rejected, not completed
+- command completion is reported by provider response, runtime event,
+  transcript projection, or unsupported/unknown semantics
+- event streams must expose ordering semantics
+- disconnects must surface through explicit events, process exit status,
+  transport error, external health probe, or unknown semantics
+- backpressure is a declared policy before async implementation exists
+- recovery policy must distinguish reconnecting an external server, respawning
+  an owned runtime, reattaching a session, manual recovery, unsupported, and
+  unknown
 
 ## Capability Discovery
 
@@ -526,9 +579,9 @@ inside.
 - OpenCode SDK generated event schema and Rust bridge shape.
 - Kimi CLI and Kimi Agent SDK lifecycle and identity model.
 - Runtime event payload schemas.
-- Async execution and backpressure shape for adapter command/event streams.
+- Concrete async execution and backpressure implementation.
 - Sidecar protocol shape for TypeScript-only SDK integrations.
 
 ## Next Task
 
-Draft adapter runtime ownership and stream semantics.
+Draft adapter registry selection and persistence semantics.
