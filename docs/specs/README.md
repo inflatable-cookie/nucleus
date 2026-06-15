@@ -21,4 +21,4 @@ contracts, roadmaps, or logs carry the durable truth.
 
 ## Next Task
 
-Draft adapter registry selection and persistence semantics.
+Draft adapter secret reference and credential boundary semantics.

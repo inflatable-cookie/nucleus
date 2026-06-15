@@ -182,4 +182,4 @@ or imply direct model invocation outside a harness runtime.
 
 ## Next Task
 
-Draft adapter registry selection and persistence semantics.
+Draft adapter secret reference and credential boundary semantics.

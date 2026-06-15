@@ -65,6 +65,8 @@ contracts before app behavior begins.
 - Runtime event payload schema batch card exists.
 - Adapter runtime ownership and stream semantics batch card exists.
 - Adapter registry selection and persistence batch card exists.
+- Adapter registry health and readiness batch card exists.
+- Adapter secret reference and credential boundary batch card exists.
 
 ## Batch Queue
 
@@ -79,7 +81,9 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/009-runtime-event-payload-schema.md`
 - `docs/roadmaps/g01/batch-cards/010-adapter-runtime-ownership-and-streams.md`
 - `docs/roadmaps/g01/batch-cards/011-adapter-registry-selection-and-persistence.md`
+- `docs/roadmaps/g01/batch-cards/012-adapter-registry-health-and-readiness.md`
+- `docs/roadmaps/g01/batch-cards/013-adapter-secret-reference-and-credential-boundary.md`
 
 ## Next Task
 
-Draft adapter registry selection and persistence semantics.
+Draft adapter secret reference and credential boundary semantics.

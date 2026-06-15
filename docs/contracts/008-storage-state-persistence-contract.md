@@ -114,4 +114,4 @@ serialization format, migration system, transactions, replay, or sync.
 
 ## Next Task
 
-Draft adapter registry selection and persistence semantics.
+Draft adapter secret reference and credential boundary semantics.

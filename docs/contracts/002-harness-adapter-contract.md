@@ -295,6 +295,20 @@ Stream rules:
   an owned runtime, reattaching a session, manual recovery, unsupported, and
   unknown
 
+## Registry Boundary
+
+Adapter selection belongs to the adapter registry, not to the harness adapter
+contract.
+
+Adapters expose identity, routes, capabilities, lifecycle support, runtime
+ownership, and event boundaries. The registry decides which configured adapter
+instance receives work for a project, task, session, model route, or explicit
+user choice.
+
+This keeps provider behavior separate from deployment configuration. The same
+driver may have many configured instances with different accounts, server URLs,
+binary paths, secret references, runtime ownership, or project overrides.
+
 ## Capability Discovery
 
 Adapters must expose capabilities for:
@@ -581,7 +595,8 @@ inside.
 - Runtime event payload schemas.
 - Concrete async execution and backpressure implementation.
 - Sidecar protocol shape for TypeScript-only SDK integrations.
+- Adapter secret reference and credential boundary semantics.
 
 ## Next Task
 
-Draft adapter registry selection and persistence semantics.
+Draft adapter secret reference and credential boundary semantics.

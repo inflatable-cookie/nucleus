@@ -4,12 +4,12 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/011-adapter-registry-selection-and-persistence.md`
+- `docs/roadmaps/g01/batch-cards/013-adapter-secret-reference-and-credential-boundary.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/011-adapter-registry-selection-and-persistence.md`
+- `docs/roadmaps/g01/batch-cards/013-adapter-secret-reference-and-credential-boundary.md`
 
 ## Next Task
 
-Draft adapter registry selection and persistence semantics.
+Draft adapter secret reference and credential boundary semantics.

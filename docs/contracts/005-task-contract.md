@@ -106,4 +106,4 @@ execution, and agent delegation remain out of scope.
 
 ## Next Task
 
-Draft adapter registry selection and persistence semantics.
+Draft adapter secret reference and credential boundary semantics.

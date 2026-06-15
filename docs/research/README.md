@@ -16,4 +16,4 @@ Provider implementation readiness, continuing with Claude Code CLI and SDK evide
 
 ## Next Task
 
-Draft adapter registry selection and persistence semantics.
+Draft adapter secret reference and credential boundary semantics.

@@ -16,4 +16,4 @@ Architecture records the system shape once planning starts to settle.
 
 ## Next Task
 
-Draft adapter registry selection and persistence semantics.
+Draft adapter secret reference and credential boundary semantics.

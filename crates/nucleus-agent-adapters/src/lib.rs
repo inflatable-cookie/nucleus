@@ -5,9 +5,27 @@
 //! control yet.
 
 pub mod config;
+pub mod persistence;
+pub mod probes;
 pub mod registry;
+pub mod selection;
 pub mod status;
 
 pub use config::{AdapterConfigEntry, AdapterConfigScope, AdapterConfigValue};
+pub use persistence::{
+    AdapterRegistryPersistedField, AdapterRegistryPersistenceBackend,
+    AdapterRegistryPersistencePolicy, AdapterRegistryRecomputedField, AdapterRegistryRepairPolicy,
+    AdapterRegistrySnapshot,
+};
+pub use probes::{
+    AdapterProbeAssessment, AdapterProbeCadence, AdapterProbeEvidence, AdapterProbeFailurePolicy,
+    AdapterProbeKind, AdapterProbePolicy, AdapterProbeRequirement, AdapterProbeResult,
+    AdapterProbeTarget, AdapterReadinessGate, AdapterStaleStatePolicy, AdapterStateAuthority,
+};
 pub use registry::{AdapterInstanceRecord, AdapterRegistry, AdapterRegistryId};
+pub use selection::{
+    AdapterCapabilityKey, AdapterCapabilityRequirement, AdapterInstanceId, AdapterSelectionOutcome,
+    AdapterSelectionReason, AdapterSelectionRequest, AdapterSelectionScope,
+    ResolvedAdapterConfigRef, ResolvedAdapterConfigValueKind,
+};
 pub use status::{AdapterHealth, AdapterLifecycleStatus, AdapterReadiness};

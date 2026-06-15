@@ -1,6 +1,6 @@
 # 011 Adapter Registry Selection And Persistence
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-15
 
@@ -56,4 +56,4 @@ cargo test --workspace
 
 ## Next Task
 
-Draft adapter registry selection and persistence semantics.
+Draft adapter secret reference and credential boundary semantics.
