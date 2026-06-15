@@ -1,0 +1,4 @@
+/target/
+/external/t3code/
+**/*.rs.bk
+.effigy

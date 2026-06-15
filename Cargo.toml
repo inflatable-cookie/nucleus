@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/nucleus-core",
+  "crates/nucleus-agent-protocol",
+  "crates/nucleus-agent-adapters",
+  "crates/nucleus-projects",
+  "crates/nucleus-tasks",
+  "crates/nucleus-workspaces",
+  "crates/nucleus-server",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/tom/nucleus"

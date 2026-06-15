@@ -1,0 +1,12 @@
+[package]
+name = "nucleus-server"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+nucleus-agent-protocol = { path = "../nucleus-agent-protocol" }
+nucleus-projects = { path = "../nucleus-projects" }
+nucleus-tasks = { path = "../nucleus-tasks" }
+nucleus-workspaces = { path = "../nucleus-workspaces" }
