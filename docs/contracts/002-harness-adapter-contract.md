@@ -309,6 +309,20 @@ This keeps provider behavior separate from deployment configuration. The same
 driver may have many configured instances with different accounts, server URLs,
 binary paths, secret references, runtime ownership, or project overrides.
 
+## Credential Boundary
+
+Harness adapters must not expose raw secret material through adapter metadata,
+runtime events, control-plane responses, or audit records.
+
+Adapters may receive resolved secret material only at the runtime boundary
+declared by the registry: server-only use, owned process environment, owned
+process stdin, SDK sidecar, external server request, or host credential
+provider only.
+
+Provider-native auth state belongs to the provider tool or host credential
+system. Nucleus may reference it and probe it, but must not copy it into
+registry records.
+
 ## Capability Discovery
 
 Adapters must expose capabilities for:
@@ -595,8 +609,8 @@ inside.
 - Runtime event payload schemas.
 - Concrete async execution and backpressure implementation.
 - Sidecar protocol shape for TypeScript-only SDK integrations.
-- Adapter secret reference and credential boundary semantics.
+- Project and session model-route override semantics.
 
 ## Next Task
 
-Draft adapter secret reference and credential boundary semantics.
+Draft project and session model-route override semantics.

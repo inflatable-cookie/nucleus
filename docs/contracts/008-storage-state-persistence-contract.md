@@ -12,6 +12,11 @@ The server owns durable state. Storage is a server concern, not a desktop
 client concern. This contract names what must persist before a backend is
 chosen.
 
+Persistent storage must not assume it owns secret material. Durable records may
+store secret references and non-secret credential audit records; raw secrets
+belong to a future secret store, host credential provider, provider-native auth
+state, or external secret manager.
+
 ## Persistence Domains
 
 Initial persisted domains:
@@ -58,6 +63,11 @@ The server should preserve enough journal information to support:
 
 The event journal is not a UI log. It is state recovery and reconciliation
 evidence.
+
+Journal entries must not contain raw secret values, tokens, Authorization
+headers, cookie values, or provider-native auth file contents. Credential
+events may retain reference ids, source kind, resolution boundary, status, and
+sanitized failure reason.
 
 ## Storage Backend Boundary
 
@@ -111,7 +121,8 @@ serialization format, migration system, transactions, replay, or sync.
 - Snapshot and journal replay rules.
 - Backup/export/import strategy.
 - Whether project-local metadata should mirror any server state.
+- Secret-store backend and host credential-provider integration.
 
 ## Next Task
 
-Draft adapter secret reference and credential boundary semantics.
+Draft project and session model-route override semantics.

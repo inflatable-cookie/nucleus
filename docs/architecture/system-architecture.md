@@ -273,4 +273,4 @@ This architecture unlocks:
 
 ## Next Task
 
-Draft adapter secret reference and credential boundary semantics.
+Draft project and session model-route override semantics.

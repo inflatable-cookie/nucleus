@@ -104,4 +104,4 @@ project, task, workspace, or agent state.
 
 ## Next Task
 
-Draft adapter secret reference and credential boundary semantics.
+Draft project and session model-route override semantics.

@@ -1,6 +1,6 @@
 # 013 Adapter Secret Reference And Credential Boundary
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -58,4 +58,4 @@ cargo test --workspace
 
 ## Next Task
 
-Draft adapter secret reference and credential boundary semantics.
+Draft project and session model-route override semantics.

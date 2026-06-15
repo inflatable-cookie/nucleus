@@ -54,6 +54,49 @@ Config values may include:
 
 Secret references point to a future secret store or host credential provider.
 
+## Credential Boundary Rule
+
+Registry records may store secret references. They must never store secret
+values.
+
+Secret references may identify:
+
+- host credential provider entries
+- future nucleus secret-store entries
+- provider-native auth state
+- environment variable names
+- external secret-manager entries
+
+Secret references must carry purpose and scope. Initial purposes include API
+key, access token, refresh token, external server credential, local CLI auth
+state, SDK sidecar credential, MCP server credential, and custom provider
+credential.
+
+Provider-native auth state must not be copied into nucleus storage. For local
+CLI harnesses, registry records may point at the provider-native auth state or
+configuration location, but the credential remains owned by the provider tool
+or host credential system.
+
+Secret material may only be resolved inside the server runtime boundary that
+needs it. Allowed resolution boundaries are:
+
+- server only
+- owned process environment
+- owned process stdin
+- SDK sidecar
+- external server request
+- host credential provider only
+
+Remote control planes must not request or receive raw secret material.
+
+Raw secret exposure policy must be explicit. Initial values are never expose,
+runtime boundary only, and provider-native auth only.
+
+Credential audit records may retain reference id, source kind, resolution
+boundary, status, and failure reason. They must not retain raw secret values,
+tokens, keys, Authorization headers, cookie values, or provider-native auth
+file contents.
+
 ## Scope Rule
 
 Configuration entries may apply at:
@@ -248,6 +291,7 @@ Recomputed state must include:
 - readiness
 - health snapshots
 - probe evidence
+- credential resolution records
 - upstream version discovery
 - authentication preflight
 
@@ -273,6 +317,16 @@ removed.
 - `AdapterConfigEntry`
 - `AdapterConfigValue`
 - `AdapterConfigScope`
+- `AdapterSecretRef`
+- `AdapterSecretSource`
+- `AdapterSecretPurpose`
+- `AdapterSecretScope`
+- `AdapterSecretResolutionPolicy`
+- `AdapterSecretResolutionBoundary`
+- `RawSecretExposurePolicy`
+- `AdapterCredentialAuditPolicy`
+- `AdapterCredentialResolutionRecord`
+- `AdapterCredentialResolutionStatus`
 - `AdapterRuntimeOwnership`
 - `AdapterSelectionRequest`
 - `AdapterSelectionOutcome`
@@ -305,10 +359,11 @@ removed.
 - `AdapterHealth`
 - `AdapterHealthStatus`
 
-These are descriptive registry, runtime ownership, selection, persistence, and
-probe boundary types only. Provider implementations, process spawning, SDK
-bridges, ACP clients, CLI/PTY control, active health probes, selection
-algorithms, storage engines, and secret storage remain out of scope.
+These are descriptive registry, credential, runtime ownership, selection,
+persistence, and probe boundary types only. Provider implementations, process
+spawning, SDK bridges, ACP clients, CLI/PTY control, active health probes,
+selection algorithms, storage engines, secret storage, and credential
+resolution remain out of scope.
 
 ## Runtime Ownership Rule
 
@@ -330,7 +385,6 @@ behavior.
 
 ## Research Gaps
 
-- Secret reference format and host credential integration.
 - How model routes are overridden per project or session.
 - Sidecar protocol shape for Claude Agent SDK.
 - Whether Kimi Wire should become a first-class Rust adapter path after ACP.
@@ -338,4 +392,4 @@ behavior.
 
 ## Next Task
 
-Draft adapter secret reference and credential boundary semantics.
+Draft project and session model-route override semantics.

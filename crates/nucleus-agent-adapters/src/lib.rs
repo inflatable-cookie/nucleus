@@ -5,6 +5,7 @@
 //! control yet.
 
 pub mod config;
+pub mod credentials;
 pub mod persistence;
 pub mod probes;
 pub mod registry;
@@ -12,6 +13,12 @@ pub mod selection;
 pub mod status;
 
 pub use config::{AdapterConfigEntry, AdapterConfigScope, AdapterConfigValue};
+pub use credentials::{
+    AdapterCredentialAuditPolicy, AdapterCredentialResolutionRecord,
+    AdapterCredentialResolutionStatus, AdapterSecretPurpose, AdapterSecretRef,
+    AdapterSecretResolutionBoundary, AdapterSecretResolutionPolicy, AdapterSecretScope,
+    AdapterSecretSource, RawSecretExposurePolicy,
+};
 pub use persistence::{
     AdapterRegistryPersistedField, AdapterRegistryPersistenceBackend,
     AdapterRegistryPersistencePolicy, AdapterRegistryRecomputedField, AdapterRegistryRepairPolicy,

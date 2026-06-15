@@ -14,4 +14,4 @@ Updated: 2026-06-15
 
 ## Next Task
 
-Draft adapter secret reference and credential boundary semantics.
+Draft project and session model-route override semantics.

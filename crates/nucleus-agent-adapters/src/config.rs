@@ -1,5 +1,7 @@
 //! Adapter instance configuration types.
 
+use crate::credentials::AdapterSecretRef;
+
 /// Configuration entry for one adapter instance.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdapterConfigEntry {
@@ -15,7 +17,7 @@ pub enum AdapterConfigValue {
     Bool(bool),
     Integer(i64),
     Path(String),
-    SecretRef(String),
+    SecretRef(AdapterSecretRef),
 }
 
 /// Where an adapter config entry applies.

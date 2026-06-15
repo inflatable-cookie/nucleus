@@ -138,4 +138,4 @@ subscriptions, runtime routing, and process lifecycle remain out of scope.
 
 ## Next Task
 
-Draft adapter secret reference and credential boundary semantics.
+Draft project and session model-route override semantics.

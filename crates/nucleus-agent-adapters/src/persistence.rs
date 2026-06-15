@@ -35,6 +35,7 @@ pub enum AdapterRegistryRecomputedField {
     Readiness,
     HealthSnapshot,
     ProbeEvidence,
+    CredentialResolutionRecord,
     VersionDiscovery,
     AuthenticationPreflight,
 }

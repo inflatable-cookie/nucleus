@@ -27,4 +27,4 @@ model contracts are specific enough to validate.
 
 ## Next Task
 
-Draft adapter secret reference and credential boundary semantics.
+Draft project and session model-route override semantics.

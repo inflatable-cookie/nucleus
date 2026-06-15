@@ -14,4 +14,4 @@ Specimen dossiers capture deep reads of concrete projects or implementations.
 
 ## Next Task
 
-Draft adapter secret reference and credential boundary semantics.
+Draft project and session model-route override semantics.
