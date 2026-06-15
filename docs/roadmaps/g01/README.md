@@ -14,4 +14,4 @@ Updated: 2026-06-15
 
 ## Next Task
 
-Draft task-level agent assignment and model preference semantics.
+Draft validation evidence and artifact reference semantics.

@@ -234,6 +234,7 @@ Selection inputs may include:
 - task reference
 - session reference
 - requested model route
+- task model preferences
 - required capabilities
 - config scope precedence
 
@@ -396,4 +397,4 @@ behavior.
 
 ## Next Task
 
-Draft task-level agent assignment and model preference semantics.
+Draft validation evidence and artifact reference semantics.

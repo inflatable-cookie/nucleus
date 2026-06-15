@@ -14,4 +14,4 @@ Specimen dossiers capture deep reads of concrete projects or implementations.
 
 ## Next Task
 
-Draft task-level agent assignment and model preference semantics.
+Draft validation evidence and artifact reference semantics.

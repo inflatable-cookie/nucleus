@@ -23,6 +23,7 @@ Initial persisted domains:
 
 - projects
 - tasks
+- task history
 - workspaces
 - agent sessions
 - model routes
@@ -63,6 +64,10 @@ The server should preserve enough journal information to support:
 
 The event journal is not a UI log. It is state recovery and reconciliation
 evidence.
+
+Task history is also not a UI log. It is durable task audit state and should
+link to runtime events, artifacts, validation evidence, and session records
+rather than copying high-volume streams.
 
 Journal entries must not contain raw secret values, tokens, Authorization
 headers, cookie values, or provider-native auth file contents. Credential
@@ -125,4 +130,4 @@ serialization format, migration system, transactions, replay, or sync.
 
 ## Next Task
 
-Draft task-level agent assignment and model preference semantics.
+Draft validation evidence and artifact reference semantics.

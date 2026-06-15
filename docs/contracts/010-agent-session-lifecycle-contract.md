@@ -95,6 +95,24 @@ After restart or provider disconnect, each session must be marked as:
 Recovery state is explicit so clients can render uncertainty instead of
 pretending all harnesses support resume equally.
 
+## Task Attempt Linkage
+
+Agent sessions may be linked from task agent attempts, but task history must not
+copy session runtime event streams.
+
+Task attempt records may retain:
+
+- nucleus session id
+- selected adapter instance reference
+- selected route reference
+- runtime event references
+- validation references
+- short attempt summary
+
+The session lifecycle contract remains the authority for session state, turn
+state, provider ids, recovery state, approvals, and user-input wait states.
+Task history links to that evidence for audit and recovery.
+
 ## Codex Mapping
 
 First-pass Codex mapping:
@@ -250,4 +268,4 @@ control remain out of scope.
 
 ## Next Task
 
-Draft task-level agent assignment and model preference semantics.
+Draft validation evidence and artifact reference semantics.

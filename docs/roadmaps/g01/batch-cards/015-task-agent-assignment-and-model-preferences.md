@@ -1,6 +1,6 @@
 # 015 Task Agent Assignment And Model Preferences
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -59,4 +59,4 @@ cargo test --workspace
 
 ## Next Task
 
-Draft task-level agent assignment and model preference semantics.
+Draft validation evidence and artifact reference semantics.

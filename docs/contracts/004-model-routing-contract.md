@@ -169,6 +169,10 @@ Session overrides must not mutate project overrides or adapter instance
 defaults. Task preferences may influence selection, but they do not become
 durable route config unless promoted by an explicit project/session action.
 
+Task model preferences can prefer routes, require one of a route set, inherit
+project defaults, or inherit session defaults. They are assignment inputs, not
+route definitions.
+
 Allowed first-pass override fields:
 
 - endpoint
@@ -230,4 +234,4 @@ invocation outside a harness runtime.
 
 ## Next Task
 
-Draft task-level agent assignment and model preference semantics.
+Draft validation evidence and artifact reference semantics.

@@ -138,4 +138,4 @@ subscriptions, runtime routing, and process lifecycle remain out of scope.
 
 ## Next Task
 
-Draft task-level agent assignment and model preference semantics.
+Draft validation evidence and artifact reference semantics.

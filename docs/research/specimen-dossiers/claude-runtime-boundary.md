@@ -224,4 +224,4 @@ environments that reject sidecars, and native terminal rendering.
 
 ## Next Task
 
-Draft task-level agent assignment and model preference semantics.
+Draft validation evidence and artifact reference semantics.

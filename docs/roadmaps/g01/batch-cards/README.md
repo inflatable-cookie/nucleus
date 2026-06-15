@@ -4,12 +4,12 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/015-task-agent-assignment-and-model-preferences.md`
+- `docs/roadmaps/g01/batch-cards/017-validation-evidence-and-artifact-references.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/015-task-agent-assignment-and-model-preferences.md`
+- `docs/roadmaps/g01/batch-cards/017-validation-evidence-and-artifact-references.md`
 
 ## Next Task
 
-Draft task-level agent assignment and model preference semantics.
+Draft validation evidence and artifact reference semantics.

@@ -7,6 +7,23 @@ use std::time::SystemTime;
 
 use nucleus_projects::ProjectId;
 
+pub mod assignment;
+pub mod history;
+pub mod preferences;
+
+pub use assignment::{
+    TaskAssignmentAuditEntry, TaskAssignmentAuditEvent, TaskAssignmentPlan, TaskAssignmentSnapshot,
+    TaskAssignmentStatus, TaskAssignmentTarget, TaskCapabilityRequirement,
+};
+pub use history::{
+    AgentAttemptId, AgentAttemptOutcome, AgentAttemptRecord, AgentAttemptSummary,
+    TaskHandoffRecord, TaskHistoryActor, TaskHistoryEntry, TaskHistoryEntryId, TaskHistoryEvent,
+    TaskValidationRecord, TaskValidationStatus,
+};
+pub use preferences::{
+    TaskModelPreferenceMode, TaskModelPreferences, TaskPreferenceWeight, TaskRoutePreference,
+};
+
 /// Stable task id.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TaskId(pub String);
@@ -25,6 +42,10 @@ pub struct Task {
     pub assignment: AssignmentState,
     pub activity: TaskActivityState,
     pub agent_readiness: AgentReadiness,
+    pub assignment_plan: Option<TaskAssignmentPlan>,
+    pub assignment_snapshot: Option<TaskAssignmentSnapshot>,
+    pub history: Vec<TaskHistoryEntry>,
+    pub model_preferences: Option<TaskModelPreferences>,
     pub timestamps: TaskTimestamps,
 }
 

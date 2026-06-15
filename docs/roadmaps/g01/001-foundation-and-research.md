@@ -69,6 +69,8 @@ contracts before app behavior begins.
 - Adapter secret reference and credential boundary batch card exists.
 - Project and session model-route override batch card exists.
 - Task agent assignment and model preference batch card exists.
+- Task history and agent attempt audit batch card exists.
+- Validation evidence and artifact reference batch card exists.
 
 ## Batch Queue
 
@@ -87,7 +89,9 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/013-adapter-secret-reference-and-credential-boundary.md`
 - `docs/roadmaps/g01/batch-cards/014-model-route-override-semantics.md`
 - `docs/roadmaps/g01/batch-cards/015-task-agent-assignment-and-model-preferences.md`
+- `docs/roadmaps/g01/batch-cards/016-task-history-and-agent-attempt-audit.md`
+- `docs/roadmaps/g01/batch-cards/017-validation-evidence-and-artifact-references.md`
 
 ## Next Task
 
-Draft task-level agent assignment and model preference semantics.
+Draft validation evidence and artifact reference semantics.
