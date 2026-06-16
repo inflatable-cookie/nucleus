@@ -1,6 +1,6 @@
 # 011 Desktop Serialization And Shell Bootstrap
 
-Status: active
+Status: done
 Owner: Tom
 Updated: 2026-06-17
 
@@ -35,6 +35,8 @@ path, then scaffold only the minimal desktop shell.
 - UI panels remain deferred until the desktop can call the server boundary.
 - The first desktop scaffold uses Bun, Svelte, and local Poodle components,
   with TypeScript kept to DTO construction and Tauri invocation.
+- The first desktop panel should be control diagnostics, not project switcher
+  or task list, because project/task mutation flows are not ready.
 
 ## Execution Plan
 
@@ -42,7 +44,7 @@ path, then scaffold only the minimal desktop shell.
 - [x] Add serializable control envelope DTOs.
 - [x] Add Tauri command handler adapter.
 - [x] Scaffold desktop shell with control command.
-- [ ] Reassess first desktop panel readiness.
+- [x] Reassess first desktop panel readiness.
 
 ## Acceptance Criteria
 
@@ -52,6 +54,7 @@ path, then scaffold only the minimal desktop shell.
 - [x] Desktop scaffold is shell-only and contains no panels.
 - [x] No provider process, command runner, live subscription, or remote
   transport behavior is introduced.
+- [x] First panel readiness is explicit.
 
 ## Cards
 

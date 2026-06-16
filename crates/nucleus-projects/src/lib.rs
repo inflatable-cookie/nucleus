@@ -7,8 +7,13 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 pub mod projection;
+pub mod storage_codec;
 
 pub use projection::{ProjectProjectionRecord, RepoMembershipProjectionRecord};
+pub use storage_codec::{
+    decode_project_storage_record, encode_project_storage_record, ProjectRecordCodecError,
+    ProjectStorageImportanceLevel, ProjectStorageRecord, ProjectStorageStatus,
+};
 
 /// Stable nucleus project id.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

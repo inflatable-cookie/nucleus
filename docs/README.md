@@ -18,7 +18,7 @@ The repo uses:
 
 ## Current Lane
 
-`roadmaps/g01/011-desktop-serialization-and-shell-bootstrap.md`
+`roadmaps/g01/014-read-only-desktop-project-switcher.md`
 
 ## Guardrail
 

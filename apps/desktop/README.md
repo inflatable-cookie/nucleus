@@ -18,3 +18,23 @@ the local request handler.
 No project panels, terminal/browser/editor surfaces, SCM controls, live
 subscriptions, provider processes, remote transport, or command execution exist
 in this app yet.
+
+The first real panel is control diagnostics. It proves command-path health,
+protocol versioning, backend reachability, and error rendering before project
+or task panels depend on mutation flows that do not exist yet.
+
+Diagnostics can issue read-only runtime metadata queries and project, task, or
+workspace list queries. The TypeScript helpers only construct DTOs and invoke
+Tauri; they do not own or reinterpret server state.
+
+The project switcher is deferred until Rust exposes display-ready project
+records and an intentional local seed or create path.
+
+Local desktop startup now seeds a `Nucleus Local` project through the Rust
+server state path. This is bootstrap readiness, not full project creation UI.
+
+The next desktop panel is a read-only project switcher. It should list and
+select server-owned project records without adding project creation or editing.
+
+The project switcher panel exists and reads `project_records` DTOs. Selection
+is currently local to the panel.

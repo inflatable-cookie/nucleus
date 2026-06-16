@@ -1930,6 +1930,8 @@ name = "nucleus-projects"
 version = "0.0.0"
 dependencies = [
  "nucleus-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

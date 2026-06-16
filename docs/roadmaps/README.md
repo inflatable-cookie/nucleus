@@ -16,6 +16,9 @@ shape.
 - `g01/009-local-transport-and-desktop-bootstrap-prep.md`
 - `g01/010-server-module-decomposition-and-ipc-readiness.md`
 - `g01/011-desktop-serialization-and-shell-bootstrap.md`
+- `g01/012-desktop-control-diagnostics-and-panel-foundation.md`
+- `g01/013-project-state-records-and-switcher-readiness.md`
+- `g01/014-read-only-desktop-project-switcher.md`
 
 ## Index
 
@@ -23,4 +26,4 @@ shape.
 
 ## Next Task
 
-Reassess first desktop panel readiness.
+Wire project selection into shell.

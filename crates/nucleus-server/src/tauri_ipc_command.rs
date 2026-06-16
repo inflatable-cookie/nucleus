@@ -178,8 +178,15 @@ mod tests {
     use crate::request_handler::LocalControlRequestHandler;
     use crate::state::ServerStateDomain;
     use crate::tauri_ipc_readiness::TauriIpcCommandShape;
-    use nucleus_core::{PersistenceDomain, PersistenceRecordKind};
-    use nucleus_local_store::{fixture_record, RevisionExpectation, SqliteBackend};
+    use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
+    use nucleus_local_store::{
+        fixture_record, LocalStoreRecord, LocalStoreRecordPayload, RevisionExpectation,
+        SqliteBackend,
+    };
+    use nucleus_projects::{
+        encode_project_storage_record, ImportanceBaseline, ImportanceLevel, Project,
+        ProjectActivity, ProjectId, ProjectStatus,
+    };
 
     #[derive(Clone, Debug)]
     struct ShapeOnlyBoundary {
@@ -203,6 +210,38 @@ mod tests {
                 }),
             };
             Ok(TauriIpcCommandExchange { request, response })
+        }
+    }
+
+    fn encoded_project_record(id: &str, display_name: &str) -> LocalStoreRecord {
+        let project = Project {
+            id: ProjectId(id.to_owned()),
+            display_name: display_name.to_owned(),
+            status: ProjectStatus::Active,
+            importance_baseline: ImportanceBaseline {
+                level: ImportanceLevel::Normal,
+                notes: None,
+            },
+            repos: Vec::new(),
+            task_ids: Vec::new(),
+            workspace_layout_refs: Vec::new(),
+            activity: ProjectActivity {
+                created_at: None,
+                last_focused_at: None,
+                last_agent_activity_at: None,
+                last_task_activity_at: None,
+            },
+        };
+
+        LocalStoreRecord {
+            id: PersistenceRecordId(id.to_owned()),
+            domain: PersistenceDomain::Projects,
+            kind: PersistenceRecordKind::Project,
+            revision_id: RevisionId("rev:1".to_owned()),
+            payload: LocalStoreRecordPayload {
+                media_type: Some("application/json".to_owned()),
+                bytes: encode_project_storage_record(&project).expect("project json"),
+            },
         }
     }
 
@@ -299,12 +338,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let backend = SqliteBackend::new(temp_dir.path().join("nucleus.sqlite"));
         let handler = LocalControlRequestHandler::new(backend, None);
-        let record = fixture_record(
-            PersistenceDomain::Projects,
-            PersistenceRecordKind::Project,
-            "project:tauri-adapter",
-            "rev:1",
-        );
+        let record = encoded_project_record("project:tauri-adapter", "Tauri Adapter");
         handler
             .state()
             .projects()
@@ -336,10 +370,8 @@ mod tests {
         assert_eq!(response.request_id, "request:tauri-adapter:project-list");
         assert!(matches!(
             response.body,
-            crate::control_envelope_dto::ControlResponseBodyDto::StateRecords {
-                records,
-                ..
-            } if records.len() == 1
+            crate::control_envelope_dto::ControlResponseBodyDto::ProjectRecords { records }
+                if records.len() == 1 && records[0].display_name == "Tauri Adapter"
         ));
     }
 

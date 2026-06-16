@@ -17,6 +17,7 @@ pub mod event_replay;
 pub mod events;
 pub mod ids;
 pub mod local_transport;
+pub mod project_seed;
 pub mod request_handler;
 pub mod runtime_effect_events;
 pub mod runtime_effect_replay;
@@ -53,9 +54,10 @@ pub use control_api::{
     StateRecordQueryScope,
 };
 pub use control_envelope_dto::{
-    ControlApiCodecError, ControlQueryDto, ControlQueryScopeDto, ControlRequestBodyDto,
-    ControlRequestEnvelopeDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
-    ControlResponseStatusDto, ControlStateDomainDto, ControlStateRecordDto,
+    ControlApiCodecError, ControlProjectRecordDto, ControlQueryDto, ControlQueryScopeDto,
+    ControlRequestBodyDto, ControlRequestEnvelopeDto, ControlResponseBodyDto,
+    ControlResponseEnvelopeDto, ControlResponseStatusDto, ControlStateDomainDto,
+    ControlStateRecordDto,
 };
 pub use control_serialization_readiness::{
     ControlApiCodecBoundary, ControlApiCodecFailure, ControlApiDtoAuthority,
@@ -77,6 +79,7 @@ pub use local_transport::{
     InProcessControlClientFixture, InProcessControlHandlerFixture, LocalControlTransport,
     LocalControlTransportBoundary, LocalControlTransportError, LocalControlTransportExchange,
 };
+pub use project_seed::{seed_local_project, LocalProjectSeed};
 pub use request_handler::{LocalControlRequestHandler, LocalControlRequestHandlerBoundary};
 pub use runtime_effect_events::{
     RuntimeEffectServerEvent, RuntimeEffectServerEventKind, ServerEventSequence,

@@ -12,42 +12,19 @@ use crate::control_api::{
     ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope,
 };
 use crate::control_serialization_readiness::{
-    ControlApiCodecFailure, CONTROL_API_PROTOCOL_FAMILY, CONTROL_API_PROTOCOL_VERSION_V1,
+    CONTROL_API_PROTOCOL_FAMILY, CONTROL_API_PROTOCOL_VERSION_V1,
 };
 use crate::ids::{ClientId, ServerControlRequestId, ServerQueryId};
 use crate::state::ServerStateDomain;
-use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
-use nucleus_local_store::LocalStoreRecord;
+use nucleus_core::PersistenceRecordId;
 
-/// Codec error at the control API transport boundary.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ControlApiCodecError {
-    pub failure: ControlApiCodecFailure,
-    pub reason: String,
-}
+mod error;
+mod projects;
+mod records;
 
-impl ControlApiCodecError {
-    fn unsupported(reason: impl Into<String>) -> Self {
-        Self {
-            failure: ControlApiCodecFailure::UnsupportedPayloadShape,
-            reason: reason.into(),
-        }
-    }
-
-    fn malformed(reason: impl Into<String>) -> Self {
-        Self {
-            failure: ControlApiCodecFailure::MalformedEnvelope,
-            reason: reason.into(),
-        }
-    }
-
-    fn unsupported_version(version: u16) -> Self {
-        Self {
-            failure: ControlApiCodecFailure::UnsupportedProtocolVersion,
-            reason: format!("unsupported protocol version: {version}"),
-        }
-    }
-}
+pub use error::ControlApiCodecError;
+pub use projects::ControlProjectRecordDto;
+pub use records::ControlStateRecordDto;
 
 /// Serializable request envelope for the first control API wire format.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -364,6 +341,9 @@ pub enum ControlResponseBodyDto {
         domain: String,
         records: Vec<ControlStateRecordDto>,
     },
+    ProjectRecords {
+        records: Vec<ControlProjectRecordDto>,
+    },
     CommandReceipt {
         command_id: String,
         status: String,
@@ -408,6 +388,16 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
 fn state_record_set_dto(
     records: &ServerStateRecordSet,
 ) -> Result<ControlResponseBodyDto, ControlApiCodecError> {
+    if records.domain == ServerStateDomain::Projects {
+        return Ok(ControlResponseBodyDto::ProjectRecords {
+            records: records
+                .records
+                .iter()
+                .map(ControlProjectRecordDto::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+        });
+    }
+
     Ok(ControlResponseBodyDto::StateRecords {
         domain: format!("{:?}", records.domain),
         records: records
@@ -416,30 +406,6 @@ fn state_record_set_dto(
             .map(ControlStateRecordDto::from)
             .collect(),
     })
-}
-
-/// Serializable state record DTO.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ControlStateRecordDto {
-    pub id: String,
-    pub domain: String,
-    pub kind: String,
-    pub revision_id: String,
-    pub media_type: Option<String>,
-    pub payload_bytes: Vec<u8>,
-}
-
-impl From<&LocalStoreRecord> for ControlStateRecordDto {
-    fn from(record: &LocalStoreRecord) -> Self {
-        Self {
-            id: record.id.0.clone(),
-            domain: persistence_domain_dto(&record.domain),
-            kind: persistence_kind_dto(&record.kind),
-            revision_id: record.revision_id.0.clone(),
-            media_type: record.payload.media_type.clone(),
-            payload_bytes: record.payload.bytes.clone(),
-        }
-    }
 }
 
 fn control_error_dto(error: &ServerControlError) -> (String, String) {
@@ -485,161 +451,5 @@ fn validate_protocol(family: &str, version: u16) -> Result<(), ControlApiCodecEr
     Ok(())
 }
 
-fn persistence_domain_dto(domain: &PersistenceDomain) -> String {
-    format!("{domain:?}")
-}
-
-fn persistence_kind_dto(kind: &PersistenceRecordKind) -> String {
-    format!("{kind:?}")
-}
-
-#[allow(dead_code)]
-fn revision_id(value: String) -> RevisionId {
-    RevisionId(value)
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::control_api::{ServerControlResponse, StateRecordQuery, StateRecordQueryScope};
-    use crate::ids::{ServerControlRequestId, ServerQueryId};
-    use nucleus_core::{PersistenceRecordId, RevisionId};
-    use nucleus_local_store::LocalStoreRecordPayload;
-
-    #[test]
-    fn request_envelope_dto_serializes_supported_state_query() {
-        let request = ServerControlRequest {
-            id: ServerControlRequestId("request:dto:1".to_owned()),
-            client_id: ClientId("client:desktop".to_owned()),
-            kind: ServerControlRequestKind::Query(ServerQuery {
-                id: ServerQueryId("query:dto:1".to_owned()),
-                client_id: ClientId("client:desktop".to_owned()),
-                kind: ServerQueryKind::Project(StateRecordQuery {
-                    domain: ServerStateDomain::Projects,
-                    scope: StateRecordQueryScope::List,
-                }),
-            }),
-        };
-
-        let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
-        let json = serde_json::to_string(&dto).expect("json");
-        let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
-        let restored = ServerControlRequest::try_from(decoded).expect("restored request");
-
-        assert_eq!(dto.protocol_family, CONTROL_API_PROTOCOL_FAMILY);
-        assert_eq!(dto.protocol_version, CONTROL_API_PROTOCOL_VERSION_V1);
-        assert_eq!(restored.id, request.id);
-        assert!(matches!(
-            restored.kind,
-            ServerControlRequestKind::Query(ServerQuery {
-                kind: ServerQueryKind::Project(StateRecordQuery {
-                    scope: StateRecordQueryScope::List,
-                    ..
-                }),
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn request_envelope_rejects_unsupported_command_payload() {
-        let request = ServerControlRequest {
-            id: ServerControlRequestId("request:dto:command".to_owned()),
-            client_id: ClientId("client:desktop".to_owned()),
-            kind: ServerControlRequestKind::Command(crate::commands::ServerCommand {
-                id: crate::ids::ServerCommandId("command:dto".to_owned()),
-                client_id: ClientId("client:desktop".to_owned()),
-                kind: crate::commands::ServerCommandKind::Task(
-                    crate::commands::TaskCommand::Start(nucleus_tasks::TaskId(
-                        "task:dto".to_owned(),
-                    )),
-                ),
-            }),
-        };
-
-        let error = ControlRequestEnvelopeDto::try_from(&request).expect_err("unsupported");
-
-        assert_eq!(
-            error.failure,
-            ControlApiCodecFailure::UnsupportedPayloadShape
-        );
-    }
-
-    #[test]
-    fn response_envelope_dto_serializes_status_error_and_state_records() {
-        let response = ServerControlResponse {
-            request_id: ServerControlRequestId("request:dto:response".to_owned()),
-            status: ServerControlResponseStatus::Complete,
-            body: ServerControlResponseBody::Query(ServerQueryResult::StateRecords(
-                ServerStateRecordSet {
-                    domain: ServerStateDomain::Projects,
-                    records: vec![LocalStoreRecord {
-                        id: PersistenceRecordId("project:dto".to_owned()),
-                        domain: PersistenceDomain::Projects,
-                        kind: PersistenceRecordKind::Project,
-                        revision_id: RevisionId("rev:1".to_owned()),
-                        payload: LocalStoreRecordPayload {
-                            media_type: Some("application/json".to_owned()),
-                            bytes: br#"{"name":"DTO"}"#.to_vec(),
-                        },
-                    }],
-                },
-            )),
-        };
-
-        let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
-        let json = serde_json::to_string(&dto).expect("json");
-        let decoded: ControlResponseEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
-
-        assert_eq!(decoded.status, ControlResponseStatusDto::Complete);
-        assert!(matches!(
-            decoded.body,
-            ControlResponseBodyDto::StateRecords { records, .. } if records.len() == 1
-        ));
-    }
-
-    #[test]
-    fn response_error_shape_is_explicit() {
-        let response = ServerControlResponse {
-            request_id: ServerControlRequestId("request:dto:error".to_owned()),
-            status: ServerControlResponseStatus::Rejected,
-            body: ServerControlResponseBody::Error(ServerControlError::Deferred {
-                reason: "not wired".to_owned(),
-            }),
-        };
-
-        let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
-
-        assert_eq!(dto.status, ControlResponseStatusDto::Rejected);
-        assert_eq!(
-            dto.body,
-            ControlResponseBodyDto::Error {
-                kind: "deferred".to_owned(),
-                reason: "not wired".to_owned(),
-            }
-        );
-    }
-
-    #[test]
-    fn request_envelope_rejects_unsupported_version() {
-        let dto = ControlRequestEnvelopeDto {
-            protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),
-            protocol_version: 2,
-            request_id: "request:dto:bad-version".to_owned(),
-            client_id: "client:desktop".to_owned(),
-            body: ControlRequestBodyDto::Query {
-                query: ControlQueryDto::RuntimeMetadata {
-                    query_id: "query:dto".to_owned(),
-                    action: "list_artifact_metadata".to_owned(),
-                },
-            },
-        };
-
-        let error = ServerControlRequest::try_from(dto).expect_err("bad version");
-
-        assert_eq!(
-            error.failure,
-            ControlApiCodecFailure::UnsupportedProtocolVersion
-        );
-    }
-}
+mod tests;

@@ -17,6 +17,9 @@ Updated: 2026-06-16
 - `009-local-transport-and-desktop-bootstrap-prep.md`
 - `010-server-module-decomposition-and-ipc-readiness.md`
 - `011-desktop-serialization-and-shell-bootstrap.md`
+- `012-desktop-control-diagnostics-and-panel-foundation.md`
+- `013-project-state-records-and-switcher-readiness.md`
+- `014-read-only-desktop-project-switcher.md`
 
 ## Batch Cards
 

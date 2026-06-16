@@ -4,11 +4,11 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/110-reassess-first-desktop-panel-readiness.md`
+- `docs/roadmaps/g01/batch-cards/119-wire-project-selection-into-shell.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/110-reassess-first-desktop-panel-readiness.md`
+- `docs/roadmaps/g01/batch-cards/119-wire-project-selection-into-shell.md`
 
 ## Completed Cards
 
@@ -52,7 +52,16 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 - `docs/roadmaps/g01/batch-cards/107-add-serializable-control-envelope-dtos.md`
 - `docs/roadmaps/g01/batch-cards/108-add-tauri-command-handler-adapter.md`
 - `docs/roadmaps/g01/batch-cards/109-scaffold-desktop-shell-with-control-command.md`
+- `docs/roadmaps/g01/batch-cards/110-reassess-first-desktop-panel-readiness.md`
+- `docs/roadmaps/g01/batch-cards/111-add-desktop-control-diagnostics-panel.md`
+- `docs/roadmaps/g01/batch-cards/112-add-desktop-control-query-helpers.md`
+- `docs/roadmaps/g01/batch-cards/113-reassess-project-switcher-readiness.md`
+- `docs/roadmaps/g01/batch-cards/114-compile-project-record-and-mutation-runway.md`
+- `docs/roadmaps/g01/batch-cards/115-add-project-record-storage-codec-or-fixture.md`
+- `docs/roadmaps/g01/batch-cards/116-add-local-project-seed-or-create-path.md`
+- `docs/roadmaps/g01/batch-cards/117-reassess-read-only-project-switcher-readiness.md`
+- `docs/roadmaps/g01/batch-cards/118-add-read-only-project-switcher-panel.md`
 
 ## Planned Cards
 
-- None.
+- `docs/roadmaps/g01/batch-cards/120-reassess-task-list-readiness.md`

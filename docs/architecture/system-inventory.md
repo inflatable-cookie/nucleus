@@ -79,7 +79,10 @@ Updated: 2026-06-16
   and Effigy integration records, but no Effigy tool bridge, harness skill
   injection, command execution, or UI exists yet.
 - `nucleus-projects`: first draft durable project, repo membership, path
-  history, repair action, activity, and projection record types.
+  history, repair action, activity, projection record types, and a Rust-owned
+  JSON storage codec for first project display records. The codec preserves
+  stable project id, display name, status, and importance baseline for
+  server-owned storage/control projection use.
 - `nucleus-scm-forge`: first draft provider-agnostic SCM, forge, credential,
   webhook, conflict, review-workflow, task-link, observation, and work-session
   boundary types. Current contracts define the first production adapter trait
@@ -182,8 +185,10 @@ Updated: 2026-06-16
   control envelope DTOs now cover the first request/response envelopes,
   supported state and runtime metadata query shapes, response status, state
   record payload envelopes, command receipt summaries, and explicit error
-  shapes. Unsupported payloads fail with codec errors. Tauri IPC readiness can
-  now consume explicit control serialization readiness. A Tauri IPC command
+  shapes. Project state query responses can now expose display-ready project
+  record DTOs decoded from server-owned project storage payloads. Unsupported
+  payloads fail with codec errors. Tauri IPC readiness can now consume explicit
+  control serialization readiness. A Tauri IPC command
   boundary skeleton now names schema-only, fixture-backed, and Tauri
   runtime-backed postures plus a request/response submission trait. It does not
   use Tauri macros, start a Tauri runtime, serialize payloads, own durable
@@ -240,15 +245,22 @@ Updated: 2026-06-16
   and resolution status, but they do not store payloads, select a backend, scan
   secrets, redact payloads, resolve refs, expose replay payloads, render UI, or
   execute commands.
+- `nucleus-server` also provides a server-owned local project seed path for
+  bootstrap readiness. `seed_local_project` writes idempotent project records
+  through `ServerStateService` using the `nucleus-projects` JSON storage codec.
+  It is seed behavior, not full project creation command execution.
 
 ## Apps
 
 - `apps/nucleusd`: future server binary placeholder.
 - `apps/desktop`: initial Tauri v2 desktop client scaffold. It uses Bun,
   Svelte, and local Poodle component packages from `../poodle`. The first
-  screen is a shell-only control command proof that invokes
-  `submit_control_envelope` and renders the serialized response DTO. It does
-  not implement panels, live subscriptions, provider process lifecycle, remote
+  panel is read-only control diagnostics that invokes `submit_control_envelope`
+  and renders protocol details, request status, raw DTO response, and errors.
+  Local desktop startup seeds a `Nucleus Local` project through the server
+  seed path. A read-only project switcher panel lists `project_records` DTOs
+  and keeps selection local to the panel. It does not implement project/task
+  mutation panels, live subscriptions, provider process lifecycle, remote
   transport, command execution, or durable state authority.
 
 ## External Systems To Research
