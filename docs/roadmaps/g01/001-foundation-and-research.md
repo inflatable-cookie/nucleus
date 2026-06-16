@@ -153,3 +153,4 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/050-add-runtime-effect-event-types.md`
 - `docs/roadmaps/g01/batch-cards/051-draft-runtime-effect-replay-and-retention-policy.md`
 - `docs/roadmaps/g01/batch-cards/052-add-runtime-effect-replay-retention-policy-types.md`
+- `docs/roadmaps/g01/batch-cards/053-draft-runtime-effect-storage-boundary.md`

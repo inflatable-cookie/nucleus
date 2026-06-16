@@ -1,6 +1,6 @@
 # 052 Add Runtime Effect Replay Retention Policy Types
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -50,6 +50,16 @@ Add runtime effect replay retention policy types.
 - `docs/contracts/007-server-boundary-contract.md`
 - `docs/contracts/011-scm-forge-sync-contract.md`
 - `docs/architecture/system-inventory.md`
+
+## Decisions
+
+- Replay and retention policy types live in `nucleus-server`.
+- Adapter and command crates continue to expose domain-specific symbolic refs.
+- Deployment profile variance is represented as server policy vocabulary for
+  now.
+- Ref retention remains symbolic until storage and replay contracts exist.
+- No storage, replay API, event bus, transport, artifact store, subscription,
+  scheduler, or runtime execution was added.
 
 ## Validation
 

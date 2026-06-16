@@ -614,6 +614,13 @@ authoritative.
 This policy does not choose a database, file format, replay API, event bus,
 transport, or artifact store.
 
+The first Rust replay and retention policy types now name replay durability,
+transient reconciliation, retained symbolic refs, compaction posture,
+deployment profile variance, and sanitized summary retention. They live in the
+server crate because replay and retention are server-owned. They do not
+implement storage, replay APIs, event transport, subscriptions, artifact
+stores, scheduling, or runtime execution.
+
 The first Rust command runtime effect state types now name command effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -636,3 +643,4 @@ or server event fan-out.
 - Server event envelope Rust type boundaries.
 - Event transport and subscription policy.
 - Runtime effect replay and retention Rust type boundaries.
+- Replay retention transition from symbolic refs to storage-backed refs.

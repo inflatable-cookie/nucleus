@@ -10,6 +10,7 @@ pub mod deployment;
 pub mod events;
 pub mod ids;
 pub mod runtime_effect_events;
+pub mod runtime_effect_retention;
 
 pub use authority::{AuthorityArea, ServerAuthority};
 pub use clients::{ClientConnection, ClientIdentity, ClientKind};
@@ -21,4 +22,9 @@ pub use events::{ServerEvent, ServerEventKind};
 pub use ids::{ClientId, ServerCommandId, ServerEventId};
 pub use runtime_effect_events::{
     RuntimeEffectServerEvent, RuntimeEffectServerEventKind, ServerEventSequence,
+};
+pub use runtime_effect_retention::{
+    RuntimeEffectCompactionPosture, RuntimeEffectReplayDeploymentProfile,
+    RuntimeEffectReplayDurability, RuntimeEffectRetainedRef, RuntimeEffectRetentionPolicy,
+    RuntimeEffectSummaryRetention,
 };

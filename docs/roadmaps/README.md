@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Add runtime effect replay retention policy types.
+Draft runtime effect storage boundary.

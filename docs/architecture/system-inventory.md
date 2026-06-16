@@ -66,7 +66,10 @@ Updated: 2026-06-15
 - `nucleus-server`: first draft modular server authority, deployment, client,
   command, and event boundary types. Runtime effect server event envelope types
   are compile-only and do not implement transport, persistence, replay,
-  subscriptions, scheduling, or runtime execution.
+  subscriptions, scheduling, or runtime execution. Runtime effect replay and
+  retention policy types are compile-only and do not implement storage, replay
+  APIs, event transport, artifact stores, subscriptions, scheduling, or runtime
+  execution.
 
 ## Apps
 

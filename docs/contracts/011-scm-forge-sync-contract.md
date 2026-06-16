@@ -1169,6 +1169,11 @@ Adapter retry linkage must keep the prior terminal adapter effect request id
 and the new adapter effect request id resolvable for replay. A retry remains a
 new server-scheduled request.
 
+Replay and retention policy types live in the server crate. SCM and forge
+adapter crates expose domain refs such as observation batch refs, task-link
+proposal refs, sanitized evidence refs, and command-authority request refs.
+Those refs remain symbolic until storage and replay contracts exist.
+
 The first Rust runtime effect state types now name adapter effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -1191,3 +1196,4 @@ or server event fan-out.
 - Adapter effect event Rust type boundaries.
 - Adapter event transport and subscription policy.
 - Adapter replay and retention Rust type boundaries.
+- Adapter symbolic ref transition to storage-backed refs.
