@@ -6,7 +6,8 @@ Source hubs group external evidence by topic.
 
 - `harness-communications.md`
 - `provider-routing-and-model-surfaces.md`
+- `scm-forge-implementation.md`
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

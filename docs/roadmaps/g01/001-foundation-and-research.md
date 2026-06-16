@@ -77,6 +77,13 @@ contracts before app behavior begins.
 - Steward persona policy and sync authority batch card exists.
 - Management projection file model batch card exists.
 - Projection storage Rust surface boundaries batch card exists.
+- Projection schema validation and migration policy batch card exists.
+- SCM and forge adapter surface boundaries batch card exists.
+- SCM/forge sync observation and task-link policy batch card exists.
+- SCM/forge implementation readiness research batch card exists.
+- SCM/forge credential and webhook verification boundary batch card exists.
+- Branch/worktree session management policy batch card exists.
+- SCM/forge conflict and review workflow policy batch card exists.
 
 ## Batch Queue
 
@@ -103,7 +110,14 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/021-steward-persona-policy-and-sync-authority.md`
 - `docs/roadmaps/g01/batch-cards/022-management-projection-file-model.md`
 - `docs/roadmaps/g01/batch-cards/023-projection-storage-rust-surface-boundaries.md`
+- `docs/roadmaps/g01/batch-cards/024-projection-schema-validation-and-migration-policy.md`
+- `docs/roadmaps/g01/batch-cards/025-scm-and-forge-adapter-surface-boundaries.md`
+- `docs/roadmaps/g01/batch-cards/026-scm-forge-sync-observation-and-task-link-policy.md`
+- `docs/roadmaps/g01/batch-cards/027-scm-forge-implementation-readiness-research.md`
+- `docs/roadmaps/g01/batch-cards/028-scm-forge-credential-and-webhook-verification-boundary.md`
+- `docs/roadmaps/g01/batch-cards/029-branch-worktree-session-management-policy.md`
+- `docs/roadmaps/g01/batch-cards/030-scm-forge-conflict-and-review-workflow-policy.md`
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

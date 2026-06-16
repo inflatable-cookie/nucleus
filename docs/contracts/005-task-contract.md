@@ -158,6 +158,60 @@ journal reference when needed, not copied into task history by default.
 Human handoffs and reassignment must record source actor, target actor, reason,
 and context references.
 
+## SCM And Forge Task Links
+
+Tasks may link to SCM and forge objects by reference.
+
+Allowed first-pass link targets:
+
+- branch
+- commit
+- provider-neutral SCM change
+- pull request or merge request
+- issue
+- comment
+
+Task links do not replace task identity. Forge issue ids, pull request ids, and
+SCM change ids remain external references.
+
+Task links may be:
+
+- user-authored
+- adapter-observed
+- steward-suggested
+- imported
+
+Adapter-observed links are evidence until accepted or promoted. They should
+not mutate projected task state by themselves.
+
+Task link status should be explicit. Stale, missing, superseded, and unknown
+links should be retained until a human, policy, or later repair flow removes or
+updates them.
+
+SCM and forge observations may propose low-volume task history summaries, but
+they must not become task history automatically. A task-domain action must
+decide which observation summaries belong in durable task history.
+
+## SCM Work Session Binding
+
+A task or agent attempt may bind to an SCM work session.
+
+The binding may reference:
+
+- primary worktree branch session
+- per-thread worktree session
+- external managed session
+- review request or merge target
+
+The task remains the planning unit. The SCM work session is execution context.
+It must not replace task identity, assignment state, activity state, or
+acceptance criteria.
+
+Task assignment UI should surface whether an agent will work in the primary
+checkout or in a separate worktree. If the project has a single runnable
+instance constraint, Nucleus must make that constraint visible before launching
+parallel work.
+
 ## Task Projection Record
 
 Committed task state lives under:
@@ -275,9 +329,12 @@ enough for the selected agent and harness.
 - `TaskRoutePreference`
 - `TaskPreferenceWeight`
 - `TaskTimestamps`
+- `TaskProjectionRecord`
+- `TaskProjectionHistorySummary`
 
 These are descriptive domain types only. Scheduling, scoring, adapter
-selection, assignment execution, and agent delegation remain out of scope.
+selection, assignment execution, agent delegation, projection serialization,
+and projection IO remain out of scope.
 
 ## Research Gaps
 
@@ -289,4 +346,4 @@ selection, assignment execution, and agent delegation remain out of scope.
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

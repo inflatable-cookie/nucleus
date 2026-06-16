@@ -7,4 +7,5 @@ repository.workspace = true
 
 [dependencies]
 nucleus-agent-protocol = { path = "../nucleus-agent-protocol" }
+nucleus-core = { path = "../nucleus-core" }
 nucleus-projects = { path = "../nucleus-projects" }

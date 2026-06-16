@@ -138,4 +138,4 @@ subscriptions, runtime routing, and process lifecycle remain out of scope.
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

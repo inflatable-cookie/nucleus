@@ -10,7 +10,7 @@ Spec refs: `docs/specs/002-git-backed-project-management-state.md`
 Define the first boundary for Git, SCM, forge, and project-management sync.
 
 Nucleus should make project management state portable and committable without
-turning Git into the live runtime database.
+turning Git or any other SCM into the live runtime database.
 
 ## Authority Boundary
 
@@ -20,8 +20,13 @@ Repo-backed management files are a shared projection of project intent. They
 are portable, reviewable, and syncable, but they are not the only runtime state
 store.
 
-Git and forges provide synchronization, review, discovery, and collaboration
-signals.
+SCM systems and forges provide synchronization, review, discovery, and
+collaboration signals.
+
+Git is the first practical SCM target. It is not the only model. SCM support
+must stay adapter-based so Jujutsu, Mercurial, Pijul, Fossil, or future
+systems can be represented without forcing every object into Git's branch and
+commit vocabulary.
 
 ## State Split
 
@@ -157,6 +162,43 @@ Excluded from projection records:
 - machine-specific absolute paths except repairable path hints
 - raw validation output unless stored as an artifact reference
 
+## Projection Validation And Migration
+
+The sync layer must validate projection records before importing them into the
+active server working set.
+
+Validation outcomes:
+
+- valid: record can be imported
+- valid with warnings: record can be imported, but warnings should be surfaced
+- invalid: record must not be imported until repaired
+- unsupported schema: record must be preserved and reported, not ignored
+
+Invalid projection records should become repair work, not raw parser failures
+in normal UI flows.
+
+Schema errors include missing required fields, invalid ids, unsupported schema
+versions, unknown record kinds, invalid references, and excluded state in
+projection files.
+
+Semantic conflicts include incompatible task status, acceptance criteria,
+assignment intent, task deletion versus update, project identity changes, repo
+membership changes, and history rewrites affecting meaning.
+
+Schema validation must not be treated as Git conflict resolution. Git conflict
+resolution handles file merge shape. Projection validation handles record
+meaning and import safety after a candidate file state exists.
+
+Migration policy:
+
+- old schema records may be read-only until migrated
+- unsupported schema records must be preserved
+- mechanical migrations may run only when meaning is preserved
+- migrations that affect meaning require human approval
+- migration plans must be reviewable before shared records are rewritten
+- migration evidence should be attached as sanitized validation or artifact
+  references
+
 ## Sync Policy
 
 Initial sync policies:
@@ -272,9 +314,294 @@ Forge issues may mirror or link to Nucleus tasks. They must not replace the
 Nucleus task identity model unless a later contract explicitly promotes that
 mode.
 
+## SCM And Forge Adapter Boundary
+
+SCM adapters and forge adapters are separate capability surfaces in one
+first-pass crate.
+
+SCM adapters cover local and remote source-control state:
+
+- repositories
+- worktrees
+- remotes
+- branches
+- commits or provider-neutral changes
+- dirty-state observations
+- management-state commit preparation
+- management-state push capability under policy
+
+Forge adapters cover collaboration state:
+
+- forge repository refs
+- pull requests or merge requests
+- issues
+- comments
+- review state
+- webhook refresh
+- polling refresh
+
+Stable Nucleus ids and provider refs are separate. Provider-native repository,
+pull request, issue, comment, branch, and commit refs must be retained as
+metadata. They must not replace project ids, repo membership ids, task ids, or
+server-owned observation ids.
+
+Provider-neutral change refs must be available for SCM systems where `commit`
+is not the right primitive. Initial change kinds include commit, changeset,
+patch, revision, checkin, and custom provider-specific values.
+
+Webhook payloads and poll responses are inputs, not durable state. Adapters
+must normalize them into server-owned observations before they affect task,
+project, sync, or workspace state.
+
+Task links to SCM and forge objects are references. A forge issue may link to a
+Nucleus task. It must not become the task identity.
+
+## Credential Boundary
+
+SCM and forge adapters may need credentials. Nucleus records credential
+references and sanitized evidence, not credential material.
+
+Initial credential kinds:
+
+- local SCM command credential
+- forge API token
+- forge app installation
+- SSH key
+- webhook signing secret
+- host credential provider
+- external secret manager
+- provider-native auth state
+- custom provider value
+
+Local SCM command credentials and forge API credentials are separate
+boundaries. A local Git, Jujutsu, Mercurial, or future SCM command may use host
+credential state without granting Nucleus forge API authority. A forge API
+credential may inspect pull requests or issues without granting local command
+authority.
+
+Credential references may identify where resolution happens:
+
+- server secret store
+- host credential provider
+- provider-native auth
+- external secret manager
+- user interactive flow
+- unresolved
+
+Projection records, task history, observations, journals, runtime events, and
+logs must not contain raw secrets, tokens, authorization headers, cookies,
+private keys, webhook signing secrets, provider-native auth files, or
+credential helper output.
+
+Sanitized credential evidence may retain:
+
+- credential reference id
+- credential kind
+- resolution boundary
+- status
+- failure kind
+- short non-secret summary
+
+Credential failure evidence may become repair work. It must not copy provider
+error output unless that output has been sanitized.
+
+SCM and forge adapters must expose whether they can use credential references.
+Credential lookup, prompting, storage, rotation, and revocation remain outside
+the adapter type surface until a secret-store contract exists.
+
+## Webhook Verification Policy
+
+Webhook ingestion requires verification policy before it can affect Nucleus
+state.
+
+Initial verification methods:
+
+- shared secret HMAC
+- provider signature
+- mutual TLS
+- network boundary only
+- disabled for local development
+- unsupported
+
+Webhook signing secrets are credential references. They are not projection
+state and must not be stored in observations, task history, journals, runtime
+events, or logs.
+
+Webhook payloads are untrusted inputs until verification succeeds or policy
+explicitly marks the local-development path as disabled verification. A
+verified webhook may produce normalized forge observations. A rejected webhook
+may produce sanitized verification evidence or repair work, but it must not
+mutate project, task, sync, or workspace state.
+
+Sanitized webhook verification evidence may retain:
+
+- webhook endpoint id
+- provider event ref where safe
+- verification status
+- failure kind
+- short non-secret summary
+
+Verification evidence must not retain raw payload bodies, signature header
+values, signing secrets, delivery tokens, cookies, authorization headers, or
+full provider request headers.
+
+Adapters should expose whether webhook verification is supported. If a forge
+adapter can receive webhooks but cannot verify them, Nucleus must treat the
+webhook path as unavailable for trusted state changes.
+
+## Branch And Worktree Session Policy
+
+In-app branch and worktree management is part of the SCM boundary. It is not a
+desktop-only convenience.
+
+Nucleus must model bounded SCM work sessions for human and agent work. A work
+session groups a task, thread, branch-like ref, worktree-like ref, review
+target, and lifecycle state where the provider supports those concepts.
+
+Initial isolation modes:
+
+- primary worktree branch
+- per-thread worktree
+- external managed
+- unsupported
+
+Primary worktree branch mode uses the project checkout as the active work
+location and moves it to a temporary branch or provider-equivalent change
+surface for a bounded session. This is simpler for testing and local developer
+workflow because the known directory remains the directory under test. It
+assumes all active threads for that repo share the same active branch context.
+Nucleus must surface that shared context clearly before starting agent work.
+
+Primary worktree branch mode must require a clean or explicitly recoverable
+worktree before switching, merging, or abandoning the session. It must not hide
+thread conflicts caused by multiple agents sharing the same checkout.
+
+Per-thread worktree mode creates or registers a separate worktree, temporary
+checkout, or provider-equivalent isolated location for each thread or task
+attempt. This supports parallel work, but it may make testing harder when a
+project can only run one dev server, database, hardware target, simulator, or
+build output location on a machine at once.
+
+Per-thread worktree mode must track runtime constraints separately from SCM
+state. Initial constraints are:
+
+- single runnable instance
+- shared service conflict
+- isolated
+- unknown
+
+Work sessions may end by opening a review request, merging into a target ref,
+abandoning the attempt, or handing off for manual review. Merge and review
+actions are policy-gated. Nucleus must not delete unmerged work silently.
+
+SCM adapters must expose capability flags for starting primary worktree
+sessions, starting per-thread worktree sessions, merging work sessions, and
+abandoning work sessions.
+
+For non-Git SCMs, `branch`, `worktree`, and `merge` are user-facing concepts,
+not mandatory provider primitives. SCM adapters must map work sessions onto the
+provider's real isolation and review mechanisms and expose unsupported
+capabilities honestly.
+
+## Observation Policy
+
+SCM and forge observations are server-owned facts derived from adapter inputs.
+They are not raw Git command output, raw webhook payloads, raw API responses,
+or durable task history.
+
+Observation sources:
+
+- SCM inspection
+- forge polling
+- forge webhook
+- manual refresh
+- import
+
+Observations may:
+
+- update project activity
+- propose task links
+- update task-link freshness
+- propose low-volume task history summaries
+- request human review
+
+Observations must not:
+
+- replace task history
+- mutate task state without a task-domain action
+- persist raw webhook payloads as task history
+- persist raw webhook verification material
+- discard provider refs
+- copy secret or auth material
+
+Webhook and polling events may duplicate each other. Adapters should attach a
+dedupe key when available. De-duplication is a later implementation concern,
+but the identity surface must preserve enough provider refs and timestamps to
+support it.
+
+## Task Link Policy
+
+Task links connect Nucleus tasks to SCM and forge objects.
+
+Initial link targets:
+
+- branch
+- commit
+- provider-neutral change
+- pull request or merge request
+- issue
+- comment
+
+Initial link sources:
+
+- user-authored
+- adapter-observed
+- steward-suggested
+- imported
+
+Initial link statuses:
+
+- active
+- stale
+- missing
+- superseded
+- unknown
+
+User-authored links are explicit task metadata. Adapter-observed links are
+evidence until accepted or promoted. Steward-suggested links require policy
+approval before changing projected task state.
+
+Stale links should be retained with status rather than deleted silently.
+Missing forge objects should be surfaced as repair work.
+
 ## Current Rust Surface
 
-No SCM/forge crate exists yet.
+`nucleus-scm-forge` is the type-only crate for SCM and forge adapter
+boundaries.
+
+Current modules:
+
+- `ids`: SCM adapter instance ids, forge adapter instance ids, provider refs,
+  repository ref ids, worktree ref ids, and work session ids
+- `auth`: credential references, credential resolution boundary, credential
+  status, and sanitized credential-use evidence
+- `webhooks`: webhook endpoint ids, verification policy, verification status,
+  and sanitized verification evidence
+- `scm`: SCM provider kind, repository, worktree, branch, commit,
+  provider-neutral change, work session, runtime constraint, and remote refs
+- `forge`: forge repository, pull request, issue, and comment refs
+- `links`: task links to SCM and forge objects
+- `observations`: normalized SCM and forge observations, refresh mode,
+  dedupe key, and observation effect
+- `capabilities`: SCM and forge adapter capabilities
+
+Projection storage vocabulary is split across existing type-only crates:
+
+- `nucleus-core`: projection root, record path, record id, schema version,
+  record revision, record kind, record envelope, excluded-state kind,
+  validation report, validation issue, migration posture, and migration plan
+- `nucleus-projects`: project and repo membership projection records
+- `nucleus-tasks`: task projection record and low-volume history summary
 
 `nucleus-native-harness` now names steward-facing policy vocabulary:
 
@@ -288,8 +615,11 @@ No SCM/forge crate exists yet.
 - `NativeApprovalPolicy::RequiredBeforeHistoryRewrite`
 - `NativeApprovalPolicy::RequiredBeforePolicyChange`
 
-This is descriptive policy vocabulary only. Git sync implementation remains out
-of scope until the projection file model is settled.
+These are descriptive policy and adapter vocabulary only. Git command
+execution, network API clients, webhook endpoints, credential lookup,
+credential storage, signature verification execution, sync workers, file IO,
+serialization, validation execution, and migration execution remain out of
+scope.
 
 ## Research Gaps
 
@@ -297,8 +627,7 @@ of scope until the projection file model is settled.
 - Conflict model for simultaneous task edits.
 - Forge issue mirroring semantics.
 - Webhook versus polling refresh.
-- Projection file schema validation and migration policy.
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

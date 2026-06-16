@@ -27,6 +27,17 @@ dependencies = [
 [[package]]
 name = "nucleus-projects"
 version = "0.0.0"
+dependencies = [
+ "nucleus-core",
+]
+
+[[package]]
+name = "nucleus-scm-forge"
+version = "0.0.0"
+dependencies = [
+ "nucleus-projects",
+ "nucleus-tasks",
+]
 
 [[package]]
 name = "nucleus-server"
@@ -43,6 +54,7 @@ name = "nucleus-tasks"
 version = "0.0.0"
 dependencies = [
  "nucleus-agent-protocol",
+ "nucleus-core",
  "nucleus-projects",
 ]
 

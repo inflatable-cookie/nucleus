@@ -6,6 +6,10 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+pub mod projection;
+
+pub use projection::{ProjectProjectionRecord, RepoMembershipProjectionRecord};
+
 /// Stable nucleus project id.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ProjectId(pub String);

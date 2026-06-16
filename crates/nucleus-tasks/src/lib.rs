@@ -10,6 +10,7 @@ use nucleus_projects::ProjectId;
 pub mod assignment;
 pub mod history;
 pub mod preferences;
+pub mod projection;
 
 pub use assignment::{
     TaskAssignmentAuditEntry, TaskAssignmentAuditEvent, TaskAssignmentPlan, TaskAssignmentSnapshot,
@@ -23,6 +24,7 @@ pub use history::{
 pub use preferences::{
     TaskModelPreferenceMode, TaskModelPreferences, TaskPreferenceWeight, TaskRoutePreference,
 };
+pub use projection::{TaskProjectionHistorySummary, TaskProjectionRecord};
 
 /// Stable task id.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

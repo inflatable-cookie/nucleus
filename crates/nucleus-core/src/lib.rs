@@ -4,10 +4,18 @@
 //! persistence, scheduling, storage engines, or runtime behavior yet.
 
 pub mod persistence;
+pub mod projection;
 pub mod revisions;
 
 pub use persistence::{
     PersistenceDomain, PersistenceRecord, PersistenceRecordId, PersistenceRecordKind,
     StorageBackendKind, StorageLocation,
+};
+pub use projection::{
+    ProjectionExcludedStateKind, ProjectionMigrationAction, ProjectionMigrationPlan,
+    ProjectionMigrationPosture, ProjectionRecordEnvelope, ProjectionRecordId, ProjectionRecordKind,
+    ProjectionRecordPath, ProjectionRecordRevision, ProjectionRoot, ProjectionSchemaVersion,
+    ProjectionValidationIssue, ProjectionValidationIssueKind, ProjectionValidationReport,
+    ProjectionValidationStatus,
 };
 pub use revisions::{ChangeJournalEntry, ChangeOperation, RevisionId, StateSnapshot};

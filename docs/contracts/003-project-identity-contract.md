@@ -154,9 +154,12 @@ The dedicated task contract is `005-task-contract.md`.
 - `WorkspaceLayoutRef`
 - `ProjectActivity`
 - `RepoRepairAction`
+- `ProjectProjectionRecord`
+- `RepoMembershipProjectionRecord`
 
 These are descriptive domain types only. Storage, path repair, repo scanning,
-activity scoring, and task scheduling remain out of scope.
+activity scoring, task scheduling, projection serialization, and projection IO
+remain out of scope.
 
 ## Control Plane Boundary
 
@@ -167,4 +170,4 @@ project, task, workspace, or agent state.
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

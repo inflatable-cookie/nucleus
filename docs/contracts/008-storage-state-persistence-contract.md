@@ -21,6 +21,16 @@ store secret references and non-secret credential audit records; raw secrets
 belong to a future secret store, host credential provider, provider-native auth
 state, or external secret manager.
 
+Credential references are durable metadata. Credential material is not durable
+Nucleus state unless a later secret-store contract explicitly defines that
+storage boundary.
+
+Webhook verification records are sanitized evidence. They may record endpoint
+id, provider event ref, verification status, failure kind, and short
+non-secret summary. They must not store raw webhook bodies, signature header
+values, signing secrets, delivery tokens, cookies, authorization headers, or
+full provider request headers.
+
 ## Persistence Domains
 
 Initial persisted domains:
@@ -57,6 +67,52 @@ The first model only names revision ids, snapshots, and journal entries. It
 does not define conflict resolution, transactions, migration, or replay
 semantics yet.
 
+## Projection Validation Rule
+
+Projection validation is an import and sync gate, not a storage engine.
+
+A projected record should be classified as:
+
+- valid
+- valid with warnings
+- invalid
+- unsupported schema
+
+Invalid records must not be silently imported into the active working set.
+Unsupported schema records must be preserved and reported. They must not be
+ignored, deleted, or rewritten without an explicit migration path.
+
+Validation failures are not Git conflicts by default. Schema errors describe
+record shape. Semantic conflicts describe incompatible project or task meaning.
+The sync layer may surface both, but it must keep those classes separate.
+
+Validation evidence should be recorded as sanitized state or artifact
+references. It must not include secrets, provider auth material, raw provider
+transcripts, or high-volume runtime event streams.
+
+## Projection Migration Rule
+
+Projection migrations are explicit policy actions.
+
+Initial migration postures:
+
+- current
+- read-only until migrated
+- mechanical migration available
+- human approval required
+- unsupported
+
+Mechanical migrations may add defaulted fields, rename fields, normalize
+identifiers, or split records only when meaning is preserved.
+
+Human approval is required when migration changes task meaning, project
+identity, repo membership, assignment intent, task history, sync policy, or
+artifact references.
+
+Migration tooling must produce a plan before shared projection records are
+rewritten. The plan should identify source schema, target schema, affected
+records, mechanical actions, and human approval points.
+
 ## Journal Rule
 
 The server should preserve enough journal information to support:
@@ -77,6 +133,11 @@ Journal entries must not contain raw secret values, tokens, Authorization
 headers, cookie values, or provider-native auth file contents. Credential
 events may retain reference ids, source kind, resolution boundary, status, and
 sanitized failure reason.
+
+Webhook verification journal entries may retain endpoint id, provider event
+ref, verification status, failure kind, and sanitized summary. They must not
+retain raw payloads, raw signature material, shared secrets, full headers, or
+provider auth material.
 
 ## Storage Backend Boundary
 
@@ -122,21 +183,39 @@ the server remains the authority for active state.
 - `StateSnapshot`
 - `ChangeJournalEntry`
 - `ChangeOperation`
+- `ProjectionRoot`
+- `ProjectionRecordPath`
+- `ProjectionRecordId`
+- `ProjectionSchemaVersion`
+- `ProjectionRecordRevision`
+- `ProjectionRecordKind`
+- `ProjectionRecordEnvelope`
+- `ProjectionExcludedStateKind`
+- `ProjectionValidationStatus`
+- `ProjectionValidationReport`
+- `ProjectionValidationIssue`
+- `ProjectionValidationIssueKind`
+- `ProjectionMigrationPosture`
+- `ProjectionMigrationPlan`
+- `ProjectionMigrationAction`
 
 These are descriptive shared types only. They do not implement a database,
-serialization format, migration system, transactions, replay, or sync.
+serialization format, migration executor, transactions, replay, file IO, or
+sync.
 
 ## Research Gaps
 
 - Embedded database choice.
 - Serialization format for durable records.
-- Migration strategy.
+- Migration execution strategy.
 - Snapshot and journal replay rules.
 - Backup/export/import strategy.
 - Whether project-local metadata should mirror any server state.
 - Secret-store backend and host credential-provider integration.
 - Git-backed management projection format and sync policy.
+- Credential rotation and revocation model.
+- Webhook replay cache storage model.
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

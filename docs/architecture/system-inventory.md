@@ -12,7 +12,7 @@ Updated: 2026-06-15
 ## Rust Crates
 
 - `nucleus-core`: first draft persistence domains, record identity, revision,
-  snapshot, and journal vocabulary.
+  snapshot, journal, and projection envelope vocabulary.
 - `nucleus-agent-protocol`: first draft adapter identity, transport,
   capability, event identity, model-route, and agent session lifecycle types.
 - `nucleus-agent-adapters`: first draft adapter registry, instance
@@ -20,9 +20,11 @@ Updated: 2026-06-15
 - `nucleus-native-harness`: first draft Nucleus-owned persona, session, event,
   tool, approval, model backend, and audit boundary types.
 - `nucleus-projects`: first draft durable project, repo membership, path
-  history, repair action, and activity types.
+  history, repair action, activity, and projection record types.
+- `nucleus-scm-forge`: first draft provider-agnostic SCM, forge, credential,
+  webhook, task-link, observation, and work-session boundary types.
 - `nucleus-tasks`: first draft task identity, importance, neglect, action,
-  assignment, activity, and agent-readiness types.
+  assignment, activity, agent-readiness, and projection record types.
 - `nucleus-workspaces`: first draft modular workspace layout, panel, and
   surface types.
 - `nucleus-server`: first draft modular server authority, deployment, client,
@@ -74,4 +76,4 @@ Updated: 2026-06-15
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

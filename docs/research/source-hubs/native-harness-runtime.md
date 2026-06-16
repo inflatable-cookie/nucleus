@@ -111,4 +111,4 @@ First implementation target after contracts settle:
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

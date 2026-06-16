@@ -23,4 +23,4 @@ contracts, roadmaps, or logs carry the durable truth.
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

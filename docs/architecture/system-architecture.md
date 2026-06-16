@@ -26,17 +26,21 @@ Future clients may include:
 ## Core Crate Boundaries
 
 - `nucleus-core`: first draft persistence domains, record identity, revision,
-  snapshot, and journal vocabulary.
+  snapshot, journal, and projection envelope vocabulary.
 - `nucleus-agent-protocol`: first draft adapter identity, capability, runtime
   event, model route, and agent session lifecycle types.
 - `nucleus-agent-adapters`: first draft adapter registry, instance
   configuration, readiness, lifecycle, and health types.
 - `nucleus-native-harness`: first draft Nucleus-owned persona, session, event,
   tool, approval, model backend, and audit boundary types.
-- `nucleus-projects`: durable project identity, repo membership, and project
-  lifecycle later.
-- `nucleus-tasks`: task model, importance scoring, and task action taxonomy
-  later.
+- `nucleus-projects`: durable project identity, repo membership, project
+  lifecycle, and projection record types later.
+- `nucleus-scm-forge`: first draft provider-agnostic SCM and forge adapter
+  boundary types for repositories, worktrees, branches, commits,
+  provider-neutral changes, pull requests, issues, comments, task links,
+  credential references, webhook verification, observations, and capabilities.
+- `nucleus-tasks`: task model, importance scoring, task action taxonomy, and
+  projection record types later.
 - `nucleus-workspaces`: persisted layouts, terminals, browser views, and
   panel/tab state later.
 - `nucleus-server`: first draft server authority, deployment, client, command,
@@ -271,6 +275,24 @@ Nucleus should support a hybrid model:
 - project steward agent for normalization, sync preparation, and conflict
   assistance
 
+The server owns SCM work sessions. Clients may request branch, worktree,
+review, or merge actions, but the durable session state belongs to the server.
+
+Two first-pass work modes are required:
+
+- primary worktree branch mode, where the known project checkout moves to a
+  temporary branch or provider-equivalent change surface
+- per-thread worktree mode, where each task attempt or thread can receive its
+  own isolated checkout, branch-like ref, or provider-equivalent work area
+
+Primary worktree branch mode is easier to run and test because the familiar
+directory remains active. It is less flexible because concurrent threads share
+one branch context.
+
+Per-thread worktree mode supports parallel agent work. It needs extra runtime
+constraint tracking because some projects can only run one dev server, build,
+database, simulator, or hardware target cleanly on a machine.
+
 The steward agent is bounded. It can prepare management-state commits, link
 tasks to forge objects, and ask for human decisions. It must not silently delete
 tasks, rewrite meaningful history, push code changes, or expose secrets.
@@ -339,4 +361,4 @@ This architecture unlocks:
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

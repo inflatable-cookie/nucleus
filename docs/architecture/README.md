@@ -20,4 +20,4 @@ Architecture records the system shape once planning starts to settle.
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

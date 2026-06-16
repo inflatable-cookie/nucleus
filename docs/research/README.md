@@ -12,8 +12,8 @@ roadmaps depend on it.
 
 ## Current Focus
 
-Provider implementation readiness, continuing with Claude Code CLI and SDK evidence.
+SCM and forge implementation readiness.
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.

@@ -1,6 +1,6 @@
 # 023 Projection Storage Rust Surface Boundaries
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -58,4 +58,4 @@ cargo test --workspace
 
 ## Next Task
 
-Draft projection storage Rust surface boundaries.
+Draft SCM/forge conflict and review workflow policy.
