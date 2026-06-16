@@ -1,6 +1,6 @@
 # 067 Normalize Server Runtime Implementation Gaps
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -55,3 +55,10 @@ versus implementation-phase decisions.
 effigy qa:docs
 effigy qa:northstar
 ```
+
+## Closeout
+
+- Replaced flat server and storage research-gap lists with implementation gap
+  classifications.
+- Marked roadmap 005 gap-normalization acceptance complete.
+- Preserved `g01` as active and moved the next runway step to card 068.

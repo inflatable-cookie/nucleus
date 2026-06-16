@@ -39,7 +39,7 @@ command readiness, and artifact retention before runtime implementation starts.
 - [x] Define client auth, pairing, secret material, and credential readiness.
 - [x] Define command runner and sandbox readiness.
 - [x] Define command artifact store and output retention boundary.
-- [ ] Normalize remaining server/runtime research gaps into implementation
+- [x] Normalize remaining server/runtime research gaps into implementation
   blockers versus implementation-phase decisions.
 - [ ] Compile the first implementation runway inside `g01`.
 
@@ -53,7 +53,32 @@ command readiness, and artifact retention before runtime implementation starts.
 - [x] Command readiness is separate from command execution.
 - [x] Artifact retention policy prevents raw output from entering normal
   evidence, task history, journals, or logs by default.
-- [ ] Remaining foundation gaps are sorted before implementation starts.
+- [x] Remaining foundation gaps are sorted before implementation starts.
+
+## Implementation Gap Classification
+
+Foundation blockers before the first implementation runway:
+
+- choose the first implementation slice and acceptance tests
+- decide which runtime subsystems stay type-only for that slice
+
+First implementation decisions:
+
+- server-local storage backend and serialization format
+- minimal server command/event/state persistence
+- local-only control API transport
+- local-only auth posture
+- first restart-recovery path
+- first implementation test strategy
+
+Deferred subsystem decisions:
+
+- LAN/internet auth and pairing
+- live subscriptions and backpressure
+- command runner and sandbox backends
+- artifact payload backend
+- secret backend and user prompting
+- Tauri control plane behavior
 
 ## Cards
 
@@ -82,12 +107,11 @@ command readiness, and artifact retention before runtime implementation starts.
 
 ## Current Ready Card
 
-- `docs/roadmaps/g01/batch-cards/066-draft-command-artifact-store-and-output-retention-boundary.md`
+- `docs/roadmaps/g01/batch-cards/068-compile-first-implementation-runway.md`
 
 ## Planning Gaps
 
-- Artifact retention and redaction policy for full command output.
-- Runtime scheduler and async execution model.
-- Storage backend and serialization format.
-- API transport and auth implementation shape.
-- Secret backend implementation shape.
+- First implementation slice and acceptance tests.
+- Initial local storage/backend choice for the first slice.
+- Initial local control API transport choice for the first slice.
+- Initial local auth posture for the first slice.

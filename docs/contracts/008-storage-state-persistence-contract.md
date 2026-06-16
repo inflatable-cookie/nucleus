@@ -572,27 +572,53 @@ These are descriptive artifact metadata and envelope types only. They do not
 implement artifact storage, backend selection, scanning, redaction, payload
 reads, payload writes, replay exposure, or UI rendering.
 
-## Research Gaps
+## Implementation Gap Classification
 
-- Embedded database choice.
-- Serialization format for durable records.
-- Migration execution strategy.
-- Snapshot and journal replay rules.
-- Runtime effect replay query and client reconciliation model.
-- Storage generation identity for ordering tokens and replay checkpoints.
-- Runtime effect replay query implementation boundary.
-- Runtime effect subscription storage and acknowledgement policy.
-- Runtime effect transport selection and subscription implementation boundary.
-- Backup/export/import strategy.
-- Whether project-local metadata should mirror any server state.
-- Secret-store backend and host credential-provider integration.
-- Client auth credential reference and revocation storage model.
-- Secret material backend, rotation, redaction, and revocation model.
-- Credential readiness storage and repair-work projection model.
-- Command runner readiness retention and repair-work projection model.
-- Git-backed management projection format and sync policy.
-- Credential rotation and revocation model.
-- Webhook replay cache storage model.
-- Retention policy for abandoned reviews and resolved conflicts.
-- Artifact store backend and payload lifecycle model.
-- Secret scanner and redactor implementation model for command artifacts.
+The storage contract has enough first-pass record and ref vocabulary to compile
+an implementation runway. The remaining decisions should be sequenced by the
+first implementation slice.
+
+Foundation blockers before implementation runway:
+
+- choose the first durable storage slice and its acceptance tests
+- decide which records must persist in the first slice and which remain
+  type-only
+- decide whether the first slice includes project-local projection writes or
+  only server-local state
+
+First implementation decisions:
+
+- embedded database versus filesystem-backed store for the first local server
+- serialization format for durable records
+- migration posture for pre-release schema changes
+- snapshot and journal replay minimum needed for restart recovery
+- storage generation identity for ordering tokens and replay checkpoints
+- indexes needed for projects, tasks, adapter registry, sessions, event
+  journal, command evidence, and artifact metadata
+
+Subsystem implementation decisions:
+
+- runtime effect replay query implementation
+- subscription acknowledgement persistence
+- backup, export, and import
+- project-local metadata mirroring
+- secret-store backend and host credential-provider integration
+- credential readiness storage and repair-work projection
+- command runner readiness retention and repair-work projection
+- Git-backed management projection format and sync policy
+- webhook replay cache
+- retention policy implementation for abandoned reviews and resolved conflicts
+- artifact payload backend and lifecycle
+- secret scanner and redactor implementation for command artifacts
+
+Already promoted from earlier research gaps:
+
+- persistence domains and stable record identity
+- revision, snapshot, and journal vocabulary
+- projection validation and migration posture
+- runtime effect storage, replay query, subscription, and transport boundary
+  vocabulary
+- client auth credential references and revocation record shape
+- secret material, rotation, redaction, and revocation vocabulary
+- command runner readiness storage rule
+- command artifact metadata storage rule

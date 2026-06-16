@@ -17,4 +17,4 @@ shape.
 
 ## Next Task
 
-Normalize server runtime implementation gaps.
+Compile first implementation runway inside g01.

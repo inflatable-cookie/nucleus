@@ -1333,31 +1333,53 @@ command ids and exposes resolution status. It is compile-only and does not
 implement storage, scanning, redaction, payload reads, payload writes, or UI
 rendering.
 
-## Research Gaps
+## Implementation Gap Classification
 
-- Whether the first API should be HTTP/WebSocket, local socket, or both.
-- How auth and pairing should work for LAN and internet deployments.
-- How event subscriptions and replay should be represented.
-- How command acceptance, rejection, queueing, and results should be modeled.
-- How server state persists across restarts.
-- How command sandbox profiles map to host OS isolation primitives.
-- How command approval prompts are represented across clients.
-- Dev-only command fixture crate boundary.
-- Runtime command effect request and outcome type shapes.
-- Cancellation, timeout, retry, and artifact-retention policy.
-- Runtime command effect state transition validation.
-- Server event envelope Rust type boundaries.
-- Event transport and subscription policy.
-- Runtime effect replay and retention Rust type boundaries.
-- Replay retention transition from symbolic refs to storage-backed refs.
-- Runtime effect replay query and client reconciliation boundary.
-- Runtime effect replay query implementation boundary.
-- Runtime effect transport selection boundary.
-- Runtime effect auth and pairing boundary.
-- Runtime effect transport implementation readiness.
-- Secret store and credential material boundary.
-- Credential resolution integration policy.
-- Credential resolution runtime implementation readiness.
-- Command runner implementation boundary.
-- Sandbox backend selection and host isolation mapping.
-- Command artifact store implementation boundary.
+The server boundary has enough first-pass contract shape to compile an
+implementation runway. Remaining gaps should be treated by implementation lane,
+not as a reason to keep widening the foundation pass.
+
+Foundation blockers before implementation runway:
+
+- choose the first implementation slice and success criteria inside `g01`
+- decide which runtime boundaries are intentionally out of scope for that first
+  slice
+- keep command execution, provider adapters, and Tauri app behavior out of the
+  first slice unless the runway explicitly promotes them
+
+First implementation decisions:
+
+- minimal server state store shape for projects, tasks, adapter registry,
+  sessions, and runtime refs
+- initial local-only control API transport for development
+- initial local-only auth posture and pairing bypass policy
+- minimal event journal and replay query needed for restart recovery
+- type-to-storage mapping for server events, command evidence, artifact
+  metadata, credential refs, and runtime effect state
+- first async runtime and internal task scheduling approach if runtime effects
+  enter the first slice
+
+Subsystem implementation decisions:
+
+- LAN and internet auth and pairing
+- event subscription transport
+- replay compaction and retention implementation
+- command runner implementation boundary
+- sandbox backend mapping to host OS isolation primitives
+- command approval prompt transport across clients
+- artifact payload backend and payload lifecycle
+- secret backend and credential material lookup
+- credential prompting and repair-work UI
+
+Already promoted from earlier research gaps:
+
+- dev-only command fixture crate boundary
+- command effect request and outcome type shape
+- cancellation, timeout, retry, and artifact-retention vocabulary
+- runtime effect state and event vocabulary
+- server event envelope Rust type boundary
+- replay, retention, query, subscription, and transport boundary vocabulary
+- client auth and pairing boundary
+- secret material and credential readiness boundary
+- command runner readiness boundary
+- command artifact and output-retention boundary
