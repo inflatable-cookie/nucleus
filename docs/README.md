@@ -18,7 +18,7 @@ The repo uses:
 
 ## Current Lane
 
-`roadmaps/g01/010-server-module-decomposition-and-ipc-readiness.md`
+`roadmaps/g01/011-desktop-serialization-and-shell-bootstrap.md`
 
 ## Guardrail
 

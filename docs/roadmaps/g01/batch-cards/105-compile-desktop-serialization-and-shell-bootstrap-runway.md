@@ -1,6 +1,6 @@
 # 105 Compile Desktop Serialization And Shell Bootstrap Runway
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -36,3 +36,18 @@ desktop-callable command path.
 - Desktop scaffold work is bounded to shell bootstrap only.
 - Panel work remains deferred.
 - The next executable card is bounded and testable.
+
+## Validation
+
+```sh
+effigy qa:docs
+effigy qa:northstar
+```
+
+## Closeout
+
+Added G01 roadmap `011-desktop-serialization-and-shell-bootstrap.md` and cards
+`106` through `110`.
+
+The next executable step is naming the control API wire format and codec
+boundary before any Tauri shell scaffold.

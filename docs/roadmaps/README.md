@@ -15,6 +15,7 @@ shape.
 - `g01/008-local-request-handling-and-transport-readiness.md`
 - `g01/009-local-transport-and-desktop-bootstrap-prep.md`
 - `g01/010-server-module-decomposition-and-ipc-readiness.md`
+- `g01/011-desktop-serialization-and-shell-bootstrap.md`
 
 ## Index
 
@@ -22,4 +23,4 @@ shape.
 
 ## Next Task
 
-Compile desktop serialization and shell bootstrap runway.
+Name control API wire format and codec boundary.

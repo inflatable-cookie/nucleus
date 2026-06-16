@@ -16,6 +16,7 @@ Updated: 2026-06-16
 - `008-local-request-handling-and-transport-readiness.md`
 - `009-local-transport-and-desktop-bootstrap-prep.md`
 - `010-server-module-decomposition-and-ipc-readiness.md`
+- `011-desktop-serialization-and-shell-bootstrap.md`
 
 ## Batch Cards
 
