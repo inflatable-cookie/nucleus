@@ -402,6 +402,50 @@ If readiness is blocked by missing credential readiness, missing approval, or
 unsupported sandbox profile, the storage record should preserve that blocker
 for repair and audit without copying secret material or command output.
 
+## Command Artifact Storage Rule
+
+Command artifact records are metadata and refs, not payloads.
+
+Storage may retain:
+
+- artifact ref
+- command request id
+- server command id
+- payload class
+- output retention posture
+- approval requirement and approval ref where satisfied
+- secret-scan status
+- redaction status
+- resolution status
+- expiry or compaction posture when known
+- short sanitized summary
+
+Storage must not retain in normal event, task, command-evidence, or journal
+records:
+
+- raw stdout
+- raw stderr
+- terminal byte streams
+- shell traces
+- environment values
+- credentials, tokens, cookies, private keys, or provider auth files
+- unredacted validation output
+- artifact payload bytes
+
+Artifact payload storage is a separate implementation boundary. A command
+evidence record may point at an artifact ref, but the artifact ref must be
+resolved separately and may return resolvable, missing, expired, redacted,
+compacted-to-summary, or unsupported.
+
+Full-output artifacts require explicit approval, secret-scan, and redaction
+metadata before they can be exposed through replay, client resolution, task
+history, or UI rendering. Missing approval, required scan not run, blocked
+secret findings, pending redaction, failed redaction, or unsupported scanner
+or redactor state must block full-output resolution.
+
+Compaction may preserve sanitized summaries and refs after payload expiry, but
+it must not pretend the raw payload remains available.
+
 ## Storage Backend Boundary
 
 Backend selection is deliberately open.
@@ -508,6 +552,26 @@ These are descriptive readiness and envelope types only. They do not implement
 storage, scheduling, process spawning, sandboxing, credential lookup, output
 capture, artifact storage, event publication, or command execution.
 
+`nucleus-command-policy` now contains the first draft of command artifact
+metadata vocabulary:
+
+- `CommandArtifactApprovalRequirement`
+- `CommandArtifactDescriptor`
+- `CommandArtifactPayloadClass`
+- `CommandArtifactRedactionStatus`
+- `CommandArtifactResolutionStatus`
+- `CommandArtifactRetentionPolicy`
+- `CommandArtifactSecretScanStatus`
+
+`nucleus-server` now contains server-owned command artifact envelopes:
+
+- `ServerCommandArtifactRecord`
+- `ServerCommandArtifactResolution`
+
+These are descriptive artifact metadata and envelope types only. They do not
+implement artifact storage, backend selection, scanning, redaction, payload
+reads, payload writes, replay exposure, or UI rendering.
+
 ## Research Gaps
 
 - Embedded database choice.
@@ -530,5 +594,5 @@ capture, artifact storage, event publication, or command execution.
 - Credential rotation and revocation model.
 - Webhook replay cache storage model.
 - Retention policy for abandoned reviews and resolved conflicts.
-- Retention policy for full command output artifacts.
-- Secret scanning and redaction model for command evidence.
+- Artifact store backend and payload lifecycle model.
+- Secret scanner and redactor implementation model for command artifacts.

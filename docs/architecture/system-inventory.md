@@ -40,7 +40,11 @@ Updated: 2026-06-16
   compile-only readiness surface, gate, blocker, environment, output-capture,
   interruption, and readiness-plan types now present. No command runner,
   process spawning, sandbox backend, credential injection, output capture,
-  artifact store, scheduler, or evidence publisher exists.
+  artifact store, scheduler, or evidence publisher exists. Command artifact
+  and output retention policy is documented, with compile-only artifact
+  payload class, approval, secret-scan, redaction, resolution, retention
+  policy, and descriptor types now present. No artifact backend, payload
+  storage, secret scanner, redactor, replay exposure, or UI rendering exists.
 - `nucleus-contract-fixtures`: dev-only, unpublished contract fixture
   vocabulary crate for provider-neutral SCM/forge and command-policy contract
   tests. Production crates must not depend on it. The first integration tests
@@ -118,7 +122,11 @@ Updated: 2026-06-16
   implement UI. Command runtime readiness envelope types now bind command
   runner readiness plans to server command ids, but they do not schedule
   commands, spawn processes, implement sandboxes, resolve credentials, capture
-  output, retain artifacts, publish events, or execute commands.
+  output, retain artifacts, publish events, or execute commands. Command
+  artifact envelope types now bind artifact descriptors to server command ids
+  and resolution status, but they do not store payloads, select a backend, scan
+  secrets, redact payloads, resolve refs, expose replay payloads, render UI, or
+  execute commands.
 
 ## Apps
 

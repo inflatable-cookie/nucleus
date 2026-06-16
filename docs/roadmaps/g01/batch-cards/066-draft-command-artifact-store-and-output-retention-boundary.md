@@ -1,6 +1,6 @@
 # 066 Draft Command Artifact Store And Output Retention Boundary
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -60,3 +60,11 @@ effigy qa:northstar
 cargo check --workspace
 cargo test --workspace
 ```
+
+## Closeout
+
+- Added compile-only command artifact metadata vocabulary.
+- Added server command artifact envelope types.
+- Promoted artifact retention, resolution, secret-scan, redaction, and
+  full-output approval rules into server and storage contracts.
+- Updated system inventory and roadmap 005 acceptance state.

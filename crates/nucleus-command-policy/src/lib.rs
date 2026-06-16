@@ -4,6 +4,7 @@
 //! execute shell commands, persist command output, fake command execution, or
 //! provide fixture builders.
 
+pub mod artifacts;
 pub mod authority;
 pub mod effects;
 pub mod evidence;
@@ -14,6 +15,11 @@ pub mod runtime_events;
 pub mod runtime_readiness;
 pub mod runtime_states;
 
+pub use artifacts::{
+    CommandArtifactApprovalRequirement, CommandArtifactDescriptor, CommandArtifactPayloadClass,
+    CommandArtifactRedactionStatus, CommandArtifactResolutionStatus,
+    CommandArtifactRetentionPolicy, CommandArtifactSecretScanStatus,
+};
 pub use authority::{CommandAuthorityPolicySurface, CommandAuthorityReadiness};
 pub use effects::{
     CommandEffectCancellation, CommandEffectOutcome, CommandEffectOutcomeKind,

@@ -38,7 +38,7 @@ command readiness, and artifact retention before runtime implementation starts.
   boundaries.
 - [x] Define client auth, pairing, secret material, and credential readiness.
 - [x] Define command runner and sandbox readiness.
-- [ ] Define command artifact store and output retention boundary.
+- [x] Define command artifact store and output retention boundary.
 - [ ] Normalize remaining server/runtime research gaps into implementation
   blockers versus implementation-phase decisions.
 - [ ] Compile the first implementation runway inside `g01`.
@@ -51,7 +51,7 @@ command readiness, and artifact retention before runtime implementation starts.
 - [x] Client auth is separate from command approval and credentials.
 - [x] Credential readiness is separate from credential resolution.
 - [x] Command readiness is separate from command execution.
-- [ ] Artifact retention policy prevents raw output from entering normal
+- [x] Artifact retention policy prevents raw output from entering normal
   evidence, task history, journals, or logs by default.
 - [ ] Remaining foundation gaps are sorted before implementation starts.
 

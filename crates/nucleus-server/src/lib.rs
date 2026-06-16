@@ -6,6 +6,7 @@
 pub mod authority;
 pub mod client_auth;
 pub mod clients;
+pub mod command_artifacts;
 pub mod command_runtime_readiness;
 pub mod commands;
 pub mod deployment;
@@ -26,6 +27,7 @@ pub use client_auth::{
     ClientRevocationRecord,
 };
 pub use clients::{ClientConnection, ClientIdentity, ClientKind};
+pub use command_artifacts::{ServerCommandArtifactRecord, ServerCommandArtifactResolution};
 pub use command_runtime_readiness::{
     ServerCommandRuntimeReadiness, ServerCommandRuntimeReadinessDisposition,
 };

@@ -405,6 +405,8 @@ adapter-level event identity inside the server event.
 - `RuntimeEffectTransportBoundaryGuarantee`
 - `RuntimeEffectTransportSelectionCriteria`
 - `RuntimeEffectTransportAuthBlocker`
+- `ServerCommandArtifactRecord`
+- `ServerCommandArtifactResolution`
 - `ServerCommandRuntimeReadiness`
 - `ServerCommandRuntimeReadinessDisposition`
 - `ClientAuthRecordId`
@@ -440,6 +442,13 @@ adapter-level event identity inside the server event.
 - `CommandEvidence`
 - `CommandExecutionStatus`
 - `CommandOutputRetention`
+- `CommandArtifactApprovalRequirement`
+- `CommandArtifactDescriptor`
+- `CommandArtifactPayloadClass`
+- `CommandArtifactRedactionStatus`
+- `CommandArtifactResolutionStatus`
+- `CommandArtifactRetentionPolicy`
+- `CommandArtifactSecretScanStatus`
 - `CommandRunnerRuntimeSurface`
 - `CommandRunnerReadinessGate`
 - `CommandRunnerReadinessStatus`
@@ -1262,6 +1271,68 @@ plan to a server command id. It is compile-only and does not implement
 scheduling, process control, sandboxing, credential lookup, output capture,
 artifact storage, or event publication.
 
+## Command Artifact Store And Output Retention Boundary
+
+Command artifacts are payload refs outside command evidence.
+
+Command evidence may retain artifact refs and short sanitized summaries. It
+must not embed raw stdout, raw stderr, terminal byte streams, shell traces,
+environment values, credential material, provider-native auth files, or large
+validation output by default.
+
+Initial command artifact payload classes:
+
+- stdout
+- stderr
+- combined output
+- terminal transcript
+- validation report
+- sanitized summary
+- custom
+
+Initial artifact resolution states:
+
+- resolvable
+- missing
+- expired
+- redacted
+- compacted to summary
+- unsupported
+
+Artifact refs are not proof that payloads still exist. A retained event,
+command evidence record, task history record, or replay checkpoint may outlive
+the artifact payload. Clients must treat artifact resolution as a separate
+server query and handle missing, expired, redacted, compacted, and unsupported
+states explicitly.
+
+Full command output retention requires:
+
+- explicit retention policy
+- approval where policy requires it
+- secret scanning before publication or replay exposure
+- redaction policy before publication or replay exposure
+- sanitized audit summary
+
+Secret scanning and redaction status must be visible as metadata. A full-output
+artifact ref must not be treated as resolvable when approval is missing, secret
+scanning is required but not run, secret findings are blocked, redaction is
+pending, redaction failed, or the scanner/redactor is unsupported for a policy
+that requires it.
+
+The artifact store boundary does not choose a backend. Filesystem blobs,
+embedded database blobs, object storage, project-local files, remote storage,
+or custom stores remain storage implementation choices.
+
+The first Rust command artifact types now name payload classes, approval
+requirements, secret-scan status, redaction status, resolution status,
+retention policy, and artifact descriptors. They are compile-only and store no
+payloads.
+
+The first server command artifact envelope binds artifact descriptors to server
+command ids and exposes resolution status. It is compile-only and does not
+implement storage, scanning, redaction, payload reads, payload writes, or UI
+rendering.
+
 ## Research Gaps
 
 - Whether the first API should be HTTP/WebSocket, local socket, or both.
@@ -1289,4 +1360,4 @@ artifact storage, or event publication.
 - Credential resolution runtime implementation readiness.
 - Command runner implementation boundary.
 - Sandbox backend selection and host isolation mapping.
-- Command artifact store and output retention boundary.
+- Command artifact store implementation boundary.

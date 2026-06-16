@@ -17,4 +17,4 @@ shape.
 
 ## Next Task
 
-Draft command artifact store and output retention boundary.
+Normalize server runtime implementation gaps.
