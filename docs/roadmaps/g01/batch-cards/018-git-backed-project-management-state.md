@@ -1,6 +1,6 @@
 # 018 Git-Backed Project Management State
 
-Status: ready
+Status: superseded
 Owner: Tom
 Updated: 2026-06-16
 
@@ -55,3 +55,17 @@ Draft Git-backed project management state semantics.
 effigy qa:docs
 effigy qa:northstar
 ```
+
+## Superseded By
+
+- `docs/specs/002-git-backed-project-management-state.md`
+- `docs/contracts/003-project-identity-contract.md`
+- `docs/contracts/005-task-contract.md`
+- `docs/contracts/008-storage-state-persistence-contract.md`
+- `docs/contracts/011-scm-forge-sync-contract.md`
+- `docs/roadmaps/g01/002-management-state-and-scm-forge.md`
+
+The broad Git-backed management-state card was split into the projection,
+SCM/forge, credential, webhook, branch/worktree, conflict, and implementation
+readiness cards tracked by roadmap 002. Git remains one SCM adapter path, not
+the only SCM model.

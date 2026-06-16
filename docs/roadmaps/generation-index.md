@@ -8,4 +8,4 @@ Updated: 2026-06-15
 
 | Generation | Status | Focus |
 | --- | --- | --- |
-| `g01` | active | Foundation, docs spine, Rust workspace, harness research. |
+| `g01` | active | Foundation, harness research, management state, SCM/forge, native harness, and runtime boundaries. |

@@ -4,8 +4,8 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/065-draft-command-runner-and-sandbox-runtime-readiness.md`
+- `docs/roadmaps/g01/batch-cards/066-draft-command-artifact-store-and-output-retention-boundary.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/065-draft-command-runner-and-sandbox-runtime-readiness.md`
+- `docs/roadmaps/g01/batch-cards/066-draft-command-artifact-store-and-output-retention-boundary.md`

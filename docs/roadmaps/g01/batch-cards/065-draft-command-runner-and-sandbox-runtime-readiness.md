@@ -1,6 +1,6 @@
 # 065 Draft Command Runner And Sandbox Runtime Readiness
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -56,3 +56,10 @@ effigy qa:northstar
 cargo check --workspace
 cargo test --workspace
 ```
+
+## Closeout
+
+- Added compile-only command runner readiness vocabulary.
+- Added server command readiness envelope types.
+- Promoted readiness rules into server and storage contracts.
+- Updated system inventory.

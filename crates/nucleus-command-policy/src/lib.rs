@@ -11,6 +11,7 @@ pub mod ids;
 pub mod policy;
 pub mod runtime_effects;
 pub mod runtime_events;
+pub mod runtime_readiness;
 pub mod runtime_states;
 
 pub use authority::{CommandAuthorityPolicySurface, CommandAuthorityReadiness};
@@ -30,6 +31,11 @@ pub use runtime_effects::{
 pub use runtime_events::{
     CommandArtifactRef, CommandEffectEventKind, CommandEffectEventPayload, CommandEvidenceRef,
     CommandPolicyDecisionRef,
+};
+pub use runtime_readiness::{
+    CommandCredentialReadinessRef, CommandEnvironmentPlan, CommandInterruptionPlan,
+    CommandOutputCapturePlan, CommandRunnerReadinessBlocker, CommandRunnerReadinessGate,
+    CommandRunnerReadinessPlan, CommandRunnerReadinessStatus, CommandRunnerRuntimeSurface,
 };
 pub use runtime_states::{
     CommandEffectNonTerminalState, CommandEffectState, CommandEffectStateRecord,

@@ -363,6 +363,45 @@ backpressure posture, disconnect reason, and reconnect requirements only. They
 do not implement storage, event buses, replay, transport, acknowledgement
 processing, client caches, or runtime execution.
 
+## Command Runner Readiness Storage Rule
+
+Command runner readiness records are pre-execution planning evidence.
+
+Storage may retain:
+
+- command request id
+- server command id
+- readiness status
+- runtime surfaces named by the plan
+- satisfied gate names
+- blocker names
+- sandbox profile
+- command scope
+- output-retention posture
+- symbolic artifact refs
+- credential-readiness refs
+- cancellation and timeout posture
+- short sanitized summary
+
+Storage must not retain:
+
+- raw stdout or stderr
+- terminal byte streams
+- raw environment values
+- credential material
+- provider-native auth files
+- command helper output
+- host-specific sandbox internals unless represented as sanitized refs
+
+Readiness records are not command evidence and not artifact storage. A ready
+record means the server may queue or hand off execution to a future runner. It
+does not prove a process started, output was captured, credentials were
+resolved, or evidence was published.
+
+If readiness is blocked by missing credential readiness, missing approval, or
+unsupported sandbox profile, the storage record should preserve that blocker
+for repair and audit without copying secret material or command output.
+
 ## Storage Backend Boundary
 
 Backend selection is deliberately open.
@@ -447,6 +486,28 @@ select a storage backend, file format, migration model, replay API, event
 transport, subscription model, artifact store, scheduler, command runner, or
 adapter runtime.
 
+`nucleus-command-policy` now contains the first draft of command runner
+readiness vocabulary:
+
+- `CommandRunnerRuntimeSurface`
+- `CommandRunnerReadinessGate`
+- `CommandRunnerReadinessStatus`
+- `CommandRunnerReadinessBlocker`
+- `CommandCredentialReadinessRef`
+- `CommandEnvironmentPlan`
+- `CommandOutputCapturePlan`
+- `CommandInterruptionPlan`
+- `CommandRunnerReadinessPlan`
+
+`nucleus-server` now contains a server-owned command readiness envelope:
+
+- `ServerCommandRuntimeReadiness`
+- `ServerCommandRuntimeReadinessDisposition`
+
+These are descriptive readiness and envelope types only. They do not implement
+storage, scheduling, process spawning, sandboxing, credential lookup, output
+capture, artifact storage, event publication, or command execution.
+
 ## Research Gaps
 
 - Embedded database choice.
@@ -464,6 +525,7 @@ adapter runtime.
 - Client auth credential reference and revocation storage model.
 - Secret material backend, rotation, redaction, and revocation model.
 - Credential readiness storage and repair-work projection model.
+- Command runner readiness retention and repair-work projection model.
 - Git-backed management projection format and sync policy.
 - Credential rotation and revocation model.
 - Webhook replay cache storage model.

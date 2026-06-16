@@ -405,6 +405,8 @@ adapter-level event identity inside the server event.
 - `RuntimeEffectTransportBoundaryGuarantee`
 - `RuntimeEffectTransportSelectionCriteria`
 - `RuntimeEffectTransportAuthBlocker`
+- `ServerCommandRuntimeReadiness`
+- `ServerCommandRuntimeReadinessDisposition`
 - `ClientAuthRecordId`
 - `ClientPairingId`
 - `ClientAuthSessionId`
@@ -438,6 +440,15 @@ adapter-level event identity inside the server event.
 - `CommandEvidence`
 - `CommandExecutionStatus`
 - `CommandOutputRetention`
+- `CommandRunnerRuntimeSurface`
+- `CommandRunnerReadinessGate`
+- `CommandRunnerReadinessStatus`
+- `CommandRunnerReadinessBlocker`
+- `CommandCredentialReadinessRef`
+- `CommandEnvironmentPlan`
+- `CommandOutputCapturePlan`
+- `CommandInterruptionPlan`
+- `CommandRunnerReadinessPlan`
 
 These are descriptive boundary types only. Networking, auth, persistence,
 subscriptions, runtime routing, process spawning, sandbox implementation, PTY
@@ -1182,6 +1193,75 @@ classification. They are value-shaped only. They do not implement a scheduler,
 transition validator, process supervisor, persistence, replay, artifact store,
 or server event fan-out.
 
+## Command Runner And Sandbox Runtime Readiness
+
+Command execution implementation may begin only after pre-execution readiness
+surfaces are explicit.
+
+Required command runner readiness surfaces:
+
+- process spawning
+- PTY attachment
+- sandbox selection
+- working-directory validation
+- environment construction
+- credential injection
+- output capture
+- cancellation
+- timeout
+- artifact retention
+- sanitized evidence publication
+
+Readiness gates must stay separate from execution. A ready plan may queue a
+command for execution later; it must not itself spawn a process, open a PTY,
+select a host sandbox backend, resolve credential material, retain output, or
+publish command evidence.
+
+Initial readiness blockers:
+
+- missing approval
+- missing sandbox policy
+- unsupported sandbox profile
+- unsupported command scope
+- missing working-directory validation
+- missing environment plan
+- missing credential readiness
+- missing output-capture plan
+- missing cancellation policy
+- missing timeout policy
+- missing artifact-retention policy
+- missing evidence-publication policy
+- raw output retention denied
+- custom
+
+Secret-access commands require both command approval and credential readiness.
+Command approval does not imply credential access. Credential readiness does
+not imply command approval.
+
+Output capture must default to discard, summary-only, or artifact reference
+posture. Full output retention needs explicit retention policy and approval
+where policy requires it. Raw stdout, raw stderr, terminal byte streams,
+environment values, credential values, shell traces, and provider-native auth
+material must not be copied into normal evidence, task history, event journals,
+or UI logs.
+
+Cancellation and timeout are readiness gates. A runner must declare whether
+cancellation is supported, cooperative-only, unsupported, or policy-blocked.
+Timeout policy must be planned before execution for commands that can hang or
+hold scarce runtime resources.
+
+The first Rust command runner readiness types now name runtime surfaces,
+readiness gates, readiness status, blockers, credential-readiness refs,
+environment plans, output-capture plans, interruption plans, and full readiness
+plans. They are compile-only. They do not spawn processes, select sandbox
+backends, construct environments, inject credentials, capture output, retain
+artifacts, publish evidence, schedule work, or implement UI.
+
+The first server command runtime readiness envelope binds a command readiness
+plan to a server command id. It is compile-only and does not implement
+scheduling, process control, sandboxing, credential lookup, output capture,
+artifact storage, or event publication.
+
 ## Research Gaps
 
 - Whether the first API should be HTTP/WebSocket, local socket, or both.
@@ -1207,4 +1287,6 @@ or server event fan-out.
 - Secret store and credential material boundary.
 - Credential resolution integration policy.
 - Credential resolution runtime implementation readiness.
-- Command runner and sandbox runtime readiness.
+- Command runner implementation boundary.
+- Sandbox backend selection and host isolation mapping.
+- Command artifact store and output retention boundary.

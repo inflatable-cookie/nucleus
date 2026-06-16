@@ -36,7 +36,11 @@ Updated: 2026-06-16
   compile-only command event payload types now present. No event transport,
   persistence, replay, or subscriptions exist. Runtime effect replay and
   retention policy is documented, but no Rust replay or retention policy types
-  exist.
+  exist. Command runner and sandbox runtime readiness is documented, with
+  compile-only readiness surface, gate, blocker, environment, output-capture,
+  interruption, and readiness-plan types now present. No command runner,
+  process spawning, sandbox backend, credential injection, output capture,
+  artifact store, scheduler, or evidence publisher exists.
 - `nucleus-contract-fixtures`: dev-only, unpublished contract fixture
   vocabulary crate for provider-neutral SCM/forge and command-policy contract
   tests. Production crates must not depend on it. The first integration tests
@@ -111,7 +115,10 @@ Updated: 2026-06-16
   readiness states, preflight records, audit capture posture, repair work
   items, and readiness outcomes, but they do not resolve credentials, prompt
   users, access backends, inject secrets, execute commands, call providers, or
-  implement UI.
+  implement UI. Command runtime readiness envelope types now bind command
+  runner readiness plans to server command ids, but they do not schedule
+  commands, spawn processes, implement sandboxes, resolve credentials, capture
+  output, retain artifacts, publish events, or execute commands.
 
 ## Apps
 

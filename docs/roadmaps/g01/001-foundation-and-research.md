@@ -1,14 +1,14 @@
-# 001 Foundation And Research
+# 001 Foundation And Harness Research
 
-Status: active
+Status: complete-first-pass
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-16
 
 ## Goal
 
-Install the repo spine, establish Rust workspace boundaries, gather harness
-communication evidence, and promote stable findings into architecture and
-contracts before app behavior begins.
+Install the repo spine, establish Rust workspace boundaries, gather first-pass
+harness communication evidence, and promote stable findings into architecture
+and contracts before app behavior begins.
 
 ## Scope
 
@@ -17,7 +17,9 @@ contracts before app behavior begins.
 - Minimal Rust workspace.
 - T3 Code reference source.
 - Harness communication research lane.
-- Initial project identity and adapter contracts.
+- Initial project identity, task, workspace, server, persistence, adapter
+  registry, and session lifecycle contracts.
+- First-pass model routing and task assignment boundaries.
 
 ## Out Of Scope
 
@@ -27,79 +29,32 @@ contracts before app behavior begins.
 - Storage engine selection.
 - UI design.
 
-## Milestone Acceptance
+## Execution Plan
 
-- Repo has a passing Northstar validation path.
-- Rust workspace checks.
-- T3 Code integration points are mapped. First pass complete in
+- [x] Install strict Northstar docs spine and Effigy routing.
+- [x] Add minimal Rust workspace and placeholder app surfaces.
+- [x] Clone and map T3 Code as ignored research evidence.
+- [x] Research Codex, Cursor CLI, OpenCode, Claude, Kimi, and Pi readiness.
+- [x] Promote first-pass harness, model-route, adapter registry, task,
+  workspace, server, persistence, and session lifecycle contracts.
+- [x] Add type-only Rust surfaces for adapter identity, model routes, project,
+  task, workspace, server, persistence, adapter registry, and session records.
+
+## Acceptance Criteria
+
+- [x] Repo has a passing Northstar validation path.
+- [x] Rust workspace checks.
+- [x] T3 Code integration points are mapped in
   `docs/research/specimen-dossiers/t3-code-provider-integrations.md`.
-- Harness adapter contract has provider-specific findings. First pass promoted
-  in `docs/contracts/002-harness-adapter-contract.md`.
-- Kimi, Pi, and provider-routing surfaces are separated from core harness
-  adapters before Rust traits are drafted. First pass complete in
-  `docs/research/specimen-dossiers/kimi-runtime-boundary.md`,
-  `docs/research/specimen-dossiers/pi-runtime-boundary.md`, and
-  `docs/contracts/004-model-routing-contract.md`.
-- `nucleus-agent-protocol` has first draft adapter identity, capability, event
-  identity, model-route, and agent session lifecycle types.
-- `nucleus-projects` and `nucleus-tasks` have first draft type-only domain
-  surfaces.
-- `nucleus-workspaces` has first draft modular workspace layout, panel, and
-  surface types.
-- `nucleus-server` has first draft modular server authority, deployment,
-  client, command, and event boundary types.
-- `nucleus-core` has first draft persistence domains, record identity,
-  revision, snapshot, and journal vocabulary.
-- `nucleus-agent-adapters` has first draft adapter registry, instance
-  configuration, readiness, lifecycle, and health types.
-- Project, task, workspace, server, persistence, adapter registry, and session
-  lifecycle contracts have enough shape to support provider readiness planning.
-- Provider implementation readiness spec and first adapter research cards exist.
-- Codex adapter readiness research is promoted first-pass.
-- Cursor CLI adapter readiness research is promoted first-pass.
-- OpenCode adapter readiness research is promoted first-pass.
-- Claude adapter readiness research is promoted first-pass.
-- Kimi adapter readiness research is promoted first-pass.
-- Pi adapter readiness research is promoted implementation-ready.
-- Adapter trait requirements batch card exists.
-- Runtime event payload schema batch card exists.
-- Adapter runtime ownership and stream semantics batch card exists.
-- Adapter registry selection and persistence batch card exists.
-- Adapter registry health and readiness batch card exists.
-- Adapter secret reference and credential boundary batch card exists.
-- Project and session model-route override batch card exists.
-- Task agent assignment and model preference batch card exists.
-- Task history and agent attempt audit batch card exists.
-- Validation evidence and artifact reference batch card exists.
-- Git-backed project management state batch card exists.
-- Native harness and steward runtime research batch card exists.
-- Native harness Rust surface boundaries batch card exists.
-- Steward persona policy and sync authority batch card exists.
-- Management projection file model batch card exists.
-- Projection storage Rust surface boundaries batch card exists.
-- Projection schema validation and migration policy batch card exists.
-- SCM and forge adapter surface boundaries batch card exists.
-- SCM/forge sync observation and task-link policy batch card exists.
-- SCM/forge implementation readiness research batch card exists.
-- SCM/forge credential and webhook verification boundary batch card exists.
-- Branch/worktree session management policy batch card exists.
-- SCM/forge conflict and review workflow policy batch card exists.
-- SCM/forge adapter implementation readiness plan batch card exists.
-- Command execution authority and sandbox policy batch card exists.
-- Provider-neutral fake adapter and fixture plan batch card exists.
-- Dev-only fixture crate boundary and contract-test plan batch card exists.
-- Dev-only contract fixture crate scaffold batch card exists.
-- First provider-neutral contract tests batch card exists.
-- Provider-neutral fake adapter skeleton batch card exists.
-- Fake adapter scenario script tests batch card exists.
-- Production adapter trait boundary draft batch card exists.
-- Production adapter trait skeleton batch card exists.
-- Production adapter trait compile tests batch card exists.
-- Adapter runtime effect boundary draft batch card exists.
-- Adapter runtime effect type skeleton batch card exists.
-- Adapter runtime effect type compile tests batch card exists.
+- [x] Harness adapter contract has provider-specific findings in
+  `docs/contracts/002-harness-adapter-contract.md`.
+- [x] Kimi, Pi, and provider-routing surfaces are separated from core harness
+  adapters in `docs/contracts/004-model-routing-contract.md`.
+- [x] `nucleus-agent-protocol`, `nucleus-agent-adapters`,
+  `nucleus-projects`, `nucleus-tasks`, `nucleus-workspaces`,
+  `nucleus-server`, and `nucleus-core` have first-pass type-only surfaces.
 
-## Batch Queue
+## Cards
 
 - `docs/roadmaps/g01/batch-cards/001-bootstrap-repo-spine.md`
 - `docs/roadmaps/g01/batch-cards/002-codex-adapter-readiness-research.md`
@@ -117,52 +72,10 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/014-model-route-override-semantics.md`
 - `docs/roadmaps/g01/batch-cards/015-task-agent-assignment-and-model-preferences.md`
 - `docs/roadmaps/g01/batch-cards/016-task-history-and-agent-attempt-audit.md`
-- `docs/roadmaps/g01/batch-cards/017-validation-evidence-and-artifact-references.md`
-- `docs/roadmaps/g01/batch-cards/018-git-backed-project-management-state.md`
-- `docs/roadmaps/g01/batch-cards/019-native-harness-and-steward-runtime-research.md`
-- `docs/roadmaps/g01/batch-cards/020-native-harness-rust-surface-boundaries.md`
-- `docs/roadmaps/g01/batch-cards/021-steward-persona-policy-and-sync-authority.md`
-- `docs/roadmaps/g01/batch-cards/022-management-projection-file-model.md`
-- `docs/roadmaps/g01/batch-cards/023-projection-storage-rust-surface-boundaries.md`
-- `docs/roadmaps/g01/batch-cards/024-projection-schema-validation-and-migration-policy.md`
-- `docs/roadmaps/g01/batch-cards/025-scm-and-forge-adapter-surface-boundaries.md`
-- `docs/roadmaps/g01/batch-cards/026-scm-forge-sync-observation-and-task-link-policy.md`
-- `docs/roadmaps/g01/batch-cards/027-scm-forge-implementation-readiness-research.md`
-- `docs/roadmaps/g01/batch-cards/028-scm-forge-credential-and-webhook-verification-boundary.md`
-- `docs/roadmaps/g01/batch-cards/029-branch-worktree-session-management-policy.md`
-- `docs/roadmaps/g01/batch-cards/030-scm-forge-conflict-and-review-workflow-policy.md`
-- `docs/roadmaps/g01/batch-cards/031-scm-forge-adapter-implementation-readiness-plan.md`
-- `docs/roadmaps/g01/batch-cards/032-command-execution-authority-and-sandbox-policy.md`
-- `docs/roadmaps/g01/batch-cards/033-provider-neutral-fake-adapter-and-fixture-plan.md`
-- `docs/roadmaps/g01/batch-cards/034-dev-only-fixture-crate-boundary-and-contract-test-plan.md`
-- `docs/roadmaps/g01/batch-cards/035-scaffold-dev-only-contract-fixture-crate.md`
-- `docs/roadmaps/g01/batch-cards/036-add-first-provider-neutral-contract-tests.md`
-- `docs/roadmaps/g01/batch-cards/037-add-provider-neutral-fake-adapter-skeleton.md`
-- `docs/roadmaps/g01/batch-cards/038-add-fake-adapter-scenario-script-tests.md`
-- `docs/roadmaps/g01/batch-cards/039-draft-production-adapter-trait-boundary.md`
-- `docs/roadmaps/g01/batch-cards/040-add-production-adapter-trait-skeleton.md`
-- `docs/roadmaps/g01/batch-cards/041-add-production-adapter-trait-compile-tests.md`
-- `docs/roadmaps/g01/batch-cards/042-draft-adapter-runtime-effect-boundary.md`
-- `docs/roadmaps/g01/batch-cards/043-add-adapter-runtime-effect-type-skeleton.md`
-- `docs/roadmaps/g01/batch-cards/044-add-adapter-runtime-effect-type-compile-tests.md`
-- `docs/roadmaps/g01/batch-cards/045-draft-runtime-effect-trait-boundary.md`
-- `docs/roadmaps/g01/batch-cards/046-add-runtime-effect-trait-skeleton.md`
-- `docs/roadmaps/g01/batch-cards/047-draft-runtime-effect-state-machine-policy.md`
-- `docs/roadmaps/g01/batch-cards/048-add-runtime-effect-state-types.md`
-- `docs/roadmaps/g01/batch-cards/049-draft-runtime-effect-event-vocabulary.md`
-- `docs/roadmaps/g01/batch-cards/050-add-runtime-effect-event-types.md`
-- `docs/roadmaps/g01/batch-cards/051-draft-runtime-effect-replay-and-retention-policy.md`
-- `docs/roadmaps/g01/batch-cards/052-add-runtime-effect-replay-retention-policy-types.md`
-- `docs/roadmaps/g01/batch-cards/053-draft-runtime-effect-storage-boundary.md`
-- `docs/roadmaps/g01/batch-cards/054-add-runtime-effect-storage-boundary-types.md`
-- `docs/roadmaps/g01/batch-cards/055-draft-runtime-effect-replay-query-boundary.md`
-- `docs/roadmaps/g01/batch-cards/056-add-runtime-effect-replay-query-types.md`
-- `docs/roadmaps/g01/batch-cards/057-draft-runtime-effect-subscription-boundary.md`
-- `docs/roadmaps/g01/batch-cards/058-add-runtime-effect-subscription-types.md`
-- `docs/roadmaps/g01/batch-cards/059-draft-runtime-effect-transport-selection-boundary.md`
-- `docs/roadmaps/g01/batch-cards/060-add-runtime-effect-transport-types.md`
-- `docs/roadmaps/g01/batch-cards/061-draft-client-auth-and-pairing-boundary.md`
-- `docs/roadmaps/g01/batch-cards/062-draft-secret-store-and-credential-material-boundary.md`
-- `docs/roadmaps/g01/batch-cards/063-draft-credential-resolution-integration-policy.md`
-- `docs/roadmaps/g01/batch-cards/064-draft-credential-resolution-runtime-readiness.md`
-- `docs/roadmaps/g01/batch-cards/065-draft-command-runner-and-sandbox-runtime-readiness.md`
+
+## Follow-On Roadmaps
+
+- `002-management-state-and-scm-forge.md`
+- `003-native-harness-and-steward.md`
+- `004-adapter-contracts-fixtures-and-effects.md`
+- `005-server-runtime-boundaries.md`

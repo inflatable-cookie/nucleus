@@ -1,6 +1,6 @@
 # 017 Validation Evidence And Artifact References
 
-Status: ready
+Status: superseded
 Owner: Tom
 Updated: 2026-06-16
 
@@ -53,3 +53,14 @@ effigy qa:northstar
 cargo check --workspace
 cargo test --workspace
 ```
+
+## Superseded By
+
+- `docs/contracts/005-task-contract.md`
+- `docs/contracts/008-storage-state-persistence-contract.md`
+- `docs/roadmaps/g01/batch-cards/066-draft-command-artifact-store-and-output-retention-boundary.md`
+
+The generic validation-evidence concern was partly promoted into task and
+storage contracts. The remaining artifact-retention work now belongs to card
+066 so output retention policy is handled once, at the command/runtime
+boundary.
