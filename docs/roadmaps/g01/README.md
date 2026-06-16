@@ -11,6 +11,10 @@ Updated: 2026-06-16
 - `003-native-harness-and-steward.md`
 - `004-adapter-contracts-fixtures-and-effects.md`
 - `005-server-runtime-boundaries.md`
+- `006-server-local-state-implementation-runway.md`
+- `007-server-control-api-and-runtime-sequencing.md`
+- `008-local-request-handling-and-transport-readiness.md`
+- `009-local-transport-and-desktop-bootstrap-prep.md`
 
 ## Batch Cards
 

@@ -1,6 +1,6 @@
 # 068 Compile First Implementation Runway
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -59,3 +59,12 @@ Compile the first implementation runway inside `g01`.
 effigy qa:docs
 effigy qa:northstar
 ```
+
+## Closeout
+
+- Chose server-local durable state as the first implementation slice.
+- Deferred Tauri, editor/plugin implementation, SCM diff/commit
+  implementation, provider adapters, command execution, remote auth, secret
+  backend implementation, and artifact payload storage.
+- Created roadmap `006-server-local-state-implementation-runway.md`.
+- Created first ready implementation card `070`.

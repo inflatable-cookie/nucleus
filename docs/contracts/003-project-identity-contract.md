@@ -22,6 +22,8 @@ Planned fields:
 - repo membership list
 - management repository root where configured
 - task list
+- shared memory refs
+- planning artifact refs
 - workspace layout references
 - activity timestamps
 
@@ -47,6 +49,8 @@ That root stores portable shared project intent:
 - project metadata
 - repo membership declarations
 - task records
+- accepted shared memory records
+- accepted planning artifacts
 - project documentation
 - decision records
 - artifact references
@@ -74,6 +78,8 @@ The project record should include:
 - sync policy
 - management repository marker
 - shared documentation refs
+- shared memory refs
+- planning artifact refs
 - updated timestamp or record revision where known
 
 Repo membership records live under:
@@ -135,6 +141,22 @@ Tasks attached to a project should include:
 - agent-readiness fields
 
 The dedicated task contract is `005-task-contract.md`.
+
+## Planning And Memory Interface
+
+Projects may link to shared memory and structured planning records.
+
+Project-level memories preserve accepted context such as decisions,
+constraints, preferences, risks, and handoff summaries.
+
+Planning records preserve guided project definition such as vision, principles,
+architecture outlines, research questions, roadmap outlines, and task seed
+groups.
+
+These records belong to their dedicated contracts:
+
+- `013-shared-memory-contract.md`
+- `014-structured-project-planning-contract.md`
 
 ## Current Rust Surface
 

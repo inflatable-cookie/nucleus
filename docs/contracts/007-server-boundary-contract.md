@@ -142,6 +142,13 @@ device codes, local OS keychain integration, or any other concrete mechanism.
 It also does not implement auth, pairing, credential storage, secret storage,
 transport, command approval, or runtime execution.
 
+First Rust readiness gates now exist for local client auth posture. They can
+allow explicit local-only unpaired access, deny unsupported client kinds or
+revoked clients, and mark remote-login, managed-identity, or service-credential
+postures as deferred. These gates are policy checks only. They do not create
+pairing records, authenticate credentials, open transports, or grant command
+approval.
+
 ## Command Boundary
 
 Clients send commands. The server decides whether to accept, reject, queue, or
@@ -157,6 +164,13 @@ Initial command categories:
 
 Commands must carry stable command ids so clients can reconcile retries,
 duplicate submissions, and command results.
+
+The first Rust control API vocabulary now separates control requests, commands,
+queries, responses, command receipts, query results, and errors. The first
+replay service skeleton can read stored event metadata and runtime effect
+metadata by cursor. It does not provide live subscriptions, event fanout,
+network transport, Tauri IPC, request handling, scheduling, command execution,
+or provider runtime behavior.
 
 ## Command Execution Authority
 

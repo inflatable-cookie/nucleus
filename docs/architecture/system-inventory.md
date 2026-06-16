@@ -53,6 +53,31 @@ Updated: 2026-06-16
   contains deterministic fake adapter skeletons for command-policy, SCM, and
   forge test surfaces plus ordered scenario scripts for management-state sync
   and blocked-policy / rejected-review paths.
+- `nucleus-local-store`: compile-only server-local storage boundary crate. It
+  names backend, domain, repository, error, fixture, and SQLite module
+  boundaries for the first storage runway. It now includes synchronous
+  repository trait vocabulary, opaque payload records, revision expectations,
+  transaction posture vocabulary, storage error vocabulary, and an in-memory
+  conformance fixture for create/read/update/list/delete behavior. It also
+  names a backend adapter trait so SQLite, future PostgreSQL, remote database,
+  and fixture backends can expose the same domain repository boundary. SQLite
+  now stores generic project, task, workspace, adapter registry, agent session,
+  model route, event journal, command evidence metadata, artifact metadata,
+  and runtime effect records behind that trait, with restart-recovery tests.
+  It depends on `nucleus-core` for persistence vocabulary. It does not
+  implement backend transactions, serialization, migrations beyond the first
+  SQLite schema, projection import/export, credential lookup, artifact payload
+  storage, live adapter/runtime behavior, replay APIs, subscriptions, or
+  team-server database behavior. Restart tests now prove all first SQLite
+  domains recover from one database, metadata refs recover without secret or
+  artifact payload material, and projection files are not imported as active
+  server state.
+- `nucleus-effigy-integration`: planned, not scaffolded. Future optional
+  project workflow integration crate or module for Effigy selector discovery,
+  doctor/test-plan summaries, health posture, task validation refs, and
+  steward tool surfaces. The local store crate leaves room for project tooling
+  and Effigy integration records, but no Effigy tool bridge, harness skill
+  injection, command execution, or UI exists yet.
 - `nucleus-projects`: first draft durable project, repo membership, path
   history, repair action, activity, and projection record types.
 - `nucleus-scm-forge`: first draft provider-agnostic SCM, forge, credential,
@@ -72,16 +97,69 @@ Updated: 2026-06-16
   policy is documented, but no Rust replay or retention policy types exist.
 - `nucleus-tasks`: first draft task identity, importance, neglect, action,
   assignment, activity, agent-readiness, and projection record types.
+- `nucleus-memory`: planned, not scaffolded. Future shared memory crate for
+  memory records, scopes, source refs, review state, sensitivity, retention,
+  and projection boundaries. The local store crate leaves room for this domain,
+  but no Rust memory domain crate or behavior exists yet.
+- `nucleus-planning`: planned, not scaffolded. Future structured planning
+  crate for planning sessions, accepted artifacts, task seeds, review state,
+  and projection boundaries. The local store crate leaves room for this domain,
+  but no Rust planning domain crate or behavior exists yet.
+- `nucleus-research`: planned, not scaffolded. Future deep research crate for
+  research runs, question sets, source records, observations, synthesis,
+  confidence, gaps, and projection boundaries. The local store crate leaves
+  room for this domain, but no Rust research domain crate or behavior exists
+  yet.
 - `nucleus-workspaces`: first draft modular workspace layout, panel, and
   surface types.
 - `nucleus-server`: first draft modular server authority, deployment, client,
-  command, and event boundary types. Runtime effect server event envelope types
-  are compile-only and do not implement transport, persistence, replay,
+  command, event, and state facade types. It now includes a local server-owned
+  state service facade over `nucleus-local-store` backend adapters for the
+  first persisted domains. The facade keeps repository handles out of the
+  client boundary and is transport-free. It also now includes transport-neutral
+  control API request, command/query, response, result, and error vocabulary.
+  Control API types cover project, task, workspace, adapter/session, model
+  route, and runtime metadata query surfaces, but do not implement request
+  handling. Local client auth readiness gates now allow explicit local-only
+  unpaired access, deny unsupported local auth states, and defer remote-style
+  auth postures without implementing auth flows. It does not implement
+  networking, pairing, command execution, scheduling, provider processes, live
+  subscriptions, or Tauri integration. Runtime effect server event envelope
+  types are compile-only and do not implement transport, persistence, replay,
   subscriptions, scheduling, or runtime execution. Runtime effect replay and
   retention policy types are compile-only and do not implement storage, replay
   APIs, event transport, artifact stores, subscriptions, scheduling, or runtime
-  execution. Runtime effect storage boundaries are documented, but no storage
-  refs, checkpoints, replay indexes, persistence backend, or replay API exist.
+  execution. A read-only event replay query service skeleton now reads stored
+  event journal metadata and optional runtime effect metadata through the
+  server state facade, supports all-events and cursor queries, and reports
+  time-window queries as unsupported until event timestamps are indexed. It
+  does not implement live subscriptions, event fanout, payload resolution,
+  transcript storage, scheduling, or runtime execution. An inert runtime
+  scheduler acceptance queue now admits shaped work with project, task,
+  adapter, command-authority, and event metadata refs, but it does not spawn
+  processes, run commands, start providers, mutate worktrees, retry work, or
+  run background workers. Runtime effect storage boundaries are documented, but
+  no storage refs, checkpoints, replay indexes, persistence backend, or replay
+  API exists beyond this first metadata query skeleton. A transport-neutral
+  local control request handler skeleton now accepts control requests, applies
+  optional auth readiness gates, and returns explicit deferred query responses
+  or rejected command receipts. It wires state, replay, and scheduler services
+  as inert dependencies. It now executes read-only project, task, workspace,
+  adapter/session, model route, and runtime metadata state queries for direct
+  get/list paths. Indexed filters and runtime ref resolution remain explicit
+  unsupported paths. It does not mutate state, run commands, open transports,
+  start providers, or deliver subscriptions. Command handling now returns
+  deterministic receipts: state-shaped commands are accepted for later state
+  mutation handling, while runtime session commands are rejected through
+  scheduler admission or explicit deferred runtime-control errors. Local
+  transport readiness types now name in-process, Tauri IPC, Unix-domain
+  socket, Windows named pipe, loopback HTTP, and custom candidates, plus
+  desktop bootstrap requirements and blockers. They do not implement any
+  transport or listener lifecycle. A local control transport trait boundary now
+  names request/response exchanges, readiness reporting, and transport errors.
+  It is synchronous and local-only; it does not implement a socket, HTTP
+  server, WebSocket server, Tauri IPC command, remote pairing flow, or live
+  subscription channel.
   Runtime effect storage boundary types now name retained event records,
   storage refs, replay checkpoints, stored effect states, and query postures,
   but they do not implement persistence, serialization, replay APIs, event

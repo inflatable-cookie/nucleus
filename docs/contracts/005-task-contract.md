@@ -35,6 +35,8 @@ Each task must expose:
 - assignment snapshot
 - task history
 - model preferences
+- shared memory refs
+- planning artifact refs
 - timestamps
 
 ## Action Types
@@ -158,6 +160,11 @@ journal reference when needed, not copied into task history by default.
 Validation commands are command execution requests. Task readiness may name
 intended validation commands, but execution must go through server command
 policy.
+
+When a project has Effigy enabled, task readiness may name Effigy selectors
+for setup, validation, health checks, or release gates. Selector refs are
+workflow hints and evidence links. They must not replace acceptance criteria
+or command authority.
 
 Task records may retain sanitized command evidence refs and summaries. They
 must not copy raw stdout, raw stderr, terminal streams, shell traces, secret
@@ -312,6 +319,27 @@ Agent-readiness fields must cover:
 A task should not be one-click delegated unless the readiness fields are clear
 enough for the selected agent and harness.
 
+## Planning And Memory Links
+
+Tasks may link to accepted shared memories and planning artifacts by reference.
+
+Allowed first-pass refs:
+
+- accepted project memory
+- accepted task memory
+- accepted planning artifact
+- task seed source
+- decision record
+- open question set
+
+Task links to memories and planning artifacts provide context. They must not
+replace task title, description, acceptance criteria, assignment state, or
+activity state.
+
+Proposed memories and draft planning artifacts may be used as evidence during
+task preparation, but they should not become required task context until
+accepted or explicitly attached.
+
 ## Current Rust Surface
 
 `nucleus-tasks` now contains the first draft of:
@@ -364,3 +392,4 @@ and projection IO remain out of scope.
 - Exact action-type to adapter-capability mapping.
 - Artifact reference policy for retained validation output.
 - Mapping task validation commands to command authority scopes.
+- Mapping task validation and health checks to Effigy selectors where enabled.

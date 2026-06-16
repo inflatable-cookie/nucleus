@@ -16,6 +16,11 @@ Some durable project-management state may also be projected into a Git-backed
 management repository for portability and collaboration. That projection is a
 sync surface, not a replacement for the active server state store.
 
+Storage backends are adapter-based. The server may run as a local
+single-player SQLite-backed executor or as a centralized remote team server
+using PostgreSQL or another durable database backend. Domain repositories must
+not assume a specific database engine.
+
 Persistent storage must not assume it owns secret material. Durable records may
 store secret references and non-secret credential audit records; raw secrets
 belong to a future secret store, host credential provider, provider-native auth
@@ -94,6 +99,16 @@ Initial persisted domains:
 - projects
 - tasks
 - task history
+- shared memory records
+- planning sessions
+- planning artifacts
+- task seed records
+- deep research runs
+- research source records
+- research observation records
+- research synthesis artifacts
+- project tool integration records
+- Effigy integration records
 - workspaces
 - agent sessions
 - model routes
@@ -102,6 +117,33 @@ Initial persisted domains:
 - client auth records
 
 These domains must be recoverable after server restart.
+
+## Backend Adapter Rule
+
+The storage backend boundary must separate:
+
+- domain repository traits
+- backend adapter selection
+- deployment role
+- database connection strategy
+- transaction support
+- migration strategy
+
+Initial backend families:
+
+- SQLite for local single-player development
+- PostgreSQL for centralized team-server deployment
+- remote SQL or managed database adapters
+- in-memory fixtures for conformance tests
+- custom backend adapters
+
+SQLite may land first, but it must not become the implicit storage model for
+all deployments. Centralized team servers must be able to provide the same
+domain repository interfaces through a remote durable backend.
+
+Backend adapters may differ in transaction and migration capability. Those
+capabilities should be exposed explicitly instead of hidden behind SQLite-only
+assumptions.
 
 ## Record Identity
 
@@ -216,6 +258,28 @@ keys, provider auth files, or command helper output by default.
 Full command output may be retained only as an artifact reference under an
 explicit retention policy. Secret scanning and redaction requirements must be
 defined before full command output artifacts become automatic.
+
+Shared memory records may retain accepted summaries, source refs, confidence,
+sensitivity, review state, and supersession refs. They must not retain raw
+provider transcripts, raw command output, terminal byte streams, secrets,
+credential material, or private user notes by default.
+
+Planning records may retain accepted artifacts, task seeds, source refs,
+review state, and projection refs. They must not retain private brainstorming,
+raw transcripts, unreviewed model output, secrets, or restricted memories by
+default.
+
+Deep research records may retain briefs, questions, source metadata,
+observations, accepted synthesis, confidence summaries, gap lists, and
+projection refs. They must not retain raw browser caches, copyrighted source
+payloads, private notes, secret-bearing files, raw transcripts, or unreviewed
+model output by default.
+
+Effigy integration records may retain enablement status, manifest path refs,
+selector summaries, health summaries, validation plan refs, repair guidance,
+and sanitized evidence refs. They must not retain raw command output, secrets,
+credentials, local cache paths, release mutation payloads, or CI credentials
+by default.
 
 ## Runtime Effect Storage Boundary
 

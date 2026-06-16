@@ -28,6 +28,7 @@ concepts where useful. They must not hide their ownership differences.
 The native runtime may include:
 
 - deterministic planning and sync tools
+- Effigy project workflow tools where enabled
 - model backend abstraction
 - local model backend
 - cloud model backend under policy
@@ -79,6 +80,8 @@ human decision.
 The steward may run without approval for read-only or deterministic inspection:
 
 - inspect project and task state
+- inspect Effigy selector inventory where enabled
+- inspect Effigy validation plan shape where enabled
 - inspect Git status and sync queue
 - validate task schema
 - detect stale, duplicate, blocked, or conflicting task records
@@ -93,6 +96,8 @@ The steward may prepare or propose:
 - task history summaries
 - forge links
 - validation summaries
+- Effigy selector recommendations
+- Effigy health and repair summaries
 
 The steward must ask for approval before creating a commit unless project
 policy explicitly grants `commit-management-state` authority for the affected
@@ -109,6 +114,7 @@ The steward must ask for approval before:
 
 The steward must not:
 
+- mutate Effigy manifests without explicit approval
 - push code changes under management-sync authority
 - modify source files under management-sync authority
 - expose secrets
@@ -154,6 +160,8 @@ The steward should use deterministic tools before model calls for:
 
 - reading task records
 - checking schema validity
+- listing Effigy selectors
+- inspecting Effigy doctor and test plan output
 - listing sync changes
 - detecting mechanical file conflicts
 - inspecting Git status
@@ -161,6 +169,22 @@ The steward should use deterministic tools before model calls for:
 
 Model calls are for summarization, classification, merge suggestions, and
 ambiguous human-facing explanations.
+
+## Effigy Tool Rule
+
+Effigy is an optional project-level tool integration.
+
+When enabled, native personas may use Effigy through server command authority
+to inspect task selectors, diagnose project health, plan validation, and
+prepare task readiness hints.
+
+Effigy command output should be retained as sanitized evidence or artifact
+refs. Raw output, secrets, local cache paths, credentials, and release
+mutation evidence must not be copied into task history or memory by default.
+
+The steward may propose Effigy manifest, docs, or task-routing improvements,
+but it must not apply them without the same approval and sync policy that
+would govern any other project-management file edit.
 
 ## Current Rust Surface
 
@@ -196,3 +220,4 @@ persona management.
 - Event identity for native harness sessions.
 - Persona capability and approval policy model.
 - Local model packaging and deployment policy.
+- Effigy tool bridge versus harness skill injection.

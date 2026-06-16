@@ -39,6 +39,14 @@ The core product idea is server-first continuity:
 - Adapter protocol: stable enough to support SDK, ACP, and CLI/PTY harnesses.
 - Project model: survives repo moves through explicit path history and repair.
 - Task model: supports importance, staleness, actions, and delegation.
+- Shared memory: preserves accepted project context across harnesses without
+  relying on provider-native memory.
+- Structured planning: guides project intake, vision, architecture,
+  brainstorming, roadmaps, and task seeds as server-owned records.
+- Deep research: builds evidence-backed understanding for planning, tasks, or
+  standalone investigations.
+- Effigy integration: makes project task routing, health, and validation
+  seamless when a project opts in.
 - Server: deployable locally, on LAN, or over the internet.
 - Clients: thin control planes over the same server authority.
 - Workspace: persistent per-project layouts for panels, tabs, terminals, and
@@ -52,6 +60,12 @@ Aligned:
 - crates stay small and independently testable
 - provider adapters expose capability differences plainly
 - project and task state remain durable across clients
+- accepted memories and planning artifacts become project context rather than
+  disappearing inside one harness transcript
+- research output preserves sources, observations, synthesis, confidence, and
+  gaps instead of becoming disposable chat
+- opted-in Effigy projects expose validation and workflow tasks to agents
+  without manual command guessing
 - UI decisions serve project workflows, not agent novelty
 
 Drifting:
@@ -60,4 +74,8 @@ Drifting:
 - provider integrations rely on brittle UI scraping without an adapter contract
 - projects collapse back to directory bookmarks
 - tasks become a generic todo list with no agent execution shape
+- memory becomes unreviewed transcript dumping or hidden provider state
+- project planning becomes a loose chat flow with no durable artifact model
+- deep research becomes unsourced model prose with no evidence trail
+- agents bypass project task runners and invent one-off command rituals
 - implementation outruns the docs spine

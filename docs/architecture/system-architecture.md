@@ -10,10 +10,13 @@ Vision refs: `docs/vision/001-nucleus-product-vision.md`
 Nucleus is server-first.
 
 The Rust server is the system core. It owns durable state, project identity,
-task state, agent sessions, workspace state, and harness process lifecycle.
+task state, shared memory, structured planning records, deep research records,
+agent sessions, workspace state, and harness process lifecycle.
 
 The first client is a Tauri desktop app. It is a control plane over the server,
-not the authority for project, task, workspace, or agent state.
+not the authority for project, task, workspace, or agent state. The desktop
+shell should not be scaffolded until there is a local control request handler
+and a selected local client transport boundary.
 
 Future clients may include:
 
@@ -44,6 +47,12 @@ Future clients may include:
   observations, and capabilities.
 - `nucleus-tasks`: task model, importance scoring, task action taxonomy, and
   projection record types later.
+- `nucleus-memory`: shared memory records, source refs, review state,
+  sensitivity policy, and projection boundaries later.
+- `nucleus-planning`: guided project planning sessions, planning artifacts,
+  task seeds, and projection boundaries later.
+- `nucleus-research`: deep research runs, questions, source records,
+  observations, synthesis, confidence, gaps, and projection boundaries later.
 - `nucleus-workspaces`: persisted layouts, terminals, browser views, and
   panel/tab state later.
 - `nucleus-server`: first draft server authority, deployment, client, command,
@@ -59,6 +68,10 @@ The server is authoritative for:
 - projects
 - repo membership and path history
 - tasks and importance metrics
+- shared memory records
+- structured project planning records
+- deep research records
+- project tool integration records
 - agent session records
 - workspace layouts
 - terminal and browser attachment state
@@ -67,10 +80,18 @@ The server is authoritative for:
 Clients send commands and render state. They may cache for responsiveness, but
 must reconcile with server state.
 
+Server-local storage is backend-adapter based. SQLite is the first
+single-player local backend. A centralized remote team server should be able to
+use PostgreSQL or another durable backend behind the same domain repository
+traits without changing clients or project/task/workspace authority.
+
 Project management state also has a repo-backed projection path.
 
 - local server state is the active working set
 - repo-backed files are the portable shared project intent
+- accepted shared memories and planning artifacts may be projected when policy
+  allows it
+- accepted research synthesis may be projected when policy allows it
 - Git and forges provide synchronization, review, and collaboration signals
 - the project steward agent may help prepare sync commits and reconcile
   mechanical conflicts under explicit policy
@@ -90,6 +111,17 @@ the runtime.
 Local command execution is server-authorized. SCM adapters, harness adapters,
 validation workflows, and native personas request command authority from the
 server instead of spawning processes directly.
+
+Runtime scheduling starts as admission only. The server may accept work into an
+inert queue when it has project, task, adapter, command-authority, and event
+metadata refs. Queue admission is not execution: it must not spawn provider
+processes, run commands, mutate worktrees, or start background workers.
+
+Effigy is an optional project tool integration. When enabled, it becomes a
+first-class workflow surface for task discovery, health, validation planning,
+and steward automation. Effigy invocation still goes through server command
+authority; Nucleus does not let harnesses bypass command policy just because a
+selector exists.
 
 Workspace panels are client-rendered surfaces over server-owned state.
 Terminal and browser panels attach to server-managed runtime resources. Text
@@ -284,6 +316,58 @@ Task records should be project-portable where possible. Shared task intent can
 be projected into small stable-id files in the management repository while the
 server keeps richer local indexes and runtime state.
 
+## Shared Memory Model
+
+Shared memory is server-owned project context.
+
+It preserves accepted facts, decisions, preferences, constraints, risks,
+handoff summaries, validation lessons, and open questions across harnesses and
+clients.
+
+Harness-native memory may be imported or linked only through explicit policy.
+It is not the durable Nucleus memory authority.
+
+Agents and skills may propose memory records, but the server owns ids,
+sensitivity, review status, supersession, retention, and projection.
+
+Accepted non-secret project memories may be projected to the management
+repository. User-private memories, restricted notes, raw transcripts, raw
+terminal output, and secrets remain outside shared projection by default.
+
+## Structured Planning Model
+
+Structured planning is server-owned project backbone state.
+
+New projects should be able to start through a guided flow for vision,
+ideation, architecture, constraints, research questions, roadmap shape, and
+task seeds.
+
+Planning artifacts are structured records, not only generated markdown.
+Northstar-shaped docs can remain an export or interoperability path, but the
+product model needs stable planning sessions, accepted artifacts, task seeds,
+review state, and source refs.
+
+Task seeds become active tasks only through task-domain promotion. Planning
+output should guide project organization without silently creating execution
+work.
+
+## Deep Research Model
+
+Deep research is server-owned evidence work.
+
+It can run as part of project planning or as a standalone investigation. A run
+contains a brief, research questions, source records, observations, synthesis,
+confidence, gaps, and promotion targets.
+
+The system should distinguish evidence, inference, speculation, and
+recommendation. Model-generated leads are not evidence until traced to sources
+or accepted as speculation.
+
+Accepted research may feed planning artifacts, task seeds, shared memories,
+architecture docs, model-routing decisions, adapter choices, and project
+guardrails. Draft research remains evidence and must not silently mutate those
+domains.
+
 ## SCM And Forge Sync
 
 Git-backed project management is a first-class planning lane.
@@ -350,6 +434,11 @@ classification, summarization, merge suggestions, and ambiguity handling.
 Small local models are preferred for cheap stewardship work when quality is
 sufficient.
 
+When Effigy is enabled for a project, the steward should understand Effigy
+deeply enough to inspect selectors, run health checks, plan validation, and
+summarize evidence into task readiness and task history proposals. Effigy
+knowledge is a tool capability, not hidden model intuition.
+
 ## Workspace Model
 
 Workspace layout belongs to the project and persists across clients where
@@ -372,6 +461,12 @@ Expected workspace surfaces:
   terminal tabs.
 - Project records must survive repo path movement.
 - Git-backed files are a shared projection, not the only runtime state store.
+- Shared memory must not collapse into raw transcript storage or hidden
+  provider-native memory.
+- Structured project planning must produce accepted artifacts and task seeds,
+  not only chat history.
+- Deep research must preserve source provenance and confidence, not just final
+  prose.
 - The project steward agent must operate under explicit sync policy.
 - Native harnesses must expose their app-owned authority boundary.
 - Specs and contracts must lead major implementation work.

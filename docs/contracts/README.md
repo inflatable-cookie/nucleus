@@ -16,6 +16,10 @@ Contracts define durable rules and interfaces.
 - `010-agent-session-lifecycle-contract.md`
 - `011-scm-forge-sync-contract.md`
 - `012-native-harness-runtime-contract.md`
+- `013-shared-memory-contract.md`
+- `014-structured-project-planning-contract.md`
+- `015-deep-research-contract.md`
+- `016-effigy-project-integration-contract.md`
 - `contract-index.md`
 
 ## Promotion Rule

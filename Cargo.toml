@@ -7,6 +7,7 @@ members = [
   "crates/nucleus-native-harness",
   "crates/nucleus-command-policy",
   "crates/nucleus-contract-fixtures",
+  "crates/nucleus-local-store",
   "crates/nucleus-projects",
   "crates/nucleus-scm-forge",
   "crates/nucleus-tasks",

@@ -41,7 +41,7 @@ command readiness, and artifact retention before runtime implementation starts.
 - [x] Define command artifact store and output retention boundary.
 - [x] Normalize remaining server/runtime research gaps into implementation
   blockers versus implementation-phase decisions.
-- [ ] Compile the first implementation runway inside `g01`.
+- [x] Compile the first implementation runway inside `g01`.
 
 ## Acceptance Criteria
 
@@ -110,11 +110,11 @@ Deferred subsystem decisions:
 
 ## Current Ready Card
 
-- `docs/roadmaps/g01/batch-cards/068-compile-first-implementation-runway.md`
+- `docs/roadmaps/g01/batch-cards/070-define-server-local-storage-crate-shape.md`
 
 ## Planning Gaps
 
-- First implementation slice and acceptance tests.
-- Initial local storage/backend choice for the first slice.
-- Initial local control API transport choice for the first slice.
-- Initial local auth posture for the first slice.
+- Server-local storage implementation details now live in
+  `006-server-local-state-implementation-runway.md`.
+- Editor, SCM panel, Tauri, provider adapter, command runner, artifact payload,
+  remote auth, and secret backend implementation remain deferred.
