@@ -29,7 +29,8 @@ god files or starting desktop UI too early.
 
 ## Evidence
 
-`effigy doctor` currently reports god-file findings in server and storage code:
+At roadmap start, `effigy doctor` reported god-file findings in server and
+storage code:
 
 - `crates/nucleus-server/src/request_handler.rs`
 - `crates/nucleus-server/src/local_transport.rs`
@@ -37,8 +38,14 @@ god files or starting desktop UI too early.
 - `crates/nucleus-local-store/src/sqlite.rs`
 - `crates/nucleus-local-store/src/fixtures.rs`
 
-This roadmap addresses the server modules touched by the local transport and
-IPC runway first. Storage decomposition remains a later storage-lane concern.
+Cards `099` and `100` removed the local transport and request handler findings.
+Current remaining findings are storage and secret-store decomposition concerns:
+
+- `crates/nucleus-server/src/secret_store.rs`
+- `crates/nucleus-local-store/src/sqlite.rs`
+- `crates/nucleus-local-store/src/fixtures.rs`
+
+Storage decomposition remains a later storage-lane concern.
 
 ## Decisions
 
@@ -51,8 +58,8 @@ IPC runway first. Storage decomposition remains a later storage-lane concern.
 
 ## Execution Plan
 
-- [ ] Split local transport module boundaries.
-- [ ] Split request handler module boundaries.
+- [x] Split local transport module boundaries.
+- [x] Split request handler module boundaries.
 - [ ] Add control API serialization envelope readiness.
 - [ ] Add Tauri IPC command boundary skeleton.
 - [ ] Prove Tauri IPC command path with fixture.
@@ -60,9 +67,9 @@ IPC runway first. Storage decomposition remains a later storage-lane concern.
 
 ## Acceptance Criteria
 
-- [ ] Local transport fixture code is split into focused server modules without
+- [x] Local transport fixture code is split into focused server modules without
   changing behavior.
-- [ ] Request handler code is split into focused server modules without
+- [x] Request handler code is split into focused server modules without
   changing behavior.
 - [ ] Serialization readiness names control request/response envelope needs
   without implementing app transport.

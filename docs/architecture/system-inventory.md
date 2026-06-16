@@ -143,8 +143,10 @@ Updated: 2026-06-16
   API exists beyond this first metadata query skeleton. A transport-neutral
   local control request handler skeleton now accepts control requests, applies
   optional auth readiness gates, and returns explicit deferred query responses
-  or rejected command receipts. It wires state, replay, and scheduler services
-  as inert dependencies. It now executes read-only project, task, workspace,
+  or rejected command receipts. The request handler boundary is now split into
+  focused modules for the boundary marker, core handler, command receipts,
+  query execution, and tests. It wires state, replay, and scheduler services as
+  inert dependencies. It now executes read-only project, task, workspace,
   adapter/session, model route, and runtime metadata state queries for direct
   get/list paths. Indexed filters and runtime ref resolution remain explicit
   unsupported paths. It does not mutate state, run commands, open transports,
@@ -159,16 +161,18 @@ Updated: 2026-06-16
   names request/response exchanges, readiness reporting, and transport errors.
   It is synchronous and local-only; it does not implement a socket, HTTP
   server, WebSocket server, Tauri IPC command, remote pairing flow, or live
-  subscription channel. A non-production in-process control client fixture now
-  implements that trait with scripted responses and recorded exchanges. It
-  proves local request/response carrying. A handler-backed in-process fixture
-  now routes requests through `LocalControlRequestHandler` and proves read-only
-  state queries plus command receipts through the transport boundary. It still
-  does not implement Tauri IPC, network transport, socket listeners, state
-  mutation execution, runtime execution, or background workers. Tauri IPC
-  schema readiness types now name the first desktop command schema, control
-  envelopes, and IPC blockers without implementing Tauri commands,
-  serialization, or a desktop app.
+  subscription channel. The local transport boundary is now split into focused
+  modules for boundary types, scripted fixtures, handler-backed fixtures, and
+  tests. A non-production in-process control client fixture implements that
+  trait with scripted responses and recorded exchanges. It proves local
+  request/response carrying. A handler-backed in-process fixture now routes
+  requests through `LocalControlRequestHandler` and proves read-only state
+  queries plus command receipts through the transport boundary. It still does
+  not implement Tauri IPC, network transport, socket listeners, state mutation
+  execution, runtime execution, or background workers. Tauri IPC schema
+  readiness types now name the first desktop command schema, control envelopes,
+  and IPC blockers without implementing Tauri commands, serialization, or a
+  desktop app.
   Runtime effect storage boundary types now name retained event records,
   storage refs, replay checkpoints, stored effect states, and query postures,
   but they do not implement persistence, serialization, replay APIs, event

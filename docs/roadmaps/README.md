@@ -22,4 +22,4 @@ shape.
 
 ## Next Task
 
-Split local transport module boundaries.
+Add control API serialization envelope readiness.

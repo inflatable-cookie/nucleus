@@ -1,6 +1,6 @@
 # 100 Split Request Handler Module Boundaries
 
-Status: planned
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -42,3 +42,19 @@ behavior.
 cargo test --workspace
 cargo fmt --all --check
 ```
+
+## Decisions
+
+- `request_handler/mod.rs` is now the module index.
+- The boundary marker lives in `request_handler/boundary.rs`.
+- The core handler, auth gate, and service accessors live in
+  `request_handler/handler.rs`.
+- Command receipt handling lives in `request_handler/commands.rs`.
+- Query execution lives in `request_handler/queries.rs`.
+- Request handler tests live in `request_handler/tests.rs`.
+
+## Closeout
+
+Split request handler code into focused modules without changing public exports,
+auth handling, query behavior, command receipts, scheduler admission behavior,
+or state access.

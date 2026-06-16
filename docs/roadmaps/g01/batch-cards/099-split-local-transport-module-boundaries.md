@@ -1,6 +1,6 @@
 # 099 Split Local Transport Module Boundaries
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -43,3 +43,17 @@ changing behavior.
 cargo test --workspace
 cargo fmt --all --check
 ```
+
+## Decisions
+
+- `local_transport/mod.rs` is now the module index.
+- Boundary traits and value types live in `local_transport/types.rs`.
+- Scripted in-process fixture code lives in
+  `local_transport/scripted_fixture.rs`.
+- Handler-backed fixture code lives in `local_transport/handler_fixture.rs`.
+- Local transport tests live in `local_transport/tests.rs`.
+
+## Closeout
+
+Split local transport code into focused modules without changing public
+exports or transport behavior.
