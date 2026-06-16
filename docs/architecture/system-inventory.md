@@ -172,7 +172,18 @@ Updated: 2026-06-16
   execution, runtime execution, or background workers. Tauri IPC schema
   readiness types now name the first desktop command schema, control envelopes,
   and IPC blockers without implementing Tauri commands, serialization, or a
-  desktop app.
+  desktop app. Control API serialization readiness types now name request and
+  response envelope fields, id stability, versioning, error-shape, payload
+  compatibility, and codec blockers without adding serde derives, selecting a
+  wire format, or implementing transport behavior. Tauri IPC readiness can now
+  consume explicit control serialization readiness. A Tauri IPC command
+  boundary skeleton now names schema-only, fixture-backed, and Tauri
+  runtime-backed postures plus a request/response submission trait. It does not
+  use Tauri macros, start a Tauri runtime, serialize payloads, own durable
+  state, or implement desktop IPC. A non-production Tauri IPC-shaped command
+  fixture now routes `ServerControlRequest` values through
+  `LocalControlRequestHandler` and records `ServerControlResponse` exchanges.
+  It proves one local request/response path without a Tauri app or real IPC.
   Runtime effect storage boundary types now name retained event records,
   storage refs, replay checkpoints, stored effect states, and query postures,
   but they do not implement persistence, serialization, replay APIs, event

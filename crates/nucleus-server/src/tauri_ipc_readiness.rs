@@ -4,6 +4,9 @@
 //! shell. They do not implement Tauri commands, IPC serialization, a desktop
 //! app, or a transport listener.
 
+use crate::control_serialization_readiness::{
+    ControlApiSerializationReadiness, ControlApiSerializationReadinessStatus,
+};
 use crate::transport_readiness::{
     LocalTransportCandidate, LocalTransportReadiness, LocalTransportReadinessStatus,
 };
@@ -37,6 +40,24 @@ impl TauriIpcCommandSchema {
         command_implementation_exists: bool,
         serialization_defined: bool,
     ) -> TauriIpcSchemaReadiness {
+        let serialization = ControlApiSerializationReadiness {
+            status: if serialization_defined {
+                ControlApiSerializationReadinessStatus::Ready
+            } else {
+                ControlApiSerializationReadinessStatus::Deferred
+            },
+            blockers: Vec::new(),
+        };
+        self.assess_with_serialization(transport, command_implementation_exists, &serialization)
+    }
+
+    /// Assess schema readiness against explicit serialization readiness.
+    pub fn assess_with_serialization(
+        &self,
+        transport: &LocalTransportReadiness,
+        command_implementation_exists: bool,
+        serialization: &ControlApiSerializationReadiness,
+    ) -> TauriIpcSchemaReadiness {
         let mut blockers = Vec::new();
 
         if transport.candidate != LocalTransportCandidate::TauriIpc {
@@ -59,7 +80,7 @@ impl TauriIpcCommandSchema {
         if !command_implementation_exists {
             blockers.push(TauriIpcSchemaReadinessBlocker::CommandImplementationDeferred);
         }
-        if !serialization_defined {
+        if serialization.status != ControlApiSerializationReadinessStatus::Ready {
             blockers.push(TauriIpcSchemaReadinessBlocker::SerializationDeferred);
         }
 
@@ -130,6 +151,7 @@ impl TauriIpcSchemaReadinessBlocker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control_serialization_readiness::ControlApiSerializationReadinessPlan;
     use crate::transport_readiness::{
         LocalTransportReadinessBlocker, LocalTransportReadinessStatus,
     };
@@ -197,5 +219,24 @@ mod tests {
         assert!(readiness
             .blockers
             .contains(&TauriIpcSchemaReadinessBlocker::TransportNotReady));
+    }
+
+    #[test]
+    fn schema_readiness_uses_control_api_serialization_readiness() {
+        let schema = TauriIpcCommandSchema::first_desktop_schema();
+        let transport = LocalTransportReadiness {
+            candidate: LocalTransportCandidate::TauriIpc,
+            status: LocalTransportReadinessStatus::Ready,
+            blockers: Vec::new(),
+        };
+        let serialization = ControlApiSerializationReadinessPlan::first_tauri_ipc_plan()
+            .assess(true, true, true, true, false);
+
+        let readiness = schema.assess_with_serialization(&transport, true, &serialization);
+
+        assert_eq!(readiness.status, TauriIpcSchemaReadinessStatus::Deferred);
+        assert!(readiness
+            .blockers
+            .contains(&TauriIpcSchemaReadinessBlocker::SerializationDeferred));
     }
 }

@@ -1,6 +1,6 @@
 # 103 Prove Tauri IPC Command Path With Fixture
 
-Status: planned
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -41,3 +41,19 @@ desktop scaffolding.
 cargo test --workspace
 cargo fmt --all --check
 ```
+
+## Decisions
+
+- The fixture-backed command boundary is `TauriIpcCommandHandlerFixture`.
+- The fixture owns a `LocalControlRequestHandler` and records
+  `TauriIpcCommandExchange` values.
+- The fixture uses `FixtureBacked` posture, not Tauri runtime posture.
+- The proof path is a read-only project list query through the local handler.
+
+## Closeout
+
+Added a Tauri IPC-shaped fixture that routes one request/response path through
+the server handler.
+
+No Tauri app, macro command, IPC serialization, state mutation execution, live
+subscription, or runtime execution was introduced.

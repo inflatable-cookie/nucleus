@@ -14,3 +14,6 @@ transport is implemented yet.
 
 Desktop scaffolding remains deferred until IPC command handling and
 serialization are testable through the server boundary.
+
+`nucleus-server` now names a Tauri IPC command boundary skeleton, but no Tauri
+runtime, macro command, desktop app, or IPC serialization exists yet.

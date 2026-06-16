@@ -1,6 +1,6 @@
 # 101 Add Control API Serialization Envelope Readiness
 
-Status: planned
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -42,3 +42,21 @@ implementing Tauri IPC.
 cargo test --workspace
 cargo fmt --all --check
 ```
+
+## Decisions
+
+- Control API serialization readiness lives in
+  `control_serialization_readiness.rs`.
+- The first Tauri IPC envelope plan names request id, client id, request kind,
+  response status, response body, error shape, and protocol version fields.
+- Readiness blockers name stable identity, versioning, error shape, payload
+  compatibility, and codec work without implementing them.
+- Tauri IPC schema readiness can now consume explicit control serialization
+  readiness.
+
+## Closeout
+
+Added type-only control API serialization readiness and tests.
+
+No serde derives, wire format, Tauri commands, desktop scaffolding, socket,
+HTTP, or WebSocket behavior was introduced.

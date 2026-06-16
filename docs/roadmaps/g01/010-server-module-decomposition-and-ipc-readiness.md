@@ -1,6 +1,6 @@
 # 010 Server Module Decomposition And IPC Readiness
 
-Status: active
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -60,10 +60,10 @@ Storage decomposition remains a later storage-lane concern.
 
 - [x] Split local transport module boundaries.
 - [x] Split request handler module boundaries.
-- [ ] Add control API serialization envelope readiness.
-- [ ] Add Tauri IPC command boundary skeleton.
-- [ ] Prove Tauri IPC command path with fixture.
-- [ ] Reassess desktop scaffold after IPC boundary.
+- [x] Add control API serialization envelope readiness.
+- [x] Add Tauri IPC command boundary skeleton.
+- [x] Prove Tauri IPC command path with fixture.
+- [x] Reassess desktop scaffold after IPC boundary.
 
 ## Acceptance Criteria
 
@@ -71,11 +71,11 @@ Storage decomposition remains a later storage-lane concern.
   changing behavior.
 - [x] Request handler code is split into focused server modules without
   changing behavior.
-- [ ] Serialization readiness names control request/response envelope needs
+- [x] Serialization readiness names control request/response envelope needs
   without implementing app transport.
-- [ ] Tauri IPC command boundary can route one request/response path through a
+- [x] Tauri IPC command boundary can route one request/response path through a
   fixture.
-- [ ] No Tauri UI, socket listener, HTTP server, command runner, provider
+- [x] No Tauri UI, socket listener, HTTP server, command runner, provider
   process, or live subscription behavior is introduced.
 
 ## Cards

@@ -1,6 +1,6 @@
 # 102 Add Tauri IPC Command Boundary Skeleton
 
-Status: planned
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -42,3 +42,17 @@ app.
 cargo test --workspace
 cargo fmt --all --check
 ```
+
+## Decisions
+
+- The skeleton lives in `tauri_ipc_command.rs`.
+- The command boundary names schema-only, fixture-backed, Tauri runtime-backed,
+  and custom postures.
+- The handler trait accepts `ServerControlRequest` and returns a
+  `TauriIpcCommandExchange` containing `ServerControlResponse`.
+- The skeleton owns no server state and has no Tauri runtime dependency.
+
+## Closeout
+
+Added a testable Tauri IPC command boundary skeleton without scaffolding a
+desktop app or implementing IPC serialization.

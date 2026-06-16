@@ -4,11 +4,11 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/101-add-control-api-serialization-envelope-readiness.md`
+- `docs/roadmaps/g01/batch-cards/105-compile-desktop-serialization-and-shell-bootstrap-runway.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/101-add-control-api-serialization-envelope-readiness.md`
+- `docs/roadmaps/g01/batch-cards/105-compile-desktop-serialization-and-shell-bootstrap-runway.md`
 
 ## Completed Cards
 
@@ -43,9 +43,11 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 - `docs/roadmaps/g01/batch-cards/098-compile-server-module-decomposition-and-ipc-runway.md`
 - `docs/roadmaps/g01/batch-cards/099-split-local-transport-module-boundaries.md`
 - `docs/roadmaps/g01/batch-cards/100-split-request-handler-module-boundaries.md`
-
-## Planned Cards
-
+- `docs/roadmaps/g01/batch-cards/101-add-control-api-serialization-envelope-readiness.md`
 - `docs/roadmaps/g01/batch-cards/102-add-tauri-ipc-command-boundary-skeleton.md`
 - `docs/roadmaps/g01/batch-cards/103-prove-tauri-ipc-command-path-with-fixture.md`
 - `docs/roadmaps/g01/batch-cards/104-reassess-desktop-scaffold-after-ipc-boundary.md`
+
+## Planned Cards
+
+- None.

@@ -22,4 +22,4 @@ shape.
 
 ## Next Task
 
-Add control API serialization envelope readiness.
+Compile desktop serialization and shell bootstrap runway.

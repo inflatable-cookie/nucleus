@@ -10,6 +10,7 @@ pub mod command_artifacts;
 pub mod command_runtime_readiness;
 pub mod commands;
 pub mod control_api;
+pub mod control_serialization_readiness;
 pub mod deployment;
 pub mod event_replay;
 pub mod events;
@@ -25,6 +26,7 @@ pub mod runtime_effect_transport;
 pub mod scheduler;
 pub mod secret_store;
 pub mod state;
+pub mod tauri_ipc_command;
 pub mod tauri_ipc_readiness;
 pub mod transport_readiness;
 
@@ -48,6 +50,11 @@ pub use control_api::{
     ServerControlResponse, ServerControlResponseBody, ServerControlResponseStatus, ServerQuery,
     ServerQueryKind, ServerQueryResult, ServerStateRecordSet, StateRecordQuery,
     StateRecordQueryScope,
+};
+pub use control_serialization_readiness::{
+    ControlApiEnvelopeField, ControlApiEnvelopeShape, ControlApiSerializationReadiness,
+    ControlApiSerializationReadinessBlocker, ControlApiSerializationReadinessPlan,
+    ControlApiSerializationReadinessStatus,
 };
 pub use deployment::{AccessEndpoint, DeploymentMode, ServerRuntime};
 pub use event_replay::{
@@ -109,6 +116,10 @@ pub use secret_store::{
     CredentialRotationPolicy, SecretBackendKind,
 };
 pub use state::{ServerStateDomain, ServerStateDomainService, ServerStateService};
+pub use tauri_ipc_command::{
+    TauriIpcCommandBoundary, TauriIpcCommandBoundaryError, TauriIpcCommandBoundaryHandler,
+    TauriIpcCommandBoundaryPosture, TauriIpcCommandExchange, TauriIpcCommandHandlerFixture,
+};
 pub use tauri_ipc_readiness::{
     TauriIpcCommandSchema, TauriIpcCommandShape, TauriIpcSchemaReadiness,
     TauriIpcSchemaReadinessBlocker, TauriIpcSchemaReadinessStatus,
