@@ -1,6 +1,6 @@
 # 045 Draft Runtime Effect Trait Boundary
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -51,6 +51,22 @@ Draft runtime effect trait boundary.
 - `docs/architecture/system-architecture.md`
 - `docs/architecture/system-inventory.md`
 
+## Decisions
+
+- Runtime effect traits should preserve separate request-acceptance and
+  outcome-reporting phases.
+- Cancellation requests are not final states; final cancellation, timeout,
+  unsupported, cooperative-only, or recovery outcomes must still be reported.
+- SCM and forge effect traits return normalized observations, task-link
+  proposals, conflict/review refs, sanitized webhook or credential evidence, or
+  command-authority requests.
+- Command effect traits return sanitized command evidence only.
+- Server-owned scheduling, retry, timeout, approval, command execution,
+  persistence, dedupe, artifact-retention policy, and event fan-out stay out of
+  adapter traits.
+- Rust trait skeletons can be value-shaped and compile-only next; runtime
+  choices remain deferred.
+
 ## Validation
 
 ```sh
@@ -59,7 +75,3 @@ effigy qa:northstar
 cargo check --workspace
 cargo test --workspace
 ```
-
-## Next Task
-
-Draft runtime effect trait boundary.

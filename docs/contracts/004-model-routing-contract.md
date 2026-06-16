@@ -231,7 +231,3 @@ invocation outside a harness runtime.
 - How OpenCode provider/model routes should reflect provider-selected gateway
   attribution when OpenRouter or OpenCode Zen route internally.
 - Whether capability overrides are ever safe outside provider discovery.
-
-## Next Task
-
-Draft runtime effect trait boundary.

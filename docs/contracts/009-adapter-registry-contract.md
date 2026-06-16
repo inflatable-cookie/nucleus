@@ -394,7 +394,3 @@ behavior.
 - Sidecar protocol shape for Claude Agent SDK.
 - Whether Kimi Wire should become a first-class Rust adapter path after ACP.
 - Whether Pi SDK sidecar is needed after the first RPC adapter exists.
-
-## Next Task
-
-Draft runtime effect trait boundary.

@@ -28,7 +28,3 @@ End-of-turn summaries should state:
 - current state
 - validation only if failed or material
 - next move
-
-## Next Task
-
-Apply these rules while promoting harness research into contract text.

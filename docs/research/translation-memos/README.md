@@ -6,7 +6,3 @@ contracts.
 ## Planned Memos
 
 - `harness-adapter-contract-first-pass.md`
-
-## Next Task
-
-Research the first-pass contract against upstream provider docs.

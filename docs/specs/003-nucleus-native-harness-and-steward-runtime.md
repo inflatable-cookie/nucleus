@@ -172,7 +172,3 @@ Settled first-pass rules:
   identity changes require approval
 - model backend choice must not increase steward authority
 - management-sync authority must not modify source files
-
-## Next Task
-
-Draft runtime effect trait boundary.

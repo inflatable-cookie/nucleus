@@ -24,7 +24,3 @@ The repo uses:
 
 Do not build server, Tauri, or harness behavior until the protocol and project
 model contracts are specific enough to validate.
-
-## Next Task
-
-Draft runtime effect trait boundary.

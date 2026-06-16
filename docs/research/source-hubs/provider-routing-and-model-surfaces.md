@@ -91,7 +91,3 @@ Reason:
   through adapters that already know how to use them?
 - How should nucleus record which model/provider route produced an agent event
   when the harness abstracts that detail away?
-
-## Next Task
-
-Draft runtime effect trait boundary.

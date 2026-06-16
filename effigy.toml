@@ -7,21 +7,27 @@ dir = "docs/vision"
 section = "Vision Artifacts"
 exclude = ["history/**"]
 
-[docs_policy.next_actions.vision]
-index = "vision"
+[docs_policy.indexes.roadmaps]
+file = "docs/roadmaps/README.md"
+dir = "docs/roadmaps"
+section = "Index"
+exclude = []
+
+[docs_policy.next_actions.roadmaps]
+index = "roadmaps"
 heading = "## Next Task"
 allowlist_file = "docs/policy/vision-next-task-verbs.txt"
 
 [tasks]
 "qa:docs:links" = "effigy docs check links README.md AGENTS.md docs/README.md"
 "qa:docs:index:vision" = "effigy docs check index --policy-index vision"
-"qa:docs:next-action:vision" = "effigy docs check next-action --policy vision"
+"qa:docs:next-action:roadmaps" = "effigy docs check next-action --policy roadmaps"
 "qa:docs:agent-defaults" = "effigy docs check forbidden AGENTS.md README.md docs/README.md --forbid '--repo .'"
 
 "qa:docs" = [
   { task = "qa:docs:links" },
   { task = "qa:docs:index:vision" },
-  { task = "qa:docs:next-action:vision" },
+  { task = "qa:docs:next-action:roadmaps" },
   { task = "qa:docs:agent-defaults" },
 ]
 

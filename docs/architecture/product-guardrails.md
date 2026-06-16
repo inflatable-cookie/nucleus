@@ -21,8 +21,3 @@ Updated: 2026-06-15
 - Hiding provider differences behind an over-simple agent abstraction.
 - Creating one giant crate for all server, protocol, project, and task logic.
 - Shipping UI before project, task, and adapter contracts are stable.
-
-## Next Task
-
-Use these guardrails while drafting the harness adapter and project identity
-contracts.

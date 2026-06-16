@@ -202,7 +202,3 @@ Promoted into:
 - Define credential storage for external server Basic auth and provider keys.
 - Define how OpenCode fork, share, diff, revert, and unrevert should appear in
   canonical capabilities.
-
-## Next Task
-
-Draft runtime effect trait boundary.

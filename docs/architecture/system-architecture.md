@@ -437,12 +437,56 @@ store, and transport selection are deferred. The first effect contract should
 name effect requests, effect outcomes, cancellation semantics, and observation
 batch rules before Rust effect traits are implemented.
 
+## Runtime Effect Trait Direction
+
+Runtime effect traits should preserve a two-phase shape:
+
+- request acceptance: accepted, rejected, queued, blocked, unsupported, or
+  approval-required
+- outcome reporting: normalized observations, sanitized evidence, cancellation,
+  timeout, failure, recovery, or retry classification
+
+The split keeps scheduler state out of provider adapters and command runners.
+Adapters can report what they can do and what happened. The server remains the
+authority for when work starts, whether it retries, how cancellation is
+recorded, how output is retained, and how clients receive events.
+
+SCM and forge runtime traits should return normalized observation batches,
+task-link proposals, conflict records, review-workflow refs, credential-use
+evidence, webhook-verification evidence, or command-authority requests.
+
+Command runtime traits should return sanitized command evidence. Raw process
+output and artifact material stay behind explicit retention policy.
+
+The first trait skeleton should be value-shaped and compile-only. It should not
+select async runtime, stream types, polling workers, webhook server, PTY
+strategy, sandbox backend, process supervisor, artifact store, or replay store.
+
+## Runtime Effect State Direction
+
+Runtime effects have server-owned state transitions.
+
+Adapters and command runners may report acceptance, queued/running posture,
+cancellation posture, recovery need, and final outcomes. They do not own retry
+loops, timeout policy, persistence, event fan-out, approval state, or artifact
+retention.
+
+Effect states are split into non-terminal and terminal groups. Requested,
+accepted, queued, running, cancellation requested, approval required, policy
+inspection, and recovery required are non-terminal. Rejected, blocked by
+policy, unsupported, succeeded, failed, cancelled, and timed out are terminal.
+
+Cancellation requested is not terminal. Recovery required is not terminal until
+the server decides no recovery path remains. Retry classification belongs to
+terminal or recovery-required outcomes, and a retry is represented as a new
+effect request under server scheduling authority.
+
+Server events should expose effect state changes after normalization and
+sanitization. They should not expose raw provider payloads, raw command output,
+credentials, or machine-local paths by default.
+
 ## Interfaces With Roadmaps
 
 This architecture unlocks:
 
 - `docs/roadmaps/g01/001-foundation-and-research.md`
-
-## Next Task
-
-Draft runtime effect trait boundary.

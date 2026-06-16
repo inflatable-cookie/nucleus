@@ -17,7 +17,3 @@ Architecture records the system shape once planning starts to settle.
 - What authority should the project steward agent have during Git sync?
 - Should the Nucleus-native harness be pure Rust, Pi-backed, or sidecar-backed?
 - Which local model backend should support steward personas first?
-
-## Next Task
-
-Draft runtime effect trait boundary.

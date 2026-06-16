@@ -23,8 +23,11 @@ Updated: 2026-06-15
   and sanitized command evidence boundary types. Current contracts define the
   first production command authority trait boundary in docs, with
   a static policy-inspection trait skeleton now present. Runtime command
-  effects are documented and have type-only request/outcome vocabulary, but are
-  not implemented.
+  effects are documented and have type-only request/outcome vocabulary.
+  Runtime command effect trait responsibilities are drafted in docs, with
+  value-shaped request-acceptance and outcome-reporting trait skeletons now
+  present. Runtime command effect state-machine policy is documented, but no
+  Rust state-machine types or scheduler exist.
 - `nucleus-contract-fixtures`: dev-only, unpublished contract fixture
   vocabulary crate for provider-neutral SCM/forge and command-policy contract
   tests. Production crates must not depend on it. The first integration tests
@@ -40,7 +43,11 @@ Updated: 2026-06-15
   boundary types. Current contracts define the first production adapter trait
   boundary in docs, with static SCM, forge, and observation-source trait
   skeletons now present. Runtime SCM/forge effects are documented and have
-  type-only request/outcome vocabulary, but are not implemented.
+  type-only request/outcome vocabulary. Runtime SCM/forge effect trait
+  responsibilities are drafted in docs, with value-shaped SCM and forge
+  request-acceptance and outcome-reporting trait skeletons now present.
+  Runtime SCM/forge effect state-machine policy is documented, but no Rust
+  state-machine types or scheduler exist.
 - `nucleus-tasks`: first draft task identity, importance, neglect, action,
   assignment, activity, agent-readiness, and projection record types.
 - `nucleus-workspaces`: first draft modular workspace layout, panel, and
@@ -91,7 +98,3 @@ Updated: 2026-06-15
   `external/t3code/apps/server/src/provider/opencodeRuntime.ts`
 - Remote architecture:
   `external/t3code/docs/architecture/remote.md`
-
-## Next Task
-
-Draft runtime effect trait boundary.

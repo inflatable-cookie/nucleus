@@ -50,7 +50,3 @@ Determine whether OpenCode should start server-SDK-first, ACP-first, or both.
 effigy qa:docs
 effigy qa:northstar
 ```
-
-## Next Task
-
-Draft runtime effect trait boundary.

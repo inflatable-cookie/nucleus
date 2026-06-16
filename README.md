@@ -31,7 +31,3 @@ The Rust workspace is intentionally small. Current type-only crates cover first
 draft protocol, agent session lifecycle, adapter registry, project, task,
 workspace, server boundary, and persistence surfaces; app behavior remains out
 of scope until contracts settle.
-
-## Next Task
-
-Draft runtime effect trait boundary.

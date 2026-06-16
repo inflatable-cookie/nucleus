@@ -239,7 +239,3 @@ sync.
 - Retention policy for abandoned reviews and resolved conflicts.
 - Retention policy for full command output artifacts.
 - Secret scanning and redaction model for command evidence.
-
-## Next Task
-
-Draft runtime effect trait boundary.

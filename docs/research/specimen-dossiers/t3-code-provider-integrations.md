@@ -184,8 +184,3 @@ Promoted into:
 - `docs/contracts/002-harness-adapter-contract.md`
 - `docs/architecture/system-architecture.md`
 - `docs/architecture/system-inventory.md`
-
-## Next Task
-
-Research these findings against upstream ACP, Cursor SDK, Claude Code, OpenCode,
-and Codex docs before implementing Rust adapter traits.

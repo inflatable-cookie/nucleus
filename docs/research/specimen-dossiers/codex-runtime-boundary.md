@@ -212,7 +212,3 @@ Promoted into:
 - `docs/contracts/002-harness-adapter-contract.md`
 - `docs/contracts/010-agent-session-lifecycle-contract.md`
 - `docs/architecture/system-architecture.md`
-
-## Next Task
-
-Draft runtime effect trait boundary.

@@ -167,7 +167,3 @@ Desktop, web, mobile, and CLI clients are clients.
 
 The server API is the durable contract. Tauri must not become the authority for
 project, task, workspace, or agent state.
-
-## Next Task
-
-Draft runtime effect trait boundary.

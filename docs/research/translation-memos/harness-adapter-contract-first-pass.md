@@ -46,7 +46,3 @@ Updated:
   missing or unstable?
 - Should Kimi Wire become a first-class Rust adapter path after ACP?
 - Should Pi use RPC alone for first implementation, or keep SDK sidecar close?
-
-## Next Task
-
-Draft runtime effect trait boundary.

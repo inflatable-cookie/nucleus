@@ -13,7 +13,3 @@ roadmaps depend on it.
 ## Current Focus
 
 SCM and forge implementation readiness.
-
-## Next Task
-
-Draft runtime effect trait boundary.

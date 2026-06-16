@@ -196,7 +196,3 @@ persona management.
 - Event identity for native harness sessions.
 - Persona capability and approval policy model.
 - Local model packaging and deployment policy.
-
-## Next Task
-
-Draft runtime effect trait boundary.

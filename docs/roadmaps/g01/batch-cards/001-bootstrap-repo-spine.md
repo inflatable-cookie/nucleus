@@ -47,7 +47,3 @@ cargo check --workspace
 cargo test --workspace
 git status --short
 ```
-
-## Next Task
-
-Draft runtime effect trait boundary.

@@ -20,7 +20,3 @@ Updated: 2026-06-15
 | Pi runtime boundary | `specimen-dossiers/pi-runtime-boundary.md` | promoted-implementation-ready |
 | Harness adapter contract translation | `translation-memos/harness-adapter-contract-first-pass.md` | promoted-first-pass |
 | Provider implementation readiness | `../specs/001-provider-implementation-readiness.md` | active |
-
-## Next Task
-
-Draft runtime effect trait boundary.

@@ -99,7 +99,3 @@ Durable findings should promote into:
 - The roadmap points at the first research card instead of implementation.
 - No provider implementation starts until at least one card is complete and
   promoted into contracts.
-
-## Next Task
-
-Draft runtime effect trait boundary.

@@ -116,7 +116,3 @@ scope.
 - How layouts degrade on mobile or CLI control planes.
 - How workspace state interacts with live agent sessions.
 - Whether layout changes need revision ids or conflict handling.
-
-## Next Task
-
-Draft runtime effect trait boundary.

@@ -618,7 +618,3 @@ inside.
 - Concrete async execution and backpressure implementation.
 - Sidecar protocol shape for TypeScript-only SDK integrations.
 - Project and session model-route override semantics.
-
-## Next Task
-
-Draft runtime effect trait boundary.

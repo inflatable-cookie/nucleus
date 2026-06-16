@@ -221,7 +221,3 @@ environments that reject sidecars, and native terminal rendering.
 - Permission mode and approval callback support are per-instance capabilities.
 - Recovery state must report whether transcript storage is local-only or
   mirrored.
-
-## Next Task
-
-Draft runtime effect trait boundary.

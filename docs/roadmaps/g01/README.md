@@ -11,7 +11,3 @@ Updated: 2026-06-15
 ## Batch Cards
 
 - `batch-cards/README.md`
-
-## Next Task
-
-Draft runtime effect trait boundary.

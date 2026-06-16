@@ -22,7 +22,3 @@ Contracts define durable rules and interfaces.
 
 Research and specs can be provisional. Contracts should only contain rules the
 repo is ready to enforce or design against.
-
-## Next Task
-
-Draft runtime effect trait boundary.

@@ -977,6 +977,125 @@ cancellation posture, retry classification, command-authority-required
 outcomes, and request/outcome id linkage without dev-only fixtures or runtime
 behavior.
 
+## Runtime Effect Trait Boundary
+
+Runtime effect traits should be split by responsibility.
+
+Initial SCM runtime effect responsibilities:
+
+- accept an SCM effect request
+- report whether the request was accepted, rejected, blocked, or unsupported
+- return normalized SCM observation batches for refresh-style effects
+- return conflict records, task-link proposals, review-workflow refs, or
+  provider refs only as normalized outputs
+- request server command authority for command-backed SCM work
+- report cooperative cancellation, timeout, retry, and recovery outcomes
+
+Initial forge runtime effect responsibilities:
+
+- accept a forge effect request
+- report whether the request was accepted, rejected, blocked, or unsupported
+- return normalized forge observation batches for refresh, polling, webhook, or
+  imported-provider events
+- return credential-use evidence and webhook-verification evidence as
+  sanitized evidence
+- request server command authority for command-backed forge work
+- report cooperative cancellation, timeout, retry, and recovery outcomes
+
+Effect acceptance and final outcome reporting may be separate trait surfaces.
+Acceptance is a scheduling decision. Outcome reporting is evidence from work
+that may complete later, fail, time out, or require recovery. A later Rust
+trait draft should not collapse these phases unless the runtime contract proves
+that doing so will not hide queued, running, cancelled, timed-out, or recovered
+states.
+
+Cancellation needs explicit outcome reporting. A cancellation request is not a
+final state. Adapters may report cancelled, timed out, unsupported,
+cooperative-only, or recovery-required outcomes after a cancellation request.
+
+SCM and forge runtime traits must not own scheduling, retry loops, timeout
+policy, dedupe, persistence, command execution, secret lookup, approval, or
+event fan-out. Those are server responsibilities.
+
+The first Rust trait draft may name value-returning acceptance and outcome
+surfaces. Async runtime, stream type, polling scheduler, webhook transport,
+process supervision, replay store, and registry integration remain deferred.
+
+The first Rust runtime effect trait skeletons now expose separate SCM and forge
+request-acceptance and outcome-reporting surfaces. They are value-shaped and
+compile-only. They do not schedule work, execute commands, call networks, poll,
+stream, persist, retry, cancel, verify webhooks, or mutate Nucleus state.
+
+## Runtime Effect State Machine Policy
+
+Runtime effects move through server-owned state. Adapters report acceptance and
+outcomes; they do not own the state machine.
+
+Initial non-terminal states:
+
+- requested
+- accepted
+- queued
+- running
+- cancellation requested
+- recovery required
+
+Initial terminal states:
+
+- rejected
+- blocked by policy
+- unsupported
+- succeeded
+- failed
+- cancelled
+- timed out
+
+Allowed first transitions:
+
+- requested to accepted
+- requested to rejected
+- requested to blocked by policy
+- requested to unsupported
+- accepted to queued
+- accepted to running
+- queued to running
+
+Allowed completion transitions:
+
+- accepted to succeeded, failed, cancelled, timed out, or recovery required
+- queued to cancelled, timed out, or recovery required
+- running to succeeded, failed, cancelled, timed out, or recovery required
+- recovery required to queued, running, failed, cancelled, timed out, or
+  unsupported
+
+Cancellation is a request, not a terminal state. It may move from accepted,
+queued, running, or recovery required into cancellation requested. The final
+state may still be cancelled, timed out, failed, recovery required, or
+unsupported depending on provider behavior.
+
+Retry classification belongs to terminal or recovery-required outcomes. The
+server decides whether to retry and creates a new effect request when it does.
+Adapters may classify an outcome as retryable, not retryable, blocked by
+policy, missing credential, provider rejected, timed out, cancelled,
+unsupported, or unknown. They must not loop internally.
+
+SCM and forge effect state should become server events after normalization.
+The minimum event vocabulary before implementation is:
+
+- effect requested
+- effect accepted
+- effect queued
+- effect running
+- cancellation requested
+- effect outcome reported
+- effect retry scheduled
+- recovery required
+
+Server events may contain effect ids, adapter ids, retry classification,
+terminal state, sanitized evidence refs, observation batch refs, and short
+summaries. They must not contain raw provider payloads, credentials, raw command
+output, or machine-local paths by default.
+
 ## Research Gaps
 
 - Management branch versus main-branch sync.
@@ -988,7 +1107,4 @@ behavior.
 - Dev-only fixture crate boundary.
 - Runtime effect request and outcome type shapes.
 - Cancellation and retry policy for long-running provider effects.
-
-## Next Task
-
-Draft runtime effect trait boundary.
+- Server event payload shape for effect state changes.

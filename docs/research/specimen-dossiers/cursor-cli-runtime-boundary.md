@@ -171,7 +171,3 @@ Promoted into:
 - Decide how Cursor extension methods map to canonical nucleus plan,
   user-input, and task events.
 - Keep Cursor SDK research separate from local Cursor CLI ACP research.
-
-## Next Task
-
-Draft runtime effect trait boundary.

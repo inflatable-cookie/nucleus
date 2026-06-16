@@ -108,7 +108,3 @@ First implementation target after contracts settle:
 - `docs/specs/003-nucleus-native-harness-and-steward-runtime.md`
 - `docs/contracts/012-native-harness-runtime-contract.md`
 - `docs/architecture/system-architecture.md`
-
-## Next Task
-
-Draft runtime effect trait boundary.

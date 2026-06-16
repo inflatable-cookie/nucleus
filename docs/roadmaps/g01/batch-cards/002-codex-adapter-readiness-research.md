@@ -55,7 +55,3 @@ Determine whether Codex is ready for a first nucleus adapter implementation.
 effigy qa:docs
 effigy qa:northstar
 ```
-
-## Next Task
-
-Draft runtime effect trait boundary.

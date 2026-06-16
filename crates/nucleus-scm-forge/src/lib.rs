@@ -14,6 +14,7 @@ pub mod ids;
 pub mod links;
 pub mod observations;
 pub mod reviews;
+pub mod runtime_effects;
 pub mod scm;
 pub mod traits;
 pub mod webhooks;
@@ -48,6 +49,10 @@ pub use observations::{
 };
 pub use reviews::{
     ReviewMergePolicy, ReviewOutcome, ReviewWorkflow, ReviewWorkflowId, ReviewWorkflowStatus,
+};
+pub use runtime_effects::{
+    ForgeRuntimeEffectAcceptanceSurface, ForgeRuntimeEffectOutcomeSurface,
+    ScmRuntimeEffectAcceptanceSurface, ScmRuntimeEffectOutcomeSurface,
 };
 pub use scm::{
     ScmBranchRef, ScmChangeKind, ScmChangeRef, ScmCommitRef, ScmProviderKind, ScmRemoteRef,

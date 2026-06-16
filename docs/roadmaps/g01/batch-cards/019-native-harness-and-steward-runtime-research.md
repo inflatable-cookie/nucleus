@@ -53,7 +53,3 @@ Research Nucleus native harness and steward runtime semantics.
 effigy qa:docs
 effigy qa:northstar
 ```
-
-## Next Task
-
-Draft runtime effect trait boundary.

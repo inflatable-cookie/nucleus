@@ -11,7 +11,3 @@ Specimen dossiers capture deep reads of concrete projects or implementations.
 - `claude-runtime-boundary.md`
 - `kimi-runtime-boundary.md`
 - `pi-runtime-boundary.md`
-
-## Next Task
-
-Draft runtime effect trait boundary.

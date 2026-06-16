@@ -20,7 +20,3 @@ Updated: 2026-06-15
 | `010-agent-session-lifecycle-contract.md` | draft-promoted-first-pass | Server-owned agent session and turn lifecycle with first Rust types. |
 | `011-scm-forge-sync-contract.md` | draft | Git, SCM, forge, and project-management sync boundary. |
 | `012-native-harness-runtime-contract.md` | draft | Nucleus-owned harness runtime and steward persona boundary. |
-
-## Next Task
-
-Draft runtime effect trait boundary.

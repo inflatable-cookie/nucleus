@@ -57,6 +57,10 @@ Treat it as:
 - re-anchor on the current ready card or explicit stop/reassessment step
 - stay inside the bounded lane unless file state requires a stop
 
+Keep the active `## Next Task` pointer only in `docs/roadmaps/README.md`.
+Do not duplicate it into README files, contracts, specs, research notes,
+architecture docs, batch cards, or other docs front doors.
+
 ## Planning Ambiguity Rule
 
 When planning is needed and the next direction is not settled in the repo's

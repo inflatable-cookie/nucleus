@@ -89,7 +89,3 @@ Forge implementation options:
 
 - `docs/contracts/011-scm-forge-sync-contract.md`
 - `crates/nucleus-scm-forge`
-
-## Next Task
-
-Draft runtime effect trait boundary.

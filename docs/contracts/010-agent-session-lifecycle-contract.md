@@ -265,7 +265,3 @@ control remain out of scope.
   CLI/PTY integrations.
 - How approval and user-input responses bind to active turns.
 - How session recovery integrates with the future storage backend.
-
-## Next Task
-
-Draft runtime effect trait boundary.

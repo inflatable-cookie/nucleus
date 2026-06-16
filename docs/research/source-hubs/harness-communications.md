@@ -187,7 +187,3 @@ source is available.
 - `docs/architecture/system-architecture.md`
 - `docs/architecture/system-inventory.md`
 - `docs/contracts/002-harness-adapter-contract.md`
-
-## Next Task
-
-Draft runtime effect trait boundary.

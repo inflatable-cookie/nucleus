@@ -55,7 +55,3 @@ Draft Git-backed project management state semantics.
 effigy qa:docs
 effigy qa:northstar
 ```
-
-## Next Task
-
-Draft Git-backed project management state semantics.

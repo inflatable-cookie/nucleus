@@ -31,7 +31,3 @@ Use this for meaningful closeouts, not every reply:
 - keep public-facing docs as clear as needed
 - use file refs only where they help
 - do not force the full closeout frame when a shorter answer is enough
-
-## Next Task
-
-Keep `AGENTS.md` pointing here instead of copying the full policy.

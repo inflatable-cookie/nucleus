@@ -61,7 +61,3 @@ Drifting:
 - projects collapse back to directory bookmarks
 - tasks become a generic todo list with no agent execution shape
 - implementation outruns the docs spine
-
-## Next Task
-
-Draft runtime effect trait boundary.

@@ -24,7 +24,3 @@ List what must be true when the spec closes.
 
 List architecture, contracts, roadmaps, or logs that should receive durable
 findings.
-
-## Next Task
-
-State the next action.

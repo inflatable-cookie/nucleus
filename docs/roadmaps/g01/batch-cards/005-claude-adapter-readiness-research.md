@@ -49,7 +49,3 @@ supported route.
 effigy qa:docs
 effigy qa:northstar
 ```
-
-## Next Task
-
-Draft runtime effect trait boundary.

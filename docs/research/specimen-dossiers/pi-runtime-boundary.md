@@ -206,7 +206,3 @@ PTY bridge remains a fallback for visual terminal rendering only.
 - Pi adapter must report sandbox status as external/none unless nucleus wraps
   the process in its own sandbox.
 - Pi provider/model selection belongs partly to the model-route contract.
-
-## Next Task
-
-Draft runtime effect trait boundary.

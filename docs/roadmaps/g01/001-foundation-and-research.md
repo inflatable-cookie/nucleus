@@ -146,7 +146,6 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/043-add-adapter-runtime-effect-type-skeleton.md`
 - `docs/roadmaps/g01/batch-cards/044-add-adapter-runtime-effect-type-compile-tests.md`
 - `docs/roadmaps/g01/batch-cards/045-draft-runtime-effect-trait-boundary.md`
-
-## Next Task
-
-Draft runtime effect trait boundary.
+- `docs/roadmaps/g01/batch-cards/046-add-runtime-effect-trait-skeleton.md`
+- `docs/roadmaps/g01/batch-cards/047-draft-runtime-effect-state-machine-policy.md`
+- `docs/roadmaps/g01/batch-cards/048-add-runtime-effect-state-types.md`

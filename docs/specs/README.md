@@ -20,7 +20,3 @@ Batch cards live under the active roadmap lane:
 
 Closed or superseded specs move to `archive/` only when architecture,
 contracts, roadmaps, or logs carry the durable truth.
-
-## Next Task
-
-Draft runtime effect trait boundary.

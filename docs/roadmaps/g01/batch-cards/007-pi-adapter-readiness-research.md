@@ -49,7 +49,3 @@ Promote Pi from first-pass runtime dossier to adapter implementation readiness.
 effigy qa:docs
 effigy qa:northstar
 ```
-
-## Next Task
-
-Draft runtime effect trait boundary.

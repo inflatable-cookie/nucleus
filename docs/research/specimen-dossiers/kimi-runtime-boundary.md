@@ -174,7 +174,3 @@ Possible implementation paths:
   option ids.
 - Kimi session parsing and Wire logs may support history hydration, but
   `session/load` is the first ACP-native replay path.
-
-## Next Task
-
-Draft runtime effect trait boundary.

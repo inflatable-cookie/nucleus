@@ -181,7 +181,3 @@ work.
 - `docs/contracts/008-storage-state-persistence-contract.md`
 - new SCM/forge sync contract
 - future Rust crate or module for SCM/forge integration
-
-## Next Task
-
-Draft runtime effect trait boundary.

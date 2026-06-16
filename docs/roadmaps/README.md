@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Complete the foundation and harness research milestone.
+Add runtime effect state types.

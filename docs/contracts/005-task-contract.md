@@ -364,7 +364,3 @@ and projection IO remain out of scope.
 - Exact action-type to adapter-capability mapping.
 - Artifact reference policy for retained validation output.
 - Mapping task validation commands to command authority scopes.
-
-## Next Task
-
-Draft runtime effect trait boundary.

@@ -48,7 +48,3 @@ Determine whether Cursor CLI is ready for an ACP-first nucleus adapter.
 effigy qa:docs
 effigy qa:northstar
 ```
-
-## Next Task
-
-Draft runtime effect trait boundary.

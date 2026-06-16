@@ -23,7 +23,3 @@ List concrete checks.
 ## Validation
 
 List commands or manual checks.
-
-## Next Task
-
-State the next action after closeout.

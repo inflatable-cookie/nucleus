@@ -71,7 +71,3 @@ effigy qa:northstar
 cargo check --workspace
 cargo test --workspace
 ```
-
-## Next Task
-
-Draft runtime effect trait boundary.

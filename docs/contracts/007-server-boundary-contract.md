@@ -392,6 +392,130 @@ evidence-bearing outcomes compose, cancellation posture is explicit, retry
 classifications stay distinct, and sanitized evidence remains the outcome
 payload instead of raw process output.
 
+## Runtime Command Effect Trait Boundary
+
+Runtime command effect traits should be split by responsibility.
+
+Initial command effect responsibilities:
+
+- accept command effect requests from the server command authority boundary
+- report accepted, rejected, queued, blocked, unsupported, or approval-required
+  states before execution
+- prepare process and sandbox execution only after policy allows it
+- publish sanitized evidence for running, succeeded, failed, cancelled,
+  timed-out, and blocked-by-policy states
+- keep raw stdout, stderr, environment, credentials, and filesystem paths out
+  of default outcomes
+- report cancellation, timeout, retry, artifact-retention, and recovery
+  outcomes without hiding partial execution
+
+Command effect acceptance and final command evidence publication may be
+separate trait surfaces. Acceptance is policy and scheduling state. Evidence
+publication is runtime result state. A later Rust trait draft should preserve
+that split unless a narrower command runner contract proves a single surface is
+enough.
+
+Cancellation needs explicit outcome reporting. A cancellation request is not a
+final state. The command runner may report cancelled, timed out,
+cooperative-only, unsupported, or recovery-required outcomes after cancellation
+is requested.
+
+The server owns scheduling, retry policy, timeout policy, approval state,
+credential policy, artifact-retention policy, and client event fan-out. Command
+effect traits may execute only under server-issued authority and must return
+sanitized evidence.
+
+The first Rust trait draft may name value-returning acceptance and outcome
+surfaces. Async runtime, PTY strategy, stream type, sandbox backend, process
+supervisor, artifact store, and replay store remain deferred.
+
+The first Rust command runtime effect trait skeletons now expose separate
+request-acceptance and outcome-reporting surfaces. They are value-shaped and
+compile-only. They do not execute commands, spawn processes, open terminals,
+stream output, implement sandboxes, retain artifacts, schedule retries, or
+persist replay state.
+
+## Runtime Command Effect State Machine Policy
+
+Command effects move through server-owned state. Command runners report
+acceptance and sanitized evidence outcomes; they do not own scheduling, retry,
+approval, artifact-retention, or event fan-out policy.
+
+Initial non-terminal states:
+
+- requested
+- policy inspection
+- approval required
+- accepted
+- queued
+- running
+- cancellation requested
+- recovery required
+
+Initial terminal states:
+
+- rejected
+- blocked by policy
+- unsupported
+- succeeded
+- failed
+- cancelled
+- timed out
+
+Allowed first transitions:
+
+- requested to policy inspection
+- requested to approval required
+- requested to accepted
+- requested to rejected
+- requested to blocked by policy
+- requested to unsupported
+
+Allowed execution transitions:
+
+- policy inspection to accepted, approval required, rejected, blocked by policy,
+  or unsupported
+- approval required to accepted, rejected, blocked by policy, or cancelled
+- accepted to queued or running
+- queued to running
+
+Allowed completion transitions:
+
+- accepted to succeeded, failed, cancelled, timed out, or recovery required
+- queued to cancelled, timed out, or recovery required
+- running to succeeded, failed, cancelled, timed out, or recovery required
+- recovery required to queued, running, failed, cancelled, timed out, or
+  unsupported
+
+Cancellation is a request, not a terminal state. It may move from approval
+required, accepted, queued, running, or recovery required into cancellation
+requested. The final state may still be cancelled, timed out, failed, recovery
+required, or unsupported depending on process and sandbox behavior.
+
+Retry classification belongs to terminal or recovery-required outcomes. The
+server decides whether to retry and creates a new command effect request when
+it does. Command runners may classify an outcome as retryable, not retryable,
+blocked by policy, missing approval, missing credential, timed out, cancelled,
+unsupported, or unknown. They must not loop internally.
+
+Command effect state should become server events after sanitization. The
+minimum event vocabulary before implementation is:
+
+- command effect requested
+- command effect accepted
+- command effect queued
+- command effect running
+- command approval required
+- cancellation requested
+- command evidence published
+- command retry scheduled
+- recovery required
+
+Server events may contain effect ids, command request ids, retry
+classification, terminal state, sanitized evidence refs, artifact refs, and
+short summaries. They must not contain raw stdout, stderr, environment,
+credential material, or machine-local paths by default.
+
 ## Research Gaps
 
 - Whether the first API should be HTTP/WebSocket, local socket, or both.
@@ -404,7 +528,4 @@ payload instead of raw process output.
 - Dev-only command fixture crate boundary.
 - Runtime command effect request and outcome type shapes.
 - Cancellation, timeout, retry, and artifact-retention policy.
-
-## Next Task
-
-Draft runtime effect trait boundary.
+- Server event payload shape for command effect state changes.

@@ -9,6 +9,7 @@ pub mod effects;
 pub mod evidence;
 pub mod ids;
 pub mod policy;
+pub mod runtime_effects;
 
 pub use authority::{CommandAuthorityPolicySurface, CommandAuthorityReadiness};
 pub use effects::{
@@ -20,4 +21,7 @@ pub use ids::{CommandEvidenceId, CommandPolicyId, CommandRequestId};
 pub use policy::{
     CommandApprovalPolicy, CommandAuthorityArea, CommandExecutionRequest, CommandRisk,
     CommandSandboxProfile, CommandScope,
+};
+pub use runtime_effects::{
+    CommandRuntimeEffectAcceptanceSurface, CommandRuntimeEffectOutcomeSurface,
 };

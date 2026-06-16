@@ -53,7 +53,3 @@ effigy qa:northstar
 cargo check --workspace
 cargo test --workspace
 ```
-
-## Next Task
-
-Draft validation evidence and artifact reference semantics.
