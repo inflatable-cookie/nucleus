@@ -58,4 +58,4 @@ cargo test --workspace
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

@@ -12,6 +12,7 @@ pub enum ScmProviderKind {
     Mercurial,
     Pijul,
     Fossil,
+    Convergence,
     Custom(String),
 }
 
@@ -45,9 +46,36 @@ pub struct ScmWorkSession {
     pub base_ref: Option<ScmChangeRef>,
     pub branch: Option<ScmBranchRef>,
     pub worktree: Option<ScmWorktreeRef>,
+    pub workflow: ScmWorkflowSemantics,
     pub merge_target: Option<ScmBranchRef>,
     pub status: ScmWorkSessionStatus,
     pub runtime_constraints: Vec<ScmRuntimeConstraint>,
+}
+
+/// Provider workflow semantics for local capture and shared authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScmWorkflowSemantics {
+    pub local_capture: ScmWorkflowPrimitive,
+    pub shared_authority: ScmWorkflowPrimitive,
+    pub review_boundary: Option<ScmWorkflowPrimitive>,
+}
+
+/// Provider-specific workflow primitive expressed in Nucleus vocabulary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ScmWorkflowPrimitive {
+    Commit,
+    ChangeSet,
+    Patch,
+    Revision,
+    Checkin,
+    Snapshot,
+    Publication,
+    Bundle,
+    Release,
+    Branch,
+    Worktree,
+    Gate,
+    Custom(String),
 }
 
 /// How a work session isolates changes from the main project checkout.
@@ -124,6 +152,10 @@ pub enum ScmChangeKind {
     Patch,
     Revision,
     Checkin,
+    Snapshot,
+    Publication,
+    Bundle,
+    Release,
     Custom(String),
 }
 

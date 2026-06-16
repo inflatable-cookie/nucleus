@@ -33,6 +33,8 @@ Future clients may include:
   configuration, readiness, lifecycle, and health types.
 - `nucleus-native-harness`: first draft Nucleus-owned persona, session, event,
   tool, approval, model backend, and audit boundary types.
+- `nucleus-command-policy`: first draft command authority, sandbox, approval,
+  and sanitized command evidence boundary types.
 - `nucleus-projects`: durable project identity, repo membership, project
   lifecycle, and projection record types later.
 - `nucleus-scm-forge`: first draft provider-agnostic SCM and forge adapter
@@ -84,6 +86,10 @@ Remote deployment is modeled above the adapter layer.
 The server owns providers, terminals, filesystem, git, project state, task
 state, and workspace state. Clients select an access path; they do not split
 the runtime.
+
+Local command execution is server-authorized. SCM adapters, harness adapters,
+validation workflows, and native personas request command authority from the
+server instead of spawning processes directly.
 
 ## Harness Adapter Layer
 
@@ -298,6 +304,15 @@ Conflict and review workflow records are server-owned. Provider pull requests,
 merge requests, branch refs, and issue refs remain linked metadata rather than
 the durable source of Nucleus task or work-session identity.
 
+SCM adapters expose workflow semantics. Git-like systems may treat commits as
+the main shared authority primitive. Convergence-like systems may use local
+snapshots for capture and publication/gate flow for shared authority.
+
+SCM adapters also request command authority through the server. Read-only
+inspection, management-state writes, source-code writes, network operations,
+destructive operations, process lifecycle operations, and secret access are
+separate command scopes.
+
 The steward agent is bounded. It can prepare management-state commits, link
 tasks to forge objects, and ask for human decisions. It must not silently delete
 tasks, rewrite meaningful history, push code changes, or expose secrets.
@@ -358,6 +373,70 @@ Early constraints:
 
 Concrete budgets will be set after the initial research pass.
 
+## Production Adapter Trait Boundary
+
+Production adapter traits should be drafted from the canonical contracts, not
+from dev-only fixture APIs.
+
+Initial trait families:
+
+- SCM adapter: declares provider kind, capabilities, workflow semantics,
+  repository and worktree observations, provider-neutral change refs, conflict
+  observations, review-workflow links, and required command scopes.
+- forge adapter: declares provider kind, capabilities, pull request / merge
+  request refs, issue refs, comments, webhook verification evidence, polling
+  observations, credential-use evidence, and review-workflow links.
+- command authority boundary: owns command request policy, approval,
+  sandboxing, execution, and sanitized evidence. SCM and forge adapters may
+  request command authority; they must not execute host commands directly.
+- observation source: normalizes provider events into server-owned
+  observations with stable ids, dedupe keys, effect hints, and provider refs as
+  metadata.
+
+First production traits can be value-returning where they describe identity,
+capability, workflow semantics, and readiness. Operations that observe external
+state, follow event streams, execute command-backed actions, or interact with
+webhooks should be designed as effectful boundaries later. The docs must not
+force an async runtime, stream type, transport, or registry implementation yet.
+
+The trait vocabulary must not assume Git. Git-like adapters may use commit,
+branch, and pull request semantics. Convergence-like adapters may use snapshot,
+publication, gate, bundle, or release semantics. The adapter contract names
+which workflow primitive is local capture, shared authority, and review
+boundary instead of making those terms implicit.
+
+## Adapter Runtime Effect Boundary
+
+Static adapter traits describe what an adapter is and what it can do. Runtime
+effects describe work that touches outside state, long-running state, or
+server-owned authority.
+
+Initial effect categories:
+
+- refresh: inspect provider state and return normalized observation batches
+- poll: repeat refresh under server scheduling policy
+- webhook input: verify provider input and return sanitized evidence plus
+  observations
+- command request: ask server command authority for command-backed work
+- command result: receive sanitized command evidence from the server boundary
+- event subscription: follow provider event streams where supported
+- cancellation: request interruption of an in-flight effect
+- recovery: rebuild adapter runtime state after restart, reconnect, or
+  provider interruption
+
+Runtime effects must return data for server normalization. They must not mutate
+project, task, workspace, projection, or history state directly. Provider refs
+remain metadata; server-owned ids remain authoritative.
+
+The server owns scheduling, authorization, command execution, cancellation
+policy, retries, dedupe, persistence, and event fan-out. Adapters own provider
+translation and provider-specific capability limits.
+
+Async runtime, stream type, cancellation primitive, retry scheduler, replay
+store, and transport selection are deferred. The first effect contract should
+name effect requests, effect outcomes, cancellation semantics, and observation
+batch rules before Rust effect traits are implemented.
+
 ## Interfaces With Roadmaps
 
 This architecture unlocks:
@@ -366,4 +445,4 @@ This architecture unlocks:
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

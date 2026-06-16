@@ -10,4 +10,4 @@ Source hubs group external evidence by topic.
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

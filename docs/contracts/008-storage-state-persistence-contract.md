@@ -148,6 +148,18 @@ Abandoned, rejected, resolved, and superseded conflict or review records should
 remain auditable until retention policy says otherwise. Cleanup of branches,
 worktrees, or provider review objects must not erase server audit records.
 
+Command execution journal entries may retain request id, authority area, scope,
+risk, sandbox profile, approval policy, status, exit status, output retention
+mode, artifact refs, and sanitized summary.
+
+Command journals must not retain raw stdout, raw stderr, terminal byte streams,
+shell traces, environment variables, credentials, tokens, cookies, private
+keys, provider auth files, or command helper output by default.
+
+Full command output may be retained only as an artifact reference under an
+explicit retention policy. Secret scanning and redaction requirements must be
+defined before full command output artifacts become automatic.
+
 ## Storage Backend Boundary
 
 Backend selection is deliberately open.
@@ -225,7 +237,9 @@ sync.
 - Credential rotation and revocation model.
 - Webhook replay cache storage model.
 - Retention policy for abandoned reviews and resolved conflicts.
+- Retention policy for full command output artifacts.
+- Secret scanning and redaction model for command evidence.
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

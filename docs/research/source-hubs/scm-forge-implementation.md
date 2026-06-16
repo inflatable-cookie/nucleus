@@ -21,6 +21,7 @@ Git is the only long-term SCM.
 - Fossil: `https://fossil-scm.org/`
 - Octocrab: `https://github.com/XAMPPRocky/octocrab`
 - GitLab Rust crate: `https://crates.io/crates/gitlab/`
+- Local Convergence specimen: `../convergence`
 
 ## First Findings
 
@@ -47,6 +48,11 @@ Non-Git SCM findings:
 - Fossil combines distributed SCM with project-management surfaces such as bug
   tracking and wiki. It should be treated as SCM plus possible forge-like
   collaboration surface, not just a Git clone.
+- Convergence separates local capture from shared authority. A `snap` is a
+  workspace snapshot and is not necessarily buildable or authoritative.
+  `publish` submits a snap to a scope/gate. Bundles, promotions, and releases
+  are later consumable workflow points. Nucleus must model this as workflow
+  semantics rather than forcing snaps into commit vocabulary.
 
 Forge implementation options:
 
@@ -60,6 +66,8 @@ Forge implementation options:
 - Git-specific commit and branch refs are allowed but must not be mandatory for
   every SCM.
 - Provider-neutral change refs are required.
+- Provider-neutral workflow semantics are required. Adapters must name local
+  capture, shared authority, and review/publication boundary primitives.
 - Provider refs must be retained as metadata.
 - Forge issue ids must not replace Nucleus task ids.
 - Webhook payloads and poll responses are inputs; normalized observations are
@@ -75,6 +83,7 @@ Forge implementation options:
 - Webhook signature verification model.
 - Secret-reference model for forge and SCM credentials.
 - Polling budgets and backoff policy.
+- Convergence-style publication/gate fixtures for non-Git workflow tests.
 
 ## Promotion Targets
 
@@ -83,4 +92,4 @@ Forge implementation options:
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

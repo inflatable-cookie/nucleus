@@ -19,11 +19,28 @@ Updated: 2026-06-15
   configuration, readiness, lifecycle, and health types.
 - `nucleus-native-harness`: first draft Nucleus-owned persona, session, event,
   tool, approval, model backend, and audit boundary types.
+- `nucleus-command-policy`: first draft command authority, sandbox, approval,
+  and sanitized command evidence boundary types. Current contracts define the
+  first production command authority trait boundary in docs, with
+  a static policy-inspection trait skeleton now present. Runtime command
+  effects are documented and have type-only request/outcome vocabulary, but are
+  not implemented.
+- `nucleus-contract-fixtures`: dev-only, unpublished contract fixture
+  vocabulary crate for provider-neutral SCM/forge and command-policy contract
+  tests. Production crates must not depend on it. The first integration tests
+  prove provider-neutral workflow, command-policy, sanitized-evidence,
+  task-link, conflict, and review vocabulary without live providers. It also
+  contains deterministic fake adapter skeletons for command-policy, SCM, and
+  forge test surfaces plus ordered scenario scripts for management-state sync
+  and blocked-policy / rejected-review paths.
 - `nucleus-projects`: first draft durable project, repo membership, path
   history, repair action, activity, and projection record types.
 - `nucleus-scm-forge`: first draft provider-agnostic SCM, forge, credential,
   webhook, conflict, review-workflow, task-link, observation, and work-session
-  boundary types.
+  boundary types. Current contracts define the first production adapter trait
+  boundary in docs, with static SCM, forge, and observation-source trait
+  skeletons now present. Runtime SCM/forge effects are documented and have
+  type-only request/outcome vocabulary, but are not implemented.
 - `nucleus-tasks`: first draft task identity, importance, neglect, action,
   assignment, activity, agent-readiness, and projection record types.
 - `nucleus-workspaces`: first draft modular workspace layout, panel, and
@@ -77,4 +94,4 @@ Updated: 2026-06-15
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

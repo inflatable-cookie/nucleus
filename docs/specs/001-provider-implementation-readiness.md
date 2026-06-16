@@ -102,4 +102,4 @@ Durable findings should promote into:
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

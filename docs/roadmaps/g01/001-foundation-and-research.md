@@ -85,6 +85,19 @@ contracts before app behavior begins.
 - Branch/worktree session management policy batch card exists.
 - SCM/forge conflict and review workflow policy batch card exists.
 - SCM/forge adapter implementation readiness plan batch card exists.
+- Command execution authority and sandbox policy batch card exists.
+- Provider-neutral fake adapter and fixture plan batch card exists.
+- Dev-only fixture crate boundary and contract-test plan batch card exists.
+- Dev-only contract fixture crate scaffold batch card exists.
+- First provider-neutral contract tests batch card exists.
+- Provider-neutral fake adapter skeleton batch card exists.
+- Fake adapter scenario script tests batch card exists.
+- Production adapter trait boundary draft batch card exists.
+- Production adapter trait skeleton batch card exists.
+- Production adapter trait compile tests batch card exists.
+- Adapter runtime effect boundary draft batch card exists.
+- Adapter runtime effect type skeleton batch card exists.
+- Adapter runtime effect type compile tests batch card exists.
 
 ## Batch Queue
 
@@ -119,7 +132,21 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/029-branch-worktree-session-management-policy.md`
 - `docs/roadmaps/g01/batch-cards/030-scm-forge-conflict-and-review-workflow-policy.md`
 - `docs/roadmaps/g01/batch-cards/031-scm-forge-adapter-implementation-readiness-plan.md`
+- `docs/roadmaps/g01/batch-cards/032-command-execution-authority-and-sandbox-policy.md`
+- `docs/roadmaps/g01/batch-cards/033-provider-neutral-fake-adapter-and-fixture-plan.md`
+- `docs/roadmaps/g01/batch-cards/034-dev-only-fixture-crate-boundary-and-contract-test-plan.md`
+- `docs/roadmaps/g01/batch-cards/035-scaffold-dev-only-contract-fixture-crate.md`
+- `docs/roadmaps/g01/batch-cards/036-add-first-provider-neutral-contract-tests.md`
+- `docs/roadmaps/g01/batch-cards/037-add-provider-neutral-fake-adapter-skeleton.md`
+- `docs/roadmaps/g01/batch-cards/038-add-fake-adapter-scenario-script-tests.md`
+- `docs/roadmaps/g01/batch-cards/039-draft-production-adapter-trait-boundary.md`
+- `docs/roadmaps/g01/batch-cards/040-add-production-adapter-trait-skeleton.md`
+- `docs/roadmaps/g01/batch-cards/041-add-production-adapter-trait-compile-tests.md`
+- `docs/roadmaps/g01/batch-cards/042-draft-adapter-runtime-effect-boundary.md`
+- `docs/roadmaps/g01/batch-cards/043-add-adapter-runtime-effect-type-skeleton.md`
+- `docs/roadmaps/g01/batch-cards/044-add-adapter-runtime-effect-type-compile-tests.md`
+- `docs/roadmaps/g01/batch-cards/045-draft-runtime-effect-trait-boundary.md`
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

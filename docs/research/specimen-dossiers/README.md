@@ -14,4 +14,4 @@ Specimen dossiers capture deep reads of concrete projects or implementations.
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

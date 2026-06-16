@@ -24,9 +24,15 @@ SCM systems and forges provide synchronization, review, discovery, and
 collaboration signals.
 
 Git is the first practical SCM target. It is not the only model. SCM support
-must stay adapter-based so Jujutsu, Mercurial, Pijul, Fossil, or future
-systems can be represented without forcing every object into Git's branch and
-commit vocabulary.
+must stay adapter-based so Jujutsu, Mercurial, Pijul, Fossil, Convergence, or
+future systems can be represented without forcing every object into Git's
+branch and commit vocabulary.
+
+SCM adapters must expose workflow semantics, not just object names. Some
+systems treat local capture and shared authority as different operations. In
+Convergence, for example, snaps are non-authoritative workspace snapshots while
+publication/gate flow is closer to the authoritative review boundary that Git
+users often associate with commits or pull requests.
 
 ## State Split
 
@@ -213,21 +219,24 @@ must be scoped to management-state files.
 
 Sync policy grants maximum authority only. Action policy still applies.
 
-Commit and push rules:
+Commit, publish, and push rules:
 
 - manual policy: steward may prepare changes, but a human creates commits and
-  pushes
-- assisted policy: steward may prepare management-state commits; commit or push
+  pushes, publishes, or provider-equivalent authority transitions
+- assisted policy: steward may prepare management-state commits, snapshots, or
+  provider-equivalent local capture records; commit, push, publish, or promote
   requires approval unless project policy grants a narrower exception
-- automatic policy: steward may commit and push management-only changes, but
-  may not resolve semantic conflicts, delete tasks, rewrite meaningful history,
-  change sync policy, or change project identity without approval
-- reviewed policy: steward prepares a branch or pull request instead of
-  updating the shared branch directly
+- automatic policy: steward may create provider-equivalent management-only
+  shared records, but may not resolve semantic conflicts, delete tasks,
+  rewrite meaningful history, change sync policy, or change project identity
+  without approval
+- reviewed policy: steward prepares a branch, pull request, publication,
+  review workflow, or provider-equivalent gate input instead of updating shared
+  authority directly
 
 Automatic sync must stop when the working tree includes code changes unless
-the implementation can prove that the commit contains management-state files
-only.
+the implementation can prove that the provider-equivalent shared record
+contains management-state files only.
 
 ## Project Steward Role
 
@@ -239,15 +248,18 @@ It may:
 - inspect Git status and sync queues
 - validate task schemas
 - normalize task metadata
-- prepare management-state commits
+- prepare management-state commits, snapshots, publications, or
+  provider-equivalent shared records
 - reconcile mechanical conflicts
 - detect stale, duplicate, blocked, or conflicting task records
 - update project docs and indexes
-- link tasks to commits, branches, pull requests, issues, and artifacts
+- link tasks to commits, snapshots, publications, branches, pull requests,
+  issues, and artifacts
 - ask for human decisions on semantic conflicts
 
-It may commit or push only when the active sync policy and persona policy both
-grant that authority.
+It may commit, push, publish, promote, or perform provider-equivalent authority
+transitions only when the active sync policy and persona policy both grant that
+authority.
 
 It must not silently:
 
@@ -255,6 +267,7 @@ It must not silently:
 - rewrite meaningful task history
 - resolve semantic conflicts
 - push code changes
+- publish or promote code changes
 - change project identity or repo membership
 - change sync policy
 - expose secret material
@@ -348,7 +361,7 @@ Initial forge surfaces:
 
 - repository refs
 - branches
-- commits
+- commits or provider-equivalent authoritative records
 - pull requests
 - issues
 - comments
@@ -369,10 +382,10 @@ SCM adapters cover local and remote source-control state:
 - worktrees
 - remotes
 - branches
-- commits or provider-neutral changes
+- commits, snapshots, publications, or provider-neutral changes
 - dirty-state observations
-- management-state commit preparation
-- management-state push capability under policy
+- management-state capture preparation
+- management-state shared-authority capability under policy
 
 Forge adapters cover collaboration state:
 
@@ -391,7 +404,22 @@ server-owned observation ids.
 
 Provider-neutral change refs must be available for SCM systems where `commit`
 is not the right primitive. Initial change kinds include commit, changeset,
-patch, revision, checkin, and custom provider-specific values.
+patch, revision, checkin, snapshot, publication, bundle, release, and custom
+provider-specific values.
+
+Initial workflow primitives include commit, changeset, patch, revision,
+checkin, snapshot, publication, bundle, release, branch, worktree, gate, and
+custom provider-specific values.
+
+Adapters must identify which primitive is local capture, which primitive
+creates or updates shared authority, and which primitive acts as the review
+boundary. These may be the same in Git-like systems and different in systems
+such as Convergence.
+
+Command-backed adapters must declare the command scope they need before
+execution. Read-only inspection, management-state capture, source-code writes,
+network access, destructive operations, process lifecycle operations, and
+secret access are separate command scopes.
 
 Webhook payloads and poll responses are inputs, not durable state. Adapters
 must normalize them into server-owned observations before they affect task,
@@ -399,6 +427,145 @@ project, sync, or workspace state.
 
 Task links to SCM and forge objects are references. A forge issue may link to a
 Nucleus task. It must not become the task identity.
+
+## Provider-Neutral Fixture Policy
+
+SCM and forge implementation must start with provider-neutral fake adapters and
+fixtures.
+
+Required first fixture profiles:
+
+- Git-like: commit is both local capture and shared authority, branch is the
+  common isolation primitive, pull request is the review boundary.
+- Convergence-like: snap is local capture, publication/gate is the review or
+  shared-authority boundary, release is a later consumable output.
+- Generic forge: pull request, issue, comment, webhook, and polling surfaces
+  exist without live provider credentials.
+- Credential failure: missing, expired, denied, invalid, and available
+  credential references are represented without raw secrets.
+- Webhook verification: verified, rejected, replay suspected, unsupported, and
+  local-development-skipped paths are represented with sanitized evidence.
+- Conflict and review: SCM file conflict, semantic task conflict, direct
+  authority update, review request, rejected review, and abandoned work are
+  represented without running a real SCM.
+
+Fixture events must cover:
+
+- repository seen
+- worktree seen
+- branch-like ref seen
+- provider-neutral change seen
+- workflow semantics declared
+- work session changed
+- conflict detected
+- review workflow changed
+- credential use failed
+- webhook rejected
+- task link proposed
+
+Fake adapters must not require live GitHub, GitLab, Gitea, Bitbucket,
+Convergence, Git, Jujutsu, Mercurial, Pijul, Fossil, network, shell, or host
+credentials.
+
+Fixture builders are test-support surfaces. They must not be exported as stable
+production APIs until a later contract explicitly promotes them. Production
+crates may expose descriptive vocabulary needed by both production and tests,
+but fake adapter builders should live in dev-only modules, test support crates,
+or integration-test fixtures.
+
+## Dev-Only Fixture Boundary
+
+The dev-only fixture boundary is the unpublished
+`nucleus-contract-fixtures` crate.
+
+The fixture crate may depend on production type-only crates. Production crates
+must not depend on the fixture crate.
+
+Fixture crate rules:
+
+- `publish = false`
+- no process spawning
+- no network access
+- no shell execution
+- no live provider credentials
+- no host credential lookup
+- no raw secrets in fixture data
+- no stable production API promises
+
+The fixture crate may contain fake adapter skeletons for SCM and forge contract
+tests. These skeletons must return deterministic value records only. They must
+not implement production adapter traits, connect to the runtime registry, open
+network connections, shell out, or read credentials.
+
+The fixture crate may contain ordered fake scenario scripts. Scenario scripts
+are test-support records only. They may prove ordering for SCM observations,
+forge observations, task links, and command evidence, but they must not become
+the production event model, replay log, or persistence schema.
+
+## Production Adapter Trait Boundary
+
+Production SCM and forge traits are separate surfaces. They may share common
+identity, capability, observation, credential evidence, and task-link
+vocabulary, but they must not collapse local source-control behavior and forge
+collaboration behavior into one catch-all adapter.
+
+Initial SCM trait responsibilities:
+
+- expose adapter identity and provider kind
+- expose SCM capabilities
+- expose workflow semantics for local capture, shared authority, and review
+  boundary
+- describe required command scopes before any command-backed operation
+- produce normalized SCM observations
+- produce provider-neutral repository, worktree, branch-like, and change refs
+- surface conflict records and review workflow refs
+- report credential-use evidence without credential material
+
+Initial forge trait responsibilities:
+
+- expose adapter identity and provider kind
+- expose forge capabilities
+- produce normalized forge observations
+- surface pull request or merge request refs where supported
+- surface issue and comment refs where supported
+- verify or reject webhook inputs into sanitized evidence
+- surface credential-use evidence without credential material
+- link forge objects to server-owned review workflows and task links
+
+Shared observation responsibilities:
+
+- server-owned observation ids
+- provider refs retained only as metadata
+- dedupe keys for duplicate suppression
+- effect hints for downstream policy
+- no direct mutation of project, task, or workspace state
+
+Command-backed SCM and forge traits must request command authority through the
+server command policy boundary. They must not spawn Git, Convergence, shell, or
+forge helper commands directly. Network-backed forge traits must declare
+network authority and credential references before execution.
+
+Trait methods may stay synchronous and value-returning for static identity,
+capability, workflow semantics, and readiness data. Observation refresh,
+webhook processing, command-backed operations, live provider polling, and event
+streams are effectful boundaries. They need a later runtime contract before
+Rust traits are implemented.
+
+Dev-only fixtures, fake adapters, and scenario scripts are evidence for the
+trait boundary. They must not be copied directly into production trait APIs.
+
+First SCM/forge contract tests should prove:
+
+- Git-like workflow semantics: commit as local capture and shared authority,
+  branch as isolation, pull request as review boundary
+- Convergence-like workflow semantics: snap as local capture,
+  publication/gate as shared authority or review boundary
+- provider-neutral task links do not replace task ids
+- provider refs do not replace Nucleus ids
+- fake credential failures produce sanitized evidence
+- fake webhook rejection produces sanitized evidence
+- fake review workflows retain abandoned work as audit state
+- fake conflicts distinguish SCM file conflicts from semantic task conflicts
 
 ## Credential Boundary
 
@@ -422,6 +589,11 @@ boundaries. A local Git, Jujutsu, Mercurial, or future SCM command may use host
 credential state without granting Nucleus forge API authority. A forge API
 credential may inspect pull requests or issues without granting local command
 authority.
+
+Local SCM commands are server-authorized command requests. SCM adapters must
+request command authority through server policy. They must not spawn Git,
+Jujutsu, Mercurial, Pijul, Fossil, Convergence, shell, or helper commands
+directly.
 
 Credential references may identify where resolution happens:
 
@@ -499,6 +671,10 @@ Review workflows are server-owned records that may link to forge pull requests,
 merge requests, branch-like refs, and work sessions. A pull request id must not
 replace a task id, work-session id, conflict id, or review-workflow id.
 
+Review workflows are not limited to pull requests. For non-Git SCMs, the
+review boundary may be a publication, bundle, gate input, release candidate,
+or provider-equivalent shared object.
+
 Initial review workflow statuses:
 
 - draft
@@ -513,19 +689,21 @@ Initial review workflow statuses:
 
 Initial merge policies:
 
-- direct merge allowed
+- direct authority update allowed
 - review request required
 - human approval required
 - unsupported
 
 A work session may move to review by opening a review request, attaching an
-existing provider review object, or preparing a direct merge proposal. The
-review workflow records the server-owned state. Provider refs remain metadata.
+existing provider review object, publishing to a gate, or preparing a direct
+authority update proposal. The review workflow records the server-owned state.
+Provider refs remain metadata.
 
-Nucleus may merge directly only when project sync policy, SCM capability,
-forge capability, work-session state, validation evidence, and approval policy
-all allow it. Otherwise it must open or update a review workflow and wait for
-human or policy approval.
+Nucleus may perform a direct merge, publish, promote, or provider-equivalent
+authority update only when project sync policy, SCM capability, forge
+capability, work-session state, validation evidence, workflow semantics, and
+approval policy all allow it. Otherwise it must open or update a review
+workflow and wait for human or policy approval.
 
 Rejected or abandoned review work must be retained as audit state. Nucleus may
 clean up branches or worktrees only after unmerged work has been retained,
@@ -634,6 +812,8 @@ Initial link targets:
 - branch
 - commit
 - provider-neutral change
+- snapshot
+- publication
 - work session
 - conflict
 - review workflow
@@ -681,12 +861,17 @@ Current modules:
 - `reviews`: review workflow records, review statuses, merge policies, and
   outcomes
 - `scm`: SCM provider kind, repository, worktree, branch, commit,
-  provider-neutral change, work session, runtime constraint, and remote refs
+  provider-neutral change, workflow semantics, work session, runtime
+  constraint, and remote refs
 - `forge`: forge repository, pull request, issue, and comment refs
 - `links`: task links to SCM and forge objects
 - `observations`: normalized SCM and forge observations, refresh mode,
   dedupe key, and observation effect
 - `capabilities`: SCM and forge adapter capabilities
+- `traits`: static SCM adapter, forge adapter, observation source, and
+  readiness trait skeletons
+- `effects`: type-only SCM and forge runtime effect request, cancellation,
+  retry, observation batch, and outcome vocabulary
 
 Projection storage vocabulary is split across existing type-only crates:
 
@@ -709,10 +894,88 @@ Projection storage vocabulary is split across existing type-only crates:
 - `NativeApprovalPolicy::RequiredBeforePolicyChange`
 
 These are descriptive policy and adapter vocabulary only. Git command
-execution, network API clients, webhook endpoints, credential lookup,
-credential storage, signature verification execution, sync workers, file IO,
-serialization, validation execution, and migration execution remain out of
+execution, local SCM command execution, network API clients, webhook endpoints,
+credential lookup, credential storage, signature verification execution, sync
+workers, file IO, serialization, validation execution, migration execution,
+fake adapter implementation, and fixture builder implementation remain out of
 scope.
+
+The first Rust trait skeletons expose static identity, capability, workflow
+semantics, readiness, required command scopes, supported refresh modes, and
+observation effect support. They do not refresh state, stream events, execute
+commands, call networks, verify webhooks, integrate with registries, persist
+state, or implement real providers.
+
+Compile-focused trait tests use local test structs only. They prove the static
+SCM, forge, and observation-source surfaces can be implemented without dev-only
+fixtures, provider behavior, async, streaming, network, command execution, or
+registry integration.
+
+## Runtime Effect Boundary
+
+SCM and forge adapters have effectful operations after the static trait
+boundary.
+
+Initial SCM effect categories:
+
+- repository refresh
+- worktree refresh
+- branch-like ref refresh
+- provider-neutral change refresh
+- dirty-state refresh
+- conflict detection
+- work-session lifecycle request
+- command-backed management-state capture request
+- review workflow preparation
+- cancellation
+- recovery after restart or provider interruption
+
+Initial forge effect categories:
+
+- repository refresh
+- pull request / merge request refresh
+- issue refresh
+- comment refresh
+- review workflow refresh
+- polling refresh
+- webhook input verification
+- credential-use check
+- review workflow preparation
+- cancellation
+- recovery after restart or provider interruption
+
+Effectful adapter operations must return normalized observations, provider refs,
+sanitized evidence, task-link proposals, conflict records, review-workflow refs,
+or command authority requests for server handling. They must not mutate project,
+task, workspace, projection, or history state directly.
+
+Command-backed SCM and forge effects must request server command authority.
+They must not spawn commands directly. Network-backed forge effects must
+declare network authority and credential references before execution.
+
+Cancellation is cooperative at this contract level. An adapter may report that
+a provider operation cannot be interrupted safely. The server remains
+responsible for recording cancellation requests, timeouts, retries, and final
+effect outcomes.
+
+Retries must be server-scheduled. Adapters may classify failures as retryable,
+blocked by policy, missing credential, provider rejected, unsupported, timed
+out, or unknown, but they must not loop indefinitely inside the adapter.
+
+Async runtime, stream type, polling scheduler, webhook transport, replay store,
+and registry integration are unresolved. They require a later runtime contract
+before Rust effect traits are implemented.
+
+The first Rust effect type skeletons name adapter effect request ids, SCM/forge
+effect request kinds, cancellation posture, retry classification, normalized
+SCM and forge observation batches, and effect outcomes. They do not execute,
+schedule, poll, stream, persist, retry, cancel, or call providers.
+
+Compile-focused effect type tests use local values only. They prove SCM and
+forge effect requests can compose with normalized observation batches,
+cancellation posture, retry classification, command-authority-required
+outcomes, and request/outcome id linkage without dev-only fixtures or runtime
+behavior.
 
 ## Research Gaps
 
@@ -720,7 +983,12 @@ scope.
 - Forge issue mirroring semantics.
 - Webhook versus polling refresh.
 - Direct merge versus review-request default policy.
+- Convergence-style publication and gate workflow fixture design.
+- Mapping SCM adapter operations to command authority scopes.
+- Dev-only fixture crate boundary.
+- Runtime effect request and outcome type shapes.
+- Cancellation and retry policy for long-running provider effects.
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

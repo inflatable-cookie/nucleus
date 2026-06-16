@@ -155,6 +155,14 @@ Validation evidence belongs on the task only as command, status, evidence
 references, and summary. Raw command output should be stored as an artifact or
 journal reference when needed, not copied into task history by default.
 
+Validation commands are command execution requests. Task readiness may name
+intended validation commands, but execution must go through server command
+policy.
+
+Task records may retain sanitized command evidence refs and summaries. They
+must not copy raw stdout, raw stderr, terminal streams, shell traces, secret
+values, or provider credential output by default.
+
 Human handoffs and reassignment must record source actor, target actor, reason,
 and context references.
 
@@ -355,7 +363,8 @@ and projection IO remain out of scope.
 - How validation commands bind to harness sessions and repo worktrees.
 - Exact action-type to adapter-capability mapping.
 - Artifact reference policy for retained validation output.
+- Mapping task validation commands to command authority scopes.
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

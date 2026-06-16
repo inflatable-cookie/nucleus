@@ -5,6 +5,8 @@ members = [
   "crates/nucleus-agent-protocol",
   "crates/nucleus-agent-adapters",
   "crates/nucleus-native-harness",
+  "crates/nucleus-command-policy",
+  "crates/nucleus-contract-fixtures",
   "crates/nucleus-projects",
   "crates/nucleus-scm-forge",
   "crates/nucleus-tasks",

@@ -111,4 +111,4 @@ First implementation target after contracts settle:
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

@@ -3,17 +3,19 @@
 //! This crate names repository, branch, commit, pull request, issue, comment,
 //! task-link, conflict, review, observation, credential, webhook, and
 //! capability surfaces. It does not implement Git commands, forge API clients,
-//! webhooks, auth, or sync workers.
+//! webhooks, auth, sync workers, fake adapters, or fixture builders.
 
 pub mod auth;
 pub mod capabilities;
 pub mod conflicts;
+pub mod effects;
 pub mod forge;
 pub mod ids;
 pub mod links;
 pub mod observations;
 pub mod reviews;
 pub mod scm;
+pub mod traits;
 pub mod webhooks;
 
 pub use auth::{
@@ -24,6 +26,11 @@ pub use capabilities::{ForgeCapability, ScmCapability, ScmForgeAdapterCapability
 pub use conflicts::{
     ScmConflictId, ScmConflictKind, ScmConflictRecord, ScmConflictResolutionPolicy,
     ScmConflictStatus,
+};
+pub use effects::{
+    AdapterEffectAdapter, AdapterEffectCancellation, AdapterEffectOutcome,
+    AdapterEffectOutcomeKind, AdapterEffectRequest, AdapterEffectRequestId,
+    AdapterEffectRequestKind, AdapterEffectRetry, ForgeObservationBatch, ScmObservationBatch,
 };
 pub use forge::{
     ForgeCommentRef, ForgeIssueRef, ForgeProviderKind, ForgePullRequestRef, ForgeRepositoryRef,
@@ -45,7 +52,10 @@ pub use reviews::{
 pub use scm::{
     ScmBranchRef, ScmChangeKind, ScmChangeRef, ScmCommitRef, ScmProviderKind, ScmRemoteRef,
     ScmRepositoryRef, ScmRuntimeConstraint, ScmWorkIsolationMode, ScmWorkSession,
-    ScmWorkSessionStatus, ScmWorktreeRef,
+    ScmWorkSessionStatus, ScmWorkflowPrimitive, ScmWorkflowSemantics, ScmWorktreeRef,
+};
+pub use traits::{
+    AdapterReadiness, ForgeAdapterSurface, ObservationSourceSurface, ScmAdapterSurface,
 };
 pub use webhooks::{
     WebhookEndpointId, WebhookVerificationEvidence, WebhookVerificationFailureKind,

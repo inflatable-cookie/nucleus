@@ -23,4 +23,4 @@ contracts, roadmaps, or logs carry the durable truth.
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

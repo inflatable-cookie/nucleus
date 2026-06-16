@@ -209,4 +209,4 @@ PTY bridge remains a fallback for visual terminal rendering only.
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

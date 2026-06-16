@@ -20,4 +20,4 @@ Architecture records the system shape once planning starts to settle.
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

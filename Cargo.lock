@@ -14,6 +14,19 @@ name = "nucleus-agent-protocol"
 version = "0.0.0"
 
 [[package]]
+name = "nucleus-command-policy"
+version = "0.0.0"
+
+[[package]]
+name = "nucleus-contract-fixtures"
+version = "0.0.0"
+dependencies = [
+ "nucleus-command-policy",
+ "nucleus-scm-forge",
+ "nucleus-tasks",
+]
+
+[[package]]
 name = "nucleus-core"
 version = "0.0.0"
 
@@ -35,6 +48,7 @@ dependencies = [
 name = "nucleus-scm-forge"
 version = "0.0.0"
 dependencies = [
+ "nucleus-command-policy",
  "nucleus-projects",
  "nucleus-tasks",
 ]

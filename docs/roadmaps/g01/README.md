@@ -14,4 +14,4 @@ Updated: 2026-06-15
 
 ## Next Task
 
-Draft SCM/forge adapter implementation readiness plan.
+Draft runtime effect trait boundary.

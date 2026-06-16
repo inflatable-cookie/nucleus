@@ -39,6 +39,7 @@ pub enum ReviewWorkflowStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReviewMergePolicy {
     DirectMergeAllowed,
+    DirectAuthorityUpdateAllowed,
     ReviewRequestRequired,
     HumanApprovalRequired,
     Unsupported,
