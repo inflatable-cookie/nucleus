@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Draft client auth and pairing boundary.
+Draft secret store and credential material boundary.

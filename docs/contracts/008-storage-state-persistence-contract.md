@@ -25,6 +25,17 @@ Credential references are durable metadata. Credential material is not durable
 Nucleus state unless a later secret-store contract explicitly defines that
 storage boundary.
 
+Client auth records are durable metadata. They may store stable client ids,
+client kind, display name, auth posture, pairing mode, non-secret credential
+references, session refs, revocation state, and sanitized audit summaries.
+They must not store credential material, tokens, pairing secrets, private keys,
+provider credentials, cookies, or authorization headers in normal server state.
+
+Revocation records are durable audit state. They may close active connections,
+interrupt subscriptions, and invalidate replay tokens for the revoked client,
+but they must not delete retained events, command evidence, adapter
+observations, task history, or audit records.
+
 Webhook verification records are sanitized evidence. They may record endpoint
 id, provider event ref, verification status, failure kind, and short
 non-secret summary. They must not store raw webhook bodies, signature header
@@ -43,6 +54,7 @@ Initial persisted domains:
 - model routes
 - server config
 - event journal
+- client auth records
 
 These domains must be recoverable after server restart.
 
@@ -404,6 +416,7 @@ adapter runtime.
 - Backup/export/import strategy.
 - Whether project-local metadata should mirror any server state.
 - Secret-store backend and host credential-provider integration.
+- Client auth credential reference and revocation storage model.
 - Git-backed management projection format and sync policy.
 - Credential rotation and revocation model.
 - Webhook replay cache storage model.

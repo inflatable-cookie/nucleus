@@ -67,6 +67,81 @@ Initial client kinds:
 - CLI
 - service
 
+## Client Auth And Pairing Boundary
+
+Client auth is a server-owned access boundary.
+
+It identifies which client is allowed to connect to the server. It is separate
+from transport selection, event replay, runtime subscriptions, command
+approval, provider credentials, model credentials, secret storage, and harness
+permission prompts.
+
+Initial auth postures:
+
+- unpaired local
+- pairing required
+- login required
+- managed identity required
+- service credential reference required
+- revoked
+- custom
+
+Initial pairing modes:
+
+- local interactive pairing
+- LAN pairing
+- remote login
+- managed invite
+- service bootstrap
+- disabled
+- custom
+
+Deployment posture:
+
+- local-only may allow unpaired local desktop or CLI access by explicit server
+  profile
+- local network requires pairing before a new desktop, mobile, web, or CLI
+  client can control state
+- internet-reachable requires normal auth posture plus revocation and client
+  identity records
+- managed remote requires managed identity, invite, or service credential
+  reference posture
+
+Minimum durable client auth record:
+
+- stable auth record id
+- stable client id
+- client kind
+- display name
+- auth posture
+- pairing mode
+- non-secret credential reference where needed
+- revocation state
+
+Credential material must not live in normal server state. Auth records may
+store credential references and sanitized audit evidence only. A later secret
+store contract must define credential material storage, rotation, and
+revocation mechanics.
+
+Revocation is server-owned. Revoking a client may close active connections,
+interrupt subscriptions, require replay tokens to be discarded, and prevent new
+commands from that client. Revocation must not delete historical events,
+command evidence, adapter observations, task history, or audit records.
+
+Client auth does not grant command approval. An authenticated client may still
+need command approval for destructive, network, source-code write, secret
+access, or process lifecycle commands. Model output still never counts as
+approval.
+
+Transport identity must not replace server-owned client identity. A transport
+may present credentials or connection metadata, but the server maps that input
+to a stable client identity and auth record before state authority is granted.
+
+This boundary does not choose OAuth, passkeys, mTLS, token auth, pairing codes,
+device codes, local OS keychain integration, or any other concrete mechanism.
+It also does not implement auth, pairing, credential storage, secret storage,
+transport, command approval, or runtime execution.
+
 ## Command Boundary
 
 Clients send commands. The server decides whether to accept, reject, queue, or
@@ -330,6 +405,15 @@ adapter-level event identity inside the server event.
 - `RuntimeEffectTransportBoundaryGuarantee`
 - `RuntimeEffectTransportSelectionCriteria`
 - `RuntimeEffectTransportAuthBlocker`
+- `ClientAuthRecordId`
+- `ClientPairingId`
+- `ClientAuthSessionId`
+- `ClientAuthPosture`
+- `ClientPairingMode`
+- `ClientAuthDeploymentPolicy`
+- `ClientPairingRecord`
+- `ClientAuthSessionRecord`
+- `ClientRevocationRecord`
 
 `nucleus-command-policy` now contains the first draft of:
 
@@ -872,6 +956,13 @@ criteria, and auth blockers. They are compile-only. They do not implement
 networking, an event bus, auth, pairing, replay, subscription delivery,
 storage, scheduling, command execution, or adapter execution.
 
+The first Rust client auth and pairing types now name auth record ids, pairing
+ids, auth session ids, auth posture, pairing mode, deployment policy, pairing
+records, auth session records, and revocation records. They are compile-only.
+They do not implement auth, pairing flows, credential material storage, secret
+storage, transport, command approval, provider credentials, model credentials,
+or runtime execution.
+
 The first Rust command runtime effect state types now name command effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -900,3 +991,4 @@ or server event fan-out.
 - Runtime effect transport selection boundary.
 - Runtime effect auth and pairing boundary.
 - Runtime effect transport implementation readiness.
+- Secret store and credential material boundary.

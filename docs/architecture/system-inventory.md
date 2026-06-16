@@ -92,7 +92,12 @@ Updated: 2026-06-16
   capability, boundary guarantees, selection criteria, and auth blockers, but
   they do not implement networking, event bus, auth, pairing, replay service,
   subscription delivery, storage, scheduling, command execution, or adapter
-  execution.
+  execution. Client auth and pairing types now name auth record ids, pairing
+  ids, auth session ids, auth posture, pairing mode, deployment policy, pairing
+  records, auth session records, and revocation records, but they do not
+  implement auth, pairing flows, credential material storage, secret storage,
+  transport, command approval, provider credentials, model credentials, or
+  runtime execution.
 
 ## Apps
 

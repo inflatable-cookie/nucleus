@@ -554,6 +554,18 @@ adapter observations, retry lineage, recovery-required work, task state, or
 workspace state. Auth and pairing remain separate readiness gates before
 remote or LAN transport implementation.
 
+Client auth and pairing are server-owned access boundaries. They map transport
+credentials or pairing inputs onto stable client identities. Auth posture may
+vary by deployment profile: local-only can allow explicit unpaired local
+access, local-network requires pairing, internet-reachable requires normal auth
+and revocation, and managed remote requires managed identity, invite, or
+service credential reference posture.
+
+Client auth is not command approval. Authenticated clients still pass through
+command authority policy. Client auth records may store non-secret credential
+references and revocation evidence, but credential material belongs behind a
+future secret-store boundary.
+
 ## Interfaces With Roadmaps
 
 This architecture unlocks:

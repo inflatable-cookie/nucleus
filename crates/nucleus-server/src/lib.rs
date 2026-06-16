@@ -4,6 +4,7 @@
 //! networking, storage, authentication, process control, or runtime routing yet.
 
 pub mod authority;
+pub mod client_auth;
 pub mod clients;
 pub mod commands;
 pub mod deployment;
@@ -17,6 +18,11 @@ pub mod runtime_effect_subscriptions;
 pub mod runtime_effect_transport;
 
 pub use authority::{AuthorityArea, ServerAuthority};
+pub use client_auth::{
+    ClientAuthDeploymentPolicy, ClientAuthPosture, ClientAuthRecordId, ClientAuthSessionId,
+    ClientAuthSessionRecord, ClientPairingId, ClientPairingMode, ClientPairingRecord,
+    ClientRevocationRecord,
+};
 pub use clients::{ClientConnection, ClientIdentity, ClientKind};
 pub use commands::{
     AgentSessionCommand, ProjectCommand, ServerCommand, TaskCommand, WorkspaceCommand,

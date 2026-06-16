@@ -1,6 +1,6 @@
 # 061 Draft Client Auth And Pairing Boundary
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -51,6 +51,25 @@ Draft client auth and pairing boundary.
 - `docs/contracts/008-storage-state-persistence-contract.md`
 - `docs/architecture/system-architecture.md`
 - `docs/architecture/system-inventory.md`
+
+## Decisions
+
+- Client auth is a server-owned access boundary.
+- Client auth is separate from transport selection, replay, subscriptions,
+  command approval, provider credentials, model credentials, and secret
+  storage.
+- Local-only may allow explicit unpaired local access. LAN requires pairing.
+  Internet-reachable requires normal auth plus revocation. Managed remote
+  requires managed identity, invite, or service credential reference posture.
+- Transport identity does not replace stable server-owned client identity.
+- Client auth records may store non-secret credential refs and sanitized audit
+  evidence only.
+- Revocation may close connections, interrupt subscriptions, and invalidate
+  replay tokens, but must not delete retained events or audit records.
+- Initial compile-only auth and pairing vocabulary was added in
+  `nucleus-server`.
+- No concrete auth mechanism, credential material storage, secret store,
+  transport, command approval, or runtime execution was implemented.
 
 ## Validation
 
