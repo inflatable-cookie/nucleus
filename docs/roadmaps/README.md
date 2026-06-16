@@ -14,6 +14,7 @@ shape.
 - `g01/007-server-control-api-and-runtime-sequencing.md`
 - `g01/008-local-request-handling-and-transport-readiness.md`
 - `g01/009-local-transport-and-desktop-bootstrap-prep.md`
+- `g01/010-server-module-decomposition-and-ipc-readiness.md`
 
 ## Index
 
@@ -21,4 +22,4 @@ shape.
 
 ## Next Task
 
-Add in-process control client fixture.
+Split local transport module boundaries.

@@ -159,7 +159,16 @@ Updated: 2026-06-16
   names request/response exchanges, readiness reporting, and transport errors.
   It is synchronous and local-only; it does not implement a socket, HTTP
   server, WebSocket server, Tauri IPC command, remote pairing flow, or live
-  subscription channel.
+  subscription channel. A non-production in-process control client fixture now
+  implements that trait with scripted responses and recorded exchanges. It
+  proves local request/response carrying. A handler-backed in-process fixture
+  now routes requests through `LocalControlRequestHandler` and proves read-only
+  state queries plus command receipts through the transport boundary. It still
+  does not implement Tauri IPC, network transport, socket listeners, state
+  mutation execution, runtime execution, or background workers. Tauri IPC
+  schema readiness types now name the first desktop command schema, control
+  envelopes, and IPC blockers without implementing Tauri commands,
+  serialization, or a desktop app.
   Runtime effect storage boundary types now name retained event records,
   storage refs, replay checkpoints, stored effect states, and query postures,
   but they do not implement persistence, serialization, replay APIs, event

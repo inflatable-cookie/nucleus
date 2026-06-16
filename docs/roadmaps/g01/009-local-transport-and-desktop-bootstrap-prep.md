@@ -1,6 +1,6 @@
 # 009 Local Transport And Desktop Bootstrap Prep
 
-Status: active
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -40,21 +40,21 @@ without scaffolding the Tauri UI.
 ## Execution Plan
 
 - [x] Add local control transport trait boundary.
-- [ ] Add in-process control client fixture.
-- [ ] Route fixture requests through `LocalControlRequestHandler`.
-- [ ] Add Tauri IPC schema readiness types.
-- [ ] Reassess desktop shell scaffold readiness.
+- [x] Add in-process control client fixture.
+- [x] Route fixture requests through `LocalControlRequestHandler`.
+- [x] Add Tauri IPC schema readiness types.
+- [x] Reassess desktop shell scaffold readiness.
 
 ## Acceptance Criteria
 
 - [x] Transport traits are local and transport-neutral.
-- [ ] In-process fixture can submit `ServerControlRequest` values and receive
+- [x] In-process fixture can submit `ServerControlRequest` values and receive
   `ServerControlResponse` values.
-- [ ] Fixture tests prove read-only state query behavior through the transport
+- [x] Fixture tests prove read-only state query behavior through the transport
   boundary.
-- [ ] Tauri IPC readiness names schema and bootstrap needs without implementing
+- [x] Tauri IPC readiness names schema and bootstrap needs without implementing
   IPC.
-- [ ] No Tauri UI, socket listener, HTTP server, command runner, provider
+- [x] No Tauri UI, socket listener, HTTP server, command runner, provider
   process, or live subscription behavior is introduced.
 
 ## Cards

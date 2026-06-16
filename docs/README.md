@@ -18,7 +18,7 @@ The repo uses:
 
 ## Current Lane
 
-`roadmaps/g01/005-server-runtime-boundaries.md`
+`roadmaps/g01/010-server-module-decomposition-and-ipc-readiness.md`
 
 ## Guardrail
 

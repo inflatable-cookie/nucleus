@@ -4,11 +4,11 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/094-add-in-process-control-client-fixture.md`
+- `docs/roadmaps/g01/batch-cards/099-split-local-transport-module-boundaries.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/094-add-in-process-control-client-fixture.md`
+- `docs/roadmaps/g01/batch-cards/099-split-local-transport-module-boundaries.md`
 
 ## Completed Cards
 
@@ -36,9 +36,16 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 - `docs/roadmaps/g01/batch-cards/091-add-local-transport-readiness-types.md`
 - `docs/roadmaps/g01/batch-cards/092-reassess-desktop-bootstrap-readiness.md`
 - `docs/roadmaps/g01/batch-cards/093-add-local-control-transport-trait-boundary.md`
-
-## Planned Cards
-
+- `docs/roadmaps/g01/batch-cards/094-add-in-process-control-client-fixture.md`
 - `docs/roadmaps/g01/batch-cards/095-route-in-process-fixture-through-handler.md`
 - `docs/roadmaps/g01/batch-cards/096-add-tauri-ipc-schema-readiness-types.md`
 - `docs/roadmaps/g01/batch-cards/097-reassess-desktop-shell-scaffold-readiness.md`
+- `docs/roadmaps/g01/batch-cards/098-compile-server-module-decomposition-and-ipc-runway.md`
+
+## Planned Cards
+
+- `docs/roadmaps/g01/batch-cards/100-split-request-handler-module-boundaries.md`
+- `docs/roadmaps/g01/batch-cards/101-add-control-api-serialization-envelope-readiness.md`
+- `docs/roadmaps/g01/batch-cards/102-add-tauri-ipc-command-boundary-skeleton.md`
+- `docs/roadmaps/g01/batch-cards/103-prove-tauri-ipc-command-path-with-fixture.md`
+- `docs/roadmaps/g01/batch-cards/104-reassess-desktop-scaffold-after-ipc-boundary.md`

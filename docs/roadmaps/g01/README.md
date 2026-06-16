@@ -15,6 +15,7 @@ Updated: 2026-06-16
 - `007-server-control-api-and-runtime-sequencing.md`
 - `008-local-request-handling-and-transport-readiness.md`
 - `009-local-transport-and-desktop-bootstrap-prep.md`
+- `010-server-module-decomposition-and-ipc-readiness.md`
 
 ## Batch Cards
 

@@ -25,6 +25,7 @@ pub mod runtime_effect_transport;
 pub mod scheduler;
 pub mod secret_store;
 pub mod state;
+pub mod tauri_ipc_readiness;
 pub mod transport_readiness;
 
 pub use authority::{AuthorityArea, ServerAuthority};
@@ -57,8 +58,8 @@ pub use event_replay::{
 pub use events::{ServerEvent, ServerEventKind};
 pub use ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerEventId, ServerQueryId};
 pub use local_transport::{
-    LocalControlTransport, LocalControlTransportBoundary, LocalControlTransportError,
-    LocalControlTransportExchange,
+    InProcessControlClientFixture, InProcessControlHandlerFixture, LocalControlTransport,
+    LocalControlTransportBoundary, LocalControlTransportError, LocalControlTransportExchange,
 };
 pub use request_handler::{LocalControlRequestHandler, LocalControlRequestHandlerBoundary};
 pub use runtime_effect_events::{
@@ -108,6 +109,10 @@ pub use secret_store::{
     CredentialRotationPolicy, SecretBackendKind,
 };
 pub use state::{ServerStateDomain, ServerStateDomainService, ServerStateService};
+pub use tauri_ipc_readiness::{
+    TauriIpcCommandSchema, TauriIpcCommandShape, TauriIpcSchemaReadiness,
+    TauriIpcSchemaReadinessBlocker, TauriIpcSchemaReadinessStatus,
+};
 pub use transport_readiness::{
     DesktopBootstrapRequirement, DesktopBootstrapStatus, LocalClientBootstrapProfile,
     LocalTransportCandidate, LocalTransportReadiness, LocalTransportReadinessBlocker,

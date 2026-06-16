@@ -9,5 +9,8 @@ No Tauri project is scaffolded yet.
 
 The first desktop bootstrap profile should prefer Tauri IPC once implemented,
 with an in-process transport remaining useful for early local tests. Transport
-readiness is tracked in `nucleus-server`; no desktop transport is implemented
-yet.
+and Tauri IPC schema readiness are tracked in `nucleus-server`; no desktop
+transport is implemented yet.
+
+Desktop scaffolding remains deferred until IPC command handling and
+serialization are testable through the server boundary.
