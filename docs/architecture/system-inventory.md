@@ -103,6 +103,10 @@ Updated: 2026-06-16
   rotation policy, revocation policy, and sanitized audit records, but they do
   not implement secret storage, encryption, backend integration, provider auth,
   command execution, credential injection, or raw credential access.
+  Credential resolution integration types now name domain integration refs,
+  integration records, blocking impacts, repair actions, and blockers, but they
+  do not resolve credentials, prompt users, access backends, inject secrets,
+  execute commands, call providers, or implement UI.
 
 ## Apps
 

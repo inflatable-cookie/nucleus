@@ -127,6 +127,68 @@ pub struct CredentialAuditRecord {
     pub summary: Option<String>,
 }
 
+/// Domain-specific credential ref mapped into the server credential material
+/// boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CredentialIntegrationRef {
+    ClientAuth(String),
+    AdapterRegistry(String),
+    ModelRoute(String),
+    ScmForge(String),
+    Webhook(String),
+    CommandPolicy(String),
+    NativeHarness(String),
+    Custom(String),
+}
+
+/// Integration record linking a domain ref to a server credential material ref.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CredentialResolutionIntegrationRecord {
+    pub integration_ref: CredentialIntegrationRef,
+    pub credential_ref: CredentialMaterialRef,
+    pub scope: CredentialResolutionScope,
+    pub status: CredentialMaterialStatus,
+    pub impact: CredentialResolutionImpact,
+    pub repair: Option<CredentialResolutionRepairAction>,
+}
+
+/// What a credential resolution status affects.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CredentialResolutionImpact {
+    NoBlock,
+    BlocksClientAuth,
+    BlocksAdapterReadiness,
+    BlocksModelRoute,
+    BlocksScmForgeAccess,
+    BlocksWebhookVerification,
+    BlocksCommandExecution,
+    RepairRequired,
+    Custom(String),
+}
+
+/// Repair action for missing or unusable credential material.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CredentialResolutionRepairAction {
+    AskUserToPairClient,
+    AskUserToLoginProvider,
+    AskUserToSelectCredentialRef,
+    AskUserToRefreshCredential,
+    AskUserToGrantPermission,
+    MarkProviderNativeAuthRequired,
+    MarkUnsupported,
+    Custom(String),
+}
+
+/// Resolution blocker surfaced before runtime credential access.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CredentialResolutionBlocker {
+    pub credential_ref: CredentialMaterialRef,
+    pub status: CredentialMaterialStatus,
+    pub impact: CredentialResolutionImpact,
+    pub repair: Option<CredentialResolutionRepairAction>,
+    pub summary: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,5 +227,42 @@ mod tests {
 
         assert!(policy.invalidates_adapter_instances);
         assert!(policy.blocks_command_execution);
+    }
+
+    #[test]
+    fn integration_record_maps_domain_ref_to_server_credential_ref() {
+        let record = CredentialResolutionIntegrationRecord {
+            integration_ref: CredentialIntegrationRef::AdapterRegistry(
+                "adapter-secret:1".to_owned(),
+            ),
+            credential_ref: CredentialMaterialRef("credential:adapter:1".to_owned()),
+            scope: CredentialResolutionScope::AdapterRuntime,
+            status: CredentialMaterialStatus::Missing,
+            impact: CredentialResolutionImpact::BlocksAdapterReadiness,
+            repair: Some(CredentialResolutionRepairAction::AskUserToSelectCredentialRef),
+        };
+
+        assert_eq!(
+            record.impact,
+            CredentialResolutionImpact::BlocksAdapterReadiness
+        );
+        assert!(record.repair.is_some());
+    }
+
+    #[test]
+    fn blocker_distinguishes_credential_access_from_command_approval() {
+        let blocker = CredentialResolutionBlocker {
+            credential_ref: CredentialMaterialRef("credential:command".to_owned()),
+            status: CredentialMaterialStatus::PermissionDenied,
+            impact: CredentialResolutionImpact::BlocksCommandExecution,
+            repair: Some(CredentialResolutionRepairAction::AskUserToGrantPermission),
+            summary: Some("credential policy denied access".to_owned()),
+        };
+
+        assert_eq!(
+            blocker.impact,
+            CredentialResolutionImpact::BlocksCommandExecution
+        );
+        assert_eq!(blocker.status, CredentialMaterialStatus::PermissionDenied);
     }
 }

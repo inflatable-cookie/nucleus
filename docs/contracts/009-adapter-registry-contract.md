@@ -385,6 +385,15 @@ boundary vocabulary. Adapter-specific secret refs remain adapter registry
 records; server credential material refs are the future integration point when
 resolution is implemented.
 
+Credential resolution integration maps adapter registry secret refs to
+server-owned credential material refs. The mapping records runtime scope,
+non-secret status, blocking impact, and repair action. It must not resolve
+material or make the adapter registry a secret store.
+
+Missing, expired, revoked, permission-denied, requires-user-action, and
+unsupported credential states may block adapter readiness. They should become
+repair states before assignment, not runtime crashes after work starts.
+
 ## Runtime Ownership Rule
 
 Each adapter instance record must store runtime ownership metadata separately

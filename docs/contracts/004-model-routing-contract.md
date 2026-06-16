@@ -46,6 +46,12 @@ or decrypted credential payloads. Credential material for model routes belongs
 behind the server secret material boundary or an external/provider-native
 credential system.
 
+Credential resolution integration maps model route auth refs to server-owned
+credential material refs where Nucleus owns the route credential reference. A
+missing, expired, revoked, permission-denied, requires-user-action, or
+unsupported credential blocks the model route without deleting the route
+record. Provider-managed auth remains provider-owned.
+
 API compatibility family values:
 
 - OpenAI-compatible

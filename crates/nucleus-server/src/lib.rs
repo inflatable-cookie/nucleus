@@ -63,8 +63,10 @@ pub use runtime_effect_transport::{
     RuntimeEffectTransportSelectionCriteria,
 };
 pub use secret_store::{
-    CredentialAccessPolicy, CredentialAuditRecord, CredentialMaterialClass, CredentialMaterialRef,
-    CredentialMaterialStatus, CredentialRedactionPolicy, CredentialResolutionRequest,
-    CredentialResolutionScope, CredentialRevocationPolicy, CredentialRotationPolicy,
-    SecretBackendKind,
+    CredentialAccessPolicy, CredentialAuditRecord, CredentialIntegrationRef,
+    CredentialMaterialClass, CredentialMaterialRef, CredentialMaterialStatus,
+    CredentialRedactionPolicy, CredentialResolutionBlocker, CredentialResolutionImpact,
+    CredentialResolutionIntegrationRecord, CredentialResolutionRepairAction,
+    CredentialResolutionRequest, CredentialResolutionScope, CredentialRevocationPolicy,
+    CredentialRotationPolicy, SecretBackendKind,
 };

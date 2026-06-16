@@ -164,3 +164,4 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/061-draft-client-auth-and-pairing-boundary.md`
 - `docs/roadmaps/g01/batch-cards/062-draft-secret-store-and-credential-material-boundary.md`
 - `docs/roadmaps/g01/batch-cards/063-draft-credential-resolution-integration-policy.md`
+- `docs/roadmaps/g01/batch-cards/064-draft-credential-resolution-runtime-readiness.md`

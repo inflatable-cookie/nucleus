@@ -910,6 +910,13 @@ Generic secret material refs now live in `nucleus-server` as compile-only
 policy vocabulary. SCM/forge credential refs remain domain-specific records and
 must not be treated as raw credential material.
 
+Credential resolution integration maps SCM and forge credential refs to
+server-owned credential material refs. A missing, expired, revoked,
+permission-denied, requires-user-action, or unsupported credential may block
+SCM/forge access, webhook verification, or command execution. The block must
+be represented as sanitized credential status and repair work, not raw provider
+output.
+
 The first Rust trait skeletons expose static identity, capability, workflow
 semantics, readiness, required command scopes, supported refresh modes, and
 observation effect support. They do not refresh state, stream events, execute

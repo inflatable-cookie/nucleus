@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Draft credential resolution integration policy.
+Draft credential resolution runtime readiness.

@@ -1040,6 +1040,80 @@ revocation policies, and sanitized audit records. They are compile-only. They
 do not implement a secret store, encryption, backend integration, provider
 auth, command execution, credential injection, or raw credential access.
 
+## Credential Resolution Integration Policy
+
+Credential resolution integrates server credential material refs with
+domain-specific credential refs.
+
+Initial integration refs:
+
+- client auth refs
+- adapter registry secret refs
+- model route auth refs
+- SCM/forge credential refs
+- webhook signing secret refs
+- command policy secret refs
+- native harness refs
+- custom refs
+
+A domain-specific ref may map to a server credential material ref. The mapping
+does not resolve material. It only records which server-owned credential ref
+would be requested, which runtime scope is allowed, current non-secret status,
+blocking impact, and repair action.
+
+Resolution lifecycle states:
+
+- unknown
+- available
+- missing
+- expired
+- revoked
+- permission denied
+- requires user action
+- unsupported
+
+Blocking impacts:
+
+- no block
+- blocks client auth
+- blocks adapter readiness
+- blocks model route
+- blocks SCM/forge access
+- blocks webhook verification
+- blocks command execution
+- repair required
+- custom
+
+Repair actions:
+
+- ask user to pair client
+- ask user to log in to provider
+- ask user to select credential ref
+- ask user to refresh credential
+- ask user to grant permission
+- mark provider-native auth required
+- mark unsupported
+- custom
+
+Credential resolution must run before a runtime receives material. Missing,
+expired, revoked, permission-denied, requires-user-action, and unsupported
+states must surface as repair or policy blockers. They must not become raw
+provider errors in normal UI flows.
+
+Command approval still does not imply credential access. Credential access
+still does not imply command approval. A command that needs a credential may be
+blocked by either policy surface.
+
+Provider-native auth state remains provider-owned. Nucleus may mark
+provider-native auth required and point at the provider boundary, but must not
+import provider auth files as Nucleus-owned credential material unless a later
+explicit import policy defines that behavior.
+
+The first Rust credential resolution integration types now name integration
+refs, integration records, blocking impacts, repair actions, and blockers.
+They are compile-only. They do not resolve credentials, prompt users, access
+backends, inject secrets, execute commands, call providers, or implement UI.
+
 The first Rust command runtime effect state types now name command effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -1070,3 +1144,4 @@ or server event fan-out.
 - Runtime effect transport implementation readiness.
 - Secret store and credential material boundary.
 - Credential resolution integration policy.
+- Credential resolution runtime implementation readiness.

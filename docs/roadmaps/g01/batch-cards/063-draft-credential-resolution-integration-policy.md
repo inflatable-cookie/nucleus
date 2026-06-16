@@ -1,6 +1,6 @@
 # 063 Draft Credential Resolution Integration Policy
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -49,6 +49,24 @@ Draft credential resolution integration policy.
 - `docs/contracts/011-scm-forge-sync-contract.md`
 - `docs/contracts/004-model-routing-contract.md`
 - `docs/architecture/system-inventory.md`
+
+## Decisions
+
+- Credential resolution integration maps domain-specific refs to server-owned
+  credential material refs.
+- Integration records carry runtime scope, non-secret status, blocking impact,
+  and repair action.
+- Missing, expired, revoked, permission-denied, requires-user-action, and
+  unsupported states become repair or policy blockers.
+- Blocking impacts can target client auth, adapter readiness, model routes,
+  SCM/forge access, webhook verification, command execution, or repair.
+- Command approval does not imply credential access. Credential access does
+  not imply command approval.
+- Provider-native auth remains provider-owned unless a later import policy says
+  otherwise.
+- Initial compile-only integration vocabulary was added in `nucleus-server`.
+- No credential resolution, prompting, backend access, command execution,
+  provider calls, secret injection, or UI implementation was added.
 
 ## Validation
 
