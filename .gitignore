@@ -2,3 +2,6 @@
 /external/t3code/
 **/*.rs.bk
 .effigy
+node_modules/
+dist/
+apps/desktop/src-tauri/gen/

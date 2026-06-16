@@ -4,11 +4,11 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/106-name-control-api-wire-format-and-codec-boundary.md`
+- `docs/roadmaps/g01/batch-cards/110-reassess-first-desktop-panel-readiness.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/106-name-control-api-wire-format-and-codec-boundary.md`
+- `docs/roadmaps/g01/batch-cards/110-reassess-first-desktop-panel-readiness.md`
 
 ## Completed Cards
 
@@ -48,10 +48,11 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 - `docs/roadmaps/g01/batch-cards/103-prove-tauri-ipc-command-path-with-fixture.md`
 - `docs/roadmaps/g01/batch-cards/104-reassess-desktop-scaffold-after-ipc-boundary.md`
 - `docs/roadmaps/g01/batch-cards/105-compile-desktop-serialization-and-shell-bootstrap-runway.md`
-
-## Planned Cards
-
+- `docs/roadmaps/g01/batch-cards/106-name-control-api-wire-format-and-codec-boundary.md`
 - `docs/roadmaps/g01/batch-cards/107-add-serializable-control-envelope-dtos.md`
 - `docs/roadmaps/g01/batch-cards/108-add-tauri-command-handler-adapter.md`
 - `docs/roadmaps/g01/batch-cards/109-scaffold-desktop-shell-with-control-command.md`
-- `docs/roadmaps/g01/batch-cards/110-reassess-first-desktop-panel-readiness.md`
+
+## Planned Cards
+
+- None.

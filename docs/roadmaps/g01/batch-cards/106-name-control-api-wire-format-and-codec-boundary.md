@@ -1,6 +1,6 @@
 # 106 Name Control API Wire Format And Codec Boundary
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -42,3 +42,21 @@ DTOs.
 cargo test --workspace
 cargo fmt --all --check
 ```
+
+## Decisions
+
+- The first desktop IPC wire format is JSON.
+- The first protocol family is `nucleus.control`.
+- The first supported protocol version is exact-match v1.
+- The first codec boundary is `desktop-ipc-json`.
+- Codec failures are distinct from server control errors.
+- DTO authority is transport-boundary-only and must not replace server
+  authority types.
+
+## Closeout
+
+Added wire-format, codec-boundary, version-policy, DTO-authority, and codec
+failure vocabulary to `control_serialization_readiness.rs`.
+
+No serde derives, codecs, Tauri command wiring, desktop scaffold, or transport
+behavior was introduced.

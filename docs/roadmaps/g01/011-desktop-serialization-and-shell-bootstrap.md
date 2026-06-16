@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-16
+Updated: 2026-06-17
 
 ## Goal
 
@@ -33,22 +33,24 @@ path, then scaffold only the minimal desktop shell.
 - The first desktop scaffold is shell bootstrap plus one control command path,
   not a panel framework.
 - UI panels remain deferred until the desktop can call the server boundary.
+- The first desktop scaffold uses Bun, Svelte, and local Poodle components,
+  with TypeScript kept to DTO construction and Tauri invocation.
 
 ## Execution Plan
 
-- [ ] Name control API wire format and codec boundary.
-- [ ] Add serializable control envelope DTOs.
-- [ ] Add Tauri command handler adapter.
-- [ ] Scaffold desktop shell with control command.
+- [x] Name control API wire format and codec boundary.
+- [x] Add serializable control envelope DTOs.
+- [x] Add Tauri command handler adapter.
+- [x] Scaffold desktop shell with control command.
 - [ ] Reassess first desktop panel readiness.
 
 ## Acceptance Criteria
 
-- [ ] Wire format and versioning are explicit before serde work.
-- [ ] Serializable DTOs do not replace server authority types.
-- [ ] Tauri command adapter routes through the server boundary.
-- [ ] Desktop scaffold is shell-only and contains no panels.
-- [ ] No provider process, command runner, live subscription, or remote
+- [x] Wire format and versioning are explicit before serde work.
+- [x] Serializable DTOs do not replace server authority types.
+- [x] Tauri command adapter routes through the server boundary.
+- [x] Desktop scaffold is shell-only and contains no panels.
+- [x] No provider process, command runner, live subscription, or remote
   transport behavior is introduced.
 
 ## Cards

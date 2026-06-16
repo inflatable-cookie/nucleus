@@ -13,6 +13,7 @@ members = [
   "crates/nucleus-tasks",
   "crates/nucleus-workspaces",
   "crates/nucleus-server",
+  "apps/desktop/src-tauri",
 ]
 
 [workspace.package]

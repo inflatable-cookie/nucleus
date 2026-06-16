@@ -1,8 +1,8 @@
 # 109 Scaffold Desktop Shell With Control Command
 
-Status: planned
+Status: done
 Owner: Tom
-Updated: 2026-06-16
+Updated: 2026-06-17
 
 ## Goal
 
@@ -30,13 +30,24 @@ Scaffold the minimal Tauri desktop shell with one control command path.
 
 ## Acceptance Criteria
 
-- Desktop shell starts locally.
-- One control command can be invoked through Tauri.
-- No panel framework or product UI is introduced.
+- [x] Desktop shell starts locally.
+- [x] One control command can be invoked through Tauri.
+- [x] No panel framework or product UI is introduced.
+
+## Notes
+
+- The first desktop scaffold uses Bun, Svelte, Tauri v2, and local Poodle
+  component packages from `../poodle`.
+- The TypeScript layer only builds the desktop shell, request DTO, and Tauri
+  invoke call. Server state and command routing stay in Rust.
+- The first command path is `submit_control_envelope`, backed by
+  `TauriIpcControlCommandAdapter`.
+- The app icon is a placeholder compile asset only.
 
 ## Validation
 
 ```sh
-cargo test --workspace
-cargo fmt --all --check
+cargo check -p nucleus-desktop
+bun run check
+bun run build
 ```

@@ -23,4 +23,4 @@ shape.
 
 ## Next Task
 
-Name control API wire format and codec boundary.
+Reassess first desktop panel readiness.

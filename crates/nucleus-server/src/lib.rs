@@ -10,6 +10,7 @@ pub mod command_artifacts;
 pub mod command_runtime_readiness;
 pub mod commands;
 pub mod control_api;
+pub mod control_envelope_dto;
 pub mod control_serialization_readiness;
 pub mod deployment;
 pub mod event_replay;
@@ -51,10 +52,18 @@ pub use control_api::{
     ServerQueryKind, ServerQueryResult, ServerStateRecordSet, StateRecordQuery,
     StateRecordQueryScope,
 };
+pub use control_envelope_dto::{
+    ControlApiCodecError, ControlQueryDto, ControlQueryScopeDto, ControlRequestBodyDto,
+    ControlRequestEnvelopeDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
+    ControlResponseStatusDto, ControlStateDomainDto, ControlStateRecordDto,
+};
 pub use control_serialization_readiness::{
-    ControlApiEnvelopeField, ControlApiEnvelopeShape, ControlApiSerializationReadiness,
-    ControlApiSerializationReadinessBlocker, ControlApiSerializationReadinessPlan,
-    ControlApiSerializationReadinessStatus,
+    ControlApiCodecBoundary, ControlApiCodecFailure, ControlApiDtoAuthority,
+    ControlApiEnvelopeField, ControlApiEnvelopeShape, ControlApiProtocolVersionPolicy,
+    ControlApiSerializationReadiness, ControlApiSerializationReadinessBlocker,
+    ControlApiSerializationReadinessPlan, ControlApiSerializationReadinessStatus,
+    ControlApiVersionCompatibility, ControlApiWireFormat, ControlApiWireMessageKind,
+    CONTROL_API_PROTOCOL_FAMILY, CONTROL_API_PROTOCOL_VERSION_V1,
 };
 pub use deployment::{AccessEndpoint, DeploymentMode, ServerRuntime};
 pub use event_replay::{
@@ -119,6 +128,7 @@ pub use state::{ServerStateDomain, ServerStateDomainService, ServerStateService}
 pub use tauri_ipc_command::{
     TauriIpcCommandBoundary, TauriIpcCommandBoundaryError, TauriIpcCommandBoundaryHandler,
     TauriIpcCommandBoundaryPosture, TauriIpcCommandExchange, TauriIpcCommandHandlerFixture,
+    TauriIpcControlCommandAdapter,
 };
 pub use tauri_ipc_readiness::{
     TauriIpcCommandSchema, TauriIpcCommandShape, TauriIpcSchemaReadiness,

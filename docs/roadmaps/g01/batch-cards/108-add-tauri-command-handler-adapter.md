@@ -1,6 +1,6 @@
 # 108 Add Tauri Command Handler Adapter
 
-Status: planned
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -40,3 +40,19 @@ Add the server-side adapter that a future Tauri command can call.
 cargo test --workspace
 cargo fmt --all --check
 ```
+
+## Decisions
+
+- The adapter is `TauriIpcControlCommandAdapter`.
+- It accepts `ControlRequestEnvelopeDto` values.
+- It decodes into `ServerControlRequest`, routes through
+  `LocalControlRequestHandler`, and encodes `ControlResponseEnvelopeDto`.
+- Decode and encode failures use `ControlApiCodecError`.
+- The adapter is runtime-free and does not use Tauri macros.
+
+## Closeout
+
+Added a server-side adapter a future Tauri command can call.
+
+No Tauri macro command, desktop scaffold, UI panel, live subscription, or remote
+transport behavior was introduced.

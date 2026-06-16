@@ -5,6 +5,9 @@
 //! durable server state.
 
 use crate::control_api::{ServerControlRequest, ServerControlResponse};
+use crate::control_envelope_dto::{
+    ControlApiCodecError, ControlRequestEnvelopeDto, ControlResponseEnvelopeDto,
+};
 use crate::request_handler::LocalControlRequestHandler;
 use crate::tauri_ipc_readiness::TauriIpcCommandSchema;
 use nucleus_local_store::LocalStoreBackend;
@@ -121,6 +124,45 @@ where
         let exchange = TauriIpcCommandExchange { request, response };
         self.exchanges.push(exchange.clone());
         Ok(exchange)
+    }
+}
+
+/// Server-side adapter intended for a future Tauri command macro.
+#[derive(Clone, Debug)]
+pub struct TauriIpcControlCommandAdapter<B> {
+    boundary: TauriIpcCommandBoundary,
+    handler: LocalControlRequestHandler<B>,
+}
+
+impl<B> TauriIpcControlCommandAdapter<B>
+where
+    B: LocalStoreBackend + Clone,
+{
+    /// Create a fixture-backed adapter without a Tauri runtime.
+    pub fn fixture_backed(handler: LocalControlRequestHandler<B>) -> Self {
+        Self {
+            boundary: TauriIpcCommandBoundary {
+                schema: TauriIpcCommandSchema::first_desktop_schema(),
+                posture: TauriIpcCommandBoundaryPosture::FixtureBacked,
+            },
+            handler,
+        }
+    }
+
+    /// Access the boundary metadata.
+    pub fn boundary(&self) -> &TauriIpcCommandBoundary {
+        &self.boundary
+    }
+
+    /// Decode a request envelope, route through the server handler, and encode
+    /// the response envelope.
+    pub fn submit_control_envelope(
+        &mut self,
+        request: ControlRequestEnvelopeDto,
+    ) -> Result<ControlResponseEnvelopeDto, ControlApiCodecError> {
+        let request = ServerControlRequest::try_from(request)?;
+        let response = self.handler.handle(request);
+        ControlResponseEnvelopeDto::try_from(&response)
     }
 }
 
@@ -250,5 +292,84 @@ mod tests {
                 ServerStateRecordSet { records, .. }
             )) if records == vec![record]
         ));
+    }
+
+    #[test]
+    fn control_command_adapter_routes_dto_request_to_dto_response() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let backend = SqliteBackend::new(temp_dir.path().join("nucleus.sqlite"));
+        let handler = LocalControlRequestHandler::new(backend, None);
+        let record = fixture_record(
+            PersistenceDomain::Projects,
+            PersistenceRecordKind::Project,
+            "project:tauri-adapter",
+            "rev:1",
+        );
+        handler
+            .state()
+            .projects()
+            .put(record, RevisionExpectation::MustNotExist)
+            .expect("seed project");
+        let mut adapter = TauriIpcControlCommandAdapter::fixture_backed(handler);
+        let request = ControlRequestEnvelopeDto::try_from(&ServerControlRequest {
+            id: ServerControlRequestId("request:tauri-adapter:project-list".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerControlRequestKind::Query(ServerQuery {
+                id: ServerQueryId("query:tauri-adapter:project-list".to_owned()),
+                client_id: ClientId("client:desktop".to_owned()),
+                kind: ServerQueryKind::Project(StateRecordQuery {
+                    domain: ServerStateDomain::Projects,
+                    scope: StateRecordQueryScope::List,
+                }),
+            }),
+        })
+        .expect("request dto");
+
+        let response = adapter
+            .submit_control_envelope(request)
+            .expect("response dto");
+
+        assert_eq!(
+            adapter.boundary().posture,
+            TauriIpcCommandBoundaryPosture::FixtureBacked
+        );
+        assert_eq!(response.request_id, "request:tauri-adapter:project-list");
+        assert!(matches!(
+            response.body,
+            crate::control_envelope_dto::ControlResponseBodyDto::StateRecords {
+                records,
+                ..
+            } if records.len() == 1
+        ));
+    }
+
+    #[test]
+    fn control_command_adapter_reports_decode_errors_without_server_routing() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let backend = SqliteBackend::new(temp_dir.path().join("nucleus.sqlite"));
+        let handler = LocalControlRequestHandler::new(backend, None);
+        let mut adapter = TauriIpcControlCommandAdapter::fixture_backed(handler);
+        let request = ControlRequestEnvelopeDto {
+            protocol_family: crate::control_serialization_readiness::CONTROL_API_PROTOCOL_FAMILY
+                .to_owned(),
+            protocol_version: 2,
+            request_id: "request:bad-version".to_owned(),
+            client_id: "client:desktop".to_owned(),
+            body: crate::control_envelope_dto::ControlRequestBodyDto::Query {
+                query: crate::control_envelope_dto::ControlQueryDto::RuntimeMetadata {
+                    query_id: "query:bad-version".to_owned(),
+                    action: "list_artifact_metadata".to_owned(),
+                },
+            },
+        };
+
+        let error = adapter
+            .submit_control_envelope(request)
+            .expect_err("decode error");
+
+        assert_eq!(
+            error.failure,
+            crate::control_serialization_readiness::ControlApiCodecFailure::UnsupportedProtocolVersion
+        );
     }
 }

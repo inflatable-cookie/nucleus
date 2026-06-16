@@ -1,6 +1,6 @@
 # 107 Add Serializable Control Envelope DTOs
 
-Status: planned
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -40,3 +40,23 @@ Add serializable DTOs for the first control request and response envelope.
 cargo test --workspace
 cargo fmt --all --check
 ```
+
+## Decisions
+
+- DTOs live in `control_envelope_dto.rs`.
+- DTOs use serde derives and JSON-compatible shapes.
+- Request DTOs support the first state query and runtime metadata query shapes.
+- Response DTOs support response status, state record envelopes, command
+  receipt summaries, empty/unsupported query responses, and explicit error
+  shapes.
+- Unsupported payloads return `ControlApiCodecError`.
+- DTOs remain transport-boundary values and do not replace server authority
+  types.
+
+## Closeout
+
+Added serializable control request and response envelope DTOs with round-trip
+tests for version, ids, status, body, state records, and error shape.
+
+No Tauri command macros, desktop scaffolding, live subscriptions, or remote
+transport behavior was introduced.

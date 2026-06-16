@@ -1,0 +1,27 @@
+{
+  "name": "@nucleus/desktop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "dependencies": {
+    "@poodle/icons-lucide": "file:../../../poodle/packages/svelte/icons-lucide",
+    "@poodle/svelte": "file:../../../poodle/packages/svelte/components",
+    "@poodle/svelte-tokens": "file:../../../poodle/packages/svelte/tokens",
+    "@tauri-apps/api": "^2.9.0",
+    "svelte": "^5.38.6"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "@tauri-apps/cli": "^2.11.1",
+    "svelte-check": "^4.4.3",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5"
+  }
+}

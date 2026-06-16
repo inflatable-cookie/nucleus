@@ -174,16 +174,27 @@ Updated: 2026-06-16
   and IPC blockers without implementing Tauri commands, serialization, or a
   desktop app. Control API serialization readiness types now name request and
   response envelope fields, id stability, versioning, error-shape, payload
-  compatibility, and codec blockers without adding serde derives, selecting a
-  wire format, or implementing transport behavior. Tauri IPC readiness can now
-  consume explicit control serialization readiness. A Tauri IPC command
+  compatibility, and codec blockers without adding serde derives or
+  implementing transport behavior. The first desktop IPC wire format is named
+  as JSON with exact-match `nucleus.control` v1 versioning and a
+  `desktop-ipc-json` codec boundary. Transport DTO authority is explicitly
+  boundary-only and distinct from durable server authority. Serializable
+  control envelope DTOs now cover the first request/response envelopes,
+  supported state and runtime metadata query shapes, response status, state
+  record payload envelopes, command receipt summaries, and explicit error
+  shapes. Unsupported payloads fail with codec errors. Tauri IPC readiness can
+  now consume explicit control serialization readiness. A Tauri IPC command
   boundary skeleton now names schema-only, fixture-backed, and Tauri
   runtime-backed postures plus a request/response submission trait. It does not
   use Tauri macros, start a Tauri runtime, serialize payloads, own durable
   state, or implement desktop IPC. A non-production Tauri IPC-shaped command
   fixture now routes `ServerControlRequest` values through
   `LocalControlRequestHandler` and records `ServerControlResponse` exchanges.
-  It proves one local request/response path without a Tauri app or real IPC.
+  It proves one local request/response path without a Tauri app or real IPC. A
+  runtime-free Tauri command adapter now accepts serializable request DTOs,
+  decodes them into server control requests, routes through the local handler,
+  and encodes serializable response DTOs. Decode and encode failures remain
+  codec errors, not server authority errors.
   Runtime effect storage boundary types now name retained event records,
   storage refs, replay checkpoints, stored effect states, and query postures,
   but they do not implement persistence, serialization, replay APIs, event
@@ -233,7 +244,12 @@ Updated: 2026-06-16
 ## Apps
 
 - `apps/nucleusd`: future server binary placeholder.
-- `apps/desktop`: future Tauri client placeholder.
+- `apps/desktop`: initial Tauri v2 desktop client scaffold. It uses Bun,
+  Svelte, and local Poodle component packages from `../poodle`. The first
+  screen is a shell-only control command proof that invokes
+  `submit_control_envelope` and renders the serialized response DTO. It does
+  not implement panels, live subscriptions, provider process lifecycle, remote
+  transport, command execution, or durable state authority.
 
 ## External Systems To Research
 

@@ -2,13 +2,24 @@
 //!
 //! These types name the request/response envelope fields and blockers needed
 //! before an app transport can serialize control API values. They do not add
-//! serde derives, choose a wire format, or implement transport behavior.
+//! serde derives or implement transport behavior.
+
+use serde::{Deserialize, Serialize};
+
+/// First supported control API protocol family.
+pub const CONTROL_API_PROTOCOL_FAMILY: &str = "nucleus.control";
+
+/// First supported control API protocol version.
+pub const CONTROL_API_PROTOCOL_VERSION_V1: u16 = 1;
 
 /// Serialization-readiness plan for control API envelopes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ControlApiSerializationReadinessPlan {
     pub request_envelope: ControlApiEnvelopeShape,
     pub response_envelope: ControlApiEnvelopeShape,
+    pub wire_format: ControlApiWireFormat,
+    pub codec_boundary: ControlApiCodecBoundary,
+    pub version_policy: ControlApiProtocolVersionPolicy,
 }
 
 impl ControlApiSerializationReadinessPlan {
@@ -32,6 +43,9 @@ impl ControlApiSerializationReadinessPlan {
                     ControlApiEnvelopeField::ErrorShape,
                 ],
             },
+            wire_format: ControlApiWireFormat::Json,
+            codec_boundary: ControlApiCodecBoundary::desktop_ipc_json(),
+            version_policy: ControlApiProtocolVersionPolicy::v1_only(),
         }
     }
 
@@ -113,6 +127,110 @@ impl ControlApiSerializationReadinessPlan {
     }
 }
 
+/// Wire format used by a control API transport boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ControlApiWireFormat {
+    Json,
+    MessagePack,
+    Cbor,
+    Custom(String),
+}
+
+/// Codec boundary for transport DTOs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ControlApiCodecBoundary {
+    pub name: String,
+    pub wire_format: ControlApiWireFormat,
+    pub request_message_kind: ControlApiWireMessageKind,
+    pub response_message_kind: ControlApiWireMessageKind,
+    pub authority: ControlApiDtoAuthority,
+    pub failures: Vec<ControlApiCodecFailure>,
+}
+
+impl ControlApiCodecBoundary {
+    /// First codec boundary for desktop IPC.
+    pub fn desktop_ipc_json() -> Self {
+        Self {
+            name: "desktop-ipc-json".to_owned(),
+            wire_format: ControlApiWireFormat::Json,
+            request_message_kind: ControlApiWireMessageKind::ControlRequest,
+            response_message_kind: ControlApiWireMessageKind::ControlResponse,
+            authority: ControlApiDtoAuthority::TransportBoundaryOnly,
+            failures: vec![
+                ControlApiCodecFailure::UnsupportedProtocolVersion,
+                ControlApiCodecFailure::MalformedEnvelope,
+                ControlApiCodecFailure::MissingRequiredField,
+                ControlApiCodecFailure::UnknownMessageKind,
+                ControlApiCodecFailure::UnsupportedPayloadShape,
+            ],
+        }
+    }
+}
+
+/// Control API wire message kind.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ControlApiWireMessageKind {
+    ControlRequest,
+    ControlResponse,
+    ControlError,
+    Custom(String),
+}
+
+/// Authority boundary for transport DTOs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ControlApiDtoAuthority {
+    TransportBoundaryOnly,
+    ServerAuthority,
+    Custom(String),
+}
+
+/// Codec failure vocabulary, distinct from server control errors.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ControlApiCodecFailure {
+    UnsupportedProtocolVersion,
+    MalformedEnvelope,
+    MissingRequiredField,
+    UnknownMessageKind,
+    UnsupportedPayloadShape,
+    IdentityMismatch,
+    ServerErrorPayload,
+    Custom(String),
+}
+
+/// Versioning policy for control API wire envelopes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ControlApiProtocolVersionPolicy {
+    pub family: String,
+    pub supported_versions: Vec<u16>,
+    pub default_version: u16,
+    pub compatibility: ControlApiVersionCompatibility,
+}
+
+impl ControlApiProtocolVersionPolicy {
+    /// First policy: support only v1 until an upgrade contract exists.
+    pub fn v1_only() -> Self {
+        Self {
+            family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),
+            supported_versions: vec![CONTROL_API_PROTOCOL_VERSION_V1],
+            default_version: CONTROL_API_PROTOCOL_VERSION_V1,
+            compatibility: ControlApiVersionCompatibility::ExactVersionOnly,
+        }
+    }
+
+    /// Returns true when the version is supported by this policy.
+    pub fn supports(&self, version: u16) -> bool {
+        self.supported_versions.contains(&version)
+    }
+}
+
+/// Version compatibility posture.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ControlApiVersionCompatibility {
+    ExactVersionOnly,
+    BackwardCompatibleWithinMajor,
+    Custom(String),
+}
+
 /// Envelope field expected by an app transport.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlApiEnvelopeField {
@@ -159,6 +277,8 @@ pub enum ControlApiSerializationReadinessBlocker {
     ErrorShapeDeferred,
     PayloadCompatibilityDeferred,
     CodecDeferred,
+    WireFormatDeferred,
+    DtoAuthorityAmbiguous,
     Custom(String),
 }
 
@@ -171,6 +291,8 @@ impl ControlApiSerializationReadinessBlocker {
                 | Self::ErrorShapeDeferred
                 | Self::PayloadCompatibilityDeferred
                 | Self::CodecDeferred
+                | Self::WireFormatDeferred
+                | Self::DtoAuthorityAmbiguous
         )
     }
 }
@@ -199,6 +321,11 @@ mod tests {
             .response_envelope
             .fields
             .contains(&ControlApiEnvelopeField::ErrorShape));
+        assert_eq!(plan.wire_format, ControlApiWireFormat::Json);
+        assert_eq!(
+            plan.codec_boundary.authority,
+            ControlApiDtoAuthority::TransportBoundaryOnly
+        );
     }
 
     #[test]
@@ -230,5 +357,44 @@ mod tests {
             ControlApiSerializationReadinessStatus::Ready
         );
         assert!(readiness.blockers.is_empty());
+    }
+
+    #[test]
+    fn first_version_policy_is_v1_exact_match_only() {
+        let policy = ControlApiProtocolVersionPolicy::v1_only();
+
+        assert_eq!(policy.family, CONTROL_API_PROTOCOL_FAMILY);
+        assert_eq!(policy.default_version, CONTROL_API_PROTOCOL_VERSION_V1);
+        assert!(policy.supports(CONTROL_API_PROTOCOL_VERSION_V1));
+        assert!(!policy.supports(2));
+        assert_eq!(
+            policy.compatibility,
+            ControlApiVersionCompatibility::ExactVersionOnly
+        );
+    }
+
+    #[test]
+    fn desktop_ipc_json_codec_boundary_keeps_dtos_transport_only() {
+        let boundary = ControlApiCodecBoundary::desktop_ipc_json();
+
+        assert_eq!(boundary.wire_format, ControlApiWireFormat::Json);
+        assert_eq!(
+            boundary.request_message_kind,
+            ControlApiWireMessageKind::ControlRequest
+        );
+        assert_eq!(
+            boundary.response_message_kind,
+            ControlApiWireMessageKind::ControlResponse
+        );
+        assert_eq!(
+            boundary.authority,
+            ControlApiDtoAuthority::TransportBoundaryOnly
+        );
+        assert!(boundary
+            .failures
+            .contains(&ControlApiCodecFailure::UnsupportedProtocolVersion));
+        assert!(boundary
+            .failures
+            .contains(&ControlApiCodecFailure::UnsupportedPayloadShape));
     }
 }

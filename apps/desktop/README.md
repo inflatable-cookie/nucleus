@@ -1,19 +1,20 @@
 # Desktop
 
-Future Tauri control plane.
+Initial Tauri control plane.
 
-The desktop app will be the first client for nucleus, but it must not own
-durable project, task, workspace, or agent state.
+The desktop app is the first nucleus client, but it does not own durable
+project, task, workspace, or agent state. Durable authority stays in the Rust
+server boundary.
 
-No Tauri project is scaffolded yet.
+The scaffold uses Bun, Svelte, Tauri v2, and Poodle components from
+`../poodle`. The TypeScript layer is intentionally thin: it builds the shell,
+constructs a control request DTO, invokes a Tauri command, and renders the DTO
+response.
 
-The first desktop bootstrap profile should prefer Tauri IPC once implemented,
-with an in-process transport remaining useful for early local tests. Transport
-and Tauri IPC schema readiness are tracked in `nucleus-server`; no desktop
-transport is implemented yet.
+The first command path is `submit_control_envelope`. It routes a serialized
+control envelope through `nucleus-server`'s `TauriIpcControlCommandAdapter` and
+the local request handler.
 
-Desktop scaffolding remains deferred until IPC command handling and
-serialization are testable through the server boundary.
-
-`nucleus-server` now names a Tauri IPC command boundary skeleton, but no Tauri
-runtime, macro command, desktop app, or IPC serialization exists yet.
+No project panels, terminal/browser/editor surfaces, SCM controls, live
+subscriptions, provider processes, remote transport, or command execution exist
+in this app yet.
