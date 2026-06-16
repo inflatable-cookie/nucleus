@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Draft runtime effect transport selection boundary.
+Draft client auth and pairing boundary.

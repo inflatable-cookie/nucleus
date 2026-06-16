@@ -160,3 +160,5 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/057-draft-runtime-effect-subscription-boundary.md`
 - `docs/roadmaps/g01/batch-cards/058-add-runtime-effect-subscription-types.md`
 - `docs/roadmaps/g01/batch-cards/059-draft-runtime-effect-transport-selection-boundary.md`
+- `docs/roadmaps/g01/batch-cards/060-add-runtime-effect-transport-types.md`
+- `docs/roadmaps/g01/batch-cards/061-draft-client-auth-and-pairing-boundary.md`

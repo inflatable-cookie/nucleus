@@ -324,6 +324,12 @@ adapter-level event identity inside the server event.
 - `RuntimeEffectBackpressurePosture`
 - `RuntimeEffectDisconnectReason`
 - `RuntimeEffectReconnectRequirement`
+- `RuntimeEffectTransportFamily`
+- `RuntimeEffectTransportProfile`
+- `RuntimeEffectTransportCapability`
+- `RuntimeEffectTransportBoundaryGuarantee`
+- `RuntimeEffectTransportSelectionCriteria`
+- `RuntimeEffectTransportAuthBlocker`
 
 `nucleus-command-policy` now contains the first draft of:
 
@@ -785,6 +791,87 @@ compile-only. They do not implement transport, an event bus, replay service,
 persistence, delivery acknowledgement processing, client caching, scheduling,
 command execution, or adapter execution.
 
+## Runtime Effect Transport Selection Boundary
+
+Runtime effect transport is a deployment choice, not the authority surface.
+
+Transport may carry:
+
+- replay query requests and responses
+- subscription handshakes
+- live runtime effect events
+- delivery acknowledgements
+- reconnect requirements
+- backpressure notices
+- sanitized warnings and errors
+
+Transport must preserve:
+
+- server event ids
+- server ordering tokens
+- storage generation posture
+- replay catch-up requirements
+- subscription lifecycle state
+- retained ref identity
+- sanitized summaries
+- client identity and connection state
+- deployment profile limits
+
+Transport must not own:
+
+- server event identity
+- event ordering authority
+- replay retention policy
+- storage generation identity
+- command evidence
+- adapter observations
+- retry lineage
+- recovery-required work
+- task or workspace state
+- approval authority
+
+Initial transport families to keep available:
+
+- local socket for same-machine desktop or CLI clients
+- loopback HTTP for local app integration and development
+- LAN HTTP for trusted local-network deployments
+- remote HTTP for internet-reachable deployments
+- WebSocket or stream transport for live subscription delivery
+- polling for constrained or fallback clients
+- custom transport for future deployment-specific gateways
+
+Transport selection criteria:
+
+- deployment profile
+- client kind
+- auth and pairing posture
+- live subscription need
+- replay-only mode support
+- reconnect behavior
+- backpressure behavior
+- local firewall and network constraints
+- remote exposure risk
+- implementation maturity
+
+Transport can combine replay and subscription flows later, but it must not
+erase the boundary between pull-style replay reconciliation and live
+subscription delivery. A reconnecting client still needs replay catch-up or a
+checkpoint before it can trust live state.
+
+Auth and pairing are separate blockers. A transport may be technically viable
+but not implementation-ready until local pairing, LAN pairing, remote auth,
+credential storage, revocation, and client identity policy are defined.
+
+This boundary does not choose a transport, implement networking, implement an
+event bus, define auth, define pairing, or implement replay/subscription
+delivery.
+
+The first Rust runtime effect transport types now name transport family,
+transport profile, transport capability, boundary guarantees, selection
+criteria, and auth blockers. They are compile-only. They do not implement
+networking, an event bus, auth, pairing, replay, subscription delivery,
+storage, scheduling, command execution, or adapter execution.
+
 The first Rust command runtime effect state types now name command effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -811,3 +898,5 @@ or server event fan-out.
 - Runtime effect replay query and client reconciliation boundary.
 - Runtime effect replay query implementation boundary.
 - Runtime effect transport selection boundary.
+- Runtime effect auth and pairing boundary.
+- Runtime effect transport implementation readiness.

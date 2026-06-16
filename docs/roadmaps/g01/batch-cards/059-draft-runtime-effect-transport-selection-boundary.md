@@ -1,6 +1,6 @@
 # 059 Draft Runtime Effect Transport Selection Boundary
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -49,6 +49,22 @@ Draft runtime effect transport selection boundary.
 - `docs/architecture/system-architecture.md`
 - `docs/architecture/system-inventory.md`
 - `docs/roadmaps/g01/001-foundation-and-research.md`
+
+## Decisions
+
+- Runtime effect transport is a deployment choice, not the authority surface.
+- Local socket, loopback HTTP, LAN HTTP, remote HTTP, WebSocket or stream
+  transport, polling, and custom transports remain viable families.
+- Transport must preserve event ids, ordering tokens, storage generation
+  posture, replay catch-up, subscription lifecycle, retained refs, sanitized
+  summaries, client identity, and deployment profile limits.
+- Transport must not own replay, retention, storage, approval, command
+  evidence, adapter observations, retry lineage, recovery-required work, task
+  state, or workspace state.
+- Auth and pairing are separate blockers before LAN or remote transport
+  implementation.
+- No transport, event bus, networking, auth, pairing, replay service, or
+  subscription delivery was selected or implemented.
 
 ## Validation
 

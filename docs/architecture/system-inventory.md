@@ -87,7 +87,12 @@ Updated: 2026-06-16
   states, acknowledgement posture, backpressure posture, disconnect reasons,
   and reconnect requirements, but they do not implement transport, event bus,
   replay service, persistence, acknowledgement processing, client caching,
-  scheduling, command execution, or adapter execution.
+  scheduling, command execution, or adapter execution. Runtime effect
+  transport selection types now name transport family, transport profile,
+  capability, boundary guarantees, selection criteria, and auth blockers, but
+  they do not implement networking, event bus, auth, pairing, replay service,
+  subscription delivery, storage, scheduling, command execution, or adapter
+  execution.
 
 ## Apps
 

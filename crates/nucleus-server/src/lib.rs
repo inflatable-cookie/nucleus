@@ -14,6 +14,7 @@ pub mod runtime_effect_replay;
 pub mod runtime_effect_retention;
 pub mod runtime_effect_storage;
 pub mod runtime_effect_subscriptions;
+pub mod runtime_effect_transport;
 
 pub use authority::{AuthorityArea, ServerAuthority};
 pub use clients::{ClientConnection, ClientIdentity, ClientKind};
@@ -48,4 +49,9 @@ pub use runtime_effect_subscriptions::{
     RuntimeEffectDisconnectReason, RuntimeEffectReconnectRequirement,
     RuntimeEffectSubscriptionHandshake, RuntimeEffectSubscriptionId,
     RuntimeEffectSubscriptionState,
+};
+pub use runtime_effect_transport::{
+    RuntimeEffectTransportAuthBlocker, RuntimeEffectTransportBoundaryGuarantee,
+    RuntimeEffectTransportCapability, RuntimeEffectTransportFamily, RuntimeEffectTransportProfile,
+    RuntimeEffectTransportSelectionCriteria,
 };

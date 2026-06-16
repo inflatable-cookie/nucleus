@@ -542,6 +542,18 @@ Subscription transport remains open. WebSocket, HTTP, local socket, polling,
 or another mechanism can be chosen later without changing the server-owned
 event identity, ordering, replay, and storage semantics.
 
+Runtime effect transport is selected by deployment profile and client needs.
+Local socket, loopback HTTP, LAN HTTP, remote HTTP, WebSocket or stream
+transport, polling, and custom gateways remain viable families. Any transport
+must preserve server event ids, ordering tokens, storage generation posture,
+replay catch-up, subscription lifecycle, retained refs, sanitized summaries,
+client identity, and deployment profile limits.
+
+Transport does not own replay, retention, storage, approval, command evidence,
+adapter observations, retry lineage, recovery-required work, task state, or
+workspace state. Auth and pairing remain separate readiness gates before
+remote or LAN transport implementation.
+
 ## Interfaces With Roadmaps
 
 This architecture unlocks:
