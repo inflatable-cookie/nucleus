@@ -91,6 +91,20 @@ Local command execution is server-authorized. SCM adapters, harness adapters,
 validation workflows, and native personas request command authority from the
 server instead of spawning processes directly.
 
+Workspace panels are client-rendered surfaces over server-owned state.
+Terminal and browser panels attach to server-managed runtime resources. Text
+and code editor panels attach to server-authorized file and language-service
+state. SCM changes, diff, and commit panels attach to server-owned SCM adapter
+state, command authority, and review workflow state.
+
+The desktop client may use TypeScript-heavy editor and UI libraries. Rust
+remains the authority boundary for durable state, filesystem access, command
+execution, SCM mutation, language-server process lifecycle, credential access,
+and audit. Plugin planning must preserve that split: client plugins can enrich
+editor and UI behavior, while server plugins or server APIs must be
+policy-gated when they touch files, commands, SCM, credentials, or durable
+state.
+
 ## Harness Adapter Layer
 
 Agent integrations sit behind a stable Rust protocol layer.

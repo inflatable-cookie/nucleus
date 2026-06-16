@@ -773,6 +773,46 @@ not mandatory provider primitives. SCM adapters must map work sessions onto the
 provider's real isolation and review mechanisms and expose unsupported
 capabilities honestly.
 
+## SCM Diff And Commit Control Surface
+
+Nucleus should provide first-class SCM changes, diff, and commit control
+surfaces in the workspace.
+
+The first user-facing shape may resemble familiar Git tooling:
+
+- changed file list
+- staged, unstaged, selected, or provider-equivalent change groups
+- file and hunk diff review
+- discard, stage, unstage, and apply-hunk-style actions where supported
+- commit or provider-equivalent local capture action
+- push, publish, promote, review-request, or provider-equivalent shared
+  authority action where supported
+- branch/work session context
+- conflict list and repair proposals
+- generated commit message proposals
+- generated conflict-resolution proposals
+
+These controls are client views over server-owned SCM state. They must request
+SCM adapter actions, command authority, credential readiness, and approval
+through the server. They must not shell out to Git or mutate files directly
+from the client.
+
+Commit controls must not assume every SCM has Git commits. The visible verb may
+be commit for Git-like adapters, but the contract is provider-equivalent local
+capture and shared-authority transition. The adapter decides whether that maps
+to commit, changeset, patch, revision, checkin, snapshot, publication, bundle,
+release, branch, worktree, gate, pull request, or direct authority update.
+
+AI-generated commit messages are proposals attached to a work session or
+change selection. They should cite the observed change refs and task refs that
+informed them. A generated message is not approval to commit, push, publish,
+promote, or open a review request.
+
+AI conflict-resolution proposals are reviewable repair plans. Mechanical
+conflict repairs may be applied under steward policy. Semantic conflict
+repairs require human approval. All applied repairs must retain sanitized audit
+evidence.
+
 ## Observation Policy
 
 SCM and forge observations are server-owned facts derived from adapter inputs.
@@ -869,6 +909,9 @@ Current modules:
 - `scm`: SCM provider kind, repository, worktree, branch, commit,
   provider-neutral change, workflow semantics, work session, runtime
   constraint, and remote refs
+- workspace SCM control surfaces remain in `nucleus-workspaces`; SCM adapters
+  provide the underlying observations, work sessions, conflicts, review
+  workflows, and command-authority requests
 - `forge`: forge repository, pull request, issue, and comment refs
 - `links`: task links to SCM and forge objects
 - `observations`: normalized SCM and forge observations, refresh mode,
@@ -1216,6 +1259,9 @@ or server event fan-out.
 - Webhook versus polling refresh.
 - Direct merge versus review-request default policy.
 - Convergence-style publication and gate workflow fixture design.
+- First SCM diff/commit control command set and provider-neutral UI wording.
+- AI commit-message proposal evidence and approval policy.
+- AI conflict-resolution proposal lifecycle and audit policy.
 - Mapping SCM adapter operations to command authority scopes.
 - Dev-only fixture crate boundary.
 - Runtime effect request and outcome type shapes.

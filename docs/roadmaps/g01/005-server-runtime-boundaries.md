@@ -79,6 +79,9 @@ Deferred subsystem decisions:
 - artifact payload backend
 - secret backend and user prompting
 - Tauri control plane behavior
+- text/code editor substrate, language-server lifecycle, theme import, and
+  plugin host split
+- SCM changes/diff/commit controls and AI proposal workflows
 
 ## Cards
 

@@ -14,9 +14,9 @@ Compile the first implementation runway inside `g01`.
 - Define success criteria, stop conditions, and validation for that slice.
 - Create or update the roadmap file that will govern implementation batches.
 - Create a visible runway of several meaningful implementation cards.
-- Keep command execution, provider adapters, Tauri behavior, remote auth,
-  secret backend implementation, and artifact payload storage out unless
-  explicitly selected.
+- Keep command execution, provider adapters, Tauri behavior, editor/plugin
+  implementation, SCM diff/commit implementation, remote auth, secret backend
+  implementation, and artifact payload storage out unless explicitly selected.
 
 ## Out Of Scope
 
@@ -32,6 +32,8 @@ Compile the first implementation runway inside `g01`.
   runtime risk?
 - Should the first slice start with server-local project/task/storage state,
   adapter registry persistence, or runtime effect storage?
+- Do editor and SCM panel contracts need a dedicated roadmap before first
+  implementation, or can they stay deferred client surfaces?
 - What must be tested before later command or adapter runtime work can start?
 - Which decisions can stay deferred until the owning subsystem begins?
 
@@ -40,6 +42,8 @@ Compile the first implementation runway inside `g01`.
 - The runway starts implementation.
 - The runway depends on unresolved provider, Tauri, command-runner, or remote
   auth behavior.
+- The runway treats editor plugins or SCM commit controls as first-slice
+  implementation without an explicit operator decision.
 - The runway becomes a one-card micro-plan.
 - A new generation is opened.
 
