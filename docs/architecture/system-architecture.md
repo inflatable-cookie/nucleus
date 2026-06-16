@@ -531,6 +531,17 @@ command, task, workspace, projection, or artifact state. Clients may cache
 responses, but the server remains authoritative for stored effect state and
 recovery work.
 
+Runtime effect subscriptions are live delivery surfaces after replay
+catch-up. A subscription may be accepted, require replay first, begin from a
+checkpoint, enter backpressure, close, or require reconnect. Delivery
+acknowledgements are client-rendering hints only. They do not mutate durable
+effect state, storage retention, command evidence, adapter observations, retry
+lineage, recovery-required work, task state, or workspace state.
+
+Subscription transport remains open. WebSocket, HTTP, local socket, polling,
+or another mechanism can be chosen later without changing the server-owned
+event identity, ordering, replay, and storage semantics.
+
 ## Interfaces With Roadmaps
 
 This architecture unlocks:

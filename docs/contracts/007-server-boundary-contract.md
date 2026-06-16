@@ -317,6 +317,13 @@ adapter-level event identity inside the server event.
 - `RuntimeEffectReplayUnsupportedReason`
 - `RuntimeEffectReplayQueryResult`
 - `RuntimeEffectReplayRefResolution`
+- `RuntimeEffectSubscriptionId`
+- `RuntimeEffectSubscriptionHandshake`
+- `RuntimeEffectSubscriptionState`
+- `RuntimeEffectDeliveryAcknowledgement`
+- `RuntimeEffectBackpressurePosture`
+- `RuntimeEffectDisconnectReason`
+- `RuntimeEffectReconnectRequirement`
 
 `nucleus-command-policy` now contains the first draft of:
 
@@ -716,6 +723,68 @@ resolution states. They are compile-only. They do not implement transport,
 subscriptions, persistence, replay execution, artifact storage, client caching,
 scheduling, command execution, or adapter execution.
 
+## Runtime Effect Subscription Boundary
+
+Runtime effect subscriptions are live delivery surfaces for server-owned
+events.
+
+Subscriptions start after a replay catch-up handshake. A client should provide
+its last known ordering token when opening a subscription. The server decides
+whether to:
+
+- accept live delivery from that token
+- require a replay query first
+- send a compacted checkpoint before live delivery
+- reject the subscription as unsupported for the deployment profile
+- ask the client to reconnect after backpressure or generation mismatch
+
+Subscription lifecycle states:
+
+- requested
+- replay catch-up required
+- accepted
+- live
+- backpressure
+- interrupted
+- reconnect required
+- closed
+- rejected
+- unsupported
+
+Delivery acknowledgements are client-rendering hints. They may tell the server
+that a client rendered or received events through an ordering token, but they
+must not mutate effect state, command evidence, adapter observations, retry
+lineage, recovery-required work, task state, workspace state, or storage
+retention on their own.
+
+Backpressure is a subscription condition, not permission to drop durable
+events. The server may slow delivery, compact transient reconciliation events,
+require replay catch-up, or close the subscription with reconnect required.
+It must not silently discard durable replay events still needed by retention
+policy.
+
+Disconnects are normal. A reconnecting client must reconcile through replay
+query or checkpoint before assuming live state is current. Subscription resume
+must be based on server ordering tokens and storage generation posture, not on
+client-local sequence counters.
+
+Subscription delivery must follow the same sanitization rules as replay query
+responses. Live events must not include raw command output, terminal byte
+streams, raw provider payloads, raw webhook payloads, credentials, or large
+validation output by default.
+
+This boundary does not choose WebSocket, HTTP, local socket, event bus,
+message queue, polling, or any other transport. Transport can carry replay
+handshakes and live events later, but transport must not become the authority
+for event identity, ordering, storage, replay, or effect state.
+
+The first Rust runtime effect subscription types now name subscription ids,
+subscription handshakes, lifecycle states, delivery acknowledgement posture,
+backpressure posture, disconnect reasons, and reconnect requirements. They are
+compile-only. They do not implement transport, an event bus, replay service,
+persistence, delivery acknowledgement processing, client caching, scheduling,
+command execution, or adapter execution.
+
 The first Rust command runtime effect state types now name command effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -741,3 +810,4 @@ or server event fan-out.
 - Replay retention transition from symbolic refs to storage-backed refs.
 - Runtime effect replay query and client reconciliation boundary.
 - Runtime effect replay query implementation boundary.
+- Runtime effect transport selection boundary.

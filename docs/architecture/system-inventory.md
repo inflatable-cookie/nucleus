@@ -82,7 +82,12 @@ Updated: 2026-06-16
   tokens, storage generation posture, query requests, responses, result items,
   status, unsupported reasons, and ref-resolution states, but they do not
   implement replay, persistence, transport, subscriptions, artifact storage,
-  client caching, scheduling, command execution, or adapter execution.
+  client caching, scheduling, command execution, or adapter execution. Runtime
+  effect subscription types now name subscription ids, handshakes, lifecycle
+  states, acknowledgement posture, backpressure posture, disconnect reasons,
+  and reconnect requirements, but they do not implement transport, event bus,
+  replay service, persistence, acknowledgement processing, client caching,
+  scheduling, command execution, or adapter execution.
 
 ## Apps
 

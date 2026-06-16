@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Draft runtime effect subscription boundary.
+Draft runtime effect transport selection boundary.

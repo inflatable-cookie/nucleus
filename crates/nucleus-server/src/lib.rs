@@ -13,6 +13,7 @@ pub mod runtime_effect_events;
 pub mod runtime_effect_replay;
 pub mod runtime_effect_retention;
 pub mod runtime_effect_storage;
+pub mod runtime_effect_subscriptions;
 
 pub use authority::{AuthorityArea, ServerAuthority};
 pub use clients::{ClientConnection, ClientIdentity, ClientKind};
@@ -41,4 +42,10 @@ pub use runtime_effect_storage::{
     RuntimeEffectReplayCheckpointId, RuntimeEffectRetryLineageRef, RuntimeEffectStorageQuery,
     RuntimeEffectStorageRecordId, RuntimeEffectStorageRef, RuntimeEffectStoredEffectState,
     RuntimeEffectStoredEventKind, RuntimeEffectStoredEventRecord,
+};
+pub use runtime_effect_subscriptions::{
+    RuntimeEffectBackpressurePosture, RuntimeEffectDeliveryAcknowledgement,
+    RuntimeEffectDisconnectReason, RuntimeEffectReconnectRequirement,
+    RuntimeEffectSubscriptionHandshake, RuntimeEffectSubscriptionId,
+    RuntimeEffectSubscriptionState,
 };

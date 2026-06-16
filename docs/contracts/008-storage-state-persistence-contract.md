@@ -280,6 +280,32 @@ responses, partial-result status, unsupported-query status, and retained-ref
 resolution states only. They do not implement storage, replay, migrations,
 transport, subscriptions, artifact storage, or client caches.
 
+## Runtime Effect Subscription Storage Rule
+
+Subscriptions may use stored ordering tokens and replay checkpoints for
+handshake decisions, but subscriptions are not the storage authority.
+
+Storage may record sanitized subscription evidence later, such as client id,
+subscription id, accepted ordering token, disconnect reason, reconnect-required
+state, or backpressure summary. That evidence is operational audit state. It
+must not replace retained runtime effect events, replay checkpoints, command
+evidence, adapter observations, retry lineage, or recovery-required work.
+
+Delivery acknowledgements may be retained as low-value reconciliation evidence
+only if they are useful for debugging or flow control. They must not decide
+retention, compaction, task state, command state, or adapter state by
+themselves.
+
+If a subscription disconnects, storage must still support replay query
+reconciliation from the last server-owned ordering token or checkpoint that
+retention policy can honor.
+
+The first Rust runtime effect subscription types live in `nucleus-server`.
+They represent subscription handshake, lifecycle, acknowledgement posture,
+backpressure posture, disconnect reason, and reconnect requirements only. They
+do not implement storage, event buses, replay, transport, acknowledgement
+processing, client caches, or runtime execution.
+
 ## Storage Backend Boundary
 
 Backend selection is deliberately open.
@@ -373,6 +399,8 @@ adapter runtime.
 - Runtime effect replay query and client reconciliation model.
 - Storage generation identity for ordering tokens and replay checkpoints.
 - Runtime effect replay query implementation boundary.
+- Runtime effect subscription storage and acknowledgement policy.
+- Runtime effect transport selection and subscription implementation boundary.
 - Backup/export/import strategy.
 - Whether project-local metadata should mirror any server state.
 - Secret-store backend and host credential-provider integration.

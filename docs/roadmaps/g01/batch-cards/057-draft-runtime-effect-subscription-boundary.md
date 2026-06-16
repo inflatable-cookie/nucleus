@@ -1,6 +1,6 @@
 # 057 Draft Runtime Effect Subscription Boundary
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -48,6 +48,20 @@ Draft runtime effect subscription boundary.
 - `docs/contracts/008-storage-state-persistence-contract.md`
 - `docs/architecture/system-architecture.md`
 - `docs/architecture/system-inventory.md`
+
+## Decisions
+
+- Runtime effect subscriptions are live delivery surfaces, not state
+  authority.
+- Subscriptions start after replay catch-up or checkpoint negotiation.
+- Delivery acknowledgements are client-rendering hints only.
+- Backpressure may slow delivery, require replay, compact transient events, or
+  require reconnect, but it must not drop durable retained events.
+- Disconnect and reconnect flows must use server ordering tokens and storage
+  generation posture.
+- Subscription transport remains open.
+- No Rust implementation, transport, event bus, replay service, persistence,
+  acknowledgement store, command execution, or adapter execution was added.
 
 ## Validation
 
