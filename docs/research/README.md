@@ -16,4 +16,4 @@ Provider implementation readiness, continuing with Claude Code CLI and SDK evide
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

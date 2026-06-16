@@ -80,12 +80,33 @@ Initial sync policies:
 Sync policy must be explicit per project or per server profile. Automatic sync
 must be scoped to management-state files.
 
+Sync policy grants maximum authority only. Action policy still applies.
+
+Commit and push rules:
+
+- manual policy: steward may prepare changes, but a human creates commits and
+  pushes
+- assisted policy: steward may prepare management-state commits; commit or push
+  requires approval unless project policy grants a narrower exception
+- automatic policy: steward may commit and push management-only changes, but
+  may not resolve semantic conflicts, delete tasks, rewrite meaningful history,
+  change sync policy, or change project identity without approval
+- reviewed policy: steward prepares a branch or pull request instead of
+  updating the shared branch directly
+
+Automatic sync must stop when the working tree includes code changes unless
+the implementation can prove that the commit contains management-state files
+only.
+
 ## Project Steward Role
 
 The project steward is a bounded Nucleus service role.
 
 It may:
 
+- inspect project and task records
+- inspect Git status and sync queues
+- validate task schemas
 - normalize task metadata
 - prepare management-state commits
 - reconcile mechanical conflicts
@@ -94,17 +115,55 @@ It may:
 - link tasks to commits, branches, pull requests, issues, and artifacts
 - ask for human decisions on semantic conflicts
 
+It may commit or push only when the active sync policy and persona policy both
+grant that authority.
+
 It must not silently:
 
 - delete tasks
 - rewrite meaningful task history
 - resolve semantic conflicts
 - push code changes
+- change project identity or repo membership
+- change sync policy
 - expose secret material
+
+It must never:
+
+- use management-sync authority to modify source files
+- include secrets or provider auth material in repo-backed management state
+- treat model output as approval
+- bypass task, SCM, forge, or native persona policy
 
 The steward should run through the native harness runtime contract rather than
 as an external bridged provider. Its Git/forge authority is governed by this
 sync contract and project policy.
+
+## Conflict Classification
+
+Mechanical conflicts are conflicts where the steward can preserve both sides
+without changing task meaning.
+
+Examples:
+
+- reordered task metadata
+- formatting-only differences
+- concurrent edits to different fields in the same task record
+- duplicate generated indexes that can be rebuilt from source records
+
+Semantic conflicts require human approval.
+
+Examples:
+
+- conflicting task status changes
+- conflicting acceptance criteria
+- assignment or ownership disagreements
+- task deletion versus task update
+- changed project identity or repo membership
+- history rewrite affecting meaning
+
+The steward may prepare a semantic merge proposal, but it must not apply it
+without approval.
 
 ## Forge Boundary
 
@@ -126,10 +185,22 @@ mode.
 
 ## Current Rust Surface
 
-No Rust surface exists yet.
+No SCM/forge crate exists yet.
 
-This contract should eventually inform an SCM/forge crate or module boundary,
-but implementation is out of scope until the projection and sync policy settle.
+`nucleus-native-harness` now names steward-facing policy vocabulary:
+
+- `NativeSyncAuthority`
+- `NativePersonaCapability::CommitManagementState`
+- `NativePersonaCapability::PushManagementState`
+- `NativePersonaCapability::ProposeSemanticConflictResolution`
+- `NativeApprovalPolicy::RequiredBeforeCommit`
+- `NativeApprovalPolicy::RequiredBeforePush`
+- `NativeApprovalPolicy::RequiredBeforeDelete`
+- `NativeApprovalPolicy::RequiredBeforeHistoryRewrite`
+- `NativeApprovalPolicy::RequiredBeforePolicyChange`
+
+This is descriptive policy vocabulary only. Git sync implementation remains out
+of scope until the projection file model is settled.
 
 ## Research Gaps
 
@@ -139,8 +210,8 @@ but implementation is out of scope until the projection and sync policy settle.
 - Conflict model for simultaneous task edits.
 - Forge issue mirroring semantics.
 - Webhook versus polling refresh.
-- Steward-agent authority and approval policy.
+- Projection file schema and migration policy.
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

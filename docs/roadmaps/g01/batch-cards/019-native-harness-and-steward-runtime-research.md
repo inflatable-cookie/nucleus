@@ -1,6 +1,6 @@
 # 019 Native Harness And Steward Runtime Research
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -56,4 +56,4 @@ effigy qa:northstar
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

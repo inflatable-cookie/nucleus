@@ -73,6 +73,9 @@ contracts before app behavior begins.
 - Validation evidence and artifact reference batch card exists.
 - Git-backed project management state batch card exists.
 - Native harness and steward runtime research batch card exists.
+- Native harness Rust surface boundaries batch card exists.
+- Steward persona policy and sync authority batch card exists.
+- Management projection file model batch card exists.
 
 ## Batch Queue
 
@@ -95,7 +98,10 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/017-validation-evidence-and-artifact-references.md`
 - `docs/roadmaps/g01/batch-cards/018-git-backed-project-management-state.md`
 - `docs/roadmaps/g01/batch-cards/019-native-harness-and-steward-runtime-research.md`
+- `docs/roadmaps/g01/batch-cards/020-native-harness-rust-surface-boundaries.md`
+- `docs/roadmaps/g01/batch-cards/021-steward-persona-policy-and-sync-authority.md`
+- `docs/roadmaps/g01/batch-cards/022-management-projection-file-model.md`
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

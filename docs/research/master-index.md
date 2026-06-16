@@ -22,4 +22,4 @@ Updated: 2026-06-15
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

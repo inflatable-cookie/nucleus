@@ -14,6 +14,8 @@ Contracts define durable rules and interfaces.
 - `008-storage-state-persistence-contract.md`
 - `009-adapter-registry-contract.md`
 - `010-agent-session-lifecycle-contract.md`
+- `011-scm-forge-sync-contract.md`
+- `012-native-harness-runtime-contract.md`
 - `contract-index.md`
 
 ## Promotion Rule
@@ -23,4 +25,4 @@ repo is ready to enforce or design against.
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

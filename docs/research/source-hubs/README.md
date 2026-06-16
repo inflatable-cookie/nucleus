@@ -9,4 +9,4 @@ Source hubs group external evidence by topic.
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

@@ -23,4 +23,4 @@ contracts, roadmaps, or logs carry the durable truth.
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

@@ -31,6 +31,8 @@ Future clients may include:
   event, model route, and agent session lifecycle types.
 - `nucleus-agent-adapters`: first draft adapter registry, instance
   configuration, readiness, lifecycle, and health types.
+- `nucleus-native-harness`: first draft Nucleus-owned persona, session, event,
+  tool, approval, model backend, and audit boundary types.
 - `nucleus-projects`: durable project identity, repo membership, and project
   lifecycle later.
 - `nucleus-tasks`: task model, importance scoring, and task action taxonomy
@@ -337,4 +339,4 @@ This architecture unlocks:
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

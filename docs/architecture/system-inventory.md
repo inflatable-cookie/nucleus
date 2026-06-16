@@ -17,6 +17,8 @@ Updated: 2026-06-15
   capability, event identity, model-route, and agent session lifecycle types.
 - `nucleus-agent-adapters`: first draft adapter registry, instance
   configuration, readiness, lifecycle, and health types.
+- `nucleus-native-harness`: first draft Nucleus-owned persona, session, event,
+  tool, approval, model backend, and audit boundary types.
 - `nucleus-projects`: first draft durable project, repo membership, path
   history, repair action, and activity types.
 - `nucleus-tasks`: first draft task identity, importance, neglect, action,
@@ -72,4 +74,4 @@ Updated: 2026-06-15
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

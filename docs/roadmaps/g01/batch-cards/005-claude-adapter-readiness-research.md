@@ -52,4 +52,4 @@ effigy qa:northstar
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

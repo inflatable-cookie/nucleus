@@ -4,12 +4,12 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/019-native-harness-and-steward-runtime-research.md`
+- `docs/roadmaps/g01/batch-cards/022-management-projection-file-model.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/019-native-harness-and-steward-runtime-research.md`
+- `docs/roadmaps/g01/batch-cards/022-management-projection-file-model.md`
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

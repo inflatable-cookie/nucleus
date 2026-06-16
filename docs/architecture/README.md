@@ -20,4 +20,4 @@ Architecture records the system shape once planning starts to settle.
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.

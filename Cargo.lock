@@ -18,6 +18,13 @@ name = "nucleus-core"
 version = "0.0.0"
 
 [[package]]
+name = "nucleus-native-harness"
+version = "0.0.0"
+dependencies = [
+ "nucleus-agent-protocol",
+]
+
+[[package]]
 name = "nucleus-projects"
 version = "0.0.0"
 

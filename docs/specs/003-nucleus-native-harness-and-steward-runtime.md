@@ -42,6 +42,15 @@ Rust ecosystem candidates:
 - llama.cpp bindings or Ollama clients: pragmatic local-model backend options.
 - Pi itself: possible bridged or embedded harness for some personas.
 
+First-pass direction:
+
+- Rust owns native harness orchestration.
+- Pi remains a bridged harness candidate and architecture reference, not the
+  first native runtime core.
+- Rig may help with model/agent ergonomics if it fits Nucleus policy and state
+  boundaries.
+- Candle and other inference engines belong behind a model backend abstraction.
+
 ## Native Harness Roles
 
 Initial native personas:
@@ -95,6 +104,43 @@ It should expose session, event, tool, approval, and audit records through the
 same broad Nucleus concepts used by bridged harnesses, while remaining clearly
 identified as app-owned.
 
+## Native Session Shape
+
+Native sessions should record:
+
+- native session id
+- persona id
+- model backend id where used
+- task/project scope
+- tool action ids
+- approval request ids
+- audit event ids
+
+Native events may reuse the canonical runtime event vocabulary, but they must
+be marked as Nucleus-owned rather than provider-native.
+
+## Deterministic Tool Layer
+
+The steward should not ask a model to do simple state operations.
+
+Deterministic tools should cover:
+
+- task record parsing
+- schema validation
+- project index checks
+- Git status inspection
+- sync queue inspection
+- mechanical conflict detection
+- docs index updates
+
+Model calls should handle:
+
+- summarization
+- classification
+- semantic conflict explanation
+- merge suggestions
+- ambiguous prioritization notes
+
 ## Open Questions
 
 - Should the first native harness be pure Rust or Rust orchestration with a
@@ -111,9 +157,22 @@ identified as app-owned.
 - `docs/architecture/system-architecture.md`
 - `docs/contracts/002-harness-adapter-contract.md`
 - `docs/contracts/011-scm-forge-sync-contract.md`
-- new native harness runtime contract
-- future Rust crate or module for native harness runtime
+- `docs/contracts/012-native-harness-runtime-contract.md`
+- `crates/nucleus-native-harness`
+
+## Promoted Steward Policy
+
+Settled first-pass rules:
+
+- steward authority is limited to management-state surfaces
+- commit and push authority are separate policy tiers
+- automatic sync is management-state-only
+- semantic conflicts require approval
+- task deletion, meaningful history rewrite, sync-policy changes, and project
+  identity changes require approval
+- model backend choice must not increase steward authority
+- management-sync authority must not modify source files
 
 ## Next Task
 
-Research Nucleus native harness and steward runtime semantics.
+Draft management projection file model.
