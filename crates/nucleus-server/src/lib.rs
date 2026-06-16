@@ -10,6 +10,7 @@ pub mod deployment;
 pub mod events;
 pub mod ids;
 pub mod runtime_effect_events;
+pub mod runtime_effect_replay;
 pub mod runtime_effect_retention;
 pub mod runtime_effect_storage;
 
@@ -23,6 +24,12 @@ pub use events::{ServerEvent, ServerEventKind};
 pub use ids::{ClientId, ServerCommandId, ServerEventId};
 pub use runtime_effect_events::{
     RuntimeEffectServerEvent, RuntimeEffectServerEventKind, ServerEventSequence,
+};
+pub use runtime_effect_replay::{
+    RuntimeEffectClientOrderingToken, RuntimeEffectReplayQueryRequest,
+    RuntimeEffectReplayQueryResponse, RuntimeEffectReplayQueryResult,
+    RuntimeEffectReplayQueryStatus, RuntimeEffectReplayRefResolution,
+    RuntimeEffectReplayStorageGeneration, RuntimeEffectReplayUnsupportedReason,
 };
 pub use runtime_effect_retention::{
     RuntimeEffectCompactionPosture, RuntimeEffectReplayDeploymentProfile,

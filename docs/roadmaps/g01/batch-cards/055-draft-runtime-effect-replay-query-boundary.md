@@ -1,6 +1,6 @@
 # 055 Draft Runtime Effect Replay Query Boundary
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -50,6 +50,20 @@ Draft runtime effect replay query boundary.
 - `docs/contracts/008-storage-state-persistence-contract.md`
 - `docs/architecture/system-architecture.md`
 - `docs/architecture/system-inventory.md`
+
+## Decisions
+
+- Runtime effect replay queries are server-owned reconciliation requests.
+- Query vocabulary belongs first in server and storage contracts.
+- Client ordering tokens are scoped hints, not authority.
+- Replay query responses may be partial and must say so explicitly.
+- Compacted checkpoints are valid replay results.
+- Missing refs, expired refs, unsupported queries, and unsupported storage
+  generations are normal response states.
+- Clients may cache replay responses for rendering, but server storage remains
+  authoritative.
+- No transport, subscription model, replay implementation, database, artifact
+  store, runtime execution, or Rust API was added.
 
 ## Validation
 

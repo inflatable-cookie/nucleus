@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Draft runtime effect replay query boundary.
+Draft runtime effect subscription boundary.

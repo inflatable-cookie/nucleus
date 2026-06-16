@@ -156,3 +156,5 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/053-draft-runtime-effect-storage-boundary.md`
 - `docs/roadmaps/g01/batch-cards/054-add-runtime-effect-storage-boundary-types.md`
 - `docs/roadmaps/g01/batch-cards/055-draft-runtime-effect-replay-query-boundary.md`
+- `docs/roadmaps/g01/batch-cards/056-add-runtime-effect-replay-query-types.md`
+- `docs/roadmaps/g01/batch-cards/057-draft-runtime-effect-subscription-boundary.md`

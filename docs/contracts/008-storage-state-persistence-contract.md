@@ -232,6 +232,54 @@ state lookups, retry lineage refs, and recovery lookups only. They do not
 implement persistence, serialization, migrations, replay, subscriptions, event
 transport, artifact storage, or runtime execution.
 
+## Runtime Effect Replay Query Storage Rule
+
+Storage must preserve enough queryable shape for client reconciliation before
+live replay is implemented.
+
+Minimum retained query inputs:
+
+- optional client ordering token
+- optional effect request ref
+- optional retained ref
+- optional deployment profile
+- optional recovery filter
+
+Minimum retained query outputs:
+
+- ordered retained event records
+- compacted replay checkpoints
+- latest stored effect state
+- retry lineage refs
+- recovery-required refs
+- missing-ref notices
+- expired-ref notices
+- partial-result notices
+
+Partial results are valid when retention, compaction, backend limits, or
+storage generation boundaries prevent a complete replay. Partial results must
+be explicit. They must not be disguised as complete event history.
+
+Storage generation boundaries must be visible to replay queries. If an
+ordering token belongs to an expired, compacted, migrated, or unsupported
+generation, the server should return a checkpoint, latest-state summary,
+or unsupported-generation notice rather than pretending the token is current.
+
+Ref resolution is best-effort inside retention policy. A retained event may
+outlive a detailed artifact, evidence record, or observation record if policy
+allows a sanitized summary to remain. The query response must distinguish
+resolvable refs, expired refs, missing refs, and unsupported refs.
+
+Client caches are not storage. A client may cache replay responses for
+responsiveness, but server storage remains the authority for retained effect
+state, replay checkpoints, retry lineage, and recovery-required work.
+
+The first Rust replay query types live in `nucleus-server`. They represent
+storage generation posture, client ordering tokens, query requests, query
+responses, partial-result status, unsupported-query status, and retained-ref
+resolution states only. They do not implement storage, replay, migrations,
+transport, subscriptions, artifact storage, or client caches.
+
 ## Storage Backend Boundary
 
 Backend selection is deliberately open.
@@ -323,6 +371,8 @@ adapter runtime.
 - Migration execution strategy.
 - Snapshot and journal replay rules.
 - Runtime effect replay query and client reconciliation model.
+- Storage generation identity for ordering tokens and replay checkpoints.
+- Runtime effect replay query implementation boundary.
 - Backup/export/import strategy.
 - Whether project-local metadata should mirror any server state.
 - Secret-store backend and host credential-provider integration.

@@ -78,7 +78,11 @@ Updated: 2026-06-16
   storage refs, replay checkpoints, stored effect states, and query postures,
   but they do not implement persistence, serialization, replay APIs, event
   transport, subscriptions, artifact stores, scheduling, command execution, or
-  adapter execution.
+  adapter execution. Runtime effect replay query types now name client ordering
+  tokens, storage generation posture, query requests, responses, result items,
+  status, unsupported reasons, and ref-resolution states, but they do not
+  implement replay, persistence, transport, subscriptions, artifact storage,
+  client caching, scheduling, command execution, or adapter execution.
 
 ## Apps
 

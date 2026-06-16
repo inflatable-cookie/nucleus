@@ -309,6 +309,14 @@ adapter-level event identity inside the server event.
 - `RuntimeEffectLatestStateLookup`
 - `RuntimeEffectRetryLineageRef`
 - `RuntimeEffectRecoveryLookup`
+- `RuntimeEffectClientOrderingToken`
+- `RuntimeEffectReplayStorageGeneration`
+- `RuntimeEffectReplayQueryRequest`
+- `RuntimeEffectReplayQueryResponse`
+- `RuntimeEffectReplayQueryStatus`
+- `RuntimeEffectReplayUnsupportedReason`
+- `RuntimeEffectReplayQueryResult`
+- `RuntimeEffectReplayRefResolution`
 
 `nucleus-command-policy` now contains the first draft of:
 
@@ -649,6 +657,65 @@ implement a database, serialization, migrations, replay APIs, event transport,
 subscriptions, artifact stores, scheduling, command execution, or adapter
 execution.
 
+## Runtime Effect Replay Query Boundary
+
+Replay queries are server-owned reconciliation requests.
+
+Clients may ask for retained runtime effect events after reconnect, restart,
+view switch, or suspected missed delivery. The query result helps the client
+repair its rendered state. It does not make the client authoritative for event
+ordering, effect state, retry lineage, recovery state, command evidence, or
+adapter observations.
+
+Initial replay query shapes:
+
+- events after ordering token
+- events by effect request
+- latest effect state
+- retry lineage for an effect request
+- recovery-required effects
+- retained ref resolution
+
+An ordering token is scoped to one server runtime and storage generation unless
+a later persistence contract defines cross-generation continuity. It proves
+only that the client has seen events through that token from the same server
+authority. It does not prove the client has seen every provider event, command
+output artifact, task change, workspace change, or projection sync result.
+
+Replay query responses may include:
+
+- retained event records
+- compacted replay checkpoints
+- latest state summaries
+- retry predecessor and successor refs
+- recovery-required summaries
+- missing-ref notices
+- expired-ref notices
+- unsupported-query notices
+- partial-result notices
+
+Compacted checkpoints are valid replay results. A client that receives a
+checkpoint must treat it as server-owned summarized state, not as proof that
+the client can reconstruct every original transient event.
+
+Missing refs and expired refs are normal replay outcomes. The server should
+return sanitized notices and the best retained summary it can provide. Replay
+responses must not include raw command output, terminal byte streams, raw
+provider payloads, raw webhook payloads, credentials, or large validation
+output by default.
+
+Replay queries are pull-style recovery surfaces. Event subscriptions and live
+transport are separate boundaries. A future transport may combine live events
+and replay handshakes, but the durable contract remains the server-owned query
+semantics, not WebSocket, HTTP, local socket, or any specific protocol.
+
+The first Rust runtime effect replay query types now name client ordering
+tokens, storage generation posture, replay query requests, replay query
+responses, query status, unsupported reasons, result items, and retained-ref
+resolution states. They are compile-only. They do not implement transport,
+subscriptions, persistence, replay execution, artifact storage, client caching,
+scheduling, command execution, or adapter execution.
+
 The first Rust command runtime effect state types now name command effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -673,3 +740,4 @@ or server event fan-out.
 - Runtime effect replay and retention Rust type boundaries.
 - Replay retention transition from symbolic refs to storage-backed refs.
 - Runtime effect replay query and client reconciliation boundary.
+- Runtime effect replay query implementation boundary.

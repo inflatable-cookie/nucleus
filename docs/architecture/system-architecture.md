@@ -518,6 +518,19 @@ Replay remains deferred until the storage layer can resolve retained refs,
 list events by effect request, list events after a client ordering token, find
 latest effect state, and find recovery-required effects after restart.
 
+Runtime effect replay queries are pull-style reconciliation requests. Clients
+may request events after a server ordering token, events by effect request,
+latest state, retry lineage, recovery-required effects, and retained ref
+resolution. Responses may include retained events, compacted checkpoints,
+latest-state summaries, missing-ref notices, expired-ref notices, unsupported
+query notices, and partial-result notices.
+
+Client ordering tokens are not authority. They are server-scoped hints for what
+the client last rendered. They do not prove the client has complete provider,
+command, task, workspace, projection, or artifact state. Clients may cache
+responses, but the server remains authoritative for stored effect state and
+recovery work.
+
 ## Interfaces With Roadmaps
 
 This architecture unlocks:
