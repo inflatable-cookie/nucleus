@@ -566,6 +566,17 @@ command authority policy. Client auth records may store non-secret credential
 references and revocation evidence, but credential material belongs behind a
 future secret-store boundary.
 
+Secret material is a distinct server boundary. Nucleus state may keep
+credential refs, backend family, scope, status, redacted audit, rotation
+posture, and revocation posture. Raw credential material belongs in a host
+credential provider, OS keychain, external secret manager, provider-native auth
+state, future Nucleus secret store, environment source, or user-interactive
+resolution flow.
+
+Credential resolution is separate from command approval. A command may be
+approved but still blocked by missing credential policy. A credential may be
+available but still unusable for a command without command authority.
+
 ## Interfaces With Roadmaps
 
 This architecture unlocks:

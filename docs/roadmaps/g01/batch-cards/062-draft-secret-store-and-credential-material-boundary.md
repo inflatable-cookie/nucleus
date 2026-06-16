@@ -1,6 +1,6 @@
 # 062 Draft Secret Store And Credential Material Boundary
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -51,6 +51,24 @@ Draft secret store and credential material boundary.
 - `docs/contracts/011-scm-forge-sync-contract.md`
 - `docs/architecture/system-architecture.md`
 - `docs/architecture/system-inventory.md`
+
+## Decisions
+
+- Credential references and credential material are separate.
+- Normal server state may store refs, backend family, material class,
+  resolution scope, status, redaction posture, rotation posture, revocation
+  posture, and sanitized audit summaries only.
+- Raw material may live behind host credential provider, OS keychain, external
+  secret manager, provider-native auth state, future Nucleus secret store,
+  environment variable, user-interactive resolution, or custom backends.
+- Provider-native auth state is referenced, not copied.
+- Command approval and credential access are separate gates.
+- Revocation can invalidate clients, adapters, model routes, SCM/forge access,
+  webhook verification, and command execution without deleting audit history.
+- Initial compile-only secret material vocabulary was added in
+  `nucleus-server`.
+- No backend, encryption, OS keychain integration, provider auth, command
+  secret injection, or raw credential access was implemented.
 
 ## Validation
 

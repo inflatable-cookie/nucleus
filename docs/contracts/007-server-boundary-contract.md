@@ -963,6 +963,83 @@ They do not implement auth, pairing flows, credential material storage, secret
 storage, transport, command approval, provider credentials, model credentials,
 or runtime execution.
 
+## Secret Store And Credential Material Boundary
+
+Credential references and credential material are different things.
+
+Server records may store credential references, backend family, material class,
+resolution scope, status, redaction posture, rotation posture, revocation
+posture, and sanitized audit summaries. Server records must not store raw
+credential material unless a later secret-store implementation contract
+explicitly defines that backend and its encryption, access, backup, and
+rotation behavior.
+
+Credential material may be needed by:
+
+- client auth and pairing
+- harness adapter provider auth
+- model routes and routing gateways
+- SCM adapters
+- forge adapters
+- webhook verification
+- command execution with secret access
+- native harness personas
+- custom integrations
+
+Credential material backend families:
+
+- host credential provider
+- OS keychain
+- external secret manager
+- provider-native auth state
+- future Nucleus secret store
+- environment variable
+- user-interactive resolution
+- custom
+
+Resolution scopes:
+
+- server only
+- client auth
+- adapter runtime
+- model route runtime
+- SCM/forge runtime
+- command runtime
+- webhook verification
+- provider-native only
+- custom
+
+Raw credential material must not be sent to remote control planes. Runtime
+injection, when allowed later, must be scoped to the runtime boundary that needs
+it and audited by reference, status, scope, backend family, and sanitized
+summary.
+
+Command approval and credential access are separate gates. An authenticated
+client may request a command that needs a credential. The command still needs
+command authority policy, and the credential still needs credential access
+policy. Model output cannot grant either.
+
+Provider-native auth state is not ordinary Nucleus state. Nucleus may store a
+reference to provider-owned auth state or configuration, but must not copy the
+provider auth file contents into normal storage.
+
+Rotation and revocation are policy events. They may mark client sessions,
+adapter instances, model routes, SCM/forge access, webhook verification, and
+command execution as unavailable or repair-required. They must not delete
+historic audit records, command evidence, adapter observations, or task
+history.
+
+This boundary does not select a secret backend, implement encryption, implement
+an OS keychain integration, implement provider auth, implement command secret
+injection, or expose raw credential material.
+
+The first Rust secret material boundary types now name credential material
+refs, material classes, backend families, material statuses, resolution scopes,
+resolution requests, access policies, redaction policies, rotation policies,
+revocation policies, and sanitized audit records. They are compile-only. They
+do not implement a secret store, encryption, backend integration, provider
+auth, command execution, credential injection, or raw credential access.
+
 The first Rust command runtime effect state types now name command effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -992,3 +1069,4 @@ or server event fan-out.
 - Runtime effect auth and pairing boundary.
 - Runtime effect transport implementation readiness.
 - Secret store and credential material boundary.
+- Credential resolution integration policy.

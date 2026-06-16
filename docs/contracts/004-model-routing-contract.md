@@ -40,6 +40,12 @@ Each route must expose:
 - billing/account source
 - enabled state
 
+Model route auth source is a credential reference or provider-managed auth
+source. It must not contain raw API keys, tokens, cookies, provider auth files,
+or decrypted credential payloads. Credential material for model routes belongs
+behind the server secret material boundary or an external/provider-native
+credential system.
+
 API compatibility family values:
 
 - OpenAI-compatible

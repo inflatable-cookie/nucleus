@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Draft secret store and credential material boundary.
+Draft credential resolution integration policy.

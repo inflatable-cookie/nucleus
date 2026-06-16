@@ -53,6 +53,9 @@ Config values may include:
 - secret references
 
 Secret references point to a future secret store or host credential provider.
+After the secret material boundary is drafted, registry secret references may
+map to server-owned credential material refs. The registry still stores refs
+and policy metadata only.
 
 ## Credential Boundary Rule
 
@@ -91,6 +94,12 @@ Remote control planes must not request or receive raw secret material.
 
 Raw secret exposure policy must be explicit. Initial values are never expose,
 runtime boundary only, and provider-native auth only.
+
+Credential material classes, backend families, redaction, rotation, and
+revocation are owned by the server secret material boundary. Adapter registry
+records may declare which credential refs an instance needs and which runtime
+boundary may receive resolved material. They must not implement the secret
+store or retain raw material.
 
 Credential audit records may retain reference id, source kind, resolution
 boundary, status, and failure reason. They must not retain raw secret values,
@@ -370,6 +379,11 @@ persistence, and probe boundary types only. Provider implementations, process
 spawning, SDK bridges, ACP clients, CLI/PTY control, active health probes,
 selection algorithms, storage engines, secret storage, and credential
 resolution remain out of scope.
+
+`nucleus-server` now contains the first draft of generic credential material
+boundary vocabulary. Adapter-specific secret refs remain adapter registry
+records; server credential material refs are the future integration point when
+resolution is implemented.
 
 ## Runtime Ownership Rule
 

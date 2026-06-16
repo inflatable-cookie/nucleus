@@ -604,6 +604,11 @@ Credential references may identify where resolution happens:
 - user interactive flow
 - unresolved
 
+The server secret material boundary owns credential material class, backend
+family, redaction, rotation, revocation, and resolution policy. SCM and forge
+adapters may declare and use credential refs through server policy. They must
+not implement secret storage or retain raw material.
+
 Projection records, task history, observations, journals, runtime events, and
 logs must not contain raw secrets, tokens, authorization headers, cookies,
 private keys, webhook signing secrets, provider-native auth files, or
@@ -623,7 +628,8 @@ error output unless that output has been sanitized.
 
 SCM and forge adapters must expose whether they can use credential references.
 Credential lookup, prompting, storage, rotation, and revocation remain outside
-the adapter type surface until a secret-store contract exists.
+the adapter type surface. The secret material boundary names the policy
+vocabulary, but implementation remains deferred.
 
 ## Webhook Verification Policy
 
@@ -899,6 +905,10 @@ credential lookup, credential storage, signature verification execution, sync
 workers, file IO, serialization, validation execution, migration execution,
 fake adapter implementation, and fixture builder implementation remain out of
 scope.
+
+Generic secret material refs now live in `nucleus-server` as compile-only
+policy vocabulary. SCM/forge credential refs remain domain-specific records and
+must not be treated as raw credential material.
 
 The first Rust trait skeletons expose static identity, capability, workflow
 semantics, readiness, required command scopes, supported refresh modes, and

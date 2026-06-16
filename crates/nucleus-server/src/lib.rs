@@ -16,6 +16,7 @@ pub mod runtime_effect_retention;
 pub mod runtime_effect_storage;
 pub mod runtime_effect_subscriptions;
 pub mod runtime_effect_transport;
+pub mod secret_store;
 
 pub use authority::{AuthorityArea, ServerAuthority};
 pub use client_auth::{
@@ -60,4 +61,10 @@ pub use runtime_effect_transport::{
     RuntimeEffectTransportAuthBlocker, RuntimeEffectTransportBoundaryGuarantee,
     RuntimeEffectTransportCapability, RuntimeEffectTransportFamily, RuntimeEffectTransportProfile,
     RuntimeEffectTransportSelectionCriteria,
+};
+pub use secret_store::{
+    CredentialAccessPolicy, CredentialAuditRecord, CredentialMaterialClass, CredentialMaterialRef,
+    CredentialMaterialStatus, CredentialRedactionPolicy, CredentialResolutionRequest,
+    CredentialResolutionScope, CredentialRevocationPolicy, CredentialRotationPolicy,
+    SecretBackendKind,
 };

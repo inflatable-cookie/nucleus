@@ -97,7 +97,12 @@ Updated: 2026-06-16
   records, auth session records, and revocation records, but they do not
   implement auth, pairing flows, credential material storage, secret storage,
   transport, command approval, provider credentials, model credentials, or
-  runtime execution.
+  runtime execution. Secret material boundary types now name credential
+  material refs, material classes, backend families, material statuses,
+  resolution scopes, resolution requests, access policy, redaction policy,
+  rotation policy, revocation policy, and sanitized audit records, but they do
+  not implement secret storage, encryption, backend integration, provider auth,
+  command execution, credential injection, or raw credential access.
 
 ## Apps
 
