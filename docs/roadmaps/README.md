@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Add runtime effect storage boundary types.
+Draft runtime effect replay query boundary.

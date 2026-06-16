@@ -11,6 +11,7 @@ pub mod events;
 pub mod ids;
 pub mod runtime_effect_events;
 pub mod runtime_effect_retention;
+pub mod runtime_effect_storage;
 
 pub use authority::{AuthorityArea, ServerAuthority};
 pub use clients::{ClientConnection, ClientIdentity, ClientKind};
@@ -27,4 +28,10 @@ pub use runtime_effect_retention::{
     RuntimeEffectCompactionPosture, RuntimeEffectReplayDeploymentProfile,
     RuntimeEffectReplayDurability, RuntimeEffectRetainedRef, RuntimeEffectRetentionPolicy,
     RuntimeEffectSummaryRetention,
+};
+pub use runtime_effect_storage::{
+    RuntimeEffectLatestStateLookup, RuntimeEffectRecoveryLookup, RuntimeEffectReplayCheckpoint,
+    RuntimeEffectReplayCheckpointId, RuntimeEffectRetryLineageRef, RuntimeEffectStorageQuery,
+    RuntimeEffectStorageRecordId, RuntimeEffectStorageRef, RuntimeEffectStoredEffectState,
+    RuntimeEffectStoredEventKind, RuntimeEffectStoredEventRecord,
 };

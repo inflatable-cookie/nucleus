@@ -74,6 +74,11 @@ Updated: 2026-06-16
   APIs, event transport, artifact stores, subscriptions, scheduling, or runtime
   execution. Runtime effect storage boundaries are documented, but no storage
   refs, checkpoints, replay indexes, persistence backend, or replay API exist.
+  Runtime effect storage boundary types now name retained event records,
+  storage refs, replay checkpoints, stored effect states, and query postures,
+  but they do not implement persistence, serialization, replay APIs, event
+  transport, subscriptions, artifact stores, scheduling, command execution, or
+  adapter execution.
 
 ## Apps
 

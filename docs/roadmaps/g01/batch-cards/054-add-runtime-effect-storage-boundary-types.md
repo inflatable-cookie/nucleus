@@ -1,6 +1,6 @@
 # 054 Add Runtime Effect Storage Boundary Types
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -53,6 +53,22 @@ Add runtime effect storage boundary types.
 - `docs/contracts/007-server-boundary-contract.md`
 - `docs/contracts/008-storage-state-persistence-contract.md`
 - `docs/architecture/system-inventory.md`
+
+## Decisions
+
+- Runtime effect storage boundary types live in `nucleus-server`.
+- `nucleus-core` remains generic persistence vocabulary only for this batch.
+- Stored event records retain effect request refs, server event ids, ordering
+  tokens, durability posture, deployment profile, retained refs, and sanitized
+  summaries.
+- Replay checkpoints preserve latest state, retained refs, and sanitized
+  summary without implementing replay.
+- Query vocabulary names required storage access for events by effect request,
+  events after sequence, ref resolution, latest effect state, retry lineage,
+  and recovery-required effects.
+- No database, file format, persistence implementation, replay API, event
+  transport, subscription model, artifact store, scheduler, command execution,
+  or adapter execution was added.
 
 ## Validation
 

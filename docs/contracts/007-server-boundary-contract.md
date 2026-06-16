@@ -298,6 +298,17 @@ adapter-level event identity inside the server event.
 - `AgentSessionCommand`
 - `ServerEvent`
 - `ServerEventKind`
+- `RuntimeEffectStorageRecordId`
+- `RuntimeEffectReplayCheckpointId`
+- `RuntimeEffectStoredEventRecord`
+- `RuntimeEffectStoredEventKind`
+- `RuntimeEffectStorageRef`
+- `RuntimeEffectReplayCheckpoint`
+- `RuntimeEffectStoredEffectState`
+- `RuntimeEffectStorageQuery`
+- `RuntimeEffectLatestStateLookup`
+- `RuntimeEffectRetryLineageRef`
+- `RuntimeEffectRecoveryLookup`
 
 `nucleus-command-policy` now contains the first draft of:
 
@@ -629,6 +640,15 @@ The storage boundary remains separate from event transport, subscriptions,
 scheduling, command execution, adapter execution, and artifact-store
 implementation.
 
+The first Rust runtime effect storage boundary types now name storage record
+ids, replay checkpoint ids, retained event records, stored event kinds, storage
+refs, replay checkpoints, stored effect states, and query postures for retained
+events, ordering-token reconciliation, ref resolution, latest state, retry
+lineage, and recovery-required effects. They are compile-only. They do not
+implement a database, serialization, migrations, replay APIs, event transport,
+subscriptions, artifact stores, scheduling, command execution, or adapter
+execution.
+
 The first Rust command runtime effect state types now name command effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -652,4 +672,4 @@ or server event fan-out.
 - Event transport and subscription policy.
 - Runtime effect replay and retention Rust type boundaries.
 - Replay retention transition from symbolic refs to storage-backed refs.
-- Runtime effect storage ref and checkpoint type boundaries.
+- Runtime effect replay query and client reconciliation boundary.

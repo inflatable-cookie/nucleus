@@ -1181,6 +1181,11 @@ command-authority requests that the server may retain by ref. Raw provider
 payloads remain outside retained event records unless a later artifact policy
 explicitly imports and sanitizes them.
 
+The first Rust runtime effect storage types live in `nucleus-server`. Adapter
+refs remain domain-specific values produced by `nucleus-scm-forge` and retained
+by server storage records. SCM and forge crates still do not implement storage,
+replay, subscriptions, provider calls, command execution, or event fan-out.
+
 The first Rust runtime effect state types now name adapter effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -1204,4 +1209,4 @@ or server event fan-out.
 - Adapter event transport and subscription policy.
 - Adapter replay and retention Rust type boundaries.
 - Adapter symbolic ref transition to storage-backed refs.
-- Adapter observation storage and replay checkpoint boundaries.
+- Adapter observation replay query and client reconciliation boundaries.

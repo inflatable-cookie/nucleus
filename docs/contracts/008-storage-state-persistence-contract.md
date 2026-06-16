@@ -226,6 +226,12 @@ the last terminal state, unresolved recovery state, retry lineage, retained
 sanitized evidence ref, retained observation batch ref, or retained artifact
 ref. Compacted summaries must stay sanitized.
 
+The first Rust runtime effect storage boundary types live in `nucleus-server`.
+They name retained event records, storage refs, replay checkpoints, latest
+state lookups, retry lineage refs, and recovery lookups only. They do not
+implement persistence, serialization, migrations, replay, subscriptions, event
+transport, artifact storage, or runtime execution.
+
 ## Storage Backend Boundary
 
 Backend selection is deliberately open.
@@ -290,12 +296,33 @@ These are descriptive shared types only. They do not implement a database,
 serialization format, migration executor, transactions, replay, file IO, or
 sync.
 
+`nucleus-server` now contains the first draft of runtime effect storage
+boundary vocabulary:
+
+- `RuntimeEffectStorageRecordId`
+- `RuntimeEffectReplayCheckpointId`
+- `RuntimeEffectStoredEventRecord`
+- `RuntimeEffectStoredEventKind`
+- `RuntimeEffectStorageRef`
+- `RuntimeEffectReplayCheckpoint`
+- `RuntimeEffectStoredEffectState`
+- `RuntimeEffectStorageQuery`
+- `RuntimeEffectLatestStateLookup`
+- `RuntimeEffectRetryLineageRef`
+- `RuntimeEffectRecoveryLookup`
+
+These are descriptive server-owned runtime storage types only. They do not
+select a storage backend, file format, migration model, replay API, event
+transport, subscription model, artifact store, scheduler, command runner, or
+adapter runtime.
+
 ## Research Gaps
 
 - Embedded database choice.
 - Serialization format for durable records.
 - Migration execution strategy.
 - Snapshot and journal replay rules.
+- Runtime effect replay query and client reconciliation model.
 - Backup/export/import strategy.
 - Whether project-local metadata should mirror any server state.
 - Secret-store backend and host credential-provider integration.
