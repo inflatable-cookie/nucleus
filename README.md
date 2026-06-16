@@ -34,4 +34,4 @@ of scope until contracts settle.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

@@ -54,6 +54,52 @@ That root stores portable shared project intent:
 The management repository is not the live runtime database. The server imports,
 projects, validates, and syncs shared state through it.
 
+## Project Projection Record
+
+The first-pass repo projection root is `nucleus/`.
+
+Project metadata lives at:
+
+```text
+nucleus/project.toml
+```
+
+The project record should include:
+
+- schema version
+- stable project id
+- display name
+- status
+- importance baseline
+- sync policy
+- management repository marker
+- shared documentation refs
+- updated timestamp or record revision where known
+
+Repo membership records live under:
+
+```text
+nucleus/repos/<repo-membership-id>.toml
+```
+
+Repo membership projection records should include:
+
+- schema version
+- stable repo membership id
+- project id
+- display name
+- remote refs where available
+- default branch where available
+- portable role or purpose
+- current path hint
+- path history
+- missing or moved status
+- repair notes
+
+Absolute local paths are only hints. They must not be the project identity.
+Moved or missing repos should be repairable by updating membership records
+without changing project id.
+
 ## Project Status
 
 - active: visible in current work surfaces and activity indicators
@@ -121,4 +167,4 @@ project, task, workspace, or agent state.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

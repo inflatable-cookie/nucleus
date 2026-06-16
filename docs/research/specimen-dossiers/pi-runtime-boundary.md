@@ -209,4 +209,4 @@ PTY bridge remains a fallback for visual terminal rendering only.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

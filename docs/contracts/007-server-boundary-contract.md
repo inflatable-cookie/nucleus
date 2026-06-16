@@ -138,4 +138,4 @@ subscriptions, runtime routing, and process lifecycle remain out of scope.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

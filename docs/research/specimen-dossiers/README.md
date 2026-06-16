@@ -14,4 +14,4 @@ Specimen dossiers capture deep reads of concrete projects or implementations.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

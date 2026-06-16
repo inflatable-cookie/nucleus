@@ -58,15 +58,104 @@ The repo projection should use small, stable-id records.
 One task per file is preferred over one large shared document. Git conflict
 handling should happen at task-record level where possible.
 
-The exact path is unsettled. Candidate roots include:
+The first-pass projection root is:
 
-- `nucleus/`
-- `.nucleus/`
-- `docs/nucleus/`
-- `docs/project/`
+```text
+nucleus/
+```
 
-Visible paths are preferred for reviewability unless tooling constraints prove
-otherwise.
+This is intentionally visible. Project management state is shared project
+knowledge, not a hidden tool cache.
+
+First-pass layout:
+
+```text
+nucleus/
+  project.toml
+  repos/
+    <repo-membership-id>.toml
+  tasks/
+    <task-id>.toml
+  indexes/
+    README.md
+  artifacts/
+    README.md
+```
+
+`nucleus/` is the portable projection. The server may keep richer local state
+elsewhere.
+
+Reserved but not first-pass:
+
+- `nucleus/history/`
+- `nucleus/decisions/`
+- `nucleus/validation/`
+- `nucleus/forge/`
+
+Hidden roots such as `.nucleus/` remain a fallback only if a later tooling
+constraint proves visible paths are unworkable.
+
+## Projection Record Model
+
+Projection records should be line-diff-friendly and schema-versioned.
+
+Each committed record must include:
+
+- `schema_version`
+- stable record id
+- project id where applicable
+- human-readable title or label where applicable
+- record revision or updated timestamp when known
+
+Project metadata record:
+
+- project id
+- display name
+- status
+- importance baseline
+- sync policy
+- management repo marker
+- shared documentation refs
+
+Repo membership record:
+
+- repo membership id
+- project id
+- display name
+- remote refs where available
+- default branch where available
+- portable role or purpose
+- current path hint
+- path history
+- missing or moved status
+- repair notes
+
+Task record:
+
+- task id
+- project id
+- title
+- description
+- acceptance criteria
+- importance
+- action type
+- workflow activity state
+- assignment intent
+- agent-readiness summary
+- validation summary refs
+- artifact refs
+- low-volume task history summaries
+
+Excluded from projection records:
+
+- secrets and provider auth material
+- provider-native transcripts unless explicitly imported by policy
+- live runtime event streams
+- live agent sessions
+- terminal and browser state
+- local caches and indexes
+- machine-specific absolute paths except repairable path hints
+- raw validation output unless stored as an artifact reference
 
 ## Sync Policy
 
@@ -204,14 +293,12 @@ of scope until the projection file model is settled.
 
 ## Research Gaps
 
-- Canonical repo projection path.
-- File format for task records and project metadata.
 - Management branch versus main-branch sync.
 - Conflict model for simultaneous task edits.
 - Forge issue mirroring semantics.
 - Webhook versus polling refresh.
-- Projection file schema and migration policy.
+- Projection file schema validation and migration policy.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

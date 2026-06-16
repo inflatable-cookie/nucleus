@@ -59,4 +59,4 @@ cargo test --workspace
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

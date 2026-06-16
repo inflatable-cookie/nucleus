@@ -27,4 +27,4 @@ model contracts are specific enough to validate.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

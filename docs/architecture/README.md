@@ -20,4 +20,4 @@ Architecture records the system shape once planning starts to settle.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

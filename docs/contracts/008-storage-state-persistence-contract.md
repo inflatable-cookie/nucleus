@@ -139,4 +139,4 @@ serialization format, migration system, transactions, replay, or sync.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

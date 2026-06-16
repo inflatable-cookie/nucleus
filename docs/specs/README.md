@@ -23,4 +23,4 @@ contracts, roadmaps, or logs carry the durable truth.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

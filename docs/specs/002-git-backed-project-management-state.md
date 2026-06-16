@@ -70,27 +70,29 @@ Referenced, not copied:
 
 ## Repository Projection
 
-The exact layout is not settled.
-
-Candidate shape:
+First-pass layout:
 
 ```text
 nucleus/
   project.toml
+  repos/
+    <repo-membership-id>.toml
   tasks/
-    open/
-    done/
-  history/
+    <task-id>.toml
+  indexes/
+    README.md
   artifacts/
+    README.md
 ```
 
-Open question: whether the directory should be hidden (`.nucleus/`) or visible
-(`nucleus/`, `docs/nucleus/`, or `docs/project/`). Visible paths are better for
-review and shared project knowledge. Hidden paths are cleaner for tooling but
-easier for humans to ignore.
+`nucleus/` is visible by default because project management state is shared
+project knowledge.
 
 Task files should be small, stable-id records. One task per file is preferred
 over one large JSON/TOML document because it gives Git a better merge surface.
+
+Hidden roots such as `.nucleus/` remain a fallback only if later tooling proves
+the visible root unworkable.
 
 ## Sync Model
 
@@ -165,12 +167,9 @@ work.
 
 ## Open Questions
 
-- Which repo projection path should be canonical?
 - How much task history should be committed by default?
 - Should task metadata sync to the main branch, a management branch, or both?
 - How should management-state commits relate to code commits?
-- What conflict cases can be resolved mechanically?
-- What conflict cases require human review?
 - How should forge issues mirror task records without replacing them?
 - How should multiple local Nucleus servers coordinate when each user has one?
 
@@ -185,4 +184,4 @@ work.
 
 ## Next Task
 
-Draft Git-backed project management state semantics.
+Draft projection storage Rust surface boundaries.

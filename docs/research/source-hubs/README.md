@@ -9,4 +9,4 @@ Source hubs group external evidence by topic.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

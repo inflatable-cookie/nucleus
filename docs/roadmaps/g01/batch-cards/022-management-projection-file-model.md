@@ -1,6 +1,6 @@
 # 022 Management Projection File Model
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -60,4 +60,4 @@ cargo test --workspace
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

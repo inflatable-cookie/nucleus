@@ -158,6 +158,49 @@ journal reference when needed, not copied into task history by default.
 Human handoffs and reassignment must record source actor, target actor, reason,
 and context references.
 
+## Task Projection Record
+
+Committed task state lives under:
+
+```text
+nucleus/tasks/<task-id>.toml
+```
+
+One task per file is the first-pass rule. Large shared task documents are not
+the initial model because they create poor Git conflict surfaces.
+
+The task projection record should include:
+
+- schema version
+- stable task id
+- project id
+- title
+- description
+- acceptance criteria
+- importance
+- action type
+- workflow activity state
+- assignment intent
+- agent-readiness summary
+- validation summary refs
+- artifact refs
+- low-volume task history summaries
+- updated timestamp or record revision where known
+
+The task projection record must not include:
+
+- live runtime event streams
+- full provider transcripts
+- raw validation output by default
+- terminal or browser state
+- provider auth material
+- secrets
+- local cache paths
+
+Agent attempt records may be summarized by reference. Full runtime records stay
+server-local or artifact-backed unless an explicit import policy says
+otherwise.
+
 ## Task Model Preferences
 
 Task model preferences influence adapter and route selection without mutating
@@ -246,4 +289,4 @@ selection, assignment execution, and agent delegation remain out of scope.
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

@@ -53,4 +53,4 @@ effigy qa:northstar
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

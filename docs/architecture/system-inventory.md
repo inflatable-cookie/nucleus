@@ -74,4 +74,4 @@ Updated: 2026-06-15
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

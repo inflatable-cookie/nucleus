@@ -16,4 +16,4 @@ Provider implementation readiness, continuing with Claude Code CLI and SDK evide
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.

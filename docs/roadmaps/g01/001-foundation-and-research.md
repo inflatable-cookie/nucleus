@@ -76,6 +76,7 @@ contracts before app behavior begins.
 - Native harness Rust surface boundaries batch card exists.
 - Steward persona policy and sync authority batch card exists.
 - Management projection file model batch card exists.
+- Projection storage Rust surface boundaries batch card exists.
 
 ## Batch Queue
 
@@ -101,7 +102,8 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/020-native-harness-rust-surface-boundaries.md`
 - `docs/roadmaps/g01/batch-cards/021-steward-persona-policy-and-sync-authority.md`
 - `docs/roadmaps/g01/batch-cards/022-management-projection-file-model.md`
+- `docs/roadmaps/g01/batch-cards/023-projection-storage-rust-surface-boundaries.md`
 
 ## Next Task
 
-Draft management projection file model.
+Draft projection storage Rust surface boundaries.
