@@ -58,6 +58,16 @@ The server is authoritative for:
 Clients send commands and render state. They may cache for responsiveness, but
 must reconcile with server state.
 
+Project management state also has a repo-backed projection path.
+
+- local server state is the active working set
+- repo-backed files are the portable shared project intent
+- Git and forges provide synchronization, review, and collaboration signals
+- the project steward agent may help prepare sync commits and reconcile
+  mechanical conflicts under explicit policy
+- live runtime state, provider state, local caches, and secrets do not belong
+  in the committable project projection by default
+
 Remote deployment is modeled above the adapter layer.
 
 - execution environment: one running nucleus server
@@ -85,6 +95,14 @@ Supported adapter transport families:
 Provider constraints are visible in adapter capabilities. Nucleus should not
 pretend all harnesses support the same identity, resume, cancellation,
 checkpointing, or permission model.
+
+Nucleus also needs an app-owned native harness family.
+
+Bridged harnesses adapt external runtimes. Native harnesses are Nucleus-owned
+agent runtimes for stewardship, organization, docs, validation summaries, and
+sync assistance. They may use local or cloud models internally, but their
+authority comes from Nucleus policy and server services, not from an external
+provider runtime.
 
 The first adapter trait split is metadata-first:
 
@@ -213,6 +231,10 @@ flows.
 Projects carry activity state so inactive work can be parked without being
 lost.
 
+A project may declare a management repository root. That root stores portable
+project metadata, task records, documentation, decision records, and references
+to artifacts. It is a collaboration surface, not the live runtime database.
+
 ## Task Model
 
 Tasks are first-class planning and execution units.
@@ -230,6 +252,45 @@ Tasks carry enough detail for semi-automated agent work:
 
 Project importance and task importance combine so neglected important work can
 rise in the multi-project environment.
+
+Task records should be project-portable where possible. Shared task intent can
+be projected into small stable-id files in the management repository while the
+server keeps richer local indexes and runtime state.
+
+## SCM And Forge Sync
+
+Git-backed project management is a first-class planning lane.
+
+Nucleus should support a hybrid model:
+
+- local database for fast active task/project state
+- repo-backed projection for portable shared intent
+- SCM/forge adapters for fetch, push, PR, issue, webhook, and review surfaces
+- project steward agent for normalization, sync preparation, and conflict
+  assistance
+
+The steward agent is bounded. It can prepare management-state commits, link
+tasks to forge objects, and ask for human decisions. It must not silently delete
+tasks, rewrite meaningful history, push code changes, or expose secrets.
+
+## Native Harness Runtime
+
+The first native harness target is the project steward.
+
+Native personas may include:
+
+- project steward
+- task triage assistant
+- documentation maintainer
+- sync conflict assistant
+- validation summarizer
+- research librarian
+- lightweight local helper
+
+The native runtime should use deterministic tools first and model calls for
+classification, summarization, merge suggestions, and ambiguity handling.
+Small local models are preferred for cheap stewardship work when quality is
+sufficient.
 
 ## Workspace Model
 
@@ -252,6 +313,9 @@ Expected workspace surfaces:
 - CLI-backed harnesses must be managed as process/session resources, not loose
   terminal tabs.
 - Project records must survive repo path movement.
+- Git-backed files are a shared projection, not the only runtime state store.
+- The project steward agent must operate under explicit sync policy.
+- Native harnesses must expose their app-owned authority boundary.
 - Specs and contracts must lead major implementation work.
 
 ## Performance and Reliability Constraints
@@ -273,4 +337,4 @@ This architecture unlocks:
 
 ## Next Task
 
-Draft validation evidence and artifact reference semantics.
+Research Nucleus native harness and steward runtime semantics.

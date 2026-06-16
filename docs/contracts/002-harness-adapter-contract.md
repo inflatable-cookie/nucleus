@@ -309,6 +309,14 @@ This keeps provider behavior separate from deployment configuration. The same
 driver may have many configured instances with different accounts, server URLs,
 binary paths, secret references, runtime ownership, or project overrides.
 
+## Native Harness Boundary
+
+Native Nucleus harnesses are not bridged provider adapters.
+
+They should reuse compatible session, event, capability, and audit concepts
+where useful, but they must remain clearly identified as app-owned runtimes.
+Their authority comes from Nucleus policy and server services.
+
 ## Credential Boundary
 
 Harness adapters must not expose raw secret material through adapter metadata,
@@ -613,4 +621,4 @@ inside.
 
 ## Next Task
 
-Draft validation evidence and artifact reference semantics.
+Research Nucleus native harness and steward runtime semantics.

@@ -20,6 +20,7 @@ Planned fields:
 - status: active, parked, archived
 - importance baseline
 - repo membership list
+- management repository root where configured
 - task list
 - workspace layout references
 - activity timestamps
@@ -36,6 +37,22 @@ Each repo membership record should carry:
 - default branch where available
 - missing/moved status
 - repair notes
+
+## Management Repository
+
+A project may nominate one repository path as its management repository root.
+
+That root stores portable shared project intent:
+
+- project metadata
+- repo membership declarations
+- task records
+- project documentation
+- decision records
+- artifact references
+
+The management repository is not the live runtime database. The server imports,
+projects, validates, and syncs shared state through it.
 
 ## Project Status
 
@@ -104,4 +121,4 @@ project, task, workspace, or agent state.
 
 ## Next Task
 
-Draft validation evidence and artifact reference semantics.
+Research Nucleus native harness and steward runtime semantics.

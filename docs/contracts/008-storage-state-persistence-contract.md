@@ -12,6 +12,10 @@ The server owns durable state. Storage is a server concern, not a desktop
 client concern. This contract names what must persist before a backend is
 chosen.
 
+Some durable project-management state may also be projected into a Git-backed
+management repository for portability and collaboration. That projection is a
+sync surface, not a replacement for the active server state store.
+
 Persistent storage must not assume it owns secret material. Durable records may
 store secret references and non-secret credential audit records; raw secrets
 belong to a future secret store, host credential provider, provider-native auth
@@ -88,6 +92,10 @@ Allowed backend families:
 Nucleus must not expose backend-specific assumptions through the public control
 plane contract before the storage backend is selected.
 
+Git-backed management files are a projection backend for shared project intent,
+not the only storage backend. Server-local storage remains required for active
+state, runtime state, indexes, and caches.
+
 ## Storage Location
 
 Initial storage locations:
@@ -127,7 +135,8 @@ serialization format, migration system, transactions, replay, or sync.
 - Backup/export/import strategy.
 - Whether project-local metadata should mirror any server state.
 - Secret-store backend and host credential-provider integration.
+- Git-backed management projection format and sync policy.
 
 ## Next Task
 
-Draft validation evidence and artifact reference semantics.
+Research Nucleus native harness and steward runtime semantics.

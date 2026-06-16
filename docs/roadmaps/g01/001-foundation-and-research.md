@@ -71,6 +71,8 @@ contracts before app behavior begins.
 - Task agent assignment and model preference batch card exists.
 - Task history and agent attempt audit batch card exists.
 - Validation evidence and artifact reference batch card exists.
+- Git-backed project management state batch card exists.
+- Native harness and steward runtime research batch card exists.
 
 ## Batch Queue
 
@@ -91,7 +93,9 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/015-task-agent-assignment-and-model-preferences.md`
 - `docs/roadmaps/g01/batch-cards/016-task-history-and-agent-attempt-audit.md`
 - `docs/roadmaps/g01/batch-cards/017-validation-evidence-and-artifact-references.md`
+- `docs/roadmaps/g01/batch-cards/018-git-backed-project-management-state.md`
+- `docs/roadmaps/g01/batch-cards/019-native-harness-and-steward-runtime-research.md`
 
 ## Next Task
 
-Draft validation evidence and artifact reference semantics.
+Research Nucleus native harness and steward runtime semantics.

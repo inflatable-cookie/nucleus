@@ -4,12 +4,12 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/017-validation-evidence-and-artifact-references.md`
+- `docs/roadmaps/g01/batch-cards/019-native-harness-and-steward-runtime-research.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/017-validation-evidence-and-artifact-references.md`
+- `docs/roadmaps/g01/batch-cards/019-native-harness-and-steward-runtime-research.md`
 
 ## Next Task
 
-Draft validation evidence and artifact reference semantics.
+Research Nucleus native harness and steward runtime semantics.

@@ -12,6 +12,10 @@ Tasks are first-class records. They are not loose checklist items and should
 carry enough context for a human or agent to understand scope, acceptance, and
 validation.
 
+Task records should be project-portable where possible. Shared task intent may
+be projected into repo-backed files so cloned projects can carry their task
+state without requiring a hosted Nucleus database.
+
 ## Task Identity
 
 Each task must expose:
@@ -105,6 +109,11 @@ human review. This is not an execution log.
 
 Task history is durable task state. It is not a UI activity log and must not
 duplicate runtime event streams.
+
+Low-volume task history summaries may be projected to the management
+repository. High-volume runtime streams, provider transcripts, and raw
+validation output should be linked by reference unless an explicit artifact
+policy says otherwise.
 
 Task history entries must identify:
 
@@ -237,4 +246,4 @@ selection, assignment execution, and agent delegation remain out of scope.
 
 ## Next Task
 
-Draft validation evidence and artifact reference semantics.
+Research Nucleus native harness and steward runtime semantics.

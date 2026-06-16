@@ -8,6 +8,8 @@ architecture, contracts, and roadmaps.
 ## Active Spec Surfaces
 
 - `001-provider-implementation-readiness.md`
+- `002-git-backed-project-management-state.md`
+- `003-nucleus-native-harness-and-steward-runtime.md`
 - `templates/`
 
 Batch cards live under the active roadmap lane:
@@ -21,4 +23,4 @@ contracts, roadmaps, or logs carry the durable truth.
 
 ## Next Task
 
-Draft validation evidence and artifact reference semantics.
+Research Nucleus native harness and steward runtime semantics.
