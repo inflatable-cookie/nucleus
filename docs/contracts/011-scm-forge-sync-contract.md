@@ -1174,6 +1174,13 @@ adapter crates expose domain refs such as observation batch refs, task-link
 proposal refs, sanitized evidence refs, and command-authority request refs.
 Those refs remain symbolic until storage and replay contracts exist.
 
+Runtime effect storage keeps adapter event records and retained adapter refs in
+server-owned storage. SCM and forge adapters do not own the replay store. They
+produce normalized observations, task-link proposals, sanitized evidence, and
+command-authority requests that the server may retain by ref. Raw provider
+payloads remain outside retained event records unless a later artifact policy
+explicitly imports and sanitizes them.
+
 The first Rust runtime effect state types now name adapter effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -1197,3 +1204,4 @@ or server event fan-out.
 - Adapter event transport and subscription policy.
 - Adapter replay and retention Rust type boundaries.
 - Adapter symbolic ref transition to storage-backed refs.
+- Adapter observation storage and replay checkpoint boundaries.

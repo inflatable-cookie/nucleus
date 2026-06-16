@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Draft runtime effect storage boundary.
+Add runtime effect storage boundary types.

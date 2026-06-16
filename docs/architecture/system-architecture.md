@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-16
 Vision refs: `docs/vision/001-nucleus-product-vision.md`
 
 ## Top-Level Stack
@@ -505,6 +505,18 @@ must not be dropped while retained events still point to them.
 Replay and retention policy may differ by deployment profile. The policy does
 not choose a database, replay API, event bus, transport, artifact store, or
 client subscription model.
+
+Runtime effect storage is a server-owned storage boundary over normalized
+event records and retained refs. It should keep stable event identity,
+ordering, effect request identity, retry lineage, latest recoverable state,
+terminal state, sanitized command evidence refs, adapter observation refs, and
+artifact refs. It must not copy raw command output, terminal byte streams, raw
+provider payloads, raw webhook payloads, credentials, or large validation
+output into event records by default.
+
+Replay remains deferred until the storage layer can resolve retained refs,
+list events by effect request, list events after a client ordering token, find
+latest effect state, and find recovery-required effects after restart.
 
 ## Interfaces With Roadmaps
 

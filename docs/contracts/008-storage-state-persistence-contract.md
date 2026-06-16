@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-16
 
 ## Purpose
 
@@ -159,6 +159,72 @@ keys, provider auth files, or command helper output by default.
 Full command output may be retained only as an artifact reference under an
 explicit retention policy. Secret scanning and redaction requirements must be
 defined before full command output artifacts become automatic.
+
+## Runtime Effect Storage Boundary
+
+Runtime effect storage is a server-owned persistence boundary.
+
+It stores enough normalized state for restart recovery, client reconciliation,
+and later replay. It is not an event bus, subscription API, scheduler, command
+runner, adapter runtime, artifact store implementation, or database choice.
+
+Runtime effect storage domains:
+
+- event records: server event id, ordering token, effect request id, event
+  kind, event time, retry linkage, durability posture, and short sanitized
+  summary
+- command evidence records: command request id, command evidence ref, status,
+  terminal state, retry classification, output retention mode, artifact refs,
+  and sanitized summary
+- adapter observation records: observation batch ref, provider-neutral
+  observation refs, task-link proposal refs, conflict or review refs,
+  credential-use evidence refs, webhook-verification evidence refs, and
+  command-authority request refs
+- artifact refs: symbolic refs to separately retained artifacts, with
+  retention policy outside event retention
+- replay checkpoints: compacted summaries that preserve terminal state, retry
+  linkage, unresolved recovery state, and refs that retained events still need
+
+Runtime effect storage must preserve:
+
+- stable event identity and monotonic ordering inside one server runtime
+- effect request identity and retry lineage
+- latest known non-terminal state until a terminal or recovery state exists
+- terminal state and retry classification while the effect remains auditable
+- sanitized command evidence refs while retained command events point to them
+- adapter observation batch refs while retained adapter events point to them
+- artifact refs while artifact retention policy says they are resolvable
+- deployment profile used to choose the replay and retention posture
+
+Runtime effect storage must not store by default:
+
+- raw stdout or stderr
+- terminal byte streams
+- raw provider payloads
+- raw webhook payloads
+- credentials, tokens, cookies, signing secrets, or provider auth files
+- machine-local absolute paths except explicit repairable path hints
+- large validation output or command output copied into event records
+
+Symbolic refs remain valid at this boundary. They name the required linkage
+without selecting a storage backend or serialization format. A later storage
+implementation contract must define how symbolic refs become storage-backed
+refs, which records can be garbage-collected, and which query indexes are
+required.
+
+Minimum query needs before replay can be implemented:
+
+- list retained events by effect request id
+- list retained events after an ordering token for client reconciliation
+- resolve retained refs used by a retained event
+- find the latest state for an effect request
+- find retry successor and predecessor relationships
+- find recovery-required effects that need server attention after restart
+
+Compaction is allowed only after the storage layer can prove it will not drop
+the last terminal state, unresolved recovery state, retry lineage, retained
+sanitized evidence ref, retained observation batch ref, or retained artifact
+ref. Compacted summaries must stay sanitized.
 
 ## Storage Backend Boundary
 

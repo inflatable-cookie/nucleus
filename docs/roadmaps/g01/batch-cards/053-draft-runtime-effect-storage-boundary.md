@@ -1,6 +1,6 @@
 # 053 Draft Runtime Effect Storage Boundary
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -47,6 +47,22 @@ Draft runtime effect storage boundary.
 - `docs/contracts/011-scm-forge-sync-contract.md`
 - `docs/architecture/system-architecture.md`
 - `docs/architecture/system-inventory.md`
+
+## Decisions
+
+- Runtime effect storage is server-owned.
+- Storage is split into normalized event records, command evidence refs,
+  adapter observation refs, artifact refs, and replay checkpoints.
+- Symbolic refs remain valid until a later implementation contract promotes
+  storage-backed refs.
+- Replay requires query support for effect events, ordering-token
+  reconciliation, ref resolution, latest effect state, retry lineage, and
+  recovery-required effects.
+- Raw command output, terminal byte streams, raw provider payloads, raw webhook
+  payloads, credentials, and large validation output stay out of event records
+  by default.
+- No database, file format, persistence implementation, replay API, event bus,
+  artifact store, scheduler, command runner, or adapter runtime was selected.
 
 ## Validation
 

@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-16
 
 ## Repos
 
@@ -12,7 +12,10 @@ Updated: 2026-06-15
 ## Rust Crates
 
 - `nucleus-core`: first draft persistence domains, record identity, revision,
-  snapshot, journal, and projection envelope vocabulary.
+  snapshot, journal, projection envelope vocabulary, and storage-boundary
+  contract docs. Runtime effect storage is documented as server-owned
+  normalized event and ref storage, but no Rust storage types or persistence
+  implementation exist yet.
 - `nucleus-agent-protocol`: first draft adapter identity, transport,
   capability, event identity, model-route, and agent session lifecycle types.
 - `nucleus-agent-adapters`: first draft adapter registry, instance
@@ -69,7 +72,8 @@ Updated: 2026-06-15
   subscriptions, scheduling, or runtime execution. Runtime effect replay and
   retention policy types are compile-only and do not implement storage, replay
   APIs, event transport, artifact stores, subscriptions, scheduling, or runtime
-  execution.
+  execution. Runtime effect storage boundaries are documented, but no storage
+  refs, checkpoints, replay indexes, persistence backend, or replay API exist.
 
 ## Apps
 

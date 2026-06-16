@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-16
 
 ## Purpose
 
@@ -621,6 +621,14 @@ server crate because replay and retention are server-owned. They do not
 implement storage, replay APIs, event transport, subscriptions, artifact
 stores, scheduling, or runtime execution.
 
+Runtime effect storage belongs to the server storage boundary. The server must
+persist enough normalized event records, command evidence refs, adapter
+observation refs, artifact refs, retry lineage, and recovery-required state for
+restart recovery and client reconciliation before replay APIs are implemented.
+The storage boundary remains separate from event transport, subscriptions,
+scheduling, command execution, adapter execution, and artifact-store
+implementation.
+
 The first Rust command runtime effect state types now name command effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -644,3 +652,4 @@ or server event fan-out.
 - Event transport and subscription policy.
 - Runtime effect replay and retention Rust type boundaries.
 - Replay retention transition from symbolic refs to storage-backed refs.
+- Runtime effect storage ref and checkpoint type boundaries.
