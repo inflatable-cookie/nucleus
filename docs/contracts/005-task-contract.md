@@ -167,6 +167,9 @@ Allowed first-pass link targets:
 - branch
 - commit
 - provider-neutral SCM change
+- SCM work session
+- SCM conflict
+- review workflow
 - pull request or merge request
 - issue
 - comment
@@ -202,6 +205,8 @@ The binding may reference:
 - per-thread worktree session
 - external managed session
 - review request or merge target
+- conflict record
+- review workflow record
 
 The task remains the planning unit. The SCM work session is execution context.
 It must not replace task identity, assignment state, activity state, or
@@ -211,6 +216,13 @@ Task assignment UI should surface whether an agent will work in the primary
 checkout or in a separate worktree. If the project has a single runnable
 instance constraint, Nucleus must make that constraint visible before launching
 parallel work.
+
+Review workflows and conflict records may add task history summaries by task
+action. They must not update task status, acceptance criteria, assignment
+state, or activity state automatically.
+
+Rejected or abandoned review work should remain linkable from the task until a
+human, policy, or repair flow marks it stale, superseded, or safe to remove.
 
 ## Task Projection Record
 
@@ -346,4 +358,4 @@ and projection IO remain out of scope.
 
 ## Next Task
 
-Draft SCM/forge conflict and review workflow policy.
+Draft SCM/forge adapter implementation readiness plan.

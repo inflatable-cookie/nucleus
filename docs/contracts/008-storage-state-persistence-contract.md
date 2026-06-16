@@ -139,6 +139,15 @@ ref, verification status, failure kind, and sanitized summary. They must not
 retain raw payloads, raw signature material, shared secrets, full headers, or
 provider auth material.
 
+Conflict and review workflow journal entries may retain server-owned ids,
+provider refs, status, resolution policy, merge policy, sanitized summaries,
+and approval references. They must not rely on provider pull request ids,
+branch names, or issue ids as the durable Nucleus identity.
+
+Abandoned, rejected, resolved, and superseded conflict or review records should
+remain auditable until retention policy says otherwise. Cleanup of branches,
+worktrees, or provider review objects must not erase server audit records.
+
 ## Storage Backend Boundary
 
 Backend selection is deliberately open.
@@ -215,7 +224,8 @@ sync.
 - Git-backed management projection format and sync policy.
 - Credential rotation and revocation model.
 - Webhook replay cache storage model.
+- Retention policy for abandoned reviews and resolved conflicts.
 
 ## Next Task
 
-Draft SCM/forge conflict and review workflow policy.
+Draft SCM/forge adapter implementation readiness plan.

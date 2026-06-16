@@ -38,7 +38,8 @@ Future clients may include:
 - `nucleus-scm-forge`: first draft provider-agnostic SCM and forge adapter
   boundary types for repositories, worktrees, branches, commits,
   provider-neutral changes, pull requests, issues, comments, task links,
-  credential references, webhook verification, observations, and capabilities.
+  credential references, webhook verification, conflicts, review workflows,
+  observations, and capabilities.
 - `nucleus-tasks`: task model, importance scoring, task action taxonomy, and
   projection record types later.
 - `nucleus-workspaces`: persisted layouts, terminals, browser views, and
@@ -293,6 +294,10 @@ Per-thread worktree mode supports parallel agent work. It needs extra runtime
 constraint tracking because some projects can only run one dev server, build,
 database, simulator, or hardware target cleanly on a machine.
 
+Conflict and review workflow records are server-owned. Provider pull requests,
+merge requests, branch refs, and issue refs remain linked metadata rather than
+the durable source of Nucleus task or work-session identity.
+
 The steward agent is bounded. It can prepare management-state commits, link
 tasks to forge objects, and ask for human decisions. It must not silently delete
 tasks, rewrite meaningful history, push code changes, or expose secrets.
@@ -361,4 +366,4 @@ This architecture unlocks:
 
 ## Next Task
 
-Draft SCM/forge conflict and review workflow policy.
+Draft SCM/forge adapter implementation readiness plan.

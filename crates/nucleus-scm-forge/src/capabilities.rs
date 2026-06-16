@@ -24,6 +24,8 @@ pub enum ScmCapability {
     MergeWorkSession,
     AbandonWorkSession,
     UseCredentialReference,
+    ClassifyConflicts,
+    ProposeMechanicalConflictResolution,
 }
 
 /// Forge capability.
@@ -39,5 +41,7 @@ pub enum ForgeCapability {
     ReceiveWebhook,
     VerifyWebhook,
     UseCredentialReference,
+    OpenReviewWorkflow,
+    InspectReviewWorkflow,
     PollRefresh,
 }

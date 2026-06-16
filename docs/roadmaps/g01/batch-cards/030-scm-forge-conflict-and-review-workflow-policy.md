@@ -1,6 +1,6 @@
 # 030 SCM Forge Conflict And Review Workflow Policy
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -57,4 +57,4 @@ cargo test --workspace
 
 ## Next Task
 
-Draft SCM/forge conflict and review workflow policy.
+Draft SCM/forge adapter implementation readiness plan.

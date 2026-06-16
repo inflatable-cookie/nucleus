@@ -296,6 +296,50 @@ Examples:
 The steward may prepare a semantic merge proposal, but it must not apply it
 without approval.
 
+Conflict classes must stay explicit.
+
+Initial conflict kinds:
+
+- SCM file merge
+- projection schema
+- projection semantic
+- task semantic
+- project identity
+- repo membership
+- review divergence
+- credential or permission
+- custom provider value
+
+SCM file conflicts and Nucleus semantic conflicts are different events. A Git
+merge conflict can be resolved while the resulting task record is still
+semantically unsafe. A clean SCM merge can still create a semantic conflict in
+task meaning, project identity, assignment intent, sync policy, or task
+history.
+
+Initial conflict statuses:
+
+- detected
+- mechanical resolution available
+- human approval required
+- resolved
+- abandoned
+- superseded
+
+Initial resolution policies:
+
+- steward may resolve mechanically
+- steward may propose
+- human approval required
+- unsupported
+
+The steward may apply mechanical resolutions only when meaning is preserved.
+The steward may propose semantic resolutions, but a human or explicit policy
+gate must approve them before shared state is rewritten.
+
+Abandoned and superseded conflicts must retain an audit trail. They must not
+be deleted merely because a branch, worktree, review request, or provider-side
+object was closed.
+
 ## Forge Boundary
 
 Forges are adapters over collaboration surfaces.
@@ -449,6 +493,48 @@ Adapters should expose whether webhook verification is supported. If a forge
 adapter can receive webhooks but cannot verify them, Nucleus must treat the
 webhook path as unavailable for trusted state changes.
 
+## Review Workflow Policy
+
+Review workflows are server-owned records that may link to forge pull requests,
+merge requests, branch-like refs, and work sessions. A pull request id must not
+replace a task id, work-session id, conflict id, or review-workflow id.
+
+Initial review workflow statuses:
+
+- draft
+- open
+- changes requested
+- approved
+- ready to merge
+- merged
+- rejected
+- abandoned
+- blocked
+
+Initial merge policies:
+
+- direct merge allowed
+- review request required
+- human approval required
+- unsupported
+
+A work session may move to review by opening a review request, attaching an
+existing provider review object, or preparing a direct merge proposal. The
+review workflow records the server-owned state. Provider refs remain metadata.
+
+Nucleus may merge directly only when project sync policy, SCM capability,
+forge capability, work-session state, validation evidence, and approval policy
+all allow it. Otherwise it must open or update a review workflow and wait for
+human or policy approval.
+
+Rejected or abandoned review work must be retained as audit state. Nucleus may
+clean up branches or worktrees only after unmerged work has been retained,
+discarded by explicit approval, or linked to a superseding review workflow.
+
+Review workflows may link back to tasks. Those links are evidence and workflow
+context. They must not mutate task acceptance criteria, assignment state, or
+activity state without a task-domain action.
+
 ## Branch And Worktree Session Policy
 
 In-app branch and worktree management is part of the SCM boundary. It is not a
@@ -548,6 +634,9 @@ Initial link targets:
 - branch
 - commit
 - provider-neutral change
+- work session
+- conflict
+- review workflow
 - pull request or merge request
 - issue
 - comment
@@ -587,6 +676,10 @@ Current modules:
   status, and sanitized credential-use evidence
 - `webhooks`: webhook endpoint ids, verification policy, verification status,
   and sanitized verification evidence
+- `conflicts`: SCM and management-state conflict records, conflict classes,
+  statuses, and resolution policies
+- `reviews`: review workflow records, review statuses, merge policies, and
+  outcomes
 - `scm`: SCM provider kind, repository, worktree, branch, commit,
   provider-neutral change, work session, runtime constraint, and remote refs
 - `forge`: forge repository, pull request, issue, and comment refs
@@ -624,10 +717,10 @@ scope.
 ## Research Gaps
 
 - Management branch versus main-branch sync.
-- Conflict model for simultaneous task edits.
 - Forge issue mirroring semantics.
 - Webhook versus polling refresh.
+- Direct merge versus review-request default policy.
 
 ## Next Task
 
-Draft SCM/forge conflict and review workflow policy.
+Draft SCM/forge adapter implementation readiness plan.

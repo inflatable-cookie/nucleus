@@ -84,6 +84,7 @@ contracts before app behavior begins.
 - SCM/forge credential and webhook verification boundary batch card exists.
 - Branch/worktree session management policy batch card exists.
 - SCM/forge conflict and review workflow policy batch card exists.
+- SCM/forge adapter implementation readiness plan batch card exists.
 
 ## Batch Queue
 
@@ -117,7 +118,8 @@ contracts before app behavior begins.
 - `docs/roadmaps/g01/batch-cards/028-scm-forge-credential-and-webhook-verification-boundary.md`
 - `docs/roadmaps/g01/batch-cards/029-branch-worktree-session-management-policy.md`
 - `docs/roadmaps/g01/batch-cards/030-scm-forge-conflict-and-review-workflow-policy.md`
+- `docs/roadmaps/g01/batch-cards/031-scm-forge-adapter-implementation-readiness-plan.md`
 
 ## Next Task
 
-Draft SCM/forge conflict and review workflow policy.
+Draft SCM/forge adapter implementation readiness plan.

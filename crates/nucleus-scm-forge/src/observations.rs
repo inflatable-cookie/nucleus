@@ -3,10 +3,12 @@
 use std::time::SystemTime;
 
 use crate::auth::CredentialUseEvidence;
+use crate::conflicts::ScmConflictId;
 use crate::forge::{ForgeIssueRef, ForgePullRequestRef};
 use crate::ids::{
     ForgeAdapterInstanceId, ScmAdapterInstanceId, ScmRepositoryRefId, ScmWorktreeRefId,
 };
+use crate::reviews::ReviewWorkflowId;
 use crate::scm::{ScmBranchRef, ScmChangeRef, ScmCommitRef};
 use crate::webhooks::WebhookVerificationEvidence;
 
@@ -36,6 +38,8 @@ pub enum ScmObservationKind {
     ManagementStateChanged,
     CodeChangesPresent,
     SyncConflictDetected,
+    ConflictDetected(ScmConflictId),
+    ReviewWorkflowChanged(ReviewWorkflowId),
     CredentialUseFailed(CredentialUseEvidence),
 }
 
@@ -72,6 +76,7 @@ pub enum ForgeObservationKind {
     IssueSeen(ForgeIssueRef),
     CommentSeen,
     ReviewStateChanged,
+    ReviewWorkflowChanged(ReviewWorkflowId),
     WebhookReceived,
     WebhookRejected(WebhookVerificationEvidence),
     CredentialUseFailed(CredentialUseEvidence),

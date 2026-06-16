@@ -2,7 +2,10 @@
 
 use nucleus_tasks::TaskId;
 
+use crate::conflicts::ScmConflictId;
 use crate::forge::{ForgeCommentRef, ForgeIssueRef, ForgePullRequestRef};
+use crate::ids::ScmWorkSessionId;
+use crate::reviews::ReviewWorkflowId;
 use crate::scm::{ScmBranchRef, ScmChangeRef, ScmCommitRef};
 
 /// Link from a task to an SCM object.
@@ -21,6 +24,9 @@ pub enum ScmTaskLinkKind {
     Branch(ScmBranchRef),
     Commit(ScmCommitRef),
     Change(ScmChangeRef),
+    WorkSession(ScmWorkSessionId),
+    Conflict(ScmConflictId),
+    ReviewWorkflow(ReviewWorkflowId),
 }
 
 /// Link from a task to a forge object.

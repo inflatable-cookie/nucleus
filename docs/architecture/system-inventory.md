@@ -22,7 +22,8 @@ Updated: 2026-06-15
 - `nucleus-projects`: first draft durable project, repo membership, path
   history, repair action, activity, and projection record types.
 - `nucleus-scm-forge`: first draft provider-agnostic SCM, forge, credential,
-  webhook, task-link, observation, and work-session boundary types.
+  webhook, conflict, review-workflow, task-link, observation, and work-session
+  boundary types.
 - `nucleus-tasks`: first draft task identity, importance, neglect, action,
   assignment, activity, agent-readiness, and projection record types.
 - `nucleus-workspaces`: first draft modular workspace layout, panel, and
@@ -76,4 +77,4 @@ Updated: 2026-06-15
 
 ## Next Task
 
-Draft SCM/forge conflict and review workflow policy.
+Draft SCM/forge adapter implementation readiness plan.
