@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Draft credential resolution runtime readiness.
+Draft command runner and sandbox runtime readiness.

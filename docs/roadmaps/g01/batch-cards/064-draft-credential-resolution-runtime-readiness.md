@@ -1,6 +1,6 @@
 # 064 Draft Credential Resolution Runtime Readiness
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -46,6 +46,26 @@ Draft credential resolution runtime readiness.
 - `docs/contracts/008-storage-state-persistence-contract.md`
 - `docs/architecture/system-inventory.md`
 - `crates/nucleus-server`
+
+## Decisions
+
+- Credential readiness is separate from credential resolution.
+- Readiness names policy preflight, backend lookup boundary, runtime material
+  receiver boundary, user prompting boundary, audit capture, redaction, repair
+  work, revocation check, and command approval separation.
+- Runtime receiver boundaries include server memory only, process environment,
+  process stdin, SDK sidecar, external server request, provider-native,
+  webhook verifier, unsupported, and custom.
+- Lookup readiness can be ready, missing policy, missing backend, missing user
+  prompt, missing audit policy, missing redaction policy, blocked, or
+  unsupported.
+- Repair work is emitted for user-action states. Transient backend failures
+  may remain runtime errors when no user action is needed.
+- Safe audit capture retains refs, backend kind, scope, status, failure kind,
+  and sanitized summary only.
+- Initial compile-only readiness vocabulary was added in `nucleus-server`.
+- No credential lookup, prompting, backend access, command execution, provider
+  call, secret injection, or UI implementation was added.
 
 ## Validation
 

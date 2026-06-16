@@ -189,6 +189,69 @@ pub struct CredentialResolutionBlocker {
     pub summary: Option<String>,
 }
 
+/// Runtime boundary that may receive resolved credential material later.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CredentialResolutionRuntimeBoundary {
+    ServerMemoryOnly,
+    ProcessEnvironmentInjection,
+    ProcessStdinInjection,
+    SdkSidecarRequest,
+    ExternalServerRequest,
+    ProviderNativeBoundary,
+    WebhookVerifier,
+    Unsupported,
+    Custom(String),
+}
+
+/// Readiness of a credential lookup path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CredentialLookupReadiness {
+    Ready,
+    MissingPolicy,
+    MissingBackend,
+    MissingUserPrompt,
+    MissingAuditPolicy,
+    MissingRedactionPolicy,
+    Blocked(CredentialResolutionBlocker),
+    Unsupported(String),
+}
+
+/// Preflight record before a runtime may request material.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CredentialResolutionPreflight {
+    pub request: CredentialResolutionRequest,
+    pub runtime_boundary: CredentialResolutionRuntimeBoundary,
+    pub lookup_readiness: CredentialLookupReadiness,
+    pub audit: CredentialResolutionAuditCapture,
+}
+
+/// Sanitized audit capture posture for resolution attempts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CredentialResolutionAuditCapture {
+    pub retain_ref: bool,
+    pub retain_backend_kind: bool,
+    pub retain_scope: bool,
+    pub retain_status: bool,
+    pub retain_failure_summary: bool,
+}
+
+/// Repair work item emitted by credential readiness checks.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CredentialRepairWorkItem {
+    pub credential_ref: CredentialMaterialRef,
+    pub action: CredentialResolutionRepairAction,
+    pub impact: CredentialResolutionImpact,
+    pub summary: Option<String>,
+}
+
+/// Overall readiness result. This is not a resolution result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CredentialResolutionReadiness {
+    pub preflight: CredentialResolutionPreflight,
+    pub repair_work: Vec<CredentialRepairWorkItem>,
+    pub may_attempt_lookup: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +327,62 @@ mod tests {
             CredentialResolutionImpact::BlocksCommandExecution
         );
         assert_eq!(blocker.status, CredentialMaterialStatus::PermissionDenied);
+    }
+
+    #[test]
+    fn preflight_can_be_ready_without_resolving_material() {
+        let request = CredentialResolutionRequest {
+            credential_ref: CredentialMaterialRef("credential:webhook".to_owned()),
+            material_class: CredentialMaterialClass::WebhookSigningSecret,
+            backend: SecretBackendKind::HostCredentialProvider,
+            scope: CredentialResolutionScope::WebhookVerification,
+            access_policy: CredentialAccessPolicy {
+                allow_raw_material_to_leave_server: false,
+                allow_runtime_injection: false,
+                requires_command_approval: false,
+                redaction: CredentialRedactionPolicy::RetainRefAndStatus,
+            },
+        };
+
+        let preflight = CredentialResolutionPreflight {
+            request,
+            runtime_boundary: CredentialResolutionRuntimeBoundary::WebhookVerifier,
+            lookup_readiness: CredentialLookupReadiness::Ready,
+            audit: CredentialResolutionAuditCapture {
+                retain_ref: true,
+                retain_backend_kind: true,
+                retain_scope: true,
+                retain_status: true,
+                retain_failure_summary: true,
+            },
+        };
+
+        let readiness = CredentialResolutionReadiness {
+            preflight,
+            repair_work: Vec::new(),
+            may_attempt_lookup: true,
+        };
+
+        assert!(readiness.may_attempt_lookup);
+        assert!(readiness.repair_work.is_empty());
+    }
+
+    #[test]
+    fn readiness_can_emit_repair_work_without_lookup() {
+        let repair = CredentialRepairWorkItem {
+            credential_ref: CredentialMaterialRef("credential:provider".to_owned()),
+            action: CredentialResolutionRepairAction::AskUserToLoginProvider,
+            impact: CredentialResolutionImpact::BlocksAdapterReadiness,
+            summary: Some("provider login required".to_owned()),
+        };
+
+        assert_eq!(
+            repair.impact,
+            CredentialResolutionImpact::BlocksAdapterReadiness
+        );
+        assert_eq!(
+            repair.action,
+            CredentialResolutionRepairAction::AskUserToLoginProvider
+        );
     }
 }

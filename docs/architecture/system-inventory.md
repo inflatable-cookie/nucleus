@@ -106,7 +106,12 @@ Updated: 2026-06-16
   Credential resolution integration types now name domain integration refs,
   integration records, blocking impacts, repair actions, and blockers, but they
   do not resolve credentials, prompt users, access backends, inject secrets,
-  execute commands, call providers, or implement UI.
+  execute commands, call providers, or implement UI. Credential runtime
+  readiness types now name runtime material receiver boundaries, lookup
+  readiness states, preflight records, audit capture posture, repair work
+  items, and readiness outcomes, but they do not resolve credentials, prompt
+  users, access backends, inject secrets, execute commands, call providers, or
+  implement UI.
 
 ## Apps
 

@@ -1114,6 +1114,68 @@ refs, integration records, blocking impacts, repair actions, and blockers.
 They are compile-only. They do not resolve credentials, prompt users, access
 backends, inject secrets, execute commands, call providers, or implement UI.
 
+## Credential Resolution Runtime Readiness
+
+Credential resolution implementation may begin only after runtime readiness
+surfaces are explicit.
+
+Required runtime readiness surfaces:
+
+- policy preflight before lookup
+- backend lookup boundary
+- runtime material receiver boundary
+- user prompting boundary
+- sanitized audit capture
+- redaction policy
+- repair work emission
+- revocation check
+- command approval separation
+
+Runtime boundaries that may receive material later:
+
+- server memory only
+- process environment injection
+- process stdin injection
+- SDK sidecar request
+- external server request
+- provider-native boundary
+- webhook verifier
+- unsupported
+- custom
+
+Lookup readiness states:
+
+- ready
+- missing policy
+- missing backend
+- missing user prompt
+- missing audit policy
+- missing redaction policy
+- blocked by credential status
+- unsupported
+
+Credential readiness is not credential resolution. A readiness pass may say a
+lookup is allowed, blocked, repair-required, or unsupported. It must not
+return raw credential material.
+
+Repair work should be emitted for user-action states such as missing provider
+login, missing selected credential ref, expired credential, revoked credential,
+permission denied, provider-native auth required, or unsupported backend.
+Transient backend failures may stay runtime errors when retry is reasonable and
+no user action is needed.
+
+Safe audit capture may retain credential ref, backend kind, resolution scope,
+status, failure kind, and short sanitized summary. It must not retain raw
+material, decrypted payloads, provider auth files, tokens, private keys,
+cookies, authorization headers, command output, or provider error output unless
+sanitized.
+
+The first Rust credential runtime readiness types now name runtime material
+receiver boundaries, lookup readiness states, preflight records, audit capture
+posture, repair work items, and readiness outcomes. They are compile-only.
+They do not resolve credentials, prompt users, access backends, inject secrets,
+execute commands, call providers, or implement UI.
+
 The first Rust command runtime effect state types now name command effect state
 records, non-terminal states, terminal states, and optional retry
 classification. They are value-shaped only. They do not implement a scheduler,
@@ -1145,3 +1207,4 @@ or server event fan-out.
 - Secret store and credential material boundary.
 - Credential resolution integration policy.
 - Credential resolution runtime implementation readiness.
+- Command runner and sandbox runtime readiness.

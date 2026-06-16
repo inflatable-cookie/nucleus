@@ -75,6 +75,12 @@ routes, SCM/forge access, webhook verification, and command execution. It must
 be represented as revocation and repair state, not by deleting affected records
 or hiding previous evidence.
 
+Credential readiness records may retain preflight status, backend family,
+resolution scope, readiness status, repair work refs, and sanitized summaries.
+They must not retain raw material or decrypted payloads. Readiness records are
+not proof that credential material was resolved; they are only evidence that a
+lookup may be attempted, blocked, unsupported, or repair-required.
+
 Webhook verification records are sanitized evidence. They may record endpoint
 id, provider event ref, verification status, failure kind, and short
 non-secret summary. They must not store raw webhook bodies, signature header
@@ -457,6 +463,7 @@ adapter runtime.
 - Secret-store backend and host credential-provider integration.
 - Client auth credential reference and revocation storage model.
 - Secret material backend, rotation, redaction, and revocation model.
+- Credential readiness storage and repair-work projection model.
 - Git-backed management projection format and sync policy.
 - Credential rotation and revocation model.
 - Webhook replay cache storage model.

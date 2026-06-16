@@ -64,9 +64,11 @@ pub use runtime_effect_transport::{
 };
 pub use secret_store::{
     CredentialAccessPolicy, CredentialAuditRecord, CredentialIntegrationRef,
-    CredentialMaterialClass, CredentialMaterialRef, CredentialMaterialStatus,
-    CredentialRedactionPolicy, CredentialResolutionBlocker, CredentialResolutionImpact,
-    CredentialResolutionIntegrationRecord, CredentialResolutionRepairAction,
-    CredentialResolutionRequest, CredentialResolutionScope, CredentialRevocationPolicy,
+    CredentialLookupReadiness, CredentialMaterialClass, CredentialMaterialRef,
+    CredentialMaterialStatus, CredentialRedactionPolicy, CredentialRepairWorkItem,
+    CredentialResolutionAuditCapture, CredentialResolutionBlocker, CredentialResolutionImpact,
+    CredentialResolutionIntegrationRecord, CredentialResolutionPreflight,
+    CredentialResolutionReadiness, CredentialResolutionRepairAction, CredentialResolutionRequest,
+    CredentialResolutionRuntimeBoundary, CredentialResolutionScope, CredentialRevocationPolicy,
     CredentialRotationPolicy, SecretBackendKind,
 };
