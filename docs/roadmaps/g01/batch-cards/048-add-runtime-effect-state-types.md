@@ -1,6 +1,6 @@
 # 048 Add Runtime Effect State Types
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-16
 
@@ -49,6 +49,17 @@ Add runtime effect state types.
 - `docs/contracts/011-scm-forge-sync-contract.md`
 - `docs/contracts/007-server-boundary-contract.md`
 - `docs/architecture/system-inventory.md`
+
+## Decisions
+
+- Adapter and command effect state vocabularies stay separate for now.
+- Recovery required is a non-terminal state.
+- Cancellation requested is a non-terminal state.
+- Retry scheduling is not state; retry classification is an optional field on
+  state records.
+- State records are value-shaped and compile-only.
+- No transition validator, scheduler, persistence, replay, process supervisor,
+  provider client, or event fan-out was added.
 
 ## Validation
 

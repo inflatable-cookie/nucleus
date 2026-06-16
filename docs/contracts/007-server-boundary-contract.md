@@ -516,6 +516,110 @@ classification, terminal state, sanitized evidence refs, artifact refs, and
 short summaries. They must not contain raw stdout, stderr, environment,
 credential material, or machine-local paths by default.
 
+Runtime effect events should share a common server-owned envelope across
+adapter and command effects.
+
+Minimum shared event envelope fields:
+
+- stable server event id
+- event kind
+- event sequence or monotonic ordering token
+- effect request id
+- event time
+- optional prior effect request id for retry-scheduled events
+- optional summary
+
+Minimum command effect event payload fields:
+
+- command request id
+- current command effect state
+- optional terminal command effect state
+- optional retry classification
+- optional sanitized evidence ref
+- optional artifact refs
+- optional policy or approval ref
+
+Adapter and command effect events may share the same envelope, but their
+payloads stay separate. Command events reference sanitized command evidence.
+Adapter events reference normalized observation batches, task-link proposals,
+credential-use evidence, webhook-verification evidence, or command-authority
+requests.
+
+Retry-scheduled events must point to the prior effect request id and the new
+effect request id. The scheduled retry is a new request, not mutation of the
+old terminal outcome.
+
+Effect events are reconciliation signals for clients. They are not the
+persistence schema, replay store, transport contract, or source of authority
+for project, task, workspace, projection, command, or adapter state.
+
+The first Rust runtime effect event types now include a server-owned envelope,
+server event sequence token, adapter effect payload variant, command effect
+payload variant, symbolic retry linkage, and short summaries. They are
+compile-only. They do not implement event transport, subscriptions,
+persistence, replay, scheduling, or runtime execution.
+
+## Runtime Effect Replay And Retention Policy
+
+Runtime effect events are split into durable replay events and transient
+reconciliation events.
+
+Durable replay events must survive server restart until a later retention
+contract says otherwise:
+
+- effect requested
+- effect accepted
+- effect queued
+- effect running
+- cancellation requested
+- command approval required
+- command evidence published
+- effect outcome reported
+- effect retry scheduled
+- recovery required
+
+Transient reconciliation events may be compacted after a durable successor
+exists:
+
+- repeated running heartbeats
+- repeated queued posture with no state change
+- repeated client delivery acknowledgements
+- duplicate provider delivery notices after dedupe
+- UI-only progress summaries
+
+Retention posture:
+
+- sanitized command evidence refs must remain resolvable while any retained
+  command effect event points to them
+- artifact refs must remain resolvable according to artifact-retention policy,
+  not event-retention policy alone
+- observation batch refs must remain resolvable while any retained adapter
+  effect event points to them
+- retry linkage must remain resolvable at least across the prior terminal event
+  and the new requested event
+- summaries may be retained after detailed refs expire if the summary does not
+  contain raw command output, raw provider payloads, credentials, or
+  machine-local paths
+
+Compaction may replace a sequence of non-terminal events with a summary only
+after a terminal or recovery-required event exists. Compaction must not remove
+the last known terminal state, retry linkage, sanitized evidence ref, artifact
+ref, or observation batch ref while those refs are still within retention.
+
+Replay policy may differ by deployment profile. Local-only deployments may keep
+shorter replay windows. Remote or multi-client deployments need enough replay
+to let clients reconnect and reconcile effect state without becoming
+authoritative.
+
+This policy does not choose a database, file format, replay API, event bus,
+transport, or artifact store.
+
+The first Rust command runtime effect state types now name command effect state
+records, non-terminal states, terminal states, and optional retry
+classification. They are value-shaped only. They do not implement a scheduler,
+transition validator, process supervisor, persistence, replay, artifact store,
+or server event fan-out.
+
 ## Research Gaps
 
 - Whether the first API should be HTTP/WebSocket, local socket, or both.
@@ -528,4 +632,7 @@ credential material, or machine-local paths by default.
 - Dev-only command fixture crate boundary.
 - Runtime command effect request and outcome type shapes.
 - Cancellation, timeout, retry, and artifact-retention policy.
-- Server event payload shape for command effect state changes.
+- Runtime command effect state transition validation.
+- Server event envelope Rust type boundaries.
+- Event transport and subscription policy.
+- Runtime effect replay and retention Rust type boundaries.

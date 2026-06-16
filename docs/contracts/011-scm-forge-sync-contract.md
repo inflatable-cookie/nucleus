@@ -1096,6 +1096,85 @@ terminal state, sanitized evidence refs, observation batch refs, and short
 summaries. They must not contain raw provider payloads, credentials, raw command
 output, or machine-local paths by default.
 
+Minimum adapter effect event payload fields:
+
+- adapter effect request id
+- adapter instance id
+- adapter surface kind: SCM or forge
+- current adapter effect state
+- optional terminal adapter effect state
+- optional retry classification
+- optional observation batch ref
+- optional task-link proposal ref
+- optional conflict record ref
+- optional review-workflow ref
+- optional credential-use evidence ref
+- optional webhook-verification evidence ref
+- optional command-authority request ref
+
+Observation batch refs and sanitized evidence refs may be symbolic before
+storage exists. They should name the shape of the reference without committing
+to a persistence backend.
+
+Adapter effect events may use the common server event envelope defined in the
+server boundary contract. Adapter payloads remain separate from command effect
+payloads because provider observations and command evidence carry different
+sanitization rules.
+
+Retry-scheduled adapter events must point to the prior effect request id and
+the new effect request id. A retry is a new server-scheduled request, not an
+adapter-owned loop or mutation of the old outcome.
+
+The first Rust adapter runtime effect event types now name adapter effect event
+payloads, adapter effect event kinds, and symbolic refs for observation
+batches, task-link proposals, sanitized evidence, and command-authority
+requests. They are compile-only. They do not implement event transport,
+subscriptions, persistence, replay, scheduling, provider calls, or event
+fan-out.
+
+## Adapter Effect Replay And Retention Policy
+
+Adapter effect events follow the server replay and retention policy.
+
+Adapter-specific durable replay events:
+
+- adapter effect requested
+- adapter effect accepted
+- adapter effect queued
+- adapter effect running
+- adapter cancellation requested
+- adapter effect outcome reported
+- adapter effect retry scheduled
+- adapter recovery required
+
+Adapter-specific transient reconciliation events:
+
+- repeated polling heartbeat with no observed state change
+- duplicate webhook delivery after verification and dedupe
+- repeated provider progress summaries
+- refresh progress that is superseded by an observation batch
+
+Adapter observation batch refs must remain resolvable while retained adapter
+events point to them. Task-link proposal refs, conflict record refs,
+review-workflow refs, credential-use evidence refs, webhook-verification
+evidence refs, and command-authority request refs must follow the retention
+policy of their owning record type once those records exist.
+
+Provider-native refs may be retained as metadata. Raw provider payloads must
+not be retained in event replay by default. If a later import policy preserves
+raw provider payloads, those payloads must be separate artifacts with explicit
+retention and sanitization rules.
+
+Adapter retry linkage must keep the prior terminal adapter effect request id
+and the new adapter effect request id resolvable for replay. A retry remains a
+new server-scheduled request.
+
+The first Rust runtime effect state types now name adapter effect state
+records, non-terminal states, terminal states, and optional retry
+classification. They are value-shaped only. They do not implement a scheduler,
+transition validator, persistence, replay, provider calls, command execution,
+or server event fan-out.
+
 ## Research Gaps
 
 - Management branch versus main-branch sync.
@@ -1108,3 +1187,7 @@ output, or machine-local paths by default.
 - Runtime effect request and outcome type shapes.
 - Cancellation and retry policy for long-running provider effects.
 - Server event payload shape for effect state changes.
+- Runtime effect state transition validation.
+- Adapter effect event Rust type boundaries.
+- Adapter event transport and subscription policy.
+- Adapter replay and retention Rust type boundaries.

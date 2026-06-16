@@ -485,6 +485,27 @@ Server events should expose effect state changes after normalization and
 sanitization. They should not expose raw provider payloads, raw command output,
 credentials, or machine-local paths by default.
 
+Runtime effect events should use a common server-owned envelope with separate
+adapter and command payloads. The envelope carries event identity, ordering,
+effect request identity, event time, retry linkage, and summaries. Payloads
+carry domain-specific refs such as sanitized command evidence refs, artifact
+refs, normalized observation batch refs, task-link proposal refs, credential or
+webhook evidence refs, and command-authority request refs.
+
+Effect events are client reconciliation signals. They are not the persistence
+schema, replay store, transport contract, scheduler, or authority for state
+mutation.
+
+Runtime effect replay should retain durable effect state changes long enough
+for server restart and client reconnection. Repeated progress and heartbeat
+events may be compacted after a durable successor exists. Sanitized evidence
+refs, artifact refs, observation refs, retry linkage, and terminal outcomes
+must not be dropped while retained events still point to them.
+
+Replay and retention policy may differ by deployment profile. The policy does
+not choose a database, replay API, event bus, transport, artifact store, or
+client subscription model.
+
 ## Interfaces With Roadmaps
 
 This architecture unlocks:

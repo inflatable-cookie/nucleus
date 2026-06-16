@@ -58,7 +58,9 @@ name = "nucleus-server"
 version = "0.0.0"
 dependencies = [
  "nucleus-agent-protocol",
+ "nucleus-command-policy",
  "nucleus-projects",
+ "nucleus-scm-forge",
  "nucleus-tasks",
  "nucleus-workspaces",
 ]

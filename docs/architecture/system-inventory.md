@@ -27,7 +27,13 @@ Updated: 2026-06-15
   Runtime command effect trait responsibilities are drafted in docs, with
   value-shaped request-acceptance and outcome-reporting trait skeletons now
   present. Runtime command effect state-machine policy is documented, but no
-  Rust state-machine types or scheduler exist.
+  scheduler exists. Value-shaped command runtime effect state types now name
+  non-terminal states, terminal states, state records, and optional retry
+  classification. Runtime command effect event vocabulary is documented, with
+  compile-only command event payload types now present. No event transport,
+  persistence, replay, or subscriptions exist. Runtime effect replay and
+  retention policy is documented, but no Rust replay or retention policy types
+  exist.
 - `nucleus-contract-fixtures`: dev-only, unpublished contract fixture
   vocabulary crate for provider-neutral SCM/forge and command-policy contract
   tests. Production crates must not depend on it. The first integration tests
@@ -46,14 +52,21 @@ Updated: 2026-06-15
   type-only request/outcome vocabulary. Runtime SCM/forge effect trait
   responsibilities are drafted in docs, with value-shaped SCM and forge
   request-acceptance and outcome-reporting trait skeletons now present.
-  Runtime SCM/forge effect state-machine policy is documented, but no Rust
-  state-machine types or scheduler exist.
+  Runtime SCM/forge effect state-machine policy is documented, but no scheduler
+  exists. Value-shaped adapter runtime effect state types now name
+  non-terminal states, terminal states, state records, and optional retry
+  classification. Runtime adapter effect event vocabulary is documented, with
+  compile-only adapter event payload types now present. No event transport,
+  persistence, replay, or subscriptions exist. Adapter replay and retention
+  policy is documented, but no Rust replay or retention policy types exist.
 - `nucleus-tasks`: first draft task identity, importance, neglect, action,
   assignment, activity, agent-readiness, and projection record types.
 - `nucleus-workspaces`: first draft modular workspace layout, panel, and
   surface types.
 - `nucleus-server`: first draft modular server authority, deployment, client,
-  command, and event boundary types.
+  command, and event boundary types. Runtime effect server event envelope types
+  are compile-only and do not implement transport, persistence, replay,
+  subscriptions, scheduling, or runtime execution.
 
 ## Apps
 

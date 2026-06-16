@@ -13,4 +13,4 @@ shape.
 
 ## Next Task
 
-Add runtime effect state types.
+Add runtime effect replay retention policy types.

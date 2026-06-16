@@ -9,6 +9,7 @@ pub mod commands;
 pub mod deployment;
 pub mod events;
 pub mod ids;
+pub mod runtime_effect_events;
 
 pub use authority::{AuthorityArea, ServerAuthority};
 pub use clients::{ClientConnection, ClientIdentity, ClientKind};
@@ -18,3 +19,6 @@ pub use commands::{
 pub use deployment::{AccessEndpoint, DeploymentMode, ServerRuntime};
 pub use events::{ServerEvent, ServerEventKind};
 pub use ids::{ClientId, ServerCommandId, ServerEventId};
+pub use runtime_effect_events::{
+    RuntimeEffectServerEvent, RuntimeEffectServerEventKind, ServerEventSequence,
+};

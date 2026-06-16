@@ -15,6 +15,8 @@ pub mod links;
 pub mod observations;
 pub mod reviews;
 pub mod runtime_effects;
+pub mod runtime_events;
+pub mod runtime_states;
 pub mod scm;
 pub mod traits;
 pub mod webhooks;
@@ -53,6 +55,14 @@ pub use reviews::{
 pub use runtime_effects::{
     ForgeRuntimeEffectAcceptanceSurface, ForgeRuntimeEffectOutcomeSurface,
     ScmRuntimeEffectAcceptanceSurface, ScmRuntimeEffectOutcomeSurface,
+};
+pub use runtime_events::{
+    AdapterCommandAuthorityRequestRef, AdapterEffectEventKind, AdapterEffectEventPayload,
+    AdapterObservationBatchRef, AdapterSanitizedEvidenceRef, AdapterTaskLinkProposalRef,
+};
+pub use runtime_states::{
+    AdapterEffectNonTerminalState, AdapterEffectState, AdapterEffectStateRecord,
+    AdapterEffectTerminalState,
 };
 pub use scm::{
     ScmBranchRef, ScmChangeKind, ScmChangeRef, ScmCommitRef, ScmProviderKind, ScmRemoteRef,

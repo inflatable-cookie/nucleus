@@ -10,6 +10,8 @@ pub mod evidence;
 pub mod ids;
 pub mod policy;
 pub mod runtime_effects;
+pub mod runtime_events;
+pub mod runtime_states;
 
 pub use authority::{CommandAuthorityPolicySurface, CommandAuthorityReadiness};
 pub use effects::{
@@ -24,4 +26,12 @@ pub use policy::{
 };
 pub use runtime_effects::{
     CommandRuntimeEffectAcceptanceSurface, CommandRuntimeEffectOutcomeSurface,
+};
+pub use runtime_events::{
+    CommandArtifactRef, CommandEffectEventKind, CommandEffectEventPayload, CommandEvidenceRef,
+    CommandPolicyDecisionRef,
+};
+pub use runtime_states::{
+    CommandEffectNonTerminalState, CommandEffectState, CommandEffectStateRecord,
+    CommandEffectTerminalState,
 };
