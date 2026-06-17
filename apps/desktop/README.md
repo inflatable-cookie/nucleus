@@ -37,4 +37,11 @@ The next desktop panel is a read-only project switcher. It should list and
 select server-owned project records without adding project creation or editing.
 
 The project switcher panel exists and reads `project_records` DTOs. Selection
-is currently local to the panel.
+is local shell state and is not persisted or sent to the server.
+
+Task list UI is deferred until Rust exposes an intentional local task seed or
+create path.
+
+The chosen task runway mirrors project records: Rust owns task storage codec,
+server projection, and seeded bootstrap data. The `task_records` DTO now
+exists; desktop should only render it after bootstrap task data exists.

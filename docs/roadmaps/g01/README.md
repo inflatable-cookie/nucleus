@@ -20,6 +20,7 @@ Updated: 2026-06-16
 - `012-desktop-control-diagnostics-and-panel-foundation.md`
 - `013-project-state-records-and-switcher-readiness.md`
 - `014-read-only-desktop-project-switcher.md`
+- `015-task-records-and-read-only-list-readiness.md`
 
 ## Batch Cards
 

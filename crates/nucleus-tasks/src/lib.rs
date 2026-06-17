@@ -11,6 +11,7 @@ pub mod assignment;
 pub mod history;
 pub mod preferences;
 pub mod projection;
+pub mod storage_codec;
 
 pub use assignment::{
     TaskAssignmentAuditEntry, TaskAssignmentAuditEvent, TaskAssignmentPlan, TaskAssignmentSnapshot,
@@ -25,6 +26,11 @@ pub use preferences::{
     TaskModelPreferenceMode, TaskModelPreferences, TaskPreferenceWeight, TaskRoutePreference,
 };
 pub use projection::{TaskProjectionHistorySummary, TaskProjectionRecord};
+pub use storage_codec::{
+    decode_task_storage_record, encode_task_storage_record, TaskRecordCodecError,
+    TaskStorageAcceptanceCriterion, TaskStorageActionType, TaskStorageActivityState,
+    TaskStorageImportance, TaskStorageRecord,
+};
 
 /// Stable task id.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

@@ -19,6 +19,7 @@ shape.
 - `g01/012-desktop-control-diagnostics-and-panel-foundation.md`
 - `g01/013-project-state-records-and-switcher-readiness.md`
 - `g01/014-read-only-desktop-project-switcher.md`
+- `g01/015-task-records-and-read-only-list-readiness.md`
 
 ## Index
 
@@ -26,4 +27,4 @@ shape.
 
 ## Next Task
 
-Wire project selection into shell.
+Add local task seed path.

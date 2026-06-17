@@ -99,7 +99,11 @@ Updated: 2026-06-16
   persistence, replay, or subscriptions exist. Adapter replay and retention
   policy is documented, but no Rust replay or retention policy types exist.
 - `nucleus-tasks`: first draft task identity, importance, neglect, action,
-  assignment, activity, agent-readiness, and projection record types.
+  assignment, activity, agent-readiness, and projection record types. It now
+  includes a Rust-owned JSON storage codec for first task display records. The
+  codec preserves stable task id, project id, title, description, acceptance
+  criteria, importance, action type, activity, assignment intent, and
+  agent-readiness flag for server-owned storage/control projection use.
 - `nucleus-memory`: planned, not scaffolded. Future shared memory crate for
   memory records, scopes, source refs, review state, sensitivity, retention,
   and projection boundaries. The local store crate leaves room for this domain,
@@ -185,10 +189,10 @@ Updated: 2026-06-16
   control envelope DTOs now cover the first request/response envelopes,
   supported state and runtime metadata query shapes, response status, state
   record payload envelopes, command receipt summaries, and explicit error
-  shapes. Project state query responses can now expose display-ready project
-  record DTOs decoded from server-owned project storage payloads. Unsupported
-  payloads fail with codec errors. Tauri IPC readiness can now consume explicit
-  control serialization readiness. A Tauri IPC command
+  shapes. Project and task state query responses can now expose display-ready
+  typed DTOs decoded from server-owned storage payloads. Unsupported payloads
+  fail with codec errors. Tauri IPC readiness can now consume explicit control
+  serialization readiness. A Tauri IPC command
   boundary skeleton now names schema-only, fixture-backed, and Tauri
   runtime-backed postures plus a request/response submission trait. It does not
   use Tauri macros, start a Tauri runtime, serialize payloads, own durable
@@ -259,9 +263,9 @@ Updated: 2026-06-16
   and renders protocol details, request status, raw DTO response, and errors.
   Local desktop startup seeds a `Nucleus Local` project through the server
   seed path. A read-only project switcher panel lists `project_records` DTOs
-  and keeps selection local to the panel. It does not implement project/task
+  and keeps selection in local shell state. It does not implement project/task
   mutation panels, live subscriptions, provider process lifecycle, remote
-  transport, command execution, or durable state authority.
+  transport, command execution, persisted focus, or durable state authority.
 
 ## External Systems To Research
 

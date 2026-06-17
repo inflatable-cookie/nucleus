@@ -1,6 +1,6 @@
 # 119 Wire Project Selection Into Shell
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-17
 
@@ -27,6 +27,13 @@ Let the desktop shell track the currently selected project as local view state.
 
 ## Acceptance Criteria
 
-- Selecting a project updates local shell state.
-- Selection does not mutate server state.
-- Empty project lists remain valid.
+- [x] Selecting a project updates local shell state.
+- [x] Selection does not mutate server state.
+- [x] Empty project lists remain valid.
+
+## Notes
+
+- `App.svelte` now owns `selectedProjectId` as local view state.
+- `ProjectSwitcherPanel` receives a bindable selection prop and only mutates
+  local shell state.
+- Selection is still not persisted or sent to the server.

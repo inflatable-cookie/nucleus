@@ -4,11 +4,11 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/119-wire-project-selection-into-shell.md`
+- `docs/roadmaps/g01/batch-cards/123-add-local-task-seed-or-create-path.md`
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/119-wire-project-selection-into-shell.md`
+- `docs/roadmaps/g01/batch-cards/123-add-local-task-seed-or-create-path.md`
 
 ## Completed Cards
 
@@ -61,7 +61,11 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 - `docs/roadmaps/g01/batch-cards/116-add-local-project-seed-or-create-path.md`
 - `docs/roadmaps/g01/batch-cards/117-reassess-read-only-project-switcher-readiness.md`
 - `docs/roadmaps/g01/batch-cards/118-add-read-only-project-switcher-panel.md`
+- `docs/roadmaps/g01/batch-cards/119-wire-project-selection-into-shell.md`
+- `docs/roadmaps/g01/batch-cards/120-reassess-task-list-readiness.md`
+- `docs/roadmaps/g01/batch-cards/121-compile-task-record-display-and-seed-runway.md`
+- `docs/roadmaps/g01/batch-cards/122-add-task-record-storage-codec-or-display-projection.md`
 
 ## Planned Cards
 
-- `docs/roadmaps/g01/batch-cards/120-reassess-task-list-readiness.md`
+- `docs/roadmaps/g01/batch-cards/124-reassess-read-only-task-list-readiness.md`

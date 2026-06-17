@@ -57,7 +57,7 @@ pub use control_envelope_dto::{
     ControlApiCodecError, ControlProjectRecordDto, ControlQueryDto, ControlQueryScopeDto,
     ControlRequestBodyDto, ControlRequestEnvelopeDto, ControlResponseBodyDto,
     ControlResponseEnvelopeDto, ControlResponseStatusDto, ControlStateDomainDto,
-    ControlStateRecordDto,
+    ControlStateRecordDto, ControlTaskRecordDto,
 };
 pub use control_serialization_readiness::{
     ControlApiCodecBoundary, ControlApiCodecFailure, ControlApiDtoAuthority,

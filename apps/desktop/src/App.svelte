@@ -2,6 +2,8 @@
   import { StatusIndicator, Text } from "@poodle/svelte";
   import ControlDiagnosticsPanel from "./lib/ControlDiagnosticsPanel.svelte";
   import ProjectSwitcherPanel from "./lib/ProjectSwitcherPanel.svelte";
+
+  let selectedProjectId = $state<string | null>(null);
 </script>
 
 <main class="shell" data-theme="dark" data-density="compact" data-control-size="sm">
@@ -24,7 +26,7 @@
     </header>
 
     <div class="panel-grid">
-      <ProjectSwitcherPanel />
+      <ProjectSwitcherPanel bind:selectedProjectId />
       <ControlDiagnosticsPanel />
     </div>
   </section>

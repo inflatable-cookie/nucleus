@@ -1967,6 +1967,8 @@ dependencies = [
  "nucleus-agent-protocol",
  "nucleus-core",
  "nucleus-projects",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

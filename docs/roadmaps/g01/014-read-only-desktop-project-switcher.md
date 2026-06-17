@@ -1,6 +1,6 @@
 # 014 Read-Only Desktop Project Switcher
 
-Status: active
+Status: done
 Owner: Tom
 Updated: 2026-06-17
 
@@ -30,12 +30,19 @@ Add the first project-oriented desktop panel using server-owned project records.
 - The first switcher is display/list/select only.
 - Desktop TypeScript may hold selected project id as local view state.
 - Project authority remains in Rust/server-owned storage and DTOs.
+- Task list is not ready yet because task display DTOs and seed/create paths do
+  not exist.
 
 ## Execution Plan
 
 - [x] Add read-only project switcher panel.
-- [ ] Wire project selection into the shell layout.
-- [ ] Reassess task list readiness after project selection exists.
+- [x] Wire project selection into the shell layout.
+- [x] Reassess task list readiness after project selection exists.
+
+## Closeout
+
+Read-only project switcher work is complete. Task list work is routed to
+`015-task-records-and-read-only-list-readiness.md`.
 
 ## Acceptance Criteria
 

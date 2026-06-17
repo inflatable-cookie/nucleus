@@ -9,10 +9,14 @@
     type ControlProjectRecordDto,
   } from "./control";
 
+  type Props = {
+    selectedProjectId: string | null;
+  };
+
+  let { selectedProjectId = $bindable(null) }: Props = $props();
   let loading = $state(false);
   let projects = $state<ControlProjectRecordDto[]>([]);
   let failure = $state<string | null>(null);
-  let selectedProjectId = $state<string | null>(null);
 
   const selectedProject = $derived(
     projects.find((project) => project.project_id === selectedProjectId) ?? null,
@@ -29,7 +33,9 @@
     try {
       const response = await submitControlEnvelope(buildStateListQuery("projects"));
       projects = projectRecordsFromResponse(response);
-      selectedProjectId = selectedProjectId ?? projects[0]?.project_id ?? null;
+      if (!projects.some((project) => project.project_id === selectedProjectId)) {
+        selectedProjectId = projects[0]?.project_id ?? null;
+      }
     } catch (error) {
       projects = [];
       selectedProjectId = null;
