@@ -118,12 +118,11 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/081-effigy-test-plan-summary-command.md`
+- `batch-cards/082-effigy-repair-hint-synthesis.md`
 
 Planned cards:
 
 - None.
-- `batch-cards/082-effigy-repair-hint-synthesis.md`
 - `batch-cards/083-effigy-command-inspection-validation.md`
 - `batch-cards/084-management-sync-plan-records.md`
 - `batch-cards/085-projection-import-repair-proposals.md`
@@ -175,6 +174,7 @@ Completed cards:
 - `batch-cards/078-native-steward-command-validation.md`
 - `batch-cards/079-effigy-selector-refresh-command.md`
 - `batch-cards/080-effigy-doctor-summary-command.md`
+- `batch-cards/081-effigy-test-plan-summary-command.md`
 
 Completed cards:
 

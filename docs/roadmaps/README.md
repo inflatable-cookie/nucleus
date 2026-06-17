@@ -87,4 +87,4 @@ shape.
 ## Next Task
 
 Continue `g02/020-effigy-command-backed-inspection.md`, starting with
-`g02/batch-cards/081-effigy-test-plan-summary-command.md`.
+`g02/batch-cards/082-effigy-repair-hint-synthesis.md`.

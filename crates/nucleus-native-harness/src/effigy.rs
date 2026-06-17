@@ -268,6 +268,66 @@ pub enum NativeEffigyDoctorCommandStatus {
     Unknown,
 }
 
+/// Sanitized result of a read-only `effigy test --plan` command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeEffigyTestPlanCommandSummary {
+    pub status: NativeEffigyTestPlanCommandStatus,
+    pub validation_plan: NativeEffigyValidationPlanSummary,
+    pub evidence_refs: Vec<NativeEffigyEvidenceRef>,
+    pub summary: Option<String>,
+}
+
+impl NativeEffigyTestPlanCommandSummary {
+    pub fn from_validation_plan(validation_plan: NativeEffigyValidationPlanSummary) -> Self {
+        let status = match validation_plan.status {
+            NativeEffigyValidationPlanStatus::PlannedOnly => {
+                NativeEffigyTestPlanCommandStatus::Summarized
+            }
+            NativeEffigyValidationPlanStatus::Executed => {
+                NativeEffigyTestPlanCommandStatus::ExecutionOutOfScope
+            }
+            NativeEffigyValidationPlanStatus::Unsupported => {
+                NativeEffigyTestPlanCommandStatus::Unsupported("validation plan unsupported".into())
+            }
+            NativeEffigyValidationPlanStatus::Blocked => NativeEffigyTestPlanCommandStatus::Blocked,
+            NativeEffigyValidationPlanStatus::Unknown => NativeEffigyTestPlanCommandStatus::Unknown,
+        };
+        Self {
+            status,
+            validation_plan,
+            evidence_refs: Vec::new(),
+            summary: None,
+        }
+    }
+
+    pub fn claims_test_execution(&self) -> bool {
+        self.status == NativeEffigyTestPlanCommandStatus::ExecutionOutOfScope
+            || self.validation_plan.claims_execution()
+    }
+
+    pub fn uses_sanitized_refs(&self) -> bool {
+        self.summary
+            .as_ref()
+            .map(|summary| !contains_forbidden_effigy_term(summary))
+            .unwrap_or(true)
+            && self.validation_plan.uses_sanitized_refs()
+            && self
+                .evidence_refs
+                .iter()
+                .all(|evidence_ref| !contains_forbidden_effigy_term(&evidence_ref.0))
+    }
+}
+
+/// Test-plan command summary status.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeEffigyTestPlanCommandStatus {
+    Summarized,
+    Blocked,
+    Unsupported(String),
+    ExecutionOutOfScope,
+    Unknown,
+}
+
 /// Sanitized summary of an Effigy health check such as `effigy doctor`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeEffigyHealthSummary {
@@ -725,6 +785,57 @@ mod tests {
         assert_eq!(plan.planned_selectors.len(), 1);
         assert!(!plan.claims_execution());
         assert!(plan.uses_sanitized_refs());
+    }
+
+    #[test]
+    fn effigy_test_plan_command_summary_preserves_planned_only_semantics() {
+        let mut plan = NativeEffigyValidationPlanSummary::planned_only(
+            NativeEffigyScope::ProjectRoot,
+            vec![NativeEffigyPlannedSelector {
+                selector_ref: NativeEffigySelectorRef("qa:docs".to_owned()),
+                purpose: NativeEffigyValidationPurpose::Validation,
+                command_scope_hint: NativeEffigyCommandScopeHint::Validation,
+                evidence_refs: vec![NativeEffigyEvidenceRef("evidence:plan-selector".to_owned())],
+            }],
+        );
+        plan.tool_action_id = Some(NativeToolActionId("tool:effigy-test-plan".to_owned()));
+        plan.receipt_refs.push(NativeRuntimeReceiptRef(
+            "receipt:effigy:test-plan".to_owned(),
+        ));
+        let mut command = NativeEffigyTestPlanCommandSummary::from_validation_plan(plan);
+        command.evidence_refs.push(NativeEffigyEvidenceRef(
+            "evidence:test-plan-command".to_owned(),
+        ));
+        command.summary = Some("test plan summarized".to_owned());
+
+        assert_eq!(
+            command.status,
+            NativeEffigyTestPlanCommandStatus::Summarized
+        );
+        assert!(!command.claims_test_execution());
+        assert_eq!(command.validation_plan.planned_selectors.len(), 1);
+        assert!(command.uses_sanitized_refs());
+    }
+
+    #[test]
+    fn effigy_test_plan_command_summary_rejects_execution_claims() {
+        let plan = NativeEffigyValidationPlanSummary {
+            status: NativeEffigyValidationPlanStatus::Executed,
+            scope: NativeEffigyScope::ProjectRoot,
+            tool_action_id: None,
+            planned_selectors: Vec::new(),
+            receipt_refs: Vec::new(),
+            evidence_refs: Vec::new(),
+            repair_hints: Vec::new(),
+            summary: Some("execution should be separate".to_owned()),
+        };
+        let command = NativeEffigyTestPlanCommandSummary::from_validation_plan(plan);
+
+        assert_eq!(
+            command.status,
+            NativeEffigyTestPlanCommandStatus::ExecutionOutOfScope
+        );
+        assert!(command.claims_test_execution());
     }
 
     #[test]

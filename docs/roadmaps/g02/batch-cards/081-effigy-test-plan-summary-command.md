@@ -1,6 +1,6 @@
 # 081 Effigy Test Plan Summary Command
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../020-effigy-command-backed-inspection.md`
@@ -17,18 +17,24 @@ Map `effigy test --plan` evidence into validation-plan summaries.
 
 ## Acceptance Criteria
 
-- A test plan can list selectors without claiming execution.
-- Execution requires a separate command or Effigy receipt.
-- Raw plan output is excluded from durable task history.
+- [x] A test plan can list selectors without claiming execution.
+- [x] Execution requires a separate command or Effigy receipt.
+- [x] Raw plan output is excluded from durable task history.
+
+## Outcome
+
+- Added test-plan command summary records.
+- Preserved planned-only semantics for `effigy test --plan`.
+- Marked execution claims as out of scope for plan summaries.
 
 ## Validation
 
-- `cargo test -p nucleus-native-harness effigy`
-- `cargo test -p nucleus-engine runtime_receipt`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-native-harness effigy`
+- [x] `cargo test -p nucleus-engine runtime_receipt`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

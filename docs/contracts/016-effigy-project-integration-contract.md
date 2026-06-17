@@ -127,6 +127,12 @@ command-scope hints, evidence refs, and repair hints. A validation plan is not
 proof that validation ran. Execution must be represented by a separate runtime
 receipt or command evidence record.
 
+Test-plan command summaries wrap read-only `effigy test --plan` evidence into
+validation-plan summaries. They may summarize planned selectors, blocked
+plans, unsupported plans, and unknown state. If a summary observes execution,
+that state is out of scope for the plan summary and must be represented by a
+separate execution receipt.
+
 Durable health and validation-plan records must not copy raw Effigy output,
 secrets, credentials, local cache paths, provider transcripts, or release
 mutation evidence into task history.

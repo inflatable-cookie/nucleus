@@ -26,7 +26,8 @@ pub use effigy::{
     NativeEffigyPlannedSelector, NativeEffigyProjectIntegration, NativeEffigyRepairHint,
     NativeEffigyRepairHintKind, NativeEffigyScope, NativeEffigySelectorKind,
     NativeEffigySelectorRecord, NativeEffigySelectorRef, NativeEffigySelectorRefreshStatus,
-    NativeEffigySelectorRefreshSummary, NativeEffigyValidationPlanStatus,
+    NativeEffigySelectorRefreshSummary, NativeEffigyTestPlanCommandStatus,
+    NativeEffigyTestPlanCommandSummary, NativeEffigyValidationPlanStatus,
     NativeEffigyValidationPlanSummary, NativeEffigyValidationPurpose,
 };
 pub use events::{NativeEventId, NativeEventKind, NativeHarnessEvent};
