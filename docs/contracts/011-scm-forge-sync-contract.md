@@ -34,6 +34,11 @@ Convergence, for example, snaps are non-authoritative workspace snapshots while
 publication/gate flow is closer to the authoritative review boundary that Git
 users often associate with commits or pull requests.
 
+See `docs/research/translation-memos/convergence-scm-shape.md` for the first
+Convergence vocabulary pass. That memo is the current guardrail for keeping
+core SCM capability names neutral while still allowing Git-specific descriptors
+and UI labels.
+
 ## State Split
 
 Shared committable state may include:
@@ -167,6 +172,60 @@ Excluded from projection records:
 - local caches and indexes
 - machine-specific absolute paths except repairable path hints
 - raw validation output unless stored as an artifact reference
+
+## First Projection Boundary Implementation
+
+The first implementation produces a management projection export plan, not SCM
+mutations.
+
+It can name first-pass shared file refs and project/task projection entries
+from authoritative local state. It keeps local UI layout state, runtime
+streams, provider auth, terminal/browser attachment state, and raw validation
+output out of the plan.
+
+SCM adapters remain responsible for later file writes, status checks, commits,
+snapshots, publications, review requests, and provider-specific sync flows.
+This keeps the projection boundary usable for Git and non-Git SCMs.
+
+## First Neutral Capability Implementation
+
+The first SCM capability implementation uses provider-neutral capability names
+for core driver surfaces:
+
+- inspect working copy
+- inspect isolation refs
+- inspect captured changes
+- prepare management capture
+- create management capture
+- share management capture
+- open review boundary
+- start primary working-copy session
+- start isolated working-copy session
+- integrate work session
+
+Git-like adapters may map these capabilities to branches, worktrees, commits,
+pushes, pull requests, and merges. Convergence-like adapters may map them to
+snaps, scopes, publications, gates, bundles, promotions, and releases.
+
+The current implementation is metadata only. It does not mutate SCM state.
+
+## First Driver Registry Implementation
+
+The first SCM/forge registry is a metadata-only descriptor registry.
+
+It can list and resolve SCM and forge drivers separately. Static descriptors
+exist for:
+
+- Git SCM semantics
+- Convergence SCM semantics
+- GitHub forge semantics
+
+Descriptors include provider kind, readiness, implementation status,
+capabilities, workflow semantics where applicable, refresh modes where
+applicable, and required command scopes.
+
+The registry does not execute provider commands, inspect repositories, call
+networks, resolve credentials, mutate files, or own process lifecycle.
 
 ## Projection Validation And Migration
 
@@ -933,11 +992,12 @@ Projection storage vocabulary is split across existing type-only crates:
 `nucleus-native-harness` now names steward-facing policy vocabulary:
 
 - `NativeSyncAuthority`
-- `NativePersonaCapability::CommitManagementState`
-- `NativePersonaCapability::PushManagementState`
+- `NativePersonaCapability::PrepareManagementCapture`
+- `NativePersonaCapability::CreateManagementCapture`
+- `NativePersonaCapability::ShareManagementCapture`
 - `NativePersonaCapability::ProposeSemanticConflictResolution`
-- `NativeApprovalPolicy::RequiredBeforeCommit`
-- `NativeApprovalPolicy::RequiredBeforePush`
+- `NativeApprovalPolicy::RequiredBeforeCapture`
+- `NativeApprovalPolicy::RequiredBeforeShare`
 - `NativeApprovalPolicy::RequiredBeforeDelete`
 - `NativeApprovalPolicy::RequiredBeforeHistoryRewrite`
 - `NativeApprovalPolicy::RequiredBeforePolicyChange`

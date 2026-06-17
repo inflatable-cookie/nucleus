@@ -1,0 +1,1 @@
+//! Engine projection coordination vocabulary.

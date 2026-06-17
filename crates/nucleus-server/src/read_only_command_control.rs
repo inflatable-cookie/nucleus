@@ -21,6 +21,9 @@ use crate::commands::ReadOnlyCommand;
 use crate::local_read_only_spawn_smoke::{
     build_local_read_only_spawn_smoke_input, LocalReadOnlySpawnSmokeInput,
 };
+use crate::runtime_receipt_state::{
+    runtime_receipt_from_read_only_command_result, write_runtime_receipt,
+};
 use crate::server_read_only_spawn::{run_server_read_only_spawn, ServerReadOnlySpawnInput};
 use crate::state::ServerStateService;
 use crate::{LocalReadOnlySpawnInput, LocalReadOnlySpawnOutcome, LocalReadOnlySpawnRejection};
@@ -75,7 +78,7 @@ where
     let rejection = control_rejection(&result.spawn.outcome, &result.spawn.rejection);
     let evidence = result.spawn.evidence;
 
-    Ok(ReadOnlyCommandControlResult {
+    let control_result = ReadOnlyCommandControlResult {
         command_id,
         command_request_id,
         evidence_id: evidence.id,
@@ -89,7 +92,19 @@ where
         stderr_truncated: result.spawn.output.stderr_truncated,
         events: result.spawn.events.len(),
         rejection,
-    })
+    };
+    let receipt = runtime_receipt_from_read_only_command_result(&control_result);
+    write_runtime_receipt(
+        state,
+        &receipt,
+        RevisionId(format!(
+            "rev:{}:runtime-receipt:1",
+            control_result.command_id.0
+        )),
+        RevisionExpectation::Any,
+    )?;
+
+    Ok(control_result)
 }
 
 fn build_local_read_only_spawn_input(

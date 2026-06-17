@@ -1,18 +1,21 @@
-use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
+use nucleus_core::PersistenceRecordId;
+use nucleus_engine::{
+    EngineRevisionExpectation, EngineTaskCommand, EngineTaskCommandError, EngineTaskCommandOutcome,
+    EngineTaskCommandService, EngineTaskCreateCommand, EngineTaskRecord, EngineTaskRepository,
+    EngineTaskTransitionCommand, EngineTaskUpdateChanges, EngineTaskUpdateCommand,
+};
 use nucleus_local_store::{
     LocalStoreBackend, LocalStoreError, LocalStoreRecord, LocalStoreRecordPayload,
     RevisionExpectation,
 };
-use nucleus_tasks::{
-    decode_task_storage_record, encode_task_storage_payload, encode_task_storage_record,
-    TaskStorageActionType, TaskStorageActivityState, TaskStorageImportance, TaskStorageRecord,
-};
+use nucleus_projects::ProjectId;
 
 use super::handler::LocalControlRequestHandler;
 use crate::commands::{
     TaskCommand, TaskCreateCommand, TaskTransitionCommand, TaskUpdateChanges, TaskUpdateCommand,
 };
 use crate::control_api::{ServerCommandReceiptStatus, ServerControlError};
+use crate::state::ServerStateService;
 
 pub(crate) fn handle_task_command<B>(
     handler: &LocalControlRequestHandler<B>,
@@ -22,352 +25,175 @@ pub(crate) fn handle_task_command<B>(
 where
     B: LocalStoreBackend + Clone,
 {
-    let result = match command {
-        TaskCommand::Create(command) => create_task(handler, command_id, command),
-        TaskCommand::Update(command) => update_task(handler, command_id, command),
-        TaskCommand::Start(command) => transition_task_activity(
-            handler,
-            command_id,
-            command,
-            TaskStorageActivityState::Active,
-        ),
+    let repository = ServerTaskCommandRepository::new(handler.state());
+    let service = EngineTaskCommandService::new(repository);
+
+    match service.execute(command_id, engine_task_command(command)) {
+        Ok(EngineTaskCommandOutcome::Mutated) => {
+            ServerCommandReceiptStatus::AcceptedForStateMutation
+        }
+        Err(error) => ServerCommandReceiptStatus::Rejected(engine_task_error(error)),
+    }
+}
+
+fn engine_task_command(command: TaskCommand) -> EngineTaskCommand {
+    match command {
+        TaskCommand::Create(command) => EngineTaskCommand::Create(engine_create_command(command)),
+        TaskCommand::Update(command) => EngineTaskCommand::Update(engine_update_command(command)),
+        TaskCommand::Start(command) => EngineTaskCommand::Start(engine_transition_command(command)),
         TaskCommand::Block {
             task_id,
             reason,
             expected_revision,
-        } => transition_task_activity(
-            handler,
-            command_id,
-            TaskTransitionCommand {
-                task_id,
-                expected_revision,
-            },
-            TaskStorageActivityState::Blocked { reason },
-        ),
+        } => EngineTaskCommand::Block {
+            task_id,
+            reason,
+            expected_revision,
+        },
         TaskCommand::Complete(command) => {
-            transition_task_activity(handler, command_id, command, TaskStorageActivityState::Done)
+            EngineTaskCommand::Complete(engine_transition_command(command))
         }
-        TaskCommand::Archive(command) => transition_task_activity(
-            handler,
-            command_id,
-            command,
-            TaskStorageActivityState::Archived,
-        ),
-    };
-
-    match result {
-        Ok(()) => ServerCommandReceiptStatus::AcceptedForStateMutation,
-        Err(error) => ServerCommandReceiptStatus::Rejected(error),
+        TaskCommand::Archive(command) => {
+            EngineTaskCommand::Archive(engine_transition_command(command))
+        }
     }
 }
 
-fn create_task<B>(
-    handler: &LocalControlRequestHandler<B>,
-    command_id: &str,
-    command: TaskCreateCommand,
-) -> Result<(), ServerControlError>
-where
-    B: LocalStoreBackend + Clone,
-{
-    validate_project_exists(handler, &command.project_id.0)?;
-    validate_task_title(&command.title)?;
-    validate_create_activity(&command.activity)?;
-    validate_agent_readiness(
-        command.agent_readiness.ready_for_agent,
-        &command.acceptance_criteria,
-    )?;
-
-    let task = task_from_create_command(command_id, command);
-    let payload = encode_task_storage_record(&task).map_err(task_codec_error)?;
-    let record = LocalStoreRecord {
-        id: PersistenceRecordId(task.id.0),
-        domain: PersistenceDomain::Tasks,
-        kind: PersistenceRecordKind::Task,
-        revision_id: next_task_revision(command_id),
-        payload: LocalStoreRecordPayload {
-            media_type: Some("application/json".to_owned()),
-            bytes: payload,
-        },
-    };
-
-    handler
-        .state
-        .tasks()
-        .put(record, RevisionExpectation::MustNotExist)
-        .map_err(local_store_error)?;
-    Ok(())
-}
-
-fn update_task<B>(
-    handler: &LocalControlRequestHandler<B>,
-    command_id: &str,
-    command: TaskUpdateCommand,
-) -> Result<(), ServerControlError>
-where
-    B: LocalStoreBackend + Clone,
-{
-    let record_id = PersistenceRecordId(command.task_id.0);
-    let existing = handler
-        .state
-        .tasks()
-        .get(&record_id)
-        .map_err(local_store_error)?
-        .ok_or_else(|| {
-            local_store_error(LocalStoreError::RecordNotFound {
-                record_id: record_id.clone(),
-            })
-        })?;
-    let mut decoded =
-        decode_task_storage_record(&existing.payload.bytes).map_err(task_codec_error)?;
-
-    apply_task_update_changes(&mut decoded, command.changes)?;
-    validate_task_title(&decoded.title)?;
-    validate_agent_ready_storage(&decoded)?;
-
-    let payload = encode_task_storage_payload(&decoded).map_err(task_codec_error)?;
-    let expected_revision = command
-        .expected_revision
-        .map(RevisionExpectation::Exact)
-        .unwrap_or(RevisionExpectation::MustExist);
-    let updated = LocalStoreRecord {
-        id: record_id,
-        domain: existing.domain,
-        kind: existing.kind,
-        revision_id: next_task_revision(command_id),
-        payload: LocalStoreRecordPayload {
-            media_type: Some("application/json".to_owned()),
-            bytes: payload,
-        },
-    };
-
-    handler
-        .state
-        .tasks()
-        .put(updated, expected_revision)
-        .map_err(local_store_error)?;
-    Ok(())
-}
-
-fn transition_task_activity<B>(
-    handler: &LocalControlRequestHandler<B>,
-    command_id: &str,
-    command: TaskTransitionCommand,
-    activity: TaskStorageActivityState,
-) -> Result<(), ServerControlError>
-where
-    B: LocalStoreBackend + Clone,
-{
-    let record_id = PersistenceRecordId(command.task_id.0);
-    let existing = handler
-        .state
-        .tasks()
-        .get(&record_id)
-        .map_err(local_store_error)?
-        .ok_or_else(|| LocalStoreError::RecordNotFound {
-            record_id: record_id.clone(),
-        })
-        .map_err(local_store_error)?;
-
-    let mut decoded =
-        decode_task_storage_record(&existing.payload.bytes).map_err(task_codec_error)?;
-    decoded.activity = activity;
-
-    let payload = encode_task_storage_payload(&decoded).map_err(task_codec_error)?;
-    let expected_revision = command
-        .expected_revision
-        .map(RevisionExpectation::Exact)
-        .unwrap_or(RevisionExpectation::MustExist);
-    let updated = LocalStoreRecord {
-        id: record_id,
-        domain: existing.domain,
-        kind: existing.kind,
-        revision_id: next_task_revision(command_id),
-        payload: LocalStoreRecordPayload {
-            media_type: Some("application/json".to_owned()),
-            bytes: payload,
-        },
-    };
-
-    handler
-        .state
-        .tasks()
-        .put(updated, expected_revision)
-        .map_err(local_store_error)?;
-    Ok(())
-}
-
-fn task_from_create_command(command_id: &str, command: TaskCreateCommand) -> nucleus_tasks::Task {
-    nucleus_tasks::Task {
-        id: nucleus_tasks::TaskId(format!("task:{command_id}")),
+fn engine_create_command(command: TaskCreateCommand) -> EngineTaskCreateCommand {
+    EngineTaskCreateCommand {
         project_id: command.project_id,
         title: command.title,
         description: command.description,
         acceptance_criteria: command.acceptance_criteria,
         importance: command.importance,
-        neglect: nucleus_tasks::NeglectSignal {
-            level: nucleus_tasks::NeglectLevel::Fresh,
-            last_addressed_at: None,
-            note: None,
-        },
         action_type: command.action_type,
-        assignment: nucleus_tasks::AssignmentState::Unassigned,
         activity: command.activity,
         agent_readiness: command.agent_readiness,
-        assignment_plan: None,
-        assignment_snapshot: None,
-        history: Vec::new(),
-        model_preferences: None,
-        timestamps: nucleus_tasks::TaskTimestamps {
-            created_at: None,
-            updated_at: None,
-            started_at: None,
-            completed_at: None,
+    }
+}
+
+fn engine_update_command(command: TaskUpdateCommand) -> EngineTaskUpdateCommand {
+    EngineTaskUpdateCommand {
+        task_id: command.task_id,
+        expected_revision: command.expected_revision,
+        changes: engine_update_changes(command.changes),
+    }
+}
+
+fn engine_update_changes(changes: TaskUpdateChanges) -> EngineTaskUpdateChanges {
+    EngineTaskUpdateChanges {
+        title: changes.title,
+        description: changes.description,
+        acceptance_criteria: changes.acceptance_criteria,
+        importance: changes.importance,
+        action_type: changes.action_type,
+        activity: changes.activity,
+        agent_readiness: changes.agent_readiness,
+    }
+}
+
+fn engine_transition_command(command: TaskTransitionCommand) -> EngineTaskTransitionCommand {
+    EngineTaskTransitionCommand {
+        task_id: command.task_id,
+        expected_revision: command.expected_revision,
+    }
+}
+
+struct ServerTaskCommandRepository<'a, B>
+where
+    B: LocalStoreBackend,
+{
+    state: &'a ServerStateService<B>,
+}
+
+impl<'a, B> ServerTaskCommandRepository<'a, B>
+where
+    B: LocalStoreBackend,
+{
+    fn new(state: &'a ServerStateService<B>) -> Self {
+        Self { state }
+    }
+}
+
+impl<B> EngineTaskRepository for ServerTaskCommandRepository<'_, B>
+where
+    B: LocalStoreBackend,
+{
+    type Error = LocalStoreError;
+
+    fn project_exists(&self, project_id: &ProjectId) -> Result<bool, Self::Error> {
+        let record_id = PersistenceRecordId(project_id.0.clone());
+        self.state
+            .projects()
+            .get(&record_id)
+            .map(|record| record.is_some())
+    }
+
+    fn get_task(
+        &self,
+        task_id: &PersistenceRecordId,
+    ) -> Result<Option<EngineTaskRecord>, Self::Error> {
+        self.state
+            .tasks()
+            .get(task_id)
+            .map(|record| record.map(engine_record_from_local))
+    }
+
+    fn put_task(
+        &self,
+        record: EngineTaskRecord,
+        revision: EngineRevisionExpectation,
+    ) -> Result<(), Self::Error> {
+        self.state
+            .tasks()
+            .put(local_record_from_engine(record), local_revision(revision))?;
+        Ok(())
+    }
+}
+
+fn engine_record_from_local(record: LocalStoreRecord) -> EngineTaskRecord {
+    EngineTaskRecord {
+        id: record.id,
+        domain: record.domain,
+        kind: record.kind,
+        revision_id: record.revision_id,
+        payload: record.payload.bytes,
+    }
+}
+
+fn local_record_from_engine(record: EngineTaskRecord) -> LocalStoreRecord {
+    LocalStoreRecord {
+        id: record.id,
+        domain: record.domain,
+        kind: record.kind,
+        revision_id: record.revision_id,
+        payload: LocalStoreRecordPayload {
+            media_type: Some("application/json".to_owned()),
+            bytes: record.payload,
         },
     }
 }
 
-fn apply_task_update_changes(
-    record: &mut TaskStorageRecord,
-    changes: TaskUpdateChanges,
-) -> Result<(), ServerControlError> {
-    if let Some(title) = changes.title {
-        record.title = title;
-    }
-    if let Some(description) = changes.description {
-        record.description = description;
-    }
-    if let Some(acceptance_criteria) = changes.acceptance_criteria {
-        record.acceptance_criteria = acceptance_criteria
-            .into_iter()
-            .map(|criterion| nucleus_tasks::TaskStorageAcceptanceCriterion {
-                text: criterion.text,
-                required: criterion.required,
-            })
-            .collect();
-    }
-    if let Some(importance) = changes.importance {
-        record.importance = TaskStorageImportance::from(&importance);
-    }
-    if let Some(action_type) = changes.action_type {
-        record.action_type = TaskStorageActionType::from(&action_type);
-    }
-    if let Some(activity) = changes.activity {
-        validate_update_activity(&activity)?;
-        record.activity = TaskStorageActivityState::from(&activity);
-    }
-    if let Some(readiness) = changes.agent_readiness {
-        record.agent_ready = readiness.ready_for_agent;
-        record.required_context_refs = readiness.required_context_refs;
-        record.allowed_actions = readiness
-            .allowed_actions
-            .iter()
-            .map(TaskStorageActionType::from)
-            .collect();
-        record.stop_conditions = readiness.stop_conditions;
-        record.validation_commands = readiness.validation_commands;
-    }
-    Ok(())
-}
-
-fn validate_project_exists<B>(
-    handler: &LocalControlRequestHandler<B>,
-    project_id: &str,
-) -> Result<(), ServerControlError>
-where
-    B: LocalStoreBackend + Clone,
-{
-    let record_id = PersistenceRecordId(project_id.to_owned());
-    match handler
-        .state
-        .projects()
-        .get(&record_id)
-        .map_err(local_store_error)?
-    {
-        Some(_) => Ok(()),
-        None => Err(ServerControlError::NotFound {
-            reason: format!("project record not found: {project_id}"),
-        }),
+fn local_revision(revision: EngineRevisionExpectation) -> RevisionExpectation {
+    match revision {
+        EngineRevisionExpectation::MustNotExist => RevisionExpectation::MustNotExist,
+        EngineRevisionExpectation::MustExist => RevisionExpectation::MustExist,
+        EngineRevisionExpectation::Exact(revision) => RevisionExpectation::Exact(revision),
     }
 }
 
-fn validate_task_title(title: &str) -> Result<(), ServerControlError> {
-    let trimmed = title.trim();
-    if trimmed.is_empty() {
-        return Err(ServerControlError::InvalidRequest {
-            reason: "task title must not be empty".to_owned(),
-        });
-    }
-
-    if trimmed.len() > 160 {
-        return Err(ServerControlError::InvalidRequest {
-            reason: "task title must be 160 characters or fewer".to_owned(),
-        });
-    }
-
-    Ok(())
-}
-
-fn validate_create_activity(
-    activity: &nucleus_tasks::TaskActivityState,
-) -> Result<(), ServerControlError> {
-    match activity {
-        nucleus_tasks::TaskActivityState::Proposed
-        | nucleus_tasks::TaskActivityState::Ready
-        | nucleus_tasks::TaskActivityState::Active => Ok(()),
-        nucleus_tasks::TaskActivityState::Blocked(reason) if !reason.trim().is_empty() => Ok(()),
-        nucleus_tasks::TaskActivityState::Blocked(_) => Err(ServerControlError::InvalidRequest {
-            reason: "blocked task activity requires a reason".to_owned(),
-        }),
-        nucleus_tasks::TaskActivityState::Done | nucleus_tasks::TaskActivityState::Archived => {
-            Err(ServerControlError::InvalidRequest {
-                reason: "task create cannot start as done or archived".to_owned(),
-            })
+fn engine_task_error(error: EngineTaskCommandError<LocalStoreError>) -> ServerControlError {
+    match error {
+        EngineTaskCommandError::InvalidRequest { reason } => {
+            ServerControlError::InvalidRequest { reason }
         }
-    }
-}
-
-fn validate_update_activity(
-    activity: &nucleus_tasks::TaskActivityState,
-) -> Result<(), ServerControlError> {
-    match activity {
-        nucleus_tasks::TaskActivityState::Blocked(reason) if reason.trim().is_empty() => {
-            Err(ServerControlError::InvalidRequest {
-                reason: "blocked task activity requires a reason".to_owned(),
-            })
+        EngineTaskCommandError::NotFound { reason } => ServerControlError::NotFound { reason },
+        EngineTaskCommandError::Conflict { reason } => ServerControlError::Conflict { reason },
+        EngineTaskCommandError::Unsupported { reason } => {
+            ServerControlError::Unsupported { reason }
         }
-        _ => Ok(()),
+        EngineTaskCommandError::Storage(error) => local_store_error(error),
     }
-}
-
-fn validate_agent_readiness(
-    ready_for_agent: bool,
-    acceptance_criteria: &[nucleus_tasks::AcceptanceCriterion],
-) -> Result<(), ServerControlError> {
-    if ready_for_agent && acceptance_criteria.is_empty() {
-        return Err(ServerControlError::InvalidRequest {
-            reason: "agent-ready tasks require at least one acceptance criterion".to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_agent_ready_storage(record: &TaskStorageRecord) -> Result<(), ServerControlError> {
-    if record.agent_ready && record.acceptance_criteria.is_empty() {
-        return Err(ServerControlError::InvalidRequest {
-            reason: "agent-ready tasks require at least one acceptance criterion".to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn task_codec_error(error: nucleus_tasks::TaskRecordCodecError) -> ServerControlError {
-    ServerControlError::InvalidRequest {
-        reason: format!("task storage payload is invalid: {}", error.reason),
-    }
-}
-
-fn next_task_revision(command_id: &str) -> RevisionId {
-    RevisionId(format!("rev:task-command:{command_id}"))
 }
 
 fn local_store_error(error: LocalStoreError) -> ServerControlError {

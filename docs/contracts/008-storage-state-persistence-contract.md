@@ -193,6 +193,31 @@ Validation evidence should be recorded as sanitized state or artifact
 references. It must not include secrets, provider auth material, raw provider
 transcripts, or high-volume runtime event streams.
 
+## First Management Projection Implementation
+
+The first implementation is an in-memory planning and validation boundary.
+
+Implemented:
+
+- management projection root `nucleus/`
+- first shared file refs:
+  - `nucleus/project.toml`
+  - `nucleus/repos/<repo-membership-id>.toml`
+  - `nucleus/tasks/<task-id>.toml`
+  - `nucleus/indexes/README.md`
+  - `nucleus/artifacts/README.md`
+- schema version vocabulary
+- projection record kinds
+- project/task export-plan entries
+- validation statuses: valid, valid with warnings, invalid, unsupported schema
+- excluded-state markers for secrets, runtime streams, provider auth,
+  terminal/browser state, local caches, and local client layout state
+- conflict report classes for schema and semantic conflicts
+
+The first server helper can build an export plan from stored project and task
+records. It does not write files, import records, run migrations, resolve
+conflicts, commit, push, publish, or call SCM adapters.
+
 ## Projection Migration Rule
 
 Projection migrations are explicit policy actions.
@@ -227,6 +252,12 @@ The server should preserve enough journal information to support:
 
 The event journal is not a UI log. It is state recovery and reconciliation
 evidence.
+
+Orchestration event journal entries must store the orchestration event-store
+envelope, not an ad hoc host-local payload. The envelope owns event identity,
+stream ref, cursor, command causality, payload schema version, and projection
+cursor. Host storage records may wrap this envelope, but must not replace its
+identity model with backend-specific fields.
 
 Task history is also not a UI log. It is durable task audit state and should
 link to runtime events, artifacts, validation evidence, and session records

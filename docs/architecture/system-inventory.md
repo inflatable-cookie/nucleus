@@ -121,7 +121,14 @@ Updated: 2026-06-16
   room for this domain, but no Rust research domain crate or behavior exists
   yet.
 - `nucleus-workspaces`: first draft modular workspace layout, panel, and
-  surface types.
+  surface types. The workspace contract now requires a stronger
+  Loophole-inspired display/window/surface/region/panel hierarchy before real
+  panel work begins. The current crate does not yet model display inventory,
+  window targeting, hosted-surface lifecycle, active-surface fallback, or
+  region hierarchy. It also does not yet distinguish local client layout
+  persistence, likely SQLite-backed client profile records, from committable
+  project-management projection files. It must also separate global
+  display/window/surface config from per-project panel layout rules.
 - `nucleus-server`: current crate name for host API/runtime boundary types.
   The name is historical after the engine-first correction: the crate remains
   useful for sidecar daemon, remote host, and embedded IPC/control surfaces,

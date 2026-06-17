@@ -6,7 +6,11 @@
 //! work, or deliver subscriptions yet.
 
 mod boundary;
+mod command_admission;
+mod command_events;
+pub mod command_projection;
 mod commands;
+mod event_store;
 mod handler;
 mod queries;
 mod task_commands;

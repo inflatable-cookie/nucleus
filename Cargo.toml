@@ -8,6 +8,8 @@ members = [
   "crates/nucleus-command-policy",
   "crates/nucleus-contract-fixtures",
   "crates/nucleus-local-store",
+  "crates/nucleus-orchestration",
+  "crates/nucleus-engine",
   "crates/nucleus-projects",
   "crates/nucleus-scm-forge",
   "crates/nucleus-tasks",

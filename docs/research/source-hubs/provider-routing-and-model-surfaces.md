@@ -2,7 +2,7 @@
 
 Status: open
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-17
 
 ## Purpose
 
@@ -54,6 +54,25 @@ This avoids mixing two different layers:
 - OpenCode Zen is an OpenCode model gateway. It works inside OpenCode as a
   provider, so nucleus should reach it through the OpenCode adapter unless a
   direct model-routing feature is added later.
+
+## Evidence Refresh 2026-06-17
+
+Current provider-routing docs still support the existing classification.
+
+- DeepSeek documents OpenAI-compatible and Anthropic-compatible endpoints and
+  integrations with coding tools. This makes it a model/backend route for
+  harnesses such as Claude Code or OpenCode, not a complete harness adapter by
+  itself.
+- OpenRouter documents provider routing through request-level provider
+  controls including ordering, fallback, parameter support, data collection,
+  zero-data-retention filtering, quantization, price, throughput, and latency.
+  This belongs in model-route policy, not agent session identity.
+- OpenCode Zen is still best treated as an OpenCode provider/gateway path
+  until Nucleus has a first-class model router.
+
+This reinforces the split: harness adapters own sessions, turns, tools,
+approvals, event streams, and recovery; model routes own inference provider,
+model selection, routing, billing, data policy, and fallback behavior.
 
 ## Contract Implications
 

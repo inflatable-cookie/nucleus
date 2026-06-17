@@ -14,7 +14,7 @@ CLI clients.
 - Project docs: `docs/README.md`
 - Current vision: `docs/vision/001-nucleus-product-vision.md`
 - Architecture: `docs/architecture/system-architecture.md`
-- Roadmap: `docs/roadmaps/g01/001-foundation-and-research.md`
+- Roadmap: `docs/roadmaps/g02/011-codex-app-server-runtime-runway.md`
 
 ## Development Surface
 
@@ -27,7 +27,7 @@ effigy test --plan
 effigy qa
 ```
 
-The Rust workspace is intentionally small. Current type-only crates cover first
-draft protocol, agent session lifecycle, adapter registry, project, task,
-workspace, server boundary, and persistence surfaces; app behavior remains out
-of scope until contracts settle.
+The Rust workspace is intentionally modular. Current crates cover first draft
+protocol, agent session lifecycle, adapter registry, project, task, workspace,
+engine, orchestration, server boundary, and persistence surfaces; app behavior
+remains out of scope until contracts settle.

@@ -21,9 +21,19 @@ Contracts define durable rules and interfaces.
 - `015-deep-research-contract.md`
 - `016-effigy-project-integration-contract.md`
 - `017-engine-host-authority-contract.md`
+- `018-orchestration-contract.md`
+- `019-conversation-timeline-contract.md`
+- `020-runtime-receipt-contract.md`
+- `021-checkpoint-diff-contract.md`
+- `022-engine-orchestration-boundary-contract.md`
 - `contract-index.md`
 
 ## Promotion Rule
 
 Research and specs can be provisional. Contracts should only contain rules the
 repo is ready to enforce or design against.
+
+## Current Gaps
+
+See `contract-index.md` for needed contracts found during the 2026-06-17
+reassessment.

@@ -1917,6 +1917,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nucleus-engine"
+version = "0.0.0"
+dependencies = [
+ "nucleus-agent-protocol",
+ "nucleus-command-policy",
+ "nucleus-core",
+ "nucleus-orchestration",
+ "nucleus-projects",
+ "nucleus-scm-forge",
+ "nucleus-tasks",
+ "nucleus-workspaces",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nucleus-local-store"
 version = "0.0.0"
 dependencies = [
@@ -1930,6 +1946,15 @@ name = "nucleus-native-harness"
 version = "0.0.0"
 dependencies = [
  "nucleus-agent-protocol",
+]
+
+[[package]]
+name = "nucleus-orchestration"
+version = "0.0.0"
+dependencies = [
+ "nucleus-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1957,7 +1982,9 @@ dependencies = [
  "nucleus-agent-protocol",
  "nucleus-command-policy",
  "nucleus-core",
+ "nucleus-engine",
  "nucleus-local-store",
+ "nucleus-orchestration",
  "nucleus-projects",
  "nucleus-scm-forge",
  "nucleus-tasks",

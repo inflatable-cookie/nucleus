@@ -56,7 +56,10 @@ Server-owned and usually not committed:
 - local indexes
 - caches
 - local machine paths unless repairable/portable
-- workspace state that is personal rather than project-shared
+- local workspace layout state that is personal rather than project-shared
+- global display/window/surface arrangements
+- per-project panel arrangements
+- client app profile database records
 
 ### Provider-Owned State
 
@@ -93,6 +96,11 @@ over one large JSON/TOML document because it gives Git a better merge surface.
 
 Hidden roots such as `.nucleus/` remain a fallback only if later tooling proves
 the visible root unworkable.
+
+Workspace layout state is explicitly outside this repository projection.
+Global display/window/surface configuration belongs in local client profile
+storage. Per-project panel arrangements also belong in local client profile
+storage, likely SQLite-backed, not in the shared project repo.
 
 ## Sync Model
 

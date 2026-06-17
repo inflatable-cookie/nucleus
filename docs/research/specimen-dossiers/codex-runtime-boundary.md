@@ -2,7 +2,7 @@
 
 Status: promoted-first-pass
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-17
 
 ## Purpose
 
@@ -28,10 +28,12 @@ Codex integration as evidence. It does not authorize implementation yet.
 
 Local CLI evidence:
 
-- `codex-cli 0.139.0`
+- `codex-cli 0.140.0`
 - `codex app-server --help`
 - `codex debug app-server send-message-v2 --help`
 - `codex exec --help`
+- `codex app-server generate-json-schema --out /tmp/...`
+- `codex app-server generate-ts --out /tmp/...`
 
 ## Transport Decision
 
@@ -93,16 +95,28 @@ App-server lifecycle supports:
 - stream notifications
 - complete turn with final status
 
-T3 Code also uses:
+Current local schema generated from `codex-cli 0.140.0` verifies these client
+request methods:
 
 - `thread/read`
 - `thread/rollback`
+- `thread/fork`
+- `thread/list`
+- `thread/loaded/list`
+- `thread/unsubscribe`
+- `thread/compact/start`
+- `turn/start`
+- `turn/steer`
 - `turn/interrupt`
-- `item/requestApproval/decision`
-- `item/tool/requestUserInput/answered`
 
-These methods are implementation evidence from T3 and must be verified against
-generated app-server schema before nucleus implements them.
+The generated schema also verifies server notifications for thread state, turn
+state, item lifecycle, content deltas, reasoning deltas, plan updates,
+command/file-change output, request resolution, token usage, warnings, errors,
+and process output.
+
+T3 Code remains useful implementation evidence for queueing, request
+correlation, and process supervision, but the local generated schema is now the
+implementation authority for method names.
 
 ## Approval And User Input
 
@@ -115,9 +129,27 @@ T3 evidence shows these app-server request paths:
 - `item/fileChange/requestApproval`
 - `item/tool/requestUserInput`
 
+Current local schema verifies these server request methods and adds other
+surfaces that must stay explicit:
+
+- `item/commandExecution/requestApproval`
+- `item/fileChange/requestApproval`
+- `item/tool/requestUserInput`
+- `mcpServer/elicitation/request`
+- `item/permissions/requestApproval`
+- `item/tool/call`
+- `account/chatgptAuthTokens/refresh`
+- `attestation/generate`
+- deprecated `applyPatchApproval`
+- deprecated `execCommandApproval`
+
 Nucleus must surface approval and user-input requests as server-owned state.
 The adapter must preserve request kind, request id, turn id, and item id where
 available.
+
+`item/tool/requestUserInput` is marked experimental in the generated schema.
+Nucleus should still model it because it is visible in current schema and T3,
+but the adapter must expose experimental status in capability metadata.
 
 ## Cancellation, Resume, And Recovery
 
@@ -131,6 +163,8 @@ Resume:
 - app-server documents `thread/resume`
 - CLI documents `codex resume` and `codex exec resume`
 - T3 stores a resume cursor containing Codex thread id
+- generated schema says `thread/resume` can resume by thread id, history, or
+  path, with precedence rules; Nucleus should prefer thread id where possible
 
 Recovery rule:
 
@@ -179,14 +213,69 @@ First-pass Codex capability posture:
 | external server support | supported | WebSocket/Unix/stdio app-server transports |
 | server-spawn support | supported | local `codex app-server` process |
 
+## Schema Probe 2026-06-17
+
+Probe environment:
+
+- command path: `/opt/homebrew/bin/codex`
+- version: `codex-cli 0.140.0`
+- generated JSON schema outside the repo:
+  `/tmp/nucleus-codex-app-server-schema/json`
+- generated TypeScript bindings outside the repo:
+  `/tmp/nucleus-codex-app-server-schema/ts`
+
+No live project session was started and no generated schema files were added to
+the Nucleus repo.
+
+Verified app-server transport/help facts:
+
+- `codex app-server` is still marked experimental.
+- default transport is `stdio://`.
+- supported listen values include `stdio://`, `unix://`, `unix://PATH`,
+  `ws://IP:PORT`, and `off`.
+- WebSocket non-loopback auth supports capability-token and signed bearer-token
+  modes.
+- analytics are disabled by default for app-server unless explicitly enabled.
+
+Verified implementation-relevant method families:
+
+- client requests: `initialize`, `thread/start`, `thread/resume`,
+  `thread/fork`, `thread/read`, `thread/rollback`, `thread/list`,
+  `thread/loaded/list`, `thread/unsubscribe`, `turn/start`, `turn/steer`,
+  `turn/interrupt`
+- server notifications: `thread/started`, `thread/status/changed`,
+  `thread/closed`, `thread/tokenUsage/updated`, `turn/started`,
+  `turn/completed`, `turn/diff/updated`, `turn/plan/updated`,
+  `item/started`, `item/completed`, `item/agentMessage/delta`,
+  `item/plan/delta`, `item/commandExecution/outputDelta`,
+  `item/fileChange/outputDelta`, `item/fileChange/patchUpdated`,
+  `serverRequest/resolved`, `item/reasoning/*`, warnings, errors, and process
+  output notifications
+- server requests: `item/commandExecution/requestApproval`,
+  `item/fileChange/requestApproval`, `item/tool/requestUserInput`,
+  `mcpServer/elicitation/request`, `item/permissions/requestApproval`, and
+  `item/tool/call`
+
+Implementation cautions:
+
+- generated schema includes a large v2 surface beyond the first Nucleus
+  adapter target; the first implementation should whitelist the subset above
+  rather than trying to support all methods
+- `item/tool/requestUserInput` is experimental
+- deprecated approval methods are present and should not be first-path APIs
+- `thread/rollback` returns lossy thread items and must not be confused with
+  filesystem rollback
+- app-server remains experimental, so registry metadata should expose protocol
+  schema version/probe evidence rather than hard-code permanent guarantees
+
 ## Readiness Result
 
 Codex is ready for a first adapter design, but not implementation in this
 batch.
 
-Implementation must first generate and inspect the app-server schema from the
-local Codex binary, then pin the exact method and notification set nucleus will
-support.
+Implementation may now proceed to metadata-only registry descriptors and
+static lifecycle/event fixtures using the 2026-06-17 generated schema as the
+current evidence baseline.
 
 ## Stop Conditions Cleared
 
@@ -201,7 +290,8 @@ support.
   may change.
 - WebSocket transport is experimental and unsupported; stdio or Unix socket
   should be first.
-- Some methods used by T3 need generated-schema verification.
+- The first implementation must whitelist a supported method subset from the
+  generated schema rather than mirror the full app-server surface.
 - Multi-instance behavior through `CODEX_HOME`, profiles, and auth stores must
   be tested before implementation.
 

@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-17
 
 ## Active Contracts
 
@@ -25,3 +25,23 @@ Updated: 2026-06-15
 | `015-deep-research-contract.md` | draft | Server-owned deep research runs, questions, source records, observations, and synthesis. |
 | `016-effigy-project-integration-contract.md` | draft | Optional project-level Effigy integration for workflow routing, validation, and native steward tooling. |
 | `017-engine-host-authority-contract.md` | draft-promoted-first-pass | Engine-first host forms, project authority maps, and multi-host authority rules. |
+| `018-orchestration-contract.md` | draft | Event-sourced command, event, projection, and replay spine. |
+| `019-conversation-timeline-contract.md` | draft | Canonical task, work item, session, thread, turn, message, activity, and provider-id mapping model. |
+| `020-runtime-receipt-contract.md` | draft | Durable receipts and progress events for runtime side effects. |
+| `021-checkpoint-diff-contract.md` | draft | Checkpoint and diff ownership across SCM, tasks, turns, and review workflows. |
+| `022-engine-orchestration-boundary-contract.md` | draft | Portable engine, orchestration, and host/server crate ownership boundary. |
+
+## Needed Contracts
+
+The 2026-06-17 stocktake found gaps that should become contracts before more
+runtime implementation depends on them:
+
+- remote host pairing/session contract
+- tool broker, preview, and MCP contract
+- observability and diagnostics contract
+
+Source refs:
+
+- `docs/architecture/architecture-gap-index.md`
+- `docs/architecture/t3-code-comparison.md`
+- `docs/roadmaps/reassessment-decision-queue.md`

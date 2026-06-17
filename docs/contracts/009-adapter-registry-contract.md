@@ -380,6 +380,28 @@ spawning, SDK bridges, ACP clients, CLI/PTY control, active health probes,
 selection algorithms, storage engines, secret storage, and credential
 resolution remain out of scope.
 
+## First Codex App-Server Descriptor
+
+The first provider-specific registry descriptor is metadata-only Codex
+app-server.
+
+It records:
+
+- provider driver kind: Codex
+- harness name: Codex app-server
+- transport: structured app-server/runtime
+- default endpoint label: `stdio://`
+- runtime ownership: nucleus-owned local server
+- version discovery: `codex --version`
+- authentication preflight: `codex doctor --json`
+- readiness gate: version discovery, stdio handshake, and authentication
+  preflight
+- schema evidence: local `codex-cli 0.140.0` schema generation on
+  2026-06-17
+
+The descriptor does not spawn Codex, open a socket, create a session, resolve
+credentials, store raw auth material, or claim readiness before probes run.
+
 `nucleus-server` now contains the first draft of generic credential material
 boundary vocabulary. Adapter-specific secret refs remain adapter registry
 records; server credential material refs are the future integration point when

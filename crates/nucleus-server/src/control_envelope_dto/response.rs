@@ -91,8 +91,22 @@ pub enum ControlResponseBodyDto {
     CommandEvidenceRecords {
         records: Vec<ControlCommandEvidenceRecordDto>,
     },
+    RuntimeReceiptRecords {
+        records: Vec<ControlRuntimeReceiptRecordDto>,
+    },
+    CheckpointRecords {
+        records: Vec<ControlCheckpointRecordDto>,
+    },
+    DiffSummaryRecords {
+        records: Vec<ControlDiffSummaryRecordDto>,
+    },
     RuntimeReadinessDiagnostics {
         records: Vec<ControlRuntimeReadinessDiagnosticDto>,
+    },
+    TaskTimeline {
+        task_id: String,
+        entries: Vec<ControlTaskTimelineEntryDto>,
+        last_source_event_id: Option<String>,
     },
     CommandReceipt {
         command_id: String,
@@ -146,6 +160,44 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                         .collect(),
                 })
             }
+            ServerControlResponseBody::Query(ServerQueryResult::RuntimeReceipts(records)) => {
+                Ok(Self::RuntimeReceiptRecords {
+                    records: records
+                        .iter()
+                        .map(ControlRuntimeReceiptRecordDto::from)
+                        .collect(),
+                })
+            }
+            ServerControlResponseBody::Query(ServerQueryResult::CheckpointRecords(records)) => {
+                Ok(Self::CheckpointRecords {
+                    records: records
+                        .iter()
+                        .map(ControlCheckpointRecordDto::from)
+                        .collect(),
+                })
+            }
+            ServerControlResponseBody::Query(ServerQueryResult::DiffSummaryRecords(records)) => {
+                Ok(Self::DiffSummaryRecords {
+                    records: records
+                        .iter()
+                        .map(ControlDiffSummaryRecordDto::from)
+                        .collect(),
+                })
+            }
+            ServerControlResponseBody::Query(ServerQueryResult::TaskTimeline(projection)) => {
+                Ok(Self::TaskTimeline {
+                    task_id: projection.task_id.0.clone(),
+                    entries: projection
+                        .entries
+                        .iter()
+                        .map(ControlTaskTimelineEntryDto::from)
+                        .collect(),
+                    last_source_event_id: projection
+                        .last_cursor
+                        .as_ref()
+                        .map(|cursor| cursor.source_event_id.clone()),
+                })
+            }
             ServerControlResponseBody::Command(receipt) => Ok(Self::CommandReceipt {
                 command_id: receipt.command_id.0.clone(),
                 status: command_receipt_status_dto(&receipt.status),
@@ -183,6 +235,54 @@ pub struct ControlCommandEvidenceRecordDto {
     pub stderr_artifact_ref: Option<String>,
 }
 
+/// Serializable sanitized runtime receipt record.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ControlRuntimeReceiptRecordDto {
+    pub receipt_id: String,
+    pub family: String,
+    pub status: String,
+    pub command_ref: Option<String>,
+    pub effect_ref: Option<String>,
+    pub evidence_refs: Vec<String>,
+    pub artifact_refs: Vec<String>,
+    pub summary: Option<String>,
+}
+
+/// Serializable sanitized checkpoint record.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ControlCheckpointRecordDto {
+    pub checkpoint_id: String,
+    pub family: String,
+    pub primary_workflow_ref: String,
+    pub project_ref: String,
+    pub source_ref: Option<String>,
+    pub scm_adapter_ref: Option<String>,
+    pub authority_host_ref: String,
+    pub created_by_actor_ref: String,
+    pub causal_refs: Vec<String>,
+    pub parent_checkpoint_refs: Vec<String>,
+    pub artifact_refs: Vec<String>,
+    pub summary: Option<String>,
+    pub recovery_state: String,
+}
+
+/// Serializable sanitized diff summary record.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ControlDiffSummaryRecordDto {
+    pub diff_id: String,
+    pub kind: String,
+    pub source_boundary_ref: String,
+    pub target_boundary_ref: String,
+    pub source_ref: Option<String>,
+    pub adapter_ref: Option<String>,
+    pub generated_by_ref: String,
+    pub confidence: String,
+    pub summary: String,
+    pub changed_paths: Vec<String>,
+    pub evidence_refs: Vec<String>,
+    pub artifact_refs: Vec<String>,
+}
+
 /// Serializable sanitized runtime readiness diagnostics record.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ControlRuntimeReadinessDiagnosticDto {
@@ -203,6 +303,36 @@ pub struct ControlRuntimeReadinessBlockerDto {
     pub message: String,
 }
 
+/// Serializable task timeline entry.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ControlTaskTimelineEntryDto {
+    pub entry_id: String,
+    pub task_id: String,
+    pub kind: String,
+    pub source_command_id: String,
+    pub source_event_id: String,
+    pub source_projection_id: String,
+    pub summary: String,
+}
+
+impl From<&nucleus_engine::EngineTaskTimelineEntry> for ControlTaskTimelineEntryDto {
+    fn from(entry: &nucleus_engine::EngineTaskTimelineEntry) -> Self {
+        Self {
+            entry_id: entry.entry_id.0.clone(),
+            task_id: entry.task_id.0.clone(),
+            kind: match entry.kind {
+                nucleus_engine::EngineTaskTimelineEntryKind::TaskCommandAdmitted => {
+                    "task_command_admitted".to_owned()
+                }
+            },
+            source_command_id: entry.source_command_id.clone(),
+            source_event_id: entry.source_event_id.clone(),
+            source_projection_id: entry.source_cursor.projection_id.clone(),
+            summary: entry.summary.text.clone(),
+        }
+    }
+}
+
 impl From<&CommandEvidence> for ControlCommandEvidenceRecordDto {
     fn from(evidence: &CommandEvidence) -> Self {
         Self {
@@ -214,6 +344,84 @@ impl From<&CommandEvidence> for ControlCommandEvidenceRecordDto {
             summary: evidence.summary.clone(),
             stdout_artifact_ref: evidence.stdout_artifact_ref.clone(),
             stderr_artifact_ref: evidence.stderr_artifact_ref.clone(),
+        }
+    }
+}
+
+impl From<&nucleus_engine::EngineRuntimeReceiptRecord> for ControlRuntimeReceiptRecordDto {
+    fn from(receipt: &nucleus_engine::EngineRuntimeReceiptRecord) -> Self {
+        Self {
+            receipt_id: receipt.receipt_id.0.clone(),
+            family: runtime_receipt_family_dto(&receipt.family),
+            status: runtime_receipt_status_dto(&receipt.status),
+            command_ref: receipt.command_ref.as_ref().map(runtime_receipt_ref_dto),
+            effect_ref: receipt.effect_ref.as_ref().map(runtime_receipt_ref_dto),
+            evidence_refs: receipt
+                .evidence_refs
+                .iter()
+                .map(runtime_receipt_ref_dto)
+                .collect(),
+            artifact_refs: receipt
+                .artifact_refs
+                .iter()
+                .map(runtime_receipt_ref_dto)
+                .collect(),
+            summary: receipt.summary.clone(),
+        }
+    }
+}
+
+impl From<&nucleus_engine::EngineCheckpointRecord> for ControlCheckpointRecordDto {
+    fn from(record: &nucleus_engine::EngineCheckpointRecord) -> Self {
+        Self {
+            checkpoint_id: record.checkpoint_id.0.clone(),
+            family: checkpoint_family_dto(&record.family),
+            primary_workflow_ref: checkpoint_ref_dto(&record.primary_workflow_ref),
+            project_ref: checkpoint_ref_dto(&record.project_ref),
+            source_ref: record.source_ref.as_ref().map(checkpoint_ref_dto),
+            scm_adapter_ref: record.scm_adapter_ref.as_ref().map(checkpoint_ref_dto),
+            authority_host_ref: checkpoint_ref_dto(&record.authority_host_ref),
+            created_by_actor_ref: checkpoint_ref_dto(&record.created_by_actor_ref),
+            causal_refs: record.causal_refs.iter().map(checkpoint_ref_dto).collect(),
+            parent_checkpoint_refs: record
+                .parent_checkpoint_refs
+                .iter()
+                .map(checkpoint_ref_dto)
+                .collect(),
+            artifact_refs: record
+                .artifact_refs
+                .iter()
+                .map(checkpoint_ref_dto)
+                .collect(),
+            summary: record.summary.clone(),
+            recovery_state: checkpoint_recovery_state_dto(&record.recovery_state),
+        }
+    }
+}
+
+impl From<&nucleus_engine::EngineDiffSummaryRecord> for ControlDiffSummaryRecordDto {
+    fn from(record: &nucleus_engine::EngineDiffSummaryRecord) -> Self {
+        Self {
+            diff_id: record.diff_id.0.clone(),
+            kind: diff_summary_kind_dto(&record.kind),
+            source_boundary_ref: checkpoint_ref_dto(&record.source_boundary_ref),
+            target_boundary_ref: checkpoint_ref_dto(&record.target_boundary_ref),
+            source_ref: record.source_ref.as_ref().map(checkpoint_ref_dto),
+            adapter_ref: record.adapter_ref.as_ref().map(checkpoint_ref_dto),
+            generated_by_ref: checkpoint_ref_dto(&record.generated_by_ref),
+            confidence: diff_summary_confidence_dto(&record.confidence),
+            summary: record.summary.clone(),
+            changed_paths: record.changed_paths.clone(),
+            evidence_refs: record
+                .evidence_refs
+                .iter()
+                .map(checkpoint_ref_dto)
+                .collect(),
+            artifact_refs: record
+                .artifact_refs
+                .iter()
+                .map(checkpoint_ref_dto)
+                .collect(),
         }
     }
 }
@@ -327,6 +535,129 @@ fn retention_dto(retention: &nucleus_command_policy::CommandOutputRetention) -> 
         }
     }
     .to_owned()
+}
+
+fn runtime_receipt_family_dto(family: &nucleus_engine::EngineRuntimeReceiptEffectFamily) -> String {
+    match family {
+        nucleus_engine::EngineRuntimeReceiptEffectFamily::CommandExecution => "command_execution",
+        nucleus_engine::EngineRuntimeReceiptEffectFamily::HarnessProvider => "harness_provider",
+        nucleus_engine::EngineRuntimeReceiptEffectFamily::ToolCall => "tool_call",
+        nucleus_engine::EngineRuntimeReceiptEffectFamily::ScmForge => "scm_forge",
+        nucleus_engine::EngineRuntimeReceiptEffectFamily::CheckpointDiff => "checkpoint_diff",
+        nucleus_engine::EngineRuntimeReceiptEffectFamily::Research => "research",
+        nucleus_engine::EngineRuntimeReceiptEffectFamily::Memory => "memory",
+        nucleus_engine::EngineRuntimeReceiptEffectFamily::Effigy => "effigy",
+        nucleus_engine::EngineRuntimeReceiptEffectFamily::Steward => "steward",
+        nucleus_engine::EngineRuntimeReceiptEffectFamily::Custom(value) => value,
+    }
+    .to_owned()
+}
+
+fn runtime_receipt_status_dto(status: &nucleus_engine::EngineRuntimeReceiptStatus) -> String {
+    match status {
+        nucleus_engine::EngineRuntimeReceiptStatus::Accepted => "accepted",
+        nucleus_engine::EngineRuntimeReceiptStatus::Queued => "queued",
+        nucleus_engine::EngineRuntimeReceiptStatus::Started => "started",
+        nucleus_engine::EngineRuntimeReceiptStatus::InProgress => "in_progress",
+        nucleus_engine::EngineRuntimeReceiptStatus::WaitingForApproval => "waiting_for_approval",
+        nucleus_engine::EngineRuntimeReceiptStatus::WaitingForUserInput => "waiting_for_user_input",
+        nucleus_engine::EngineRuntimeReceiptStatus::Blocked => "blocked",
+        nucleus_engine::EngineRuntimeReceiptStatus::Completed => "completed",
+        nucleus_engine::EngineRuntimeReceiptStatus::CompletedWithWarnings => {
+            "completed_with_warnings"
+        }
+        nucleus_engine::EngineRuntimeReceiptStatus::Cancelled => "cancelled",
+        nucleus_engine::EngineRuntimeReceiptStatus::Failed => "failed",
+        nucleus_engine::EngineRuntimeReceiptStatus::TimedOut => "timed_out",
+        nucleus_engine::EngineRuntimeReceiptStatus::RecoveryRequired => "recovery_required",
+        nucleus_engine::EngineRuntimeReceiptStatus::Recovered => "recovered",
+        nucleus_engine::EngineRuntimeReceiptStatus::Unknown => "unknown",
+    }
+    .to_owned()
+}
+
+fn runtime_receipt_ref_dto(receipt_ref: &nucleus_engine::EngineRuntimeReceiptRef) -> String {
+    match receipt_ref {
+        nucleus_engine::EngineRuntimeReceiptRef::CommandId(value)
+        | nucleus_engine::EngineRuntimeReceiptRef::CommandRequestId(value)
+        | nucleus_engine::EngineRuntimeReceiptRef::CommandEvidenceId(value)
+        | nucleus_engine::EngineRuntimeReceiptRef::Artifact(value)
+        | nucleus_engine::EngineRuntimeReceiptRef::EventId(value)
+        | nucleus_engine::EngineRuntimeReceiptRef::Custom(value) => value.clone(),
+    }
+}
+
+fn checkpoint_family_dto(family: &nucleus_engine::EngineCheckpointFamily) -> String {
+    match family {
+        nucleus_engine::EngineCheckpointFamily::TaskWork => "task_work",
+        nucleus_engine::EngineCheckpointFamily::AgentSession => "agent_session",
+        nucleus_engine::EngineCheckpointFamily::Thread => "thread",
+        nucleus_engine::EngineCheckpointFamily::Turn => "turn",
+        nucleus_engine::EngineCheckpointFamily::ScmChangeWorkflow => "scm_change_workflow",
+        nucleus_engine::EngineCheckpointFamily::ValidationRun => "validation_run",
+        nucleus_engine::EngineCheckpointFamily::ResearchRun => "research_run",
+        nucleus_engine::EngineCheckpointFamily::StewardOperation => "steward_operation",
+        nucleus_engine::EngineCheckpointFamily::ManualOperation => "manual_operation",
+        nucleus_engine::EngineCheckpointFamily::Custom(value) => value,
+    }
+    .to_owned()
+}
+
+fn checkpoint_recovery_state_dto(state: &nucleus_engine::EngineCheckpointRecoveryState) -> String {
+    match state {
+        nucleus_engine::EngineCheckpointRecoveryState::Available => "available",
+        nucleus_engine::EngineCheckpointRecoveryState::RepairRequired => "repair_required",
+        nucleus_engine::EngineCheckpointRecoveryState::MissingSource => "missing_source",
+        nucleus_engine::EngineCheckpointRecoveryState::Superseded => "superseded",
+        nucleus_engine::EngineCheckpointRecoveryState::Unknown => "unknown",
+    }
+    .to_owned()
+}
+
+fn diff_summary_kind_dto(kind: &nucleus_engine::EngineDiffSummaryKind) -> String {
+    match kind {
+        nucleus_engine::EngineDiffSummaryKind::Source => "source",
+        nucleus_engine::EngineDiffSummaryKind::ManagementProjection => "management_projection",
+        nucleus_engine::EngineDiffSummaryKind::TaskState => "task_state",
+        nucleus_engine::EngineDiffSummaryKind::MemoryProjection => "memory_projection",
+        nucleus_engine::EngineDiffSummaryKind::PlanningArtifact => "planning_artifact",
+        nucleus_engine::EngineDiffSummaryKind::ResearchSynthesis => "research_synthesis",
+        nucleus_engine::EngineDiffSummaryKind::ArtifactManifest => "artifact_manifest",
+        nucleus_engine::EngineDiffSummaryKind::Custom(value) => value,
+    }
+    .to_owned()
+}
+
+fn diff_summary_confidence_dto(confidence: &nucleus_engine::EngineDiffSummaryConfidence) -> String {
+    match confidence {
+        nucleus_engine::EngineDiffSummaryConfidence::Exact => "exact",
+        nucleus_engine::EngineDiffSummaryConfidence::High => "high",
+        nucleus_engine::EngineDiffSummaryConfidence::Partial => "partial",
+        nucleus_engine::EngineDiffSummaryConfidence::Estimated => "estimated",
+        nucleus_engine::EngineDiffSummaryConfidence::Unknown => "unknown",
+    }
+    .to_owned()
+}
+
+fn checkpoint_ref_dto(checkpoint_ref: &nucleus_engine::EngineCheckpointRef) -> String {
+    match checkpoint_ref {
+        nucleus_engine::EngineCheckpointRef::ProjectId(value)
+        | nucleus_engine::EngineCheckpointRef::TaskId(value)
+        | nucleus_engine::EngineCheckpointRef::AgentSessionId(value)
+        | nucleus_engine::EngineCheckpointRef::ThreadId(value)
+        | nucleus_engine::EngineCheckpointRef::TurnId(value)
+        | nucleus_engine::EngineCheckpointRef::CommandId(value)
+        | nucleus_engine::EngineCheckpointRef::EventId(value)
+        | nucleus_engine::EngineCheckpointRef::ReceiptId(value)
+        | nucleus_engine::EngineCheckpointRef::AuthorityHostId(value)
+        | nucleus_engine::EngineCheckpointRef::ActorId(value)
+        | nucleus_engine::EngineCheckpointRef::RepoId(value)
+        | nucleus_engine::EngineCheckpointRef::ScmAdapterRef(value)
+        | nucleus_engine::EngineCheckpointRef::SnapshotRef(value)
+        | nucleus_engine::EngineCheckpointRef::PublicationRef(value)
+        | nucleus_engine::EngineCheckpointRef::ArtifactRef(value)
+        | nucleus_engine::EngineCheckpointRef::Custom(value) => value.clone(),
+    }
 }
 
 fn state_record_set_dto(

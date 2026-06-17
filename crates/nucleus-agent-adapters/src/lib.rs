@@ -4,6 +4,7 @@
 //! provider adapters, process spawning, SDK bridges, ACP clients, or CLI/PTY
 //! control yet.
 
+pub mod codex;
 pub mod config;
 pub mod credentials;
 pub mod persistence;
@@ -12,6 +13,10 @@ pub mod registry;
 pub mod selection;
 pub mod status;
 
+pub use codex::{
+    codex_app_server_descriptor, codex_app_server_registry, CodexAppServerDescriptor,
+    CodexAppServerMethodSet, CodexAppServerSchemaEvidence,
+};
 pub use config::{AdapterConfigEntry, AdapterConfigScope, AdapterConfigValue};
 pub use credentials::{
     AdapterCredentialAuditPolicy, AdapterCredentialResolutionRecord,

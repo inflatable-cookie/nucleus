@@ -115,7 +115,7 @@ Task history links to that evidence for audit and recovery.
 
 ## Codex Mapping
 
-First-pass Codex mapping:
+Current Codex app-server mapping:
 
 - nucleus session id maps to one Codex thread binding
 - provider session id maps to Codex thread id
@@ -125,12 +125,22 @@ First-pass Codex mapping:
 - lifecycle `SendTurn` maps to `turn/start`
 - lifecycle `Steer` maps to `turn/steer`
 - lifecycle `Interrupt` maps to `turn/interrupt`
-- rollback maps to Codex thread rollback only after generated-schema
-  verification
+- lifecycle `Rollback` maps to `thread/rollback`, but only as provider
+  transcript rollback
+- lifecycle `Close` maps first to `thread/unsubscribe`, not provider
+  transcript deletion
 
 If `thread/resume` fails and an adapter starts a new thread, nucleus must record
 that as recovery fallback instead of silently preserving the old session
 binding.
+
+The first Rust mapping lives in `nucleus-agent-protocol` as type-only Codex
+app-server lifecycle identity records. It names provider refs, id source,
+lifecycle method mapping, and explicit resume fallback. It does not execute
+app-server calls.
+
+Codex provider ids remain refs. They must not replace Nucleus session, turn,
+message, request, or event ids.
 
 ## Cursor ACP Mapping
 

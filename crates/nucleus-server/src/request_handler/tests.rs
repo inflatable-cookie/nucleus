@@ -1,8 +1,18 @@
 use super::*;
 use nucleus_core::{PersistenceDomain, PersistenceRecordKind};
+use nucleus_engine::{
+    EngineCheckpointFamily, EngineCheckpointRecord, EngineCheckpointRecordId,
+    EngineCheckpointRecoveryState, EngineCheckpointRef, EngineDiffSummaryConfidence,
+    EngineDiffSummaryKind, EngineDiffSummaryRecord, EngineDiffSummaryRecordId,
+};
 use nucleus_local_store::{fixture_record, RevisionExpectation, SqliteBackend};
+use nucleus_orchestration::{
+    decode_orchestration_event_store_record, OrchestrationCommandFamily, OrchestrationEventKind,
+};
 use nucleus_tasks::TaskId;
 
+use super::command_projection::rebuild_command_admission_projection;
+use crate::checkpoint_diff_state::{write_checkpoint_record, write_diff_summary_record};
 use crate::client_auth::{
     ClientAuthPosture, ClientAuthReadiness, ClientAuthReadinessBlocker, ClientAuthReadinessStatus,
 };
@@ -14,7 +24,7 @@ use crate::control_api::{
     AdapterSessionQuery, RuntimeMetadataQuery, ServerCommandReceipt, ServerCommandReceiptStatus,
     ServerControlError, ServerControlRequest, ServerControlRequestKind, ServerControlResponseBody,
     ServerControlResponseStatus, ServerQuery, ServerQueryKind, ServerQueryResult,
-    ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope,
+    ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope, TaskTimelineQuery,
 };
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
 use crate::project_seed::{seed_local_project, LocalProjectSeed};
@@ -111,6 +121,23 @@ fn handler_executes_task_transition_command_and_reads_back_task_dto() {
             ..
         })
     ));
+    let events = handler.state().event_journal().list().expect("events");
+    assert_eq!(events.len(), 1);
+    let event_store_record = decode_orchestration_event_store_record(&events[0].payload.bytes)
+        .expect("decode event record");
+    assert_eq!(
+        event_store_record.stream_ref.0,
+        "stream:command-admission:task:1"
+    );
+    let event = event_store_record.into_payload();
+    assert_eq!(event.kind, OrchestrationEventKind::CommandAdmitted);
+    assert_eq!(event.command_id.0, "command:start-task");
+    assert_eq!(event.family, OrchestrationCommandFamily::Task);
+    assert_eq!(event.target_ref.as_deref(), Some("task:1"));
+    let projection =
+        rebuild_command_admission_projection(handler.state()).expect("command projection");
+    assert_eq!(projection.admitted_total, 1);
+    assert_eq!(projection.task_commands, 1);
 
     let query_response = handler.handle(ServerControlRequest {
         id: ServerControlRequestId("request:task-query".to_owned()),
@@ -131,6 +158,183 @@ fn handler_executes_task_transition_command_and_reads_back_task_dto() {
         dto.body,
         crate::control_envelope_dto::ControlResponseBodyDto::TaskRecords { records }
             if records.len() == 1 && records[0].activity == "active"
+    ));
+}
+
+#[test]
+fn handler_projects_task_timeline_from_command_events() {
+    let (_temp_dir, mut handler) = handler(None);
+    seed_local_task(
+        handler.state(),
+        LocalTaskSeed {
+            task_id: "task:timeline".to_owned(),
+            project_id: "project:nucleus-local".to_owned(),
+            title: "Timeline Task".to_owned(),
+            action_type: nucleus_tasks::TaskActionType::Plan,
+            importance: nucleus_tasks::TaskImportance::Normal,
+        },
+    )
+    .expect("seed task");
+
+    let command_response = handler.handle(ServerControlRequest {
+        id: ServerControlRequestId("request:timeline-command".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Command(ServerCommand {
+            id: ServerCommandId("command:start-timeline-task".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerCommandKind::Task(TaskCommand::Start(TaskTransitionCommand {
+                task_id: TaskId("task:timeline".to_owned()),
+                expected_revision: None,
+            })),
+        }),
+    });
+    assert_eq!(
+        command_response.status,
+        ServerControlResponseStatus::Accepted
+    );
+
+    let timeline_response = handler.handle(ServerControlRequest {
+        id: ServerControlRequestId("request:timeline-query".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:task-timeline".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::TaskTimeline(TaskTimelineQuery {
+                task_id: TaskId("task:timeline".to_owned()),
+            }),
+        }),
+    });
+
+    assert_eq!(
+        timeline_response.status,
+        ServerControlResponseStatus::Complete
+    );
+    assert!(matches!(
+        timeline_response.body,
+        ServerControlResponseBody::Query(ServerQueryResult::TaskTimeline(projection))
+            if projection.task_id.0 == "task:timeline"
+                && projection.entries.len() == 1
+                && projection.entries[0].source_command_id == "command:start-timeline-task"
+                && projection.entries[0].source_event_id == "event:command:start-timeline-task:admitted"
+    ));
+}
+
+#[test]
+fn handler_lists_checkpoint_and_diff_records_without_runtime_receipt_collision() {
+    let (_temp_dir, mut handler) = handler(None);
+    let checkpoint = EngineCheckpointRecord {
+        checkpoint_id: EngineCheckpointRecordId("checkpoint:task:handler".to_owned()),
+        family: EngineCheckpointFamily::TaskWork,
+        primary_workflow_ref: EngineCheckpointRef::TaskId("task:handler".to_owned()),
+        project_ref: EngineCheckpointRef::ProjectId("project:nucleus-local".to_owned()),
+        source_ref: Some(EngineCheckpointRef::SnapshotRef(
+            "convergence:snapshot:handler".to_owned(),
+        )),
+        scm_adapter_ref: Some(EngineCheckpointRef::ScmAdapterRef(
+            "adapter:convergence".to_owned(),
+        )),
+        authority_host_ref: EngineCheckpointRef::AuthorityHostId("host:local".to_owned()),
+        created_by_actor_ref: EngineCheckpointRef::ActorId("actor:user".to_owned()),
+        causal_refs: vec![EngineCheckpointRef::CommandId(
+            "command:checkpoint".to_owned(),
+        )],
+        parent_checkpoint_refs: Vec::new(),
+        artifact_refs: Vec::new(),
+        summary: Some("handler checkpoint".to_owned()),
+        recovery_state: EngineCheckpointRecoveryState::Available,
+    };
+    let diff = EngineDiffSummaryRecord {
+        diff_id: EngineDiffSummaryRecordId("diff:handler".to_owned()),
+        kind: EngineDiffSummaryKind::Source,
+        source_boundary_ref: EngineCheckpointRef::SnapshotRef("snapshot:before".to_owned()),
+        target_boundary_ref: EngineCheckpointRef::SnapshotRef("snapshot:after".to_owned()),
+        source_ref: Some(EngineCheckpointRef::RepoId("repo:nucleus".to_owned())),
+        adapter_ref: Some(EngineCheckpointRef::ScmAdapterRef("adapter:scm".to_owned())),
+        generated_by_ref: EngineCheckpointRef::CommandId("command:diff".to_owned()),
+        confidence: EngineDiffSummaryConfidence::Partial,
+        summary: "source summary".to_owned(),
+        changed_paths: vec!["crates/nucleus-engine/src/lib.rs".to_owned()],
+        evidence_refs: Vec::new(),
+        artifact_refs: Vec::new(),
+    };
+    write_checkpoint_record(
+        handler.state(),
+        &checkpoint,
+        nucleus_core::RevisionId("rev:checkpoint:handler".to_owned()),
+        RevisionExpectation::MustNotExist,
+    )
+    .expect("write checkpoint");
+    write_diff_summary_record(
+        handler.state(),
+        &diff,
+        nucleus_core::RevisionId("rev:diff:handler".to_owned()),
+        RevisionExpectation::MustNotExist,
+    )
+    .expect("write diff");
+
+    let checkpoint_response = handler.handle(ServerControlRequest {
+        id: ServerControlRequestId("request:checkpoint-query".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:checkpoints".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::RuntimeMetadata(RuntimeMetadataQuery::ListCheckpointRecords),
+        }),
+    });
+    let diff_response = handler.handle(ServerControlRequest {
+        id: ServerControlRequestId("request:diff-query".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:diffs".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::RuntimeMetadata(RuntimeMetadataQuery::ListDiffSummaryRecords),
+        }),
+    });
+    let receipt_response = handler.handle(ServerControlRequest {
+        id: ServerControlRequestId("request:receipt-query".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:receipts-empty".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::RuntimeMetadata(RuntimeMetadataQuery::ListRuntimeReceipts),
+        }),
+    });
+
+    assert!(matches!(
+        checkpoint_response.body,
+        ServerControlResponseBody::Query(ServerQueryResult::CheckpointRecords(ref records))
+            if records.as_slice() == std::slice::from_ref(&checkpoint)
+    ));
+    assert!(matches!(
+        diff_response.body,
+        ServerControlResponseBody::Query(ServerQueryResult::DiffSummaryRecords(ref records))
+            if records.as_slice() == std::slice::from_ref(&diff)
+    ));
+    assert!(matches!(
+        receipt_response.body,
+        ServerControlResponseBody::Query(ServerQueryResult::RuntimeReceipts(records))
+            if records.is_empty()
+    ));
+
+    let checkpoint_dto =
+        crate::control_envelope_dto::ControlResponseEnvelopeDto::try_from(&checkpoint_response)
+            .expect("checkpoint dto");
+    let diff_dto =
+        crate::control_envelope_dto::ControlResponseEnvelopeDto::try_from(&diff_response)
+            .expect("diff dto");
+    assert!(matches!(
+        checkpoint_dto.body,
+        crate::control_envelope_dto::ControlResponseBodyDto::CheckpointRecords { records }
+            if records.len() == 1
+                && records[0].checkpoint_id == "checkpoint:task:handler"
+                && records[0].scm_adapter_ref.as_deref() == Some("adapter:convergence")
+    ));
+    assert!(matches!(
+        diff_dto.body,
+        crate::control_envelope_dto::ControlResponseBodyDto::DiffSummaryRecords { records }
+            if records.len() == 1
+                && records[0].diff_id == "diff:handler"
+                && records[0].changed_paths == vec!["crates/nucleus-engine/src/lib.rs".to_owned()]
     ));
 }
 

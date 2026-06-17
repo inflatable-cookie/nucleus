@@ -205,6 +205,27 @@ now named, but provider implementations, process spawning, stream parsing,
 network clients, sidecar protocols, and async runtime behavior remain out of
 scope.
 
+## First Runtime Target Selection
+
+First bridged harness implementation target: Codex app-server/runtime.
+
+Comparison target: Pi RPC.
+
+Codex is selected first because it has a structured app-server protocol,
+thread/session identity, turn and item events, approval and user-input
+surfaces, interruption, resume, read, fork, and rollback-related surfaces. It
+can prove the Nucleus orchestration, timeline, receipt, and lifecycle
+boundaries without starting from terminal-only rendering or a TypeScript
+sidecar.
+
+Pi is selected as the comparison target because it is also language-agnostic
+and process-owned, but its RPC stream lacks event ids. It will stress synthetic
+event identity, stream generation ids, and session-file replay namespaces after
+the Codex path proves the common spine.
+
+This decision does not make Codex semantics universal. Other adapters must
+still expose capability differences honestly.
+
 ## Adapter Trait Split
 
 First Rust trait split:

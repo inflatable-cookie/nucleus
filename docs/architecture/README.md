@@ -7,6 +7,11 @@ Architecture records the system shape once planning starts to settle.
 - `system-architecture.md`
 - `system-inventory.md`
 - `product-guardrails.md`
+- `t3-code-comparison.md`
+- `implementation-audit.md`
+- `architecture-gap-index.md`
+- `implementation-gap-index.md`
+- `engine-orchestration-boundary.md`
 
 ## Open Questions
 

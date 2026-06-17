@@ -80,6 +80,7 @@ mod tests {
         fn capabilities(&self) -> Vec<ScmCapability> {
             vec![
                 ScmCapability::InspectRepository,
+                ScmCapability::InspectCapturedChanges,
                 ScmCapability::ClassifyConflicts,
             ]
         }
@@ -150,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn scm_trait_can_describe_non_git_workflow_without_effects() {
+    fn scm_trait_can_describe_convergence_workflow_without_git_commit_claims() {
         let adapter = StaticScmAdapter {
             id: ScmAdapterInstanceId("test-scm".to_owned()),
             provider_kind: ScmProviderKind::Convergence,
@@ -167,10 +168,24 @@ mod tests {
             adapter.workflow_semantics().local_capture,
             ScmWorkflowPrimitive::Snapshot
         );
+        assert!(adapter
+            .capabilities()
+            .contains(&ScmCapability::InspectCapturedChanges));
         assert_eq!(adapter.readiness(), AdapterReadiness::Ready);
         assert!(adapter
             .required_command_scopes()
             .contains(&CommandScope::ManagementStateWrite));
+    }
+
+    #[test]
+    fn scm_capability_profiles_keep_git_and_convergence_distinct() {
+        let git_profile = ScmCapability::git_like_profile();
+        let convergence_profile = ScmCapability::convergence_like_profile();
+
+        assert!(git_profile.contains(&ScmCapability::StartPrimaryWorkingCopySession));
+        assert!(git_profile.contains(&ScmCapability::StartIsolatedWorkingCopySession));
+        assert!(!convergence_profile.contains(&ScmCapability::StartPrimaryWorkingCopySession));
+        assert!(convergence_profile.contains(&ScmCapability::OpenReviewBoundary));
     }
 
     #[test]

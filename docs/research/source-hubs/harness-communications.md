@@ -2,7 +2,7 @@
 
 Status: open
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-17
 
 ## Purpose
 
@@ -114,6 +114,68 @@ Collect evidence for the nucleus harness adapter model before implementation.
   harness that exposes sessions, tools, approvals, and event identity.
 - T3 Code should be used as a specimen for provider process handling and
   event normalization, not copied as product architecture.
+
+## Evidence Refresh 2026-06-17
+
+Current-doc refresh checked the active source set again before target
+selection.
+
+Confirmed harness candidates:
+
+- Codex remains structured app-server/runtime first. Current app-server docs
+  describe JSON-RPC-style bidirectional protocol, stdio as default JSONL
+  transport, WebSocket and Unix socket transports, thread start/resume/fork,
+  approvals, conversation history, and streamed agent events.
+- Claude remains SDK-sidecar-first with CLI/PTY fallback. Current Agent SDK
+  docs expose built-in tools, hooks, subagents, MCP, permissions, sessions,
+  `AskUserQuestion`, and tool/event hooks.
+- Cursor CLI remains ACP-first. The Cursor ACP page is still the official
+  route, but current docs rendering is sparse through automated fetch, so the
+  next implementation batch still needs a local `agent acp` initialize probe.
+- Cursor SDK remains a separate TypeScript/cloud/programmatic surface, not the
+  same target as local Cursor CLI ACP.
+- OpenCode remains server/SDK-first with ACP as a second path. Current ACP docs
+  confirm `opencode acp` as a JSON-RPC stdio subprocess for compatible
+  editors, while the existing dossier still favors the server/SDK path for
+  richer session and permission APIs.
+- Kimi Code remains ACP-first. Current docs confirm `kimi acp`, JSON-RPC over
+  stdin/stdout, clean stdout protocol, `session/new`, `session/load`,
+  `session/resume`, `session/prompt`, `session/cancel`, file reverse-RPC, and
+  permission/question handling through ACP.
+- Kimi Agent SDK remains a possible sidecar path. The current SDK repo says
+  Go, Node, and Python clients expose the Kimi CLI runtime, stream responses,
+  surface approvals and tool calls, and reuse CLI configuration, tools, skills,
+  and MCP servers.
+- Pi remains RPC-first. Current docs confirm `pi --mode rpc`, JSONL commands,
+  responses, streamed events, request id response correlation, session
+  options, and a documented event set. The event id gap remains the central
+  Nucleus identity challenge.
+
+Confirmed model/provider-routing surfaces:
+
+- DeepSeek exposes OpenAI-compatible and Anthropic-compatible APIs and
+  documents use through coding tools. It is a model/provider route unless
+  paired with a harness.
+- OpenRouter is a provider/model routing layer with provider ordering,
+  fallback, parameter support, data policy, ZDR, and price/latency/throughput
+  controls. It is not a harness adapter.
+- OpenCode Zen remains an OpenCode provider/gateway surface. Reach it through
+  the OpenCode adapter unless a later first-class model router exists.
+- GLM/Z.ai and MiniMax remain model/provider route candidates, not harness
+  runtime candidates, unless a separate harness surface exposes sessions,
+  tools, approvals, and event identity.
+
+Target-selection implication:
+
+- A first target should prove rich structured event ingestion, durable session
+  identity, approvals, cancellation, resume, and runtime receipts with minimal
+  sidecar complexity.
+- A comparison target should stress a different protocol/identity shape rather
+  than duplicate the same adapter assumptions.
+
+Promoted decision:
+
+- `docs/research/translation-memos/harness-runtime-target-selection.md`
 
 ## Harness Candidate Matrix
 

@@ -10,6 +10,7 @@ architecture, contracts, and roadmaps.
 - `001-provider-implementation-readiness.md`
 - `002-git-backed-project-management-state.md`
 - `003-nucleus-native-harness-and-steward-runtime.md`
+- `004-display-window-surface-layout.md`
 - `templates/`
 
 Batch cards live under the active roadmap lane:

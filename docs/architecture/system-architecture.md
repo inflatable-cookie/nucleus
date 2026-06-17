@@ -66,8 +66,14 @@ Future clients may include:
   observations, synthesis, confidence, gaps, and projection boundaries later.
 - `nucleus-workspaces`: persisted layouts, terminals, browser views, and
   panel/tab state later.
-- `nucleus-server`: first draft host API, deployment, client, command, state,
-  and event boundary types for sidecar, remote, and embedded IPC surfaces.
+- `nucleus-orchestration`: event-sourced command, event, projection, replay,
+  receipt, and deterministic projection mechanics.
+- `nucleus-engine`: portable domain execution, authority checks, command
+  admission, projection coordination, repository traits, and host-independent
+  effect ports.
+- `nucleus-server`: host API, deployment, client, transport, DTO, Tauri IPC,
+  and local/remote host wrapper surfaces for sidecar, remote, and embedded IPC
+  forms.
 
 Crates expose descriptive type surfaces only. The workspace exists to make the
 intended boundaries visible before implementation.
@@ -771,4 +777,4 @@ available but still unusable for a command without command authority.
 
 This architecture unlocks:
 
-- `docs/roadmaps/g01/001-foundation-and-research.md`
+- `docs/roadmaps/g02/001-orchestration-and-engine-boundary.md`

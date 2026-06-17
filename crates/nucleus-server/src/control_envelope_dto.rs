@@ -29,9 +29,9 @@ pub use error::ControlApiCodecError;
 pub use projects::ControlProjectRecordDto;
 pub use records::ControlStateRecordDto;
 pub use response::{
-    ControlCommandEvidenceRecordDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
-    ControlResponseStatusDto, ControlRuntimeReadinessBlockerDto,
-    ControlRuntimeReadinessDiagnosticDto,
+    ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiffSummaryRecordDto,
+    ControlResponseBodyDto, ControlResponseEnvelopeDto, ControlResponseStatusDto,
+    ControlRuntimeReadinessBlockerDto, ControlRuntimeReadinessDiagnosticDto,
 };
 pub use tasks::ControlTaskRecordDto;
 
@@ -135,6 +135,24 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                     action: "list_command_evidence".to_owned(),
                 })
             }
+            ServerQueryKind::RuntimeMetadata(RuntimeMetadataQuery::ListRuntimeReceipts) => {
+                Ok(Self::RuntimeMetadata {
+                    query_id: query.id.0.clone(),
+                    action: "list_runtime_receipts".to_owned(),
+                })
+            }
+            ServerQueryKind::RuntimeMetadata(RuntimeMetadataQuery::ListCheckpointRecords) => {
+                Ok(Self::RuntimeMetadata {
+                    query_id: query.id.0.clone(),
+                    action: "list_checkpoint_records".to_owned(),
+                })
+            }
+            ServerQueryKind::RuntimeMetadata(RuntimeMetadataQuery::ListDiffSummaryRecords) => {
+                Ok(Self::RuntimeMetadata {
+                    query_id: query.id.0.clone(),
+                    action: "list_diff_summary_records".to_owned(),
+                })
+            }
             ServerQueryKind::RuntimeMetadata(RuntimeMetadataQuery::GetLocalRuntimeReadiness) => {
                 Ok(Self::RuntimeMetadata {
                     query_id: query.id.0.clone(),
@@ -193,6 +211,15 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
                 )),
                 "list_command_evidence" => Ok(ServerQueryKind::RuntimeMetadata(
                     RuntimeMetadataQuery::ListCommandEvidence,
+                )),
+                "list_runtime_receipts" => Ok(ServerQueryKind::RuntimeMetadata(
+                    RuntimeMetadataQuery::ListRuntimeReceipts,
+                )),
+                "list_checkpoint_records" => Ok(ServerQueryKind::RuntimeMetadata(
+                    RuntimeMetadataQuery::ListCheckpointRecords,
+                )),
+                "list_diff_summary_records" => Ok(ServerQueryKind::RuntimeMetadata(
+                    RuntimeMetadataQuery::ListDiffSummaryRecords,
                 )),
                 "get_local_runtime_readiness" => Ok(ServerQueryKind::RuntimeMetadata(
                     RuntimeMetadataQuery::GetLocalRuntimeReadiness,

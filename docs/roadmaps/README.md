@@ -5,6 +5,20 @@ shape.
 
 ## Current Generation
 
+- `g02/001-orchestration-and-engine-boundary.md` - completed
+- `g02/002-event-store-persistence-hardening.md` - completed
+- `g02/003-engine-task-command-boundary.md` - completed
+- `g02/004-task-timeline-and-history-projection.md` - completed
+- `g02/005-runtime-receipts-and-effect-reactors.md` - completed
+- `g02/006-checkpoint-and-diff-foundation.md` - completed
+- `g02/007-management-projection-sync-foundation.md` - completed
+- `g02/008-scm-forge-driver-runway.md` - completed
+- `g02/009-harness-runtime-target-selection.md` - completed
+- `g02/010-client-protocol-and-host-transport-runway.md` - planned
+- `g02/011-codex-app-server-runtime-runway.md` - completed
+
+## Previous Generation
+
 - `g01/001-foundation-and-research.md`
 - `g01/002-management-state-and-scm-forge.md`
 - `g01/003-native-harness-and-steward.md`
@@ -55,8 +69,11 @@ shape.
 ## Index
 
 - `generation-index.md`
+- `long-term-plan.md`
+- `reassessment-decision-queue.md`
 
 ## Next Task
 
-Take stock after the runtime diagnostics tranche and compile the stable longer
-term plan list.
+Take stock after `g02/011-codex-app-server-runtime-runway.md` and choose the
+next G02 runway: live Codex runtime supervision, `g02/010` client transport,
+or a short milestone reassessment card.

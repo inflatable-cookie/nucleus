@@ -4,6 +4,7 @@
 //! harnesses. It intentionally does not implement provider behavior yet.
 
 pub mod capabilities;
+pub mod codex;
 pub mod events;
 pub mod identity;
 pub mod routes;
@@ -12,6 +13,13 @@ pub mod sessions;
 pub mod traits;
 
 pub use capabilities::{AdapterCapabilities, CapabilitySupport};
+pub use codex::{
+    codex_app_server_lifecycle_mappings, project_codex_app_server_fixture,
+    CodexAppServerEventFixture, CodexAppServerFixturePayload, CodexAppServerFixtureProjection,
+    CodexAppServerProviderRefs, CodexAppServerSessionBinding, CodexFixtureMappingError,
+    CodexIdSource, CodexLifecycleActionMapping, CodexRecoveryFallback, CodexRuntimeReceiptFixture,
+    CodexRuntimeReceiptStatus, CodexServerOwnedWaitState,
+};
 pub use events::{
     ApprovalPayload, ApprovalScope, CommandExecutionPayload, CommandStatus, ContentDeltaPayload,
     DeltaFormat, FileChangeKind, FileChangePayload, MessageItemPayload, MessageRole,

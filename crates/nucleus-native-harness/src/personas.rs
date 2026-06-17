@@ -33,9 +33,9 @@ pub enum NativePersonaCapability {
     InspectProjectState,
     InspectTaskState,
     NormalizeTaskMetadata,
-    PrepareManagementCommit,
-    CommitManagementState,
-    PushManagementState,
+    PrepareManagementCapture,
+    CreateManagementCapture,
+    ShareManagementCapture,
     ReconcileMechanicalConflict,
     ProposeSemanticConflictResolution,
     DeleteTask,
@@ -65,7 +65,7 @@ pub struct NativePersonaPolicy {
 pub enum NativeSyncAuthority {
     None,
     ProposeOnly,
-    PrepareManagementCommit,
-    CommitManagementState,
-    PushManagementState,
+    PrepareManagementCapture,
+    CreateManagementCapture,
+    ShareManagementCapture,
 }

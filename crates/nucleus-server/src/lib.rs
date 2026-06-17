@@ -5,6 +5,7 @@
 
 pub mod artifact_store_backend;
 pub mod authority;
+pub mod checkpoint_diff_state;
 pub mod client_auth;
 pub mod clients;
 pub mod command_artifacts;
@@ -29,6 +30,7 @@ pub mod local_read_only_spawn;
 pub mod local_read_only_spawn_smoke;
 pub mod local_sandbox_backend;
 pub mod local_transport;
+pub mod management_projection_state;
 pub mod process_control_backend;
 pub mod process_event_transport_backend;
 pub mod process_interruption;
@@ -44,6 +46,7 @@ pub mod runtime_effect_storage;
 pub mod runtime_effect_subscriptions;
 pub mod runtime_effect_transport;
 pub mod runtime_readiness_diagnostics;
+pub mod runtime_receipt_state;
 pub mod sandbox_backend;
 pub mod scheduler;
 pub mod secret_store;
@@ -58,6 +61,10 @@ pub use artifact_store_backend::{
     ArtifactStoreBackendEvidenceRef, ArtifactStoreBackendKind, ArtifactStoreBackendReadiness,
 };
 pub use authority::{AuthorityArea, ServerAuthority};
+pub use checkpoint_diff_state::{
+    read_checkpoint_records, read_diff_summary_records, write_checkpoint_record,
+    write_diff_summary_record,
+};
 pub use client_auth::{
     ClientAuthDeploymentPolicy, ClientAuthPosture, ClientAuthReadiness, ClientAuthReadinessBlocker,
     ClientAuthReadinessStatus, ClientAuthRecordId, ClientAuthSessionId, ClientAuthSessionRecord,
@@ -81,10 +88,11 @@ pub use control_api::{
     StateRecordQueryScope,
 };
 pub use control_envelope_dto::{
-    ControlApiCodecError, ControlCommandDto, ControlCommandEvidenceRecordDto,
-    ControlProjectRecordDto, ControlQueryDto, ControlQueryScopeDto, ControlRequestBodyDto,
-    ControlRequestEnvelopeDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
-    ControlResponseStatusDto, ControlStateDomainDto, ControlStateRecordDto, ControlTaskRecordDto,
+    ControlApiCodecError, ControlCheckpointRecordDto, ControlCommandDto,
+    ControlCommandEvidenceRecordDto, ControlDiffSummaryRecordDto, ControlProjectRecordDto,
+    ControlQueryDto, ControlQueryScopeDto, ControlRequestBodyDto, ControlRequestEnvelopeDto,
+    ControlResponseBodyDto, ControlResponseEnvelopeDto, ControlResponseStatusDto,
+    ControlStateDomainDto, ControlStateRecordDto, ControlTaskRecordDto,
 };
 pub use control_serialization_readiness::{
     ControlApiCodecBoundary, ControlApiCodecFailure, ControlApiDtoAuthority,
@@ -148,6 +156,7 @@ pub use local_transport::{
     InProcessControlClientFixture, InProcessControlHandlerFixture, LocalControlTransport,
     LocalControlTransportBoundary, LocalControlTransportError, LocalControlTransportExchange,
 };
+pub use management_projection_state::build_management_projection_export_plan;
 pub use process_control_backend::{
     ProcessControlBackendEvidenceRef, ProcessControlBackendKind, ProcessControlBackendReadiness,
 };
@@ -201,6 +210,9 @@ pub use runtime_effect_transport::{
 pub use runtime_readiness_diagnostics::{
     local_host_runtime_readiness_diagnostics, RuntimeReadinessBlocker, RuntimeReadinessDiagnostics,
     RuntimeReadinessStatus, RuntimeReadinessSurface,
+};
+pub use runtime_receipt_state::{
+    read_runtime_receipts, runtime_receipt_from_read_only_command_result, write_runtime_receipt,
 };
 pub use sandbox_backend::{SandboxBackendEvidenceRef, SandboxBackendKind, SandboxBackendReadiness};
 pub use scheduler::{

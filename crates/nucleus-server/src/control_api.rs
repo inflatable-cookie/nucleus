@@ -6,6 +6,10 @@
 
 use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId};
 use nucleus_core::PersistenceRecordId;
+use nucleus_engine::{
+    EngineCheckpointRecord, EngineDiffSummaryRecord, EngineRuntimeReceiptRecord,
+    EngineTaskTimelineProjection,
+};
 use nucleus_local_store::LocalStoreRecord;
 use nucleus_projects::{ProjectId, RepoMembershipId};
 use nucleus_tasks::TaskId;
@@ -52,6 +56,7 @@ pub enum ServerQueryKind {
     AdapterSession(AdapterSessionQuery),
     ModelRoute(ModelRouteQuery),
     RuntimeMetadata(RuntimeMetadataQuery),
+    TaskTimeline(TaskTimelineQuery),
 }
 
 /// Generic persisted-state query scoped to one state domain.
@@ -98,8 +103,17 @@ pub enum RuntimeMetadataQuery {
     GetStoredEffect(RuntimeEffectStorageRecordId),
     ResolveRuntimeRef(RuntimeEffectStorageRef),
     ListCommandEvidence,
+    ListRuntimeReceipts,
+    ListCheckpointRecords,
+    ListDiffSummaryRecords,
     ListArtifactMetadata,
     GetLocalRuntimeReadiness,
+}
+
+/// Task timeline query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskTimelineQuery {
+    pub task_id: TaskId,
 }
 
 /// Response emitted by the server control boundary.
@@ -151,6 +165,10 @@ pub enum ServerQueryResult {
     ModelRoutes(ServerStateRecordSet),
     RuntimeMetadata(ServerStateRecordSet),
     RuntimeReadiness(Vec<RuntimeReadinessDiagnostics>),
+    RuntimeReceipts(Vec<EngineRuntimeReceiptRecord>),
+    CheckpointRecords(Vec<EngineCheckpointRecord>),
+    DiffSummaryRecords(Vec<EngineDiffSummaryRecord>),
+    TaskTimeline(EngineTaskTimelineProjection),
     Empty,
     Unsupported { reason: String },
 }

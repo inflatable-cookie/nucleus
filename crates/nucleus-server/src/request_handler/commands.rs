@@ -1,5 +1,7 @@
 use nucleus_local_store::LocalStoreBackend;
 
+use super::command_admission::{admit_state_command, CommandAdmissionOutcome};
+use super::command_events::append_command_admitted_event;
 use super::handler::LocalControlRequestHandler;
 use super::task_commands::handle_task_command;
 use std::path::Path;
@@ -25,6 +27,30 @@ where
     B: LocalStoreBackend + Clone,
 {
     let command_id = command.id.clone();
+    let admitted = match admit_state_command(&command) {
+        CommandAdmissionOutcome::NotOrchestrated => None,
+        CommandAdmissionOutcome::Accepted(accepted) => Some(accepted),
+        CommandAdmissionOutcome::Rejected(rejected) => {
+            return ServerControlResponse {
+                request_id,
+                status: ServerControlResponseStatus::Rejected,
+                body: ServerControlResponseBody::Command(ServerCommandReceipt {
+                    command_id: command.id,
+                    status: rejected,
+                }),
+            };
+        }
+    };
+    if let Some(admitted) = admitted.as_ref() {
+        if let Err(error) = append_command_admitted_event(handler.state(), admitted) {
+            let status =
+                ServerCommandReceiptStatus::Rejected(ServerControlError::StorageUnavailable {
+                    reason: format!("{error:?}"),
+                });
+            return command_response(request_id, command.id, status);
+        }
+    }
+
     let status = match command.kind {
         ServerCommandKind::Project(_)
         | ServerCommandKind::Workspace(_)
@@ -67,6 +93,14 @@ where
         }
     };
 
+    command_response(request_id, command.id, status)
+}
+
+fn command_response(
+    request_id: ServerControlRequestId,
+    command_id: crate::ServerCommandId,
+    status: ServerCommandReceiptStatus,
+) -> ServerControlResponse {
     let response_status = match status {
         ServerCommandReceiptStatus::AcceptedForStateMutation
         | ServerCommandReceiptStatus::AcceptedForRuntimeScheduling => {
@@ -78,10 +112,7 @@ where
     ServerControlResponse {
         request_id,
         status: response_status,
-        body: ServerControlResponseBody::Command(ServerCommandReceipt {
-            command_id: command.id,
-            status,
-        }),
+        body: ServerControlResponseBody::Command(ServerCommandReceipt { command_id, status }),
     }
 }
 

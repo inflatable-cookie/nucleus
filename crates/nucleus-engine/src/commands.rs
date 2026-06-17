@@ -1,0 +1,1 @@
+//! Engine command admission vocabulary.

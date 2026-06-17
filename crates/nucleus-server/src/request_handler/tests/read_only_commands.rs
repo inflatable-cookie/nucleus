@@ -52,6 +52,34 @@ fn handler_executes_read_only_command_and_persists_sanitized_evidence() {
     assert_eq!(records.len(), 1);
     assert!(!json.contains("nucleus-readonly-handler"));
     assert!(!json.contains("raw_stdout"));
+
+    let receipts = handler
+        .state()
+        .runtime_effects()
+        .list()
+        .expect("list receipts");
+    let receipt_json = String::from_utf8(receipts[0].payload.bytes.clone()).expect("receipt json");
+    assert_eq!(receipts.len(), 1);
+    assert!(receipt_json.contains("command_execution"));
+    assert!(receipt_json.contains("completed"));
+    assert!(!receipt_json.contains("nucleus-readonly-handler"));
+    assert!(!receipt_json.contains("raw_stdout"));
+
+    let receipt_response = handler.handle(ServerControlRequest {
+        id: ServerControlRequestId("request:runtime-receipts".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:runtime-receipts".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::RuntimeMetadata(RuntimeMetadataQuery::ListRuntimeReceipts),
+        }),
+    });
+    assert!(matches!(
+        receipt_response.body,
+        ServerControlResponseBody::Query(ServerQueryResult::RuntimeReceipts(records))
+            if records.len() == 1
+                && records[0].receipt_id.0 == "receipt:command:readonly-control:read-only-command"
+    ));
 }
 
 #[test]

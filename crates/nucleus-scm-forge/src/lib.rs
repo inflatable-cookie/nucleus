@@ -1,9 +1,9 @@
 //! SCM and forge adapter boundary types.
 //!
-//! This crate names repository, branch, commit, pull request, issue, comment,
-//! task-link, conflict, review, observation, credential, webhook, and
-//! capability surfaces. It does not implement Git commands, forge API clients,
-//! webhooks, auth, sync workers, fake adapters, or fixture builders.
+//! This crate names repository, provider refs, change refs, review refs,
+//! task-link, conflict, observation, credential, webhook, and capability
+//! surfaces. It does not implement Git commands, forge API clients, webhooks,
+//! auth, sync workers, fake adapters, or fixture builders.
 
 pub mod auth;
 pub mod capabilities;
@@ -13,6 +13,7 @@ pub mod forge;
 pub mod ids;
 pub mod links;
 pub mod observations;
+pub mod registry;
 pub mod reviews;
 pub mod runtime_effects;
 pub mod runtime_events;
@@ -48,6 +49,11 @@ pub use links::{
 pub use observations::{
     ForgeObservation, ForgeObservationId, ForgeObservationKind, ForgeRefreshMode,
     ObservationDedupeKey, ObservationEffect, ScmObservation, ScmObservationId, ScmObservationKind,
+};
+pub use registry::{
+    convergence_scm_driver_descriptor, git_scm_driver_descriptor, github_forge_driver_descriptor,
+    DriverImplementationStatus, ForgeDriverDescriptor, ForgeDriverId, ScmDriverDescriptor,
+    ScmDriverId, ScmForgeDriverRegistry,
 };
 pub use reviews::{
     ReviewMergePolicy, ReviewOutcome, ReviewWorkflow, ReviewWorkflowId, ReviewWorkflowStatus,

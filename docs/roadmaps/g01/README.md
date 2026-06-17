@@ -1,8 +1,20 @@
 # g01 Foundation
 
-Status: active
+Status: closed
 Owner: Tom
-Updated: 2026-06-16
+Updated: 2026-06-17
+
+## Closeout
+
+`g01` is closed as foundation history.
+
+It established the Northstar/Effigy spine, Rust workspace, first domain
+contracts, server/control proof surfaces, local state, command evidence,
+runtime readiness diagnostics, and the engine-first host-authority correction.
+
+The 2026-06-17 reassessment moved active planning to `g02`, because the next
+work is no longer foundation bootstrap. It needs an orchestration and engine
+boundary decision before runtime implementation continues.
 
 ## Milestones
 
