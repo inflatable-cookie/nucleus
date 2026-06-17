@@ -1,6 +1,6 @@
 # 079 Effigy Selector Refresh Command
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../020-effigy-command-backed-inspection.md`
@@ -17,18 +17,25 @@ Map read-only Effigy selector refresh evidence into selector inventory records.
 
 ## Acceptance Criteria
 
-- Selector refresh can update inventory from sanitized command evidence.
-- Selector refs remain stable and scoped.
-- Raw command output is not persisted as task history.
+- [x] Selector refresh can update inventory from sanitized command evidence.
+- [x] Selector refs remain stable and scoped.
+- [x] Raw command output is not persisted as task history.
+
+## Outcome
+
+- Added selector-refresh summary records for read-only `effigy tasks`
+  evidence.
+- Added inventory update behavior gated by sanitized refs.
+- Confirmed selector refresh summaries cannot execute selectors.
 
 ## Validation
 
-- `cargo test -p nucleus-native-harness effigy`
-- `cargo test -p nucleus-engine runtime_receipt`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-native-harness effigy`
+- [x] `cargo test -p nucleus-engine runtime_receipt`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

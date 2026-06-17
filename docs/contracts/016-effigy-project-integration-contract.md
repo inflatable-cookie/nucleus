@@ -78,6 +78,27 @@ authority. They prepare later server policy checks.
 The first implementation does not run Effigy, parse live command output, edit
 manifests, execute selectors, or store raw command output.
 
+## First Selector Refresh Command Implementation
+
+The first selector refresh command surface is a sanitized summary of read-only
+`effigy tasks` evidence.
+
+It can represent:
+
+- refreshed selector inventory
+- no selectors
+- blocked refresh
+- unsupported refresh
+- unknown refresh state
+
+Selector refresh summaries may link to native tool action ids, runtime receipt
+refs, sanitized evidence refs, scope, and selector records.
+
+A refreshed summary can update the integration's selector inventory when the
+summary and selector refs are sanitized. It must not execute selectors, edit
+manifests, copy raw command output, or persist raw Effigy output into task
+history.
+
 ## First Health And Validation Plan Implementation
 
 The first health and validation-plan surface is record-only.

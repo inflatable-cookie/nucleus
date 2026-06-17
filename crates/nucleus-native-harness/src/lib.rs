@@ -24,7 +24,8 @@ pub use effigy::{
     NativeEffigyHealthSummary, NativeEffigyIntegrationStatus, NativeEffigyManifestRef,
     NativeEffigyPlannedSelector, NativeEffigyProjectIntegration, NativeEffigyRepairHint,
     NativeEffigyRepairHintKind, NativeEffigyScope, NativeEffigySelectorKind,
-    NativeEffigySelectorRecord, NativeEffigySelectorRef, NativeEffigyValidationPlanStatus,
+    NativeEffigySelectorRecord, NativeEffigySelectorRef, NativeEffigySelectorRefreshStatus,
+    NativeEffigySelectorRefreshSummary, NativeEffigyValidationPlanStatus,
     NativeEffigyValidationPlanSummary, NativeEffigyValidationPurpose,
 };
 pub use events::{NativeEventId, NativeEventKind, NativeHarnessEvent};

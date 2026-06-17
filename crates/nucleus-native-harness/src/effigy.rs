@@ -137,6 +137,85 @@ pub enum NativeEffigyCommandScopeHint {
     Unknown,
 }
 
+/// Sanitized result of a read-only Effigy selector refresh.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeEffigySelectorRefreshSummary {
+    pub status: NativeEffigySelectorRefreshStatus,
+    pub scope: NativeEffigyScope,
+    pub tool_action_id: Option<NativeToolActionId>,
+    pub receipt_refs: Vec<NativeRuntimeReceiptRef>,
+    pub evidence_refs: Vec<NativeEffigyEvidenceRef>,
+    pub selectors: Vec<NativeEffigySelectorRecord>,
+    pub summary: Option<String>,
+}
+
+impl NativeEffigySelectorRefreshSummary {
+    pub fn refreshed(scope: NativeEffigyScope, selectors: Vec<NativeEffigySelectorRecord>) -> Self {
+        Self {
+            status: NativeEffigySelectorRefreshStatus::Refreshed,
+            scope,
+            tool_action_id: None,
+            receipt_refs: Vec::new(),
+            evidence_refs: Vec::new(),
+            selectors,
+            summary: None,
+        }
+    }
+
+    pub fn can_update_inventory(&self) -> bool {
+        self.status == NativeEffigySelectorRefreshStatus::Refreshed
+            && self.uses_sanitized_refs()
+            && !self.selectors.is_empty()
+    }
+
+    pub fn apply_to_integration(
+        &self,
+        mut integration: NativeEffigyProjectIntegration,
+    ) -> NativeEffigyProjectIntegration {
+        if self.can_update_inventory() {
+            integration.scope = self.scope.clone();
+            integration.selectors = self.selectors.clone();
+            integration.evidence_refs = self.evidence_refs.clone();
+            integration.status = NativeEffigyIntegrationStatus::Enabled;
+            integration.summary = self.summary.clone();
+        }
+        integration
+    }
+
+    pub fn uses_sanitized_refs(&self) -> bool {
+        self.summary
+            .as_ref()
+            .map(|summary| !contains_forbidden_effigy_term(summary))
+            .unwrap_or(true)
+            && self
+                .receipt_refs
+                .iter()
+                .all(|receipt_ref| !contains_forbidden_effigy_term(&receipt_ref.0))
+            && self
+                .evidence_refs
+                .iter()
+                .all(|evidence_ref| !contains_forbidden_effigy_term(&evidence_ref.0))
+            && self
+                .selectors
+                .iter()
+                .all(NativeEffigySelectorRecord::uses_sanitized_refs)
+    }
+
+    pub fn executes_selectors(&self) -> bool {
+        false
+    }
+}
+
+/// Selector refresh state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeEffigySelectorRefreshStatus {
+    Refreshed,
+    NoSelectors,
+    Blocked(String),
+    Unsupported(String),
+    Unknown,
+}
+
 /// Sanitized summary of an Effigy health check such as `effigy doctor`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeEffigyHealthSummary {
@@ -413,6 +492,70 @@ mod tests {
         };
 
         assert!(!integration.uses_sanitized_refs());
+    }
+
+    #[test]
+    fn effigy_selector_refresh_updates_inventory_from_sanitized_evidence() {
+        let mut refresh = NativeEffigySelectorRefreshSummary::refreshed(
+            NativeEffigyScope::ProjectRoot,
+            vec![selector("qa:docs", NativeEffigyScope::ProjectRoot)],
+        );
+        refresh.tool_action_id = Some(NativeToolActionId("tool:effigy-tasks".to_owned()));
+        refresh
+            .receipt_refs
+            .push(NativeRuntimeReceiptRef("receipt:effigy:tasks".to_owned()));
+        refresh
+            .evidence_refs
+            .push(NativeEffigyEvidenceRef("evidence:effigy-tasks".to_owned()));
+        refresh.summary = Some("selector inventory refreshed".to_owned());
+
+        let integration = refresh.apply_to_integration(NativeEffigyProjectIntegration {
+            status: NativeEffigyIntegrationStatus::Detected,
+            scope: NativeEffigyScope::ProjectRoot,
+            manifest_ref: Some(NativeEffigyManifestRef("manifest:root-effigy".to_owned())),
+            selectors: Vec::new(),
+            evidence_refs: Vec::new(),
+            summary: None,
+        });
+
+        assert!(refresh.can_update_inventory());
+        assert!(!refresh.executes_selectors());
+        assert_eq!(integration.status, NativeEffigyIntegrationStatus::Enabled);
+        assert_eq!(integration.selectors.len(), 1);
+        assert_eq!(
+            integration.selectors[0].selector_ref,
+            NativeEffigySelectorRef("qa:docs".to_owned())
+        );
+        assert!(integration.uses_sanitized_refs());
+    }
+
+    #[test]
+    fn effigy_selector_refresh_preserves_scoped_selector_refs() {
+        let repo_scope = NativeEffigyScope::Repo {
+            repo_membership_ref: "repo:docs".to_owned(),
+            subsystem: Some("docs".to_owned()),
+        };
+        let refresh = NativeEffigySelectorRefreshSummary::refreshed(
+            repo_scope.clone(),
+            vec![selector("docs/qa", repo_scope.clone())],
+        );
+
+        assert!(refresh.can_update_inventory());
+        assert_eq!(refresh.selectors[0].scope, repo_scope);
+        assert_eq!(
+            refresh.selectors[0].command_scope_hint,
+            NativeEffigyCommandScopeHint::Validation
+        );
+    }
+
+    #[test]
+    fn effigy_selector_refresh_rejects_raw_command_output_terms() {
+        let mut refresh =
+            NativeEffigySelectorRefreshSummary::refreshed(NativeEffigyScope::ProjectRoot, vec![]);
+        refresh.summary = Some("raw_stdout should not be retained".to_owned());
+
+        assert!(!refresh.uses_sanitized_refs());
+        assert!(!refresh.can_update_inventory());
     }
 
     #[test]

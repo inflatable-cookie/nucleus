@@ -87,4 +87,4 @@ shape.
 ## Next Task
 
 Continue `g02/020-effigy-command-backed-inspection.md`, starting with
-`g02/batch-cards/079-effigy-selector-refresh-command.md`.
+`g02/batch-cards/080-effigy-doctor-summary-command.md`.
