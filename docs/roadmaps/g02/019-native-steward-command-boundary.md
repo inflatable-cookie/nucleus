@@ -1,6 +1,6 @@
 # 019 Native Steward Command Boundary
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -36,14 +36,14 @@ This milestone follows `018-steward-native-harness-and-effigy-tools.md`.
   sanitized evidence.
 - [x] Server boundary batch: prepare request-handler surfaces without live
   steward execution.
-- [ ] Validation batch: prove no command path mutates project, SCM, or forge
+- [x] Validation batch: prove no command path mutates project, SCM, or forge
   state.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/078-native-steward-command-validation.md`
+- None.
 
 Planned cards:
 
@@ -55,6 +55,7 @@ Completed cards:
 - `batch-cards/075-native-steward-command-admission.md`
 - `batch-cards/076-native-steward-command-receipt-linkage.md`
 - `batch-cards/077-server-steward-command-boundary.md`
+- `batch-cards/078-native-steward-command-validation.md`
 
 ## Acceptance Criteria
 

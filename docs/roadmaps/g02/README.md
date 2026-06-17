@@ -34,8 +34,8 @@ and engine boundary are settled.
 - `016-management-projection-file-io-and-sync.md` - completed
 - `017-scm-working-copy-and-change-request-workflows.md` - completed
 - `018-steward-native-harness-and-effigy-tools.md` - completed
-- `019-native-steward-command-boundary.md` - active
-- `020-effigy-command-backed-inspection.md` - planned
+- `019-native-steward-command-boundary.md` - completed
+- `020-effigy-command-backed-inspection.md` - active
 - `021-management-projection-sync-runtime.md` - planned
 - `022-scm-working-session-runtime.md` - planned
 - `023-client-read-model-and-diagnostics-runway.md` - planned
@@ -118,12 +118,11 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/078-native-steward-command-validation.md`
+- `batch-cards/079-effigy-selector-refresh-command.md`
 
 Planned cards:
 
 - None.
-- `batch-cards/079-effigy-selector-refresh-command.md`
 - `batch-cards/080-effigy-doctor-summary-command.md`
 - `batch-cards/081-effigy-test-plan-summary-command.md`
 - `batch-cards/082-effigy-repair-hint-synthesis.md`
@@ -175,6 +174,7 @@ Completed cards:
 - `batch-cards/075-native-steward-command-admission.md`
 - `batch-cards/076-native-steward-command-receipt-linkage.md`
 - `batch-cards/077-server-steward-command-boundary.md`
+- `batch-cards/078-native-steward-command-validation.md`
 
 Completed cards:
 

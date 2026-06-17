@@ -1,6 +1,6 @@
 # 020 Effigy Command-Backed Inspection
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -39,9 +39,12 @@ stable.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/079-effigy-selector-refresh-command.md`
+
+Planned cards:
+
 - `batch-cards/080-effigy-doctor-summary-command.md`
 - `batch-cards/081-effigy-test-plan-summary-command.md`
 - `batch-cards/082-effigy-repair-hint-synthesis.md`

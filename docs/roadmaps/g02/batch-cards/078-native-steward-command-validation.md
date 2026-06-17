@@ -1,6 +1,6 @@
 # 078 Native Steward Command Validation
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../019-native-steward-command-boundary.md`
@@ -17,20 +17,28 @@ Validate and close the native steward command boundary milestone.
 
 ## Acceptance Criteria
 
-- All 019 cards are completed or explicitly rehomed.
-- Contracts match implemented command-boundary records.
-- Next ready card points to Effigy inspection.
+- [x] All 019 cards are completed or explicitly rehomed.
+- [x] Contracts match implemented command-boundary records.
+- [x] Next ready card points to Effigy inspection.
+
+## Outcome
+
+- Validated native steward command records, admission, receipt linkage, and
+  server request-handler boundaries.
+- Confirmed the first server boundary admits native steward commands without
+  live steward execution.
+- Advanced the runway to `020-effigy-command-backed-inspection.md`.
 
 ## Validation
 
-- `cargo test -p nucleus-native-harness`
-- `cargo test -p nucleus-engine`
-- `cargo test -p nucleus-server`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `rg -n '^## Next Task' README.md AGENTS.md docs`
-- `git diff --check`
+- [x] `cargo test -p nucleus-native-harness`
+- [x] `cargo test -p nucleus-engine`
+- [x] `cargo test -p nucleus-server`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `rg -n '^## Next Task' README.md AGENTS.md docs`
+- [x] `git diff --check`
 
 ## Stop Conditions
 
