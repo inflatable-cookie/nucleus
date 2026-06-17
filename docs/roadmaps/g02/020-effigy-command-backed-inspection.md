@@ -24,7 +24,7 @@ stable.
 - [x] Add command-backed Effigy selector inventory refresh.
 - [x] Add command-backed Effigy health summary capture.
 - [x] Add command-backed `effigy test --plan` summary capture.
-- [ ] Keep raw command output out of durable task history.
+- [x] Keep raw command output out of durable task history.
 
 ## Execution Plan
 
@@ -32,7 +32,7 @@ stable.
 - [x] Doctor summary batch: map doctor evidence into health summaries.
 - [x] Test-plan batch: map `effigy test --plan` evidence into validation plan
   summaries.
-- [ ] Repair hint batch: turn missing selector/manifest evidence into steward
+- [x] Repair hint batch: turn missing selector/manifest evidence into steward
   repair hints.
 - [ ] Validation batch: prove all Effigy evidence is summarized or referenced,
   not copied raw.
@@ -41,17 +41,18 @@ stable.
 
 Ready cards:
 
-- `batch-cards/082-effigy-repair-hint-synthesis.md`
+- `batch-cards/083-effigy-command-inspection-validation.md`
 
 Planned cards:
 
-- `batch-cards/083-effigy-command-inspection-validation.md`
+- None.
 
 Completed cards:
 
 - `batch-cards/079-effigy-selector-refresh-command.md`
 - `batch-cards/080-effigy-doctor-summary-command.md`
 - `batch-cards/081-effigy-test-plan-summary-command.md`
+- `batch-cards/082-effigy-repair-hint-synthesis.md`
 
 ## Acceptance Criteria
 
@@ -59,7 +60,7 @@ Completed cards:
   path.
 - [x] Doctor and validation-plan summaries link to command evidence and
   runtime receipts.
-- [ ] Raw Effigy output remains excluded from task history, memory, and
+- [x] Raw Effigy output remains excluded from task history, memory, and
   projected management files.
 
 ## Gate

@@ -118,12 +118,10 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/082-effigy-repair-hint-synthesis.md`
+- `batch-cards/083-effigy-command-inspection-validation.md`
 
 Planned cards:
 
-- None.
-- `batch-cards/083-effigy-command-inspection-validation.md`
 - `batch-cards/084-management-sync-plan-records.md`
 - `batch-cards/085-projection-import-repair-proposals.md`
 - `batch-cards/086-projection-conflict-assistance-routing.md`
@@ -175,6 +173,7 @@ Completed cards:
 - `batch-cards/079-effigy-selector-refresh-command.md`
 - `batch-cards/080-effigy-doctor-summary-command.md`
 - `batch-cards/081-effigy-test-plan-summary-command.md`
+- `batch-cards/082-effigy-repair-hint-synthesis.md`
 
 Completed cards:
 
@@ -195,8 +194,8 @@ The next G02 suite is:
 6. management projection file IO and sync - completed
 7. SCM working-copy/change-request workflows - completed
 8. steward/native harness and Effigy tools - completed
-9. native steward command boundary - planned
-10. Effigy command-backed inspection - planned
+9. native steward command boundary - completed
+10. Effigy command-backed inspection - active
 11. management projection sync runtime - planned
 12. SCM working session runtime - planned
 13. client read model and diagnostics runway - planned
@@ -212,8 +211,9 @@ remote transport work.
 - `016` built committable projection file IO.
 - `017` completed SCM/change-request workflow records.
 - `018` closed the record-only native steward runway.
-- `019` is the next execution lane and starts with command records before
-  admission, receipt linkage, server boundary, and validation.
+- `019` completed native steward command admission, receipt linkage, and server
+  command boundaries.
+- `020` is the active Effigy command-backed inspection lane.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

@@ -4,6 +4,11 @@
 //! not run Effigy, parse live command output, edit manifests, or execute
 //! selectors.
 
+use crate::steward::{
+    NativeStewardEvidenceRef, NativeStewardEvidenceSource, NativeStewardProposal,
+    NativeStewardProposalId, NativeStewardProposalKind, NativeStewardProposalReview,
+    NativeStewardProposalTarget,
+};
 use crate::tools::{NativeRuntimeReceiptRef, NativeToolActionId};
 
 /// Project-level Effigy integration record.
@@ -511,6 +516,106 @@ pub enum NativeEffigyRepairHintKind {
     Custom(String),
 }
 
+/// Synthesis of Effigy findings into repair hints and steward proposals.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeEffigyRepairSynthesis {
+    pub source: NativeEffigyRepairSource,
+    pub status: NativeEffigyRepairSynthesisStatus,
+    pub repair_hints: Vec<NativeEffigyRepairHint>,
+    pub evidence_refs: Vec<NativeEffigyEvidenceRef>,
+    pub summary: Option<String>,
+}
+
+impl NativeEffigyRepairSynthesis {
+    pub fn from_repair_hints(
+        source: NativeEffigyRepairSource,
+        repair_hints: Vec<NativeEffigyRepairHint>,
+    ) -> Self {
+        let status = if repair_hints.is_empty() {
+            NativeEffigyRepairSynthesisStatus::NoRepairNeeded
+        } else {
+            NativeEffigyRepairSynthesisStatus::ProposalReady
+        };
+        Self {
+            source,
+            status,
+            repair_hints,
+            evidence_refs: Vec::new(),
+            summary: None,
+        }
+    }
+
+    pub fn to_steward_proposal(
+        &self,
+        id: NativeStewardProposalId,
+        target: NativeStewardProposalTarget,
+    ) -> Option<NativeStewardProposal> {
+        if self.status != NativeEffigyRepairSynthesisStatus::ProposalReady
+            || !self.uses_sanitized_refs()
+        {
+            return None;
+        }
+
+        Some(NativeStewardProposal {
+            id,
+            persona_id: None,
+            target,
+            kind: NativeStewardProposalKind::ProjectOrganizationHint,
+            review: NativeStewardProposalReview::NeedsHumanApproval,
+            proposed_changes: Vec::new(),
+            evidence_refs: self
+                .evidence_refs
+                .iter()
+                .map(|evidence_ref| NativeStewardEvidenceRef {
+                    source: NativeStewardEvidenceSource::Effigy,
+                    ref_id: evidence_ref.0.clone(),
+                })
+                .collect(),
+            tool_action_id: None,
+            receipt_refs: Vec::new(),
+            summary: self.summary.clone(),
+        })
+    }
+
+    pub fn mutates_manifest_or_scripts(&self) -> bool {
+        false
+    }
+
+    pub fn uses_sanitized_refs(&self) -> bool {
+        self.summary
+            .as_ref()
+            .map(|summary| !contains_forbidden_effigy_term(summary))
+            .unwrap_or(true)
+            && self
+                .repair_hints
+                .iter()
+                .all(NativeEffigyRepairHint::uses_sanitized_refs)
+            && self
+                .evidence_refs
+                .iter()
+                .all(|evidence_ref| !contains_forbidden_effigy_term(&evidence_ref.0))
+    }
+}
+
+/// Effigy inspection source for repair synthesis.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeEffigyRepairSource {
+    SelectorRefresh,
+    Doctor,
+    TestPlan,
+    Custom(String),
+}
+
+/// Repair synthesis state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeEffigyRepairSynthesisStatus {
+    NoRepairNeeded,
+    ProposalReady,
+    Blocked(String),
+    Unsupported(String),
+    Unknown,
+}
+
 fn contains_forbidden_effigy_term(value: &str) -> bool {
     [
         "raw_stdout",
@@ -836,6 +941,88 @@ mod tests {
             NativeEffigyTestPlanCommandStatus::ExecutionOutOfScope
         );
         assert!(command.claims_test_execution());
+    }
+
+    #[test]
+    fn effigy_repair_synthesis_creates_review_only_steward_proposal() {
+        let mut synthesis = NativeEffigyRepairSynthesis::from_repair_hints(
+            NativeEffigyRepairSource::Doctor,
+            vec![NativeEffigyRepairHint {
+                kind: NativeEffigyRepairHintKind::DoctorWarning,
+                evidence_refs: vec![NativeEffigyEvidenceRef(
+                    "evidence:doctor-warning".to_owned(),
+                )],
+                summary: Some("doctor warning needs review".to_owned()),
+            }],
+        );
+        synthesis.evidence_refs.push(NativeEffigyEvidenceRef(
+            "evidence:doctor-warning".to_owned(),
+        ));
+        synthesis.summary = Some("prepare Effigy repair proposal".to_owned());
+
+        let proposal = synthesis
+            .to_steward_proposal(
+                NativeStewardProposalId("proposal:effigy-repair".to_owned()),
+                NativeStewardProposalTarget::ManagementProjection {
+                    projection_ref: "projection:effigy".to_owned(),
+                },
+            )
+            .expect("repair proposal");
+
+        assert_eq!(
+            synthesis.status,
+            NativeEffigyRepairSynthesisStatus::ProposalReady
+        );
+        assert!(!synthesis.mutates_manifest_or_scripts());
+        assert!(synthesis.uses_sanitized_refs());
+        assert_eq!(
+            proposal.review,
+            NativeStewardProposalReview::NeedsHumanApproval
+        );
+        assert!(!proposal.has_applied_mutation_state());
+        assert_eq!(proposal.evidence_refs.len(), 1);
+    }
+
+    #[test]
+    fn effigy_repair_synthesis_without_hints_does_not_create_proposal() {
+        let synthesis = NativeEffigyRepairSynthesis::from_repair_hints(
+            NativeEffigyRepairSource::SelectorRefresh,
+            Vec::new(),
+        );
+
+        assert_eq!(
+            synthesis.status,
+            NativeEffigyRepairSynthesisStatus::NoRepairNeeded
+        );
+        assert!(synthesis
+            .to_steward_proposal(
+                NativeStewardProposalId("proposal:none".to_owned()),
+                NativeStewardProposalTarget::Custom("none".to_owned()),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn effigy_repair_synthesis_rejects_raw_refs() {
+        let mut synthesis = NativeEffigyRepairSynthesis::from_repair_hints(
+            NativeEffigyRepairSource::TestPlan,
+            vec![NativeEffigyRepairHint {
+                kind: NativeEffigyRepairHintKind::PlanUnavailable,
+                evidence_refs: Vec::new(),
+                summary: Some("raw_stdout should not be retained".to_owned()),
+            }],
+        );
+        synthesis
+            .evidence_refs
+            .push(NativeEffigyEvidenceRef("evidence:plan".to_owned()));
+
+        assert!(!synthesis.uses_sanitized_refs());
+        assert!(synthesis
+            .to_steward_proposal(
+                NativeStewardProposalId("proposal:raw".to_owned()),
+                NativeStewardProposalTarget::Custom("raw".to_owned()),
+            )
+            .is_none());
     }
 
     #[test]

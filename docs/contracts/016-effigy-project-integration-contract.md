@@ -122,6 +122,12 @@ Repair hints may describe missing manifests, missing selectors, doctor
 warnings, doctor errors, unavailable plans, policy blocks, or custom project
 conditions.
 
+Repair synthesis may convert Effigy findings into steward proposals. Synthesis
+may cite selector refresh, doctor, test-plan, or custom Effigy evidence. A
+repair synthesis can prepare a review-only steward proposal when hints are
+sanitized. It must not edit `effigy.toml`, mutate project scripts, apply task
+changes, or treat model output as approval.
+
 Validation-plan summaries can list planned selectors, selector purpose,
 command-scope hints, evidence refs, and repair hints. A validation plan is not
 proof that validation ran. Execution must be represented by a separate runtime

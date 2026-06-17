@@ -1,6 +1,6 @@
 # 083 Effigy Command Inspection Validation
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../020-effigy-command-backed-inspection.md`

@@ -1,6 +1,6 @@
 # 082 Effigy Repair Hint Synthesis
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../020-effigy-command-backed-inspection.md`
@@ -18,18 +18,24 @@ Convert Effigy inspection findings into repair hints and steward proposals.
 
 ## Acceptance Criteria
 
-- Repair hints are categorized and evidence-backed.
-- Manifest or docs fixes remain proposals.
-- No repair hint mutates files directly.
+- [x] Repair hints are categorized and evidence-backed.
+- [x] Manifest or docs fixes remain proposals.
+- [x] No repair hint mutates files directly.
+
+## Outcome
+
+- Added Effigy repair synthesis records.
+- Converted sanitized Effigy findings into review-only steward proposals.
+- Confirmed repair synthesis does not edit manifests, scripts, or task state.
 
 ## Validation
 
-- `cargo test -p nucleus-native-harness effigy`
-- `cargo test -p nucleus-native-harness steward`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-native-harness effigy`
+- [x] `cargo test -p nucleus-native-harness steward`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 
