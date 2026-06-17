@@ -133,3 +133,98 @@ fn handler_projects_task_timeline_from_command_events() {
                 && projection.entries[0].source_event_id == "event:command:start-timeline-task:admitted"
     ));
 }
+
+#[test]
+fn handler_admits_task_delegation_without_starting_provider_runtime() {
+    let (_temp_dir, mut handler) = handler(None);
+    seed_local_task(
+        handler.state(),
+        LocalTaskSeed {
+            task_id: "task:delegate".to_owned(),
+            project_id: "project:nucleus-local".to_owned(),
+            title: "Delegate Task".to_owned(),
+            action_type: nucleus_tasks::TaskActionType::Execute,
+            importance: nucleus_tasks::TaskImportance::Normal,
+        },
+    )
+    .expect("seed task");
+
+    let response = handler.handle(ServerControlRequest {
+        id: ServerControlRequestId("request:delegate".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Command(ServerCommand {
+            id: ServerCommandId("command:delegate-task".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerCommandKind::Task(TaskCommand::Delegate(TaskDelegationCommand {
+                task_id: TaskId("task:delegate".to_owned()),
+                expected_revision: None,
+                adapter_id: "adapter:codex-app-server".to_owned(),
+                provider_instance_id: "codex:local-default".to_owned(),
+                idempotency_key: "operator-click-1".to_owned(),
+            })),
+        }),
+    });
+
+    assert_eq!(response.status, ServerControlResponseStatus::Accepted);
+    assert!(matches!(
+        response.body,
+        ServerControlResponseBody::Command(ServerCommandReceipt {
+            status: ServerCommandReceiptStatus::AcceptedForRuntimeScheduling,
+            ..
+        })
+    ));
+    let events = handler.state().event_journal().list().expect("events");
+    assert_eq!(events.len(), 1);
+    let event_store_record = decode_orchestration_event_store_record(&events[0].payload.bytes)
+        .expect("decode event record");
+    assert_eq!(
+        event_store_record.stream_ref.0,
+        "stream:command-admission:task:delegate"
+    );
+    let event = event_store_record.into_payload();
+    assert_eq!(event.command_id.0, "command:delegate-task");
+    assert_eq!(event.target_ref.as_deref(), Some("task:delegate"));
+}
+
+#[test]
+fn handler_rejects_task_delegation_without_adapter_target() {
+    let (_temp_dir, mut handler) = handler(None);
+    seed_local_task(
+        handler.state(),
+        LocalTaskSeed {
+            task_id: "task:delegate".to_owned(),
+            project_id: "project:nucleus-local".to_owned(),
+            title: "Delegate Task".to_owned(),
+            action_type: nucleus_tasks::TaskActionType::Execute,
+            importance: nucleus_tasks::TaskImportance::Normal,
+        },
+    )
+    .expect("seed task");
+
+    let response = handler.handle(ServerControlRequest {
+        id: ServerControlRequestId("request:delegate".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Command(ServerCommand {
+            id: ServerCommandId("command:delegate-task".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerCommandKind::Task(TaskCommand::Delegate(TaskDelegationCommand {
+                task_id: TaskId("task:delegate".to_owned()),
+                expected_revision: None,
+                adapter_id: String::new(),
+                provider_instance_id: "codex:local-default".to_owned(),
+                idempotency_key: "operator-click-1".to_owned(),
+            })),
+        }),
+    });
+
+    assert_eq!(response.status, ServerControlResponseStatus::Rejected);
+    assert!(matches!(
+        response.body,
+        ServerControlResponseBody::Command(ServerCommandReceipt {
+            status: ServerCommandReceiptStatus::Rejected(
+                ServerControlError::InvalidRequest { reason }
+            ),
+            ..
+        }) if reason == "task delegation requires an adapter id"
+    ));
+}

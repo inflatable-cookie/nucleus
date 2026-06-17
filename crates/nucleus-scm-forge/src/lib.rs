@@ -10,6 +10,7 @@ pub mod capabilities;
 pub mod conflicts;
 pub mod effects;
 pub mod forge;
+pub mod git_inspection;
 pub mod ids;
 pub mod links;
 pub mod observations;
@@ -21,6 +22,7 @@ pub mod runtime_states;
 pub mod scm;
 pub mod traits;
 pub mod webhooks;
+pub mod work_sessions;
 
 pub use auth::{
     CredentialFailureKind, CredentialKind, CredentialReference, CredentialReferenceId,
@@ -38,6 +40,11 @@ pub use effects::{
 };
 pub use forge::{
     ForgeCommentRef, ForgeIssueRef, ForgeProviderKind, ForgePullRequestRef, ForgeRepositoryRef,
+};
+pub use git_inspection::{
+    GitStatusEntry, GitStatusEntryKind, GitStatusSnapshot, ScmHeadState, ScmInspectionAccess,
+    ScmPathChangeKind, ScmPathStatus, ScmUpstreamState, ScmWorkingCopyInspection,
+    ScmWorkingCopyInspectionIssue,
 };
 pub use ids::{
     ForgeAdapterInstanceId, ForgeProviderRef, ScmAdapterInstanceId, ScmProviderRef,
@@ -81,4 +88,8 @@ pub use traits::{
 pub use webhooks::{
     WebhookEndpointId, WebhookVerificationEvidence, WebhookVerificationFailureKind,
     WebhookVerificationMethod, WebhookVerificationPolicy, WebhookVerificationStatus,
+};
+pub use work_sessions::{
+    ScmIsolationSurface, ScmSessionCleanupPolicy, ScmSessionTestLocation, ScmSessionTestability,
+    ScmWorkingCopyLocation, ScmWorkingCopySessionMode, ScmWorkingCopySessionPlan,
 };

@@ -1,6 +1,6 @@
 # 051 Codex Live Event Ingestion
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 Milestone: `../014-codex-live-runtime-supervision.md`
@@ -19,20 +19,29 @@ surface after supervision and handshake readiness exist.
 
 ## Acceptance Criteria
 
-- Live Codex event intake can be represented without message identity
+- [x] Live Codex event intake can be represented without message identity
   collisions.
-- Unsupported provider events are captured as explicit unsupported observations.
-- Raw provider payload handling remains behind evidence policy.
+- [x] Unsupported provider events are captured as explicit unsupported
+  observations.
+- [x] Raw provider payload handling remains behind evidence policy.
+
+## Outcome
+
+- Added live Codex app-server ingestion records around decoded event frames.
+- Reused the static Codex fixture mapper for canonical runtime event and
+  runtime receipt projection.
+- Captured unsupported provider observations without retaining raw payloads.
+- Preserved Nucleus-owned ids separately from provider turn/item/request refs.
 
 ## Validation
 
-- `cargo test -p nucleus-agent-protocol codex`
-- `cargo test -p nucleus-server codex`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `rg -n '^## Next Task' README.md AGENTS.md docs`
-- `git diff --check`
+- [x] `cargo test -p nucleus-agent-protocol codex`
+- [x] `cargo test -p nucleus-server codex`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `rg -n '^## Next Task' README.md AGENTS.md docs`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

@@ -262,6 +262,11 @@ fn task_command_dto(
         ),
         TaskCommand::Create(command) => task_create_dto(command_id, command),
         TaskCommand::Update(command) => task_update_dto(command_id, command),
+        TaskCommand::Delegate(_) => {
+            return Err(ControlApiCodecError::unsupported(
+                "task delegation command DTO is not defined yet",
+            ));
+        }
     };
 
     Ok(dto)

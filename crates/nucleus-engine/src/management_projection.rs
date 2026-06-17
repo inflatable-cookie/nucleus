@@ -97,12 +97,37 @@ pub struct ManagementProjectionExportEntry {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManagementProjectionFileDocument {
+    pub envelope: ManagementProjectionEnvelope,
+    pub payload: ManagementProjectionPayload,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagementProjectionFileFormat {
+    TomlV1,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "record", rename_all = "snake_case")]
 pub enum ManagementProjectionPayload {
     Project(ProjectStorageRecord),
     Task(TaskStorageRecord),
-    Index { title: String },
-    ArtifactIndex { title: String },
+    Index {
+        title: String,
+    },
+    ArtifactIndex {
+        title: String,
+    },
+    Unsupported {
+        payload_kind: String,
+        retained_payload: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManagementProjectionFileCodecError {
+    pub reason: String,
 }
 
 pub fn export_project_task_projection(
@@ -138,6 +163,44 @@ pub fn export_project_task_projection(
     ManagementProjectionExportPlan {
         root: ManagementProjectionRoot::default(),
         entries,
+    }
+}
+
+pub fn encode_management_projection_file_document(
+    document: &ManagementProjectionFileDocument,
+) -> Result<Vec<u8>, ManagementProjectionFileCodecError> {
+    toml::to_string_pretty(document)
+        .map(String::into_bytes)
+        .map_err(file_encode_error)
+}
+
+pub fn decode_management_projection_file_document(
+    bytes: &[u8],
+) -> Result<ManagementProjectionFileDocument, ManagementProjectionFileCodecError> {
+    let text = std::str::from_utf8(bytes).map_err(|error| ManagementProjectionFileCodecError {
+        reason: error.to_string(),
+    })?;
+    toml::from_str(text).map_err(file_decode_error)
+}
+
+pub fn projection_file_document_from_entry(
+    entry: ManagementProjectionExportEntry,
+) -> ManagementProjectionFileDocument {
+    ManagementProjectionFileDocument {
+        envelope: entry.envelope,
+        payload: entry.payload,
+    }
+}
+
+fn file_encode_error(error: toml::ser::Error) -> ManagementProjectionFileCodecError {
+    ManagementProjectionFileCodecError {
+        reason: error.to_string(),
+    }
+}
+
+fn file_decode_error(error: toml::de::Error) -> ManagementProjectionFileCodecError {
+    ManagementProjectionFileCodecError {
+        reason: error.to_string(),
     }
 }
 
@@ -268,6 +331,8 @@ pub struct ManagementProjectionConflictReport {
 pub enum ManagementProjectionConflictClass {
     Schema(ManagementProjectionSchemaConflictKind),
     Semantic(ManagementProjectionSemanticConflictKind),
+    Unsupported(ManagementProjectionUnsupportedConflictKind),
+    Scm(ManagementProjectionScmConflictKind),
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -290,6 +355,25 @@ pub enum ManagementProjectionSemanticConflictKind {
     AcceptanceCriteriaRewrite,
     AssignmentIntentMismatch,
     MeaningfulHistoryRewrite,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagementProjectionUnsupportedConflictKind {
+    UnsupportedRecordKind,
+    UnsupportedPayloadKind,
+    UnsupportedSchemaPreserved,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagementProjectionScmConflictKind {
+    WorkingCopyDirty,
+    FileChangedDuringExport,
+    FileChangedDuringImport,
+    ProjectionPathConflict,
+    SyncBaseUnknown,
+    AdapterConflict(String),
 }
 
 #[cfg(test)]
@@ -379,6 +463,131 @@ mod tests {
     }
 
     #[test]
+    fn management_projection_file_document_round_trips_project_and_task_entries() {
+        let project = ProjectStorageRecord {
+            project_id: "project:nucleus".to_owned(),
+            display_name: "Nucleus".to_owned(),
+            status: ProjectStorageStatus::Active,
+            importance_level: ProjectStorageImportanceLevel::High,
+        };
+        let task = TaskStorageRecord {
+            task_id: "task:projection".to_owned(),
+            project_id: "project:nucleus".to_owned(),
+            title: "Export projection".to_owned(),
+            description: None,
+            acceptance_criteria: Vec::new(),
+            importance: TaskStorageImportance::Normal,
+            action_type: TaskStorageActionType::Execute,
+            activity: TaskStorageActivityState::Ready,
+            assignment_intent: None,
+            agent_ready: false,
+            required_context_refs: Vec::new(),
+            allowed_actions: vec![TaskStorageActionType::Execute],
+            stop_conditions: Vec::new(),
+            validation_commands: Vec::new(),
+        };
+        let plan = export_project_task_projection(&[project], &[task]);
+
+        let documents = plan
+            .entries
+            .into_iter()
+            .map(projection_file_document_from_entry)
+            .collect::<Vec<_>>();
+        let round_tripped = documents
+            .iter()
+            .map(|document| {
+                let bytes =
+                    encode_management_projection_file_document(document).expect("encode document");
+                decode_management_projection_file_document(&bytes).expect("decode document")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(round_tripped, documents);
+        assert!(round_tripped.iter().all(|document| {
+            document.envelope.schema_version == ManagementProjectionSchemaVersion::current()
+        }));
+        assert!(round_tripped.iter().any(|document| {
+            document.envelope.file_ref == ManagementProjectionFileRef::project()
+        }));
+        assert!(round_tripped.iter().any(|document| {
+            document.envelope.file_ref == ManagementProjectionFileRef::task("task:projection")
+        }));
+    }
+
+    #[test]
+    fn management_projection_file_document_preserves_explicit_unsupported_payloads() {
+        let document = ManagementProjectionFileDocument {
+            envelope: ManagementProjectionEnvelope {
+                schema_version: ManagementProjectionSchemaVersion::current(),
+                record_id: ManagementProjectionRecordId("future:1".to_owned()),
+                record_kind: ManagementProjectionRecordKind::Custom("future_kind".to_owned()),
+                file_ref: ManagementProjectionFileRef("nucleus/custom/future:1.json".to_owned()),
+            },
+            payload: ManagementProjectionPayload::Unsupported {
+                payload_kind: "future_kind".to_owned(),
+                retained_payload: "{\"field\":\"value\"}".to_owned(),
+            },
+        };
+
+        let bytes = encode_management_projection_file_document(&document).expect("encode");
+        let decoded = decode_management_projection_file_document(&bytes).expect("decode");
+
+        assert_eq!(decoded, document);
+        assert!(matches!(
+            decoded.payload,
+            ManagementProjectionPayload::Unsupported {
+                payload_kind,
+                retained_payload,
+            } if payload_kind == "future_kind" && retained_payload.contains("field")
+        ));
+    }
+
+    #[test]
+    fn management_projection_file_codec_excludes_runtime_secret_and_layout_state() {
+        let task = TaskStorageRecord {
+            task_id: "task:safe".to_owned(),
+            project_id: "project:nucleus".to_owned(),
+            title: "Safe projection".to_owned(),
+            description: Some("Only shared task intent is exported.".to_owned()),
+            acceptance_criteria: Vec::new(),
+            importance: TaskStorageImportance::Normal,
+            action_type: TaskStorageActionType::Check,
+            activity: TaskStorageActivityState::Ready,
+            assignment_intent: Some("agent:steward".to_owned()),
+            agent_ready: false,
+            required_context_refs: Vec::new(),
+            allowed_actions: vec![TaskStorageActionType::Check],
+            stop_conditions: Vec::new(),
+            validation_commands: vec!["effigy qa".to_owned()],
+        };
+        let entry = export_project_task_projection(&[], &[task])
+            .entries
+            .into_iter()
+            .next()
+            .expect("task entry");
+        let document = projection_file_document_from_entry(entry);
+        let bytes = encode_management_projection_file_document(&document).expect("encode");
+        let toml = String::from_utf8(bytes).expect("toml");
+
+        for forbidden in [
+            "raw_stdout",
+            "raw_stderr",
+            "terminal_stream",
+            "provider_auth",
+            "provider_native_transcript",
+            "live_runtime_event_stream",
+            "browser_state",
+            "client_layout",
+            "global_display_window_surface",
+            "per_project_panel",
+            "secret",
+            "local_cache",
+        ] {
+            assert!(!toml.contains(forbidden), "projection leaked {forbidden}");
+        }
+    }
+
+    #[test]
     fn management_projection_validation_preserves_invalid_and_unsupported_records() {
         let invalid = ManagementProjectionEnvelope {
             schema_version: ManagementProjectionSchemaVersion::current(),
@@ -435,12 +644,37 @@ mod tests {
             ),
             summary: "acceptance criteria changed meaning".to_owned(),
         };
-        let json = serde_json::to_string(&vec![schema, semantic]).expect("conflict json");
+        let unsupported = ManagementProjectionConflictReport {
+            conflict_id: "conflict:unsupported:1".to_owned(),
+            file_ref: ManagementProjectionFileRef("nucleus/custom/future.toml".to_owned()),
+            local_record_ref: None,
+            incoming_record_ref: Some(ManagementProjectionRecordId("future:1".to_owned())),
+            class: ManagementProjectionConflictClass::Unsupported(
+                ManagementProjectionUnsupportedConflictKind::UnsupportedSchemaPreserved,
+            ),
+            summary: "unsupported schema preserved for later migration".to_owned(),
+        };
+        let scm = ManagementProjectionConflictReport {
+            conflict_id: "conflict:scm:1".to_owned(),
+            file_ref: ManagementProjectionFileRef::task("task:changed"),
+            local_record_ref: Some(ManagementProjectionRecordId("task:changed".to_owned())),
+            incoming_record_ref: Some(ManagementProjectionRecordId("task:changed".to_owned())),
+            class: ManagementProjectionConflictClass::Scm(
+                ManagementProjectionScmConflictKind::FileChangedDuringImport,
+            ),
+            summary: "projection file changed while import was staged".to_owned(),
+        };
+        let reports = vec![schema, semantic, unsupported, scm];
+        let replayed = reports.clone();
+        let json = serde_json::to_string(&reports).expect("conflict json");
 
+        assert_eq!(reports, replayed);
         assert!(json.contains("schema"));
         assert!(json.contains("semantic"));
-        assert!(!json.contains("pull_request"));
-        assert!(!json.contains("branch"));
-        assert!(!json.contains("commit"));
+        assert!(json.contains("unsupported"));
+        assert!(json.contains("scm"));
+        for forbidden in ["raw_stdout", "terminal_stream", "provider_auth", "secret"] {
+            assert!(!json.contains(forbidden), "conflict leaked {forbidden}");
+        }
     }
 }

@@ -123,4 +123,27 @@ mod tests {
             assert!(!json.contains(forbidden), "receipt leaked {forbidden}");
         }
     }
+
+    #[test]
+    fn runtime_receipt_families_keep_native_tool_surfaces_distinct() {
+        let families = vec![
+            EngineRuntimeReceiptEffectFamily::Effigy,
+            EngineRuntimeReceiptEffectFamily::Steward,
+            EngineRuntimeReceiptEffectFamily::CommandExecution,
+            EngineRuntimeReceiptEffectFamily::ToolCall,
+        ];
+
+        assert!(families.contains(&EngineRuntimeReceiptEffectFamily::Effigy));
+        assert!(families.contains(&EngineRuntimeReceiptEffectFamily::Steward));
+        assert!(families.contains(&EngineRuntimeReceiptEffectFamily::CommandExecution));
+        assert!(families.contains(&EngineRuntimeReceiptEffectFamily::ToolCall));
+        assert_ne!(
+            EngineRuntimeReceiptEffectFamily::Effigy,
+            EngineRuntimeReceiptEffectFamily::Steward
+        );
+        assert_ne!(
+            EngineRuntimeReceiptEffectFamily::CommandExecution,
+            EngineRuntimeReceiptEffectFamily::ToolCall
+        );
+    }
 }

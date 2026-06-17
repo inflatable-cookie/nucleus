@@ -4,7 +4,11 @@
 //! app-server process. They do not spawn Codex, open stdio, probe auth, read
 //! provider payloads, or ingest live events.
 
-use nucleus_agent_protocol::AdapterIdentity;
+use nucleus_agent_protocol::{
+    project_codex_app_server_fixture, AdapterIdentity, AdapterRuntimeEvent,
+    CodexAppServerEventFixture, CodexAppServerFixtureProjection, CodexFixtureMappingError,
+    CodexRuntimeReceiptFixture,
+};
 use nucleus_projects::ProjectId;
 
 use crate::client_auth_posture::ClientAuthDisposition;
@@ -167,6 +171,91 @@ pub enum CodexAppServerHandshakeBlocker {
     ExperimentalUserInputNotAllowed,
 }
 
+/// One live Codex app-server frame after protocol decoding.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexAppServerLiveFrame {
+    pub fixture: CodexAppServerEventFixture,
+    pub transport_sequence: u64,
+}
+
+/// Result of ingesting one live Codex frame.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexAppServerLiveIngestion {
+    pub sequence: u64,
+    pub status: CodexAppServerLiveIngestionStatus,
+    pub projection: Option<CodexAppServerLiveProjection>,
+    pub unsupported: Option<CodexAppServerUnsupportedObservation>,
+}
+
+/// Live ingestion status.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CodexAppServerLiveIngestionStatus {
+    Accepted,
+    Unsupported,
+}
+
+/// Live projection into Nucleus-owned runtime surfaces.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CodexAppServerLiveProjection {
+    Event(AdapterRuntimeEvent),
+    RuntimeReceipt(CodexRuntimeReceiptFixture),
+}
+
+/// Unsupported provider event observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexAppServerUnsupportedObservation {
+    pub method: String,
+    pub provider_instance_id: String,
+    pub sequence: u64,
+    pub reason: String,
+    pub raw_payload_policy: CodexRawPayloadPolicy,
+}
+
+/// Raw payload retention posture for live Codex ingestion.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CodexRawPayloadPolicy {
+    MetadataOnly,
+    EvidenceRefOnly,
+}
+
+/// Ingest one decoded Codex app-server frame through the existing mapper.
+pub fn ingest_codex_app_server_live_frame(
+    frame: CodexAppServerLiveFrame,
+) -> CodexAppServerLiveIngestion {
+    let sequence = frame.transport_sequence;
+    let provider_instance_id = frame.fixture.provider_instance_id.clone();
+    let method = frame.fixture.method.clone();
+
+    match project_codex_app_server_fixture(frame.fixture) {
+        Ok(CodexAppServerFixtureProjection::Event(event)) => CodexAppServerLiveIngestion {
+            sequence,
+            status: CodexAppServerLiveIngestionStatus::Accepted,
+            projection: Some(CodexAppServerLiveProjection::Event(event)),
+            unsupported: None,
+        },
+        Ok(CodexAppServerFixtureProjection::RuntimeReceipt(receipt)) => {
+            CodexAppServerLiveIngestion {
+                sequence,
+                status: CodexAppServerLiveIngestionStatus::Accepted,
+                projection: Some(CodexAppServerLiveProjection::RuntimeReceipt(receipt)),
+                unsupported: None,
+            }
+        }
+        Err(CodexFixtureMappingError { reason, .. }) => CodexAppServerLiveIngestion {
+            sequence,
+            status: CodexAppServerLiveIngestionStatus::Unsupported,
+            projection: None,
+            unsupported: Some(CodexAppServerUnsupportedObservation {
+                method,
+                provider_instance_id,
+                sequence,
+                reason,
+                raw_payload_policy: CodexRawPayloadPolicy::MetadataOnly,
+            }),
+        },
+    }
+}
+
 /// Assess static handshake preflight evidence without opening stdio.
 pub fn assess_codex_app_server_handshake(
     expectation: &CodexAppServerHandshakeExpectation,
@@ -311,6 +400,10 @@ mod tests {
     use super::*;
     use nucleus_agent_protocol::{ProviderDriverKind, TransportFamily, VersionDiscovery};
 
+    use nucleus_agent_protocol::{
+        AgentSessionId, ApprovalScope, CodexAppServerFixturePayload, CodexAppServerProviderRefs,
+    };
+
     use crate::process_control_backend::{
         ProcessControlBackendEvidenceRef, ProcessControlBackendKind,
     };
@@ -389,6 +482,100 @@ mod tests {
             status: LocalTransportReadinessStatus::Ready,
             blockers: Vec::new(),
         }
+    }
+
+    fn provider_refs() -> CodexAppServerProviderRefs {
+        CodexAppServerProviderRefs {
+            thread_id: Some("codex-thread:1".to_owned()),
+            session_id: None,
+            turn_id: Some("codex-turn:1".to_owned()),
+            item_id: Some("codex-item:1".to_owned()),
+            request_id: Some("codex-request:1".to_owned()),
+        }
+    }
+
+    fn frame(method: &str, payload: CodexAppServerFixturePayload) -> CodexAppServerLiveFrame {
+        CodexAppServerLiveFrame {
+            fixture: CodexAppServerEventFixture {
+                method: method.to_owned(),
+                provider_instance_id: "codex:local-default".to_owned(),
+                nucleus_session_id: AgentSessionId("session:nucleus".to_owned()),
+                provider_refs: provider_refs(),
+                sequence: 7,
+                payload,
+                raw_payload: Some("raw payload omitted from live ingestion".to_owned()),
+            },
+            transport_sequence: 99,
+        }
+    }
+
+    #[test]
+    fn codex_live_ingestion_projects_supported_event_without_identity_collision() {
+        let ingestion = ingest_codex_app_server_live_frame(frame(
+            "item/agentMessage/delta",
+            CodexAppServerFixturePayload::AgentMessageDelta {
+                delta: "hello".to_owned(),
+                accumulated: Some("hello".to_owned()),
+            },
+        ));
+
+        assert_eq!(
+            ingestion.status,
+            CodexAppServerLiveIngestionStatus::Accepted
+        );
+        assert!(matches!(
+            ingestion.projection,
+            Some(CodexAppServerLiveProjection::Event(event))
+                if event.identity.nucleus_event_id.contains("session:nucleus")
+                    && event.identity.nucleus_session_id == "session:nucleus"
+                    && event.identity.provider_turn_id.as_deref() == Some("codex-turn:1")
+                    && event.identity.provider_item_id.as_deref() == Some("codex-item:1")
+        ));
+    }
+
+    #[test]
+    fn codex_live_ingestion_projects_runtime_receipt() {
+        let ingestion = ingest_codex_app_server_live_frame(frame(
+            "turn/interrupt",
+            CodexAppServerFixturePayload::InterruptionReceipt {
+                summary: "operator interrupted".to_owned(),
+            },
+        ));
+
+        assert_eq!(
+            ingestion.status,
+            CodexAppServerLiveIngestionStatus::Accepted
+        );
+        assert!(matches!(
+            ingestion.projection,
+            Some(CodexAppServerLiveProjection::RuntimeReceipt(receipt))
+                if receipt.summary == "operator interrupted"
+        ));
+    }
+
+    #[test]
+    fn codex_live_ingestion_records_unsupported_observation_without_raw_payload() {
+        let ingestion = ingest_codex_app_server_live_frame(frame(
+            "item/fileChange/requestApproval",
+            CodexAppServerFixturePayload::ApprovalRequest {
+                prompt: "approve file change".to_owned(),
+                scope: ApprovalScope::Command,
+                options: vec!["allow".to_owned(), "deny".to_owned()],
+            },
+        ));
+
+        assert_eq!(
+            ingestion.status,
+            CodexAppServerLiveIngestionStatus::Unsupported
+        );
+        assert!(ingestion.projection.is_none());
+        assert!(matches!(
+            ingestion.unsupported,
+            Some(CodexAppServerUnsupportedObservation {
+                raw_payload_policy: CodexRawPayloadPolicy::MetadataOnly,
+                ..
+            })
+        ));
     }
 
     fn handshake_observation() -> CodexAppServerHandshakeObservation {

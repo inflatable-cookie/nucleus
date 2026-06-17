@@ -1,6 +1,6 @@
 # 015 Task-Backed Agent Work Unit Proof
 
-Status: planned-after-014
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 
@@ -22,27 +22,44 @@ checkpoints, and reviewable outcome.
 
 ## Goals
 
-- [ ] Create a work-item record that links task, agent session, turn timeline,
+- [x] Create a work-item record that links task, agent session, turn timeline,
   receipts, and checkpoints.
-- [ ] Admit a task delegation command through the engine.
-- [ ] Run one bounded agent turn against that work item.
-- [ ] Project a task timeline summary from runtime events and receipts.
-- [ ] Preserve review and acceptance state separately from provider completion.
+- [x] Admit a task delegation command through the engine.
+- [x] Run one bounded agent turn against that work item.
+- [x] Project a task timeline summary from runtime events and receipts.
+- [x] Preserve review and acceptance state separately from provider completion.
 
 ## Execution Plan
 
-- [ ] Work-item model batch: define records and task links.
-- [ ] Delegation command batch: admit task-to-agent work through orchestration.
-- [ ] Runtime linkage batch: connect agent session events to task timeline.
-- [ ] Review batch: represent completion, validation, and operator acceptance.
+- [x] Work-item model batch: define records and task links.
+- [x] Delegation command batch: admit task-to-agent work through orchestration.
+- [x] Runtime linkage batch: connect agent session events to task timeline.
+- [x] Review batch: represent completion, validation, and operator acceptance.
+
+## Batch Cards
+
+Ready cards:
+
+None.
+
+Planned cards:
+
+None.
+
+Completed cards:
+
+- `batch-cards/054-task-agent-work-item-record-shape.md`
+- `batch-cards/055-task-delegation-command-admission.md`
+- `batch-cards/056-work-item-runtime-linkage-projection.md`
+- `batch-cards/057-work-item-review-acceptance-boundary.md`
 
 ## Acceptance Criteria
 
-- [ ] A task can own one or more work items.
-- [ ] A work item can point to provider session, turns, receipts, and
+- [x] A task can own one or more work items.
+- [x] A work item can point to provider session, turns, receipts, and
   checkpoints without copying raw transcript streams.
-- [ ] Agent completion does not automatically mark task acceptance.
-- [ ] Replay rebuilds the task work timeline deterministically.
+- [x] Agent completion does not automatically mark task acceptance.
+- [x] Replay rebuilds the task work timeline deterministically.
 
 ## Gate
 

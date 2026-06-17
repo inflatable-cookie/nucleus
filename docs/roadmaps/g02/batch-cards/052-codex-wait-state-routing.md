@@ -1,6 +1,6 @@
 # 052 Codex Wait State Routing
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 Milestone: `../014-codex-live-runtime-supervision.md`
@@ -18,19 +18,29 @@ Represent Codex approval and user-input callbacks as Nucleus-owned wait states.
 
 ## Acceptance Criteria
 
-- Approval and user-input callbacks become explicit wait states.
-- Wait states can be cancelled or timed out without losing timeline identity.
-- Provider completion does not imply task acceptance.
+- [x] Approval and user-input callbacks become explicit wait states.
+- [x] Wait states can be cancelled or timed out without losing timeline
+  identity.
+- [x] Provider completion does not imply task acceptance.
+
+## Outcome
+
+- Added server-owned Codex wait-state routing records.
+- Routed approval and structured user-input callback events to harness-provider
+  runtime receipts.
+- Added cancellation and timeout terminal routing without changing the evidence
+  event id.
+- Kept provider callback state separate from task acceptance and UI controls.
 
 ## Validation
 
-- `cargo test -p nucleus-agent-protocol codex`
-- `cargo test -p nucleus-server codex`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `rg -n '^## Next Task' README.md AGENTS.md docs`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server codex`
+- [x] `cargo test -p nucleus-agent-protocol codex`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `rg -n '^## Next Task' README.md AGENTS.md docs`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

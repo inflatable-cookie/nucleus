@@ -6,20 +6,43 @@
 
 pub mod audit;
 pub mod backends;
+pub mod effigy;
 pub mod events;
 pub mod personas;
 pub mod sessions;
+pub mod steward;
 pub mod tools;
 
 pub use audit::{NativeAuditEvent, NativeAuditEventId, NativeAuditEventKind};
-pub use backends::{NativeModelBackend, NativeModelBackendId, NativeModelBackendKind};
+pub use backends::{
+    NativeModelBackend, NativeModelBackendDeployment, NativeModelBackendId, NativeModelBackendKind,
+    NativeModelBackendStatus, NativeModelBackendSuitability, NativeModelBackendUse,
+};
+pub use effigy::{
+    NativeEffigyCommandScopeHint, NativeEffigyEvidenceRef, NativeEffigyHealthStatus,
+    NativeEffigyHealthSummary, NativeEffigyIntegrationStatus, NativeEffigyManifestRef,
+    NativeEffigyPlannedSelector, NativeEffigyProjectIntegration, NativeEffigyRepairHint,
+    NativeEffigyRepairHintKind, NativeEffigyScope, NativeEffigySelectorKind,
+    NativeEffigySelectorRecord, NativeEffigySelectorRef, NativeEffigyValidationPlanStatus,
+    NativeEffigyValidationPlanSummary, NativeEffigyValidationPurpose,
+};
 pub use events::{NativeEventId, NativeEventKind, NativeHarnessEvent};
 pub use personas::{
-    NativePersona, NativePersonaCapability, NativePersonaId, NativePersonaPolicy,
-    NativePersonaRole, NativeSyncAuthority,
+    NativeActionApproval, NativePersona, NativePersonaCapability, NativePersonaId,
+    NativePersonaPolicy, NativePersonaRole, NativePrivilegedAction, NativeSyncAuthority,
 };
 pub use sessions::{NativeHarnessSession, NativeSessionId, NativeSessionState};
+pub use steward::{
+    NativeStewardChangeField, NativeStewardChangeSemantic, NativeStewardEvidenceRef,
+    NativeStewardEvidenceSource, NativeStewardManagementCapturePlan,
+    NativeStewardManagementCapturePlanStatus, NativeStewardManagementCaptureScope,
+    NativeStewardProposal, NativeStewardProposalId, NativeStewardProposalKind,
+    NativeStewardProposalReview, NativeStewardProposalTarget, NativeStewardProposedChange,
+    NativeStewardSyncAssistance, NativeStewardSyncAssistanceId, NativeStewardSyncAssistanceKind,
+    NativeStewardSyncAssistanceLinks,
+};
 pub use tools::{
-    NativeApprovalPolicy, NativeApprovalRequest, NativeApprovalRequestId, NativeToolAction,
-    NativeToolActionId, NativeToolCapability, NativeToolPolicy,
+    NativeApprovalPolicy, NativeApprovalRequest, NativeApprovalRequestId, NativeRuntimeReceiptRef,
+    NativeToolAction, NativeToolActionId, NativeToolActionState, NativeToolCapability,
+    NativeToolEvidenceRef, NativeToolPolicy,
 };

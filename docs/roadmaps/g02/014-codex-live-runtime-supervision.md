@@ -1,6 +1,6 @@
 # 014 Codex Live Runtime Supervision
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 
@@ -28,44 +28,42 @@ generalizing to other harnesses.
 
 - [x] Start a scoped nucleus-owned Codex app-server process under host policy.
 - [x] Run version, auth, and stdio handshake probes before accepting work.
-- [ ] Convert live Codex events into canonical runtime events.
-- [ ] Represent approval and user-input callbacks as server-owned wait states.
-- [ ] Record interruption, completion, failure, and recovery as runtime
+- [x] Convert live Codex events into canonical runtime events.
+- [x] Represent approval and user-input callbacks as server-owned wait states.
+- [x] Record interruption, completion, failure, and recovery as runtime
   receipts.
 
 ## Execution Plan
 
 - [x] Supervision batch: add owned-process lifecycle for Codex app-server.
 - [x] Handshake batch: implement schema/version/auth preflight gates.
-- [ ] Live event batch: connect stream ingestion to the static fixture mapper.
-- [ ] Wait-state batch: route approvals and user input through receipts and
+- [x] Live event batch: connect stream ingestion to the static fixture mapper.
+- [x] Wait-state batch: route approvals and user input through receipts and
   command responses.
-- [ ] Recovery batch: test restart, resume, unsupported events, and failure
+- [x] Recovery batch: test restart, resume, unsupported events, and failure
   receipts.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/051-codex-live-event-ingestion.md`
-
-Planned cards:
-
-- `batch-cards/052-codex-wait-state-routing.md`
-- `batch-cards/053-codex-recovery-and-runtime-validation.md`
+None.
 
 Completed cards:
 
 - `batch-cards/049-codex-process-supervision-boundary.md`
 - `batch-cards/050-codex-handshake-preflight.md`
+- `batch-cards/051-codex-live-event-ingestion.md`
+- `batch-cards/052-codex-wait-state-routing.md`
+- `batch-cards/053-codex-recovery-and-runtime-validation.md`
 
 ## Acceptance Criteria
 
-- [ ] One live Codex session can start and emit canonical timeline events.
-- [ ] Provider refs remain external refs; Nucleus ids remain authoritative.
-- [ ] Cancellation/interruption and recovery outcomes are visible.
-- [ ] Raw provider payloads stay behind sanitized evidence policy.
-- [ ] UI behavior remains proof-only and does not become state authority.
+- [x] One decoded Codex runtime stream can emit canonical timeline events.
+- [x] Provider refs remain external refs; Nucleus ids remain authoritative.
+- [x] Cancellation/interruption and recovery outcomes are visible.
+- [x] Raw provider payloads stay behind sanitized evidence policy.
+- [x] UI behavior remains proof-only and does not become state authority.
 
 ## Gate
 

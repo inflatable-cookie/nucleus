@@ -62,6 +62,7 @@ pub enum ProjectCommand {
 pub enum TaskCommand {
     Create(TaskCreateCommand),
     Update(TaskUpdateCommand),
+    Delegate(TaskDelegationCommand),
     Start(TaskTransitionCommand),
     Block {
         task_id: TaskId,
@@ -91,6 +92,16 @@ pub struct TaskUpdateCommand {
     pub task_id: TaskId,
     pub expected_revision: Option<RevisionId>,
     pub changes: TaskUpdateChanges,
+}
+
+/// Operator-controlled task delegation command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskDelegationCommand {
+    pub task_id: TaskId,
+    pub expected_revision: Option<RevisionId>,
+    pub adapter_id: String,
+    pub provider_instance_id: String,
+    pub idempotency_key: String,
 }
 
 /// Replacement-by-field update values for editable task fields.

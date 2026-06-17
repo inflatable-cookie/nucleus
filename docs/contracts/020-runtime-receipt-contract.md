@@ -78,6 +78,29 @@ runtime receipt after sanitized command evidence is persisted.
 The first projection/query reads receipt records. It must not re-run command
 execution.
 
+## Native Tool Receipt Linkage
+
+Native harness tool actions link to runtime receipts by reference.
+
+Receipt families remain distinct:
+
+- command execution
+- tool call
+- Effigy operation
+- steward/native harness operation
+
+A native tool action may point to one or more receipt refs, approval request
+ids, audit event ids, and sanitized evidence refs. It must not copy raw command
+output, raw model output, terminal streams, provider payloads, credentials, or
+secrets into native harness records.
+
+Effigy health summaries and validation-plan summaries may point to Effigy
+operation receipt refs. A validation-plan summary is planning evidence only;
+executed validation requires its own command or Effigy receipt.
+
+Rejected, blocked, completed, and waiting-for-approval states must be visible
+in native tool records and receipt projections.
+
 ## Status Rule
 
 Initial receipt statuses:
@@ -175,3 +198,33 @@ The receipt projection records:
 Interruption/cancellation remains evidence of a provider runtime effect. It
 must not be projected as a conversation message or treated as filesystem
 rollback.
+
+## Codex Wait-State Receipt Mapping
+
+Codex app-server approval and structured user-input callbacks map to
+harness-provider runtime receipts.
+
+The first implementation is a compile-only routing surface:
+
+- no provider callback is answered
+- no UI approval state is authoritative
+- no task is accepted or completed because a provider turn completes
+- cancellation and timeout preserve the original evidence event id
+
+The receipt projection records:
+
+- harness/provider family
+- waiting for approval or waiting for user input status
+- cancelled or timed out terminal status when the wait is closed locally
+- provider instance/session/turn/item/request refs where available
+- sanitized summary
+
+## Codex Recovery Receipt Mapping
+
+Codex resume/restart fallback maps to harness-provider recovery receipts.
+
+The first implementation is compile-only. It records explicit recovery state
+from the Codex lifecycle mapping and can gate the next task-backed workflow
+lane. Recovery receipts must distinguish recovery-required, recovered, failed,
+and unknown states instead of treating a replacement provider thread as the
+same session.

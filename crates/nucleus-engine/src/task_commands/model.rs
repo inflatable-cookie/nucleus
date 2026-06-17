@@ -6,10 +6,13 @@ use nucleus_tasks::{
     AcceptanceCriterion, AgentReadiness, TaskActionType, TaskActivityState, TaskId, TaskImportance,
 };
 
+use crate::EngineTaskWorkItemRecord;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineTaskCommand {
     Create(EngineTaskCreateCommand),
     Update(EngineTaskUpdateCommand),
+    Delegate(EngineTaskDelegationCommand),
     Start(EngineTaskTransitionCommand),
     Block {
         task_id: TaskId,
@@ -37,6 +40,15 @@ pub struct EngineTaskUpdateCommand {
     pub task_id: TaskId,
     pub expected_revision: Option<RevisionId>,
     pub changes: EngineTaskUpdateChanges,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineTaskDelegationCommand {
+    pub task_id: TaskId,
+    pub expected_revision: Option<RevisionId>,
+    pub adapter_id: String,
+    pub provider_instance_id: String,
+    pub idempotency_key: String,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -92,6 +104,7 @@ pub trait EngineTaskRepository {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineTaskCommandOutcome {
     Mutated,
+    WorkItemAdmitted(EngineTaskWorkItemRecord),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

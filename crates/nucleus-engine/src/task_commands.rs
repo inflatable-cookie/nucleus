@@ -9,7 +9,7 @@ mod tests;
 
 pub use model::{
     EngineRevisionExpectation, EngineTaskCommand, EngineTaskCommandError, EngineTaskCommandOutcome,
-    EngineTaskCreateCommand, EngineTaskRecord, EngineTaskRepository, EngineTaskTransitionCommand,
-    EngineTaskUpdateChanges, EngineTaskUpdateCommand,
+    EngineTaskCreateCommand, EngineTaskDelegationCommand, EngineTaskRecord, EngineTaskRepository,
+    EngineTaskTransitionCommand, EngineTaskUpdateChanges, EngineTaskUpdateCommand,
 };
 pub use service::EngineTaskCommandService;

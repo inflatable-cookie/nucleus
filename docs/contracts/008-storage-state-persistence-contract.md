@@ -212,11 +212,13 @@ Implemented:
 - validation statuses: valid, valid with warnings, invalid, unsupported schema
 - excluded-state markers for secrets, runtime streams, provider auth,
   terminal/browser state, local caches, and local client layout state
-- conflict report classes for schema and semantic conflicts
+- conflict report classes for schema, semantic, unsupported, and SCM sync
+  conflicts
 
-The first server helper can build an export plan from stored project and task
-records. It does not write files, import records, run migrations, resolve
-conflicts, commit, push, publish, or call SCM adapters.
+The first server helpers can build an export plan from stored project and task
+records, write scoped TOML projection files under `nucleus/`, and stage
+projection files for import validation. They do not apply imports, run
+migrations, resolve conflicts, commit, push, publish, or call SCM adapters.
 
 ## Projection Migration Rule
 

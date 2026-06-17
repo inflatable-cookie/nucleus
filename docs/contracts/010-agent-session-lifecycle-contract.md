@@ -142,6 +142,11 @@ app-server calls.
 Codex provider ids remain refs. They must not replace Nucleus session, turn,
 message, request, or event ids.
 
+The server now has compile-only Codex runtime validation records for the first
+supervision closeout. Recovery fallback, unsupported event observation,
+interruption/cancellation, failure receipt, and wait-state evidence must all be
+visible before task-backed Codex work is admitted.
+
 ## Cursor ACP Mapping
 
 First-pass Cursor mapping:

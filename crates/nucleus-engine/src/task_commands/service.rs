@@ -13,8 +13,12 @@ use super::helpers::{
 };
 use super::model::{
     EngineRevisionExpectation, EngineTaskCommand, EngineTaskCommandError, EngineTaskCommandOutcome,
-    EngineTaskCreateCommand, EngineTaskRecord, EngineTaskRepository, EngineTaskTransitionCommand,
-    EngineTaskUpdateCommand,
+    EngineTaskCreateCommand, EngineTaskDelegationCommand, EngineTaskRecord, EngineTaskRepository,
+    EngineTaskTransitionCommand, EngineTaskUpdateCommand,
+};
+use crate::{
+    EngineTaskWorkItemAssignment, EngineTaskWorkItemId, EngineTaskWorkItemRecord,
+    EngineTaskWorkItemRefs, EngineTaskWorkItemReviewState, EngineTaskWorkItemRuntimeState,
 };
 
 pub struct EngineTaskCommandService<R> {
@@ -37,6 +41,7 @@ where
         match command {
             EngineTaskCommand::Create(command) => self.create_task(command_id, command),
             EngineTaskCommand::Update(command) => self.update_task(command_id, command),
+            EngineTaskCommand::Delegate(command) => self.delegate_task(command_id, command),
             EngineTaskCommand::Start(command) => {
                 self.transition_task_activity(command_id, command, TaskStorageActivityState::Active)
             }
@@ -61,6 +66,54 @@ where
                 TaskStorageActivityState::Archived,
             ),
         }
+    }
+
+    fn delegate_task(
+        &self,
+        command_id: &str,
+        command: EngineTaskDelegationCommand,
+    ) -> Result<EngineTaskCommandOutcome, EngineTaskCommandError<R::Error>> {
+        validate_delegation_target::<R::Error>(&command)?;
+        let record_id = PersistenceRecordId(command.task_id.0.clone());
+        let existing = self
+            .repository
+            .get_task(&record_id)
+            .map_err(EngineTaskCommandError::Storage)?
+            .ok_or_else(|| EngineTaskCommandError::NotFound {
+                reason: format!("task record not found: {}", record_id.0),
+            })?;
+
+        if let Some(expected) = command.expected_revision.as_ref() {
+            if &existing.revision_id != expected {
+                return Err(EngineTaskCommandError::Conflict {
+                    reason: format!("task revision conflict for {}", command.task_id.0),
+                });
+            }
+        }
+
+        let task = decode_task_storage_record(&existing.payload).map_err(task_codec_error)?;
+        let work_item = EngineTaskWorkItemRecord {
+            work_item_id: EngineTaskWorkItemId(format!(
+                "work-item:{}:{}",
+                command.task_id.0, command.idempotency_key
+            )),
+            task_id: command.task_id,
+            project_id: nucleus_projects::ProjectId(task.project_id),
+            title: format!("Agent work for {}", task.title),
+            intent: nucleus_tasks::TaskActionType::from(&task.action_type),
+            assignment: EngineTaskWorkItemAssignment::AdapterInstance {
+                adapter_id: command.adapter_id,
+                provider_instance_id: command.provider_instance_id,
+            },
+            runtime: EngineTaskWorkItemRuntimeState::Scheduled,
+            review: EngineTaskWorkItemReviewState::NotReady,
+            refs: EngineTaskWorkItemRefs::default(),
+            summary: Some(format!(
+                "task delegation admitted by command {command_id}; runtime execution deferred"
+            )),
+        };
+
+        Ok(EngineTaskCommandOutcome::WorkItemAdmitted(work_item))
     }
 
     fn create_task(
@@ -168,4 +221,25 @@ where
             .map_err(EngineTaskCommandError::Storage)?;
         Ok(EngineTaskCommandOutcome::Mutated)
     }
+}
+
+fn validate_delegation_target<E>(
+    command: &EngineTaskDelegationCommand,
+) -> Result<(), EngineTaskCommandError<E>> {
+    if command.adapter_id.trim().is_empty() {
+        return Err(EngineTaskCommandError::InvalidRequest {
+            reason: "task delegation requires an adapter id".to_owned(),
+        });
+    }
+    if command.provider_instance_id.trim().is_empty() {
+        return Err(EngineTaskCommandError::InvalidRequest {
+            reason: "task delegation requires a provider instance id".to_owned(),
+        });
+    }
+    if command.idempotency_key.trim().is_empty() {
+        return Err(EngineTaskCommandError::InvalidRequest {
+            reason: "task delegation requires an idempotency key".to_owned(),
+        });
+    }
+    Ok(())
 }

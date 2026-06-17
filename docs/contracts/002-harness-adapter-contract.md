@@ -411,13 +411,27 @@ The server now has compile-only Codex app-server supervision readiness records.
 They require binary availability, client auth allowance, project execution
 authority, v1 client protocol shape, local transport readiness, process-control
 readiness, and sanitized payload policy before live spawn is considered ready.
-They do not spawn Codex, open stdio, probe provider auth, or ingest live events.
+They do not spawn Codex, open stdio, or probe provider auth.
 
 The server also has compile-only Codex app-server handshake preflight records.
 They validate the current schema-evidence baseline, required method subset,
 version label, auth readiness, generated schema evidence, and experimental
 user-input posture before live work is admitted. They do not perform the stdio
 handshake.
+
+Decoded Codex app-server frames can now pass through a live-ingestion record
+shape that reuses the static fixture mapper. Supported frames project to
+canonical runtime events or runtime receipts. Unsupported frames become
+explicit unsupported observations with metadata-only raw payload policy, so
+provider payload retention stays behind evidence policy. Nucleus event ids,
+session ids, and derived item/turn/request ids remain separate from provider
+turn, item, and request refs.
+
+Codex approval and structured user-input callback events can now be routed into
+server-owned wait-state records. Wait-state routing produces harness-provider
+runtime receipts for waiting, cancellation, and timeout outcomes while
+preserving the original evidence event id. These records do not answer provider
+callbacks yet and do not imply task acceptance.
 - surface command approval, file-change approval, and user-input requests as
   server-owned state
 - treat thread resume failure and fallback-to-new-thread as explicit recovery

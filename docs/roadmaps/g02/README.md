@@ -29,11 +29,16 @@ and engine boundary are settled.
 - `011-codex-app-server-runtime-runway.md` - completed
 - `012-health-and-authority-surface-reset.md` - completed
 - `013-host-authority-map-and-client-protocol-records.md` - completed
-- `014-codex-live-runtime-supervision.md` - active
-- `015-task-backed-agent-work-unit-proof.md` - planned after `014`
-- `016-management-projection-file-io-and-sync.md` - planned after `015`
-- `017-scm-working-copy-and-change-request-workflows.md` - planned after `016`
-- `018-steward-native-harness-and-effigy-tools.md` - planned after `017`
+- `014-codex-live-runtime-supervision.md` - completed
+- `015-task-backed-agent-work-unit-proof.md` - completed
+- `016-management-projection-file-io-and-sync.md` - completed
+- `017-scm-working-copy-and-change-request-workflows.md` - completed
+- `018-steward-native-harness-and-effigy-tools.md` - completed
+- `019-native-steward-command-boundary.md` - planned
+- `020-effigy-command-backed-inspection.md` - planned
+- `021-management-projection-sync-runtime.md` - planned
+- `022-scm-working-session-runtime.md` - planned
+- `023-client-read-model-and-diagnostics-runway.md` - planned
 
 ## Batch Cards
 
@@ -113,17 +118,62 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/051-codex-live-event-ingestion.md`
+- `batch-cards/074-native-steward-command-records.md`
 
 Planned cards:
 
-- `batch-cards/052-codex-wait-state-routing.md`
-- `batch-cards/053-codex-recovery-and-runtime-validation.md`
+- `batch-cards/075-native-steward-command-admission.md`
+- `batch-cards/076-native-steward-command-receipt-linkage.md`
+- `batch-cards/077-server-steward-command-boundary.md`
+- `batch-cards/078-native-steward-command-validation.md`
+- `batch-cards/079-effigy-selector-refresh-command.md`
+- `batch-cards/080-effigy-doctor-summary-command.md`
+- `batch-cards/081-effigy-test-plan-summary-command.md`
+- `batch-cards/082-effigy-repair-hint-synthesis.md`
+- `batch-cards/083-effigy-command-inspection-validation.md`
+- `batch-cards/084-management-sync-plan-records.md`
+- `batch-cards/085-projection-import-repair-proposals.md`
+- `batch-cards/086-projection-conflict-assistance-routing.md`
+- `batch-cards/087-management-capture-prep-records.md`
+- `batch-cards/088-management-sync-runtime-validation.md`
+- `batch-cards/089-scm-session-command-records.md`
+- `batch-cards/090-git-session-admission-records.md`
+- `batch-cards/091-non-git-session-vocabulary-validation.md`
+- `batch-cards/092-scm-session-work-item-linkage.md`
+- `batch-cards/093-scm-session-runtime-validation.md`
+- `batch-cards/094-steward-diagnostics-read-model.md`
+- `batch-cards/095-effigy-diagnostics-read-model.md`
+- `batch-cards/096-sync-diagnostics-read-model.md`
+- `batch-cards/097-scm-session-diagnostics-read-model.md`
+- `batch-cards/098-client-diagnostics-dto-validation.md`
 
 Completed cards:
 
 - `batch-cards/049-codex-process-supervision-boundary.md`
 - `batch-cards/050-codex-handshake-preflight.md`
+- `batch-cards/051-codex-live-event-ingestion.md`
+- `batch-cards/052-codex-wait-state-routing.md`
+- `batch-cards/053-codex-recovery-and-runtime-validation.md`
+- `batch-cards/054-task-agent-work-item-record-shape.md`
+- `batch-cards/055-task-delegation-command-admission.md`
+- `batch-cards/056-work-item-runtime-linkage-projection.md`
+- `batch-cards/057-work-item-review-acceptance-boundary.md`
+- `batch-cards/058-management-projection-file-format-codec.md`
+- `batch-cards/059-management-projection-export-file-io.md`
+- `batch-cards/060-management-projection-import-staging.md`
+- `batch-cards/061-management-projection-sync-conflict-surface.md`
+- `batch-cards/062-git-driver-status-and-ref-inspection.md`
+- `batch-cards/063-working-copy-session-modes.md`
+- `batch-cards/064-scm-checkpoint-diff-work-item-linkage.md`
+- `batch-cards/065-change-request-prep-records.md`
+- `batch-cards/066-steward-persona-authority-records.md`
+- `batch-cards/067-native-tool-action-and-receipt-linkage.md`
+- `batch-cards/068-effigy-selector-inventory-records.md`
+- `batch-cards/069-effigy-health-and-validation-plan-records.md`
+- `batch-cards/070-task-hygiene-proposal-records.md`
+- `batch-cards/071-steward-sync-assistance-records.md`
+- `batch-cards/072-native-model-backend-posture-records.md`
+- `batch-cards/073-steward-lane-validation-and-next-runway.md`
 
 Completed cards:
 
@@ -139,24 +189,32 @@ The next G02 suite is:
 1. health and authority surface reset - completed
 2. client protocol and host transport runway - completed
 3. host authority map records and client read models - completed
-4. live Codex runtime supervision - active
-5. task-backed agent work unit proof
-6. management projection file IO and sync
-7. SCM working-copy/change-request workflows
-8. steward/native harness and Effigy tools
+4. live Codex runtime supervision - completed
+5. task-backed agent work unit proof - completed
+6. management projection file IO and sync - completed
+7. SCM working-copy/change-request workflows - completed
+8. steward/native harness and Effigy tools - completed
+9. native steward command boundary - planned
+10. Effigy command-backed inspection - planned
+11. management projection sync runtime - planned
+12. SCM working session runtime - planned
+13. client read model and diagnostics runway - planned
 
 This keeps code health and authority-map clarity ahead of live provider and
 remote transport work.
 
 ## Planning Rules
 
-- `014` is the only active milestone.
-- `014` is the first live provider runtime milestone.
-- `015` proves the first task-backed agent work unit.
-- `016`, `017`, and `018` then build committable projection file IO,
-  SCM/change-request workflows, and steward/native harness tools.
-- Planned milestones must not get batch cards until their predecessor gate is
-  clear enough to execute.
+- `018` is the active planning milestone.
+- `014` proved the first compile-only live provider runtime supervision spine.
+- `015` proved the first task-backed agent work unit.
+- `016` built committable projection file IO.
+- `017` completed SCM/change-request workflow records.
+- `018` closed the record-only native steward runway.
+- `019` is the next execution lane and starts with command records before
+  admission, receipt linkage, server boundary, and validation.
+- Later milestones have full planned cards, but only the current card should
+  be marked ready until predecessor validation passes.
 
 Keep future cards broad enough to execute meaningful chunks. Do not create
 one-card turns unless the card is risky or blocked.

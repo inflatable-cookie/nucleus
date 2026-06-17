@@ -124,6 +124,43 @@ The first control API exposes read-only list queries for checkpoint and diff
 summary records. It does not expose raw patches, terminal streams, provider
 payloads, or SCM credentials.
 
+## SCM Work Item Linkage
+
+SCM evidence linkage is an engine-owned reference record.
+
+It may link:
+
+- task id
+- task work item id
+- SCM work session id
+- provider-neutral SCM change refs
+- checkpoint ids
+- diff summary ids
+- runtime receipt ids
+
+Checkpoint ids and diff summary ids must stay separate from provider change
+refs. A Git commit, Convergence snapshot, publication, or provider-equivalent
+change ref may be evidence for a work item, but it must not replace the
+checkpoint or diff summary records Nucleus uses for review and recovery.
+
+Missing and superseded SCM change refs are repair states. They must not imply
+task completion, publication, merge, or review approval.
+
+## Change Request Prep Linkage
+
+Change-request prep records may reuse checkpoint ids, diff summary ids,
+runtime receipt ids, SCM work session ids, and provider-neutral change refs as
+handoff evidence.
+
+Prep records are not publication records. They may name an intended forge
+review, provider publication, provider gate, direct authority update, manual
+handoff, or custom target, but they must keep publication state separate from
+the review evidence.
+
+Diff summaries and checkpoints remain the Nucleus review boundary even when a
+later provider operation creates a pull request, merge request, publication,
+gate input, or direct authority update proposal.
+
 ## SCM Neutrality Rule
 
 The contract uses neutral terms:

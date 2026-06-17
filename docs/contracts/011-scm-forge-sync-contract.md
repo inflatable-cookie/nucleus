@@ -175,17 +175,18 @@ Excluded from projection records:
 
 ## First Projection Boundary Implementation
 
-The first implementation produces a management projection export plan, not SCM
-mutations.
+The first implementation produces management projection documents and scoped
+file writes, not SCM mutations.
 
-It can name first-pass shared file refs and project/task projection entries
-from authoritative local state. It keeps local UI layout state, runtime
-streams, provider auth, terminal/browser attachment state, and raw validation
-output out of the plan.
+It can name first-pass shared file refs, serialize TOML project/task projection
+documents, write them under `nucleus/`, and stage projection files for import
+validation from authoritative local state. It keeps local UI layout state,
+runtime streams, provider auth, terminal/browser attachment state, and raw
+validation output out of the files.
 
-SCM adapters remain responsible for later file writes, status checks, commits,
-snapshots, publications, review requests, and provider-specific sync flows.
-This keeps the projection boundary usable for Git and non-Git SCMs.
+SCM adapters remain responsible for status checks, commits, snapshots,
+publications, review requests, and provider-specific sync flows. This keeps
+the projection boundary usable for Git and non-Git SCMs.
 
 ## First Neutral Capability Implementation
 
@@ -226,6 +227,32 @@ applicable, and required command scopes.
 
 The registry does not execute provider commands, inspect repositories, call
 networks, resolve credentials, mutate files, or own process lifecycle.
+
+## First Git Inspection Implementation
+
+The first Git inspection surface is read-only and record-only.
+
+It accepts Git-specific status snapshots after command evidence has already
+been authorized and parsed elsewhere. It projects those snapshots into neutral
+SCM working-copy inspection records.
+
+The neutral record can represent:
+
+- branch head
+- detached head as a provider-neutral change ref
+- unborn or unknown head
+- tracked, missing, not-applicable, or unknown upstream state
+- clean and code-changed working-copy state
+- changed path records
+- inspection issues such as detached head and missing upstream
+
+The neutral record does not require every SCM to expose Git commits. Git may
+map detached HEAD to a commit-like change ref, but non-Git adapters may leave
+head state unknown or map to their own provider-equivalent change surface.
+
+This implementation does not spawn Git, read a repository, inspect the
+filesystem, switch refs, stage files, commit, push, publish, resolve
+credentials, or mutate the working copy.
 
 ## Projection Validation And Migration
 
@@ -387,6 +414,36 @@ merge conflict can be resolved while the resulting task record is still
 semantically unsafe. A clean SCM merge can still create a semantic conflict in
 task meaning, project identity, assignment intent, sync policy, or task
 history.
+
+## First Steward Sync Assistance Implementation
+
+The first steward sync-assistance surface is record-only.
+
+It can represent:
+
+- mechanical conflict repair proposals
+- semantic conflict escalation
+- management capture preparation
+- change-request preparation
+
+Sync-assistance records may link to projection conflict reports, SCM work
+sessions, change-request prep records, management projection refs, native tool
+actions, runtime receipts, and sanitized evidence refs.
+
+Mechanical repair and semantic escalation must stay separate. Mechanical
+repair may describe a safe repair plan. Semantic escalation must require human
+approval.
+
+Management capture preparation can describe scope and readiness for a
+management-state capture, but it does not create a commit, snapshot,
+publication, bundle, promotion, or provider-equivalent authority record.
+
+Change-request preparation can prepare handoff evidence for a later review
+boundary, but it does not open a pull request, publish a snapshot, promote a
+gate, push to a remote, or call a forge.
+
+Publication requests are outside the first sync-assistance authority. They
+must be represented as not-prep-only and require approval or a later contract.
 
 Initial conflict statuses:
 
@@ -832,6 +889,86 @@ not mandatory provider primitives. SCM adapters must map work sessions onto the
 provider's real isolation and review mechanisms and expose unsupported
 capabilities honestly.
 
+## First Working-Copy Session Implementation
+
+The first working-copy session surface is planning-only.
+
+It can describe:
+
+- primary project checkout sessions
+- isolated checkout, worktree, or provider-managed location sessions
+- external provider-managed sessions
+- unsupported session modes
+- base change refs and intended targets where known
+- cleanup policy
+- user-testability properties
+- runtime constraints such as single-runnable-instance and isolated
+
+Primary project checkout sessions record that the known project directory is
+the test location and that the checkout is shared. They require clean or
+recoverable state before cleanup and retain unmerged work.
+
+Isolated location sessions record that work may happen outside the known
+project directory. They retain unmerged work and require human approval before
+discarding an isolated location.
+
+Provider-neutral session records may retain branch-like refs, worktree-like
+refs, snapshot scopes, or custom provider surfaces. Git-like adapters may map
+these records to branches and worktrees. Convergence-like adapters may map
+them to snapshot scopes or provider-managed surfaces.
+
+This implementation does not create branches, create worktrees, switch refs,
+delete directories, merge, publish, or mutate provider state.
+
+## First SCM Work Item Linkage Implementation
+
+The first SCM work item linkage surface is engine-owned and reference-only.
+
+It links task work items to:
+
+- SCM work session ids
+- provider-neutral change refs
+- checkpoint ids
+- diff summary ids
+- runtime receipt ids
+
+The linkage record keeps checkpoints and diff summaries separate from provider
+change refs. A Git commit ref, Convergence snapshot ref, publication ref, or
+custom provider change ref may be attached as SCM evidence, but it does not
+replace Nucleus checkpoint and diff records.
+
+Missing or superseded provider change refs are explicit repair states. They do
+not grant publication, merge, review, or task-completion authority.
+
+## First Change Request Prep Implementation
+
+The first change-request prep surface is engine-owned and prep-only.
+
+It can name:
+
+- task id
+- task work item id
+- SCM work session id
+- target shape
+- provider-neutral change refs
+- checkpoint ids
+- diff summary ids
+- runtime receipt ids
+- review policy
+- prep status
+- publication state
+
+Initial target shapes include forge review, provider publication, provider
+gate, direct authority update, manual handoff, and custom provider value.
+GitHub or GitLab pull requests are possible later implementations of forge
+review. Convergence-style publication or gate handoffs remain viable without
+pretending they are pull requests.
+
+Prep records are distinct from publication records. The first implementation
+sets publication to not requested. It does not create pull requests, publish
+snapshots, open gates, merge, push, promote, resolve credentials, call remote
+APIs, or mutate provider state.
+
 ## SCM Diff And Commit Control Surface
 
 Nucleus should provide first-class SCM changes, diff, and commit control
@@ -968,6 +1105,12 @@ Current modules:
 - `scm`: SCM provider kind, repository, worktree, branch, commit,
   provider-neutral change, workflow semantics, work session, runtime
   constraint, and remote refs
+- `git_inspection`: read-only Git status snapshots and provider-neutral
+  working-copy inspection records for head, upstream, dirty state, path
+  status, and inspection issues
+- `work_sessions`: provider-neutral working-copy session planning records for
+  primary checkout, isolated location, external managed, cleanup, testability,
+  and runtime constraints
 - workspace SCM control surfaces remain in `nucleus-workspaces`; SCM adapters
   provide the underlying observations, work sessions, conflicts, review
   workflows, and command-authority requests

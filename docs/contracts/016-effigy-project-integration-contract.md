@@ -52,6 +52,60 @@ Nucleus should support projects without Effigy, projects with Effigy at the
 management root, and multi-repo projects where Effigy selectors are scoped per
 repo or per subsystem.
 
+## First Selector Inventory Implementation
+
+The first selector inventory surface is record-only.
+
+It can represent:
+
+- disabled Effigy
+- detected, enabled, missing-manifest, or unknown Effigy state
+- root project scope
+- repo or subsystem scope
+- sanitized manifest refs
+- selector refs
+- selector kinds
+- command-scope hints
+- sanitized evidence refs
+
+Selector kinds include task, health, validation, setup, release gate, dev,
+query, and custom values.
+
+Command-scope hints include read-only, validation, management-state write,
+source write, release, and unknown. These hints do not grant command
+authority. They prepare later server policy checks.
+
+The first implementation does not run Effigy, parse live command output, edit
+manifests, execute selectors, or store raw command output.
+
+## First Health And Validation Plan Implementation
+
+The first health and validation-plan surface is record-only.
+
+Health summaries can represent:
+
+- ok
+- warning
+- error
+- blocked
+- unknown
+
+Health summaries may link to native tool action ids, runtime receipt refs,
+sanitized evidence refs, and repair hints.
+
+Repair hints may describe missing manifests, missing selectors, doctor
+warnings, doctor errors, unavailable plans, policy blocks, or custom project
+conditions.
+
+Validation-plan summaries can list planned selectors, selector purpose,
+command-scope hints, evidence refs, and repair hints. A validation plan is not
+proof that validation ran. Execution must be represented by a separate runtime
+receipt or command evidence record.
+
+Durable health and validation-plan records must not copy raw Effigy output,
+secrets, credentials, local cache paths, provider transcripts, or release
+mutation evidence into task history.
+
 ## Agent Tooling Rule
 
 Effigy access is a tool capability.

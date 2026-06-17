@@ -10,14 +10,36 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `051-codex-live-event-ingestion.md`
+- `074-native-steward-command-records.md`
 
 ## Planned Cards
 
-- `052-codex-wait-state-routing.md`
-- `053-codex-recovery-and-runtime-validation.md`
+- `075-native-steward-command-admission.md`
+- `076-native-steward-command-receipt-linkage.md`
+- `077-server-steward-command-boundary.md`
+- `078-native-steward-command-validation.md`
+- `079-effigy-selector-refresh-command.md`
+- `080-effigy-doctor-summary-command.md`
+- `081-effigy-test-plan-summary-command.md`
+- `082-effigy-repair-hint-synthesis.md`
+- `083-effigy-command-inspection-validation.md`
+- `084-management-sync-plan-records.md`
+- `085-projection-import-repair-proposals.md`
+- `086-projection-conflict-assistance-routing.md`
+- `087-management-capture-prep-records.md`
+- `088-management-sync-runtime-validation.md`
+- `089-scm-session-command-records.md`
+- `090-git-session-admission-records.md`
+- `091-non-git-session-vocabulary-validation.md`
+- `092-scm-session-work-item-linkage.md`
+- `093-scm-session-runtime-validation.md`
+- `094-steward-diagnostics-read-model.md`
+- `095-effigy-diagnostics-read-model.md`
+- `096-sync-diagnostics-read-model.md`
+- `097-scm-session-diagnostics-read-model.md`
+- `098-client-diagnostics-dto-validation.md`
 
-These cards belong to `../012-health-and-authority-surface-reset.md`.
+These cards belong to `../018-steward-native-harness-and-effigy-tools.md`.
 
 ## Completed Cards
 
@@ -71,3 +93,26 @@ These cards belong to `../012-health-and-authority-surface-reset.md`.
 - `048-host-authority-map-validation.md`
 - `049-codex-process-supervision-boundary.md`
 - `050-codex-handshake-preflight.md`
+- `051-codex-live-event-ingestion.md`
+- `052-codex-wait-state-routing.md`
+- `053-codex-recovery-and-runtime-validation.md`
+- `054-task-agent-work-item-record-shape.md`
+- `055-task-delegation-command-admission.md`
+- `056-work-item-runtime-linkage-projection.md`
+- `057-work-item-review-acceptance-boundary.md`
+- `058-management-projection-file-format-codec.md`
+- `059-management-projection-export-file-io.md`
+- `060-management-projection-import-staging.md`
+- `061-management-projection-sync-conflict-surface.md`
+- `062-git-driver-status-and-ref-inspection.md`
+- `063-working-copy-session-modes.md`
+- `064-scm-checkpoint-diff-work-item-linkage.md`
+- `065-change-request-prep-records.md`
+- `066-steward-persona-authority-records.md`
+- `067-native-tool-action-and-receipt-linkage.md`
+- `068-effigy-selector-inventory-records.md`
+- `069-effigy-health-and-validation-plan-records.md`
+- `070-task-hygiene-proposal-records.md`
+- `071-steward-sync-assistance-records.md`
+- `072-native-model-backend-posture-records.md`
+- `073-steward-lane-validation-and-next-runway.md`

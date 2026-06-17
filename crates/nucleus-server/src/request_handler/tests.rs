@@ -18,7 +18,8 @@ use crate::client_auth::{
 };
 use crate::clients::{ClientIdentity, ClientKind};
 use crate::commands::{
-    AgentSessionCommand, ServerCommand, ServerCommandKind, TaskCommand, TaskTransitionCommand,
+    AgentSessionCommand, ServerCommand, ServerCommandKind, TaskCommand, TaskDelegationCommand,
+    TaskTransitionCommand,
 };
 use crate::control_api::{
     AdapterSessionQuery, ProjectAuthorityMapQuery, RuntimeMetadataQuery, ServerCommandReceipt,

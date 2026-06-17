@@ -167,6 +167,65 @@ fn engine_task_command_rejects_agent_ready_task_without_acceptance() {
     ));
 }
 
+#[test]
+fn engine_task_command_admits_task_delegation_as_work_item() {
+    let repository = FixtureTaskRepository::with_project("project:1");
+    repository.seed_task(seed_task("task:1"), RevisionId("rev:1".to_owned()));
+    let service = EngineTaskCommandService::new(&repository);
+
+    let outcome = service
+        .execute(
+            "command:delegate",
+            EngineTaskCommand::Delegate(EngineTaskDelegationCommand {
+                task_id: TaskId("task:1".to_owned()),
+                expected_revision: Some(RevisionId("rev:1".to_owned())),
+                adapter_id: "adapter:codex-app-server".to_owned(),
+                provider_instance_id: "codex:local-default".to_owned(),
+                idempotency_key: "operator-click-1".to_owned(),
+            }),
+        )
+        .expect("delegate task");
+
+    assert!(matches!(
+        outcome,
+        EngineTaskCommandOutcome::WorkItemAdmitted(work_item)
+            if work_item.task_id == TaskId("task:1".to_owned())
+                && work_item.work_item_id.0 == "work-item:task:1:operator-click-1"
+                && work_item.runtime == crate::EngineTaskWorkItemRuntimeState::Scheduled
+                && work_item.review == crate::EngineTaskWorkItemReviewState::NotReady
+    ));
+    assert_eq!(
+        repository.decoded_task("task:1").activity,
+        TaskStorageActivityState::Ready
+    );
+}
+
+#[test]
+fn engine_task_command_rejects_delegation_without_adapter_target() {
+    let repository = FixtureTaskRepository::with_project("project:1");
+    repository.seed_task(seed_task("task:1"), RevisionId("rev:1".to_owned()));
+    let service = EngineTaskCommandService::new(&repository);
+
+    let error = service
+        .execute(
+            "command:delegate",
+            EngineTaskCommand::Delegate(EngineTaskDelegationCommand {
+                task_id: TaskId("task:1".to_owned()),
+                expected_revision: None,
+                adapter_id: String::new(),
+                provider_instance_id: "codex:local-default".to_owned(),
+                idempotency_key: "operator-click-1".to_owned(),
+            }),
+        )
+        .expect_err("reject missing adapter");
+
+    assert!(matches!(
+        error,
+        EngineTaskCommandError::InvalidRequest { reason }
+            if reason == "task delegation requires an adapter id"
+    ));
+}
+
 fn create_command(project_id: &str) -> EngineTaskCreateCommand {
     EngineTaskCreateCommand {
         project_id: ProjectId(project_id.to_owned()),

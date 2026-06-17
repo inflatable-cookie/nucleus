@@ -1,8 +1,9 @@
 use nucleus_core::PersistenceRecordId;
 use nucleus_engine::{
     EngineRevisionExpectation, EngineTaskCommand, EngineTaskCommandError, EngineTaskCommandOutcome,
-    EngineTaskCommandService, EngineTaskCreateCommand, EngineTaskRecord, EngineTaskRepository,
-    EngineTaskTransitionCommand, EngineTaskUpdateChanges, EngineTaskUpdateCommand,
+    EngineTaskCommandService, EngineTaskCreateCommand, EngineTaskDelegationCommand,
+    EngineTaskRecord, EngineTaskRepository, EngineTaskTransitionCommand, EngineTaskUpdateChanges,
+    EngineTaskUpdateCommand,
 };
 use nucleus_local_store::{
     LocalStoreBackend, LocalStoreError, LocalStoreRecord, LocalStoreRecordPayload,
@@ -12,7 +13,8 @@ use nucleus_projects::ProjectId;
 
 use super::handler::LocalControlRequestHandler;
 use crate::commands::{
-    TaskCommand, TaskCreateCommand, TaskTransitionCommand, TaskUpdateChanges, TaskUpdateCommand,
+    TaskCommand, TaskCreateCommand, TaskDelegationCommand, TaskTransitionCommand,
+    TaskUpdateChanges, TaskUpdateCommand,
 };
 use crate::control_api::{ServerCommandReceiptStatus, ServerControlError};
 use crate::state::ServerStateService;
@@ -32,6 +34,9 @@ where
         Ok(EngineTaskCommandOutcome::Mutated) => {
             ServerCommandReceiptStatus::AcceptedForStateMutation
         }
+        Ok(EngineTaskCommandOutcome::WorkItemAdmitted(_)) => {
+            ServerCommandReceiptStatus::AcceptedForRuntimeScheduling
+        }
         Err(error) => ServerCommandReceiptStatus::Rejected(engine_task_error(error)),
     }
 }
@@ -40,6 +45,9 @@ fn engine_task_command(command: TaskCommand) -> EngineTaskCommand {
     match command {
         TaskCommand::Create(command) => EngineTaskCommand::Create(engine_create_command(command)),
         TaskCommand::Update(command) => EngineTaskCommand::Update(engine_update_command(command)),
+        TaskCommand::Delegate(command) => {
+            EngineTaskCommand::Delegate(engine_delegation_command(command))
+        }
         TaskCommand::Start(command) => EngineTaskCommand::Start(engine_transition_command(command)),
         TaskCommand::Block {
             task_id,
@@ -56,6 +64,16 @@ fn engine_task_command(command: TaskCommand) -> EngineTaskCommand {
         TaskCommand::Archive(command) => {
             EngineTaskCommand::Archive(engine_transition_command(command))
         }
+    }
+}
+
+fn engine_delegation_command(command: TaskDelegationCommand) -> EngineTaskDelegationCommand {
+    EngineTaskDelegationCommand {
+        task_id: command.task_id,
+        expected_revision: command.expected_revision,
+        adapter_id: command.adapter_id,
+        provider_instance_id: command.provider_instance_id,
+        idempotency_key: command.idempotency_key,
     }
 }
 

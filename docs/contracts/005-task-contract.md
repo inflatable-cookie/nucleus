@@ -153,6 +153,36 @@ Agent attempt summaries must preserve outcome, adapter instance, route,
 session, validation references, runtime event references, and a short summary.
 They must not copy full provider transcripts or runtime event streams.
 
+The engine now has first-pass task work item records. A work item is task-owned
+and may link to agent sessions, turns, runtime receipts, checkpoints, diff
+summaries, timeline entries, validation refs, and artifact refs. Runtime state
+and operator review state are separate. Provider completion may schedule
+review, but it does not mean the task is accepted.
+
+The first delegation command admits operator-controlled task-to-agent work and
+creates a scheduled work item record shape. It validates the task, adapter
+instance, provider instance, revision expectation, and idempotency key, then
+returns a scheduling posture without starting provider execution.
+
+Work-item runtime projections are sanitized and deterministic. They summarize
+linked runtime evidence by reference and surface missing session refs as repair
+state instead of copying provider transcripts or terminal streams.
+
+SCM work item linkage records may connect a task work item to an SCM work
+session, provider-neutral change refs, checkpoints, diff summaries, and runtime
+receipts. Missing or superseded SCM change refs are repair state, not silent
+task completion or publication authority.
+
+Change-request prep records may connect a task work item and SCM evidence link
+to a future review or shared-authority handoff. Prep is not publication. It
+does not create pull requests, publish snapshots, merge, promote, push, or mark
+the task accepted.
+
+Work-item review decisions are explicit operator transitions. Accepted,
+rejected, needs-changes, and abandoned outcomes require completed runtime plus
+validation or checkpoint evidence. A work-item review transition does not
+complete the parent task unless a later policy explicitly allows that.
+
 Validation evidence belongs on the task only as command, status, evidence
 references, and summary. Raw command output should be stored as an artifact or
 journal reference when needed, not copied into task history by default.
@@ -201,6 +231,10 @@ Task links may be:
 
 Adapter-observed links are evidence until accepted or promoted. They should
 not mutate projected task state by themselves.
+
+Steward-suggested links and hygiene proposals are also evidence until accepted
+or promoted by a task-domain action. They must not change task activity,
+assignment, acceptance criteria, or durable history by themselves.
 
 Task link status should be explicit. Stale, missing, superseded, and unknown
 links should be retained until a human, policy, or later repair flow removes or

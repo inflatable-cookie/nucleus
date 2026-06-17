@@ -1,6 +1,6 @@
 # 016 Management Projection File IO And Sync
 
-Status: planned-after-015
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 
@@ -26,26 +26,43 @@ accepted memory, and accepted research synthesis.
 
 ## Goals
 
-- [ ] Serialize and parse management projection files with schema envelopes.
-- [ ] Write projection files through policy-gated filesystem effects.
-- [ ] Stage imports without silently mutating authoritative records.
-- [ ] Surface schema, semantic, and SCM sync conflicts separately.
-- [ ] Keep local layout, runtime streams, secrets, caches, and provider state
+- [x] Serialize and parse management projection files with schema envelopes.
+- [x] Write projection files through policy-gated filesystem effects.
+- [x] Stage imports without silently mutating authoritative records.
+- [x] Surface schema, semantic, and SCM sync conflicts separately.
+- [x] Keep local layout, runtime streams, secrets, caches, and provider state
   excluded by default.
 
 ## Execution Plan
 
-- [ ] File format batch: choose and implement first TOML/JSON envelope codecs.
-- [ ] Export IO batch: write minimal project/task projection files.
-- [ ] Import staging batch: parse and validate fresh-clone projection files.
-- [ ] Conflict batch: surface conflicts for steward or operator resolution.
+- [x] File format batch: choose and implement first TOML envelope codecs.
+- [x] Export IO batch: write minimal project/task projection files.
+- [x] Import staging batch: parse and validate fresh-clone projection files.
+- [x] Conflict batch: surface conflicts for steward or operator resolution.
+
+## Batch Cards
+
+Ready cards:
+
+None.
+
+Planned cards:
+
+None.
+
+Completed cards:
+
+- `batch-cards/058-management-projection-file-format-codec.md`
+- `batch-cards/059-management-projection-export-file-io.md`
+- `batch-cards/060-management-projection-import-staging.md`
+- `batch-cards/061-management-projection-sync-conflict-surface.md`
 
 ## Acceptance Criteria
 
-- [ ] One project can export management projection files to a repo path.
-- [ ] Another clone can parse and validate those files before import.
-- [ ] Unsupported records survive round trip as explicit unsupported records.
-- [ ] No runtime/local-only state is written into committable projection files.
+- [x] One project can export management projection files to a repo path.
+- [x] Another clone can parse and validate those files before import.
+- [x] Unsupported records survive round trip as explicit unsupported records.
+- [x] No runtime/local-only state is written into committable projection files.
 
 ## Gate
 

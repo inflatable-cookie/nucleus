@@ -65,6 +65,15 @@ an SCM workflow, a research run, or a mixed workflow.
 Task history links to work items and summaries. It must not copy full provider
 transcripts or runtime streams by default.
 
+The first engine work item record links a task to runtime evidence by refs:
+agent session id, turn ids, runtime receipt ids, checkpoint ids, timeline entry
+ids, validation refs, and artifact refs. Work-item runtime projections are
+rebuilt from those refs in stable order and contain sanitized summaries only.
+
+Work-item review transitions are timeline facts, not provider messages.
+Operator acceptance, rejection, needs-changes, and abandonment remain separate
+from runtime completion and parent task completion.
+
 ## Session, Thread, And Turn Rule
 
 An agent session binds Nucleus to one configured adapter instance and runtime.

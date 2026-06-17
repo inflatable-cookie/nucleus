@@ -18,11 +18,16 @@ shape.
 - `g02/011-codex-app-server-runtime-runway.md` - completed
 - `g02/012-health-and-authority-surface-reset.md` - completed
 - `g02/013-host-authority-map-and-client-protocol-records.md` - completed
-- `g02/014-codex-live-runtime-supervision.md` - active
-- `g02/015-task-backed-agent-work-unit-proof.md` - planned after `014`
-- `g02/016-management-projection-file-io-and-sync.md` - planned after `015`
-- `g02/017-scm-working-copy-and-change-request-workflows.md` - planned after `016`
-- `g02/018-steward-native-harness-and-effigy-tools.md` - planned after `017`
+- `g02/014-codex-live-runtime-supervision.md` - completed
+- `g02/015-task-backed-agent-work-unit-proof.md` - completed
+- `g02/016-management-projection-file-io-and-sync.md` - completed
+- `g02/017-scm-working-copy-and-change-request-workflows.md` - completed
+- `g02/018-steward-native-harness-and-effigy-tools.md` - completed
+- `g02/019-native-steward-command-boundary.md` - planned
+- `g02/020-effigy-command-backed-inspection.md` - planned
+- `g02/021-management-projection-sync-runtime.md` - planned
+- `g02/022-scm-working-session-runtime.md` - planned
+- `g02/023-client-read-model-and-diagnostics-runway.md` - planned
 
 ## Previous Generation
 
@@ -81,5 +86,5 @@ shape.
 
 ## Next Task
 
-Continue `g02/014-codex-live-runtime-supervision.md`, starting with
-`g02/batch-cards/051-codex-live-event-ingestion.md`.
+Continue `g02/019-native-steward-command-boundary.md`, starting with
+`g02/batch-cards/074-native-steward-command-records.md`.

@@ -10,7 +10,9 @@ pub mod client_auth;
 pub mod client_auth_posture;
 pub mod client_protocol;
 pub mod clients;
+pub mod codex_runtime_validation;
 pub mod codex_supervision;
+pub mod codex_wait_state;
 pub mod command_artifacts;
 pub mod command_evidence_state;
 pub mod command_runtime_readiness;
@@ -89,14 +91,27 @@ pub use client_protocol::{
     ProjectAuthorityValidationIssue, CLIENT_PROTOCOL_FAMILY, CLIENT_PROTOCOL_VERSION_V1,
 };
 pub use clients::{ClientConnection, ClientIdentity, ClientKind};
+pub use codex_runtime_validation::{
+    codex_recovery_receipt_from_fallback, validate_codex_runtime_supervision,
+    CodexRuntimeValidationBlocker, CodexRuntimeValidationEvidence, CodexRuntimeValidationReport,
+    CodexRuntimeValidationStatus, CodexTaskBackedWorkGate,
+};
 pub use codex_supervision::{
-    assess_codex_app_server_handshake, assess_codex_app_server_supervision, CodexAppServerBinary,
-    CodexAppServerHandshakeBlocker, CodexAppServerHandshakeExpectation,
-    CodexAppServerHandshakeObservation, CodexAppServerHandshakePreflight,
-    CodexAppServerHandshakePreflightStatus, CodexAppServerSchemaEvidenceRef,
+    assess_codex_app_server_handshake, assess_codex_app_server_supervision,
+    ingest_codex_app_server_live_frame, CodexAppServerBinary, CodexAppServerHandshakeBlocker,
+    CodexAppServerHandshakeExpectation, CodexAppServerHandshakeObservation,
+    CodexAppServerHandshakePreflight, CodexAppServerHandshakePreflightStatus,
+    CodexAppServerLiveFrame, CodexAppServerLiveIngestion, CodexAppServerLiveIngestionStatus,
+    CodexAppServerLiveProjection, CodexAppServerSchemaEvidenceRef,
     CodexAppServerSupervisionBlocker, CodexAppServerSupervisionLimits,
     CodexAppServerSupervisionReadiness, CodexAppServerSupervisionReadinessInput,
     CodexAppServerSupervisionReadinessStatus, CodexAppServerSupervisionRequest,
+    CodexAppServerUnsupportedObservation, CodexRawPayloadPolicy,
+};
+pub use codex_wait_state::{
+    cancel_codex_wait_state, route_codex_wait_state_from_ingestion, time_out_codex_wait_state,
+    CodexWaitStateKind, CodexWaitStateRecord, CodexWaitStateRouting, CodexWaitStateStatus,
+    CodexWaitStateTerminalRouting,
 };
 pub use command_artifacts::{ServerCommandArtifactRecord, ServerCommandArtifactResolution};
 pub use command_evidence_state::write_command_evidence;
@@ -184,7 +199,13 @@ pub use local_transport::{
     InProcessControlClientFixture, InProcessControlHandlerFixture, LocalControlTransport,
     LocalControlTransportBoundary, LocalControlTransportError, LocalControlTransportExchange,
 };
-pub use management_projection_state::build_management_projection_export_plan;
+pub use management_projection_state::{
+    build_management_projection_export_plan, stage_management_projection_import_files,
+    write_management_projection_export_files, ManagementProjectionExportFileReport,
+    ManagementProjectionExportFileRequest, ManagementProjectionExportFileWrite,
+    ManagementProjectionImportStagingReport, ManagementProjectionImportStagingRequest,
+    ManagementProjectionStagedFile, ManagementProjectionStagingIssue,
+};
 pub use process_control_backend::{
     ProcessControlBackendEvidenceRef, ProcessControlBackendKind, ProcessControlBackendReadiness,
 };
