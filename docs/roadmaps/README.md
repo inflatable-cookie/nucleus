@@ -87,4 +87,4 @@ shape.
 ## Next Task
 
 Continue `g02/019-native-steward-command-boundary.md`, starting with
-`g02/batch-cards/076-native-steward-command-receipt-linkage.md`.
+`g02/batch-cards/077-server-steward-command-boundary.md`.

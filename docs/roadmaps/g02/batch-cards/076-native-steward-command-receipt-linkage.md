@@ -1,6 +1,6 @@
 # 076 Native Steward Command Receipt Linkage
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../019-native-steward-command-boundary.md`
@@ -18,18 +18,25 @@ Tie accepted steward commands to runtime receipts and sanitized evidence.
 
 ## Acceptance Criteria
 
-- Completed steward command outcomes can cite runtime receipts.
-- Evidence refs are sanitized.
-- Command outcomes do not duplicate receipt payloads.
+- [x] Completed steward command outcomes can cite runtime receipts.
+- [x] Evidence refs are sanitized.
+- [x] Command outcomes do not duplicate receipt payloads.
+
+## Outcome
+
+- Added native steward command receipt-link records.
+- Added outcome helpers for attaching receipt and evidence refs without
+  copying payloads.
+- Validated raw payload terms are rejected from command receipt links.
 
 ## Validation
 
-- `cargo test -p nucleus-native-harness steward`
-- `cargo test -p nucleus-engine runtime_receipt`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-native-harness steward`
+- [x] `cargo test -p nucleus-engine runtime_receipt`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

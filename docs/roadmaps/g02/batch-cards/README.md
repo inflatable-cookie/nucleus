@@ -10,11 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `076-native-steward-command-receipt-linkage.md`
+- `077-server-steward-command-boundary.md`
 
 ## Planned Cards
 
-- `077-server-steward-command-boundary.md`
 - `078-native-steward-command-validation.md`
 - `079-effigy-selector-refresh-command.md`
 - `080-effigy-doctor-summary-command.md`
@@ -116,3 +115,4 @@ These cards belong to `../018-steward-native-harness-and-effigy-tools.md`.
 - `073-steward-lane-validation-and-next-runway.md`
 - `074-native-steward-command-records.md`
 - `075-native-steward-command-admission.md`
+- `076-native-steward-command-receipt-linkage.md`

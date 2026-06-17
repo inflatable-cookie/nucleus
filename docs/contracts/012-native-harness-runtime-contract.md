@@ -199,6 +199,11 @@ authority. Capture preparation and sync-sensitive commands require the
 matching persona authority and approval state. Unsupported authority
 escalation must be rejected before execution.
 
+First command receipt-link records attach runtime receipt refs, tool action
+refs, and sanitized evidence refs to steward command outcomes. They must not
+copy receipt payloads, command output, model output, terminal streams, provider
+payloads, credentials, or secrets.
+
 ## Model Backend Rule
 
 Native harness personas should use deterministic tools before model calls.
@@ -350,7 +355,8 @@ Current modules:
   `NativeStewardCommandKind`, `NativeStewardCommandScope`,
   `NativeStewardCommandTarget`, `NativeStewardCommandStatus`,
   `NativeStewardCommandAdmission`, and
-  `NativeStewardCommandAdmissionStatus`
+  `NativeStewardCommandAdmissionStatus`, and
+  `NativeStewardCommandReceiptLink`
 - `audit`: `NativeAuditEvent`, `NativeAuditEventId`, and
   `NativeAuditEventKind`
 

@@ -23,7 +23,7 @@ This milestone follows `018-steward-native-harness-and-effigy-tools.md`.
 
 - [x] Define native steward command requests and command outcomes.
 - [x] Add read-only and proposal-only admission checks.
-- [ ] Link steward tool commands to runtime receipts and audit refs.
+- [x] Link steward tool commands to runtime receipts and audit refs.
 - [ ] Keep mutation, commit, push, publication, and forge calls out of scope.
 
 ## Execution Plan
@@ -32,7 +32,7 @@ This milestone follows `018-steward-native-harness-and-effigy-tools.md`.
   records.
 - [x] Admission batch: enforce read-only, proposal-only, and approval-required
   authority gates.
-- [ ] Receipt batch: link accepted steward commands to runtime receipt refs and
+- [x] Receipt batch: link accepted steward commands to runtime receipt refs and
   sanitized evidence.
 - [ ] Server boundary batch: prepare request-handler surfaces without live
   steward execution.
@@ -43,23 +43,23 @@ This milestone follows `018-steward-native-harness-and-effigy-tools.md`.
 
 Ready cards:
 
-- `batch-cards/076-native-steward-command-receipt-linkage.md`
+- `batch-cards/077-server-steward-command-boundary.md`
 
 Planned cards:
 
-- `batch-cards/077-server-steward-command-boundary.md`
 - `batch-cards/078-native-steward-command-validation.md`
 
 Completed cards:
 
 - `batch-cards/074-native-steward-command-records.md`
 - `batch-cards/075-native-steward-command-admission.md`
+- `batch-cards/076-native-steward-command-receipt-linkage.md`
 
 ## Acceptance Criteria
 
 - [x] Steward commands are distinct from steward proposals.
 - [x] Command admission can reject unsupported authority escalation.
-- [ ] Accepted commands can cite runtime receipts and sanitized evidence.
+- [x] Accepted commands can cite runtime receipts and sanitized evidence.
 - [ ] No first-pass steward command commits, pushes, publishes, or calls a
   forge.
 

@@ -196,6 +196,54 @@ impl NativeStewardCommandOutcome {
                 .iter()
                 .all(NativeStewardEvidenceRef::uses_reference_only_evidence)
     }
+
+    pub fn with_receipt_link(mut self, link: &NativeStewardCommandReceiptLink) -> Self {
+        for receipt_ref in &link.receipt_refs {
+            if !self.receipt_refs.contains(receipt_ref) {
+                self.receipt_refs.push(receipt_ref.clone());
+            }
+        }
+        for evidence_ref in &link.evidence_refs {
+            if !self.evidence_refs.contains(evidence_ref) {
+                self.evidence_refs.push(evidence_ref.clone());
+            }
+        }
+        if self.tool_action_id.is_none() {
+            self.tool_action_id = link.tool_action_id.clone();
+        }
+        self
+    }
+}
+
+/// Receipt and evidence linkage for a steward command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeStewardCommandReceiptLink {
+    pub command_id: NativeStewardCommandId,
+    pub tool_action_id: Option<NativeToolActionId>,
+    pub receipt_refs: Vec<NativeRuntimeReceiptRef>,
+    pub evidence_refs: Vec<NativeStewardEvidenceRef>,
+    pub summary: Option<String>,
+}
+
+impl NativeStewardCommandReceiptLink {
+    pub fn uses_reference_only_evidence(&self) -> bool {
+        self.summary
+            .as_ref()
+            .map(|summary| !contains_forbidden_steward_command_term(summary))
+            .unwrap_or(true)
+            && self
+                .receipt_refs
+                .iter()
+                .all(|receipt_ref| !contains_forbidden_steward_command_term(&receipt_ref.0))
+            && self
+                .evidence_refs
+                .iter()
+                .all(NativeStewardEvidenceRef::uses_reference_only_evidence)
+    }
+
+    pub fn links_command(&self, command_id: &NativeStewardCommandId) -> bool {
+        &self.command_id == command_id
+    }
 }
 
 /// Command class.
@@ -353,6 +401,51 @@ mod tests {
 
         assert!(!command.uses_reference_only_evidence());
         assert!(!command.can_imply_provider_authority());
+    }
+
+    #[test]
+    fn steward_command_receipt_link_attaches_receipts_without_payloads() {
+        let outcome = NativeStewardCommandOutcome {
+            command_id: NativeStewardCommandId("steward-command:1".to_owned()),
+            status: NativeStewardCommandStatus::Completed,
+            proposal_refs: Vec::new(),
+            sync_assistance_refs: Vec::new(),
+            tool_action_id: None,
+            receipt_refs: Vec::new(),
+            evidence_refs: Vec::new(),
+            summary: Some("completed command".to_owned()),
+        };
+        let link = NativeStewardCommandReceiptLink {
+            command_id: NativeStewardCommandId("steward-command:1".to_owned()),
+            tool_action_id: Some(NativeToolActionId("tool:steward-command:1".to_owned())),
+            receipt_refs: vec![NativeRuntimeReceiptRef("receipt:command:1".to_owned())],
+            evidence_refs: vec![NativeStewardEvidenceRef {
+                source: NativeStewardEvidenceSource::RuntimeReceipt,
+                ref_id: "receipt:command:1".to_owned(),
+            }],
+            summary: Some("sanitized receipt link".to_owned()),
+        };
+
+        let linked = outcome.with_receipt_link(&link);
+
+        assert!(link.links_command(&NativeStewardCommandId("steward-command:1".to_owned())));
+        assert_eq!(linked.receipt_refs.len(), 1);
+        assert_eq!(linked.evidence_refs.len(), 1);
+        assert!(linked.uses_reference_only_evidence());
+        assert!(link.uses_reference_only_evidence());
+    }
+
+    #[test]
+    fn steward_command_receipt_link_rejects_raw_payload_terms() {
+        let link = NativeStewardCommandReceiptLink {
+            command_id: NativeStewardCommandId("steward-command:1".to_owned()),
+            tool_action_id: None,
+            receipt_refs: vec![NativeRuntimeReceiptRef("raw_stdout:command".to_owned())],
+            evidence_refs: Vec::new(),
+            summary: None,
+        };
+
+        assert!(!link.uses_reference_only_evidence());
     }
 
     #[test]
