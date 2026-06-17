@@ -1,6 +1,6 @@
 # 074 Native Steward Command Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../019-native-steward-command-boundary.md`
@@ -19,19 +19,27 @@ Add record-only native steward command requests and outcomes.
 
 ## Acceptance Criteria
 
-- Steward commands are distinct from steward proposals.
-- Commands can represent accepted, rejected, blocked, completed, and unknown
+- [x] Steward commands are distinct from steward proposals.
+- [x] Commands can represent accepted, rejected, blocked, completed, and unknown
   outcomes.
-- Command records cannot imply commit, push, publication, or forge execution.
+- [x] Command records cannot imply commit, push, publication, or forge execution.
+
+## Outcome
+
+- Added record-only native steward command request and outcome records.
+- Added first command kinds for read-only inspection, proposal drafting,
+  management capture preparation, sync assistance, and Effigy inspection.
+- Kept provider authority, mutation, commit, push, publication, and forge calls
+  impossible to imply from command records.
 
 ## Validation
 
-- `cargo test -p nucleus-native-harness steward`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `rg -n '^## Next Task' README.md AGENTS.md docs`
-- `git diff --check`
+- [x] `cargo test -p nucleus-native-harness steward`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `rg -n '^## Next Task' README.md AGENTS.md docs`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

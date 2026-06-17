@@ -23,7 +23,7 @@ shape.
 - `g02/016-management-projection-file-io-and-sync.md` - completed
 - `g02/017-scm-working-copy-and-change-request-workflows.md` - completed
 - `g02/018-steward-native-harness-and-effigy-tools.md` - completed
-- `g02/019-native-steward-command-boundary.md` - planned
+- `g02/019-native-steward-command-boundary.md` - active
 - `g02/020-effigy-command-backed-inspection.md` - planned
 - `g02/021-management-projection-sync-runtime.md` - planned
 - `g02/022-scm-working-session-runtime.md` - planned
@@ -87,4 +87,4 @@ shape.
 ## Next Task
 
 Continue `g02/019-native-steward-command-boundary.md`, starting with
-`g02/batch-cards/074-native-steward-command-records.md`.
+`g02/batch-cards/075-native-steward-command-admission.md`.

@@ -167,6 +167,31 @@ First sync-assistance records can prepare mechanical conflict repair, semantic
 escalation, management capture plans, and change-request preparation. They
 must not commit, push, publish, promote, call a forge, or resolve credentials.
 
+## First Steward Command Records
+
+The first steward command records are request and outcome records only.
+
+They can represent:
+
+- read-only inspection
+- proposal drafting
+- management capture preparation
+- sync assistance
+- Effigy inspection
+
+Command records are distinct from proposals and mutations. A command request
+names persona, command kind, authority scope, target, tool action ref,
+evidence refs, and sanitized summary. A command outcome names status,
+proposal refs, sync-assistance refs, tool action ref, runtime receipt refs,
+evidence refs, and sanitized summary.
+
+Initial command statuses include accepted, rejected, blocked, completed,
+completed with warnings, and unknown.
+
+First-pass command records must not execute tools, mutate project state, apply
+proposals, commit, push, publish, promote, call a forge, or resolve provider
+credentials.
+
 ## Model Backend Rule
 
 Native harness personas should use deterministic tools before model calls.
@@ -313,6 +338,10 @@ Current modules:
   `NativeStewardManagementCapturePlan`,
   `NativeStewardManagementCapturePlanStatus`, and
   `NativeStewardManagementCaptureScope`
+- `steward_commands`: `NativeStewardCommandRequest`,
+  `NativeStewardCommandOutcome`, `NativeStewardCommandId`,
+  `NativeStewardCommandKind`, `NativeStewardCommandScope`,
+  `NativeStewardCommandTarget`, and `NativeStewardCommandStatus`
 - `audit`: `NativeAuditEvent`, `NativeAuditEventId`, and
   `NativeAuditEventKind`
 

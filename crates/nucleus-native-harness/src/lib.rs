@@ -11,6 +11,7 @@ pub mod events;
 pub mod personas;
 pub mod sessions;
 pub mod steward;
+pub mod steward_commands;
 pub mod tools;
 
 pub use audit::{NativeAuditEvent, NativeAuditEventId, NativeAuditEventKind};
@@ -40,6 +41,11 @@ pub use steward::{
     NativeStewardProposalReview, NativeStewardProposalTarget, NativeStewardProposedChange,
     NativeStewardSyncAssistance, NativeStewardSyncAssistanceId, NativeStewardSyncAssistanceKind,
     NativeStewardSyncAssistanceLinks,
+};
+pub use steward_commands::{
+    NativeStewardCommandId, NativeStewardCommandKind, NativeStewardCommandOutcome,
+    NativeStewardCommandRequest, NativeStewardCommandScope, NativeStewardCommandStatus,
+    NativeStewardCommandTarget,
 };
 pub use tools::{
     NativeApprovalPolicy, NativeApprovalRequest, NativeApprovalRequestId, NativeRuntimeReceiptRef,
