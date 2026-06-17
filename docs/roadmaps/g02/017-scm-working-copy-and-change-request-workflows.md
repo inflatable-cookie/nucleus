@@ -1,6 +1,6 @@
 # 017 SCM Working Copy And Change Request Workflows
 
-Status: planned
+Status: planned-after-016
 Owner: Tom
 Updated: 2026-06-17
 
@@ -51,4 +51,3 @@ the universal SCM model.
 
 Do not mutate shared branches or publish change requests until authority,
 credential, and recovery policy are explicit.
-

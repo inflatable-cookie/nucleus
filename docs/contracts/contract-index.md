@@ -14,7 +14,7 @@ Updated: 2026-06-17
 | `004-model-routing-contract.md` | draft-promoted-first-pass | Model/provider routing layer with first Rust protocol types. |
 | `005-task-contract.md` | draft-promoted-first-pass | Durable task model with first Rust domain types. |
 | `006-workspace-layout-contract.md` | draft-promoted-first-pass | Persisted project workspace layout with first Rust domain types. |
-| `007-server-boundary-contract.md` | draft-promoted-first-pass | Server/host API and control-plane boundary with first Rust types. |
+| `007-server-boundary-contract.md` | draft-promoted-first-pass | Server/host API, control-plane access, DTO, transport, and runtime wrapper boundary. |
 | `008-storage-state-persistence-contract.md` | draft-promoted-first-pass | Persistence domains, record identity, revisions, and journal vocabulary. |
 | `009-adapter-registry-contract.md` | draft-promoted-first-pass | Configured harness adapter registry with first Rust types. |
 | `010-agent-session-lifecycle-contract.md` | draft-promoted-first-pass | Server-owned agent session and turn lifecycle with first Rust types. |
@@ -39,6 +39,20 @@ runtime implementation depends on them:
 - remote host pairing/session contract
 - tool broker, preview, and MCP contract
 - observability and diagnostics contract
+
+## Authority Ownership Notes
+
+`007-server-boundary-contract.md` is a host/API boundary, not the system core.
+When it overlaps focused contracts, the focused contract owns the durable rule:
+
+- `017` owns engine host authority and project authority maps.
+- `018` owns orchestration commands, events, projections, replay, and effect
+  routing.
+- `019` owns conversation and provider timeline identity.
+- `020` owns runtime receipts and side-effect progress evidence.
+- `021` owns checkpoints, diffs, and review snapshots.
+- `022` owns engine, orchestration, and host/server crate boundaries.
+- `011`, `008`, and `002` own SCM/forge, storage, and harness-adapter rules.
 
 Source refs:
 

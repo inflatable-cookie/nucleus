@@ -1,6 +1,6 @@
 # 016 Management Projection File IO And Sync
 
-Status: planned
+Status: planned-after-015
 Owner: Tom
 Updated: 2026-06-17
 
@@ -51,4 +51,3 @@ accepted memory, and accepted research synthesis.
 
 Do not automate SCM push/pull for management files until file IO, validation,
 and conflict reporting are reliable.
-

@@ -14,6 +14,11 @@ project identity, task state, shared memory, structured planning records, deep
 research records, agent sessions, workspace state, command policy, storage
 records, projections, evidence, and harness lifecycle boundaries.
 
+`docs/contracts/007-server-boundary-contract.md` is the host/API boundary, not
+the umbrella system contract. Durable authority is split across focused
+contracts for engine host authority, orchestration, conversation timelines,
+runtime receipts, checkpoints, storage, SCM/forge, and harness adapters.
+
 The engine can run inside multiple host forms:
 
 - embedded desktop host

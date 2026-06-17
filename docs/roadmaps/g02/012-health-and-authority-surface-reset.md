@@ -1,6 +1,6 @@
 # 012 Health And Authority Surface Reset
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 
@@ -26,43 +26,50 @@ several "maybe next" options.
 
 ## Goals
 
-- [ ] Split error-level god files into smaller Rust modules.
-- [ ] Keep behavior unchanged while reducing file size.
-- [ ] Split or redirect broad authority docs where current front doors are too
+- [x] Split error-level god files into smaller Rust modules.
+- [x] Keep behavior unchanged while reducing file size.
+- [x] Split or redirect broad authority docs where current front doors are too
   large to govern new work cleanly.
-- [ ] Normalize roadmap front doors around one ordered G02 runway suite.
-- [ ] Make `effigy doctor` a meaningful health gate again.
+- [x] Normalize roadmap front doors around one ordered G02 runway suite.
+- [x] Make `effigy doctor` a meaningful health gate again.
 
 ## Execution Plan
 
-- [ ] Code health batch: split error-level Rust god files without behavior
+- [x] Code health batch: split error-level Rust god files without behavior
   changes.
-- [ ] Server boundary batch: move durable authority sections out of broad
+- [x] Server boundary batch: move durable authority sections out of broad
   server docs where focused contracts already exist.
-- [ ] Roadmap suite batch: make G02's next suite explicit and remove "maybe
+- [x] Roadmap suite batch: make G02's next suite explicit and remove "maybe
   next" ambiguity.
-- [ ] Validation batch: run doctor, docs QA, targeted Rust tests, and workspace
+- [x] Validation batch: run doctor, docs QA, targeted Rust tests, and workspace
   check.
 
 ## Ready Cards
 
-- `batch-cards/037-error-god-file-module-splits.md`
-- `batch-cards/038-server-boundary-authority-split.md`
-- `batch-cards/039-g02-roadmap-suite-normalization.md`
-- `batch-cards/040-health-reset-validation.md`
+- `batch-cards/037-error-god-file-module-splits.md` - completed
+- `batch-cards/038-server-boundary-authority-split.md` - completed
+- `batch-cards/039-g02-roadmap-suite-normalization.md` - completed
+- `batch-cards/040-health-reset-validation.md` - completed
 
 ## Acceptance Criteria
 
-- [ ] `effigy doctor` no longer reports error-level god-file findings.
-- [ ] Codex protocol, task commands, control response DTOs, and request-handler
+- [x] `effigy doctor` no longer reports error-level god-file findings.
+- [x] Codex protocol, task commands, control response DTOs, and request-handler
   tests are split into focused modules.
-- [ ] Large server authority content has a focused owner or clear redirect.
-- [ ] `docs/roadmaps/README.md` points at one active next task.
-- [ ] No provider process, UI panel, SCM mutation, or remote transport behavior
+- [x] Large server authority content has a focused owner or clear redirect.
+- [x] `docs/roadmaps/README.md` points at one active next task.
+- [x] No provider process, UI panel, SCM mutation, or remote transport behavior
   is added in this milestone.
+
+## Closeout
+
+Completed 2026-06-17.
+
+`effigy doctor` reports no error findings. It still reports 22 warning-level
+oversized files; those are follow-on debt and should be handled only when they
+line up with the next implementation lanes.
 
 ## Gate
 
 Do not start live provider runtime or client transport implementation until
 this health reset is complete.
-

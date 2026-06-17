@@ -33,6 +33,12 @@ Contracts define durable rules and interfaces.
 Research and specs can be provisional. Contracts should only contain rules the
 repo is ready to enforce or design against.
 
+## Authority Split
+
+`007-server-boundary-contract.md` is now the host/API boundary. Durable system
+authority belongs to the focused contracts listed in `contract-index.md`,
+especially `017` through `022`.
+
 ## Current Gaps
 
 See `contract-index.md` for needed contracts found during the 2026-06-17

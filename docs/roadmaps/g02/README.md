@@ -25,15 +25,15 @@ and engine boundary are settled.
 - `007-management-projection-sync-foundation.md` - completed
 - `008-scm-forge-driver-runway.md` - completed
 - `009-harness-runtime-target-selection.md` - completed
-- `010-client-protocol-and-host-transport-runway.md` - planned after `012`
+- `010-client-protocol-and-host-transport-runway.md` - active
 - `011-codex-app-server-runtime-runway.md` - completed
-- `012-health-and-authority-surface-reset.md` - active
+- `012-health-and-authority-surface-reset.md` - completed
 - `013-host-authority-map-and-client-protocol-records.md` - planned after `010`
 - `014-codex-live-runtime-supervision.md` - planned after `013`
 - `015-task-backed-agent-work-unit-proof.md` - planned after `014`
 - `016-management-projection-file-io-and-sync.md` - planned after `015`
 - `017-scm-working-copy-and-change-request-workflows.md` - planned after `016`
-- `018-steward-native-harness-and-effigy-tools.md` - planned after `015`
+- `018-steward-native-harness-and-effigy-tools.md` - planned after `017`
 
 ## Batch Cards
 
@@ -97,19 +97,32 @@ Completed cards:
 - `batch-cards/035-codex-session-lifecycle-identity.md`
 - `batch-cards/036-codex-event-ingestion-fixtures.md`
 
-Ready cards:
+Completed cards:
 
 - `batch-cards/037-error-god-file-module-splits.md`
 - `batch-cards/038-server-boundary-authority-split.md`
 - `batch-cards/039-g02-roadmap-suite-normalization.md`
 - `batch-cards/040-health-reset-validation.md`
 
+Ready cards:
+
+- `batch-cards/042-host-capability-advertisement-records.md`
+
+Planned cards:
+
+- `batch-cards/043-client-auth-posture-records.md`
+- `batch-cards/044-local-transport-selection-runway.md`
+
+Completed cards:
+
+- `batch-cards/041-client-protocol-envelope-profile.md`
+
 ## Planned Runway Sequence
 
 The next G02 suite is:
 
-1. health and authority surface reset
-2. client protocol and host transport records
+1. health and authority surface reset - completed
+2. client protocol and host transport runway - active
 3. host authority map records and client read models
 4. live Codex runtime supervision
 5. task-backed agent work unit proof
@@ -119,6 +132,19 @@ The next G02 suite is:
 
 This keeps code health and authority-map clarity ahead of live provider and
 remote transport work.
+
+## Planning Rules
+
+- `010` is the only active milestone.
+- `010` defines protocol and transport runway
+  shape, not live remote behavior.
+- `013` turns the host authority map and protocol runway into concrete records.
+- `014` is the first live provider runtime milestone.
+- `015` proves the first task-backed agent work unit.
+- `016`, `017`, and `018` then build committable projection file IO,
+  SCM/change-request workflows, and steward/native harness tools.
+- Planned milestones must not get batch cards until their predecessor gate is
+  clear enough to execute.
 
 Keep future cards broad enough to execute meaningful chunks. Do not create
 one-card turns unless the card is risky or blocked.

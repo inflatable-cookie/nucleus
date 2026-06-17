@@ -1,6 +1,6 @@
 # 010 Client Protocol And Host Transport Runway
 
-Status: planned-after-012
+Status: active
 Owner: Tom
 Updated: 2026-06-17
 
@@ -23,7 +23,7 @@ record work is sequenced in
 
 ## Goals
 
-- [ ] Define client protocol versioning and compatibility posture.
+- [x] Define client protocol versioning and compatibility posture.
 - [ ] Separate embedded-host, sidecar-host, remote-authoritative, and
   remote-worker connection modes.
 - [ ] Define host capability advertisement and authority-map publication.
@@ -32,13 +32,28 @@ record work is sequenced in
 
 ## Execution Plan
 
-- [ ] Protocol shape batch: define request/response/event envelope ownership.
+- [x] Protocol shape batch: define request/response/event envelope ownership.
 - [ ] Host capability batch: expose host form, authority domains, and runtime
   readiness through protocol records.
 - [ ] Auth posture batch: define pairing/session/revocation records without
   storing secret material in normal state.
 - [ ] Transport runway batch: choose first local transport implementation and
   compile follow-on cards.
+
+## Batch Cards
+
+Ready cards:
+
+- `batch-cards/042-host-capability-advertisement-records.md`
+
+Planned cards:
+
+- `batch-cards/043-client-auth-posture-records.md`
+- `batch-cards/044-local-transport-selection-runway.md`
+
+Completed cards:
+
+- `batch-cards/041-client-protocol-envelope-profile.md`
 
 ## Acceptance Criteria
 

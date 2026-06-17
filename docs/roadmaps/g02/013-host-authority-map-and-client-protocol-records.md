@@ -1,6 +1,6 @@
 # 013 Host Authority Map And Client Protocol Records
 
-Status: planned
+Status: planned-after-010
 Owner: Tom
 Updated: 2026-06-17
 
@@ -50,4 +50,3 @@ This milestone follows the health reset and complements
 
 Do not start live remote transport until authority-map records and client
 protocol envelopes are stable enough to version.
-

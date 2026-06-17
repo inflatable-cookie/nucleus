@@ -1,6 +1,6 @@
 # 014 Codex Live Runtime Supervision
 
-Status: planned
+Status: planned-after-013
 Owner: Tom
 Updated: 2026-06-17
 
@@ -55,4 +55,3 @@ generalizing to other harnesses.
 
 Do not broaden to Claude, Cursor, OpenCode, Pi, or native personas until the
 Codex live path proves the common runtime spine.
-

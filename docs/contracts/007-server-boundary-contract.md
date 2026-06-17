@@ -16,6 +16,45 @@ This contract keeps the historical `server` name for current crate and API
 surfaces, but new architecture should read it as host API unless a section is
 specifically about `nucleusd` as a daemon.
 
+## Focused Authority Owners
+
+This contract is the server/host API boundary. It no longer owns every durable
+Nucleus rule.
+
+When this file overlaps a focused contract, the focused contract owns the
+durable rule and this file owns only host exposure, access, transport, DTO, or
+runtime wrapper details.
+
+Canonical owners:
+
+- `017-engine-host-authority-contract.md`: engine host forms, authority maps,
+  project authority assignment, and multi-host rules
+- `018-orchestration-contract.md`: command, event, projection, replay, and
+  orchestration effect spine
+- `019-conversation-timeline-contract.md`: task, work item, session, thread,
+  turn, message, activity, and provider-id mapping
+- `020-runtime-receipt-contract.md`: durable runtime receipts, progress events,
+  side-effect evidence, and receipt projection
+- `021-checkpoint-diff-contract.md`: checkpoint, diff, review snapshot, and
+  task/turn linkage
+- `022-engine-orchestration-boundary-contract.md`: portable engine,
+  orchestration crate, host/server crate, and effect-port ownership
+- `011-scm-forge-sync-contract.md`: SCM, forge, work-session, branch,
+  worktree, change-request, publication, and review workflow rules
+- `008-storage-state-persistence-contract.md`: storage domains, record
+  identity, repository traits, backend adapters, revisions, and journals
+- `002-harness-adapter-contract.md`: harness adapter identity, transports,
+  capability discovery, provider event identity, and adapter recovery
+
+Remaining server-boundary ownership until a focused contract supersedes it:
+
+- client auth, pairing, revocation, and access endpoint surfaces
+- server control API command/query DTOs and transport-safe envelopes
+- local command execution, sandbox, artifact, process supervision, and host
+  spawn readiness wrapper rules
+- secret material resolution as a host runtime boundary
+- runtime diagnostics and local proof surfaces
+
 ## Host Authority Rule
 
 Host connection does not imply project authority.
@@ -94,6 +133,32 @@ Initial client kinds:
 - mobile
 - CLI
 - service
+
+## Client Protocol Boundary
+
+The client protocol names the message envelope shape shared by embedded,
+sidecar, local, and future remote clients.
+
+The first profile is `nucleus.client` v1 and is exact-version only until an
+upgrade contract exists.
+
+Initial protocol message kinds:
+
+- control request
+- control response
+- server event
+
+Protocol records are boundary records. They do not grant project authority,
+replace engine host authority, choose a transport, implement subscriptions,
+authenticate clients, or own durable state.
+
+DTOs remain transport-safe payload shapes. Durable command, query, event,
+receipt, timeline, checkpoint, and authority rules stay in the focused
+contracts listed above.
+
+Server event envelopes may name replay tokens so clients can request catch-up,
+but replay authority belongs to the orchestration and event-replay surfaces,
+not to the client renderer.
 
 ## Client Auth And Pairing Boundary
 

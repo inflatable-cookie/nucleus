@@ -1,6 +1,6 @@
 # 018 Steward Native Harness And Effigy Tools
 
-Status: planned
+Status: planned-after-017
 Owner: Tom
 Updated: 2026-06-17
 
@@ -51,3 +51,5 @@ harness.
 Do not grant autonomous mutation authority until steward proposals, review,
 receipts, and rollback/recovery behavior are proven.
 
+Do not start before the committable projection and SCM workflow lanes are
+stable enough for the steward to assist with real project hygiene.

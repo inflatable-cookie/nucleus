@@ -10,10 +10,12 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `037-error-god-file-module-splits.md`
-- `038-server-boundary-authority-split.md`
-- `039-g02-roadmap-suite-normalization.md`
-- `040-health-reset-validation.md`
+- `042-host-capability-advertisement-records.md`
+
+## Planned Cards
+
+- `043-client-auth-posture-records.md`
+- `044-local-transport-selection-runway.md`
 
 These cards belong to `../012-health-and-authority-surface-reset.md`.
 
@@ -55,3 +57,8 @@ These cards belong to `../012-health-and-authority-surface-reset.md`.
 - `034-codex-adapter-registry-descriptor.md`
 - `035-codex-session-lifecycle-identity.md`
 - `036-codex-event-ingestion-fixtures.md`
+- `037-error-god-file-module-splits.md`
+- `038-server-boundary-authority-split.md`
+- `039-g02-roadmap-suite-normalization.md`
+- `040-health-reset-validation.md`
+- `041-client-protocol-envelope-profile.md`

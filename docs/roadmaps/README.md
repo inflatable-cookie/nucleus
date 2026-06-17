@@ -14,15 +14,15 @@ shape.
 - `g02/007-management-projection-sync-foundation.md` - completed
 - `g02/008-scm-forge-driver-runway.md` - completed
 - `g02/009-harness-runtime-target-selection.md` - completed
-- `g02/010-client-protocol-and-host-transport-runway.md` - planned
+- `g02/010-client-protocol-and-host-transport-runway.md` - active
 - `g02/011-codex-app-server-runtime-runway.md` - completed
-- `g02/012-health-and-authority-surface-reset.md` - active
-- `g02/013-host-authority-map-and-client-protocol-records.md` - planned
-- `g02/014-codex-live-runtime-supervision.md` - planned
-- `g02/015-task-backed-agent-work-unit-proof.md` - planned
-- `g02/016-management-projection-file-io-and-sync.md` - planned
-- `g02/017-scm-working-copy-and-change-request-workflows.md` - planned
-- `g02/018-steward-native-harness-and-effigy-tools.md` - planned
+- `g02/012-health-and-authority-surface-reset.md` - completed
+- `g02/013-host-authority-map-and-client-protocol-records.md` - planned after `010`
+- `g02/014-codex-live-runtime-supervision.md` - planned after `013`
+- `g02/015-task-backed-agent-work-unit-proof.md` - planned after `014`
+- `g02/016-management-projection-file-io-and-sync.md` - planned after `015`
+- `g02/017-scm-working-copy-and-change-request-workflows.md` - planned after `016`
+- `g02/018-steward-native-harness-and-effigy-tools.md` - planned after `017`
 
 ## Previous Generation
 
@@ -81,5 +81,5 @@ shape.
 
 ## Next Task
 
-Execute `g02/012-health-and-authority-surface-reset.md`, starting with
-`g02/batch-cards/037-error-god-file-module-splits.md`.
+Continue `g02/010-client-protocol-and-host-transport-runway.md`, starting with
+`g02/batch-cards/042-host-capability-advertisement-records.md`.

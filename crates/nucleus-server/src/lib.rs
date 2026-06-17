@@ -7,6 +7,7 @@ pub mod artifact_store_backend;
 pub mod authority;
 pub mod checkpoint_diff_state;
 pub mod client_auth;
+pub mod client_protocol;
 pub mod clients;
 pub mod command_artifacts;
 pub mod command_evidence_state;
@@ -69,6 +70,12 @@ pub use client_auth::{
     ClientAuthDeploymentPolicy, ClientAuthPosture, ClientAuthReadiness, ClientAuthReadinessBlocker,
     ClientAuthReadinessStatus, ClientAuthRecordId, ClientAuthSessionId, ClientAuthSessionRecord,
     ClientPairingId, ClientPairingMode, ClientPairingRecord, ClientRevocationRecord,
+};
+pub use client_protocol::{
+    ClientProtocolAuthority, ClientProtocolCompatibility, ClientProtocolEnvelopeField,
+    ClientProtocolMessageKind, ClientProtocolMessageShape, ClientProtocolProfile,
+    ClientProtocolReadiness, ClientProtocolReadinessBlocker, ClientProtocolReadinessStatus,
+    CLIENT_PROTOCOL_FAMILY, CLIENT_PROTOCOL_VERSION_V1,
 };
 pub use clients::{ClientConnection, ClientIdentity, ClientKind};
 pub use command_artifacts::{ServerCommandArtifactRecord, ServerCommandArtifactResolution};

@@ -1,6 +1,6 @@
 # 037 Error God File Module Splits
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 Milestone: `../012-health-and-authority-surface-reset.md`
@@ -42,3 +42,21 @@ behavior.
   movement.
 - Stop if behavior changes become necessary to compile.
 
+## Outcome
+
+Split the four error-level god files without behavior changes:
+
+- `crates/nucleus-agent-protocol/src/codex.rs` now fronts
+  `codex/types.rs`, `codex/lifecycle.rs`, `codex/fixtures.rs`, and
+  `codex/tests.rs`.
+- `crates/nucleus-engine/src/task_commands.rs` now fronts
+  `task_commands/model.rs`, `task_commands/service.rs`,
+  `task_commands/helpers.rs`, and `task_commands/tests.rs`.
+- `crates/nucleus-server/src/control_envelope_dto/response.rs` now fronts
+  `response/envelope.rs`, `response/body.rs`, `response/records.rs`, and
+  `response/helpers.rs`.
+- `crates/nucleus-server/src/request_handler/tests.rs` now keeps shared
+  fixtures and delegates test groups to focused files under
+  `request_handler/tests/`.
+
+`effigy doctor` now reports zero error findings for god files.

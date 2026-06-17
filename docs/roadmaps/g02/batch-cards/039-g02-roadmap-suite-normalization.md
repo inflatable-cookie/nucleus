@@ -1,6 +1,6 @@
 # 039 G02 Roadmap Suite Normalization
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 Milestone: `../012-health-and-authority-surface-reset.md`
@@ -37,3 +37,15 @@ ad-hoc lane selection.
 
 - Stop if the planned sequence conflicts with current architecture contracts.
 
+## Outcome
+
+Completed 2026-06-17.
+
+The G02 front doors now agree that `012` is the only active milestone. The
+planned runway now flows through client protocol, authority-map records, live
+Codex supervision, task-backed work units, management projection file IO, SCM
+workflows, and steward/native harness tools.
+
+The root roadmap, G02 front door, planned milestone statuses, and long-term
+plan all carry the same order. Planned milestones still have no new batch cards
+before their gates are met.

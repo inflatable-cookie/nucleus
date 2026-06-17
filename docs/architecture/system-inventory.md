@@ -136,6 +136,10 @@ Updated: 2026-06-16
   services from host API wrappers. For now, read "server-owned" entries below
   as "authoritative engine host owned" unless the entry specifically refers to
   `nucleusd` as a daemon.
+  Durable authority should resolve through focused contracts before the broad
+  server boundary: `017` for host authority, `018` for orchestration, `019` for
+  conversation timelines, `020` for runtime receipts, `021` for checkpoints,
+  and `022` for engine/orchestration/host crate ownership.
   It now includes a local host-owned state service facade over
   `nucleus-local-store` backend adapters for the
   first persisted domains. The facade keeps repository handles out of the

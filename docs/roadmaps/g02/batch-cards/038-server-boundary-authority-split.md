@@ -1,6 +1,6 @@
 # 038 Server Boundary Authority Split
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 Milestone: `../012-health-and-authority-surface-reset.md`
@@ -38,3 +38,16 @@ focused contracts.
 - Stop if ownership cannot be made clear without changing the underlying
   architecture decision.
 
+## Outcome
+
+Completed 2026-06-17.
+
+`docs/contracts/007-server-boundary-contract.md` now identifies itself as the
+host/API boundary and points durable authority to focused owners for host
+authority, orchestration, conversation timelines, runtime receipts,
+checkpoints, engine/orchestration crate boundaries, SCM/forge, storage, and
+harness adapters.
+
+The contract index, contracts front door, and architecture inventory now carry
+the same split so future work does not treat the broad server boundary as the
+system core.

@@ -23,6 +23,26 @@ created inside an approved phase when the phase is ready for execution.
   depends on them.
 - Keep T3 Code as a specimen, not a template to clone blindly.
 
+## Current G02 Runway
+
+G02 is the orchestration and engine-core generation. The current runway is:
+
+1. `012-health-and-authority-surface-reset.md` - completed
+2. `010-client-protocol-and-host-transport-runway.md` - active
+3. `013-host-authority-map-and-client-protocol-records.md`
+4. `014-codex-live-runtime-supervision.md`
+5. `015-task-backed-agent-work-unit-proof.md`
+6. `016-management-projection-file-io-and-sync.md`
+7. `017-scm-working-copy-and-change-request-workflows.md`
+8. `018-steward-native-harness-and-effigy-tools.md`
+
+Only `010` is active. Later milestones are planned and should not receive
+batch cards until the predecessor gate is clear.
+
+This order intentionally pulls client protocol and authority-map records ahead
+of live provider work so embedded, sidecar, and remote host behavior share the
+same vocabulary before runtime supervision expands.
+
 ## Phase 0: Reassessment And Planning Base
 
 Goal: make the planning base trustworthy.
@@ -166,6 +186,10 @@ Exit criteria:
 
 - steward can propose and perform limited project-organization work with
   evidence and review
+
+Current roadmap coverage:
+
+- `g02/018-steward-native-harness-and-effigy-tools.md`
 
 ## Phase 6: Client Protocol And Multi-Host Transport
 

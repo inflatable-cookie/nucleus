@@ -1,6 +1,6 @@
 # 015 Task-Backed Agent Work Unit Proof
 
-Status: planned
+Status: planned-after-014
 Owner: Tom
 Updated: 2026-06-17
 
@@ -48,4 +48,3 @@ checkpoints, and reviewable outcome.
 
 Do not add broad autonomous task execution until one operator-controlled work
 unit is reliable and replayable.
-

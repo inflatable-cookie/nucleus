@@ -1,6 +1,6 @@
 # 040 Health Reset Validation
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 Milestone: `../012-health-and-authority-surface-reset.md`
@@ -38,3 +38,22 @@ Close the health reset after code and docs splits are complete.
 
 - Stop if doctor still has error findings after the planned splits.
 
+## Outcome
+
+Completed 2026-06-17.
+
+Validation passed:
+
+- `effigy doctor`: 0 errors, 22 warning-level god-file findings
+- `effigy qa:docs`
+- `effigy qa:northstar`
+- `cargo check --workspace`
+- `cargo test -p nucleus-agent-protocol`
+- `cargo test -p nucleus-engine`
+- `cargo test -p nucleus-server`
+
+Remaining warning-level file-size pressure is follow-on debt, not a blocker for
+starting the client protocol and host transport runway. The largest remaining
+warnings are in task storage codec, management projection, desktop CSS/Tauri
+shell, SQLite storage, Codex adapter fixtures, control DTOs, request-handler
+queries, and runtime diagnostics surfaces.
