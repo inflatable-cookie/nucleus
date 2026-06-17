@@ -172,6 +172,44 @@ code editor panels attach to host-authorized file and language-service state.
 SCM changes, diff, and commit panels attach to the authoritative SCM host,
 command authority, and review workflow state.
 
+Command diagnostics panels are client-rendered read-only surfaces over the
+host command history DTO. They render evidence rows, evidence detail, sanitized
+summary, status, retention, and artifact refs. They do not decode storage
+records, fetch artifact payloads, stream command output, or become command
+authority.
+
+The first desktop command diagnostics panel is a disposable proof surface. It
+may keep selected evidence id, loading state, and last error in Svelte state,
+but command records, evidence identity, retention, and artifact refs come from
+Rust control DTOs. Replacing the panel must not require server migration or
+state repair.
+
+Command diagnostics list/detail behavior:
+
+- list rows show evidence id, command request id, status, exit status,
+  retention, summary preview, and artifact-ref presence
+- detail view shows the same DTO fields plus full sanitized summary and exact
+  artifact ref strings
+- empty, unsupported, unauthorized, and failed query states stay visually
+  distinct
+- refresh requests the latest command history through the control helper
+- command execution, cancellation, retry, approval, artifact payload download,
+  PTY views, and streaming output stay absent until separate contracts exist
+
+Runtime readiness diagnostics are a separate read-only client surface. Command
+history answers what happened; runtime readiness answers what the current host
+can safely do, what is blocked, and which sanitized repair hints apply. The
+first DTO projects local host command execution readiness from sandbox,
+artifact store, event transport, and process-control descriptors. It exposes
+host id, runtime surface, status, blockers, evidence refs, repair hints, and
+summary only.
+
+The first desktop runtime readiness panel is a disposable proof surface over
+that DTO. It may keep selected host id, loading state, and last error in
+Svelte state, but readiness identity, status, blockers, evidence refs, hints,
+and summary come from Rust control DTOs. It must not expose runtime repair,
+command approval, artifact payload, PTY, or streaming controls.
+
 The desktop client may use TypeScript-heavy editor and UI libraries. Rust
 engine/host APIs remain the authority boundary for durable state, filesystem
 access, command execution, SCM mutation, language-server process lifecycle,

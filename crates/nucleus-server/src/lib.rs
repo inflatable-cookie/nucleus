@@ -43,6 +43,7 @@ pub mod runtime_effect_retention;
 pub mod runtime_effect_storage;
 pub mod runtime_effect_subscriptions;
 pub mod runtime_effect_transport;
+pub mod runtime_readiness_diagnostics;
 pub mod sandbox_backend;
 pub mod scheduler;
 pub mod secret_store;
@@ -196,6 +197,10 @@ pub use runtime_effect_transport::{
     RuntimeEffectTransportAuthBlocker, RuntimeEffectTransportBoundaryGuarantee,
     RuntimeEffectTransportCapability, RuntimeEffectTransportFamily, RuntimeEffectTransportProfile,
     RuntimeEffectTransportSelectionCriteria,
+};
+pub use runtime_readiness_diagnostics::{
+    local_host_runtime_readiness_diagnostics, RuntimeReadinessBlocker, RuntimeReadinessDiagnostics,
+    RuntimeReadinessStatus, RuntimeReadinessSurface,
 };
 pub use sandbox_backend::{SandboxBackendEvidenceRef, SandboxBackendKind, SandboxBackendReadiness};
 pub use scheduler::{

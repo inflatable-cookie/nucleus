@@ -200,6 +200,26 @@ metadata by cursor. It does not provide live subscriptions, event fanout,
 network transport, Tauri IPC, request handling, scheduling, command execution,
 or provider runtime behavior.
 
+Runtime readiness diagnostics are a read-only server query surface. They
+project host readiness descriptors into client-safe records with:
+
+- host id
+- runtime surface
+- readiness status
+- sanitized blockers
+- evidence refs
+- sanitized repair hints
+- summary
+
+Readiness diagnostics do not grant command approval, execute commands, expose
+artifact payloads, expose credentials, stream output, or let clients infer
+that a blocked runtime can be bypassed.
+
+The first runtime readiness query is local host command execution readiness.
+It maps local host discovery descriptors for sandbox, artifact storage, event
+transport, and process control into a typed control DTO. Unsupported local
+runtime state remains explicit and client-renderable.
+
 ## Command Execution Authority
 
 The server owns local command execution authority.
@@ -315,6 +335,59 @@ artifact resolution contract and must not be implied by the history list.
 
 Clients may render command history from this DTO. Clients must not decode
 command evidence storage records directly.
+
+## Command Diagnostics Client Read Model
+
+Command diagnostics clients render a read-only view over command history. The
+read model maps from command evidence DTOs and does not add authority.
+
+List rows may show:
+
+- evidence id
+- command request id
+- status
+- exit status
+- retention mode
+- one-line sanitized summary when present
+- stdout artifact ref presence
+- stderr artifact ref presence
+
+Detail views may show:
+
+- all list-row fields
+- full sanitized summary
+- exact stdout artifact ref string when present
+- exact stderr artifact ref string when present
+- raw-output availability as `not_retained`
+- artifact resolution status only after a later artifact contract provides it
+
+Empty states must distinguish:
+
+- no command evidence exists
+- command history query failed
+- command history query is unsupported by the connected host
+- command history is unavailable because the client is not authorized for the
+  evidence domain
+
+Refresh is pull-based for the first diagnostics surface. Clients may request
+the latest command history after command submission, focus, reconnect, or user
+refresh. Live subscriptions and streaming output require later event transport
+contracts.
+
+The read model must not expose:
+
+- raw stdout
+- raw stderr
+- process transcripts
+- environment values
+- credentials
+- storage payload bytes
+- storage revision metadata
+- shell command strings synthesized from executable and argv
+
+Command diagnostics panels must not offer execution, cancellation, retry,
+artifact download, or approval controls until those actions have explicit
+server command contracts.
 
 ## Command Fixture Policy
 

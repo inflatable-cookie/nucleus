@@ -30,7 +30,8 @@ pub use projects::ControlProjectRecordDto;
 pub use records::ControlStateRecordDto;
 pub use response::{
     ControlCommandEvidenceRecordDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
-    ControlResponseStatusDto,
+    ControlResponseStatusDto, ControlRuntimeReadinessBlockerDto,
+    ControlRuntimeReadinessDiagnosticDto,
 };
 pub use tasks::ControlTaskRecordDto;
 
@@ -134,6 +135,12 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                     action: "list_command_evidence".to_owned(),
                 })
             }
+            ServerQueryKind::RuntimeMetadata(RuntimeMetadataQuery::GetLocalRuntimeReadiness) => {
+                Ok(Self::RuntimeMetadata {
+                    query_id: query.id.0.clone(),
+                    action: "get_local_runtime_readiness".to_owned(),
+                })
+            }
             _ => Err(ControlApiCodecError::unsupported(
                 "query shape is not supported by the first control envelope",
             )),
@@ -186,6 +193,9 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
                 )),
                 "list_command_evidence" => Ok(ServerQueryKind::RuntimeMetadata(
                     RuntimeMetadataQuery::ListCommandEvidence,
+                )),
+                "get_local_runtime_readiness" => Ok(ServerQueryKind::RuntimeMetadata(
+                    RuntimeMetadataQuery::GetLocalRuntimeReadiness,
                 )),
                 _ => Err(ControlApiCodecError::unsupported(
                     "runtime metadata action is not supported",

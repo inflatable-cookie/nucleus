@@ -4,7 +4,10 @@ export const CONTROL_PROTOCOL_FAMILY = "nucleus.control";
 export const CONTROL_PROTOCOL_VERSION = 1;
 export const CONTROL_CLIENT_ID = "client:desktop";
 
-export type RuntimeMetadataAction = "list_artifact_metadata" | "list_command_evidence";
+export type RuntimeMetadataAction =
+  | "list_artifact_metadata"
+  | "list_command_evidence"
+  | "get_local_runtime_readiness";
 export type ControlStateDomain = "projects" | "tasks" | "workspaces";
 export type ControlTaskTransitionAction = "start" | "block" | "complete" | "archive";
 
@@ -27,6 +30,33 @@ export type ControlTaskRecordDto = {
   assignment_intent: string | null;
   agent_ready: boolean;
   revision_id: string;
+};
+
+export type ControlCommandEvidenceRecordDto = {
+  evidence_id: string;
+  command_request_id: string;
+  status: string;
+  exit_status: number | null;
+  retention: string;
+  summary: string | null;
+  stdout_artifact_ref: string | null;
+  stderr_artifact_ref: string | null;
+};
+
+export type ControlRuntimeReadinessBlockerDto = {
+  source: string;
+  code: string;
+  message: string;
+};
+
+export type ControlRuntimeReadinessDiagnosticDto = {
+  host_id: string;
+  runtime_surface: string;
+  status: string;
+  blockers: ControlRuntimeReadinessBlockerDto[];
+  evidence_refs: string[];
+  repair_hints: string[];
+  summary: string | null;
 };
 
 export type ControlQueryDto =
@@ -83,10 +113,62 @@ export type ControlResponseEnvelopeDto = {
         type: "task_records";
         records: ControlTaskRecordDto[];
       }
+    | {
+        type: "command_evidence_records";
+        records: ControlCommandEvidenceRecordDto[];
+      }
+    | {
+        type: "runtime_readiness_diagnostics";
+        records: ControlRuntimeReadinessDiagnosticDto[];
+      }
     | { type: "state_records"; domain: string; records: unknown[] }
     | { type: "command_receipt"; command_id: string; status: string }
     | { type: "error"; kind: string; reason: string };
 };
+
+export type CommandHistoryQueryResult =
+  | {
+      state: "records";
+      records: ControlCommandEvidenceRecordDto[];
+    }
+  | {
+      state: "empty";
+    }
+  | {
+      state: "unsupported";
+      reason: string;
+    }
+  | {
+      state: "error";
+      kind: string;
+      reason: string;
+    }
+  | {
+      state: "unexpected";
+      reason: string;
+    };
+
+export type RuntimeReadinessQueryResult =
+  | {
+      state: "records";
+      records: ControlRuntimeReadinessDiagnosticDto[];
+    }
+  | {
+      state: "empty";
+    }
+  | {
+      state: "unsupported";
+      reason: string;
+    }
+  | {
+      state: "error";
+      kind: string;
+      reason: string;
+    }
+  | {
+      state: "unexpected";
+      reason: string;
+    };
 
 function buildControlQueryEnvelope(query: ControlQueryDto): ControlRequestEnvelopeDto {
   const suffix = crypto.randomUUID();
@@ -148,6 +230,14 @@ export function buildArtifactMetadataProbe(): ControlRequestEnvelopeDto {
   return buildRuntimeMetadataQuery("list_artifact_metadata");
 }
 
+export function buildCommandHistoryQuery(): ControlRequestEnvelopeDto {
+  return buildRuntimeMetadataQuery("list_command_evidence");
+}
+
+export function buildRuntimeReadinessQuery(): ControlRequestEnvelopeDto {
+  return buildRuntimeMetadataQuery("get_local_runtime_readiness");
+}
+
 export function buildTaskTransitionCommand(
   task: ControlTaskRecordDto,
   action: ControlTaskTransitionAction,
@@ -198,4 +288,74 @@ export function taskRecordsFromResponse(
   response: ControlResponseEnvelopeDto,
 ): ControlTaskRecordDto[] {
   return response.body.type === "task_records" ? response.body.records : [];
+}
+
+export function commandHistoryFromResponse(
+  response: ControlResponseEnvelopeDto,
+): CommandHistoryQueryResult {
+  switch (response.body.type) {
+    case "command_evidence_records":
+      return {
+        state: "records",
+        records: response.body.records,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return {
+        state: "unsupported",
+        reason: response.body.reason,
+      };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected command history response: ${response.body.type}`,
+      };
+  }
+}
+
+export function runtimeReadinessFromResponse(
+  response: ControlResponseEnvelopeDto,
+): RuntimeReadinessQueryResult {
+  switch (response.body.type) {
+    case "runtime_readiness_diagnostics":
+      return {
+        state: "records",
+        records: response.body.records,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return {
+        state: "unsupported",
+        reason: response.body.reason,
+      };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected runtime readiness response: ${response.body.type}`,
+      };
+  }
+}
+
+export async function queryCommandHistory(): Promise<CommandHistoryQueryResult> {
+  const response = await submitControlEnvelope(buildCommandHistoryQuery());
+  return commandHistoryFromResponse(response);
+}
+
+export async function queryRuntimeReadiness(): Promise<RuntimeReadinessQueryResult> {
+  const response = await submitControlEnvelope(buildRuntimeReadinessQuery());
+  return runtimeReadinessFromResponse(response);
 }

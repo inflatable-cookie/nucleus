@@ -17,6 +17,7 @@ use crate::read_only_command_control::ReadOnlyCommandControlResult;
 use crate::runtime_effect_storage::{
     RuntimeEffectStorageQuery, RuntimeEffectStorageRecordId, RuntimeEffectStorageRef,
 };
+use crate::runtime_readiness_diagnostics::RuntimeReadinessDiagnostics;
 use crate::state::ServerStateDomain;
 
 /// Request sent to the server control boundary.
@@ -98,6 +99,7 @@ pub enum RuntimeMetadataQuery {
     ResolveRuntimeRef(RuntimeEffectStorageRef),
     ListCommandEvidence,
     ListArtifactMetadata,
+    GetLocalRuntimeReadiness,
 }
 
 /// Response emitted by the server control boundary.
@@ -148,6 +150,7 @@ pub enum ServerQueryResult {
     AdapterSessions(ServerStateRecordSet),
     ModelRoutes(ServerStateRecordSet),
     RuntimeMetadata(ServerStateRecordSet),
+    RuntimeReadiness(Vec<RuntimeReadinessDiagnostics>),
     Empty,
     Unsupported { reason: String },
 }

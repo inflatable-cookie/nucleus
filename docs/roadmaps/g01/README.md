@@ -49,6 +49,9 @@ Updated: 2026-06-16
 - `041-nucleusd-constrained-read-only-command-input.md`
 - `042-read-only-command-history-query-shape.md`
 - `043-command-diagnostics-client-read-model.md`
+- `044-command-diagnostics-panel-hardening.md`
+- `045-runtime-readiness-diagnostics-query-shape.md`
+- `046-runtime-readiness-diagnostics-panel.md`
 
 ## Batch Cards
 

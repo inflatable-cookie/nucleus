@@ -48,6 +48,9 @@ shape.
 - `g01/041-nucleusd-constrained-read-only-command-input.md`
 - `g01/042-read-only-command-history-query-shape.md`
 - `g01/043-command-diagnostics-client-read-model.md`
+- `g01/044-command-diagnostics-panel-hardening.md`
+- `g01/045-runtime-readiness-diagnostics-query-shape.md`
+- `g01/046-runtime-readiness-diagnostics-panel.md`
 
 ## Index
 
@@ -55,4 +58,5 @@ shape.
 
 ## Next Task
 
-Define command diagnostics client read model.
+Take stock after the runtime diagnostics tranche and compile the stable longer
+term plan list.

@@ -27,6 +27,45 @@ Diagnostics can issue read-only runtime metadata queries and project, task, or
 workspace list queries. The TypeScript helpers only construct DTOs and invoke
 Tauri; they do not own or reinterpret server state.
 
+Command history now has a typed desktop helper. `queryCommandHistory` requests
+`list_command_evidence`, parses the typed command evidence response, and
+returns explicit records, empty, unsupported, error, or unexpected states.
+Desktop code must use that helper instead of decoding command evidence storage
+records.
+
+The first command diagnostics panel should be read-only. It may render command
+history rows, selected evidence detail, sanitized summaries, status, exit
+status, retention mode, and artifact refs. It must not expose command run,
+cancel, retry, approval, artifact download, PTY, or streaming controls.
+
+Rust owns command history records, command authority, artifact resolution,
+runtime execution, storage payloads, and IPC routing. Svelte owns only local
+view state such as selected evidence id, loading state, last error, and
+refresh intent. The panel can be replaced later without changing server state
+or storage.
+
+The first disposable command diagnostics panel now exists. It uses
+`queryCommandHistory`, renders typed command evidence records, and keeps all
+selection/loading/error state local to Svelte. It is still proof UI, not final
+diagnostics design.
+
+Desktop startup now seeds one deterministic sanitized command evidence record
+through Rust server state so the panel is useful in a local bootstrap install.
+The seed does not execute a command, retain raw output, or create artifact
+payloads.
+
+Runtime readiness now has a typed desktop helper. `queryRuntimeReadiness`
+requests `get_local_runtime_readiness`, parses typed readiness diagnostics,
+and returns explicit records, empty, unsupported, error, or unexpected states.
+It exposes host id, runtime surface, status, blockers, evidence refs, repair
+hints, and summary only. It must not become a runtime repair or command
+approval path.
+
+The first disposable runtime readiness panel now exists. It renders typed
+readiness records, blockers, evidence refs, hints, and status from the helper.
+It is read-only proof UI and does not expose runtime repair, command approval,
+artifact payload, PTY, or streaming controls.
+
 The project switcher is deferred until Rust exposes display-ready project
 records and an intentional local seed or create path.
 

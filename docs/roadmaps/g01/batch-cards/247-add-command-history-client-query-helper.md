@@ -1,6 +1,6 @@
 # 247 Add Command History Client Query Helper
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 
@@ -30,3 +30,10 @@ storage records.
 
 - Desktop or IPC code can request command history through a helper.
 - No client code decodes `CommandEvidence` storage payloads.
+
+## Outcome
+
+The desktop control helper layer now has a typed command history query builder,
+command evidence DTO type, explicit response parser, and `queryCommandHistory`
+helper. A desktop Rust test proves the IPC path returns the typed command
+evidence response variant without exposing storage payloads.

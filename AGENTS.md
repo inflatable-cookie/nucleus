@@ -61,6 +61,21 @@ Keep the active `## Next Task` pointer only in `docs/roadmaps/README.md`.
 Do not duplicate it into README files, contracts, specs, research notes,
 architecture docs, batch cards, or other docs front doors.
 
+## Batch Size Rule
+
+Work in complete, meaningful chunks.
+
+- before editing, inspect the current ready card plus nearby planned cards
+- plan a multi-card stretch when the cards are small or tightly related
+- execute several related cards in one turn when validation can cover them
+  together
+- avoid one-card turns unless the card is genuinely large, risky, blocked, or
+  the operator explicitly asks for a narrow step
+- close and advance multiple cards together when they form one coherent lane
+- run validation after the full chunk, not after each tiny edit
+- if the work starts becoming nitpicky, pause and re-scope around the broader
+  lane goal before continuing
+
 ## Planning Ambiguity Rule
 
 When planning is needed and the next direction is not settled in the repo's

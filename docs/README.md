@@ -18,7 +18,7 @@ The repo uses:
 
 ## Current Lane
 
-`roadmaps/g01/043-command-diagnostics-client-read-model.md`
+Reassessment pause after `roadmaps/g01/046-runtime-readiness-diagnostics-panel.md`.
 
 ## Guardrail
 

@@ -99,11 +99,10 @@ nav a:hover {
 
 .panel-grid {
   display: grid;
-  grid-template-columns:
-    minmax(18rem, 24rem) minmax(20rem, 30rem) minmax(18rem, 26rem)
-    minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
   gap: var(--poodle-space-stack-md);
   min-width: 0;
+  overflow: auto;
 }
 
 .diagnostics-panel {

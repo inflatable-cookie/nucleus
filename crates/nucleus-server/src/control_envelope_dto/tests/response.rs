@@ -5,6 +5,8 @@ use crate::control_api::{
 use crate::control_envelope_dto::*;
 use crate::ids::{ServerCommandId, ServerControlRequestId};
 use crate::read_only_command_control::ReadOnlyCommandControlResult;
+use crate::runtime_readiness_diagnostics::local_host_runtime_readiness_diagnostics;
+use crate::{unsupported_local_host_runtime_discovery, EngineHostId};
 use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
 use nucleus_local_store::{LocalStoreRecord, LocalStoreRecordPayload};
 use nucleus_projects::{
@@ -259,4 +261,46 @@ fn response_envelope_dto_serializes_command_evidence_records_without_raw_output(
     assert!(!json.contains("raw_stdout"));
     assert!(!json.contains("raw_stderr"));
     assert!(!json.contains("raw_output"));
+}
+
+#[test]
+fn response_envelope_dto_serializes_runtime_readiness_without_payloads() {
+    let diagnostics = local_host_runtime_readiness_diagnostics(
+        &unsupported_local_host_runtime_discovery(EngineHostId("host:local".to_owned())),
+    );
+    let response = ServerControlResponse {
+        request_id: ServerControlRequestId("request:dto:runtime-readiness".to_owned()),
+        status: ServerControlResponseStatus::Complete,
+        body: ServerControlResponseBody::Query(ServerQueryResult::RuntimeReadiness(vec![
+            diagnostics,
+        ])),
+    };
+
+    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
+    let json = serde_json::to_string(&dto).expect("json");
+
+    assert!(matches!(
+        dto.body,
+        ControlResponseBodyDto::RuntimeReadinessDiagnostics { records }
+            if records.len() == 1
+                && records[0].host_id == "host:local"
+                && records[0].runtime_surface == "local_host_command_execution"
+                && records[0].status == "unsupported"
+                && records[0].blockers.iter().any(|blocker| blocker.code == "sandbox_backend_unsupported")
+                && records[0].evidence_refs.iter().any(|item| item == "evidence:host:local:local-host-runtime:unsupported")
+    ));
+    for forbidden in [
+        "raw_stdout",
+        "raw_stderr",
+        "payload",
+        "bytes",
+        "credential",
+        "secret",
+        "environment",
+    ] {
+        assert!(
+            !json.contains(forbidden),
+            "runtime readiness DTO should not contain {forbidden}"
+        );
+    }
 }

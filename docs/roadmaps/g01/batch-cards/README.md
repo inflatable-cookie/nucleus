@@ -4,11 +4,11 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 
 ## Current Card
 
-- `docs/roadmaps/g01/batch-cards/246-define-command-diagnostics-client-read-model.md`
+Reassessment pause after `docs/roadmaps/g01/batch-cards/265-verify-readiness-panel-and-reassess.md`.
 
 ## Ready Cards
 
-- `docs/roadmaps/g01/batch-cards/246-define-command-diagnostics-client-read-model.md`
+No ready card. Take stock before opening the next implementation lane.
 
 ## Completed Cards
 
@@ -188,10 +188,27 @@ Active strict-lane batch cards live in `docs/roadmaps/g01/batch-cards/`.
 - `docs/roadmaps/g01/batch-cards/243-add-nucleusd-command-history-query-output.md`
 - `docs/roadmaps/g01/batch-cards/244-test-command-history-raw-output-absence.md`
 - `docs/roadmaps/g01/batch-cards/245-reassess-desktop-command-diagnostics-readiness.md`
-
-## Planned Cards
-
+- `docs/roadmaps/g01/batch-cards/246-define-command-diagnostics-client-read-model.md`
 - `docs/roadmaps/g01/batch-cards/247-add-command-history-client-query-helper.md`
 - `docs/roadmaps/g01/batch-cards/248-draft-read-only-command-diagnostics-panel-boundary.md`
 - `docs/roadmaps/g01/batch-cards/249-test-command-diagnostics-storage-decoupling.md`
 - `docs/roadmaps/g01/batch-cards/250-reassess-disposable-desktop-command-panel.md`
+- `docs/roadmaps/g01/batch-cards/251-add-desktop-command-evidence-seed.md`
+- `docs/roadmaps/g01/batch-cards/252-render-seeded-command-diagnostics.md`
+- `docs/roadmaps/g01/batch-cards/253-verify-command-diagnostics-panel.md`
+- `docs/roadmaps/g01/batch-cards/254-add-forbidden-command-control-regression.md`
+- `docs/roadmaps/g01/batch-cards/255-reassess-next-runtime-diagnostics-lane.md`
+- `docs/roadmaps/g01/batch-cards/256-define-runtime-readiness-diagnostics-read-model.md`
+- `docs/roadmaps/g01/batch-cards/257-map-local-host-readiness-to-diagnostics.md`
+- `docs/roadmaps/g01/batch-cards/258-add-runtime-readiness-query-dto.md`
+- `docs/roadmaps/g01/batch-cards/259-test-runtime-readiness-diagnostics.md`
+- `docs/roadmaps/g01/batch-cards/260-reassess-readiness-diagnostics-ui.md`
+- `docs/roadmaps/g01/batch-cards/261-define-disposable-readiness-panel-boundary.md`
+- `docs/roadmaps/g01/batch-cards/262-add-read-only-runtime-readiness-panel.md`
+- `docs/roadmaps/g01/batch-cards/263-wire-readiness-panel-into-desktop-shell.md`
+- `docs/roadmaps/g01/batch-cards/264-add-forbidden-readiness-control-regression.md`
+- `docs/roadmaps/g01/batch-cards/265-verify-readiness-panel-and-reassess.md`
+
+## Planned Cards
+
+No planned card until reassessment opens the next lane.

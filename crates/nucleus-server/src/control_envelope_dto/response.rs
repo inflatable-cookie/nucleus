@@ -15,6 +15,10 @@ use crate::control_serialization_readiness::{
 use crate::read_only_command_control::{
     ReadOnlyCommandControlRejection, ReadOnlyCommandControlResult,
 };
+use crate::runtime_readiness_diagnostics::{
+    RuntimeReadinessBlocker, RuntimeReadinessDiagnostics, RuntimeReadinessStatus,
+    RuntimeReadinessSurface,
+};
 use crate::state::ServerStateDomain;
 
 use super::{
@@ -87,6 +91,9 @@ pub enum ControlResponseBodyDto {
     CommandEvidenceRecords {
         records: Vec<ControlCommandEvidenceRecordDto>,
     },
+    RuntimeReadinessDiagnostics {
+        records: Vec<ControlRuntimeReadinessDiagnosticDto>,
+    },
     CommandReceipt {
         command_id: String,
         status: String,
@@ -131,6 +138,14 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
             | ServerControlResponseBody::Query(ServerQueryResult::RuntimeMetadata(records)) => {
                 state_record_set_dto(records)
             }
+            ServerControlResponseBody::Query(ServerQueryResult::RuntimeReadiness(records)) => {
+                Ok(Self::RuntimeReadinessDiagnostics {
+                    records: records
+                        .iter()
+                        .map(ControlRuntimeReadinessDiagnosticDto::from)
+                        .collect(),
+                })
+            }
             ServerControlResponseBody::Command(receipt) => Ok(Self::CommandReceipt {
                 command_id: receipt.command_id.0.clone(),
                 status: command_receipt_status_dto(&receipt.status),
@@ -168,6 +183,26 @@ pub struct ControlCommandEvidenceRecordDto {
     pub stderr_artifact_ref: Option<String>,
 }
 
+/// Serializable sanitized runtime readiness diagnostics record.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ControlRuntimeReadinessDiagnosticDto {
+    pub host_id: String,
+    pub runtime_surface: String,
+    pub status: String,
+    pub blockers: Vec<ControlRuntimeReadinessBlockerDto>,
+    pub evidence_refs: Vec<String>,
+    pub repair_hints: Vec<String>,
+    pub summary: Option<String>,
+}
+
+/// Serializable sanitized runtime readiness blocker.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ControlRuntimeReadinessBlockerDto {
+    pub source: String,
+    pub code: String,
+    pub message: String,
+}
+
 impl From<&CommandEvidence> for ControlCommandEvidenceRecordDto {
     fn from(evidence: &CommandEvidence) -> Self {
         Self {
@@ -179,6 +214,34 @@ impl From<&CommandEvidence> for ControlCommandEvidenceRecordDto {
             summary: evidence.summary.clone(),
             stdout_artifact_ref: evidence.stdout_artifact_ref.clone(),
             stderr_artifact_ref: evidence.stderr_artifact_ref.clone(),
+        }
+    }
+}
+
+impl From<&RuntimeReadinessDiagnostics> for ControlRuntimeReadinessDiagnosticDto {
+    fn from(diagnostics: &RuntimeReadinessDiagnostics) -> Self {
+        Self {
+            host_id: diagnostics.host_id.0.clone(),
+            runtime_surface: runtime_surface_dto(&diagnostics.surface),
+            status: runtime_readiness_status_dto(&diagnostics.status),
+            blockers: diagnostics
+                .blockers
+                .iter()
+                .map(ControlRuntimeReadinessBlockerDto::from)
+                .collect(),
+            evidence_refs: diagnostics.evidence_refs.clone(),
+            repair_hints: diagnostics.repair_hints.clone(),
+            summary: diagnostics.summary.clone(),
+        }
+    }
+}
+
+impl From<&RuntimeReadinessBlocker> for ControlRuntimeReadinessBlockerDto {
+    fn from(blocker: &RuntimeReadinessBlocker) -> Self {
+        Self {
+            source: blocker.source.clone(),
+            code: blocker.code.clone(),
+            message: blocker.message.clone(),
         }
     }
 }
@@ -221,6 +284,22 @@ fn read_only_rejection_dto(
             }
         }
     }
+}
+
+fn runtime_surface_dto(surface: &RuntimeReadinessSurface) -> String {
+    match surface {
+        RuntimeReadinessSurface::LocalHostCommandExecution => "local_host_command_execution",
+    }
+    .to_owned()
+}
+
+fn runtime_readiness_status_dto(status: &RuntimeReadinessStatus) -> String {
+    match status {
+        RuntimeReadinessStatus::Ready => "ready",
+        RuntimeReadinessStatus::Degraded => "degraded",
+        RuntimeReadinessStatus::Unsupported => "unsupported",
+    }
+    .to_owned()
 }
 
 fn command_execution_status_dto(status: &nucleus_command_policy::CommandExecutionStatus) -> String {

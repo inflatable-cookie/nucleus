@@ -1906,9 +1906,12 @@ version = "0.0.0"
 name = "nucleus-desktop"
 version = "0.0.0"
 dependencies = [
+ "nucleus-command-policy",
+ "nucleus-core",
  "nucleus-local-store",
  "nucleus-server",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
 ]

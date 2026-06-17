@@ -2,6 +2,7 @@
   import { Button, StatusIndicator, Surface, Text } from "@poodle/svelte";
   import { send } from "@poodle/icons-lucide";
   import {
+    buildCommandHistoryQuery,
     buildRuntimeMetadataQuery,
     buildStateListQuery,
     CONTROL_PROTOCOL_FAMILY,
@@ -26,7 +27,7 @@
     {
       id: "command-evidence",
       label: "Command evidence",
-      buildRequest: () => buildRuntimeMetadataQuery("list_command_evidence"),
+      buildRequest: buildCommandHistoryQuery,
     },
     {
       id: "projects",

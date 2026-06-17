@@ -1,6 +1,6 @@
 # 249 Test Command Diagnostics Storage Decoupling
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 
@@ -29,3 +29,10 @@ Prove the command diagnostics path uses typed DTOs instead of storage payloads.
 
 - Tests fail if the diagnostics path depends on raw storage records.
 - Tests fail if raw output fields appear.
+
+## Outcome
+
+Desktop Tauri tests now seed sanitized command evidence through server state,
+query command history through the control envelope, and assert the response is
+typed `command_evidence_records` without raw output, storage payload bytes, or
+revision metadata.

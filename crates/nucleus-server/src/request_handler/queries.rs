@@ -9,7 +9,9 @@ use crate::control_api::{
     StateRecordQueryScope,
 };
 use crate::ids::ServerControlRequestId;
+use crate::runtime_readiness_diagnostics::local_host_runtime_readiness_diagnostics;
 use crate::state::{ServerStateDomain, ServerStateDomainService};
+use crate::{unsupported_local_host_runtime_discovery, EngineHostId};
 
 pub(crate) fn handle_query<B>(
     handler: &LocalControlRequestHandler<B>,
@@ -160,6 +162,13 @@ where
             StateRecordQueryScope::List,
         )
         .map(ServerQueryResult::RuntimeMetadata),
+        RuntimeMetadataQuery::GetLocalRuntimeReadiness => {
+            let discovery =
+                unsupported_local_host_runtime_discovery(EngineHostId("host:local".to_owned()));
+            Ok(ServerQueryResult::RuntimeReadiness(vec![
+                local_host_runtime_readiness_diagnostics(&discovery),
+            ]))
+        }
         RuntimeMetadataQuery::StoredEffects(_) | RuntimeMetadataQuery::ResolveRuntimeRef(_) => {
             Ok(ServerQueryResult::Unsupported {
                 reason: "runtime metadata ref queries are not implemented".to_owned(),

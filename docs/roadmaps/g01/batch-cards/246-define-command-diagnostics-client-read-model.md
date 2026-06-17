@@ -1,6 +1,6 @@
 # 246 Define Command Diagnostics Client Read Model
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 
@@ -33,3 +33,10 @@ Define the client-side read model for command diagnostics.
 - Clients know which fields to render.
 - Clients know which fields are unavailable by design.
 - The model maps directly from the command history DTO.
+
+## Outcome
+
+The server boundary contract now defines list fields, detail fields, empty
+states, refresh expectations, and unavailable raw-output fields for command
+diagnostics clients. Architecture records command diagnostics as a read-only
+client surface over the command history DTO.
