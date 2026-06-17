@@ -1,6 +1,6 @@
 # 080 Effigy Doctor Summary Command
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../020-effigy-command-backed-inspection.md`
@@ -17,17 +17,23 @@ Map read-only Effigy doctor evidence into health summaries.
 
 ## Acceptance Criteria
 
-- Doctor summaries are sanitized and reference-backed.
-- Repair hints can cite doctor evidence.
-- Health status does not imply project mutation.
+- [x] Doctor summaries are sanitized and reference-backed.
+- [x] Repair hints can cite doctor evidence.
+- [x] Health status does not imply project mutation.
+
+## Outcome
+
+- Added doctor command summary records that wrap health summaries.
+- Preserved repair hints and receipt-backed evidence.
+- Confirmed doctor summaries do not mutate project state or retain raw output.
 
 ## Validation
 
-- `cargo test -p nucleus-native-harness effigy`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-native-harness effigy`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

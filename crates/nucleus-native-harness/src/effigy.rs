@@ -216,6 +216,58 @@ pub enum NativeEffigySelectorRefreshStatus {
     Unknown,
 }
 
+/// Sanitized result of a read-only Effigy doctor command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeEffigyDoctorCommandSummary {
+    pub status: NativeEffigyDoctorCommandStatus,
+    pub health: NativeEffigyHealthSummary,
+    pub evidence_refs: Vec<NativeEffigyEvidenceRef>,
+    pub summary: Option<String>,
+}
+
+impl NativeEffigyDoctorCommandSummary {
+    pub fn from_health(health: NativeEffigyHealthSummary) -> Self {
+        let status = match health.status {
+            NativeEffigyHealthStatus::Ok => NativeEffigyDoctorCommandStatus::Summarized,
+            NativeEffigyHealthStatus::Warning => NativeEffigyDoctorCommandStatus::Summarized,
+            NativeEffigyHealthStatus::Error => NativeEffigyDoctorCommandStatus::Summarized,
+            NativeEffigyHealthStatus::Blocked => NativeEffigyDoctorCommandStatus::Blocked,
+            NativeEffigyHealthStatus::Unknown => NativeEffigyDoctorCommandStatus::Unknown,
+        };
+        Self {
+            status,
+            health,
+            evidence_refs: Vec::new(),
+            summary: None,
+        }
+    }
+
+    pub fn uses_sanitized_refs(&self) -> bool {
+        self.summary
+            .as_ref()
+            .map(|summary| !contains_forbidden_effigy_term(summary))
+            .unwrap_or(true)
+            && self.health.uses_sanitized_refs()
+            && self
+                .evidence_refs
+                .iter()
+                .all(|evidence_ref| !contains_forbidden_effigy_term(&evidence_ref.0))
+    }
+
+    pub fn mutates_project(&self) -> bool {
+        false
+    }
+}
+
+/// Doctor command summary status.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeEffigyDoctorCommandStatus {
+    Summarized,
+    Blocked,
+    Unsupported(String),
+    Unknown,
+}
+
 /// Sanitized summary of an Effigy health check such as `effigy doctor`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeEffigyHealthSummary {
@@ -606,6 +658,51 @@ mod tests {
 
         assert!(summary.needs_repair());
         assert!(summary.uses_sanitized_refs());
+    }
+
+    #[test]
+    fn effigy_doctor_command_summary_wraps_health_without_mutation() {
+        let health = NativeEffigyHealthSummary {
+            status: NativeEffigyHealthStatus::Warning,
+            scope: NativeEffigyScope::ProjectRoot,
+            tool_action_id: Some(NativeToolActionId("tool:effigy-doctor".to_owned())),
+            receipt_refs: vec![NativeRuntimeReceiptRef("receipt:effigy:doctor".to_owned())],
+            evidence_refs: vec![NativeEffigyEvidenceRef("evidence:doctor".to_owned())],
+            repair_hints: vec![NativeEffigyRepairHint {
+                kind: NativeEffigyRepairHintKind::DoctorWarning,
+                evidence_refs: vec![NativeEffigyEvidenceRef(
+                    "evidence:doctor-warning".to_owned(),
+                )],
+                summary: Some("doctor reported warning".to_owned()),
+            }],
+            summary: Some("doctor warning summary".to_owned()),
+        };
+        let mut doctor = NativeEffigyDoctorCommandSummary::from_health(health);
+        doctor.evidence_refs.push(NativeEffigyEvidenceRef(
+            "evidence:doctor-command".to_owned(),
+        ));
+        doctor.summary = Some("doctor command summarized".to_owned());
+
+        assert_eq!(doctor.status, NativeEffigyDoctorCommandStatus::Summarized);
+        assert!(doctor.health.needs_repair());
+        assert!(!doctor.mutates_project());
+        assert!(doctor.uses_sanitized_refs());
+    }
+
+    #[test]
+    fn effigy_doctor_command_summary_rejects_raw_output_terms() {
+        let health = NativeEffigyHealthSummary {
+            status: NativeEffigyHealthStatus::Ok,
+            scope: NativeEffigyScope::ProjectRoot,
+            tool_action_id: None,
+            receipt_refs: Vec::new(),
+            evidence_refs: Vec::new(),
+            repair_hints: Vec::new(),
+            summary: Some("raw_stderr should not be retained".to_owned()),
+        };
+        let doctor = NativeEffigyDoctorCommandSummary::from_health(health);
+
+        assert!(!doctor.uses_sanitized_refs());
     }
 
     #[test]

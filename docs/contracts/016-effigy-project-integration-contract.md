@@ -114,6 +114,10 @@ Health summaries can represent:
 Health summaries may link to native tool action ids, runtime receipt refs,
 sanitized evidence refs, and repair hints.
 
+Doctor command summaries wrap read-only `effigy doctor` evidence into health
+summaries. They may represent summarized, blocked, unsupported, or unknown
+doctor state. They must not mutate project state or copy raw doctor output.
+
 Repair hints may describe missing manifests, missing selectors, doctor
 warnings, doctor errors, unavailable plans, policy blocks, or custom project
 conditions.

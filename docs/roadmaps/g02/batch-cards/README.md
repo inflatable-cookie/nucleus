@@ -10,12 +10,11 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `080-effigy-doctor-summary-command.md`
+- `081-effigy-test-plan-summary-command.md`
 
 ## Planned Cards
 
 - None.
-- `081-effigy-test-plan-summary-command.md`
 - `082-effigy-repair-hint-synthesis.md`
 - `083-effigy-command-inspection-validation.md`
 - `084-management-sync-plan-records.md`
@@ -117,3 +116,4 @@ These cards belong to `../018-steward-native-harness-and-effigy-tools.md`.
 - `077-server-steward-command-boundary.md`
 - `078-native-steward-command-validation.md`
 - `079-effigy-selector-refresh-command.md`
+- `080-effigy-doctor-summary-command.md`

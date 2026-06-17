@@ -20,7 +20,8 @@ pub use backends::{
     NativeModelBackendStatus, NativeModelBackendSuitability, NativeModelBackendUse,
 };
 pub use effigy::{
-    NativeEffigyCommandScopeHint, NativeEffigyEvidenceRef, NativeEffigyHealthStatus,
+    NativeEffigyCommandScopeHint, NativeEffigyDoctorCommandStatus,
+    NativeEffigyDoctorCommandSummary, NativeEffigyEvidenceRef, NativeEffigyHealthStatus,
     NativeEffigyHealthSummary, NativeEffigyIntegrationStatus, NativeEffigyManifestRef,
     NativeEffigyPlannedSelector, NativeEffigyProjectIntegration, NativeEffigyRepairHint,
     NativeEffigyRepairHintKind, NativeEffigyScope, NativeEffigySelectorKind,

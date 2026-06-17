@@ -22,14 +22,14 @@ stable.
 ## Goals
 
 - [x] Add command-backed Effigy selector inventory refresh.
-- [ ] Add command-backed Effigy health summary capture.
+- [x] Add command-backed Effigy health summary capture.
 - [ ] Add command-backed `effigy test --plan` summary capture.
 - [ ] Keep raw command output out of durable task history.
 
 ## Execution Plan
 
 - [x] Selector refresh batch: map `effigy tasks` evidence into selector records.
-- [ ] Doctor summary batch: map doctor evidence into health summaries.
+- [x] Doctor summary batch: map doctor evidence into health summaries.
 - [ ] Test-plan batch: map `effigy test --plan` evidence into validation plan
   summaries.
 - [ ] Repair hint batch: turn missing selector/manifest evidence into steward
@@ -41,17 +41,17 @@ stable.
 
 Ready cards:
 
-- `batch-cards/080-effigy-doctor-summary-command.md`
+- `batch-cards/081-effigy-test-plan-summary-command.md`
 
 Planned cards:
 
-- `batch-cards/081-effigy-test-plan-summary-command.md`
 - `batch-cards/082-effigy-repair-hint-synthesis.md`
 - `batch-cards/083-effigy-command-inspection-validation.md`
 
 Completed cards:
 
 - `batch-cards/079-effigy-selector-refresh-command.md`
+- `batch-cards/080-effigy-doctor-summary-command.md`
 
 ## Acceptance Criteria
 
