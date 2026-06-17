@@ -103,7 +103,10 @@ Updated: 2026-06-16
   includes a Rust-owned JSON storage codec for first task display records. The
   codec preserves stable task id, project id, title, description, acceptance
   criteria, importance, action type, activity, assignment intent, and
-  agent-readiness flag for server-owned storage/control projection use.
+  agent-readiness fields for server-owned storage/control projection use. The
+  storage projection can now rebuild a domain task for create/update-safe
+  fields while leaving runtime, history, provider, and command evidence state
+  outside the projection.
 - `nucleus-memory`: planned, not scaffolded. Future shared memory crate for
   memory records, scopes, source refs, review state, sensitivity, retention,
   and projection boundaries. The local store crate leaves room for this domain,
@@ -119,9 +122,15 @@ Updated: 2026-06-16
   yet.
 - `nucleus-workspaces`: first draft modular workspace layout, panel, and
   surface types.
-- `nucleus-server`: first draft modular server authority, deployment, client,
-  command, event, and state facade types. It now includes a local server-owned
-  state service facade over `nucleus-local-store` backend adapters for the
+- `nucleus-server`: current crate name for host API/runtime boundary types.
+  The name is historical after the engine-first correction: the crate remains
+  useful for sidecar daemon, remote host, and embedded IPC/control surfaces,
+  but it is not the system core. Future refactoring may split reusable engine
+  services from host API wrappers. For now, read "server-owned" entries below
+  as "authoritative engine host owned" unless the entry specifically refers to
+  `nucleusd` as a daemon.
+  It now includes a local host-owned state service facade over
+  `nucleus-local-store` backend adapters for the
   first persisted domains. The facade keeps repository handles out of the
   client boundary and is transport-free. It also now includes transport-neutral
   control API request, command/query, response, result, and error vocabulary.
@@ -156,11 +165,19 @@ Updated: 2026-06-16
   inert dependencies. It now executes read-only project, task, workspace,
   adapter/session, model route, and runtime metadata state queries for direct
   get/list paths. Indexed filters and runtime ref resolution remain explicit
-  unsupported paths. It does not mutate state, run commands, open transports,
-  start providers, or deliver subscriptions. Command handling now returns
-  deterministic receipts: state-shaped commands are accepted for later state
-  mutation handling, while runtime session commands are rejected through
-  scheduler admission or explicit deferred runtime-control errors. Local
+  unsupported paths. It now mutates task activity state for the first supported
+  task transition commands: start, block, complete, and archive. Those
+  transitions update existing task records durably while preserving unrelated
+  stored task display fields and surfacing not-found, conflict, and
+  invalid-storage failures as rejected command receipts. It now also executes
+  first task create/update commands through the server state service using
+  task authoring input, project existence validation, title validation,
+  agent-readiness checks, revision expectations, and read-after-write DTO
+  visibility. It does not open transports, start providers, execute runtime
+  work, or deliver subscriptions.
+  Command handling still treats other state-shaped commands as accepted for
+  later state mutation handling, while runtime session commands are rejected
+  through scheduler admission or explicit deferred runtime-control errors. Local
   transport readiness types now name in-process, Tauri IPC, Unix-domain
   socket, Windows named pipe, loopback HTTP, and custom candidates, plus
   desktop bootstrap requirements and blockers. They do not implement any
@@ -190,8 +207,12 @@ Updated: 2026-06-16
   supported state and runtime metadata query shapes, response status, state
   record payload envelopes, command receipt summaries, and explicit error
   shapes. Project and task state query responses can now expose display-ready
-  typed DTOs decoded from server-owned storage payloads. Unsupported payloads
-  fail with codec errors. Tauri IPC readiness can now consume explicit control
+  typed DTOs decoded from server-owned storage payloads. The first command DTO
+  subset now supports task activity transition commands for start, block,
+  complete, and archive with optional expected revision. It also supports first
+  task create/update command DTOs using authoring input rather than raw storage
+  records. Unsupported payloads fail with codec errors. Tauri IPC readiness can
+  now consume explicit control
   serialization readiness. A Tauri IPC command
   boundary skeleton now names schema-only, fixture-backed, and Tauri
   runtime-backed postures plus a request/response submission trait. It does not
@@ -253,19 +274,34 @@ Updated: 2026-06-16
   bootstrap readiness. `seed_local_project` writes idempotent project records
   through `ServerStateService` using the `nucleus-projects` JSON storage codec.
   It is seed behavior, not full project creation command execution.
+- `nucleus-server` also provides a server-owned local task seed path for
+  bootstrap readiness. `seed_local_task` writes idempotent task records through
+  `ServerStateService` using the `nucleus-tasks` JSON storage codec and reads
+  back through the typed `task_records` control DTO boundary. It is seed
+  behavior separate from normal task creation command execution.
 
 ## Apps
 
-- `apps/nucleusd`: future server binary placeholder.
+- `apps/nucleusd`: local Rust host smoke binary. It opens SQLite-backed host
+  state, can seed the local bootstrap project and task, and prints
+  project/task counts through `LocalControlRequestHandler`. It can also query
+  local project, task, workspace, and command evidence records through the same
+  handler and print sanitized metadata. It does not open a network listener,
+  run as a daemon, execute commands, start providers, or deliver subscriptions.
 - `apps/desktop`: initial Tauri v2 desktop client scaffold. It uses Bun,
   Svelte, and local Poodle component packages from `../poodle`. The first
   panel is read-only control diagnostics that invokes `submit_control_envelope`
   and renders protocol details, request status, raw DTO response, and errors.
   Local desktop startup seeds a `Nucleus Local` project through the server
-  seed path. A read-only project switcher panel lists `project_records` DTOs
-  and keeps selection in local shell state. It does not implement project/task
-  mutation panels, live subscriptions, provider process lifecycle, remote
-  transport, command execution, persisted focus, or durable state authority.
+  seed path and a bootstrap local task through the task seed path. A read-only
+  project switcher panel lists `project_records` DTOs and keeps selection in
+  local shell state. A task list panel lists `task_records` DTOs. Shell-level
+  task selection and task detail display use typed task DTOs as local view
+  state. Task detail transition controls can submit start, block, complete,
+  and archive commands, then refresh task records. It does not implement
+  project/task create/edit forms, live subscriptions, provider process
+  lifecycle, remote transport, command execution, persisted focus, or durable
+  state authority.
 
 ## External Systems To Research
 

@@ -20,6 +20,34 @@ shape.
 - `g01/013-project-state-records-and-switcher-readiness.md`
 - `g01/014-read-only-desktop-project-switcher.md`
 - `g01/015-task-records-and-read-only-list-readiness.md`
+- `g01/016-read-only-desktop-task-list.md`
+- `g01/017-read-only-task-detail-display.md`
+- `g01/018-task-mutation-command-boundary-readiness.md`
+- `g01/019-desktop-task-transition-controls.md`
+- `g01/020-task-authoring-and-edit-semantics.md`
+- `g01/021-nucleusd-local-server-runtime.md`
+- `g01/022-command-runner-execution-readiness.md`
+- `g01/023-command-evidence-persistence-and-query.md`
+- `g01/024-local-process-supervision-readiness.md`
+- `g01/025-process-supervisor-module-and-events.md`
+- `g01/026-engine-host-authority-correction.md`
+- `g01/027-host-authority-map-vocabulary.md`
+- `g01/028-host-execution-safety-and-artifact-policy.md`
+- `g01/029-host-spawn-readiness-gate-composition.md`
+- `g01/030-host-runtime-backend-readiness-descriptors.md`
+- `g01/031-local-host-runtime-capability-discovery.md`
+- `g01/032-local-runtime-backend-implementation-runway.md`
+- `g01/033-server-runtime-module-splits-for-backend-work.md`
+- `g01/034-local-artifact-store-backend-implementation.md`
+- `g01/035-local-event-transport-backend-implementation.md`
+- `g01/036-local-sandbox-backend-implementation.md`
+- `g01/037-local-process-control-backend-implementation.md`
+- `g01/038-first-read-only-spawn-implementation.md`
+- `g01/039-read-only-spawn-server-integration.md`
+- `g01/040-read-only-command-request-control-api.md`
+- `g01/041-nucleusd-constrained-read-only-command-input.md`
+- `g01/042-read-only-command-history-query-shape.md`
+- `g01/043-command-diagnostics-client-read-model.md`
 
 ## Index
 
@@ -27,4 +55,4 @@ shape.
 
 ## Next Task
 
-Add local task seed path.
+Define command diagnostics client read model.

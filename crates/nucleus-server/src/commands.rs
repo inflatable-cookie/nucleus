@@ -1,8 +1,11 @@
 //! Server command envelope types.
 
 use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId, ModelRoute};
+use nucleus_core::RevisionId;
 use nucleus_projects::{Project, ProjectId, RepoMembershipId, RepoRepairAction};
-use nucleus_tasks::{Task, TaskId};
+use nucleus_tasks::{
+    AcceptanceCriterion, AgentReadiness, TaskActionType, TaskActivityState, TaskId, TaskImportance,
+};
 use nucleus_workspaces::{WorkspaceLayout, WorkspaceLayoutId};
 
 use crate::ids::{ClientId, ServerCommandId};
@@ -22,7 +25,22 @@ pub enum ServerCommandKind {
     Task(TaskCommand),
     Workspace(WorkspaceCommand),
     AgentSession(AgentSessionCommand),
+    ReadOnlyCommand(ReadOnlyCommand),
     ConfigureModelRoute(ModelRoute),
+}
+
+/// Narrow local read-only command execution request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadOnlyCommand {
+    pub project_id: ProjectId,
+    pub execution_host_id: crate::EngineHostId,
+    pub executable: String,
+    pub argv: Vec<String>,
+    pub working_directory: std::path::PathBuf,
+    pub timeout_ms: u64,
+    pub stdout_limit_bytes: usize,
+    pub stderr_limit_bytes: usize,
+    pub command_display: Option<String>,
 }
 
 /// Project state commands.
@@ -42,12 +60,56 @@ pub enum ProjectCommand {
 /// Task state commands.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TaskCommand {
-    Create(Task),
-    Update(Task),
-    Start(TaskId),
-    Block { task_id: TaskId, reason: String },
-    Complete(TaskId),
-    Archive(TaskId),
+    Create(TaskCreateCommand),
+    Update(TaskUpdateCommand),
+    Start(TaskTransitionCommand),
+    Block {
+        task_id: TaskId,
+        reason: String,
+        expected_revision: Option<RevisionId>,
+    },
+    Complete(TaskTransitionCommand),
+    Archive(TaskTransitionCommand),
+}
+
+/// Task create command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskCreateCommand {
+    pub project_id: ProjectId,
+    pub title: String,
+    pub description: Option<String>,
+    pub acceptance_criteria: Vec<AcceptanceCriterion>,
+    pub importance: TaskImportance,
+    pub action_type: TaskActionType,
+    pub activity: TaskActivityState,
+    pub agent_readiness: AgentReadiness,
+}
+
+/// Task update command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskUpdateCommand {
+    pub task_id: TaskId,
+    pub expected_revision: Option<RevisionId>,
+    pub changes: TaskUpdateChanges,
+}
+
+/// Replacement-by-field update values for editable task fields.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TaskUpdateChanges {
+    pub title: Option<String>,
+    pub description: Option<Option<String>>,
+    pub acceptance_criteria: Option<Vec<AcceptanceCriterion>>,
+    pub importance: Option<TaskImportance>,
+    pub action_type: Option<TaskActionType>,
+    pub activity: Option<TaskActivityState>,
+    pub agent_readiness: Option<AgentReadiness>,
+}
+
+/// Task activity transition command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskTransitionCommand {
+    pub task_id: TaskId,
+    pub expected_revision: Option<RevisionId>,
 }
 
 /// Workspace layout commands.

@@ -6,12 +6,26 @@ export const CONTROL_CLIENT_ID = "client:desktop";
 
 export type RuntimeMetadataAction = "list_artifact_metadata" | "list_command_evidence";
 export type ControlStateDomain = "projects" | "tasks" | "workspaces";
+export type ControlTaskTransitionAction = "start" | "block" | "complete" | "archive";
 
 export type ControlProjectRecordDto = {
   project_id: string;
   display_name: string;
   status: string;
   importance_level: string;
+  revision_id: string;
+};
+
+export type ControlTaskRecordDto = {
+  task_id: string;
+  project_id: string;
+  title: string;
+  description: string | null;
+  importance: string;
+  action_type: string;
+  activity: string;
+  assignment_intent: string | null;
+  agent_ready: boolean;
   revision_id: string;
 };
 
@@ -28,15 +42,29 @@ export type ControlQueryDto =
       scope: { type: "list" };
     };
 
+export type ControlCommandDto = {
+  kind: "task";
+  command_id: string;
+  action: ControlTaskTransitionAction;
+  task_id: string;
+  expected_revision: string | null;
+  reason: string | null;
+};
+
 export type ControlRequestEnvelopeDto = {
   protocol_family: typeof CONTROL_PROTOCOL_FAMILY;
   protocol_version: typeof CONTROL_PROTOCOL_VERSION;
   request_id: string;
   client_id: string;
-  body: {
-    type: "query";
-    query: ControlQueryDto;
-  };
+  body:
+    | {
+        type: "query";
+        query: ControlQueryDto;
+      }
+    | {
+        type: "command";
+        command: ControlCommandDto;
+      };
 };
 
 export type ControlResponseEnvelopeDto = {
@@ -50,6 +78,10 @@ export type ControlResponseEnvelopeDto = {
     | {
         type: "project_records";
         records: ControlProjectRecordDto[];
+      }
+    | {
+        type: "task_records";
+        records: ControlTaskRecordDto[];
       }
     | { type: "state_records"; domain: string; records: unknown[] }
     | { type: "command_receipt"; command_id: string; status: string }
@@ -69,6 +101,25 @@ function buildControlQueryEnvelope(query: ControlQueryDto): ControlRequestEnvelo
       query: {
         ...query,
         query_id: query.query_id || `query:desktop:${suffix}`,
+      },
+    },
+  };
+}
+
+function buildControlCommandEnvelope(command: ControlCommandDto): ControlRequestEnvelopeDto {
+  const suffix = crypto.randomUUID();
+  const commandId = command.command_id || `command:desktop:${suffix}`;
+
+  return {
+    protocol_family: CONTROL_PROTOCOL_FAMILY,
+    protocol_version: CONTROL_PROTOCOL_VERSION,
+    request_id: `request:desktop:${suffix}`,
+    client_id: CONTROL_CLIENT_ID,
+    body: {
+      type: "command",
+      command: {
+        ...command,
+        command_id: commandId,
       },
     },
   };
@@ -97,6 +148,40 @@ export function buildArtifactMetadataProbe(): ControlRequestEnvelopeDto {
   return buildRuntimeMetadataQuery("list_artifact_metadata");
 }
 
+export function buildTaskTransitionCommand(
+  task: ControlTaskRecordDto,
+  action: ControlTaskTransitionAction,
+  reason: string | null = null,
+): ControlRequestEnvelopeDto {
+  return buildControlCommandEnvelope({
+    kind: "task",
+    command_id: "",
+    action,
+    task_id: task.task_id,
+    expected_revision: task.revision_id,
+    reason,
+  });
+}
+
+export function buildStartTaskCommand(task: ControlTaskRecordDto): ControlRequestEnvelopeDto {
+  return buildTaskTransitionCommand(task, "start");
+}
+
+export function buildBlockTaskCommand(
+  task: ControlTaskRecordDto,
+  reason: string,
+): ControlRequestEnvelopeDto {
+  return buildTaskTransitionCommand(task, "block", reason);
+}
+
+export function buildCompleteTaskCommand(task: ControlTaskRecordDto): ControlRequestEnvelopeDto {
+  return buildTaskTransitionCommand(task, "complete");
+}
+
+export function buildArchiveTaskCommand(task: ControlTaskRecordDto): ControlRequestEnvelopeDto {
+  return buildTaskTransitionCommand(task, "archive");
+}
+
 export async function submitControlEnvelope(
   request: ControlRequestEnvelopeDto,
 ): Promise<ControlResponseEnvelopeDto> {
@@ -107,4 +192,10 @@ export function projectRecordsFromResponse(
   response: ControlResponseEnvelopeDto,
 ): ControlProjectRecordDto[] {
   return response.body.type === "project_records" ? response.body.records : [];
+}
+
+export function taskRecordsFromResponse(
+  response: ControlResponseEnvelopeDto,
+): ControlTaskRecordDto[] {
+  return response.body.type === "task_records" ? response.body.records : [];
 }

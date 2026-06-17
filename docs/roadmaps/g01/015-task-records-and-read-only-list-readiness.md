@@ -1,6 +1,6 @@
 # 015 Task Records And Read-Only List Readiness
 
-Status: active
+Status: done
 Owner: Tom
 Updated: 2026-06-17
 
@@ -41,16 +41,16 @@ Prepare enough task state behavior for a useful read-only desktop task list.
 
 - [x] Compile task record display and seed runway.
 - [x] Add task record storage codec or display projection.
-- [ ] Add local task seed or create path.
-- [ ] Reassess read-only task list readiness.
+- [x] Add local task seed or create path.
+- [x] Reassess read-only task list readiness.
 
 ## Acceptance Criteria
 
 - [x] Task display fields are available through a server-owned boundary.
-- [ ] Local storage can contain at least one valid task record through an
+- [x] Local storage can contain at least one valid task record through an
   intentional server path.
-- [ ] Read-only task list readiness is explicit.
-- [ ] TypeScript remains view glue and does not own task authority.
+- [x] Read-only task list readiness is explicit.
+- [x] TypeScript remains view glue and does not own task authority.
 
 ## Cards
 

@@ -9,11 +9,15 @@ pub mod authority;
 pub mod effects;
 pub mod evidence;
 pub mod ids;
+pub mod invocation;
 pub mod policy;
+pub mod process_supervision;
+pub mod process_supervision_events;
 pub mod runtime_effects;
 pub mod runtime_events;
 pub mod runtime_readiness;
 pub mod runtime_states;
+pub mod storage_codec;
 
 pub use artifacts::{
     CommandArtifactApprovalRequirement, CommandArtifactDescriptor, CommandArtifactPayloadClass,
@@ -27,9 +31,22 @@ pub use effects::{
 };
 pub use evidence::{CommandEvidence, CommandExecutionStatus, CommandOutputRetention};
 pub use ids::{CommandEvidenceId, CommandPolicyId, CommandRequestId};
+pub use invocation::{CommandEnvironmentPolicy, CommandInvocation};
 pub use policy::{
     CommandApprovalPolicy, CommandAuthorityArea, CommandExecutionRequest, CommandRisk,
     CommandSandboxProfile, CommandScope,
+};
+pub use process_supervision::{
+    CommandCancellationPolicy, CommandCleanupFailurePolicy, CommandOutputBoundPolicy,
+    CommandProcessInterruptionContract, CommandProcessSupervisionBlocker,
+    CommandProcessSupervisionReadiness, CommandProcessSupervisionReadinessStatus,
+    CommandProcessSupervisionSurface, CommandSandboxEnforcement, CommandTimeoutPolicy,
+    CommandTimeoutStartPolicy,
+};
+pub use process_supervision_events::{
+    CommandProcessSupervisionEventId, CommandProcessSupervisionEventKind,
+    CommandProcessSupervisionEventPayload, CommandProcessSupervisionRetryRef,
+    CommandProcessSupervisionStatus, CommandProcessTerminalStatus,
 };
 pub use runtime_effects::{
     CommandRuntimeEffectAcceptanceSurface, CommandRuntimeEffectOutcomeSurface,
@@ -46,4 +63,13 @@ pub use runtime_readiness::{
 pub use runtime_states::{
     CommandEffectNonTerminalState, CommandEffectState, CommandEffectStateRecord,
     CommandEffectTerminalState,
+};
+pub use storage_codec::{
+    CommandEvidenceStorageRecord, CommandExecutionRequestStorageRecord, CommandRecordCodecError,
+    CommandStorageApprovalPolicy, CommandStorageAuthorityArea, CommandStorageExecutionStatus,
+    CommandStorageOutputRetention, CommandStorageRisk, CommandStorageSandboxProfile,
+    CommandStorageScope, command_evidence_from_storage_record, command_request_from_storage_record,
+    decode_command_evidence_storage_record, decode_command_request_storage_record,
+    encode_command_evidence_storage_payload, encode_command_evidence_storage_record,
+    encode_command_request_storage_payload, encode_command_request_storage_record,
 };

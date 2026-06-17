@@ -1,12 +1,16 @@
 use nucleus_local_store::LocalStoreBackend;
 
 use super::handler::LocalControlRequestHandler;
+use super::task_commands::handle_task_command;
+use std::path::Path;
+
 use crate::commands::{AgentSessionCommand, ServerCommand, ServerCommandKind};
 use crate::control_api::{
     ServerCommandReceipt, ServerCommandReceiptStatus, ServerControlError, ServerControlResponse,
     ServerControlResponseBody, ServerControlResponseStatus,
 };
 use crate::ids::ServerControlRequestId;
+use crate::read_only_command_control::run_read_only_command_control;
 use crate::scheduler::{
     RuntimeSchedulerAdmissionDecision, RuntimeSchedulerAdmissionRejection, RuntimeSchedulerRequest,
     RuntimeSchedulerRequestId, RuntimeSchedulerRequestKind, RuntimeSchedulerRequestRefs,
@@ -20,12 +24,15 @@ pub(crate) fn handle_command<B>(
 where
     B: LocalStoreBackend + Clone,
 {
+    let command_id = command.id.clone();
     let status = match command.kind {
         ServerCommandKind::Project(_)
-        | ServerCommandKind::Task(_)
         | ServerCommandKind::Workspace(_)
         | ServerCommandKind::ConfigureModelRoute(_) => {
             ServerCommandReceiptStatus::AcceptedForStateMutation
+        }
+        ServerCommandKind::Task(task_command) => {
+            handle_task_command(handler, &command_id.0, task_command)
         }
         ServerCommandKind::AgentSession(AgentSessionCommand::RegisterAdapter(_)) => {
             ServerCommandReceiptStatus::AcceptedForStateMutation
@@ -55,6 +62,9 @@ where
         ) => ServerCommandReceiptStatus::Rejected(ServerControlError::Deferred {
             reason: "agent session runtime control is not implemented".to_owned(),
         }),
+        ServerCommandKind::ReadOnlyCommand(read_only_command) => {
+            return handle_read_only_command(handler, request_id, command_id, read_only_command);
+        }
     };
 
     let response_status = match status {
@@ -72,6 +82,40 @@ where
             command_id: command.id,
             status,
         }),
+    }
+}
+
+fn handle_read_only_command<B>(
+    handler: &mut LocalControlRequestHandler<B>,
+    request_id: ServerControlRequestId,
+    command_id: crate::ServerCommandId,
+    command: crate::ReadOnlyCommand,
+) -> ServerControlResponse
+where
+    B: LocalStoreBackend + Clone,
+{
+    let artifact_store_root = Path::new(".nucleus/local/artifacts").to_path_buf();
+    match run_read_only_command_control(handler.state(), command_id, command, artifact_store_root) {
+        Ok(result) => {
+            let status = if result.rejection.is_some() {
+                ServerControlResponseStatus::Rejected
+            } else {
+                ServerControlResponseStatus::Complete
+            };
+
+            ServerControlResponse {
+                request_id,
+                status,
+                body: ServerControlResponseBody::ReadOnlyCommand(result),
+            }
+        }
+        Err(error) => ServerControlResponse {
+            request_id,
+            status: ServerControlResponseStatus::Rejected,
+            body: ServerControlResponseBody::Error(ServerControlError::StorageUnavailable {
+                reason: format!("{error:?}"),
+            }),
+        },
     }
 }
 

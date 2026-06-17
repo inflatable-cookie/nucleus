@@ -1,0 +1,20 @@
+[package]
+name = "nucleusd"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "nucleusd"
+path = "src/main.rs"
+
+[dependencies]
+nucleus-command-policy = { path = "../../crates/nucleus-command-policy" }
+nucleus-core = { path = "../../crates/nucleus-core" }
+nucleus-local-store = { path = "../../crates/nucleus-local-store" }
+nucleus-projects = { path = "../../crates/nucleus-projects" }
+nucleus-server = { path = "../../crates/nucleus-server" }
+
+[dev-dependencies]
+tempfile = "3"

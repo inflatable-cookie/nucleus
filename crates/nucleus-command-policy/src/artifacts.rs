@@ -100,6 +100,64 @@ impl CommandArtifactRetentionPolicy {
                     | CommandArtifactRedactionStatus::NotRequired
             )
     }
+
+    /// Returns true when policy permits storing payload bytes for this class.
+    pub fn permits_payload_storage_for(&self, payload_class: &CommandArtifactPayloadClass) -> bool {
+        if payload_class.is_raw_process_output() {
+            return self.permits_full_output_ref();
+        }
+
+        match payload_class {
+            CommandArtifactPayloadClass::SanitizedSummary => {
+                matches!(
+                    self.retention,
+                    CommandOutputRetention::SummaryOnly | CommandOutputRetention::ArtifactReference
+                ) && !matches!(self.approval, CommandArtifactApprovalRequirement::Missing)
+                    && !matches!(
+                        self.secret_scan,
+                        CommandArtifactSecretScanStatus::RequiredNotRun
+                            | CommandArtifactSecretScanStatus::FindingsBlocked
+                    )
+                    && !matches!(
+                        self.redaction,
+                        CommandArtifactRedactionStatus::Pending
+                            | CommandArtifactRedactionStatus::Failed
+                    )
+            }
+            CommandArtifactPayloadClass::ValidationReport => {
+                matches!(
+                    self.retention,
+                    CommandOutputRetention::ArtifactReference
+                        | CommandOutputRetention::FullArtifactWithApproval
+                ) && !matches!(self.approval, CommandArtifactApprovalRequirement::Missing)
+                    && matches!(
+                        self.secret_scan,
+                        CommandArtifactSecretScanStatus::Passed
+                            | CommandArtifactSecretScanStatus::FindingsRedacted
+                    )
+                    && matches!(
+                        self.redaction,
+                        CommandArtifactRedactionStatus::Applied
+                            | CommandArtifactRedactionStatus::NotRequired
+                    )
+            }
+            CommandArtifactPayloadClass::Custom(_) => false,
+            CommandArtifactPayloadClass::Stdout
+            | CommandArtifactPayloadClass::Stderr
+            | CommandArtifactPayloadClass::CombinedOutput
+            | CommandArtifactPayloadClass::TerminalTranscript => self.permits_full_output_ref(),
+        }
+    }
+}
+
+impl CommandArtifactPayloadClass {
+    /// Returns true when the class represents raw process or terminal bytes.
+    pub fn is_raw_process_output(&self) -> bool {
+        matches!(
+            self,
+            Self::Stdout | Self::Stderr | Self::CombinedOutput | Self::TerminalTranscript
+        )
+    }
 }
 
 impl CommandArtifactDescriptor {
@@ -132,6 +190,31 @@ mod tests {
 
         assert!(!missing_approval.permits_full_output_ref());
         assert!(permitted.permits_full_output_ref());
+    }
+
+    #[test]
+    fn raw_output_payload_storage_requires_full_artifact_policy() {
+        let summary_only = CommandArtifactRetentionPolicy {
+            retention: CommandOutputRetention::SummaryOnly,
+            approval: CommandArtifactApprovalRequirement::NotRequired,
+            secret_scan: CommandArtifactSecretScanStatus::NotRequired,
+            redaction: CommandArtifactRedactionStatus::NotRequired,
+        };
+        let approved_full_output = CommandArtifactRetentionPolicy {
+            retention: CommandOutputRetention::FullArtifactWithApproval,
+            approval: CommandArtifactApprovalRequirement::Satisfied("approval:1".to_owned()),
+            secret_scan: CommandArtifactSecretScanStatus::Passed,
+            redaction: CommandArtifactRedactionStatus::Applied,
+        };
+
+        assert!(!summary_only.permits_payload_storage_for(&CommandArtifactPayloadClass::Stdout));
+        assert!(
+            summary_only
+                .permits_payload_storage_for(&CommandArtifactPayloadClass::SanitizedSummary)
+        );
+        assert!(
+            approved_full_output.permits_payload_storage_for(&CommandArtifactPayloadClass::Stderr)
+        );
     }
 
     #[test]

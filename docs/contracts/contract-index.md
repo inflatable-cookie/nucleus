@@ -14,7 +14,7 @@ Updated: 2026-06-15
 | `004-model-routing-contract.md` | draft-promoted-first-pass | Model/provider routing layer with first Rust protocol types. |
 | `005-task-contract.md` | draft-promoted-first-pass | Durable task model with first Rust domain types. |
 | `006-workspace-layout-contract.md` | draft-promoted-first-pass | Persisted project workspace layout with first Rust domain types. |
-| `007-server-boundary-contract.md` | draft-promoted-first-pass | Server authority and control-plane boundary with first Rust types. |
+| `007-server-boundary-contract.md` | draft-promoted-first-pass | Server/host API and control-plane boundary with first Rust types. |
 | `008-storage-state-persistence-contract.md` | draft-promoted-first-pass | Persistence domains, record identity, revisions, and journal vocabulary. |
 | `009-adapter-registry-contract.md` | draft-promoted-first-pass | Configured harness adapter registry with first Rust types. |
 | `010-agent-session-lifecycle-contract.md` | draft-promoted-first-pass | Server-owned agent session and turn lifecycle with first Rust types. |
@@ -24,3 +24,4 @@ Updated: 2026-06-15
 | `014-structured-project-planning-contract.md` | draft | Server-owned guided planning sessions, artifacts, and task seeds. |
 | `015-deep-research-contract.md` | draft | Server-owned deep research runs, questions, source records, observations, and synthesis. |
 | `016-effigy-project-integration-contract.md` | draft | Optional project-level Effigy integration for workflow routing, validation, and native steward tooling. |
+| `017-engine-host-authority-contract.md` | draft-promoted-first-pass | Engine-first host forms, project authority maps, and multi-host authority rules. |

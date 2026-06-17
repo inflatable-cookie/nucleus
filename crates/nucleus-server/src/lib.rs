@@ -3,10 +3,12 @@
 //! This crate names the server authority surface. It does not implement
 //! networking, authentication, process control, or runtime routing yet.
 
+pub mod artifact_store_backend;
 pub mod authority;
 pub mod client_auth;
 pub mod clients;
 pub mod command_artifacts;
+pub mod command_evidence_state;
 pub mod command_runtime_readiness;
 pub mod commands;
 pub mod control_api;
@@ -15,9 +17,25 @@ pub mod control_serialization_readiness;
 pub mod deployment;
 pub mod event_replay;
 pub mod events;
+pub mod host_authority;
+pub mod host_spawn_readiness;
 pub mod ids;
+pub mod local_artifact_store_backend;
+pub mod local_command_runner;
+pub mod local_event_transport_backend;
+pub mod local_host_runtime_discovery;
+pub mod local_process_control_backend;
+pub mod local_read_only_spawn;
+pub mod local_read_only_spawn_smoke;
+pub mod local_sandbox_backend;
 pub mod local_transport;
+pub mod process_control_backend;
+pub mod process_event_transport_backend;
+pub mod process_interruption;
+pub mod process_supervision_events;
+pub mod process_supervisor;
 pub mod project_seed;
+pub mod read_only_command_control;
 pub mod request_handler;
 pub mod runtime_effect_events;
 pub mod runtime_effect_replay;
@@ -25,13 +43,19 @@ pub mod runtime_effect_retention;
 pub mod runtime_effect_storage;
 pub mod runtime_effect_subscriptions;
 pub mod runtime_effect_transport;
+pub mod sandbox_backend;
 pub mod scheduler;
 pub mod secret_store;
+pub mod server_read_only_spawn;
 pub mod state;
+pub mod task_seed;
 pub mod tauri_ipc_command;
 pub mod tauri_ipc_readiness;
 pub mod transport_readiness;
 
+pub use artifact_store_backend::{
+    ArtifactStoreBackendEvidenceRef, ArtifactStoreBackendKind, ArtifactStoreBackendReadiness,
+};
 pub use authority::{AuthorityArea, ServerAuthority};
 pub use client_auth::{
     ClientAuthDeploymentPolicy, ClientAuthPosture, ClientAuthReadiness, ClientAuthReadinessBlocker,
@@ -40,11 +64,13 @@ pub use client_auth::{
 };
 pub use clients::{ClientConnection, ClientIdentity, ClientKind};
 pub use command_artifacts::{ServerCommandArtifactRecord, ServerCommandArtifactResolution};
+pub use command_evidence_state::write_command_evidence;
 pub use command_runtime_readiness::{
     ServerCommandRuntimeReadiness, ServerCommandRuntimeReadinessDisposition,
 };
 pub use commands::{
-    AgentSessionCommand, ProjectCommand, ServerCommand, TaskCommand, WorkspaceCommand,
+    AgentSessionCommand, ProjectCommand, ReadOnlyCommand, ServerCommand, TaskCommand,
+    TaskTransitionCommand, WorkspaceCommand,
 };
 pub use control_api::{
     AdapterSessionQuery, ModelRouteQuery, RuntimeMetadataQuery, ServerCommandReceipt,
@@ -54,10 +80,10 @@ pub use control_api::{
     StateRecordQueryScope,
 };
 pub use control_envelope_dto::{
-    ControlApiCodecError, ControlProjectRecordDto, ControlQueryDto, ControlQueryScopeDto,
-    ControlRequestBodyDto, ControlRequestEnvelopeDto, ControlResponseBodyDto,
-    ControlResponseEnvelopeDto, ControlResponseStatusDto, ControlStateDomainDto,
-    ControlStateRecordDto, ControlTaskRecordDto,
+    ControlApiCodecError, ControlCommandDto, ControlCommandEvidenceRecordDto,
+    ControlProjectRecordDto, ControlQueryDto, ControlQueryScopeDto, ControlRequestBodyDto,
+    ControlRequestEnvelopeDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
+    ControlResponseStatusDto, ControlStateDomainDto, ControlStateRecordDto, ControlTaskRecordDto,
 };
 pub use control_serialization_readiness::{
     ControlApiCodecBoundary, ControlApiCodecFailure, ControlApiDtoAuthority,
@@ -74,12 +100,71 @@ pub use event_replay::{
     ServerEventReplayWindow,
 };
 pub use events::{ServerEvent, ServerEventKind};
+pub use host_authority::{
+    EngineHostDescriptor, EngineHostForm, EngineHostId, HostAuthorityReadiness,
+    HostAuthorityReadinessStatus, ProjectAuthorityAssignment, ProjectAuthorityDomain,
+    ProjectAuthorityMap,
+};
+pub use host_spawn_readiness::{
+    evaluate_host_spawn_readiness, HostSpawnReadinessBlocker, HostSpawnReadinessGate,
+    HostSpawnReadinessInput, HostSpawnReadinessStatus,
+};
 pub use ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerEventId, ServerQueryId};
+pub use local_artifact_store_backend::{
+    with_local_artifact_store_readiness, LocalArtifactMetadataId, LocalArtifactMetadataRecord,
+    LocalArtifactMetadataStore, LocalArtifactStoreBackend, LocalArtifactStoreError,
+};
+pub use local_command_runner::{LocalReadOnlyCommandRunner, LocalReadOnlyCommandRunnerRejection};
+pub use local_event_transport_backend::{
+    with_local_event_transport_readiness, LocalEventTransportBackend, LocalEventTransportChannelId,
+    LocalEventTransportError, LocalEventTransportReplayPosture, LocalSupervisionEventChannel,
+};
+pub use local_host_runtime_discovery::{
+    evaluate_host_spawn_readiness_from_discovery, unsupported_local_host_runtime_discovery,
+    LocalHostRuntimeDiscovery, LocalHostRuntimeDiscoveryEvidenceRef,
+    LocalHostRuntimeDiscoveryFinding, LocalHostRuntimeDiscoveryGateInput,
+    LocalHostRuntimeDiscoveryStatus,
+};
+pub use local_process_control_backend::{
+    with_local_process_control_readiness, LocalProcessControlBackend, LocalProcessControlBackendId,
+    LocalProcessControlError, LocalProcessControlReadinessProfile, LocalProcessControlRuntime,
+};
+pub use local_read_only_spawn::{
+    run_local_read_only_spawn, LocalReadOnlySpawnError, LocalReadOnlySpawnInput,
+    LocalReadOnlySpawnOutcome, LocalReadOnlySpawnOutputSummary, LocalReadOnlySpawnRejection,
+    LocalReadOnlySpawnResult,
+};
+pub use local_read_only_spawn_smoke::{
+    build_local_read_only_spawn_smoke_input, LocalReadOnlySpawnSmokeError,
+    LocalReadOnlySpawnSmokeInput,
+};
+pub use local_sandbox_backend::{
+    with_local_sandbox_readiness, LocalSandboxBackend, LocalSandboxBackendId,
+    LocalSandboxBackendPlatform, LocalSandboxBackendPosture, LocalSandboxError,
+    LocalSandboxProfileSupport,
+};
 pub use local_transport::{
     InProcessControlClientFixture, InProcessControlHandlerFixture, LocalControlTransport,
     LocalControlTransportBoundary, LocalControlTransportError, LocalControlTransportExchange,
 };
+pub use process_control_backend::{
+    ProcessControlBackendEvidenceRef, ProcessControlBackendKind, ProcessControlBackendReadiness,
+};
+pub use process_event_transport_backend::{
+    ProcessEventTransportBackendKind, ProcessEventTransportEvidenceRef,
+    ProcessEventTransportReadiness,
+};
+pub use process_interruption::ProcessInterruptionHostContract;
+pub use process_supervision_events::ProcessSupervisionServerEvent;
+pub use process_supervisor::{
+    accept_process_supervision_request, ProcessSupervisorAcceptanceDecision,
+    ProcessSupervisorAcceptanceRejection, ProcessSupervisorAcceptanceRejectionReason,
+    ProcessSupervisorAcceptanceRequest, ProcessSupervisorAcceptedEvents,
+};
 pub use project_seed::{seed_local_project, LocalProjectSeed};
+pub use read_only_command_control::{
+    run_read_only_command_control, ReadOnlyCommandControlRejection, ReadOnlyCommandControlResult,
+};
 pub use request_handler::{LocalControlRequestHandler, LocalControlRequestHandlerBoundary};
 pub use runtime_effect_events::{
     RuntimeEffectServerEvent, RuntimeEffectServerEventKind, ServerEventSequence,
@@ -112,6 +197,7 @@ pub use runtime_effect_transport::{
     RuntimeEffectTransportCapability, RuntimeEffectTransportFamily, RuntimeEffectTransportProfile,
     RuntimeEffectTransportSelectionCriteria,
 };
+pub use sandbox_backend::{SandboxBackendEvidenceRef, SandboxBackendKind, SandboxBackendReadiness};
 pub use scheduler::{
     RuntimeSchedulerAdmissionDecision, RuntimeSchedulerAdmissionRejection, RuntimeSchedulerQueue,
     RuntimeSchedulerQueuedItem, RuntimeSchedulerRequest, RuntimeSchedulerRequestId,
@@ -127,7 +213,12 @@ pub use secret_store::{
     CredentialResolutionRuntimeBoundary, CredentialResolutionScope, CredentialRevocationPolicy,
     CredentialRotationPolicy, SecretBackendKind,
 };
+pub use server_read_only_spawn::{
+    read_only_spawn_store_error, run_server_read_only_spawn, ServerReadOnlySpawnInput,
+    ServerReadOnlySpawnResult,
+};
 pub use state::{ServerStateDomain, ServerStateDomainService, ServerStateService};
+pub use task_seed::{seed_local_task, LocalTaskSeed};
 pub use tauri_ipc_command::{
     TauriIpcCommandBoundary, TauriIpcCommandBoundaryError, TauriIpcCommandBoundaryHandler,
     TauriIpcCommandBoundaryPosture, TauriIpcCommandExchange, TauriIpcCommandHandlerFixture,

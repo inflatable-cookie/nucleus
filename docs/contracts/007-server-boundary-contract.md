@@ -6,43 +6,71 @@ Updated: 2026-06-16
 
 ## Purpose
 
-Define the server boundary that all control planes use.
+Define the server/host API boundary that control planes use.
 
-The server is the nucleus authority surface. Desktop, web, mobile, CLI, and
-service clients are control planes over the same server-owned state.
+The server is one Nucleus host form, not the system core. The portable Rust
+engine is the core authority implementation surface. Desktop, web, mobile,
+CLI, and service clients are control planes over authoritative engine hosts.
 
-## Authority Rule
+This contract keeps the historical `server` name for current crate and API
+surfaces, but new architecture should read it as host API unless a section is
+specifically about `nucleusd` as a daemon.
 
-The server owns:
+## Host Authority Rule
+
+Host connection does not imply project authority.
+
+An engine host owns only the authority domains assigned to it by a project
+authority map. Initial authority domains:
 
 - project records
+- source checkout and worktree state
 - repo membership and path history
-- task state
+- task records
 - agent session records
 - workspace layouts
 - terminal attachment state
 - browser attachment state
 - harness process lifecycle
 - model routes
+- shared memory records
+- planning records
+- research records
+- SCM/forge actions
+- command execution
+- credentials
+- audit/evidence records
+- projection records
 
-Clients may cache and render state, but must reconcile with server state.
-Tauri must not become the authority for project, task, workspace, or agent
-state.
+Clients may cache and render state, but must reconcile with the authoritative
+host for the affected domain.
+
+Tauri may embed the engine and act as the authoritative local host for
+single-user local workflows. Tauri UI code must not become authority by
+itself; authority remains in Rust engine/host APIs.
+
+`nucleusd` may act as a local sidecar host, remote authoritative host, remote
+worker/proxy host, or managed team host depending on deployment and project
+authority map.
 
 ## Deployment Boundary
 
 A deployment has:
 
-- one running server runtime
+- one running engine host
 - one deployment mode
 - one or more access endpoints
 - one or more clients connected through those endpoints
 
 Initial deployment modes:
 
+- embedded local
 - local-only
+- local sidecar
 - local network
 - internet reachable
+- remote worker/proxy
+- remote authoritative
 - managed remote
 
 Access transport is not fixed yet. The contract must support local socket,
@@ -262,6 +290,32 @@ Command evidence may retain command request id, status, exit status, retention
 mode, artifact refs, and short sanitized summary. It must not copy raw output
 into task history, projection records, event journals, or logs by default.
 
+## Command History Query Surface
+
+Command history queries return sanitized command evidence DTOs, not raw storage
+records.
+
+Initial command history DTO fields:
+
+- evidence id
+- command request id
+- status
+- exit status
+- retention mode
+- sanitized summary
+- stdout artifact ref
+- stderr artifact ref
+
+Command history DTOs must not expose raw stdout, raw stderr, process
+transcripts, environment values, credentials, storage payload bytes, or
+storage revision metadata.
+
+Artifact refs are references only. Fetching artifact payloads requires a later
+artifact resolution contract and must not be implied by the history list.
+
+Clients may render command history from this DTO. Clients must not decode
+command evidence storage records directly.
+
 ## Command Fixture Policy
 
 Command policy tests need fixtures before a command runner exists.
@@ -364,6 +418,75 @@ Initial event categories:
 Events must carry stable server event ids. Adapter runtime events retain their
 adapter-level event identity inside the server event.
 
+## Task Command Mutation Boundary
+
+Task command mutation is server authority.
+
+The first executable subset covers activity transitions for existing task
+records:
+
+- start task
+- block task with reason
+- complete task
+- archive task
+
+Create and update commands now have a first server-owned path using task
+authoring input.
+
+Task mutation handling must:
+
+- read task records through `ServerStateService`
+- decode typed task storage payloads
+- update only the requested activity state in the first subset
+- write back through the task repository
+- preserve unrelated task display fields
+- return explicit not-found, conflict, malformed-payload, or unsupported errors
+- keep runtime execution, validation command execution, and agent assignment out
+  of the state mutation handler
+
+Command DTOs must not expose raw storage records. Client-originated mutation
+requests should include stable command id, client id, task id, intended
+transition, transition-specific fields, and expected revision when available.
+The server decides whether a transition is supported.
+
+Task create/update command DTOs should use task authoring input, not display
+DTOs or storage records.
+
+Create commands should include:
+
+- stable command id
+- client id
+- project id
+- title
+- action type
+- importance
+- optional description
+- optional acceptance criteria
+- optional initial activity state
+- optional agent-readiness fields
+- optional model preference refs
+- optional user-authored SCM or forge links
+
+Update commands should include:
+
+- stable command id
+- client id
+- task id
+- expected revision
+- replacement values for editable fields
+
+The server must own task id creation, schema version, storage revision,
+timestamps, task history, assignment snapshots, adapter-observed links, runtime
+refs, command evidence refs, and projection paths.
+
+Create/update handling must validate project existence, supported action type,
+importance vocabulary, allowed activity state, blocked reason requirements,
+agent-readiness constraints, and reference shape before writing state.
+
+Create/update handling must not accept raw storage payloads from clients. It
+must write through server state services, then return read-after-write task
+records through the typed DTO boundary.
+
 ## Current Rust Surface
 
 `nucleus-server` now contains the first draft of:
@@ -383,6 +506,10 @@ adapter-level event identity inside the server event.
 - `ServerCommandKind`
 - `ProjectCommand`
 - `TaskCommand`
+- `TaskCreateCommand`
+- `TaskUpdateCommand`
+- `TaskUpdateChanges`
+- `TaskTransitionCommand`
 - `WorkspaceCommand`
 - `AgentSessionCommand`
 - `ServerEvent`
@@ -482,6 +609,119 @@ The first Rust command authority trait skeleton exposes policy inspection only:
 policy id, readiness, supported scopes, default sandbox, and approval policy.
 It does not execute commands, spawn processes, stream output, retain artifacts,
 open terminals, or implement sandboxes.
+
+`nucleus-server` now contains the first local read-only command runner
+skeleton:
+
+- `LocalReadOnlyCommandRunner`
+- `LocalReadOnlyCommandRunnerRejection`
+
+`nucleus-command-policy` now contains shared structured invocation vocabulary:
+
+- `CommandInvocation`
+- `CommandEnvironmentPolicy`
+
+The server skeleton validates the first local read-only subset and returns
+sanitized queued or blocked evidence. It does not spawn processes, open shells,
+stream output, retain raw stdout/stderr, enforce a real sandbox, or prove
+command completion.
+
+The first real local read-only spawn path now exists behind the server
+boundary:
+
+- `run_local_read_only_spawn`
+- `ServerReadOnlySpawnInput`
+- `ServerReadOnlySpawnResult`
+- `run_server_read_only_spawn`
+- `LocalReadOnlySpawnSmokeInput`
+- `build_local_read_only_spawn_smoke_input`
+
+The path requires a ready host-spawn gate before spawn, structured executable
+and argv values, finite timeout, bounded stdout/stderr capture, and
+summary-only output retention. It persists sanitized command evidence through
+server state. It does not expose raw stdout/stderr, environment variables,
+credentials, terminal byte streams, shell traces, PTY state, or full artifact
+payloads by default.
+
+`nucleusd command-runner read-only-spawn-smoke` is a fixed smoke command for
+this path. It proves server wiring, readiness composition, process exit status,
+event count, byte-count summaries, truncation reporting, and sanitized evidence
+persistence. It is not a general command execution API and must not be expanded
+to arbitrary client input until the read-only command request/admission control
+API shape is defined.
+
+The first read-only command control API shape is now defined for structured
+client requests:
+
+- `ReadOnlyCommand`
+- `ReadOnlyCommandControlResult`
+- `ReadOnlyCommandControlRejection`
+- `run_read_only_command_control`
+- `ControlCommandDto::ReadOnlyCommand`
+- `ControlResponseBodyDto::ReadOnlyCommandResult`
+
+Request fields are structured and bounded:
+
+- stable command id
+- project id
+- execution host id
+- executable
+- argv list
+- working directory
+- timeout in milliseconds
+- stdout and stderr byte limits
+- optional sanitized display string
+
+Response fields are sanitized:
+
+- command id
+- command request id
+- evidence id
+- execution status
+- exit status
+- retention mode
+- sanitized summary
+- stdout and stderr captured byte counts
+- stdout and stderr truncation flags
+- supervision event count
+- sanitized rejection category
+
+The response must not expose raw stdout, raw stderr, terminal byte streams,
+shell traces, environment variables, credential material, or full artifact
+payloads. Shell passthrough, invalid working directories, missing timeout, and
+unbounded output are rejected before spawn. Accepted requests still pass
+through host-spawn readiness, read-only runner validation, server-owned spawn
+execution, and sanitized evidence persistence.
+
+This control path is narrow enough for constrained CLI input next. Desktop UI
+controls should wait until the CLI path proves structured argument handling,
+operator feedback, and evidence query ergonomics.
+
+`nucleusd` now exposes the constrained CLI syntax:
+
+```text
+nucleusd command-runner read-only [--cwd <dir>] [--timeout-ms <ms>] [--stdout-limit <bytes>] [--stderr-limit <bytes>] -- <executable> [args...]
+```
+
+Rules:
+
+- flags must appear before `--`
+- executable and argv must appear after `--`
+- the CLI must not accept a single shell command string
+- `--cwd` defaults to the current directory
+- `--timeout-ms` defaults to `2000`
+- `--stdout-limit` and `--stderr-limit` default to `16384`
+- zero timeout or output limits are invalid
+- shell entrypoints such as `sh`, `bash`, `zsh`, `cmd`, `powershell`, and
+  `pwsh` remain blocked by the server runner before spawn
+- CLI output may print status, exit status, evidence id, event count, byte
+  counts, truncation flags, rejection category, and sanitized summary
+- CLI output must not print raw stdout or raw stderr
+
+The CLI path routes through `LocalControlRequestHandler` and
+`ServerCommandKind::ReadOnlyCommand`; it must not call the spawn helper
+directly. It is a proof path for server control semantics, not a desktop UI
+contract.
 
 Compile-focused trait tests use local test structs only. They prove the command
 authority surface can inspect policy without executing commands, reading
@@ -1285,6 +1525,663 @@ plan to a server command id. It is compile-only and does not implement
 scheduling, process control, sandboxing, credential lookup, output capture,
 artifact storage, or event publication.
 
+## Local Command Runner Implementation Contract
+
+The first command runner implementation must be local-only, server-owned, and
+read-only. It is an execution path, not a shell.
+
+First executable subset:
+
+- authority area: validation, steward, user terminal, or custom read-only
+  inspection only
+- scope: read-only inspection only
+- risk: low only
+- approval: auto-allowed or already approved before runner invocation
+- sandbox profile: no filesystem write or project restricted
+- command shape: structured executable plus argv, not a shell string
+- working directory: existing project or worktree path validated by the server
+- environment: minimal inherited-safe environment with no credential material
+- output retention: summary-only by default
+- timeout: required
+
+The first runner must reject:
+
+- shell passthrough
+- source-code writes
+- management-state writes
+- SCM mutation
+- worktree mutation
+- network access
+- secret access
+- destructive commands
+- provider process lifecycle commands
+- PTY attachment
+- unbounded output
+- raw stdout/stderr retention without an artifact policy
+
+Process spawning requirements:
+
+- the server must decide the command policy before spawning
+- the executable must be a structured field, never parsed from a shell string
+- argv must be represented as separate arguments
+- working-directory validation must happen before spawn
+- the runner must set a timeout before spawn
+- the runner must capture stdout/stderr separately
+- stdout/stderr may be summarized, truncated, or referenced by artifact id
+- raw output must not be copied into task history, event journals, normal logs,
+  or UI state
+
+Initial sanitized evidence must include:
+
+- command request id
+- status
+- exit status when known
+- output retention posture
+- optional stdout artifact ref
+- optional stderr artifact ref
+- short sanitized summary
+
+Initial cancellation posture is cooperative-only or unsupported. A timeout
+must produce timed-out evidence. A failed spawn must produce failed evidence
+without pretending the process ran.
+
+The first implementation may use host process spawning for the local-only
+profile. This does not select the long-term sandbox backend. Broader sandbox
+profiles, PTY execution, streaming output, artifact payload storage, network
+commands, secret-backed commands, provider process lifecycle, and remote
+execution remain separate future contracts.
+
+## Command Execution Readiness Assessment
+
+The first gate-only runner proves request classification and sanitized evidence
+shape. It does not make broader command execution ready.
+
+Host process spawning remains blocked until the server has:
+
+- structured command invocation records with executable, argv, working
+  directory, timeout, and output bound
+- environment construction rules
+- timeout and cancellation implementation rules
+- artifact payload policy for raw stdout/stderr when retained
+- sandbox enforcement strategy, not only sandbox labels
+- event publication rules for queued, blocked, running, and terminal evidence
+
+Persisted command evidence and `nucleusd` command evidence query output now
+exist for the fixed gate-only smoke path. Query output remains sanitized and
+does not expose raw process output.
+
+The next implementation lane should define local process supervision,
+invocation records, timeout/cancellation semantics, and sandbox limits before
+adding host process spawning.
+
+## Local Process Supervision Contract
+
+Local process supervision is the server-owned runtime boundary for host child
+processes. It is narrower than command authority. Command authority decides
+whether a request may run; process supervision starts, observes, interrupts,
+and finalizes a local process only after that authority exists.
+
+The first process supervisor may support only:
+
+- local host child process
+- read-only inspection scope
+- low risk
+- validation, steward, user terminal, or custom read-only authority area
+- auto-allowed or already-approved request
+- structured executable plus argv
+- existing project or worktree working directory
+- bounded stdout and stderr capture
+- required timeout
+- summary-only evidence by default
+
+The first process supervisor must not support:
+
+- shell strings or shell passthrough
+- PTY allocation
+- interactive stdin
+- network-enabled commands
+- secret material or credential lookup
+- source-code writes
+- management-state writes
+- SCM mutation
+- worktree mutation
+- destructive commands
+- provider process lifecycle commands
+- unbounded output
+- background processes detached from the server
+
+Structured invocation record requirements:
+
+- executable is a field, not parsed from a string
+- argv is a list of arguments, not shell text
+- working directory is validated before spawn
+- timeout is required and finite
+- stdout and stderr byte limits are required
+- environment policy is named before spawn
+- sandbox policy is named before spawn
+- output retention policy is named before spawn
+- command request id is linked before spawn
+
+Environment construction rules:
+
+- start from a minimal server-selected environment, not full inherited host
+  environment by default
+- include no provider credentials, API keys, tokens, SSH agent paths, keychain
+  refs, or secret file paths
+- include only allowlisted variables needed for local tool execution
+- record the environment policy name in evidence, not environment values
+- reject requests that require credential material until the secret-store
+  contract defines that flow
+
+Timeout and cancellation rules:
+
+- timeout starts either before spawn attempt or after spawn success; the
+  implementation must choose and document one exact interpretation before
+  spawn is allowed
+- timeout must produce timed-out evidence even if process cleanup also fails
+- cancellation request is not a terminal state
+- terminal state must distinguish succeeded, failed, cancelled, timed out,
+  failed spawn, blocked by policy, and cleanup failed
+- cleanup failure must be visible as sanitized evidence
+- cleanup failure must emit a cleanup-failed event or equivalent sanitized
+  evidence ref; it must not be hidden inside a generic failure summary
+- retry must remain server-scheduled and policy-aware
+- cancellation behavior must be named before spawn; `Unsupported` cancellation
+  is not acceptable for unattended local spawn
+
+Output capture rules:
+
+- stdout and stderr are captured separately
+- each stream has a byte limit before spawn
+- exceeding a byte limit must stop capture, truncate, or terminate according to
+  a named policy
+- summaries must be sanitized and bounded
+- raw output must not enter task history, event journals, normal logs, UI
+  state, or projection records by default
+- artifact refs require artifact policy; artifact payload storage remains a
+  separate boundary
+
+Sandbox honesty rule:
+
+The first local host-spawn slice may use labels such as `NoFilesystemWrite` or
+`ProjectRestricted` only if the implementation honestly enforces that posture.
+If the host cannot enforce no-write behavior, the runner must either stay
+gate-only or use a weaker explicit sandbox label. Nucleus must not present a
+sandbox profile as enforced when it is only advisory.
+
+Local host execution safety strategy:
+
+- `HostDefault` is advisory and must not be used for unattended spawn.
+- `NoFilesystemWrite` is enforceable only when the host proves writes are
+  blocked by an OS sandbox, container, mount policy, or equivalent mechanism.
+- `ProjectRestricted` is enforceable only when filesystem access is confined to
+  approved project or worktree roots and escapes are rejected before spawn.
+- `WorktreeRestricted` is enforceable only when the allowed root is one
+  recorded worktree and path escapes are rejected before spawn.
+- `NetworkDenied` is enforceable only when outbound network access is blocked
+  by the host runtime, not just omitted from command intent.
+- `NetworkAllowed` is not part of the first local read-only spawn class.
+- `Custom` profiles are blocked until their enforcement backend and evidence
+  shape are named.
+
+Gate-only command runners may inspect these labels and reject unsupported
+requests, but they must not claim sandbox enforcement. Evidence may record the
+requested sandbox label and a gate-only disposition; it must not record an
+advisory label as enforced.
+
+First allowed future spawn class:
+
+- local execution host has project execution authority
+- command authority already accepted the request
+- scope is `ReadOnlyInspection`
+- risk is `Low`
+- approval is `AutoAllowed` or already approved by policy
+- executable and argv are structured
+- shell passthrough is rejected
+- working directory is an existing project or worktree root or descendant
+- environment is minimal and allowlisted
+- timeout is finite and required
+- stdout and stderr limits are finite and required
+- output retention is summary-only unless artifact policy explicitly allows
+  payload retention
+- sandbox enforcement status is `Enforced`, not advisory
+
+If any of those conditions fail, the process supervisor must stay at blocked or
+queued evidence and must not emit running evidence.
+
+Event publication rules:
+
+- queued evidence is not proof of process start
+- running evidence is not proof of process completion
+- terminal evidence must include status, exit status when known, retention
+  posture, optional artifact refs, and sanitized summary
+- client event streams may reference evidence ids; they must not copy raw
+  output by default
+
+Host process spawning remains blocked until structured invocation records,
+process supervision readiness, event payloads, acceptance checks, sandbox
+enforcement, artifact payload policy, timeout behavior, and cancellation
+behavior prove these constraints without pretending a process ran.
+
+`nucleus-command-policy` now contains first-pass process supervision readiness
+vocabulary:
+
+- `CommandProcessSupervisionReadinessStatus`
+- `CommandProcessSupervisionSurface`
+- `CommandProcessSupervisionBlocker`
+- `CommandTimeoutPolicy`
+- `CommandCancellationPolicy`
+- `CommandOutputBoundPolicy`
+- `CommandSandboxEnforcement`
+- `CommandProcessSupervisionReadiness`
+
+These types are compile-only. They do not spawn processes, select an async
+runtime, enforce sandboxes, capture output, interrupt children, store
+artifacts, publish events, or prove host execution is safe.
+
+## First Host Spawn Readiness Assessment
+
+The first host-spawn slice is not ready yet.
+
+Closed prerequisites:
+
+- command evidence can be persisted and queried
+- command evidence output remains sanitized
+- structured invocation records exist
+- process supervision readiness types exist
+- process supervision event payload types exist
+- process supervisor acceptance skeleton exists
+- process supervision contract names timeout, cancellation, environment,
+  output, sandbox, and event requirements
+
+Remaining blockers:
+
+- no concrete sandbox enforcement strategy exists for `NoFilesystemWrite` or
+  `ProjectRestricted`
+- no event transport exists for process start, running, terminal, and
+  cleanup-failed evidence
+- no artifact payload policy exists for retained stdout/stderr bytes
+- no implementation-level timeout and cancellation behavior has been proven
+
+The next lane must define host execution safety and artifact policy. It must
+still avoid starting child processes until sandbox enforcement,
+output/artifact behavior, timeout behavior, and cancellation behavior are
+honest.
+
+## Process Supervisor Module And Event Boundary
+
+The process supervisor module is a host runtime boundary. It is separate from
+command authority, host authority, storage, and event transport.
+
+Before supervisor acceptance, the host must have:
+
+- project authority-map assignment for execution authority
+- command authority accepted for the request
+- structured invocation record
+- process supervision readiness plan
+- evidence publication policy
+
+Supervisor responsibilities:
+
+- accept or reject a process supervision request
+- preserve command request id and project id refs
+- preserve authoritative execution host id
+- publish evidence-ref based supervision events
+- keep sandbox enforcement blockers visible
+- keep raw stdout/stderr out of event payloads
+- report terminal and cleanup-failed states separately
+
+Supervisor event categories:
+
+- accepted: supervisor accepted a policy-ready request for future execution
+- blocked: supervisor rejected a request before execution
+- queued: supervisor queued a request without process start
+- running: process start was observed
+- terminal: process reached succeeded, failed, cancelled, or timed-out state
+- cleanup failed: process interruption or cleanup failed after terminal or
+  timeout handling
+
+Supervisor events may carry:
+
+- event id
+- project id
+- command request id
+- execution host id
+- supervision status
+- command evidence ref
+- sanitized summary
+- retry classification ref where available
+
+Supervisor events must not carry:
+
+- raw stdout
+- raw stderr
+- terminal byte streams
+- environment values
+- credential values
+- secret file paths
+- provider-native auth material
+- unredacted filesystem listings
+
+The first process supervisor implementation must remain non-spawning until the
+event types and acceptance skeleton prove these boundaries. A ready
+supervision acceptance is still not proof that a child process ran.
+
+Current Rust surface:
+
+- `CommandProcessSupervisionEventId`
+- `CommandProcessSupervisionRetryRef`
+- `CommandProcessSupervisionEventPayload`
+- `CommandProcessSupervisionEventKind`
+- `CommandProcessSupervisionStatus`
+- `CommandProcessTerminalStatus`
+- `CommandTimeoutStartPolicy`
+- `CommandCleanupFailurePolicy`
+- `CommandProcessInterruptionContract`
+- `ProcessSupervisionServerEvent`
+- `ProcessInterruptionHostContract`
+- `ProcessSupervisorAcceptanceRequest`
+- `ProcessSupervisorAcceptanceDecision`
+- `ProcessSupervisorAcceptedEvents`
+- `ProcessSupervisorAcceptanceRejection`
+- `ProcessSupervisorAcceptanceRejectionReason`
+- `accept_process_supervision_request`
+
+These types preserve command request, project, execution host, evidence, policy
+decision, and retry refs. They do not include raw stdout, raw stderr, terminal
+streams, environment values, process spawning, event transport, persistence, or
+artifact payload storage.
+
+The first acceptance skeleton checks execution authority from the project
+authority map and rejects blocked readiness plans. Ready requests emit accepted
+and queued event values only; they do not produce running or terminal events
+and still do not prove any child process ran.
+
+The first interruption contract requires finite timeout policy, a named timeout
+start interpretation, supported cancellation behavior, cleanup-failed event
+visibility, terminal event visibility, and policy-aware retry classification.
+It does not implement async process control, kill-tree behavior, cleanup,
+retry scheduling, or event transport.
+
+## Second Host Spawn Readiness Assessment
+
+The first host-spawn slice is still not ready.
+
+Closed prerequisites:
+
+- command evidence can be persisted and queried
+- command evidence output remains sanitized
+- structured invocation records exist
+- process supervision readiness types exist
+- process supervision event payload types exist
+- process supervisor acceptance skeleton exists
+- local host execution safety strategy is explicit
+- artifact payload retention policy is explicit
+- timeout and cancellation implementation contract is explicit
+
+Remaining blockers:
+
+- no OS sandbox, container, mount policy, or equivalent enforcement backend
+  proves `NoFilesystemWrite`, `ProjectRestricted`, `WorktreeRestricted`, or
+  `NetworkDenied`
+- no artifact payload storage implementation exists behind the retention policy
+- no event transport exists for running, terminal, and cleanup-failed process
+  supervision events
+- no async process control implementation exists for timeout, cancellation, or
+  cleanup
+
+## Host Runtime Backend Readiness Descriptors
+
+Host-spawn backend readiness is descriptor-based, not boolean-only.
+
+Backend descriptor families:
+
+- sandbox backend readiness: backend kind, enforced profiles, enforcement
+  posture, and enforcement evidence refs
+- artifact store backend readiness: backend kind, supported payload classes,
+  payload storage readiness, retention evidence refs, and redaction evidence
+  refs
+- process event transport readiness: backend kind, supported supervision event
+  kinds, delivery evidence refs, and replay evidence refs
+- process-control backend readiness: backend kind, spawn, timeout,
+  cancellation, cleanup support, and implementation evidence refs
+
+Descriptors are evidence surfaces only. They do not implement sandboxing,
+artifact payload storage, event transport, process spawning, timeout,
+cancellation, cleanup, or UI rendering.
+
+Current Rust surface:
+
+- `SandboxBackendReadiness`
+- `SandboxBackendKind`
+- `SandboxBackendEvidenceRef`
+- `ArtifactStoreBackendReadiness`
+- `ArtifactStoreBackendKind`
+- `ArtifactStoreBackendEvidenceRef`
+- `ProcessEventTransportReadiness`
+- `ProcessEventTransportBackendKind`
+- `ProcessEventTransportEvidenceRef`
+- `ProcessControlBackendReadiness`
+- `ProcessControlBackendKind`
+- `ProcessControlBackendEvidenceRef`
+
+## Local Host Runtime Discovery Vocabulary
+
+Local host runtime discovery is a non-spawning server vocabulary for descriptor
+production.
+
+It may report:
+
+- local host runtime discovery status: ready, degraded, or unsupported
+- sandbox backend readiness descriptor
+- artifact store backend readiness descriptor
+- process event transport readiness descriptor
+- process-control backend readiness descriptor
+- discovery evidence refs
+- discovery findings such as unsupported backends or descriptor host mismatch
+
+Discovery records are values only. They do not probe the machine, spawn
+processes, enforce sandboxes, store artifacts, publish events, control child
+processes, choose an async runtime, or repair missing capability.
+
+Current Rust surface:
+
+- `LocalHostRuntimeDiscovery`
+- `LocalHostRuntimeDiscoveryStatus`
+- `LocalHostRuntimeDiscoveryFinding`
+- `LocalHostRuntimeDiscoveryEvidenceRef`
+- `LocalHostRuntimeDiscoveryGateInput`
+- `unsupported_local_host_runtime_discovery`
+- `evaluate_host_spawn_readiness_from_discovery`
+
+Discovery may feed the host-spawn readiness gate through an explicit
+composition input. The composition keeps project id, authority readiness,
+supervisor decision, requested sandbox profile, required artifact payload
+classes, interruption contract, and summary explicit. Discovery supplies only
+backend descriptors and execution host id.
+
+Unsupported discovery is a valid result. When composed with otherwise-ready
+authority, supervisor, and interruption inputs, unsupported backend descriptors
+must keep host-spawn readiness blocked with concrete backend blockers.
+
+## Host Spawn Readiness Gate
+
+The host-spawn readiness gate is a server-owned, non-spawning decision surface.
+It composes authority, supervisor acceptance, requested sandbox profile,
+sandbox backend readiness, artifact store backend readiness, process event
+transport readiness, interruption contract readiness, and process-control
+backend readiness into one value.
+
+The gate may return ready only when all of these are true:
+
+- project execution authority is ready for the execution host
+- process supervisor accepted the request
+- sandbox backend supports the requested sandbox profile with evidence refs
+- artifact store backend supports all required artifact payload classes with
+  retention and redaction evidence refs
+- event transport backend supports running, terminal, and cleanup-failed
+  supervision events with delivery and replay evidence refs
+- interruption contract is present and ready
+- process-control backend supports spawn, timeout, cancellation, and cleanup
+  with implementation evidence refs
+
+The gate must return blocked when any of these blockers are present:
+
+- execution authority is missing, assigned to another host, or mutation-denied
+- supervisor acceptance is blocked or rejected
+- sandbox backend is missing, advisory-only, unsupported, lacks evidence, or
+  does not support the requested sandbox profile
+- artifact store backend is missing, unsupported, lacks evidence, or does not
+  support required payload classes
+- event transport backend is missing, unsupported, lacks evidence, or cannot
+  carry running, terminal, and cleanup-failed events
+- interruption contract is missing or not ready
+- process-control backend is missing, unsupported, lacks evidence, or cannot
+  support spawn, timeout, cancellation, and cleanup
+
+The gate does not spawn processes, enforce sandboxes, store artifacts, publish
+events, control child processes, choose an async runtime, or select a sandbox
+backend. A ready gate is permission to enter a backend implementation boundary,
+not proof that a process ran.
+
+Current Rust surface:
+
+- `HostSpawnReadinessInput`
+- `HostSpawnReadinessGate`
+- `HostSpawnReadinessStatus`
+- `HostSpawnReadinessBlocker`
+- `evaluate_host_spawn_readiness`
+
+The tests prove missing or incomplete sandbox, artifact store, event transport,
+interruption contract, and process-control descriptors each keep readiness
+blocked. They also prove combined blockers remain visible for diagnostics and
+UI surfaces.
+
+## Fourth Host Spawn Readiness Assessment
+
+The first host-spawn implementation is closer, but still not ready.
+
+Closed prerequisites:
+
+- host-spawn readiness gate exists and uses typed backend descriptors
+- sandbox, artifact store, event transport, and process-control readiness are
+  descriptor-backed
+- descriptor tests prove missing evidence and unsupported capabilities block
+  readiness
+
+Remaining blockers:
+
+- descriptor values are still manually constructed test values
+- no host runtime discovery builds descriptors from real local capabilities
+- no backend-specific implementation exists for sandbox enforcement
+- no backend-specific implementation exists for artifact payload storage
+- no backend-specific implementation exists for process event transport
+- no backend-specific implementation exists for process control
+
+The next lane should add local host runtime capability discovery that produces
+backend descriptors. It must remain non-spawning.
+
+Real local process spawning remains blocked until concrete sandbox, artifact
+store, event transport, and process-control backends exist behind this gate.
+
+## Fifth Host Spawn Readiness Assessment
+
+The first host-spawn implementation is still blocked.
+
+Closed prerequisites:
+
+- local host runtime discovery vocabulary exists
+- unsupported local host runtime discovery fixture exists
+- discovery output can feed the host-spawn readiness gate
+- unsupported discovery produces concrete sandbox, artifact store, event
+  transport, and process-control blockers
+
+Remaining blockers:
+
+- no concrete local sandbox backend implementation is selected
+- no concrete local artifact store backend implementation is selected
+- no concrete local event transport backend implementation is selected
+- no concrete local process-control backend implementation is selected
+- the first spawn slice needs a narrow implementation runway that introduces
+  one backend at a time behind the existing gate
+
+The next lane should compile a local runtime backend implementation runway
+before attempting real process spawn.
+
+## Local Runtime Backend Implementation Runway
+
+First concrete local runtime backend work should land in dependency order:
+
+1. artifact store backend
+2. event transport backend
+3. sandbox backend
+4. process-control backend
+5. first read-only spawn implementation
+
+Reason:
+
+- artifact storage and event transport are evidence plumbing and do not require
+  child process spawn
+- sandbox and process-control work should not begin until evidence capture can
+  describe what happened
+- process-control is the last backend before spawn because it is the first
+  slice that can cross into real child-process behavior
+
+Before backend implementation, oversized server modules should be split where
+they block clean ownership. In particular, host-spawn readiness test helpers
+and discovery composition fixtures must not keep accumulating in
+`host_spawn_readiness.rs`.
+
+First backend slice definitions:
+
+- artifact store: local filesystem-backed sanitized metadata and bounded text
+  artifact refs under the server state root; no raw secret material; no remote
+  object storage; evidence refs must distinguish retention policy from
+  redaction policy
+- event transport: in-process supervision event bus with replay from existing
+  server event/effect storage vocabulary; must support running, terminal, and
+  cleanup-failed event kinds; no remote streaming
+- sandbox: advisory unsupported by default plus an explicitly selected first
+  enforceable local profile; unsupported platforms must produce unsupported
+  discovery, not pretend readiness
+- process control: finite-timeout, bounded-output, read-only command spawn
+  only after artifact, event, and sandbox descriptors are implemented; no PTY,
+  shell passthrough, terminal rendering, or remote process execution
+
+Real spawn remains blocked until all backend descriptors are produced by
+concrete backend slices and the host-spawn readiness gate returns ready.
+
+## Third Host Spawn Readiness Assessment
+
+The first host-spawn slice is still not ready.
+
+Closed prerequisites:
+
+- command evidence can be persisted and queried
+- command evidence output remains sanitized
+- structured invocation records exist
+- process supervision readiness types exist
+- process supervision event payload types exist
+- process supervisor acceptance skeleton exists
+- local host execution safety strategy is explicit
+- artifact payload retention policy is explicit
+- timeout and cancellation implementation contract is explicit
+- host-spawn readiness gate exists and preserves blocker detail
+
+Remaining blockers:
+
+- sandbox readiness is still represented as a coarse enforcement value, not a
+  backend descriptor with evidence of actual enforcement
+- artifact store readiness is still a boolean, not a backend descriptor with
+  payload class support and retention evidence
+- event transport readiness is still a boolean, not a transport descriptor for
+  running, terminal, and cleanup-failed supervision events
+- process-control readiness is still a boolean, not an implementation
+  descriptor for spawn, timeout, cancellation, and cleanup behavior
+
+The next lane should replace coarse backend booleans with typed backend
+readiness descriptors. It must remain non-spawning.
+
 ## Command Artifact Store And Output Retention Boundary
 
 Command artifacts are payload refs outside command evidence.
@@ -1323,9 +2220,29 @@ Full command output retention requires:
 
 - explicit retention policy
 - approval where policy requires it
+- payload class that policy permits
+- secret scan passed or findings redacted
+- redaction applied or not required
+- artifact payload stored outside command evidence, event journals, task
+  history, replay checkpoints, and normal logs
 - secret scanning before publication or replay exposure
 - redaction policy before publication or replay exposure
 - sanitized audit summary
+
+Artifact payload retention rules:
+
+- stdout, stderr, combined output, and terminal transcript payloads are raw
+  process output.
+- raw process output payload storage requires `FullArtifactWithApproval`,
+  satisfied approval, secret scanning, and redaction policy.
+- summary-only retention may store sanitized summary payloads, not raw stream
+  bytes.
+- validation reports may be stored as artifact payloads only after secret scan
+  and redaction policy have passed.
+- custom payload classes are blocked until their policy and scanner behavior
+  are named.
+- artifact refs may appear in command evidence and events; artifact payload
+  bytes must be resolved through a separate artifact query.
 
 Secret scanning and redaction status must be visible as metadata. A full-output
 artifact ref must not be treated as resolvable when approval is missing, secret
@@ -1346,6 +2263,151 @@ The first server command artifact envelope binds artifact descriptors to server
 command ids and exposes resolution status. It is compile-only and does not
 implement storage, scanning, redaction, payload reads, payload writes, or UI
 rendering.
+
+The first local artifact-store backend implementation now exists in
+`nucleus-server`.
+
+Implemented boundary:
+
+- `LocalArtifactStoreBackend`
+- `LocalArtifactMetadataStore`
+- `LocalArtifactMetadataRecord`
+- `LocalArtifactMetadataId`
+- `LocalArtifactStoreError`
+- `with_local_artifact_store_readiness`
+
+The backend owns a server state root and reports filesystem readiness only
+after its metadata directory exists. The first accepted payload classes are
+sanitized summary and validation report. Metadata is written as sanitized JSON
+under the state root; payload bytes are not stored by this boundary.
+
+Default local artifact storage rejects raw process output payload classes:
+
+- stdout
+- stderr
+- combined output
+- terminal transcript
+
+It also rejects obvious secret-material markers in metadata summaries. This is
+a first guardrail, not a substitute for the later scanner and redactor
+pipeline. Full output retention remains blocked until explicit approval,
+scanner, redaction, and payload-store behavior are implemented.
+
+Local runtime discovery can now compose concrete artifact-store readiness into
+an otherwise unsupported discovery result. This removes the artifact-store
+host-spawn blocker while keeping sandbox, event transport, and process-control
+blockers intact.
+
+The first local event transport backend implementation now exists in
+`nucleus-server`.
+
+Implemented boundary:
+
+- `LocalEventTransportBackend`
+- `LocalSupervisionEventChannel`
+- `LocalEventTransportChannelId`
+- `LocalEventTransportReplayPosture`
+- `LocalEventTransportError`
+- `with_local_event_transport_readiness`
+
+The backend names an in-process supervision event channel for one execution
+host. It reports readiness for the required future spawn event kinds:
+
+- running
+- terminal
+- cleanup failed
+
+Delivery evidence and replay evidence are separate. Replay readiness is
+metadata-ref only in this slice. This does not implement a durable replay
+store, live subscriptions, remote streaming, sockets, process spawn, or client
+event fanout.
+
+Local runtime discovery can now compose concrete event transport readiness into
+an otherwise degraded discovery result. With local artifact store and local
+event transport readiness composed, host-spawn readiness remains blocked by
+sandbox and process-control descriptors.
+
+The first local sandbox backend implementation now exists in `nucleus-server`.
+
+Implemented boundary:
+
+- `LocalSandboxBackend`
+- `LocalSandboxBackendId`
+- `LocalSandboxBackendPosture`
+- `LocalSandboxBackendPlatform`
+- `LocalSandboxProfileSupport`
+- `LocalSandboxError`
+- `with_local_sandbox_readiness`
+
+The backend can report enforced readiness for the `NoFilesystemWrite` profile
+with evidence refs. Unsupported and advisory-only postures remain explicit
+states and do not satisfy host-spawn readiness. This boundary still does not
+spawn processes, enforce OS policy, create containers, rewrite mounts, inspect
+paths, or run shell commands.
+
+Local runtime discovery can now compose concrete sandbox readiness into an
+otherwise degraded discovery result. With local artifact store, local event
+transport, and local sandbox readiness composed, host-spawn readiness remains
+blocked by process-control descriptors.
+
+The first local process-control backend implementation now exists in
+`nucleus-server`.
+
+Implemented boundary:
+
+- `LocalProcessControlBackend`
+- `LocalProcessControlBackendId`
+- `LocalProcessControlRuntime`
+- `LocalProcessControlReadinessProfile`
+- `LocalProcessControlError`
+- `with_local_process_control_readiness`
+
+The backend can report readiness for the first bounded read-only spawn control
+profile. The readiness profile keeps these controls explicit:
+
+- spawn readiness
+- finite timeout readiness
+- cooperative cancellation readiness
+- cleanup failure reporting readiness
+- shell passthrough disabled
+- PTY disabled
+
+This boundary still does not spawn processes, start async runtimes, cancel
+child processes, kill process trees, run cleanup, or open PTYs.
+
+Local runtime discovery can now compose concrete process-control readiness into
+an otherwise degraded discovery result. With local artifact store, local event
+transport, local sandbox, and local process-control readiness composed, the
+host-spawn readiness gate can report ready without spawning.
+
+The first bounded read-only local spawn boundary now exists in
+`nucleus-server`.
+
+Implemented boundary:
+
+- `run_local_read_only_spawn`
+- `LocalReadOnlySpawnInput`
+- `LocalReadOnlySpawnResult`
+- `LocalReadOnlySpawnOutcome`
+- `LocalReadOnlySpawnOutputSummary`
+- `LocalReadOnlySpawnRejection`
+- `LocalReadOnlySpawnError`
+
+The boundary requires a ready host-spawn gate before any process spawn attempt.
+It reuses the local read-only command runner policy checks, rejects shell
+passthrough, runs structured executable-plus-argv invocations, sets stdin to
+null, captures stdout and stderr through bounded readers, enforces finite
+timeout, and returns sanitized command evidence plus deterministic supervision
+events.
+
+Default evidence does not persist raw stdout, raw stderr, terminal byte
+streams, shell traces, environment values, or credential material. Output is
+reported as captured-byte counts and truncation flags only. Full artifact
+payload storage remains outside this boundary.
+
+The boundary is not yet wired into the server command runner smoke command or
+control API. The next lane should expose this through a narrow server-owned
+helper and smoke path before expanding command classes.
 
 ## Implementation Gap Classification
 

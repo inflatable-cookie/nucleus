@@ -20,6 +20,7 @@ Contracts define durable rules and interfaces.
 - `014-structured-project-planning-contract.md`
 - `015-deep-research-contract.md`
 - `016-effigy-project-integration-contract.md`
+- `017-engine-host-authority-contract.md`
 - `contract-index.md`
 
 ## Promotion Rule

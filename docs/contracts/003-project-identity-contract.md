@@ -26,6 +26,7 @@ Planned fields:
 - planning artifact refs
 - workspace layout references
 - activity timestamps
+- project authority map refs
 
 ## Repo Membership
 
@@ -55,8 +56,34 @@ That root stores portable shared project intent:
 - decision records
 - artifact references
 
-The management repository is not the live runtime database. The server imports,
-projects, validates, and syncs shared state through it.
+The management repository is not the live runtime database. The authoritative
+engine host imports, projects, validates, and syncs shared state through it.
+
+## Authority Map
+
+Project identity must separate project authority from host connection.
+
+A project may be controlled through multiple hosts, but each durable domain
+needs an assigned authoritative engine host before mutation:
+
+- project metadata
+- source checkout and worktree state
+- tasks
+- workspace layout
+- sessions
+- command execution
+- SCM/forge actions
+- shared memory
+- planning artifacts
+- research artifacts
+- evidence and audit records
+
+The authority map should survive host movement and support explicit repair
+flows when a host is unavailable, renamed, or replaced.
+
+Host connection does not update the authority map by itself. A connected
+remote worker can provide execution capacity without gaining source, task, SCM,
+or project metadata authority.
 
 ## Project Projection Record
 

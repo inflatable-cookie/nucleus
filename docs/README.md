@@ -18,7 +18,7 @@ The repo uses:
 
 ## Current Lane
 
-`roadmaps/g01/015-task-records-and-read-only-list-readiness.md`
+`roadmaps/g01/043-command-diagnostics-client-read-model.md`
 
 ## Guardrail
 

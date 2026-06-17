@@ -1,6 +1,6 @@
 # 123 Add Local Task Seed Or Create Path
 
-Status: ready
+Status: done
 Owner: Tom
 Updated: 2026-06-17
 
@@ -37,3 +37,19 @@ records.
 
 Mirror `seed_local_project`. The local seed should produce one bootstrap task
 attached to `project:nucleus-local` and use the `nucleus-tasks` storage codec.
+
+## Result
+
+Added `seed_local_task` and `LocalTaskSeed` in `nucleus-server`.
+
+The local bootstrap task:
+
+- uses `task:nucleus-local:bootstrap`
+- attaches to `project:nucleus-local`
+- writes through `ServerStateService`
+- uses the `nucleus-tasks` storage codec
+- is idempotent
+- reads back through the control response DTO boundary as `task_records`
+
+Desktop startup now seeds the local task after the local project seed. This is
+bootstrap data only, not general task creation UI.

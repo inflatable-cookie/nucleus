@@ -1,5 +1,5 @@
 use super::*;
-use crate::commands::{ServerCommand, ServerCommandKind, TaskCommand};
+use crate::commands::{ServerCommand, ServerCommandKind, TaskCommand, TaskTransitionCommand};
 use crate::control_api::{
     ServerControlError, ServerControlRequest, ServerControlRequestKind, ServerControlResponse,
     ServerControlResponseBody, ServerControlResponseStatus, ServerQuery, ServerQueryKind,
@@ -8,6 +8,7 @@ use crate::control_api::{
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
 use crate::request_handler::LocalControlRequestHandler;
 use crate::state::ServerStateDomain;
+use crate::task_seed::{seed_local_task, LocalTaskSeed};
 use crate::transport_readiness::{
     LocalTransportCandidate, LocalTransportReadiness, LocalTransportReadinessBlocker,
     LocalTransportReadinessStatus,
@@ -172,6 +173,17 @@ fn handler_backed_fixture_routes_command_receipt_through_handler() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let backend = SqliteBackend::new(temp_dir.path().join("nucleus.sqlite"));
     let handler = LocalControlRequestHandler::new(backend, None);
+    seed_local_task(
+        handler.state(),
+        LocalTaskSeed {
+            task_id: "task:transport".to_owned(),
+            project_id: "project:nucleus-local".to_owned(),
+            title: "Transport Task".to_owned(),
+            action_type: nucleus_tasks::TaskActionType::Plan,
+            importance: nucleus_tasks::TaskImportance::Normal,
+        },
+    )
+    .expect("seed task");
     let mut fixture = InProcessControlHandlerFixture::new(handler);
 
     let exchange = fixture
@@ -181,9 +193,10 @@ fn handler_backed_fixture_routes_command_receipt_through_handler() {
             kind: ServerControlRequestKind::Command(ServerCommand {
                 id: ServerCommandId("command:transport".to_owned()),
                 client_id: ClientId("client:transport".to_owned()),
-                kind: ServerCommandKind::Task(TaskCommand::Start(TaskId(
-                    "task:transport".to_owned(),
-                ))),
+                kind: ServerCommandKind::Task(TaskCommand::Start(TaskTransitionCommand {
+                    task_id: TaskId("task:transport".to_owned()),
+                    expected_revision: None,
+                })),
             }),
         })
         .expect("exchange");

@@ -13,6 +13,7 @@ use nucleus_workspaces::WorkspaceLayoutId;
 
 use crate::commands::ServerCommand;
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
+use crate::read_only_command_control::ReadOnlyCommandControlResult;
 use crate::runtime_effect_storage::{
     RuntimeEffectStorageQuery, RuntimeEffectStorageRecordId, RuntimeEffectStorageRef,
 };
@@ -120,6 +121,7 @@ pub enum ServerControlResponseStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ServerControlResponseBody {
     Command(ServerCommandReceipt),
+    ReadOnlyCommand(ReadOnlyCommandControlResult),
     Query(ServerQueryResult),
     Error(ServerControlError),
 }
@@ -186,7 +188,10 @@ mod tests {
                 id: command_id.clone(),
                 client_id: ClientId("client:1".to_owned()),
                 kind: crate::commands::ServerCommandKind::Task(
-                    crate::commands::TaskCommand::Start(TaskId("task:1".to_owned())),
+                    crate::commands::TaskCommand::Start(crate::commands::TaskTransitionCommand {
+                        task_id: TaskId("task:1".to_owned()),
+                        expected_revision: None,
+                    }),
                 ),
             }),
         };

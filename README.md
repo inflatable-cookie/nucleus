@@ -1,13 +1,13 @@
 # Nucleus
 
 Nucleus is an AI-powered development environment built around durable project
-management, native coding-agent harness communication, and a server-first
-architecture.
+management, native coding-agent harness communication, and an engine-first
+multi-host architecture.
 
-The project starts with documentation and contracts before behavior. The first
-implementation target is a Rust workspace plus a Tauri desktop control plane,
-but the system core is a Rust server that can later be controlled from desktop,
-web, mobile, or CLI clients.
+The project starts with documentation and contracts before behavior. The core
+is a portable Rust engine that can be embedded in the Tauri desktop app or
+wrapped by local/remote server hosts controlled from desktop, web, mobile, or
+CLI clients.
 
 ## Start Here
 

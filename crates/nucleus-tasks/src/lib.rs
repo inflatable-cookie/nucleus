@@ -27,9 +27,9 @@ pub use preferences::{
 };
 pub use projection::{TaskProjectionHistorySummary, TaskProjectionRecord};
 pub use storage_codec::{
-    decode_task_storage_record, encode_task_storage_record, TaskRecordCodecError,
-    TaskStorageAcceptanceCriterion, TaskStorageActionType, TaskStorageActivityState,
-    TaskStorageImportance, TaskStorageRecord,
+    decode_task_storage_record, encode_task_storage_payload, encode_task_storage_record,
+    task_from_storage_record, TaskRecordCodecError, TaskStorageAcceptanceCriterion,
+    TaskStorageActionType, TaskStorageActivityState, TaskStorageImportance, TaskStorageRecord,
 };
 
 /// Stable task id.

@@ -15,7 +15,7 @@ nucleus-scm-forge = { path = "../nucleus-scm-forge" }
 nucleus-tasks = { path = "../nucleus-tasks" }
 nucleus-workspaces = { path = "../nucleus-workspaces" }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dev-dependencies]
-serde_json = "1"
 tempfile = "3"

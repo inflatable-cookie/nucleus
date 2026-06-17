@@ -17,7 +17,7 @@ These rules apply to all nucleus work before v1.0.
 - Do not add compatibility shims, aliases, or silent fallbacks before v1.0
   without operator approval.
 - Do not turn provider-specific harness behavior into a fake uniform interface.
-- Do not let Tauri own durable server state.
+- Do not let TypeScript UI code own durable engine/host state.
 - Keep external source references ignored unless explicitly vendored later.
 
 ## Closeout Shape

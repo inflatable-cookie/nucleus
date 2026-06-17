@@ -7,16 +7,27 @@ Vision refs: `docs/vision/001-nucleus-product-vision.md`
 
 ## Top-Level Stack
 
-Nucleus is server-first.
+Nucleus is engine-first and host-flexible.
 
-The Rust server is the system core. It owns durable state, project identity,
-task state, shared memory, structured planning records, deep research records,
-agent sessions, workspace state, and harness process lifecycle.
+The portable Rust engine is the system core. It owns the domain logic for
+project identity, task state, shared memory, structured planning records, deep
+research records, agent sessions, workspace state, command policy, storage
+records, projections, evidence, and harness lifecycle boundaries.
 
-The first client is a Tauri desktop app. It is a control plane over the server,
-not the authority for project, task, workspace, or agent state. The desktop
-shell should not be scaffolded until there is a local control request handler
-and a selected local client transport boundary.
+The engine can run inside multiple host forms:
+
+- embedded desktop host
+- local sidecar host
+- remote authoritative host
+- remote worker or proxy host
+- managed team host
+- custom host
+
+The first user-facing shell is a Tauri desktop app. For single-user local work,
+the desktop app may embed the engine directly and own the local authority
+domains assigned to it. A separate `nucleusd` process remains useful for
+always-on work, headless operation, crash isolation, remote clients, and
+networked deployments, but it is not the only local architecture.
 
 Future clients may include:
 
@@ -55,39 +66,56 @@ Future clients may include:
   observations, synthesis, confidence, gaps, and projection boundaries later.
 - `nucleus-workspaces`: persisted layouts, terminals, browser views, and
   panel/tab state later.
-- `nucleus-server`: first draft server authority, deployment, client, command,
-  and event boundary types.
+- `nucleus-server`: first draft host API, deployment, client, command, state,
+  and event boundary types for sidecar, remote, and embedded IPC surfaces.
 
 Crates expose descriptive type surfaces only. The workspace exists to make the
 intended boundaries visible before implementation.
 
-## Data and Authority Flow
+## Host And Authority Flow
 
-The server is authoritative for:
+Host connection does not imply project authority.
 
-- projects
-- repo membership and path history
-- tasks and importance metrics
-- shared memory records
-- structured project planning records
-- deep research records
-- project tool integration records
-- agent session records
-- workspace layouts
-- terminal and browser attachment state
-- harness process lifecycle
+Each project needs an authority map assigning domains to engine hosts:
+
+- project authority
+- source authority
+- task authority
+- workspace authority
+- session authority
+- execution authority
+- SCM/forge authority
+- memory authority
+- planning authority
+- research authority
+- credential authority
+- audit/evidence authority
+- projection authority
+
+A UI may connect to many hosts. A host becomes authoritative only for the
+domains assigned by the project authority map.
+
+Common deployment shapes:
+
+- embedded local: Tauri embeds the engine and owns local single-user authority
+- local sidecar: `nucleusd` owns assigned local domains on the same machine
+- remote authoritative: remote host owns project/source/session/execution
+  domains for one or more projects
+- remote worker/proxy: remote host provides model, harness, browser, terminal,
+  or tool execution without owning project/source/task authority by default
+- managed team: managed host owns team-scoped domains according to policy
 
 Clients send commands and render state. They may cache for responsiveness, but
-must reconcile with server state.
+must reconcile with the authoritative host for the affected domain.
 
-Server-local storage is backend-adapter based. SQLite is the first
-single-player local backend. A centralized remote team server should be able to
-use PostgreSQL or another durable backend behind the same domain repository
-traits without changing clients or project/task/workspace authority.
+Host-local storage is backend-adapter based. SQLite is the first single-player
+local backend for embedded and sidecar hosts. A centralized remote team host
+should be able to use PostgreSQL or another durable backend behind the same
+domain repository traits without changing clients or domain rules.
 
 Project management state also has a repo-backed projection path.
 
-- local server state is the active working set
+- authoritative host state is the active working set for assigned domains
 - repo-backed files are the portable shared project intent
 - accepted shared memories and planning artifacts may be projected when policy
   allows it
@@ -100,42 +128,57 @@ Project management state also has a repo-backed projection path.
 
 Remote deployment is modeled above the adapter layer.
 
-- execution environment: one running nucleus server
-- access endpoint: one concrete way for a client to reach that server
+- host: one running engine wrapper
+- access endpoint: one concrete way for a client to reach that host
 - control plane: desktop, web, mobile, or CLI client
 
-The server owns providers, terminals, filesystem, git, project state, task
-state, and workspace state. Clients select an access path; they do not split
-the runtime.
+Hosts own providers, terminals, filesystem access, SCM operations, project
+state, task state, workspace state, and runtime state only for the authority
+domains assigned to them. Clients select access paths and execution targets;
+they do not silently grant authority to a host.
 
-Local command execution is server-authorized. SCM adapters, harness adapters,
+Local command execution is host-authorized. SCM adapters, harness adapters,
 validation workflows, and native personas request command authority from the
-server instead of spawning processes directly.
+authoritative execution host instead of spawning processes directly.
 
-Runtime scheduling starts as admission only. The server may accept work into an
-inert queue when it has project, task, adapter, command-authority, and event
-metadata refs. Queue admission is not execution: it must not spawn provider
-processes, run commands, mutate worktrees, or start background workers.
+Local host execution is gate-only until safety policy is proven in code. A
+host may inspect command authority, structured invocation, project execution
+authority, and requested sandbox labels, but it must not describe
+`NoFilesystemWrite`, `ProjectRestricted`, `WorktreeRestricted`, or
+`NetworkDenied` as enforced unless an OS sandbox, container, mount policy, or
+equivalent host mechanism actually enforces the restriction.
+
+The first future local spawn class is narrow: read-only inspection, low risk,
+structured executable plus argv, validated project/worktree working directory,
+minimal environment, finite timeout, finite stdout/stderr limits, summary-only
+output, and enforced sandbox status. Anything outside that class remains
+blocked before spawn.
+
+Runtime scheduling starts as admission only. An authoritative execution host
+may accept work into an inert queue when it has project, task, adapter,
+command-authority, and event metadata refs. Queue admission is not execution:
+it must not spawn provider processes, run commands, mutate worktrees, or start
+background workers.
 
 Effigy is an optional project tool integration. When enabled, it becomes a
 first-class workflow surface for task discovery, health, validation planning,
-and steward automation. Effigy invocation still goes through server command
+and steward automation. Effigy invocation still goes through host command
 authority; Nucleus does not let harnesses bypass command policy just because a
 selector exists.
 
-Workspace panels are client-rendered surfaces over server-owned state.
-Terminal and browser panels attach to server-managed runtime resources. Text
-and code editor panels attach to server-authorized file and language-service
-state. SCM changes, diff, and commit panels attach to server-owned SCM adapter
-state, command authority, and review workflow state.
+Workspace panels are client-rendered surfaces over authoritative host state.
+Terminal and browser panels attach to host-managed runtime resources. Text and
+code editor panels attach to host-authorized file and language-service state.
+SCM changes, diff, and commit panels attach to the authoritative SCM host,
+command authority, and review workflow state.
 
 The desktop client may use TypeScript-heavy editor and UI libraries. Rust
-remains the authority boundary for durable state, filesystem access, command
-execution, SCM mutation, language-server process lifecycle, credential access,
-and audit. Plugin planning must preserve that split: client plugins can enrich
-editor and UI behavior, while server plugins or server APIs must be
-policy-gated when they touch files, commands, SCM, credentials, or durable
-state.
+engine/host APIs remain the authority boundary for durable state, filesystem
+access, command execution, SCM mutation, language-server process lifecycle,
+credential access, and audit. Plugin planning must preserve that split: client
+plugins can enrich editor and UI behavior, while host plugins or host APIs
+must be policy-gated when they touch files, commands, SCM, credentials, or
+durable state.
 
 ## Harness Adapter Layer
 

@@ -46,13 +46,34 @@ allowlist_file = "docs/policy/vision-next-task-verbs.txt"
 
 "check:rust" = "cargo check --workspace"
 "test:rust" = "cargo test --workspace"
+"server:build" = "cargo build -p nucleusd"
+"server:status" = "cargo run -p nucleusd -- --status"
+"server:bootstrap" = "cargo run -p nucleusd -- --bootstrap"
+"server:smoke" = "cargo run -p nucleusd -- --state target/nucleusd-smoke/nucleus.sqlite --bootstrap"
+"server:command-runner:smoke" = "cargo run -p nucleusd -- command-runner smoke"
+"server:command-runner:read-only-spawn-smoke" = "cargo run -p nucleusd -- command-runner read-only-spawn-smoke"
+"server:command-runner:read-only" = "cargo run -p nucleusd -- command-runner read-only --stdout-limit 8 -- printf nucleus-readonly-effigy"
+"server:query:projects" = "cargo run -p nucleusd -- query projects"
+"server:query:tasks" = "cargo run -p nucleusd -- query tasks"
+"server:query:workspaces" = "cargo run -p nucleusd -- query workspaces"
+"server:query:command-evidence" = "cargo run -p nucleusd -- query command-evidence"
+"desktop:dev" = "cd apps/desktop && bun run tauri:dev"
+"desktop:web:dev" = "cd apps/desktop && bun run dev"
+"desktop:check" = "cd apps/desktop && bun run check"
+"desktop:build" = "cd apps/desktop && bun run build"
+"dev" = [
+  { task = "desktop:dev" },
+]
 "health" = [
   { task = "qa:northstar" },
   { task = "check:rust" },
+  { task = "server:build" },
 ]
 "qa" = [
   { task = "qa:docs" },
   { task = "qa:northstar" },
   { task = "check:rust" },
   { task = "test:rust" },
+  { task = "server:smoke" },
+  { task = "desktop:check" },
 ]

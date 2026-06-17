@@ -39,9 +39,32 @@ select server-owned project records without adding project creation or editing.
 The project switcher panel exists and reads `project_records` DTOs. Selection
 is local shell state and is not persisted or sent to the server.
 
-Task list UI is deferred until Rust exposes an intentional local task seed or
-create path.
+Task list UI is deferred until readiness is reassessed against the new task
+record and seed boundary.
 
 The chosen task runway mirrors project records: Rust owns task storage codec,
 server projection, and seeded bootstrap data. The `task_records` DTO now
-exists; desktop should only render it after bootstrap task data exists.
+exists and desktop startup seeds one bootstrap task through the Rust server.
+
+The desktop now has a read-only task list panel. It queries server-owned task
+records and renders DTO fields only. It does not create, edit, assign, or run
+tasks.
+
+The task list filters visible records by the selected project id as local view
+glue. Server authority remains unchanged.
+
+The shell also tracks a local selected task id. Selection is not persisted and
+does not imply task mutation authority.
+
+The task detail panel is read-only. It renders the selected task DTO and does
+not expose assignment, execution, or edit controls.
+
+The desktop control helper layer can now build command DTOs for the supported
+task activity transitions. UI controls are still limited to the explicit
+transition subset.
+
+Task detail exposes controls only for start, block, complete, and archive.
+Unsupported task mutations are still absent.
+
+Accepted transition commands trigger a server refresh. The task list and detail
+panel update from refreshed DTOs rather than optimistic local mutation.

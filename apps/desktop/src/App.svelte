@@ -2,8 +2,14 @@
   import { StatusIndicator, Text } from "@poodle/svelte";
   import ControlDiagnosticsPanel from "./lib/ControlDiagnosticsPanel.svelte";
   import ProjectSwitcherPanel from "./lib/ProjectSwitcherPanel.svelte";
+  import TaskDetailPanel from "./lib/TaskDetailPanel.svelte";
+  import TaskListPanel from "./lib/TaskListPanel.svelte";
+  import type { ControlTaskRecordDto } from "./lib/control";
 
   let selectedProjectId = $state<string | null>(null);
+  let selectedTaskId = $state<string | null>(null);
+  let selectedTask = $state<ControlTaskRecordDto | null>(null);
+  let taskRefreshToken = $state(0);
 </script>
 
 <main class="shell" data-theme="dark" data-density="compact" data-control-size="sm">
@@ -27,6 +33,18 @@
 
     <div class="panel-grid">
       <ProjectSwitcherPanel bind:selectedProjectId />
+      <TaskListPanel
+        {selectedProjectId}
+        {taskRefreshToken}
+        bind:selectedTaskId
+        bind:selectedTask
+      />
+      <TaskDetailPanel
+        {selectedTask}
+        onTaskChanged={() => {
+          taskRefreshToken += 1;
+        }}
+      />
       <ControlDiagnosticsPanel />
     </div>
   </section>

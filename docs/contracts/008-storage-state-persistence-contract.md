@@ -8,18 +8,22 @@ Updated: 2026-06-16
 
 Define the persistence boundary for durable nucleus state.
 
-The server owns durable state. Storage is a server concern, not a desktop
-client concern. This contract names what must persist before a backend is
-chosen.
+The authoritative engine host owns durable state for the domains assigned to
+it. Storage is a host concern, not a UI rendering concern. This contract names
+what must persist before a backend is chosen.
+
+Host form does not decide authority by itself. Embedded desktop, local sidecar,
+remote authoritative, remote worker, and managed team hosts may all use storage
+only for the authority domains assigned by the project authority map.
 
 Some durable project-management state may also be projected into a Git-backed
 management repository for portability and collaboration. That projection is a
-sync surface, not a replacement for the active server state store.
+sync surface, not a replacement for the active authoritative host state store.
 
-Storage backends are adapter-based. The server may run as a local
-single-player SQLite-backed executor or as a centralized remote team server
-using PostgreSQL or another durable database backend. Domain repositories must
-not assume a specific database engine.
+Storage backends are adapter-based. An embedded local host or sidecar host may
+run as a single-player SQLite-backed executor. A centralized remote team host
+may use PostgreSQL or another durable database backend. Domain repositories
+must not assume a specific database engine or host form.
 
 Persistent storage must not assume it owns secret material. Durable records may
 store secret references and non-secret credential audit records; raw secrets
@@ -525,8 +529,8 @@ Nucleus must not expose backend-specific assumptions through the public control
 plane contract before the storage backend is selected.
 
 Git-backed management files are a projection backend for shared project intent,
-not the only storage backend. Server-local storage remains required for active
-state, runtime state, indexes, and caches.
+not the only storage backend. Authoritative host-local storage remains required
+for active state, runtime state, indexes, and caches.
 
 ## Storage Location
 
@@ -538,7 +542,7 @@ Initial storage locations:
 - custom
 
 Project-local storage may be useful for portable project metadata later, but
-the server remains the authority for active state.
+the assigned authoritative engine host remains the authority for active state.
 
 ## Current Rust Surface
 
@@ -635,6 +639,67 @@ metadata vocabulary:
 These are descriptive artifact metadata and envelope types only. They do not
 implement artifact storage, backend selection, scanning, redaction, payload
 reads, payload writes, replay exposure, or UI rendering.
+
+`nucleus-command-policy` now contains the first command request and sanitized
+evidence storage codec vocabulary:
+
+- `CommandExecutionRequestStorageRecord`
+- `CommandEvidenceStorageRecord`
+- `CommandStorageAuthorityArea`
+- `CommandStorageScope`
+- `CommandStorageRisk`
+- `CommandStorageSandboxProfile`
+- `CommandStorageApprovalPolicy`
+- `CommandStorageExecutionStatus`
+- `CommandStorageOutputRetention`
+- `CommandRecordCodecError`
+
+The codec serializes metadata only. It round-trips command request policy
+metadata and sanitized evidence metadata; it does not persist raw stdout,
+stderr, terminal streams, shell traces, environment values, credentials, or
+process transcripts.
+
+`nucleus-command-policy` also contains structured invocation and process
+supervision readiness vocabulary. These are not storage payloads yet. They do
+not select a persistence format for invocation attempts, environment policies,
+process lifecycle records, or supervision events.
+
+## Command Runner Storage Rule
+
+Command runner state must persist metadata, not raw process streams.
+
+The first local runner storage slice may store:
+
+- command request id
+- command evidence id
+- command status
+- exit status when known
+- output retention posture
+- stdout artifact ref when retained separately
+- stderr artifact ref when retained separately
+- sanitized summary
+- storage revision
+
+The first local runner storage slice must not store:
+
+- raw stdout bytes
+- raw stderr bytes
+- terminal byte streams
+- shell traces
+- environment values
+- credential values
+- provider-native auth material
+- secret file paths
+- unredacted filesystem listings beyond the sanitized summary
+
+Command evidence records belong in the command evidence domain. Artifact
+payloads, when supported later, belong behind artifact refs and retention
+policy. Task history, event journals, projection records, and UI state may link
+to evidence refs; they must not copy raw process output by default.
+
+Read-only runner evidence should survive server restart. Retry policy,
+subscription fan-out, live output streaming, and artifact payload storage are
+separate implementation slices.
 
 ## Implementation Gap Classification
 

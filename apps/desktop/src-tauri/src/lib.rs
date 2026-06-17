@@ -3,8 +3,8 @@ use std::sync::Mutex;
 
 use nucleus_local_store::SqliteBackend;
 use nucleus_server::{
-    seed_local_project, ControlApiCodecError, ControlRequestEnvelopeDto,
-    ControlResponseEnvelopeDto, LocalControlRequestHandler, LocalProjectSeed,
+    seed_local_project, seed_local_task, ControlApiCodecError, ControlRequestEnvelopeDto,
+    ControlResponseEnvelopeDto, LocalControlRequestHandler, LocalProjectSeed, LocalTaskSeed,
     TauriIpcControlCommandAdapter,
 };
 
@@ -17,6 +17,8 @@ impl DesktopState {
         let handler = LocalControlRequestHandler::new(backend, None);
         seed_local_project(handler.state(), LocalProjectSeed::nucleus_local())
             .expect("local desktop project seed should be writable");
+        seed_local_task(handler.state(), LocalTaskSeed::nucleus_local_bootstrap())
+            .expect("local desktop task seed should be writable");
         let adapter = TauriIpcControlCommandAdapter::fixture_backed(handler);
 
         Self {
@@ -130,6 +132,42 @@ mod tests {
             response.body,
             nucleus_server::ControlResponseBodyDto::ProjectRecords { records }
                 if records.len() == 1 && records[0].display_name == "Nucleus Local"
+        ));
+
+        let _ = std::fs::remove_file(database_path);
+    }
+
+    #[test]
+    fn desktop_state_seeds_local_task_for_task_queries() {
+        let database_path = std::env::temp_dir().join(format!(
+            "nucleus-desktop-task-seed-test-{}.sqlite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&database_path);
+        let state = DesktopState::new(SqliteBackend::new(database_path.clone()));
+
+        let response = state
+            .submit_control_envelope(ControlRequestEnvelopeDto {
+                protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),
+                protocol_version: CONTROL_API_PROTOCOL_VERSION_V1,
+                request_id: "desktop-request-tasks".to_owned(),
+                client_id: "desktop-client".to_owned(),
+                body: ControlRequestBodyDto::Query {
+                    query: ControlQueryDto::State {
+                        query_id: "desktop-query-tasks".to_owned(),
+                        domain: nucleus_server::ControlStateDomainDto::Tasks,
+                        scope: nucleus_server::ControlQueryScopeDto::List,
+                    },
+                },
+            })
+            .expect("desktop task list should route through the server adapter");
+
+        assert!(matches!(
+            response.body,
+            nucleus_server::ControlResponseBodyDto::TaskRecords { records }
+                if records.len() == 1
+                    && records[0].task_id == "task:nucleus-local:bootstrap"
+                    && records[0].project_id == "project:nucleus-local"
         ));
 
         let _ = std::fs::remove_file(database_path);

@@ -319,6 +319,167 @@ Agent-readiness fields must cover:
 A task should not be one-click delegated unless the readiness fields are clear
 enough for the selected agent and harness.
 
+## Task Mutation Semantics
+
+Task mutation is server-owned state behavior.
+
+The first executable mutation subset should be task activity transitions
+against existing task records:
+
+- start
+- block with reason
+- complete
+- archive
+
+These commands may update activity state only:
+
+- start sets activity to active
+- block sets activity to blocked with the supplied reason
+- complete sets activity to done
+- archive sets activity to archived
+
+Create and update now have a first server-owned command path. The path uses
+task authoring input, writes storage through the server state service, and
+returns read-after-write state through the typed task DTO boundary.
+
+State transitions must:
+
+- require an existing task record
+- preserve task id, project id, title, description, acceptance criteria,
+  importance, action type, assignment intent, and agent-readiness flag
+- update the stored record through the server state service
+- produce read-after-write visibility through the typed task DTO boundary
+- return not-found when the task record is missing
+- return conflict when an exact revision expectation is supplied and does not
+  match
+
+Server-internal bootstrap or repair paths may use `MustExist` when the current
+revision is not exposed to a client action. Client-originated task mutations
+should use exact revision checks once command DTOs expose revision ids.
+
+Task mutation is not runtime execution. Starting a task does not start an
+agent session, checkout a branch, run validation, or claim assignment.
+
+Create commands must:
+
+- require an existing project record
+- generate the task id on the server side
+- reject empty or oversized titles
+- reject done or archived initial activity
+- reject agent-ready tasks without acceptance criteria
+- write one task storage record
+
+Update commands must:
+
+- require an existing task record
+- use exact revision checks when an expected revision is supplied
+- apply replacement values only for supplied editable fields
+- preserve omitted fields
+- reject empty or oversized titles
+- reject agent-ready tasks without acceptance criteria
+- preserve task id and project id
+
+## Task Authoring Input
+
+Task authoring input is the client-to-server shape for creating and editing
+task intent. It is not the display DTO and it is not the full storage record.
+
+The first editable input shape should include:
+
+- project id
+- title
+- description
+- acceptance criteria
+- importance
+- action type
+- initial or edited activity state
+- agent-readiness flag
+- required context references
+- stop conditions
+- validation command refs
+- optional model preference refs
+- optional SCM or forge links
+
+Create input must require:
+
+- project id
+- non-empty title
+- action type
+- importance
+- activity state of proposed, ready, or active
+
+Update input must require:
+
+- task id
+- expected revision when the task came from a client-visible record
+- editable fields to replace
+
+The first update model is replacement-by-field, not patch-by-arbitrary-path.
+Clients may omit fields they are not editing. Arrays supplied by the client
+replace the previous array for that field.
+
+Editable fields in the first authoring model:
+
+- title
+- description
+- acceptance criteria
+- importance
+- action type
+- activity state
+- agent-readiness flag
+- required context references
+- stop conditions
+- validation command refs
+- model preference refs
+- SCM or forge links authored by the user
+
+Server-owned fields:
+
+- stable task id generation on create
+- project existence validation
+- schema version
+- storage revision
+- timestamps
+- task history entries
+- adapter-observed links until promoted
+- assignment snapshots
+- agent attempt records
+- runtime event refs
+- command evidence refs
+- projection path
+
+Validation rules:
+
+- title must be trimmed, non-empty, and short enough for list rendering
+- project id must reference an existing project record
+- action type must be one of research, plan, execute, test, check, or review
+- importance must stay inside the task importance vocabulary
+- activity state on create must not be done or archived
+- blocked activity requires a non-empty reason
+- done and archived states should normally be reached through transition
+  commands, not create forms
+- acceptance criteria may be empty for draft/proposed tasks, but agent-ready
+  tasks should have at least one clear acceptance item
+- validation command refs must be references or selectors, not raw shell output
+- required context refs must point to known project docs, repo paths, artifacts,
+  memories, or external links
+- model preference refs must not create new route config by themselves
+
+Task authoring must not accept:
+
+- raw provider transcripts
+- raw terminal streams
+- raw stdout or stderr
+- secret values
+- provider credentials
+- local cache paths
+- arbitrary storage revision ids
+- task history entries authored directly by clients
+
+Create and update commands should return read-after-write task records through
+the typed task DTO boundary. The server may add task history summaries for
+create or update, but clients do not submit task history directly.
+
 ## Planning And Memory Links
 
 Tasks may link to accepted shared memories and planning artifacts by reference.
@@ -379,10 +540,17 @@ accepted or explicitly attached.
 - `TaskTimestamps`
 - `TaskProjectionRecord`
 - `TaskProjectionHistorySummary`
+- `TaskStorageRecord`
+- `TaskStorageAcceptanceCriterion`
+- `TaskStorageImportance`
+- `TaskStorageActionType`
+- `TaskStorageActivityState`
+- `task_from_storage_record`
 
-These are descriptive domain types only. Scheduling, scoring, adapter
-selection, assignment execution, agent delegation, projection serialization,
-and projection IO remain out of scope.
+These are descriptive domain and storage projection types only. Scheduling,
+scoring, adapter selection, assignment execution, agent delegation, projection
+IO, runtime records, provider transcripts, and command evidence remain out of
+scope for task storage.
 
 ## Research Gaps
 

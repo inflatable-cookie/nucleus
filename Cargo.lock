@@ -1884,6 +1884,10 @@ version = "0.0.0"
 [[package]]
 name = "nucleus-command-policy"
 version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "nucleus-contract-fixtures"
@@ -1976,6 +1980,18 @@ name = "nucleus-workspaces"
 version = "0.0.0"
 dependencies = [
  "nucleus-projects",
+]
+
+[[package]]
+name = "nucleusd"
+version = "0.0.0"
+dependencies = [
+ "nucleus-command-policy",
+ "nucleus-core",
+ "nucleus-local-store",
+ "nucleus-projects",
+ "nucleus-server",
+ "tempfile",
 ]
 
 [[package]]

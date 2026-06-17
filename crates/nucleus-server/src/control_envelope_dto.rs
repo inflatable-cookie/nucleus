@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::commands::ServerCommand;
 use crate::control_api::{
     RuntimeMetadataQuery, ServerControlRequest, ServerControlRequestKind, ServerQuery,
     ServerQueryKind, StateRecordQuery, StateRecordQueryScope,
@@ -16,16 +17,21 @@ use crate::ids::{ClientId, ServerControlRequestId, ServerQueryId};
 use crate::state::ServerStateDomain;
 use nucleus_core::PersistenceRecordId;
 
+mod commands;
 mod error;
 mod projects;
 mod records;
 mod response;
 mod tasks;
 
+pub use commands::ControlCommandDto;
 pub use error::ControlApiCodecError;
 pub use projects::ControlProjectRecordDto;
 pub use records::ControlStateRecordDto;
-pub use response::{ControlResponseBodyDto, ControlResponseEnvelopeDto, ControlResponseStatusDto};
+pub use response::{
+    ControlCommandEvidenceRecordDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
+    ControlResponseStatusDto,
+};
 pub use tasks::ControlTaskRecordDto;
 
 /// Serializable request envelope for the first control API wire format.
@@ -59,17 +65,13 @@ impl TryFrom<ControlRequestEnvelopeDto> for ServerControlRequest {
 
     fn try_from(dto: ControlRequestEnvelopeDto) -> Result<Self, Self::Error> {
         validate_protocol(&dto.protocol_family, dto.protocol_version)?;
-        let (query_id, kind) = <(ServerQueryId, ServerQueryKind)>::try_from(dto.body)?;
         let client_id = ClientId(dto.client_id.clone());
+        let kind = server_request_kind_from_body(dto.body, client_id.clone())?;
 
         Ok(Self {
             id: ServerControlRequestId(dto.request_id),
-            client_id: client_id.clone(),
-            kind: ServerControlRequestKind::Query(ServerQuery {
-                id: query_id,
-                client_id,
-                kind,
-            }),
+            client_id,
+            kind,
         })
     }
 }
@@ -79,6 +81,7 @@ impl TryFrom<ControlRequestEnvelopeDto> for ServerControlRequest {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControlRequestBodyDto {
     Query { query: ControlQueryDto },
+    Command { command: ControlCommandDto },
 }
 
 impl TryFrom<&ServerControlRequestKind> for ControlRequestBodyDto {
@@ -89,9 +92,9 @@ impl TryFrom<&ServerControlRequestKind> for ControlRequestBodyDto {
             ServerControlRequestKind::Query(query) => Ok(Self::Query {
                 query: ControlQueryDto::try_from(query)?,
             }),
-            ServerControlRequestKind::Command(_) => Err(ControlApiCodecError::unsupported(
-                "command DTOs are not part of the first control envelope",
-            )),
+            ServerControlRequestKind::Command(command) => Ok(Self::Command {
+                command: ControlCommandDto::try_from(command)?,
+            }),
         }
     }
 }
@@ -144,6 +147,9 @@ impl TryFrom<ControlRequestBodyDto> for ServerQueryKind {
     fn try_from(body: ControlRequestBodyDto) -> Result<Self, Self::Error> {
         match body {
             ControlRequestBodyDto::Query { query } => ServerQueryKind::try_from(query),
+            ControlRequestBodyDto::Command { .. } => Err(ControlApiCodecError::unsupported(
+                "command body cannot be decoded as a query",
+            )),
         }
     }
 }
@@ -198,6 +204,33 @@ impl TryFrom<ControlRequestBodyDto> for (ServerQueryId, ServerQueryKind) {
                 let query_id = query.query_id();
                 Ok((ServerQueryId(query_id), ServerQueryKind::try_from(query)?))
             }
+            ControlRequestBodyDto::Command { .. } => Err(ControlApiCodecError::unsupported(
+                "command body cannot be decoded as a query",
+            )),
+        }
+    }
+}
+
+fn server_request_kind_from_body(
+    body: ControlRequestBodyDto,
+    client_id: ClientId,
+) -> Result<ServerControlRequestKind, ControlApiCodecError> {
+    match body {
+        ControlRequestBodyDto::Query { query } => {
+            let query_id = ServerQueryId(query.query_id());
+            Ok(ServerControlRequestKind::Query(ServerQuery {
+                id: query_id,
+                client_id,
+                kind: ServerQueryKind::try_from(query)?,
+            }))
+        }
+        ControlRequestBodyDto::Command { command } => {
+            let (command_id, kind) = command.try_into_server_kind()?;
+            Ok(ServerControlRequestKind::Command(ServerCommand {
+                id: command_id,
+                client_id,
+                kind,
+            }))
         }
     }
 }
