@@ -10,7 +10,12 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-None.
+- `037-error-god-file-module-splits.md`
+- `038-server-boundary-authority-split.md`
+- `039-g02-roadmap-suite-normalization.md`
+- `040-health-reset-validation.md`
+
+These cards belong to `../012-health-and-authority-surface-reset.md`.
 
 ## Completed Cards
 

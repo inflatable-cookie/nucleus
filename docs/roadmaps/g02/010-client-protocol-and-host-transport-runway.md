@@ -1,6 +1,6 @@
 # 010 Client Protocol And Host Transport Runway
 
-Status: planned
+Status: planned-after-012
 Owner: Tom
 Updated: 2026-06-17
 
@@ -8,6 +8,10 @@ Updated: 2026-06-17
 
 Prepare the client protocol and host transport model after the engine boundary
 is strong enough to be embedded, sidecar-hosted, or remote-hosted.
+
+This roadmap is the protocol/transport runway. The concrete host authority-map
+record work is sequenced in
+`013-host-authority-map-and-client-protocol-records.md`.
 
 ## Governing Refs
 
@@ -45,5 +49,12 @@ is strong enough to be embedded, sidecar-hosted, or remote-hosted.
 
 ## Gate
 
-Do not start until engine command services and projection APIs are no longer
-request-handler-owned.
+Do not start until:
+
+- `012-health-and-authority-surface-reset.md` completes
+- engine command services and projection APIs are no longer
+  request-handler-owned
+- `effigy doctor` has no error findings
+
+Do not start live network listeners, pairing flows, or remote auth before the
+authority-map and protocol records are stable.

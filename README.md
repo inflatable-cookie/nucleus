@@ -14,7 +14,7 @@ CLI clients.
 - Project docs: `docs/README.md`
 - Current vision: `docs/vision/001-nucleus-product-vision.md`
 - Architecture: `docs/architecture/system-architecture.md`
-- Roadmap: `docs/roadmaps/g02/011-codex-app-server-runtime-runway.md`
+- Roadmap: `docs/roadmaps/README.md`
 
 ## Development Surface
 

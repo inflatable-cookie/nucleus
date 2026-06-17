@@ -74,6 +74,7 @@ Current roadmap coverage:
 - `g02/004-task-timeline-and-history-projection.md`
 - `g02/005-runtime-receipts-and-effect-reactors.md`
 - `g02/006-checkpoint-and-diff-foundation.md`
+- `g02/012-health-and-authority-surface-reset.md`
 
 ## Phase 2: Project Management Persistence And Projection
 
@@ -98,6 +99,7 @@ Exit criteria:
 Current roadmap coverage:
 
 - `g02/007-management-projection-sync-foundation.md`
+- `g02/016-management-projection-file-io-and-sync.md`
 
 ## Phase 3: SCM And Forge Workflow Engine
 
@@ -121,6 +123,7 @@ Exit criteria:
 Current roadmap coverage:
 
 - `g02/008-scm-forge-driver-runway.md`
+- `g02/017-scm-working-copy-and-change-request-workflows.md`
 
 ## Phase 4: Harness Runtime Foundation
 
@@ -144,6 +147,8 @@ Exit criteria:
 Current roadmap coverage:
 
 - `g02/009-harness-runtime-target-selection.md`
+- `g02/011-codex-app-server-runtime-runway.md`
+- `g02/014-codex-live-runtime-supervision.md`
 
 ## Phase 5: Native Harness And Steward
 
@@ -183,6 +188,7 @@ Exit criteria:
 Current roadmap coverage:
 
 - `g02/010-client-protocol-and-host-transport-runway.md`
+- `g02/013-host-authority-map-and-client-protocol-records.md`
 
 ## Phase 7: Workspace Panels
 
@@ -213,6 +219,11 @@ Exit criteria:
 - project switching can reuse the same global shell while applying the active
   project's panel rules
 
+Current roadmap coverage:
+
+- none in active implementation; workspace panel work remains gated behind
+  host/client protocol and product workflow proof
+
 ## Phase 8: Planning, Research, Memory, And Effigy Integration
 
 Goal: make Nucleus a project-management environment, not just a harness shell.
@@ -231,6 +242,32 @@ Exit criteria:
 
 - a new project can be planned, researched, tasked, validated, and maintained
   through Nucleus-owned flows
+
+Current roadmap coverage:
+
+- `g02/018-steward-native-harness-and-effigy-tools.md`
+
+## Phase 8a: Product Workflow Proof
+
+Goal: prove the first end-to-end Nucleus workflow before expanding UI panels
+or broad automation.
+
+Work:
+
+- Link tasks to work items.
+- Delegate one bounded unit of agentic work.
+- Preserve provider session refs, runtime receipts, checkpoints, validation,
+  and operator acceptance separately.
+- Rebuild task timeline state from events.
+
+Exit criteria:
+
+- one task-backed work item can move through delegation, runtime progress,
+  review, and acceptance without clients becoming state authorities
+
+Current roadmap coverage:
+
+- `g02/015-task-backed-agent-work-unit-proof.md`
 
 ## Phase 9: Product Hardening
 

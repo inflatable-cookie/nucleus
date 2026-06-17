@@ -37,6 +37,13 @@ Current planning artifacts:
 - `roadmaps/g02/009-harness-runtime-target-selection.md`
 - `roadmaps/g02/010-client-protocol-and-host-transport-runway.md`
 - `roadmaps/g02/011-codex-app-server-runtime-runway.md`
+- `roadmaps/g02/012-health-and-authority-surface-reset.md`
+- `roadmaps/g02/013-host-authority-map-and-client-protocol-records.md`
+- `roadmaps/g02/014-codex-live-runtime-supervision.md`
+- `roadmaps/g02/015-task-backed-agent-work-unit-proof.md`
+- `roadmaps/g02/016-management-projection-file-io-and-sync.md`
+- `roadmaps/g02/017-scm-working-copy-and-change-request-workflows.md`
+- `roadmaps/g02/018-steward-native-harness-and-effigy-tools.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`

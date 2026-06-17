@@ -16,6 +16,13 @@ shape.
 - `g02/009-harness-runtime-target-selection.md` - completed
 - `g02/010-client-protocol-and-host-transport-runway.md` - planned
 - `g02/011-codex-app-server-runtime-runway.md` - completed
+- `g02/012-health-and-authority-surface-reset.md` - active
+- `g02/013-host-authority-map-and-client-protocol-records.md` - planned
+- `g02/014-codex-live-runtime-supervision.md` - planned
+- `g02/015-task-backed-agent-work-unit-proof.md` - planned
+- `g02/016-management-projection-file-io-and-sync.md` - planned
+- `g02/017-scm-working-copy-and-change-request-workflows.md` - planned
+- `g02/018-steward-native-harness-and-effigy-tools.md` - planned
 
 ## Previous Generation
 
@@ -74,6 +81,5 @@ shape.
 
 ## Next Task
 
-Take stock after `g02/011-codex-app-server-runtime-runway.md` and choose the
-next G02 runway: live Codex runtime supervision, `g02/010` client transport,
-or a short milestone reassessment card.
+Execute `g02/012-health-and-authority-surface-reset.md`, starting with
+`g02/batch-cards/037-error-god-file-module-splits.md`.
