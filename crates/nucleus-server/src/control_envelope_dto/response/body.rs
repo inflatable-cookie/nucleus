@@ -13,8 +13,8 @@ use super::helpers::{
 };
 use super::records::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiffSummaryRecordDto,
-    ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
-    ControlTaskTimelineEntryDto,
+    ControlProjectAuthorityMapDto, ControlRuntimeReadinessDiagnosticDto,
+    ControlRuntimeReceiptRecordDto, ControlTaskTimelineEntryDto,
 };
 use crate::control_envelope_dto::{
     ControlApiCodecError, ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -57,6 +57,9 @@ pub enum ControlResponseBodyDto {
         task_id: String,
         entries: Vec<ControlTaskTimelineEntryDto>,
         last_source_event_id: Option<String>,
+    },
+    ProjectAuthorityMap {
+        record: ControlProjectAuthorityMapDto,
     },
     CommandReceipt {
         command_id: String,
@@ -146,6 +149,11 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                         .last_cursor
                         .as_ref()
                         .map(|cursor| cursor.source_event_id.clone()),
+                })
+            }
+            ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)) => {
+                Ok(Self::ProjectAuthorityMap {
+                    record: ControlProjectAuthorityMapDto::from(record),
                 })
             }
             ServerControlResponseBody::Command(receipt) => Ok(Self::CommandReceipt {

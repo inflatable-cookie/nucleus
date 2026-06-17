@@ -10,11 +10,12 @@ use nucleus_orchestration::{OrchestrationEventRecord, OrchestrationEventStoreRep
 use super::event_store::ServerOrchestrationEventStore;
 use super::handler::LocalControlRequestHandler;
 use crate::checkpoint_diff_state::{read_checkpoint_records, read_diff_summary_records};
+use crate::client_protocol::ProjectAuthorityMapPublicationRecord;
 use crate::control_api::{
-    AdapterSessionQuery, ModelRouteQuery, RuntimeMetadataQuery, ServerControlError,
-    ServerControlResponse, ServerControlResponseBody, ServerControlResponseStatus, ServerQuery,
-    ServerQueryKind, ServerQueryResult, ServerStateRecordSet, StateRecordQuery,
-    StateRecordQueryScope, TaskTimelineQuery,
+    AdapterSessionQuery, ModelRouteQuery, ProjectAuthorityMapQuery, RuntimeMetadataQuery,
+    ServerControlError, ServerControlResponse, ServerControlResponseBody,
+    ServerControlResponseStatus, ServerQuery, ServerQueryKind, ServerQueryResult,
+    ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope, TaskTimelineQuery,
 };
 use crate::ids::ServerControlRequestId;
 use crate::runtime_readiness_diagnostics::local_host_runtime_readiness_diagnostics;
@@ -69,6 +70,7 @@ where
         ServerQueryKind::ModelRoute(query) => model_route_query(handler, query),
         ServerQueryKind::RuntimeMetadata(query) => runtime_metadata_query(handler, query),
         ServerQueryKind::TaskTimeline(query) => task_timeline_query(handler, query),
+        ServerQueryKind::ProjectAuthorityMap(query) => project_authority_map_query(query),
     }
 }
 
@@ -213,6 +215,17 @@ where
     let projection = EngineTaskTimelineProjection::rebuild(query.task_id, &events);
 
     Ok(ServerQueryResult::TaskTimeline(projection))
+}
+
+fn project_authority_map_query(
+    query: ProjectAuthorityMapQuery,
+) -> Result<ServerQueryResult, ServerControlError> {
+    Ok(ServerQueryResult::ProjectAuthorityMap(
+        ProjectAuthorityMapPublicationRecord::deferred(
+            query.project_id,
+            "authority-map persistence is not implemented",
+        ),
+    ))
 }
 
 fn read_state_records<B>(

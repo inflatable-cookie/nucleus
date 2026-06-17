@@ -1,6 +1,6 @@
 # 043 Client Auth Posture Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 Milestone: `../010-client-protocol-and-host-transport-runway.md`
@@ -40,3 +40,12 @@ without implementing credentials or remote login.
 ## Stop Conditions
 
 - Stop if a real auth mechanism must be selected.
+
+## Outcome
+
+Completed 2026-06-17.
+
+Added client-visible auth posture projection records. The records explain
+allowed, blocked, deferred, and revoked states; carry only non-secret
+credential references; and keep command approval and provider credential access
+outside client authentication.

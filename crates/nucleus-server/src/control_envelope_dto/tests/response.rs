@@ -1,8 +1,13 @@
+use crate::client_protocol::{
+    ProjectAuthorityDomainPublication, ProjectAuthorityMapPublicationRecord,
+    ProjectAuthorityPublicationState, ProjectAuthorityValidationIssue,
+};
 use crate::control_api::{
     ServerControlError, ServerControlResponse, ServerControlResponseBody,
     ServerControlResponseStatus, ServerQueryResult, ServerStateRecordSet,
 };
 use crate::control_envelope_dto::*;
+use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ServerCommandId, ServerControlRequestId};
 use crate::read_only_command_control::ReadOnlyCommandControlResult;
 use crate::runtime_readiness_diagnostics::local_host_runtime_readiness_diagnostics;
@@ -17,6 +22,57 @@ use nucleus_tasks::{
     encode_task_storage_record, AcceptanceCriterion, AgentReadiness, AssignmentState, NeglectLevel,
     NeglectSignal, Task, TaskActionType, TaskActivityState, TaskId, TaskImportance, TaskTimestamps,
 };
+
+#[test]
+fn response_envelope_dto_serializes_project_authority_map() {
+    let record = ProjectAuthorityMapPublicationRecord {
+        project_id: ProjectId("project:authority".to_owned()),
+        domains: vec![
+            ProjectAuthorityDomainPublication {
+                domain: ProjectAuthorityDomain::Execution,
+                state: ProjectAuthorityPublicationState::Assigned {
+                    authoritative_host_id: EngineHostId("host:remote-worker".to_owned()),
+                    fallback_host_ids: vec![EngineHostId("host:local".to_owned())],
+                    mutation_allowed: true,
+                },
+                note: Some("remote execution host".to_owned()),
+            },
+            ProjectAuthorityDomainPublication {
+                domain: ProjectAuthorityDomain::Projection,
+                state: ProjectAuthorityPublicationState::MutationDenied {
+                    authoritative_host_id: EngineHostId("host:local".to_owned()),
+                    fallback_host_ids: Vec::new(),
+                },
+                note: None,
+            },
+        ],
+        issues: vec![ProjectAuthorityValidationIssue::DomainUnassigned {
+            domain: ProjectAuthorityDomain::Task,
+        }],
+    };
+    let response = ServerControlResponse {
+        request_id: ServerControlRequestId("request:dto:authority-map".to_owned()),
+        status: ServerControlResponseStatus::Complete,
+        body: ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)),
+    };
+
+    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlResponseEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+
+    assert!(matches!(
+        decoded.body,
+        ControlResponseBodyDto::ProjectAuthorityMap { record }
+            if record.project_id == "project:authority"
+                && record.domains.len() == 2
+                && record.domains[0].domain == "execution"
+                && record.domains[0].state == "assigned"
+                && record.domains[0].authoritative_host_id.as_deref()
+                    == Some("host:remote-worker")
+                && record.domains[1].state == "mutation_denied"
+                && record.issues.len() == 1
+    ));
+}
 
 #[test]
 fn response_envelope_dto_serializes_status_error_and_state_records() {

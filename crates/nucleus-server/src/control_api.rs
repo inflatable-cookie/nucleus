@@ -15,7 +15,9 @@ use nucleus_projects::{ProjectId, RepoMembershipId};
 use nucleus_tasks::TaskId;
 use nucleus_workspaces::WorkspaceLayoutId;
 
+use crate::client_protocol::ProjectAuthorityMapPublicationRecord;
 use crate::commands::ServerCommand;
+use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
 use crate::read_only_command_control::ReadOnlyCommandControlResult;
 use crate::runtime_effect_storage::{
@@ -57,6 +59,7 @@ pub enum ServerQueryKind {
     ModelRoute(ModelRouteQuery),
     RuntimeMetadata(RuntimeMetadataQuery),
     TaskTimeline(TaskTimelineQuery),
+    ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
 
 /// Generic persisted-state query scoped to one state domain.
@@ -116,6 +119,13 @@ pub struct TaskTimelineQuery {
     pub task_id: TaskId,
 }
 
+/// Project authority-map query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectAuthorityMapQuery {
+    pub project_id: ProjectId,
+    pub expected_domains: Vec<ProjectAuthorityDomain>,
+}
+
 /// Response emitted by the server control boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerControlResponse {
@@ -169,6 +179,7 @@ pub enum ServerQueryResult {
     CheckpointRecords(Vec<EngineCheckpointRecord>),
     DiffSummaryRecords(Vec<EngineDiffSummaryRecord>),
     TaskTimeline(EngineTaskTimelineProjection),
+    ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     Empty,
     Unsupported { reason: String },
 }

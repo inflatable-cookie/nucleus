@@ -160,6 +160,38 @@ Server event envelopes may name replay tokens so clients can request catch-up,
 but replay authority belongs to the orchestration and event-replay surfaces,
 not to the client renderer.
 
+## Host Capability Advertisement Boundary
+
+Hosts may advertise client-visible capabilities through the client protocol.
+
+Initial advertised surfaces:
+
+- host identity and host form
+- connection mode: embedded, local sidecar, remote authoritative, remote
+  worker, managed, or custom
+- supported client protocol profile
+- control request, state query, event replay, runtime readiness, command
+  scheduling, harness runtime, SCM/forge, and management projection capability
+  categories
+- authority-map publication posture
+- runtime readiness publication posture
+
+Advertisement records do not grant authority. They tell clients what a host
+claims it can expose and whether authority-map or runtime-readiness information
+is published, deferred, or unsupported.
+
+Authority-map mutation and durable authority assignment belong to
+`017-engine-host-authority-contract.md` and the follow-on
+`013-host-authority-map-and-client-protocol-records.md` roadmap. Runtime
+readiness records remain evidence/read-model surfaces; they are not transport
+permission and do not bypass auth, pairing, or command approval.
+
+Client-visible authority-map publication records may expose assigned,
+mutation-denied, fallback-only, unassigned, and publication-deferred domain
+states. These records are explanatory read models. They do not grant authority,
+persist authority maps, repair assignments, synchronize hosts, or open
+transports.
+
 ## Client Auth And Pairing Boundary
 
 Client auth is a server-owned access boundary.
@@ -241,6 +273,12 @@ revoked clients, and mark remote-login, managed-identity, or service-credential
 postures as deferred. These gates are policy checks only. They do not create
 pairing records, authenticate credentials, open transports, or grant command
 approval.
+
+Client-visible auth posture records may project readiness into allowed,
+blocked, deferred, or revoked dispositions. These records are explanatory
+protocol/read-model surfaces. They may carry non-secret credential references,
+but never credential material. They also keep command approval and provider
+credential access as separate boundaries.
 
 ## Command Boundary
 

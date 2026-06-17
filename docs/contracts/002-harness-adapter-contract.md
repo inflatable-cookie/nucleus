@@ -406,6 +406,18 @@ Initial adapter requirements:
 - prefer stdio or Unix socket before WebSocket
 - preserve Codex thread id as provider session id
 - preserve Codex turn id, item id, and request/approval ids
+
+The server now has compile-only Codex app-server supervision readiness records.
+They require binary availability, client auth allowance, project execution
+authority, v1 client protocol shape, local transport readiness, process-control
+readiness, and sanitized payload policy before live spawn is considered ready.
+They do not spawn Codex, open stdio, probe provider auth, or ingest live events.
+
+The server also has compile-only Codex app-server handshake preflight records.
+They validate the current schema-evidence baseline, required method subset,
+version label, auth readiness, generated schema evidence, and experimental
+user-input posture before live work is admitted. They do not perform the stdio
+handshake.
 - surface command approval, file-change approval, and user-input requests as
   server-owned state
 - treat thread resume failure and fallback-to-new-thread as explicit recovery

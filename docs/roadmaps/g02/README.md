@@ -25,11 +25,11 @@ and engine boundary are settled.
 - `007-management-projection-sync-foundation.md` - completed
 - `008-scm-forge-driver-runway.md` - completed
 - `009-harness-runtime-target-selection.md` - completed
-- `010-client-protocol-and-host-transport-runway.md` - active
+- `010-client-protocol-and-host-transport-runway.md` - completed
 - `011-codex-app-server-runtime-runway.md` - completed
 - `012-health-and-authority-surface-reset.md` - completed
-- `013-host-authority-map-and-client-protocol-records.md` - planned after `010`
-- `014-codex-live-runtime-supervision.md` - planned after `013`
+- `013-host-authority-map-and-client-protocol-records.md` - completed
+- `014-codex-live-runtime-supervision.md` - active
 - `015-task-backed-agent-work-unit-proof.md` - planned after `014`
 - `016-management-projection-file-io-and-sync.md` - planned after `015`
 - `017-scm-working-copy-and-change-request-workflows.md` - planned after `016`
@@ -104,27 +104,42 @@ Completed cards:
 - `batch-cards/039-g02-roadmap-suite-normalization.md`
 - `batch-cards/040-health-reset-validation.md`
 
-Ready cards:
-
-- `batch-cards/042-host-capability-advertisement-records.md`
-
-Planned cards:
-
-- `batch-cards/043-client-auth-posture-records.md`
-- `batch-cards/044-local-transport-selection-runway.md`
-
 Completed cards:
 
 - `batch-cards/041-client-protocol-envelope-profile.md`
+- `batch-cards/042-host-capability-advertisement-records.md`
+- `batch-cards/043-client-auth-posture-records.md`
+- `batch-cards/044-local-transport-selection-runway.md`
+
+Ready cards:
+
+- `batch-cards/051-codex-live-event-ingestion.md`
+
+Planned cards:
+
+- `batch-cards/052-codex-wait-state-routing.md`
+- `batch-cards/053-codex-recovery-and-runtime-validation.md`
+
+Completed cards:
+
+- `batch-cards/049-codex-process-supervision-boundary.md`
+- `batch-cards/050-codex-handshake-preflight.md`
+
+Completed cards:
+
+- `batch-cards/045-project-authority-map-record-shape.md`
+- `batch-cards/046-host-authority-read-model-query.md`
+- `batch-cards/047-protocol-authority-map-dto.md`
+- `batch-cards/048-host-authority-map-validation.md`
 
 ## Planned Runway Sequence
 
 The next G02 suite is:
 
 1. health and authority surface reset - completed
-2. client protocol and host transport runway - active
-3. host authority map records and client read models
-4. live Codex runtime supervision
+2. client protocol and host transport runway - completed
+3. host authority map records and client read models - completed
+4. live Codex runtime supervision - active
 5. task-backed agent work unit proof
 6. management projection file IO and sync
 7. SCM working-copy/change-request workflows
@@ -135,10 +150,7 @@ remote transport work.
 
 ## Planning Rules
 
-- `010` is the only active milestone.
-- `010` defines protocol and transport runway
-  shape, not live remote behavior.
-- `013` turns the host authority map and protocol runway into concrete records.
+- `014` is the only active milestone.
 - `014` is the first live provider runtime milestone.
 - `015` proves the first task-backed agent work unit.
 - `016`, `017`, and `018` then build committable projection file IO,

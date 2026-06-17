@@ -30,8 +30,10 @@ pub use projects::ControlProjectRecordDto;
 pub use records::ControlStateRecordDto;
 pub use response::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiffSummaryRecordDto,
-    ControlResponseBodyDto, ControlResponseEnvelopeDto, ControlResponseStatusDto,
-    ControlRuntimeReadinessBlockerDto, ControlRuntimeReadinessDiagnosticDto,
+    ControlProjectAuthorityDomainDto, ControlProjectAuthorityIssueDto,
+    ControlProjectAuthorityMapDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
+    ControlResponseStatusDto, ControlRuntimeReadinessBlockerDto,
+    ControlRuntimeReadinessDiagnosticDto,
 };
 pub use tasks::ControlTaskRecordDto;
 

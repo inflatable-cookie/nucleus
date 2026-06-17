@@ -1,6 +1,6 @@
 # 013 Host Authority Map And Client Protocol Records
 
-Status: planned-after-010
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 
@@ -22,29 +22,46 @@ This milestone follows the health reset and complements
 
 ## Goals
 
-- [ ] Define typed host identity, host form, capability, and authority-map
+- [x] Define typed host identity, host form, capability, and authority-map
   records in the portable engine/server boundary.
-- [ ] Define client protocol envelope versioning and compatibility posture.
-- [ ] Expose host capability and authority-map read models without creating a
+- [x] Define client protocol envelope versioning and compatibility posture.
+- [x] Expose host capability and authority-map read models without creating a
   remote auth implementation.
-- [ ] Keep embedded, sidecar, remote-authoritative, and remote-worker modes
+- [x] Keep embedded, sidecar, remote-authoritative, and remote-worker modes
   distinguishable.
 
 ## Execution Plan
 
-- [ ] Authority-map record batch: add focused records and validation rules.
-- [ ] Protocol envelope batch: define versioned request, response, event, and
+- [x] Authority-map record batch: add focused records and validation rules.
+- [x] Protocol envelope batch: define versioned request, response, event, and
   error envelope records.
-- [ ] Host capability batch: expose host form, authority domains, readiness,
+- [x] Host capability batch: expose host form, authority domains, readiness,
   and advertised limits.
-- [ ] Query/projection batch: add read-only query paths for clients.
+- [x] Query/projection batch: add read-only query paths for clients.
+
+## Batch Cards
+
+Completed cards:
+
+- `batch-cards/045-project-authority-map-record-shape.md`
+- `batch-cards/046-host-authority-read-model-query.md`
+- `batch-cards/047-protocol-authority-map-dto.md`
+- `batch-cards/048-host-authority-map-validation.md`
 
 ## Acceptance Criteria
 
-- [ ] Clients can inspect which host owns which authority domains.
-- [ ] Embedded and sidecar host modes share protocol records where practical.
-- [ ] Remote host records expose auth posture without storing secret material.
-- [ ] No network listener, pairing flow, or live remote transport is started.
+- [x] Clients can inspect which host owns which authority domains.
+- [x] Embedded and sidecar host modes share protocol records where practical.
+- [x] Remote host records expose auth posture without storing secret material.
+- [x] No network listener, pairing flow, or live remote transport is started.
+
+## Closeout
+
+Completed 2026-06-17.
+
+This milestone established client-visible authority-map publication records,
+read-only query routing, and response DTOs. Missing authority-map persistence
+is represented as deferred publication rather than fabricated authority.
 
 ## Gate
 

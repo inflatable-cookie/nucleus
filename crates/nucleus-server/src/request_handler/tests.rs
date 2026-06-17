@@ -21,11 +21,13 @@ use crate::commands::{
     AgentSessionCommand, ServerCommand, ServerCommandKind, TaskCommand, TaskTransitionCommand,
 };
 use crate::control_api::{
-    AdapterSessionQuery, RuntimeMetadataQuery, ServerCommandReceipt, ServerCommandReceiptStatus,
-    ServerControlError, ServerControlRequest, ServerControlRequestKind, ServerControlResponseBody,
-    ServerControlResponseStatus, ServerQuery, ServerQueryKind, ServerQueryResult,
-    ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope, TaskTimelineQuery,
+    AdapterSessionQuery, ProjectAuthorityMapQuery, RuntimeMetadataQuery, ServerCommandReceipt,
+    ServerCommandReceiptStatus, ServerControlError, ServerControlRequest, ServerControlRequestKind,
+    ServerControlResponseBody, ServerControlResponseStatus, ServerQuery, ServerQueryKind,
+    ServerQueryResult, ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope,
+    TaskTimelineQuery,
 };
+use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
 use crate::project_seed::{seed_local_project, LocalProjectSeed};
 use crate::state::ServerStateDomain;
@@ -43,6 +45,7 @@ fn handler(
 }
 
 mod checkpoint_diff;
+mod host_authority;
 mod project_queries;
 mod read_only_commands;
 mod runtime_auth;

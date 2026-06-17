@@ -14,11 +14,11 @@ shape.
 - `g02/007-management-projection-sync-foundation.md` - completed
 - `g02/008-scm-forge-driver-runway.md` - completed
 - `g02/009-harness-runtime-target-selection.md` - completed
-- `g02/010-client-protocol-and-host-transport-runway.md` - active
+- `g02/010-client-protocol-and-host-transport-runway.md` - completed
 - `g02/011-codex-app-server-runtime-runway.md` - completed
 - `g02/012-health-and-authority-surface-reset.md` - completed
-- `g02/013-host-authority-map-and-client-protocol-records.md` - planned after `010`
-- `g02/014-codex-live-runtime-supervision.md` - planned after `013`
+- `g02/013-host-authority-map-and-client-protocol-records.md` - completed
+- `g02/014-codex-live-runtime-supervision.md` - active
 - `g02/015-task-backed-agent-work-unit-proof.md` - planned after `014`
 - `g02/016-management-projection-file-io-and-sync.md` - planned after `015`
 - `g02/017-scm-working-copy-and-change-request-workflows.md` - planned after `016`
@@ -81,5 +81,5 @@ shape.
 
 ## Next Task
 
-Continue `g02/010-client-protocol-and-host-transport-runway.md`, starting with
-`g02/batch-cards/042-host-capability-advertisement-records.md`.
+Continue `g02/014-codex-live-runtime-supervision.md`, starting with
+`g02/batch-cards/051-codex-live-event-ingestion.md`.

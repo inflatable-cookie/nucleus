@@ -1,6 +1,6 @@
 # 042 Host Capability Advertisement Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 Milestone: `../010-client-protocol-and-host-transport-runway.md`
@@ -40,3 +40,13 @@ publication records through the client protocol layer.
 ## Stop Conditions
 
 - Stop if authority-map mutation rules are needed. That belongs to `013`.
+
+## Outcome
+
+Completed 2026-06-17.
+
+Added compile-only `nucleus-server` host capability advertisement records under
+the client protocol module. The records expose host form, connection mode,
+protocol profile, capability categories, authority-map publication posture, and
+runtime-readiness publication posture without granting authority or choosing a
+transport.

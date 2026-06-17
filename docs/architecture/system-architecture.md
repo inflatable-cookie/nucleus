@@ -119,6 +119,16 @@ Common deployment shapes:
 Clients send commands and render state. They may cache for responsiveness, but
 must reconcile with the authoritative host for the affected domain.
 
+Hosts advertise protocol and capability records before clients assume a
+workflow is available. Advertisement can expose host form, connection mode,
+protocol profile, capability categories, authority-map publication posture, and
+runtime readiness publication posture. It does not grant project authority.
+
+The first desktop/local transport target is Tauri IPC. In-process transport
+remains the test fixture and embedded-host fallback. Local sockets, named
+pipes, loopback HTTP, LAN transport, and remote HTTP/WebSocket are deferred
+until authority-map and auth gates are stronger.
+
 Host-local storage is backend-adapter based. SQLite is the first single-player
 local backend for embedded and sidecar hosts. A centralized remote team host
 should be able to use PostgreSQL or another durable backend behind the same

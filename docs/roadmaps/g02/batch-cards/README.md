@@ -10,12 +10,12 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `042-host-capability-advertisement-records.md`
+- `051-codex-live-event-ingestion.md`
 
 ## Planned Cards
 
-- `043-client-auth-posture-records.md`
-- `044-local-transport-selection-runway.md`
+- `052-codex-wait-state-routing.md`
+- `053-codex-recovery-and-runtime-validation.md`
 
 These cards belong to `../012-health-and-authority-surface-reset.md`.
 
@@ -62,3 +62,12 @@ These cards belong to `../012-health-and-authority-surface-reset.md`.
 - `039-g02-roadmap-suite-normalization.md`
 - `040-health-reset-validation.md`
 - `041-client-protocol-envelope-profile.md`
+- `042-host-capability-advertisement-records.md`
+- `043-client-auth-posture-records.md`
+- `044-local-transport-selection-runway.md`
+- `045-project-authority-map-record-shape.md`
+- `046-host-authority-read-model-query.md`
+- `047-protocol-authority-map-dto.md`
+- `048-host-authority-map-validation.md`
+- `049-codex-process-supervision-boundary.md`
+- `050-codex-handshake-preflight.md`

@@ -9,5 +9,7 @@ pub use body::ControlResponseBodyDto;
 pub use envelope::{ControlResponseEnvelopeDto, ControlResponseStatusDto};
 pub use records::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiffSummaryRecordDto,
-    ControlRuntimeReadinessBlockerDto, ControlRuntimeReadinessDiagnosticDto,
+    ControlProjectAuthorityDomainDto, ControlProjectAuthorityIssueDto,
+    ControlProjectAuthorityMapDto, ControlRuntimeReadinessBlockerDto,
+    ControlRuntimeReadinessDiagnosticDto,
 };

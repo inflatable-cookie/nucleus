@@ -1,6 +1,6 @@
 # 010 Client Protocol And Host Transport Runway
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 
@@ -24,43 +24,76 @@ record work is sequenced in
 ## Goals
 
 - [x] Define client protocol versioning and compatibility posture.
-- [ ] Separate embedded-host, sidecar-host, remote-authoritative, and
+- [x] Separate embedded-host, sidecar-host, remote-authoritative, and
   remote-worker connection modes.
-- [ ] Define host capability advertisement and authority-map publication.
-- [ ] Define pairing, session, revocation, and local-only proof modes.
-- [ ] Keep final UI design out of scope.
+- [x] Define host capability advertisement and authority-map publication.
+- [x] Define pairing, session, revocation, and local-only proof modes.
+- [x] Keep final UI design out of scope.
 
 ## Execution Plan
 
 - [x] Protocol shape batch: define request/response/event envelope ownership.
-- [ ] Host capability batch: expose host form, authority domains, and runtime
+- [x] Host capability batch: expose host form, authority domains, and runtime
   readiness through protocol records.
-- [ ] Auth posture batch: define pairing/session/revocation records without
+- [x] Auth posture batch: define pairing/session/revocation records without
   storing secret material in normal state.
-- [ ] Transport runway batch: choose first local transport implementation and
+- [x] Transport runway batch: choose first local transport implementation and
   compile follow-on cards.
 
+## Local Transport Selection
+
+First desktop/local implementation target: Tauri IPC.
+
+Reason:
+
+- it matches the initial desktop control plane
+- it keeps renderer code as a client, not authority
+- it can use the existing request/response DTO and protocol profile work
+- it avoids opening a socket before local auth and host authority-map records
+  are stronger
+
+In-process transport remains the test fixture and embedded-host fallback.
+
+Deferred options:
+
+- local socket or named pipe: useful for sidecar and CLI clients after host
+  authority-map and auth posture records mature
+- loopback HTTP: useful later, but it pulls in auth, pairing, revocation, and
+  listener lifecycle too early
+- LAN/remote HTTP or WebSocket: out of scope until remote auth and authority
+  maps have explicit gates
+
+Follow-on implementation cards should be compiled after `013`:
+
+- Tauri IPC protocol-profile query
+- Tauri IPC host-capability query
+- Tauri IPC client-auth posture query
+- sidecar local transport readiness comparison
+
 ## Batch Cards
-
-Ready cards:
-
-- `batch-cards/042-host-capability-advertisement-records.md`
-
-Planned cards:
-
-- `batch-cards/043-client-auth-posture-records.md`
-- `batch-cards/044-local-transport-selection-runway.md`
 
 Completed cards:
 
 - `batch-cards/041-client-protocol-envelope-profile.md`
+- `batch-cards/042-host-capability-advertisement-records.md`
+- `batch-cards/043-client-auth-posture-records.md`
+- `batch-cards/044-local-transport-selection-runway.md`
 
 ## Acceptance Criteria
 
-- [ ] Clients can reason about which host owns which authority domain.
-- [ ] Embedded and sidecar hosts can share a protocol boundary where practical.
-- [ ] Remote host work has an explicit auth/pairing gate.
-- [ ] The desktop app remains a light control plane, not the state authority.
+- [x] Clients can reason about which host owns which authority domain.
+- [x] Embedded and sidecar hosts can share a protocol boundary where practical.
+- [x] Remote host work has an explicit auth/pairing gate.
+- [x] The desktop app remains a light control plane, not the state authority.
+
+## Closeout
+
+Completed 2026-06-17.
+
+This milestone established protocol profile, host capability advertisement,
+client auth posture projection, and first local transport direction. It did not
+open a listener, add remote auth, implement pairing, or make the desktop the
+authority.
 
 ## Gate
 

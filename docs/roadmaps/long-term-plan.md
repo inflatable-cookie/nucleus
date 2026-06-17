@@ -28,15 +28,15 @@ created inside an approved phase when the phase is ready for execution.
 G02 is the orchestration and engine-core generation. The current runway is:
 
 1. `012-health-and-authority-surface-reset.md` - completed
-2. `010-client-protocol-and-host-transport-runway.md` - active
-3. `013-host-authority-map-and-client-protocol-records.md`
-4. `014-codex-live-runtime-supervision.md`
+2. `010-client-protocol-and-host-transport-runway.md` - completed
+3. `013-host-authority-map-and-client-protocol-records.md` - completed
+4. `014-codex-live-runtime-supervision.md` - active
 5. `015-task-backed-agent-work-unit-proof.md`
 6. `016-management-projection-file-io-and-sync.md`
 7. `017-scm-working-copy-and-change-request-workflows.md`
 8. `018-steward-native-harness-and-effigy-tools.md`
 
-Only `010` is active. Later milestones are planned and should not receive
+Only `014` is active. Later milestones are planned and should not receive
 batch cards until the predecessor gate is clear.
 
 This order intentionally pulls client protocol and authority-map records ahead

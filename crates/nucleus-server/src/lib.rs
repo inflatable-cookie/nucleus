@@ -7,8 +7,10 @@ pub mod artifact_store_backend;
 pub mod authority;
 pub mod checkpoint_diff_state;
 pub mod client_auth;
+pub mod client_auth_posture;
 pub mod client_protocol;
 pub mod clients;
+pub mod codex_supervision;
 pub mod command_artifacts;
 pub mod command_evidence_state;
 pub mod command_runtime_readiness;
@@ -71,13 +73,31 @@ pub use client_auth::{
     ClientAuthReadinessStatus, ClientAuthRecordId, ClientAuthSessionId, ClientAuthSessionRecord,
     ClientPairingId, ClientPairingMode, ClientPairingRecord, ClientRevocationRecord,
 };
+pub use client_auth_posture::{
+    ClientAuthDisposition, ClientAuthPostureReason, ClientAuthPostureRecord,
+    ClientAuthSessionPublication, ClientCommandApprovalBoundary, ClientCredentialReference,
+    ClientCredentialReferenceScope, ProviderCredentialBoundary,
+};
 pub use client_protocol::{
     ClientProtocolAuthority, ClientProtocolCompatibility, ClientProtocolEnvelopeField,
     ClientProtocolMessageKind, ClientProtocolMessageShape, ClientProtocolProfile,
     ClientProtocolReadiness, ClientProtocolReadinessBlocker, ClientProtocolReadinessStatus,
-    CLIENT_PROTOCOL_FAMILY, CLIENT_PROTOCOL_VERSION_V1,
+    HostAuthorityMapPublication, HostCapabilityAdvertisement, HostCapabilityAdvertisementStatus,
+    HostCapabilityCategory, HostCapabilityReadinessRef, HostCapabilityReadinessStatus,
+    HostConnectionMode, HostRuntimeReadinessPublication, ProjectAuthorityDomainPublication,
+    ProjectAuthorityMapPublicationRecord, ProjectAuthorityPublicationState,
+    ProjectAuthorityValidationIssue, CLIENT_PROTOCOL_FAMILY, CLIENT_PROTOCOL_VERSION_V1,
 };
 pub use clients::{ClientConnection, ClientIdentity, ClientKind};
+pub use codex_supervision::{
+    assess_codex_app_server_handshake, assess_codex_app_server_supervision, CodexAppServerBinary,
+    CodexAppServerHandshakeBlocker, CodexAppServerHandshakeExpectation,
+    CodexAppServerHandshakeObservation, CodexAppServerHandshakePreflight,
+    CodexAppServerHandshakePreflightStatus, CodexAppServerSchemaEvidenceRef,
+    CodexAppServerSupervisionBlocker, CodexAppServerSupervisionLimits,
+    CodexAppServerSupervisionReadiness, CodexAppServerSupervisionReadinessInput,
+    CodexAppServerSupervisionReadinessStatus, CodexAppServerSupervisionRequest,
+};
 pub use command_artifacts::{ServerCommandArtifactRecord, ServerCommandArtifactResolution};
 pub use command_evidence_state::write_command_evidence;
 pub use command_runtime_readiness::{
@@ -88,15 +108,16 @@ pub use commands::{
     TaskTransitionCommand, WorkspaceCommand,
 };
 pub use control_api::{
-    AdapterSessionQuery, ModelRouteQuery, RuntimeMetadataQuery, ServerCommandReceipt,
-    ServerCommandReceiptStatus, ServerControlError, ServerControlRequest, ServerControlRequestKind,
-    ServerControlResponse, ServerControlResponseBody, ServerControlResponseStatus, ServerQuery,
-    ServerQueryKind, ServerQueryResult, ServerStateRecordSet, StateRecordQuery,
-    StateRecordQueryScope,
+    AdapterSessionQuery, ModelRouteQuery, ProjectAuthorityMapQuery, RuntimeMetadataQuery,
+    ServerCommandReceipt, ServerCommandReceiptStatus, ServerControlError, ServerControlRequest,
+    ServerControlRequestKind, ServerControlResponse, ServerControlResponseBody,
+    ServerControlResponseStatus, ServerQuery, ServerQueryKind, ServerQueryResult,
+    ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope,
 };
 pub use control_envelope_dto::{
     ControlApiCodecError, ControlCheckpointRecordDto, ControlCommandDto,
-    ControlCommandEvidenceRecordDto, ControlDiffSummaryRecordDto, ControlProjectRecordDto,
+    ControlCommandEvidenceRecordDto, ControlDiffSummaryRecordDto, ControlProjectAuthorityDomainDto,
+    ControlProjectAuthorityIssueDto, ControlProjectAuthorityMapDto, ControlProjectRecordDto,
     ControlQueryDto, ControlQueryScopeDto, ControlRequestBodyDto, ControlRequestEnvelopeDto,
     ControlResponseBodyDto, ControlResponseEnvelopeDto, ControlResponseStatusDto,
     ControlStateDomainDto, ControlStateRecordDto, ControlTaskRecordDto,

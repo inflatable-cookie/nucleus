@@ -198,3 +198,17 @@ persistence, synchronization, or runtime execution. They exist so later runtime
 and storage work can check assigned authority domains instead of assuming one
 global server owns every project. Readiness checks distinguish no assignment,
 different authoritative host, mutation denied, and ready states.
+
+The client protocol layer now adds client-visible authority-map publication
+records:
+
+- project authority-map publication record
+- per-domain publication rows
+- assigned, mutation-denied, fallback-only, unassigned, and
+  publication-deferred states
+- validation issues for unassigned domains, deferred publication, and fallback
+  duplication
+
+These records are read-model shapes only. They do not grant authority, mutate
+authority maps, persist maps, synchronize hosts, authenticate clients, or start
+transport behavior.

@@ -1,6 +1,6 @@
 # 044 Local Transport Selection Runway
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-17
 Milestone: `../010-client-protocol-and-host-transport-runway.md`
@@ -35,3 +35,12 @@ host capability, and auth posture records are explicit.
 ## Stop Conditions
 
 - Stop if transport choice depends on UI design decisions that are not settled.
+
+## Outcome
+
+Completed 2026-06-17.
+
+Selected Tauri IPC as the first desktop/local implementation target. In-process
+transport remains the test fixture and embedded-host fallback. Local sockets,
+named pipes, loopback HTTP, LAN transport, and remote HTTP/WebSocket stay
+deferred until authority-map and auth gates are stronger.
