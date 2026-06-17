@@ -192,6 +192,13 @@ First-pass command records must not execute tools, mutate project state, apply
 proposals, commit, push, publish, promote, call a forge, or resolve provider
 credentials.
 
+First command admission records map command scope and persona policy to
+accepted, requires-approval, rejected, blocked, or unsupported status. Read-only
+commands may run without approval. Proposal-only commands require proposal
+authority. Capture preparation and sync-sensitive commands require the
+matching persona authority and approval state. Unsupported authority
+escalation must be rejected before execution.
+
 ## Model Backend Rule
 
 Native harness personas should use deterministic tools before model calls.
@@ -341,7 +348,9 @@ Current modules:
 - `steward_commands`: `NativeStewardCommandRequest`,
   `NativeStewardCommandOutcome`, `NativeStewardCommandId`,
   `NativeStewardCommandKind`, `NativeStewardCommandScope`,
-  `NativeStewardCommandTarget`, and `NativeStewardCommandStatus`
+  `NativeStewardCommandTarget`, `NativeStewardCommandStatus`,
+  `NativeStewardCommandAdmission`, and
+  `NativeStewardCommandAdmissionStatus`
 - `audit`: `NativeAuditEvent`, `NativeAuditEventId`, and
   `NativeAuditEventKind`
 

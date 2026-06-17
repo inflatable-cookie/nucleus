@@ -118,11 +118,10 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/075-native-steward-command-admission.md`
+- `batch-cards/076-native-steward-command-receipt-linkage.md`
 
 Planned cards:
 
-- `batch-cards/076-native-steward-command-receipt-linkage.md`
 - `batch-cards/077-server-steward-command-boundary.md`
 - `batch-cards/078-native-steward-command-validation.md`
 - `batch-cards/079-effigy-selector-refresh-command.md`
@@ -174,6 +173,7 @@ Completed cards:
 - `batch-cards/072-native-model-backend-posture-records.md`
 - `batch-cards/073-steward-lane-validation-and-next-runway.md`
 - `batch-cards/074-native-steward-command-records.md`
+- `batch-cards/075-native-steward-command-admission.md`
 
 Completed cards:
 

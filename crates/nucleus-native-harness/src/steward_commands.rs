@@ -4,7 +4,9 @@
 //! not execute tools, mutate project state, commit, push, publish, or call a
 //! forge.
 
-use crate::personas::NativePersonaId;
+use crate::personas::{
+    NativeActionApproval, NativePersonaId, NativePersonaPolicy, NativePrivilegedAction,
+};
 use crate::steward::{
     NativeStewardEvidenceRef, NativeStewardProposalId, NativeStewardSyncAssistanceId,
 };
@@ -57,6 +59,95 @@ impl NativeStewardCommandRequest {
                 .iter()
                 .all(NativeStewardEvidenceRef::uses_reference_only_evidence)
     }
+
+    pub fn admit_with_policy(&self, policy: &NativePersonaPolicy) -> NativeStewardCommandAdmission {
+        let approval = policy.approval_for_action(self.privileged_action());
+        let status = match (&self.scope, approval.clone()) {
+            (NativeStewardCommandScope::Unsupported, _) => {
+                NativeStewardCommandAdmissionStatus::Rejected(
+                    "unsupported command scope".to_owned(),
+                )
+            }
+            (_, NativeActionApproval::BlockedByPolicy) => {
+                NativeStewardCommandAdmissionStatus::Rejected(
+                    "blocked by persona policy".to_owned(),
+                )
+            }
+            (NativeStewardCommandScope::ApprovalRequired, NativeActionApproval::Required) => {
+                NativeStewardCommandAdmissionStatus::RequiresApproval
+            }
+            (_, NativeActionApproval::Required) => {
+                NativeStewardCommandAdmissionStatus::RequiresApproval
+            }
+            (NativeStewardCommandScope::Unknown, _) => {
+                NativeStewardCommandAdmissionStatus::Blocked("unknown command authority".to_owned())
+            }
+            _ => NativeStewardCommandAdmissionStatus::Accepted,
+        };
+
+        NativeStewardCommandAdmission {
+            command_id: self.id.clone(),
+            status,
+            approval,
+            reason: None,
+        }
+    }
+
+    fn privileged_action(&self) -> NativePrivilegedAction {
+        match self.scope {
+            NativeStewardCommandScope::ReadOnly => NativePrivilegedAction::ReadOnlyInspection,
+            NativeStewardCommandScope::ProposalOnly => {
+                NativePrivilegedAction::ProposeManagementStateEdit
+            }
+            NativeStewardCommandScope::ApprovalRequired => match self.kind {
+                NativeStewardCommandKind::ManagementCapturePreparation => {
+                    NativePrivilegedAction::PrepareManagementCapture
+                }
+                _ => NativePrivilegedAction::ProposeManagementStateEdit,
+            },
+            NativeStewardCommandScope::Unsupported | NativeStewardCommandScope::Unknown => {
+                NativePrivilegedAction::ChangeSyncPolicy
+            }
+        }
+    }
+}
+
+/// Admission result for a steward command request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeStewardCommandAdmission {
+    pub command_id: NativeStewardCommandId,
+    pub status: NativeStewardCommandAdmissionStatus,
+    pub approval: NativeActionApproval,
+    pub reason: Option<String>,
+}
+
+impl NativeStewardCommandAdmission {
+    pub fn can_run_without_approval(&self) -> bool {
+        self.status == NativeStewardCommandAdmissionStatus::Accepted
+            && matches!(
+                self.approval,
+                NativeActionApproval::NotRequired | NativeActionApproval::AllowedByPolicy
+            )
+    }
+
+    pub fn is_rejected_or_blocked(&self) -> bool {
+        matches!(
+            self.status,
+            NativeStewardCommandAdmissionStatus::Rejected(_)
+                | NativeStewardCommandAdmissionStatus::Blocked(_)
+                | NativeStewardCommandAdmissionStatus::Unsupported
+        )
+    }
+}
+
+/// Admission status for a steward command request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeStewardCommandAdmissionStatus {
+    Accepted,
+    RequiresApproval,
+    Rejected(String),
+    Blocked(String),
+    Unsupported,
 }
 
 /// Steward command result.
@@ -175,6 +266,7 @@ fn contains_forbidden_steward_command_term(value: &str) -> bool {
 mod tests {
     use super::*;
     use crate::steward::{NativeStewardEvidenceRef, NativeStewardEvidenceSource};
+    use crate::NativeSyncAuthority;
 
     fn command(kind: NativeStewardCommandKind) -> NativeStewardCommandRequest {
         NativeStewardCommandRequest {
@@ -261,5 +353,66 @@ mod tests {
 
         assert!(!command.uses_reference_only_evidence());
         assert!(!command.can_imply_provider_authority());
+    }
+
+    #[test]
+    fn steward_command_admission_accepts_read_only_without_approval() {
+        let policy =
+            NativePersonaPolicy::project_steward(NativeSyncAuthority::ProposeOnly, true, false);
+        let command = command(NativeStewardCommandKind::ReadOnlyInspection);
+
+        let admission = command.admit_with_policy(&policy);
+
+        assert_eq!(
+            admission.status,
+            NativeStewardCommandAdmissionStatus::Accepted
+        );
+        assert!(admission.can_run_without_approval());
+    }
+
+    #[test]
+    fn steward_command_admission_requires_approval_for_capture_prep() {
+        let policy = NativePersonaPolicy::project_steward(
+            NativeSyncAuthority::PrepareManagementCapture,
+            true,
+            false,
+        );
+        let mut command = command(NativeStewardCommandKind::ManagementCapturePreparation);
+        command.scope = NativeStewardCommandScope::ApprovalRequired;
+
+        let admission = command.admit_with_policy(&policy);
+
+        assert_eq!(
+            admission.status,
+            NativeStewardCommandAdmissionStatus::RequiresApproval
+        );
+        assert_eq!(admission.approval, NativeActionApproval::Required);
+    }
+
+    #[test]
+    fn steward_command_admission_rejects_unsupported_escalation() {
+        let policy = NativePersonaPolicy::project_steward(NativeSyncAuthority::None, true, false);
+        let mut command = command(NativeStewardCommandKind::SyncAssistance);
+        command.scope = NativeStewardCommandScope::Unsupported;
+
+        let admission = command.admit_with_policy(&policy);
+
+        assert!(admission.is_rejected_or_blocked());
+        assert!(matches!(
+            admission.status,
+            NativeStewardCommandAdmissionStatus::Rejected(_)
+        ));
+    }
+
+    #[test]
+    fn steward_command_admission_blocks_proposal_when_policy_has_no_sync_authority() {
+        let policy = NativePersonaPolicy::project_steward(NativeSyncAuthority::None, true, false);
+        let mut command = command(NativeStewardCommandKind::ProposalDrafting);
+        command.scope = NativeStewardCommandScope::ProposalOnly;
+
+        let admission = command.admit_with_policy(&policy);
+
+        assert!(admission.is_rejected_or_blocked());
+        assert_eq!(admission.approval, NativeActionApproval::BlockedByPolicy);
     }
 }

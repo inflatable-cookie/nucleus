@@ -43,9 +43,9 @@ pub use steward::{
     NativeStewardSyncAssistanceLinks,
 };
 pub use steward_commands::{
-    NativeStewardCommandId, NativeStewardCommandKind, NativeStewardCommandOutcome,
-    NativeStewardCommandRequest, NativeStewardCommandScope, NativeStewardCommandStatus,
-    NativeStewardCommandTarget,
+    NativeStewardCommandAdmission, NativeStewardCommandAdmissionStatus, NativeStewardCommandId,
+    NativeStewardCommandKind, NativeStewardCommandOutcome, NativeStewardCommandRequest,
+    NativeStewardCommandScope, NativeStewardCommandStatus, NativeStewardCommandTarget,
 };
 pub use tools::{
     NativeApprovalPolicy, NativeApprovalRequest, NativeApprovalRequestId, NativeRuntimeReceiptRef,
