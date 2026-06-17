@@ -1985,6 +1985,7 @@ dependencies = [
  "nucleus-core",
  "nucleus-engine",
  "nucleus-local-store",
+ "nucleus-native-harness",
  "nucleus-orchestration",
  "nucleus-projects",
  "nucleus-scm-forge",

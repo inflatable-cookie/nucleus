@@ -2,6 +2,7 @@
 
 use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId, ModelRoute};
 use nucleus_core::RevisionId;
+use nucleus_native_harness::NativeStewardCommandRequest;
 use nucleus_projects::{Project, ProjectId, RepoMembershipId, RepoRepairAction};
 use nucleus_tasks::{
     AcceptanceCriterion, AgentReadiness, TaskActionType, TaskActivityState, TaskId, TaskImportance,
@@ -25,6 +26,7 @@ pub enum ServerCommandKind {
     Task(TaskCommand),
     Workspace(WorkspaceCommand),
     AgentSession(AgentSessionCommand),
+    Steward(NativeStewardCommandRequest),
     ReadOnlyCommand(ReadOnlyCommand),
     ConfigureModelRoute(ModelRoute),
 }

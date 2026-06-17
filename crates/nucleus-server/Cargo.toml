@@ -11,6 +11,7 @@ nucleus-command-policy = { path = "../nucleus-command-policy" }
 nucleus-core = { path = "../nucleus-core" }
 nucleus-engine = { path = "../nucleus-engine" }
 nucleus-local-store = { path = "../nucleus-local-store" }
+nucleus-native-harness = { path = "../nucleus-native-harness" }
 nucleus-orchestration = { path = "../nucleus-orchestration" }
 nucleus-projects = { path = "../nucleus-projects" }
 nucleus-scm-forge = { path = "../nucleus-scm-forge" }

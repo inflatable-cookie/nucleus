@@ -50,6 +50,7 @@ mod host_authority;
 mod project_queries;
 mod read_only_commands;
 mod runtime_auth;
+mod steward_commands;
 mod task_authoring;
 mod task_transitions;
 

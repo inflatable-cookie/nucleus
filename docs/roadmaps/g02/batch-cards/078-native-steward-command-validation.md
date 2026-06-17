@@ -1,6 +1,6 @@
 # 078 Native Steward Command Validation
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../019-native-steward-command-boundary.md`

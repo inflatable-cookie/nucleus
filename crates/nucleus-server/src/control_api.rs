@@ -164,6 +164,8 @@ pub struct ServerCommandReceipt {
 pub enum ServerCommandReceiptStatus {
     AcceptedForStateMutation,
     AcceptedForRuntimeScheduling,
+    AcceptedForNativeStewardCommand,
+    WaitingForApproval,
     Rejected(ServerControlError),
 }
 

@@ -13,6 +13,7 @@ mod commands;
 mod event_store;
 mod handler;
 mod queries;
+mod steward_commands;
 mod task_commands;
 
 pub use boundary::LocalControlRequestHandlerBoundary;

@@ -3,6 +3,7 @@ use nucleus_local_store::LocalStoreBackend;
 use super::command_admission::{admit_state_command, CommandAdmissionOutcome};
 use super::command_events::append_command_admitted_event;
 use super::handler::LocalControlRequestHandler;
+use super::steward_commands::handle_steward_command;
 use super::task_commands::handle_task_command;
 use std::path::Path;
 
@@ -88,6 +89,7 @@ where
         ) => ServerCommandReceiptStatus::Rejected(ServerControlError::Deferred {
             reason: "agent session runtime control is not implemented".to_owned(),
         }),
+        ServerCommandKind::Steward(steward_command) => handle_steward_command(&steward_command),
         ServerCommandKind::ReadOnlyCommand(read_only_command) => {
             return handle_read_only_command(handler, request_id, command_id, read_only_command);
         }
@@ -103,9 +105,11 @@ fn command_response(
 ) -> ServerControlResponse {
     let response_status = match status {
         ServerCommandReceiptStatus::AcceptedForStateMutation
-        | ServerCommandReceiptStatus::AcceptedForRuntimeScheduling => {
+        | ServerCommandReceiptStatus::AcceptedForRuntimeScheduling
+        | ServerCommandReceiptStatus::AcceptedForNativeStewardCommand => {
             ServerControlResponseStatus::Accepted
         }
+        ServerCommandReceiptStatus::WaitingForApproval => ServerControlResponseStatus::Partial,
         ServerCommandReceiptStatus::Rejected(_) => ServerControlResponseStatus::Rejected,
     };
 

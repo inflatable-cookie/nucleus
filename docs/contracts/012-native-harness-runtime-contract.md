@@ -204,6 +204,12 @@ refs, and sanitized evidence refs to steward command outcomes. They must not
 copy receipt payloads, command output, model output, terminal streams, provider
 payloads, credentials, or secrets.
 
+The first server request-handler boundary can accept native steward command
+requests and return accepted, waiting-for-approval, or rejected command
+receipts. This boundary performs admission only. It must not run a live steward
+loop, execute tools, mutate project state, mutate SCM state, call a forge, or
+resolve provider credentials.
+
 ## Model Backend Rule
 
 Native harness personas should use deterministic tools before model calls.

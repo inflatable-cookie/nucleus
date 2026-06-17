@@ -1,6 +1,6 @@
 # 077 Server Steward Command Boundary
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../019-native-steward-command-boundary.md`
@@ -18,17 +18,26 @@ Prepare server request-handler boundaries for steward commands.
 
 ## Acceptance Criteria
 
-- Server boundary can accept a steward command request shape.
-- Server boundary can reject unsupported command classes.
-- No command handler mutates project, SCM, or forge state.
+- [x] Server boundary can accept a steward command request shape.
+- [x] Server boundary can reject unsupported command classes.
+- [x] No command handler mutates project, SCM, or forge state.
+
+## Outcome
+
+- Added `ServerCommandKind::Steward` for native steward command requests.
+- Added request-handler admission for steward commands.
+- Added receipt statuses for accepted native steward commands and
+  waiting-for-approval.
+- Kept live steward execution, project mutation, SCM mutation, and forge calls
+  out of scope.
 
 ## Validation
 
-- `cargo test -p nucleus-server steward`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server steward`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

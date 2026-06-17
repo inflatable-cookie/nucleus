@@ -272,6 +272,10 @@ pub(super) fn command_receipt_status_dto(status: &ServerCommandReceiptStatus) ->
         ServerCommandReceiptStatus::AcceptedForRuntimeScheduling => {
             "accepted_for_runtime_scheduling".to_owned()
         }
+        ServerCommandReceiptStatus::AcceptedForNativeStewardCommand => {
+            "accepted_for_native_steward_command".to_owned()
+        }
+        ServerCommandReceiptStatus::WaitingForApproval => "waiting_for_approval".to_owned(),
         ServerCommandReceiptStatus::Rejected(_) => "rejected".to_owned(),
     }
 }
