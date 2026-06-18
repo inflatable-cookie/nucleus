@@ -188,11 +188,13 @@ fn engine_task_command_admits_task_delegation_as_work_item() {
 
     assert!(matches!(
         outcome,
-        EngineTaskCommandOutcome::WorkItemAdmitted(work_item)
+        EngineTaskCommandOutcome::WorkItemAdmitted { work_item, admission }
             if work_item.task_id == TaskId("task:1".to_owned())
                 && work_item.work_item_id.0 == "work-item:task:1:operator-click-1"
                 && work_item.runtime == crate::EngineTaskWorkItemRuntimeState::Scheduled
                 && work_item.review == crate::EngineTaskWorkItemReviewState::NotReady
+                && admission.source_record.work_item_id == work_item.work_item_id
+                && admission.provider_execution_deferred
     ));
     assert_eq!(
         repository.decoded_task("task:1").activity,

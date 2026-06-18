@@ -35,8 +35,8 @@ shape.
 - `g02/028-next-product-workflow-selection.md` - completed
 - `g02/029-health-and-module-boundary-reset.md` - completed
 - `g02/030-task-backed-agent-workflow-contract-reset.md` - completed
-- `g02/031-task-agent-work-unit-source-model.md` - active
-- `g02/032-codex-task-runtime-admission-bridge.md` - planned
+- `g02/031-task-agent-work-unit-source-model.md` - completed
+- `g02/032-codex-task-runtime-admission-bridge.md` - active
 - `g02/033-codex-task-event-ingestion-and-receipts.md` - planned
 - `g02/034-task-work-checkpoint-and-review-loop.md` - planned
 - `g02/035-desktop-task-agent-progress-proof.md` - planned
@@ -99,5 +99,5 @@ shape.
 
 ## Next Task
 
-Review `g02/031-task-agent-work-unit-source-model.md`, starting with
-`g02/batch-cards/134-task-work-unit-source-records.md`.
+Review `g02/032-codex-task-runtime-admission-bridge.md`, starting with
+`g02/batch-cards/139-codex-task-runtime-request-records.md`.

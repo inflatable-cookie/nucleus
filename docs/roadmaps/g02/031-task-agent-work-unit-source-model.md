@@ -1,6 +1,6 @@
 # 031 Task Agent Work Unit Source Model
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -19,27 +19,24 @@ records and projections.
 
 ## Goals
 
-- [ ] Define source records for task work units.
-- [ ] Bind task delegation commands to work-unit admission records.
-- [ ] Project work-unit state into diagnostics/read models.
-- [ ] Keep provider runtime execution deferred.
+- [x] Define source records for task work units.
+- [x] Bind task delegation commands to work-unit admission records.
+- [x] Project work-unit state into diagnostics/read models.
+- [x] Keep provider runtime execution deferred.
 
 ## Execution Plan
 
-- [ ] Source record batch: add task work-unit source record types.
-- [ ] Admission batch: connect task delegation to work-unit admission.
-- [ ] Projection batch: rebuild work-unit state from source records/events.
-- [ ] Diagnostics batch: expose work-unit state through server read models.
-- [ ] Validation batch: prove no provider process starts.
+- [x] Source record batch: add task work-unit source record types.
+- [x] Admission batch: connect task delegation to work-unit admission.
+- [x] Projection batch: rebuild work-unit state from source records/events.
+- [x] Diagnostics batch: expose work-unit state through server read models.
+- [x] Validation batch: prove no provider process starts.
 
 ## Batch Cards
 
-Ready cards:
+Completed cards:
 
 - `batch-cards/134-task-work-unit-source-records.md`
-
-Planned cards:
-
 - `batch-cards/135-task-delegation-work-unit-admission.md`
 - `batch-cards/136-task-work-unit-state-projection.md`
 - `batch-cards/137-task-work-unit-diagnostics-read-model.md`
@@ -47,9 +44,15 @@ Planned cards:
 
 ## Acceptance Criteria
 
-- [ ] Task delegation creates or references a stable work unit.
-- [ ] Work-unit state is rebuildable.
-- [ ] Diagnostics can show work units without provider execution.
+- [x] Task delegation creates or references a stable work unit.
+- [x] Work-unit state is rebuildable.
+- [x] Diagnostics can show work units without provider execution.
+
+## Result
+
+Task-agent work-unit source records, admission records, deterministic
+projection, diagnostics, control DTO support, and desktop DTO types are in
+place without provider process launch.
 
 ## Gate
 

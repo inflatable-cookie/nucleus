@@ -1,6 +1,6 @@
 # 136 Task Work Unit State Projection
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../031-task-agent-work-unit-source-model.md`
@@ -17,9 +17,14 @@ Project task work-unit source records into rebuildable state.
 
 ## Acceptance Criteria
 
-- Work-unit state rebuilds from source records/events.
-- Projection is deterministic.
-- Projection does not run side effects.
+- [x] Work-unit state rebuilds from source records/events.
+- [x] Projection is deterministic.
+- [x] Projection does not run side effects.
+
+## Result
+
+Added deterministic task-agent work-unit projection from source records with
+repair issues for missing refs and forbidden summary terms.
 
 ## Validation
 

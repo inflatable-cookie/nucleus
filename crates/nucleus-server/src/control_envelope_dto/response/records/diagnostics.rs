@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::control_api::{ServerDiagnosticsQueryResult, ServerDiagnosticsSnapshot};
 use crate::diagnostics_read_models::{
     EffigyDiagnosticsDto, ScmSessionDiagnosticsDto, StewardDiagnosticsDto, SyncDiagnosticsDto,
+    TaskAgentDiagnosticsDto,
 };
 
 /// Serializable diagnostics query result.
@@ -13,6 +14,7 @@ pub enum ControlDiagnosticsResultDto {
     Effigy(EffigyDiagnosticsDto),
     ManagementSync(SyncDiagnosticsDto),
     ScmSession(ScmSessionDiagnosticsDto),
+    TaskAgent(TaskAgentDiagnosticsDto),
     All(ControlDiagnosticsSnapshotDto),
 }
 
@@ -23,6 +25,7 @@ pub struct ControlDiagnosticsSnapshotDto {
     pub effigy: EffigyDiagnosticsDto,
     pub management_sync: SyncDiagnosticsDto,
     pub scm_session: ScmSessionDiagnosticsDto,
+    pub task_agent: TaskAgentDiagnosticsDto,
 }
 
 impl From<&ServerDiagnosticsQueryResult> for ControlDiagnosticsResultDto {
@@ -34,6 +37,7 @@ impl From<&ServerDiagnosticsQueryResult> for ControlDiagnosticsResultDto {
                 Self::ManagementSync(record.clone())
             }
             ServerDiagnosticsQueryResult::ScmSession(record) => Self::ScmSession(record.clone()),
+            ServerDiagnosticsQueryResult::TaskAgent(record) => Self::TaskAgent(record.clone()),
             ServerDiagnosticsQueryResult::All(snapshot) => {
                 Self::All(ControlDiagnosticsSnapshotDto::from(snapshot))
             }
@@ -48,6 +52,7 @@ impl From<&ServerDiagnosticsSnapshot> for ControlDiagnosticsSnapshotDto {
             effigy: snapshot.effigy.clone(),
             management_sync: snapshot.management_sync.clone(),
             scm_session: snapshot.scm_session.clone(),
+            task_agent: snapshot.task_agent.clone(),
         }
     }
 }

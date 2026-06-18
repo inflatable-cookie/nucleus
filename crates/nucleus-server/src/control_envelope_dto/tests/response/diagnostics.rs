@@ -5,6 +5,7 @@ use crate::control_api::{
 use crate::control_envelope_dto::*;
 use crate::diagnostics_read_models::{
     effigy_diagnostics, scm_session_diagnostics, steward_diagnostics, sync_diagnostics,
+    task_agent_diagnostics,
 };
 use crate::ids::ServerControlRequestId;
 use nucleus_native_harness::NativeEffigyProjectIntegration;
@@ -35,6 +36,7 @@ fn response_envelope_dto_serializes_all_diagnostics_without_authority() {
             && snapshot.effigy.source_status == "disabled"
             && snapshot.management_sync.source_status == "empty"
             && snapshot.scm_session.source_status == "empty"
+            && snapshot.task_agent.source_status == "empty"
     ));
     assert!(json.contains("\"type\":\"diagnostics\""));
     assert!(json.contains("\"domain\":\"all\""));
@@ -78,6 +80,7 @@ fn empty_diagnostics_snapshot() -> ServerDiagnosticsSnapshot {
         ),
         management_sync: sync_diagnostics(&[], &[], &[], &[]),
         scm_session: scm_session_diagnostics(&[], &[], &[]),
+        task_agent: task_agent_diagnostics(&[]),
     }
 }
 

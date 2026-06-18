@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `134-task-work-unit-source-records.md`
+- `139-codex-task-runtime-request-records.md`
 
 ## Planned Cards
 
-- `135-task-delegation-work-unit-admission.md`
-- `136-task-work-unit-state-projection.md`
-- `137-task-work-unit-diagnostics-read-model.md`
-- `138-task-work-unit-source-validation.md`
-- `139-codex-task-runtime-request-records.md`
 - `140-task-runtime-scheduler-admission.md`
 - `141-codex-wait-state-task-linkage.md`
 - `142-codex-task-runtime-recovery-gates.md`
@@ -179,3 +174,8 @@ Hold execution cards for `g02`.
 - `131-codex-task-runtime-binding-contract.md`
 - `132-task-work-review-acceptance-contract.md`
 - `133-task-backed-contract-validation.md`
+- `134-task-work-unit-source-records.md`
+- `135-task-delegation-work-unit-admission.md`
+- `136-task-work-unit-state-projection.md`
+- `137-task-work-unit-diagnostics-read-model.md`
+- `138-task-work-unit-source-validation.md`

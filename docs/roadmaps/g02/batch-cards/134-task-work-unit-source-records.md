@@ -1,6 +1,6 @@
 # 134 Task Work Unit Source Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../031-task-agent-work-unit-source-model.md`
@@ -18,9 +18,14 @@ Add source record types for task-backed agent work units.
 
 ## Acceptance Criteria
 
-- Work-unit source records are typed and testable.
-- Records do not encode Codex-only assumptions.
-- No provider process starts.
+- [x] Work-unit source records are typed and testable.
+- [x] Records do not encode Codex-only assumptions.
+- [x] No provider process starts.
+
+## Result
+
+Added `nucleus-engine::task_agent` source records, admission records, runtime
+and review status enums, and focused tests.
 
 ## Validation
 

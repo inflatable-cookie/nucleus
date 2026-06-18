@@ -150,12 +150,13 @@ pub use control_serialization_readiness::{
 pub use deployment::{AccessEndpoint, DeploymentMode, ServerRuntime};
 pub use diagnostics_read_models::{
     effigy_diagnostics, scm_session_diagnostics, steward_diagnostics, sync_diagnostics,
-    EffigyDiagnosticsDto, ScmCommandAdmissionDiagnosticDto, ScmSessionDiagnosticsDto,
-    ScmSessionPlanDiagnosticDto, ScmWorkItemLinkDiagnosticDto,
+    task_agent_diagnostics, EffigyDiagnosticsDto, ScmCommandAdmissionDiagnosticDto,
+    ScmSessionDiagnosticsDto, ScmSessionPlanDiagnosticDto, ScmWorkItemLinkDiagnosticDto,
     StewardCommandAdmissionDiagnosticDto, StewardCommandOutcomeDiagnosticDto,
     StewardDiagnosticsDto, StewardProposalDiagnosticDto, SyncAssistanceDiagnosticDto,
     SyncCapturePrepDiagnosticDto, SyncDiagnosticsDto, SyncPlanDiagnosticDto,
-    SyncRepairDiagnosticDto,
+    SyncRepairDiagnosticDto, TaskAgentDiagnosticsDto, TaskAgentWorkUnitDiagnosticDto,
+    TaskAgentWorkUnitIssueDto,
 };
 pub use event_replay::{
     ServerEventReplayError, ServerEventReplayQuery, ServerEventReplayQueryScope,

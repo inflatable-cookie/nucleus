@@ -8,6 +8,7 @@ mod helpers;
 mod scm;
 mod steward;
 mod sync;
+mod task_agent;
 
 pub use effigy::{effigy_diagnostics, EffigyDiagnosticsDto};
 pub use scm::{
@@ -15,12 +16,16 @@ pub use scm::{
     ScmSessionPlanDiagnosticDto, ScmWorkItemLinkDiagnosticDto,
 };
 pub use steward::{
-    steward_diagnostics, StewardCommandAdmissionDiagnosticDto,
-    StewardCommandOutcomeDiagnosticDto, StewardDiagnosticsDto, StewardProposalDiagnosticDto,
+    steward_diagnostics, StewardCommandAdmissionDiagnosticDto, StewardCommandOutcomeDiagnosticDto,
+    StewardDiagnosticsDto, StewardProposalDiagnosticDto,
 };
 pub use sync::{
     sync_diagnostics, SyncAssistanceDiagnosticDto, SyncCapturePrepDiagnosticDto,
     SyncDiagnosticsDto, SyncPlanDiagnosticDto, SyncRepairDiagnosticDto,
+};
+pub use task_agent::{
+    task_agent_diagnostics, TaskAgentDiagnosticsDto, TaskAgentWorkUnitDiagnosticDto,
+    TaskAgentWorkUnitIssueDto,
 };
 
 #[cfg(test)]

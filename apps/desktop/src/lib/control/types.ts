@@ -6,7 +6,13 @@ export type RuntimeMetadataAction =
   | "list_artifact_metadata"
   | "list_command_evidence"
   | "get_local_runtime_readiness";
-export type DiagnosticsDomain = "steward" | "effigy" | "management_sync" | "scm_session" | "all";
+export type DiagnosticsDomain =
+  | "steward"
+  | "effigy"
+  | "management_sync"
+  | "scm_session"
+  | "task_agent"
+  | "all";
 export type ControlStateDomain = "projects" | "tasks" | "workspaces";
 export type ControlTaskTransitionAction = "start" | "block" | "complete" | "archive";
 
@@ -182,11 +188,38 @@ export type ScmSessionDiagnosticsDto = {
   source_summary: string | null;
 };
 
+export type TaskAgentWorkUnitIssueDto = {
+  code: string;
+  summary: string;
+};
+
+export type TaskAgentWorkUnitDiagnosticDto = {
+  work_item_id: string;
+  project_id: string;
+  task_id: string;
+  runtime: string;
+  review: string;
+  last_source_id: string;
+  last_cursor: string;
+  source_count: number;
+  issues: TaskAgentWorkUnitIssueDto[];
+  summary: string;
+};
+
+export type TaskAgentDiagnosticsDto = {
+  work_units: TaskAgentWorkUnitDiagnosticDto[];
+  client_can_mutate_work_units: false;
+  provider_execution_available: false;
+  source_status: string;
+  source_summary: string | null;
+};
+
 export type ControlDiagnosticsSnapshotDto = {
   steward: StewardDiagnosticsDto;
   effigy: EffigyDiagnosticsDto;
   management_sync: SyncDiagnosticsDto;
   scm_session: ScmSessionDiagnosticsDto;
+  task_agent: TaskAgentDiagnosticsDto;
 };
 
 export type ControlDiagnosticsResultDto =
@@ -194,4 +227,5 @@ export type ControlDiagnosticsResultDto =
   | { domain: "effigy"; record: EffigyDiagnosticsDto }
   | { domain: "management_sync"; record: SyncDiagnosticsDto }
   | { domain: "scm_session"; record: ScmSessionDiagnosticsDto }
+  | { domain: "task_agent"; record: TaskAgentDiagnosticsDto }
   | { domain: "all"; record: ControlDiagnosticsSnapshotDto };

@@ -18,6 +18,9 @@ fn handler_returns_empty_diagnostics_snapshot_without_mutation() {
             && snapshot.effigy.source_status == "disabled"
             && snapshot.management_sync.source_status == "empty"
             && snapshot.scm_session.source_status == "empty"
+            && snapshot.task_agent.source_status == "empty"
+            && !snapshot.task_agent.client_can_mutate_work_units
+            && !snapshot.task_agent.provider_execution_available
     ));
 }
 
@@ -29,6 +32,7 @@ fn handler_routes_each_diagnostics_query_kind() {
     let effigy = handler.handle(diagnostics_request(DiagnosticsQuery::Effigy));
     let sync = handler.handle(diagnostics_request(DiagnosticsQuery::ManagementSync));
     let scm = handler.handle(diagnostics_request(DiagnosticsQuery::ScmSession));
+    let task_agent = handler.handle(diagnostics_request(DiagnosticsQuery::TaskAgent));
 
     assert!(matches!(
         steward.body,
@@ -52,6 +56,12 @@ fn handler_routes_each_diagnostics_query_kind() {
         scm.body,
         ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
             ServerDiagnosticsQueryResult::ScmSession(_)
+        ))
+    ));
+    assert!(matches!(
+        task_agent.body,
+        ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::TaskAgent(_)
         ))
     ));
 }

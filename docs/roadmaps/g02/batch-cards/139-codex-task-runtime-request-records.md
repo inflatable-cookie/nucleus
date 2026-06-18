@@ -1,6 +1,6 @@
 # 139 Codex Task Runtime Request Records
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../032-codex-task-runtime-admission-bridge.md`

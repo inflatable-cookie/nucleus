@@ -18,6 +18,7 @@ pub mod repositories;
 pub mod runtime_receipts;
 pub mod scm_work_item_linkage;
 pub mod services;
+pub mod task_agent;
 pub mod task_commands;
 pub mod task_timeline;
 pub mod task_work_items;
@@ -71,6 +72,14 @@ pub use scm_work_item_linkage::{
 pub use services::{
     EngineReadModelError, EngineReadModelService, EngineReadRecordSet, EngineReadScope,
     EngineStateDomain, EngineStateRecordReader,
+};
+pub use task_agent::{
+    admit_task_agent_work_unit, project_task_agent_work_units, task_agent_work_unit_diagnostics,
+    EngineTaskAgentWorkUnitAdmissionRecord, EngineTaskAgentWorkUnitDiagnostics,
+    EngineTaskAgentWorkUnitProjection, EngineTaskAgentWorkUnitProjectionIssue,
+    EngineTaskAgentWorkUnitReviewStatus, EngineTaskAgentWorkUnitRuntimeStatus,
+    EngineTaskAgentWorkUnitSourceCursor, EngineTaskAgentWorkUnitSourceId,
+    EngineTaskAgentWorkUnitSourceRecord,
 };
 pub use task_commands::{
     EngineRevisionExpectation, EngineTaskCommand, EngineTaskCommandError, EngineTaskCommandOutcome,

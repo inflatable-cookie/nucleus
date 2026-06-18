@@ -301,6 +301,7 @@ fn diagnostics_domain_dto(query: &DiagnosticsQuery) -> String {
         DiagnosticsQuery::Effigy => "effigy".to_owned(),
         DiagnosticsQuery::ManagementSync => "management_sync".to_owned(),
         DiagnosticsQuery::ScmSession => "scm_session".to_owned(),
+        DiagnosticsQuery::TaskAgent => "task_agent".to_owned(),
         DiagnosticsQuery::All => "all".to_owned(),
     }
 }
@@ -311,6 +312,7 @@ fn diagnostics_query_from_domain(domain: &str) -> Result<DiagnosticsQuery, Contr
         "effigy" => Ok(DiagnosticsQuery::Effigy),
         "management_sync" => Ok(DiagnosticsQuery::ManagementSync),
         "scm_session" => Ok(DiagnosticsQuery::ScmSession),
+        "task_agent" => Ok(DiagnosticsQuery::TaskAgent),
         "all" => Ok(DiagnosticsQuery::All),
         _ => Err(ControlApiCodecError::unsupported(
             "diagnostics query domain is not supported",

@@ -17,8 +17,9 @@ use super::model::{
     EngineTaskTransitionCommand, EngineTaskUpdateCommand,
 };
 use crate::{
-    EngineTaskWorkItemAssignment, EngineTaskWorkItemId, EngineTaskWorkItemRecord,
-    EngineTaskWorkItemRefs, EngineTaskWorkItemReviewState, EngineTaskWorkItemRuntimeState,
+    admit_task_agent_work_unit, EngineTaskWorkItemAssignment, EngineTaskWorkItemId,
+    EngineTaskWorkItemRecord, EngineTaskWorkItemRefs, EngineTaskWorkItemReviewState,
+    EngineTaskWorkItemRuntimeState,
 };
 
 pub struct EngineTaskCommandService<R> {
@@ -92,10 +93,12 @@ where
         }
 
         let task = decode_task_storage_record(&existing.payload).map_err(task_codec_error)?;
+        let expected_revision = command.expected_revision.clone();
+        let idempotency_key = command.idempotency_key.clone();
         let work_item = EngineTaskWorkItemRecord {
             work_item_id: EngineTaskWorkItemId(format!(
                 "work-item:{}:{}",
-                command.task_id.0, command.idempotency_key
+                command.task_id.0, idempotency_key
             )),
             task_id: command.task_id,
             project_id: nucleus_projects::ProjectId(task.project_id),
@@ -113,7 +116,18 @@ where
             )),
         };
 
-        Ok(EngineTaskCommandOutcome::WorkItemAdmitted(work_item))
+        let admission = admit_task_agent_work_unit(
+            command_id,
+            "actor:task-command-service",
+            &idempotency_key,
+            expected_revision,
+            &work_item,
+        );
+
+        Ok(EngineTaskCommandOutcome::WorkItemAdmitted {
+            work_item,
+            admission,
+        })
     }
 
     fn create_task(

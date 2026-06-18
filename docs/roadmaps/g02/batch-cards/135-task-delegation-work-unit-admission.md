@@ -1,6 +1,6 @@
 # 135 Task Delegation Work Unit Admission
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../031-task-agent-work-unit-source-model.md`
@@ -17,9 +17,14 @@ Connect task delegation commands to work-unit admission.
 
 ## Acceptance Criteria
 
-- Delegating a task creates or references a work unit.
-- Admission failures are explicit.
-- Provider execution remains deferred.
+- [x] Delegating a task creates or references a work unit.
+- [x] Admission failures are explicit.
+- [x] Provider execution remains deferred.
+
+## Result
+
+Task delegation now returns a work item plus an admission source record.
+Provider execution stays deferred.
 
 ## Validation
 

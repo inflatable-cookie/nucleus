@@ -1,6 +1,6 @@
 # 032 Codex Task Runtime Admission Bridge
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -15,6 +15,7 @@ through admission records, not unattended execution.
 - `docs/contracts/010-agent-session-lifecycle-contract.md`
 - `docs/contracts/018-orchestration-contract.md`
 - `docs/contracts/020-runtime-receipt-contract.md`
+- `docs/contracts/023-task-backed-agent-workflow-contract.md`
 - `docs/roadmaps/g02/014-codex-live-runtime-supervision.md`
 
 ## Goals
@@ -34,9 +35,12 @@ through admission records, not unattended execution.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/139-codex-task-runtime-request-records.md`
+
+Planned cards:
+
 - `batch-cards/140-task-runtime-scheduler-admission.md`
 - `batch-cards/141-codex-wait-state-task-linkage.md`
 - `batch-cards/142-codex-task-runtime-recovery-gates.md`

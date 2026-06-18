@@ -1,6 +1,6 @@
 # 137 Task Work Unit Diagnostics Read Model
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../031-task-agent-work-unit-source-model.md`
@@ -17,9 +17,15 @@ Expose task work-unit state through client-safe diagnostics.
 
 ## Acceptance Criteria
 
-- Clients can inspect work units.
-- DTOs do not expose provider payloads.
-- DTOs cannot mutate state.
+- [x] Clients can inspect work units.
+- [x] DTOs do not expose provider payloads.
+- [x] DTOs cannot mutate state.
+
+## Result
+
+Added task-agent diagnostics read models, control API diagnostics domain,
+control response DTO snapshot support, request decoding, and desktop DTO
+types.
 
 ## Validation
 

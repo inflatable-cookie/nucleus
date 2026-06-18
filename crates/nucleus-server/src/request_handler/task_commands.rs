@@ -34,7 +34,7 @@ where
         Ok(EngineTaskCommandOutcome::Mutated) => {
             ServerCommandReceiptStatus::AcceptedForStateMutation
         }
-        Ok(EngineTaskCommandOutcome::WorkItemAdmitted(_)) => {
+        Ok(EngineTaskCommandOutcome::WorkItemAdmitted { .. }) => {
             ServerCommandReceiptStatus::AcceptedForRuntimeScheduling
         }
         Err(error) => ServerCommandReceiptStatus::Rejected(engine_task_error(error)),

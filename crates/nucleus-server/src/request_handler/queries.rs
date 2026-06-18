@@ -20,6 +20,7 @@ use crate::control_api::{
 };
 use crate::diagnostics_read_models::{
     effigy_diagnostics, scm_session_diagnostics, steward_diagnostics, sync_diagnostics,
+    task_agent_diagnostics,
 };
 use crate::ids::ServerControlRequestId;
 use crate::runtime_readiness_diagnostics::local_host_runtime_readiness_diagnostics;
@@ -93,12 +94,16 @@ fn diagnostics_query(query: DiagnosticsQuery) -> Result<ServerQueryResult, Serve
         DiagnosticsQuery::ScmSession => Ok(ServerQueryResult::Diagnostics(
             ServerDiagnosticsQueryResult::ScmSession(empty_scm_session_diagnostics()),
         )),
+        DiagnosticsQuery::TaskAgent => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::TaskAgent(empty_task_agent_diagnostics()),
+        )),
         DiagnosticsQuery::All => Ok(ServerQueryResult::Diagnostics(
             ServerDiagnosticsQueryResult::All(ServerDiagnosticsSnapshot {
                 steward: empty_steward_diagnostics(),
                 effigy: empty_effigy_diagnostics(),
                 management_sync: empty_sync_diagnostics(),
                 scm_session: empty_scm_session_diagnostics(),
+                task_agent: empty_task_agent_diagnostics(),
             }),
         )),
     }
@@ -120,6 +125,10 @@ fn empty_sync_diagnostics() -> crate::SyncDiagnosticsDto {
 
 fn empty_scm_session_diagnostics() -> crate::ScmSessionDiagnosticsDto {
     scm_session_diagnostics(&[], &[], &[])
+}
+
+fn empty_task_agent_diagnostics() -> crate::TaskAgentDiagnosticsDto {
+    task_agent_diagnostics(&[])
 }
 
 fn state_record_query<B>(

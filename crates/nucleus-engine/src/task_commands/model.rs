@@ -6,7 +6,7 @@ use nucleus_tasks::{
     AcceptanceCriterion, AgentReadiness, TaskActionType, TaskActivityState, TaskId, TaskImportance,
 };
 
-use crate::EngineTaskWorkItemRecord;
+use crate::{EngineTaskAgentWorkUnitAdmissionRecord, EngineTaskWorkItemRecord};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineTaskCommand {
@@ -104,7 +104,10 @@ pub trait EngineTaskRepository {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineTaskCommandOutcome {
     Mutated,
-    WorkItemAdmitted(EngineTaskWorkItemRecord),
+    WorkItemAdmitted {
+        work_item: EngineTaskWorkItemRecord,
+        admission: EngineTaskAgentWorkUnitAdmissionRecord,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
