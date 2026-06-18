@@ -99,6 +99,11 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                     reason: reason.clone(),
                 })
             }
+            ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(_)) => {
+                Ok(Self::QueryUnsupported {
+                    reason: "diagnostics DTO serialization is not implemented".to_owned(),
+                })
+            }
             ServerControlResponseBody::Query(ServerQueryResult::StateRecords(records))
             | ServerControlResponseBody::Query(ServerQueryResult::AdapterSessions(records))
             | ServerControlResponseBody::Query(ServerQueryResult::ModelRoutes(records))

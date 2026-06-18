@@ -1,6 +1,6 @@
 # 025 Diagnostics Control DTO Serialization
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -32,9 +32,12 @@ boundary.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/104-diagnostics-control-dto-record-shapes.md`
+
+Planned cards:
+
 - `batch-cards/105-response-envelope-diagnostics-serialization.md`
 - `batch-cards/106-tauri-ipc-diagnostics-boundary.md`
 - `batch-cards/107-diagnostics-dto-authority-guard-tests.md`

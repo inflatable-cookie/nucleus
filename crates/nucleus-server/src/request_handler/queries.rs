@@ -12,10 +12,14 @@ use super::handler::LocalControlRequestHandler;
 use crate::checkpoint_diff_state::{read_checkpoint_records, read_diff_summary_records};
 use crate::client_protocol::ProjectAuthorityMapPublicationRecord;
 use crate::control_api::{
-    AdapterSessionQuery, ModelRouteQuery, ProjectAuthorityMapQuery, RuntimeMetadataQuery,
-    ServerControlError, ServerControlResponse, ServerControlResponseBody,
-    ServerControlResponseStatus, ServerQuery, ServerQueryKind, ServerQueryResult,
-    ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope, TaskTimelineQuery,
+    AdapterSessionQuery, DiagnosticsQuery, ModelRouteQuery, ProjectAuthorityMapQuery,
+    RuntimeMetadataQuery, ServerControlError, ServerControlResponse, ServerControlResponseBody,
+    ServerControlResponseStatus, ServerDiagnosticsQueryResult, ServerDiagnosticsSnapshot,
+    ServerQuery, ServerQueryKind, ServerQueryResult, ServerStateRecordSet, StateRecordQuery,
+    StateRecordQueryScope, TaskTimelineQuery,
+};
+use crate::diagnostics_read_models::{
+    effigy_diagnostics, scm_session_diagnostics, steward_diagnostics, sync_diagnostics,
 };
 use crate::ids::ServerControlRequestId;
 use crate::runtime_readiness_diagnostics::local_host_runtime_readiness_diagnostics;
@@ -69,9 +73,53 @@ where
         ServerQueryKind::AdapterSession(query) => adapter_session_query(handler, query),
         ServerQueryKind::ModelRoute(query) => model_route_query(handler, query),
         ServerQueryKind::RuntimeMetadata(query) => runtime_metadata_query(handler, query),
+        ServerQueryKind::Diagnostics(query) => diagnostics_query(query),
         ServerQueryKind::TaskTimeline(query) => task_timeline_query(handler, query),
         ServerQueryKind::ProjectAuthorityMap(query) => project_authority_map_query(query),
     }
+}
+
+fn diagnostics_query(query: DiagnosticsQuery) -> Result<ServerQueryResult, ServerControlError> {
+    match query {
+        DiagnosticsQuery::Steward => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::Steward(empty_steward_diagnostics()),
+        )),
+        DiagnosticsQuery::Effigy => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::Effigy(empty_effigy_diagnostics()),
+        )),
+        DiagnosticsQuery::ManagementSync => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::ManagementSync(empty_sync_diagnostics()),
+        )),
+        DiagnosticsQuery::ScmSession => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::ScmSession(empty_scm_session_diagnostics()),
+        )),
+        DiagnosticsQuery::All => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::All(ServerDiagnosticsSnapshot {
+                steward: empty_steward_diagnostics(),
+                effigy: empty_effigy_diagnostics(),
+                management_sync: empty_sync_diagnostics(),
+                scm_session: empty_scm_session_diagnostics(),
+            }),
+        )),
+    }
+}
+
+fn empty_steward_diagnostics() -> crate::StewardDiagnosticsDto {
+    steward_diagnostics(&[], &[], &[])
+}
+
+fn empty_effigy_diagnostics() -> crate::EffigyDiagnosticsDto {
+    let integration =
+        nucleus_native_harness::NativeEffigyProjectIntegration::disabled("effigy unavailable");
+    effigy_diagnostics(&integration, None, None)
+}
+
+fn empty_sync_diagnostics() -> crate::SyncDiagnosticsDto {
+    sync_diagnostics(&[], &[], &[], &[])
+}
+
+fn empty_scm_session_diagnostics() -> crate::ScmSessionDiagnosticsDto {
+    scm_session_diagnostics(&[], &[], &[])
 }
 
 fn state_record_query<B>(

@@ -17,6 +17,9 @@ use nucleus_workspaces::WorkspaceLayoutId;
 
 use crate::client_protocol::ProjectAuthorityMapPublicationRecord;
 use crate::commands::ServerCommand;
+use crate::diagnostics_read_models::{
+    EffigyDiagnosticsDto, ScmSessionDiagnosticsDto, StewardDiagnosticsDto, SyncDiagnosticsDto,
+};
 use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
 use crate::read_only_command_control::ReadOnlyCommandControlResult;
@@ -58,6 +61,7 @@ pub enum ServerQueryKind {
     AdapterSession(AdapterSessionQuery),
     ModelRoute(ModelRouteQuery),
     RuntimeMetadata(RuntimeMetadataQuery),
+    Diagnostics(DiagnosticsQuery),
     TaskTimeline(TaskTimelineQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
@@ -111,6 +115,16 @@ pub enum RuntimeMetadataQuery {
     ListDiffSummaryRecords,
     ListArtifactMetadata,
     GetLocalRuntimeReadiness,
+}
+
+/// Client-safe diagnostics query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DiagnosticsQuery {
+    Steward,
+    Effigy,
+    ManagementSync,
+    ScmSession,
+    All,
 }
 
 /// Task timeline query shape.
@@ -180,10 +194,30 @@ pub enum ServerQueryResult {
     RuntimeReceipts(Vec<EngineRuntimeReceiptRecord>),
     CheckpointRecords(Vec<EngineCheckpointRecord>),
     DiffSummaryRecords(Vec<EngineDiffSummaryRecord>),
+    Diagnostics(ServerDiagnosticsQueryResult),
     TaskTimeline(EngineTaskTimelineProjection),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     Empty,
     Unsupported { reason: String },
+}
+
+/// Diagnostics query result shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ServerDiagnosticsQueryResult {
+    Steward(StewardDiagnosticsDto),
+    Effigy(EffigyDiagnosticsDto),
+    ManagementSync(SyncDiagnosticsDto),
+    ScmSession(ScmSessionDiagnosticsDto),
+    All(ServerDiagnosticsSnapshot),
+}
+
+/// Combined diagnostics snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServerDiagnosticsSnapshot {
+    pub steward: StewardDiagnosticsDto,
+    pub effigy: EffigyDiagnosticsDto,
+    pub management_sync: SyncDiagnosticsDto,
+    pub scm_session: ScmSessionDiagnosticsDto,
 }
 
 /// State records returned from the local state facade.
@@ -298,5 +332,19 @@ mod tests {
             ServerControlError::RuntimeUnavailable { .. }
         ));
         assert!(matches!(errors[3], ServerControlError::Deferred { .. }));
+    }
+
+    #[test]
+    fn diagnostics_query_is_read_only_control_vocabulary() {
+        let query = ServerQuery {
+            id: ServerQueryId("query:diagnostics".to_owned()),
+            client_id: ClientId("client:1".to_owned()),
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::All),
+        };
+
+        assert!(matches!(
+            query.kind,
+            ServerQueryKind::Diagnostics(DiagnosticsQuery::All)
+        ));
     }
 }

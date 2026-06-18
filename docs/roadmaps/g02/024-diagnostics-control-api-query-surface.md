@@ -1,6 +1,6 @@
 # 024 Diagnostics Control API Query Surface
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -21,27 +21,32 @@ vocabulary and request-handler routing without granting mutation authority.
 
 ## Goals
 
-- [ ] Add diagnostics query kinds to the control API.
-- [ ] Add diagnostics result variants.
-- [ ] Route diagnostics queries through the local request handler.
-- [ ] Keep diagnostics read-only and source-safe.
+- [x] Add diagnostics query kinds to the control API.
+- [x] Add diagnostics result variants.
+- [x] Route diagnostics queries through the local request handler.
+- [x] Keep diagnostics read-only and source-safe.
 
 ## Execution Plan
 
-- [ ] Query vocabulary batch: name diagnostics query kinds.
-- [ ] Result variant batch: return typed diagnostics read models.
-- [ ] Handler routing batch: wire local handler query execution.
-- [ ] Fixture batch: prove empty and populated diagnostics responses.
-- [ ] Validation batch: prove diagnostics queries do not mutate state.
+- [x] Query vocabulary batch: name diagnostics query kinds.
+- [x] Result variant batch: return typed diagnostics read models.
+- [x] Handler routing batch: wire local handler query execution.
+- [x] Fixture batch: prove empty and populated diagnostics responses.
+- [x] Validation batch: prove diagnostics queries do not mutate state.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/099-control-api-diagnostics-query-kinds.md`
+- None.
 
 Planned cards:
 
+- None.
+
+Completed cards:
+
+- `batch-cards/099-control-api-diagnostics-query-kinds.md`
 - `batch-cards/100-server-query-result-diagnostics-variants.md`
 - `batch-cards/101-request-handler-diagnostics-query-routing.md`
 - `batch-cards/102-diagnostics-query-fixture-tests.md`
@@ -49,9 +54,9 @@ Planned cards:
 
 ## Acceptance Criteria
 
-- [ ] Clients can request steward, Effigy, sync, and SCM diagnostics.
-- [ ] Diagnostics responses remain server-owned read models.
-- [ ] Unsupported or empty diagnostics are explicit.
+- [x] Clients can request steward, Effigy, sync, and SCM diagnostics.
+- [x] Diagnostics responses remain server-owned read models.
+- [x] Unsupported or empty diagnostics are explicit.
 
 ## Gate
 

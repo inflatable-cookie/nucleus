@@ -1,6 +1,6 @@
 # 101 Request Handler Diagnostics Query Routing
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../024-diagnostics-control-api-query-surface.md`
@@ -17,18 +17,23 @@ Route diagnostics queries through the local request handler.
 
 ## Acceptance Criteria
 
-- Local handler returns diagnostics responses.
-- Missing source records are explicit.
-- Query handling does not write state.
+- [x] Local handler returns diagnostics responses.
+- [x] Missing source records are explicit.
+- [x] Query handling does not write state.
+
+## Outcome
+
+- Routed diagnostics queries through the local request handler.
+- Returned empty read-only diagnostics until source integration lands.
 
 ## Validation
 
-- `cargo test -p nucleus-server diagnostics`
-- `cargo test -p nucleus-server request_handler`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server diagnostics`
+- [x] `cargo test -p nucleus-server request_handler`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

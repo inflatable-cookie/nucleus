@@ -1,6 +1,6 @@
 # 099 Control API Diagnostics Query Kinds
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../024-diagnostics-control-api-query-surface.md`
@@ -17,17 +17,22 @@ Name diagnostics query kinds in the transport-neutral control API.
 
 ## Acceptance Criteria
 
-- Diagnostics query kinds are explicit.
-- Query kinds cannot imply mutation.
-- Unsupported diagnostics can be represented.
+- [x] Diagnostics query kinds are explicit.
+- [x] Query kinds cannot imply mutation.
+- [x] Unsupported diagnostics can be represented.
+
+## Outcome
+
+- Added diagnostics query vocabulary to the transport-neutral control API.
+- Kept diagnostics query kinds separate from command surfaces.
 
 ## Validation
 
-- `cargo test -p nucleus-server diagnostics`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server diagnostics`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

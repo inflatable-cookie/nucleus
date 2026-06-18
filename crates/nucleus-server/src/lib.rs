@@ -124,10 +124,11 @@ pub use commands::{
     TaskTransitionCommand, WorkspaceCommand,
 };
 pub use control_api::{
-    AdapterSessionQuery, ModelRouteQuery, ProjectAuthorityMapQuery, RuntimeMetadataQuery,
-    ServerCommandReceipt, ServerCommandReceiptStatus, ServerControlError, ServerControlRequest,
-    ServerControlRequestKind, ServerControlResponse, ServerControlResponseBody,
-    ServerControlResponseStatus, ServerQuery, ServerQueryKind, ServerQueryResult,
+    AdapterSessionQuery, DiagnosticsQuery, ModelRouteQuery, ProjectAuthorityMapQuery,
+    RuntimeMetadataQuery, ServerCommandReceipt, ServerCommandReceiptStatus, ServerControlError,
+    ServerControlRequest, ServerControlRequestKind, ServerControlResponse,
+    ServerControlResponseBody, ServerControlResponseStatus, ServerDiagnosticsQueryResult,
+    ServerDiagnosticsSnapshot, ServerQuery, ServerQueryKind, ServerQueryResult,
     ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope,
 };
 pub use control_envelope_dto::{

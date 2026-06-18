@@ -10,14 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `099-control-api-diagnostics-query-kinds.md`
+- `104-diagnostics-control-dto-record-shapes.md`
 
 ## Planned Cards
 
-- `100-server-query-result-diagnostics-variants.md`
-- `101-request-handler-diagnostics-query-routing.md`
-- `102-diagnostics-query-fixture-tests.md`
-- `103-diagnostics-query-validation.md`
 - `104-diagnostics-control-dto-record-shapes.md`
 - `105-response-envelope-diagnostics-serialization.md`
 - `106-tauri-ipc-diagnostics-boundary.md`
@@ -39,7 +35,7 @@ Hold execution cards for `g02`.
 - `122-native-steward-workflow-readiness-gate.md`
 - `123-next-runway-selection-and-closeout.md`
 
-Cards 099-103 belong to `../024-diagnostics-control-api-query-surface.md`.
+Cards 104-108 belong to `../025-diagnostics-control-dto-serialization.md`.
 
 ## Completed Cards
 
@@ -141,3 +137,8 @@ Cards 099-103 belong to `../024-diagnostics-control-api-query-surface.md`.
 - `096-sync-diagnostics-read-model.md`
 - `097-scm-session-diagnostics-read-model.md`
 - `098-client-diagnostics-dto-validation.md`
+- `099-control-api-diagnostics-query-kinds.md`
+- `100-server-query-result-diagnostics-variants.md`
+- `101-request-handler-diagnostics-query-routing.md`
+- `102-diagnostics-query-fixture-tests.md`
+- `103-diagnostics-query-validation.md`

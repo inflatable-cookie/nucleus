@@ -1,6 +1,6 @@
 # 102 Diagnostics Query Fixture Tests
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../024-diagnostics-control-api-query-surface.md`
@@ -17,17 +17,22 @@ Prove diagnostics query behavior with empty and populated fixtures.
 
 ## Acceptance Criteria
 
-- Empty diagnostics are stable.
-- Populated diagnostics serialize expected refs and states.
-- Raw output and provider payloads stay absent.
+- [x] Empty diagnostics are stable.
+- [x] Populated diagnostics serialize expected refs and states.
+- [x] Raw output and provider payloads stay absent.
+
+## Outcome
+
+- Added handler fixture tests for diagnostics snapshot and per-domain queries.
+- Reused diagnostics read-model tests for populated serialization evidence.
 
 ## Validation
 
-- `cargo test -p nucleus-server diagnostics`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server diagnostics`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

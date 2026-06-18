@@ -39,8 +39,8 @@ and engine boundary are settled.
 - `021-management-projection-sync-runtime.md` - completed
 - `022-scm-working-session-runtime.md` - completed
 - `023-client-read-model-and-diagnostics-runway.md` - completed
-- `024-diagnostics-control-api-query-surface.md` - active
-- `025-diagnostics-control-dto-serialization.md` - planned
+- `024-diagnostics-control-api-query-surface.md` - completed
+- `025-diagnostics-control-dto-serialization.md` - active
 - `026-desktop-diagnostics-proof-surface.md` - planned
 - `027-diagnostics-read-model-source-integration.md` - planned
 - `028-next-product-workflow-selection.md` - planned
@@ -123,14 +123,10 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/099-control-api-diagnostics-query-kinds.md`
+- `batch-cards/104-diagnostics-control-dto-record-shapes.md`
 
 Planned cards:
 
-- `batch-cards/100-server-query-result-diagnostics-variants.md`
-- `batch-cards/101-request-handler-diagnostics-query-routing.md`
-- `batch-cards/102-diagnostics-query-fixture-tests.md`
-- `batch-cards/103-diagnostics-query-validation.md`
 - `batch-cards/104-diagnostics-control-dto-record-shapes.md`
 - `batch-cards/105-response-envelope-diagnostics-serialization.md`
 - `batch-cards/106-tauri-ipc-diagnostics-boundary.md`
@@ -204,6 +200,11 @@ Completed cards:
 - `batch-cards/096-sync-diagnostics-read-model.md`
 - `batch-cards/097-scm-session-diagnostics-read-model.md`
 - `batch-cards/098-client-diagnostics-dto-validation.md`
+- `batch-cards/099-control-api-diagnostics-query-kinds.md`
+- `batch-cards/100-server-query-result-diagnostics-variants.md`
+- `batch-cards/101-request-handler-diagnostics-query-routing.md`
+- `batch-cards/102-diagnostics-query-fixture-tests.md`
+- `batch-cards/103-diagnostics-query-validation.md`
 
 Completed cards:
 
@@ -229,8 +230,8 @@ The next G02 suite is:
 11. management projection sync runtime - completed
 12. SCM working session runtime - completed
 13. client read model and diagnostics runway - completed
-14. diagnostics control API query surface - active
-15. diagnostics control DTO serialization - planned
+14. diagnostics control API query surface - completed
+15. diagnostics control DTO serialization - active
 16. desktop diagnostics proof surface - planned
 17. diagnostics read-model source integration - planned
 18. next product workflow selection - planned
@@ -252,8 +253,8 @@ remote transport work.
 - `021` completed management projection sync runtime records.
 - `022` completed SCM working-session runtime records.
 - `023` completed diagnostics read-model DTOs.
-- `024` is active and exposes diagnostics read models through control queries.
-- `025` serializes diagnostics through control DTO envelopes.
+- `024` completed diagnostics control queries.
+- `025` is active and serializes diagnostics through control DTO envelopes.
 - `026` adds a disposable desktop diagnostics proof surface.
 - `027` connects diagnostics queries to available source records.
 - `028` selects the next product workflow proof.

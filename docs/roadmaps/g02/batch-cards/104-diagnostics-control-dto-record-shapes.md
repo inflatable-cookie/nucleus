@@ -1,6 +1,6 @@
 # 104 Diagnostics Control DTO Record Shapes
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../025-diagnostics-control-dto-serialization.md`

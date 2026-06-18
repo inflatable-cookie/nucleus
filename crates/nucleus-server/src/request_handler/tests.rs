@@ -22,11 +22,11 @@ use crate::commands::{
     TaskTransitionCommand,
 };
 use crate::control_api::{
-    AdapterSessionQuery, ProjectAuthorityMapQuery, RuntimeMetadataQuery, ServerCommandReceipt,
-    ServerCommandReceiptStatus, ServerControlError, ServerControlRequest, ServerControlRequestKind,
-    ServerControlResponseBody, ServerControlResponseStatus, ServerQuery, ServerQueryKind,
-    ServerQueryResult, ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope,
-    TaskTimelineQuery,
+    AdapterSessionQuery, DiagnosticsQuery, ProjectAuthorityMapQuery, RuntimeMetadataQuery,
+    ServerCommandReceipt, ServerCommandReceiptStatus, ServerControlError, ServerControlRequest,
+    ServerControlRequestKind, ServerControlResponseBody, ServerControlResponseStatus,
+    ServerDiagnosticsQueryResult, ServerQuery, ServerQueryKind, ServerQueryResult,
+    ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope, TaskTimelineQuery,
 };
 use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
@@ -46,6 +46,7 @@ fn handler(
 }
 
 mod checkpoint_diff;
+mod diagnostics_queries;
 mod host_authority;
 mod project_queries;
 mod read_only_commands;
