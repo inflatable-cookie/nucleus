@@ -1,0 +1,257 @@
+use super::*;
+use crate::project_seed::{seed_local_project, LocalProjectSeed};
+use crate::state::ServerStateService;
+use crate::task_seed::{seed_local_task, LocalTaskSeed};
+use super::helpers::{scoped_projection_path, write_projection_document};
+use nucleus_engine::{
+    ManagementProjectionExportPlan, ManagementProjectionFileDocument, ManagementProjectionFileRef,
+    ManagementProjectionValidationStatus,
+};
+use nucleus_local_store::{LocalStoreError, SqliteBackend};
+use nucleus_projects::ImportanceLevel;
+use nucleus_tasks::{TaskActionType, TaskImportance};
+
+    #[test]
+    fn management_projection_export_plan_reads_project_and_task_state() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state =
+            ServerStateService::new(SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")));
+        seed_local_project(
+            &state,
+            LocalProjectSeed {
+                project_id: "project:nucleus".to_owned(),
+                display_name: "Nucleus".to_owned(),
+                importance_level: ImportanceLevel::High,
+            },
+        )
+        .expect("seed project");
+        seed_local_task(
+            &state,
+            LocalTaskSeed {
+                task_id: "task:projection".to_owned(),
+                project_id: "project:nucleus".to_owned(),
+                title: "Export projection".to_owned(),
+                action_type: TaskActionType::Execute,
+                importance: TaskImportance::High,
+            },
+        )
+        .expect("seed task");
+
+        let plan = build_management_projection_export_plan(&state).expect("export plan");
+        let json = serde_json::to_string(&plan).expect("plan json");
+
+        assert_eq!(plan.root.relative_path, "nucleus");
+        assert_eq!(plan.entries.len(), 2);
+        assert!(json.contains("nucleus/project.toml"));
+        assert!(json.contains("nucleus/tasks/task:projection.toml"));
+        for forbidden in [
+            "raw_stdout",
+            "terminal_stream",
+            "provider_auth",
+            "global_display_window_surface",
+            "per_project_panel",
+            "secret",
+        ] {
+            assert!(!json.contains(forbidden), "projection leaked {forbidden}");
+        }
+    }
+
+    #[test]
+    fn management_projection_export_writes_scoped_project_and_task_files_without_scm_mutation() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state =
+            ServerStateService::new(SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")));
+        seed_local_project(
+            &state,
+            LocalProjectSeed {
+                project_id: "project:nucleus".to_owned(),
+                display_name: "Nucleus".to_owned(),
+                importance_level: ImportanceLevel::High,
+            },
+        )
+        .expect("seed project");
+        seed_local_task(
+            &state,
+            LocalTaskSeed {
+                task_id: "task:projection".to_owned(),
+                project_id: "project:nucleus".to_owned(),
+                title: "Export projection".to_owned(),
+                action_type: TaskActionType::Execute,
+                importance: TaskImportance::High,
+            },
+        )
+        .expect("seed task");
+        let plan = build_management_projection_export_plan(&state).expect("export plan");
+        let repo_root = temp_dir.path().join("repo");
+
+        let report =
+            write_management_projection_export_files(ManagementProjectionExportFileRequest {
+                repo_root: repo_root.clone(),
+                plan,
+                overwrite_existing: false,
+            })
+            .expect("write files");
+
+        assert!(!report.scm_mutation_performed);
+        assert_eq!(report.writes.len(), 2);
+        assert!(repo_root.join("nucleus/project.toml").exists());
+        assert!(repo_root
+            .join("nucleus/tasks/task:projection.toml")
+            .exists());
+        let task_file =
+            std::fs::read_to_string(repo_root.join("nucleus/tasks/task:projection.toml"))
+                .expect("task file");
+        assert!(task_file.contains("schema_version"));
+        assert!(task_file.contains("Export projection"));
+        for forbidden in [
+            "provider_auth",
+            "terminal_stream",
+            "secret",
+            "client_layout",
+        ] {
+            assert!(
+                !task_file.contains(forbidden),
+                "projection leaked {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn management_projection_export_rejects_unscoped_file_refs() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut plan = ManagementProjectionExportPlan {
+            root: nucleus_engine::ManagementProjectionRoot::default(),
+            entries: Vec::new(),
+        };
+        plan.entries
+            .push(nucleus_engine::ManagementProjectionExportEntry {
+                envelope: nucleus_engine::ManagementProjectionEnvelope {
+                    schema_version: nucleus_engine::ManagementProjectionSchemaVersion::current(),
+                    record_id: nucleus_engine::ManagementProjectionRecordId("task:bad".to_owned()),
+                    record_kind: nucleus_engine::ManagementProjectionRecordKind::Task,
+                    file_ref: ManagementProjectionFileRef("../outside.toml".to_owned()),
+                },
+                payload: nucleus_engine::ManagementProjectionPayload::Unsupported {
+                    payload_kind: "bad".to_owned(),
+                    retained_payload: "{}".to_owned(),
+                },
+            });
+
+        let error =
+            write_management_projection_export_files(ManagementProjectionExportFileRequest {
+                repo_root: temp_dir.path().join("repo"),
+                plan,
+                overwrite_existing: false,
+            })
+            .expect_err("reject unscoped ref");
+
+        assert!(matches!(
+            error,
+            LocalStoreError::InvalidRecord { reason }
+                if reason == "management projection file ref must stay under repo root"
+        ));
+    }
+
+    #[test]
+    fn management_projection_import_stages_exported_files_without_mutating_state() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state =
+            ServerStateService::new(SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")));
+        seed_local_project(
+            &state,
+            LocalProjectSeed {
+                project_id: "project:nucleus".to_owned(),
+                display_name: "Nucleus".to_owned(),
+                importance_level: ImportanceLevel::High,
+            },
+        )
+        .expect("seed project");
+        seed_local_task(
+            &state,
+            LocalTaskSeed {
+                task_id: "task:projection".to_owned(),
+                project_id: "project:nucleus".to_owned(),
+                title: "Export projection".to_owned(),
+                action_type: TaskActionType::Execute,
+                importance: TaskImportance::High,
+            },
+        )
+        .expect("seed task");
+        let plan = build_management_projection_export_plan(&state).expect("export plan");
+        let file_refs = plan
+            .entries
+            .iter()
+            .map(|entry| entry.envelope.file_ref.clone())
+            .collect::<Vec<_>>();
+        let repo_root = temp_dir.path().join("repo");
+        write_management_projection_export_files(ManagementProjectionExportFileRequest {
+            repo_root: repo_root.clone(),
+            plan,
+            overwrite_existing: false,
+        })
+        .expect("write projection files");
+
+        let report =
+            stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+                repo_root,
+                file_refs,
+            })
+            .expect("stage import");
+
+        assert!(!report.authoritative_state_mutated);
+        assert_eq!(report.staged.len(), 2);
+        assert!(report.invalid.is_empty());
+        assert!(report.unsupported.is_empty());
+        assert!(report.staged.iter().any(|staged| {
+            staged.file_ref == ManagementProjectionFileRef::task("task:projection")
+                && staged.validation.status == ManagementProjectionValidationStatus::Valid
+        }));
+    }
+
+    #[test]
+    fn management_projection_import_reports_invalid_and_unsupported_files_separately() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let repo_root = temp_dir.path().join("repo");
+        let invalid_ref = ManagementProjectionFileRef("nucleus/tasks/invalid.toml".to_owned());
+        let unsupported_ref =
+            ManagementProjectionFileRef("nucleus/tasks/unsupported.toml".to_owned());
+        let invalid_path = scoped_projection_path(&repo_root, &invalid_ref).expect("invalid path");
+        let unsupported_path =
+            scoped_projection_path(&repo_root, &unsupported_ref).expect("unsupported path");
+        std::fs::create_dir_all(invalid_path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&invalid_path, b"not = [valid").expect("write invalid");
+        write_projection_document(
+            &ManagementProjectionFileDocument {
+                envelope: nucleus_engine::ManagementProjectionEnvelope {
+                    schema_version: nucleus_engine::ManagementProjectionSchemaVersion(
+                        "future".to_owned(),
+                    ),
+                    record_id: nucleus_engine::ManagementProjectionRecordId(
+                        "task:future".to_owned(),
+                    ),
+                    record_kind: nucleus_engine::ManagementProjectionRecordKind::Task,
+                    file_ref: unsupported_ref.clone(),
+                },
+                payload: nucleus_engine::ManagementProjectionPayload::Unsupported {
+                    payload_kind: "task".to_owned(),
+                    retained_payload: "{}".to_owned(),
+                },
+            },
+            &unsupported_path,
+        )
+        .expect("write unsupported");
+
+        let report =
+            stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+                repo_root,
+                file_refs: vec![invalid_ref.clone(), unsupported_ref.clone()],
+            })
+            .expect("stage import");
+
+        assert!(report.staged.is_empty());
+        assert_eq!(report.invalid.len(), 1);
+        assert_eq!(report.unsupported.len(), 1);
+        assert_eq!(report.invalid[0].file_ref, invalid_ref);
+        assert_eq!(report.unsupported[0].file_ref, unsupported_ref);
+        assert!(!report.authoritative_state_mutated);
+    }
