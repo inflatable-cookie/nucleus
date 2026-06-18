@@ -29,7 +29,7 @@ review requests, or run provider-specific SCM authority transitions.
       projection records.
 - [x] Enforce revision, conflict, and unsupported-schema gates before state
       changes.
-- [ ] Record receipts and audit evidence for applied management projection
+- [x] Record receipts and audit evidence for applied management projection
       changes.
 - [ ] Expose review-ready sync state for clients or steward assistance without
       making clients authoritative.
@@ -42,7 +42,7 @@ review requests, or run provider-specific SCM authority transitions.
       and task projection records.
 - [x] Conflict batch: prove expected-revision and semantic-conflict gates with
       fixtures.
-- [ ] Receipt batch: persist sanitized apply receipts and timeline evidence.
+- [x] Receipt batch: persist sanitized apply receipts and timeline evidence.
 - [ ] Review batch: expose review/apply/conflict read models without adding UI
       polish or SCM capture behavior.
 - [ ] Validation batch: close the lane and select the next workflow checkpoint.
@@ -51,11 +51,10 @@ review requests, or run provider-specific SCM authority transitions.
 
 Ready cards:
 
-- `batch-cards/172-management-projection-apply-receipts-and-audit.md`
+- `batch-cards/173-management-sync-review-read-model.md`
 
 Planned cards:
 
-- `batch-cards/173-management-sync-review-read-model.md`
 - `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
 
 Completed cards:
@@ -63,6 +62,7 @@ Completed cards:
 - `batch-cards/169-management-projection-apply-policy-contract.md`
 - `batch-cards/170-management-projection-import-apply-command.md`
 - `batch-cards/171-management-projection-revision-conflict-gates.md`
+- `batch-cards/172-management-projection-apply-receipts-and-audit.md`
 
 ## Acceptance Criteria
 

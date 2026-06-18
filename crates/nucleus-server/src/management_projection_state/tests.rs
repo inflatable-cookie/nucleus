@@ -1,10 +1,12 @@
 use super::*;
+use crate::runtime_receipt_state::read_runtime_receipts;
 use crate::project_seed::{seed_local_project, LocalProjectSeed};
 use crate::state::ServerStateService;
 use crate::task_seed::{seed_local_task, LocalTaskSeed};
 use super::helpers::{scoped_projection_path, write_projection_document};
 use nucleus_core::{PersistenceRecordId, RevisionId};
 use nucleus_engine::{
+    EngineRuntimeReceiptStatus,
     ManagementProjectionConflictClass, ManagementProjectionConflictReport,
     ManagementProjectionExportPlan, ManagementProjectionFileDocument, ManagementProjectionFileRef,
     ManagementProjectionPayload, ManagementProjectionRecordId,
@@ -344,8 +346,8 @@ use nucleus_tasks::{decode_task_storage_record, TaskActionType, TaskImportance};
     #[test]
     fn management_projection_apply_import_updates_targeted_records_without_scm_mutation() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
-        let state =
-            ServerStateService::new(SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")));
+        let db_path = temp_dir.path().join("nucleus.sqlite");
+        let state = ServerStateService::new(SqliteBackend::new(db_path.clone()));
         seed_local_project(
             &state,
             LocalProjectSeed {
@@ -420,7 +422,27 @@ use nucleus_tasks::{decode_task_storage_record, TaskActionType, TaskImportance};
         assert!(!report.scm_mutation_performed);
         assert!(report.blocked.is_empty());
         assert_eq!(report.applied.len(), 2);
+        assert_eq!(report.receipts.len(), 2);
+        assert!(report
+            .receipts
+            .iter()
+            .all(|receipt| receipt.status == EngineRuntimeReceiptStatus::Completed));
         assert_eq!(decoded_task.title, "Applied projection");
+
+        let restarted = ServerStateService::new(SqliteBackend::new(db_path));
+        let receipts = read_runtime_receipts(&restarted).expect("read receipts");
+        let json = serde_json::to_string(&receipts).expect("receipt json");
+        assert_eq!(receipts.len(), 2);
+        assert!(json.contains("management_projection_apply"));
+        for forbidden in [
+            "Old projection",
+            "Applied projection",
+            "raw_stdout",
+            "provider_auth",
+            "secret",
+        ] {
+            assert!(!json.contains(forbidden), "receipt leaked {forbidden}");
+        }
     }
 
     #[test]
@@ -437,7 +459,23 @@ use nucleus_tasks::{decode_task_storage_record, TaskActionType, TaskImportance};
             },
         )
         .expect("seed project");
+        seed_local_task(
+            &state,
+            LocalTaskSeed {
+                task_id: "task:projection".to_owned(),
+                project_id: "project:nucleus".to_owned(),
+                title: "Projection task".to_owned(),
+                action_type: TaskActionType::Execute,
+                importance: TaskImportance::High,
+            },
+        )
+        .expect("seed task");
         let plan = build_management_projection_export_plan(&state).expect("export plan");
+        let file_refs = plan
+            .entries
+            .iter()
+            .map(|entry| entry.envelope.file_ref.clone())
+            .collect::<Vec<_>>();
         let repo_root = temp_dir.path().join("repo");
         write_management_projection_export_files(ManagementProjectionExportFileRequest {
             repo_root: repo_root.clone(),
@@ -448,7 +486,7 @@ use nucleus_tasks::{decode_task_storage_record, TaskActionType, TaskImportance};
         let staging =
             stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
                 repo_root,
-                file_refs: vec![ManagementProjectionFileRef::project()],
+                file_refs,
             })
             .expect("stage import");
 
@@ -456,7 +494,10 @@ use nucleus_tasks::{decode_task_storage_record, TaskActionType, TaskImportance};
             &state,
             ManagementProjectionImportApplyRequest {
                 staged: staging.staged,
-                targets: Vec::new(),
+                targets: vec![ManagementProjectionApplyTarget {
+                    record_id: ManagementProjectionRecordId("project:nucleus".to_owned()),
+                    expected_current_revision: Some(RevisionId("rev:seed:1".to_owned())),
+                }],
                 conflicts: Vec::new(),
             },
         )
@@ -465,10 +506,16 @@ use nucleus_tasks::{decode_task_storage_record, TaskActionType, TaskImportance};
         assert!(!report.authoritative_state_mutated);
         assert!(report.applied.is_empty());
         assert_eq!(report.blocked.len(), 1);
+        assert_eq!(report.receipts.len(), 2);
         assert_eq!(
             report.blocked[0].kind,
             ManagementProjectionApplyBlockKind::MissingApplyTarget
         );
+        assert!(report.blocked[0].receipt_id.is_some());
+        assert!(report.receipts.iter().any(|receipt| {
+            receipt.status == EngineRuntimeReceiptStatus::Blocked
+                && receipt.summary.as_deref().unwrap_or("").contains("skipped")
+        }));
     }
 
     #[test]
@@ -516,10 +563,12 @@ use nucleus_tasks::{decode_task_storage_record, TaskActionType, TaskImportance};
         assert!(!report.authoritative_state_mutated);
         assert!(report.applied.is_empty());
         assert_eq!(report.blocked.len(), 1);
+        assert_eq!(report.receipts.len(), 1);
         assert_eq!(
             report.blocked[0].kind,
             ManagementProjectionApplyBlockKind::RevisionConflict
         );
+        assert!(report.blocked[0].receipt_id.is_some());
         assert!(report.blocked[0].summary.contains("rev:stale"));
     }
 
@@ -593,9 +642,14 @@ use nucleus_tasks::{decode_task_storage_record, TaskActionType, TaskImportance};
 
         assert!(!report.authoritative_state_mutated);
         assert_eq!(report.blocked.len(), 1);
+        assert_eq!(report.receipts.len(), 1);
         assert_eq!(
             report.blocked[0].kind,
             ManagementProjectionApplyBlockKind::SemanticConflict
+        );
+        assert_eq!(
+            report.receipts[0].status,
+            EngineRuntimeReceiptStatus::WaitingForApproval
         );
         assert_eq!(report.blocked[0].conflict, Some(conflict));
     }
@@ -668,6 +722,7 @@ use nucleus_tasks::{decode_task_storage_record, TaskActionType, TaskImportance};
 
         assert!(!report.authoritative_state_mutated);
         assert!(report.applied.is_empty());
+        assert_eq!(report.receipts.len(), 2);
         assert!(report
             .blocked
             .iter()
@@ -676,4 +731,8 @@ use nucleus_tasks::{decode_task_storage_record, TaskActionType, TaskImportance};
             .blocked
             .iter()
             .any(|block| block.kind == ManagementProjectionApplyBlockKind::UnsupportedSchema));
+        assert!(report
+            .receipts
+            .iter()
+            .all(|receipt| receipt.status == EngineRuntimeReceiptStatus::Blocked));
     }

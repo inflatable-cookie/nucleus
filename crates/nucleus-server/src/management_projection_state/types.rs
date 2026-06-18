@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use nucleus_core::RevisionId;
 use nucleus_engine::{
+    EngineRuntimeReceiptRecord, EngineRuntimeReceiptRecordId,
     ManagementProjectionConflictReport,
     ManagementProjectionExportPlan, ManagementProjectionFileDocument, ManagementProjectionFileRef,
     ManagementProjectionRecordId, ManagementProjectionValidationReport,
@@ -76,6 +77,7 @@ pub struct ManagementProjectionApplyTarget {
 pub struct ManagementProjectionImportApplyReport {
     pub applied: Vec<ManagementProjectionAppliedRecord>,
     pub blocked: Vec<ManagementProjectionApplyBlock>,
+    pub receipts: Vec<EngineRuntimeReceiptRecord>,
     pub authoritative_state_mutated: bool,
     pub scm_mutation_performed: bool,
 }
@@ -85,6 +87,7 @@ pub struct ManagementProjectionAppliedRecord {
     pub record_id: ManagementProjectionRecordId,
     pub file_ref: ManagementProjectionFileRef,
     pub revision_id: RevisionId,
+    pub receipt_id: EngineRuntimeReceiptRecordId,
     pub summary: String,
 }
 
@@ -95,6 +98,7 @@ pub struct ManagementProjectionApplyBlock {
     pub kind: ManagementProjectionApplyBlockKind,
     pub summary: String,
     pub conflict: Option<ManagementProjectionConflictReport>,
+    pub receipt_id: Option<EngineRuntimeReceiptRecordId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

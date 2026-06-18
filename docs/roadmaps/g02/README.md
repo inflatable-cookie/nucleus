@@ -59,11 +59,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/172-management-projection-apply-receipts-and-audit.md`
+- `batch-cards/173-management-sync-review-read-model.md`
 
 Planned cards:
 
-- `batch-cards/173-management-sync-review-read-model.md`
 - `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
 
 Completed cards:

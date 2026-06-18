@@ -1,6 +1,6 @@
 # 172 Management Projection Apply Receipts And Audit
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../038-management-sync-apply-and-review.md`
@@ -35,3 +35,14 @@ Record sanitized evidence for management projection apply decisions.
 
 - Stop if receipt retention policy would require storing raw projection file
   payloads by default.
+
+## Result
+
+- Apply reports now include sanitized runtime receipts for accepted, blocked,
+  review-required, and skipped records.
+- Receipts are persisted through the existing runtime-effects store so they can
+  be read after restart or client reconnection.
+- Receipt evidence refs cite record ids, projection file refs, revision refs,
+  block kinds, and conflict refs without copying raw projection payloads.
+- Blocked apply records and applied records carry receipt ids for later review
+  surfaces.

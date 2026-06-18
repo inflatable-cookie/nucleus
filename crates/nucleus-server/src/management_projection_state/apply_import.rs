@@ -1,8 +1,9 @@
 use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
 use nucleus_engine::{
-    ManagementProjectionConflictClass, ManagementProjectionConflictReport,
-    ManagementProjectionPayload, ManagementProjectionRecordId, ManagementProjectionRecordKind,
-    ManagementProjectionValidationStatus,
+    EngineRuntimeReceiptEffectFamily, EngineRuntimeReceiptRecord, EngineRuntimeReceiptRecordId,
+    EngineRuntimeReceiptRef, EngineRuntimeReceiptStatus, ManagementProjectionConflictClass,
+    ManagementProjectionConflictReport, ManagementProjectionPayload, ManagementProjectionRecordId,
+    ManagementProjectionRecordKind, ManagementProjectionValidationStatus,
 };
 use nucleus_local_store::{
     LocalStoreBackend, LocalStoreError, LocalStoreRecord, LocalStoreRecordPayload, LocalStoreResult,
@@ -12,6 +13,7 @@ use nucleus_projects::encode_project_storage_payload;
 use nucleus_tasks::encode_task_storage_payload;
 
 use crate::state::ServerStateService;
+use crate::runtime_receipt_state::write_runtime_receipt;
 
 use super::types::{
     ManagementProjectionAppliedRecord, ManagementProjectionApplyBlock,
@@ -38,15 +40,32 @@ where
     }
 
     if !blocked.is_empty() {
+        let mut receipts = Vec::new();
+        let mut blocked_with_receipts = Vec::new();
+        for block in blocked {
+            let receipt = receipt_for_block(&block);
+            write_apply_receipt(state, &receipt)?;
+            let mut block = block;
+            block.receipt_id = Some(receipt.receipt_id.clone());
+            receipts.push(receipt);
+            blocked_with_receipts.push(block);
+        }
+        for (_record, applied) in prepared {
+            let receipt = receipt_for_skipped(&applied);
+            write_apply_receipt(state, &receipt)?;
+            receipts.push(receipt);
+        }
         return Ok(ManagementProjectionImportApplyReport {
             applied: Vec::new(),
-            blocked,
+            blocked: blocked_with_receipts,
+            receipts,
             authoritative_state_mutated: false,
             scm_mutation_performed: false,
         });
     }
 
     let mut applied = Vec::new();
+    let mut receipts = Vec::new();
     for (record, applied_record) in prepared {
         let expectation = request
             .targets
@@ -64,6 +83,11 @@ where
             }
             _ => unreachable!("prepared apply records only use project/task domains"),
         }
+        let receipt = receipt_for_applied(&applied_record);
+        write_apply_receipt(state, &receipt)?;
+        let mut applied_record = applied_record;
+        applied_record.receipt_id = receipt.receipt_id.clone();
+        receipts.push(receipt);
         applied.push(applied_record);
     }
 
@@ -71,6 +95,7 @@ where
         authoritative_state_mutated: !applied.is_empty(),
         applied,
         blocked: Vec::new(),
+        receipts,
         scm_mutation_performed: false,
     })
 }
@@ -271,6 +296,7 @@ fn preflight_revision(
                 actual
             ),
             conflict: None,
+            receipt_id: None,
         }),
     }
 }
@@ -297,6 +323,7 @@ fn blocked(
         kind,
         summary: summary.to_owned(),
         conflict: None,
+        receipt_id: None,
     })
 }
 
@@ -312,6 +339,7 @@ fn blocked_with_conflict(
         kind,
         summary: summary.to_owned(),
         conflict: Some(conflict),
+        receipt_id: None,
     })
 }
 
@@ -324,6 +352,7 @@ fn applied_record(
         record_id: staged.document.envelope.record_id.clone(),
         file_ref: staged.file_ref.clone(),
         revision_id,
+        receipt_id: EngineRuntimeReceiptRecordId("receipt:pending".to_owned()),
         summary: summary.to_owned(),
     }
 }
@@ -337,4 +366,128 @@ fn revision_expectation(target: &ManagementProjectionApplyTarget) -> RevisionExp
 
 fn apply_revision(record_id: &ManagementProjectionRecordId) -> RevisionId {
     RevisionId(format!("rev:projection-apply:{}", record_id.0))
+}
+
+fn write_apply_receipt<B>(
+    state: &ServerStateService<B>,
+    receipt: &EngineRuntimeReceiptRecord,
+) -> LocalStoreResult<()>
+where
+    B: LocalStoreBackend,
+{
+    write_runtime_receipt(
+        state,
+        receipt,
+        RevisionId(format!("rev:{}", receipt.receipt_id.0)),
+        RevisionExpectation::Any,
+    )
+    .map(|_| ())
+}
+
+fn receipt_for_applied(applied: &ManagementProjectionAppliedRecord) -> EngineRuntimeReceiptRecord {
+    apply_receipt(
+        &receipt_id(&applied.record_id, "accepted"),
+        EngineRuntimeReceiptStatus::Completed,
+        &applied.record_id,
+        &applied.file_ref,
+        vec![EngineRuntimeReceiptRef::Custom(format!(
+            "revision:{}",
+            applied.revision_id.0
+        ))],
+        Some(format!(
+            "accepted management projection apply for {}",
+            applied.record_id.0
+        )),
+    )
+}
+
+fn receipt_for_block(block: &ManagementProjectionApplyBlock) -> EngineRuntimeReceiptRecord {
+    let record_id = block
+        .record_id
+        .clone()
+        .unwrap_or_else(|| ManagementProjectionRecordId("unknown".to_owned()));
+    let mut evidence_refs = vec![EngineRuntimeReceiptRef::Custom(format!(
+        "block_kind:{:?}",
+        block.kind
+    ))];
+    if let Some(conflict) = &block.conflict {
+        evidence_refs.push(EngineRuntimeReceiptRef::Custom(format!(
+            "conflict:{}",
+            conflict.conflict_id
+        )));
+    }
+    let status = if block.kind == ManagementProjectionApplyBlockKind::SemanticConflict {
+        EngineRuntimeReceiptStatus::WaitingForApproval
+    } else {
+        EngineRuntimeReceiptStatus::Blocked
+    };
+
+    apply_receipt(
+        &receipt_id(&record_id, "blocked"),
+        status,
+        &record_id,
+        &block.file_ref,
+        evidence_refs,
+        Some(format!(
+            "blocked management projection apply for {}: {:?}",
+            record_id.0, block.kind
+        )),
+    )
+}
+
+fn receipt_for_skipped(applied: &ManagementProjectionAppliedRecord) -> EngineRuntimeReceiptRecord {
+    apply_receipt(
+        &receipt_id(&applied.record_id, "skipped"),
+        EngineRuntimeReceiptStatus::Blocked,
+        &applied.record_id,
+        &applied.file_ref,
+        vec![EngineRuntimeReceiptRef::Custom(
+            "skipped_due_to_blocked_apply_batch".to_owned(),
+        )],
+        Some(format!(
+            "skipped management projection apply for {} because another record was blocked",
+            applied.record_id.0
+        )),
+    )
+}
+
+fn apply_receipt(
+    receipt_id: &EngineRuntimeReceiptRecordId,
+    status: EngineRuntimeReceiptStatus,
+    record_id: &ManagementProjectionRecordId,
+    file_ref: &nucleus_engine::ManagementProjectionFileRef,
+    mut evidence_refs: Vec<EngineRuntimeReceiptRef>,
+    summary: Option<String>,
+) -> EngineRuntimeReceiptRecord {
+    evidence_refs.push(EngineRuntimeReceiptRef::Custom(format!(
+        "record:{}",
+        record_id.0
+    )));
+    evidence_refs.push(EngineRuntimeReceiptRef::Custom(format!(
+        "file:{}",
+        file_ref.0
+    )));
+
+    EngineRuntimeReceiptRecord {
+        receipt_id: receipt_id.clone(),
+        family: EngineRuntimeReceiptEffectFamily::Custom("management_projection_apply".to_owned()),
+        status,
+        command_ref: None,
+        effect_ref: Some(EngineRuntimeReceiptRef::Custom(
+            "management_projection_apply".to_owned(),
+        )),
+        evidence_refs,
+        artifact_refs: Vec::new(),
+        summary,
+    }
+}
+
+fn receipt_id(
+    record_id: &ManagementProjectionRecordId,
+    suffix: &str,
+) -> EngineRuntimeReceiptRecordId {
+    EngineRuntimeReceiptRecordId(format!(
+        "receipt:management-projection-apply:{}:{suffix}",
+        record_id.0
+    ))
 }
