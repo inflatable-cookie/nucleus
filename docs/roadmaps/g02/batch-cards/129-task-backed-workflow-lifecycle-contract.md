@@ -1,6 +1,6 @@
 # 129 Task Backed Workflow Lifecycle Contract
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../030-task-backed-agent-workflow-contract-reset.md`
@@ -17,9 +17,15 @@ Define the task-backed agent work-unit lifecycle before implementation.
 
 ## Acceptance Criteria
 
-- Lifecycle states are explicit.
-- Invalid transitions are named.
-- Provider-specific behavior is deferred to runtime binding.
+- [x] Lifecycle states are explicit.
+- [x] Invalid transitions are named.
+- [x] Provider-specific behavior is deferred to runtime binding.
+
+## Result
+
+`docs/contracts/023-task-backed-agent-workflow-contract.md` now owns the
+generic work-item runtime states, review states, allowed first-pass
+transitions, and invalid transitions.
 
 ## Validation
 

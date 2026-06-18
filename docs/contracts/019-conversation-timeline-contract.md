@@ -74,6 +74,10 @@ Work-item review transitions are timeline facts, not provider messages.
 Operator acceptance, rejection, needs-changes, and abandonment remain separate
 from runtime completion and parent task completion.
 
+`023-task-backed-agent-workflow-contract.md` owns the allowed work-item
+lifecycle states and transitions. This contract owns how those facts appear in
+canonical timelines.
+
 ## Session, Thread, And Turn Rule
 
 An agent session binds Nucleus to one configured adapter instance and runtime.
@@ -215,3 +219,5 @@ policy.
 - `018-orchestration-contract.md` owns commands, events, and projections.
 - `020-runtime-receipt-contract.md` owns side-effect evidence.
 - `021-checkpoint-diff-contract.md` owns change boundaries.
+- `023-task-backed-agent-workflow-contract.md` owns task-backed work-item
+  lifecycle sequencing and Codex task binding rules.

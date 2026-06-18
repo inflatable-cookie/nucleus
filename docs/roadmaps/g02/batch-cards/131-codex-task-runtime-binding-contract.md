@@ -1,6 +1,6 @@
 # 131 Codex Task Runtime Binding Contract
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../030-task-backed-agent-workflow-contract-reset.md`
@@ -17,9 +17,16 @@ Define how Codex runtime supervision binds to a task-backed work unit.
 
 ## Acceptance Criteria
 
-- Codex binding rules are explicit.
-- Generic task workflow does not inherit Codex-only assumptions.
-- Cancellation, wait, and recovery refs are named.
+- [x] Codex binding rules are explicit.
+- [x] Generic task workflow does not inherit Codex-only assumptions.
+- [x] Cancellation, wait, and recovery refs are named.
+
+## Result
+
+`023-task-backed-agent-workflow-contract.md` defines Codex as one runtime
+binding. Codex session, thread, turn, item, approval, input, transport, and
+unsupported-observation refs are external refs under Nucleus-owned task,
+work-item, timeline, receipt, checkpoint, and review ids.
 
 ## Validation
 

@@ -30,6 +30,7 @@ Updated: 2026-06-17
 | `020-runtime-receipt-contract.md` | draft | Durable receipts and progress events for runtime side effects. |
 | `021-checkpoint-diff-contract.md` | draft | Checkpoint and diff ownership across SCM, tasks, turns, and review workflows. |
 | `022-engine-orchestration-boundary-contract.md` | draft | Portable engine, orchestration, and host/server crate ownership boundary. |
+| `023-task-backed-agent-workflow-contract.md` | draft | Task-owned agent work-item lifecycle, Codex binding, wait states, review, and implementation gaps. |
 
 ## Needed Contracts
 
@@ -52,6 +53,8 @@ When it overlaps focused contracts, the focused contract owns the durable rule:
 - `020` owns runtime receipts and side-effect progress evidence.
 - `021` owns checkpoints, diffs, and review snapshots.
 - `022` owns engine, orchestration, and host/server crate boundaries.
+- `023` owns task-backed work-item lifecycle, runtime binding, wait, recovery,
+  and review sequencing.
 - `011`, `008`, and `002` own SCM/forge, storage, and harness-adapter rules.
 
 Source refs:

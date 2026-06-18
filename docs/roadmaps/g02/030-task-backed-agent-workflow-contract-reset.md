@@ -1,6 +1,6 @@
 # 030 Task Backed Agent Workflow Contract Reset
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -20,29 +20,26 @@ into a runtime path.
 
 ## Goals
 
-- [ ] Define the task-backed work-unit lifecycle.
-- [ ] Name admission, wait, running, review, accepted, failed, and canceled
+- [x] Define the task-backed work-unit lifecycle.
+- [x] Name admission, wait, running, review, accepted, failed, and canceled
   states.
-- [ ] Clarify how Codex runtime events bind to task work units without making
+- [x] Clarify how Codex runtime events bind to task work units without making
   Codex the universal abstraction.
-- [ ] Keep SCM mutation and final UI design out of this runway.
+- [x] Keep SCM mutation and final UI design out of this runway.
 
 ## Execution Plan
 
-- [ ] Lifecycle batch: promote task-backed work-unit state rules.
-- [ ] Runtime binding batch: define Codex-specific binding and generic adapter
+- [x] Lifecycle batch: promote task-backed work-unit state rules.
+- [x] Runtime binding batch: define Codex-specific binding and generic adapter
   expectations.
-- [ ] Review batch: define checkpoint/review acceptance boundaries.
-- [ ] Validation batch: update docs indexes and planned code gates.
+- [x] Review batch: define checkpoint/review acceptance boundaries.
+- [x] Validation batch: update docs indexes and planned code gates.
 
 ## Batch Cards
 
-Ready cards:
+Completed cards:
 
 - `batch-cards/129-task-backed-workflow-lifecycle-contract.md`
-
-Planned cards:
-
 - `batch-cards/130-task-work-unit-state-gap-review.md`
 - `batch-cards/131-codex-task-runtime-binding-contract.md`
 - `batch-cards/132-task-work-review-acceptance-contract.md`
@@ -50,9 +47,14 @@ Planned cards:
 
 ## Acceptance Criteria
 
-- [ ] Runtime code can be implemented without inventing workflow states.
-- [ ] Codex-specific behavior is isolated behind adapter/runtime binding rules.
-- [ ] Human review and acceptance are explicit before state is marked complete.
+- [x] Runtime code can be implemented without inventing workflow states.
+- [x] Codex-specific behavior is isolated behind adapter/runtime binding rules.
+- [x] Human review and acceptance are explicit before state is marked complete.
+
+## Result
+
+Added `docs/contracts/023-task-backed-agent-workflow-contract.md` and linked it
+from task, timeline, receipt, checkpoint/diff, and contract index surfaces.
 
 ## Gate
 

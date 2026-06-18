@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `129-task-backed-workflow-lifecycle-contract.md`
+- `134-task-work-unit-source-records.md`
 
 ## Planned Cards
 
-- `130-task-work-unit-state-gap-review.md`
-- `131-codex-task-runtime-binding-contract.md`
-- `132-task-work-review-acceptance-contract.md`
-- `133-task-backed-contract-validation.md`
-- `134-task-work-unit-source-records.md`
 - `135-task-delegation-work-unit-admission.md`
 - `136-task-work-unit-state-projection.md`
 - `137-task-work-unit-diagnostics-read-model.md`
@@ -179,3 +174,8 @@ Hold execution cards for `g02`.
 - `126-server-dto-module-pressure-review.md`
 - `127-desktop-proof-surface-module-pressure-review.md`
 - `128-health-reset-validation.md`
+- `129-task-backed-workflow-lifecycle-contract.md`
+- `130-task-work-unit-state-gap-review.md`
+- `131-codex-task-runtime-binding-contract.md`
+- `132-task-work-review-acceptance-contract.md`
+- `133-task-backed-contract-validation.md`

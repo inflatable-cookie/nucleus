@@ -183,6 +183,11 @@ rejected, needs-changes, and abandoned outcomes require completed runtime plus
 validation or checkpoint evidence. A work-item review transition does not
 complete the parent task unless a later policy explicitly allows that.
 
+The authoritative lifecycle for task-backed work items is
+`023-task-backed-agent-workflow-contract.md`. This task contract owns task
+fields and task history summaries; `023` owns runtime, wait, recovery, and
+review sequencing.
+
 Validation evidence belongs on the task only as command, status, evidence
 references, and summary. Raw command output should be stored as an artifact or
 journal reference when needed, not copied into task history by default.

@@ -1,6 +1,6 @@
 # 133 Task Backed Contract Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../030-task-backed-agent-workflow-contract-reset.md`
@@ -17,9 +17,14 @@ Validate task-backed workflow contracts and advance to source records.
 
 ## Acceptance Criteria
 
-- Contract reset cards are complete or rehomed.
-- Source-model implementation has enough rules to proceed.
-- No runtime execution has started.
+- [x] Contract reset cards are complete or rehomed.
+- [x] Source-model implementation has enough rules to proceed.
+- [x] No runtime execution has started.
+
+## Result
+
+The contract reset is complete. The next ready card is
+`134-task-work-unit-source-records.md`.
 
 ## Validation
 

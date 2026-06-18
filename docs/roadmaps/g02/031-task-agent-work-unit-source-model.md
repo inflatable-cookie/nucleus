@@ -1,6 +1,6 @@
 # 031 Task Agent Work Unit Source Model
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -14,6 +14,7 @@ records and projections.
 - `docs/contracts/018-orchestration-contract.md`
 - `docs/contracts/019-conversation-timeline-contract.md`
 - `docs/contracts/020-runtime-receipt-contract.md`
+- `docs/contracts/023-task-backed-agent-workflow-contract.md`
 - `docs/roadmaps/g02/015-task-backed-agent-work-unit-proof.md`
 
 ## Goals
@@ -33,9 +34,12 @@ records and projections.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/134-task-work-unit-source-records.md`
+
+Planned cards:
+
 - `batch-cards/135-task-delegation-work-unit-admission.md`
 - `batch-cards/136-task-work-unit-state-projection.md`
 - `batch-cards/137-task-work-unit-diagnostics-read-model.md`

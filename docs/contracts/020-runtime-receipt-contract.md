@@ -210,6 +210,8 @@ The first implementation is a compile-only routing surface:
 - no UI approval state is authoritative
 - no task is accepted or completed because a provider turn completes
 - cancellation and timeout preserve the original evidence event id
+- task-backed wait states are governed by
+  `023-task-backed-agent-workflow-contract.md`
 
 The receipt projection records:
 
@@ -228,3 +230,6 @@ from the Codex lifecycle mapping and can gate the next task-backed workflow
 lane. Recovery receipts must distinguish recovery-required, recovered, failed,
 and unknown states instead of treating a replacement provider thread as the
 same session.
+
+Task-backed recovery sequencing is owned by
+`023-task-backed-agent-workflow-contract.md`.

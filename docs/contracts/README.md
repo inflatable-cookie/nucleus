@@ -26,6 +26,7 @@ Contracts define durable rules and interfaces.
 - `020-runtime-receipt-contract.md`
 - `021-checkpoint-diff-contract.md`
 - `022-engine-orchestration-boundary-contract.md`
+- `023-task-backed-agent-workflow-contract.md`
 - `contract-index.md`
 
 ## Promotion Rule

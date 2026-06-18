@@ -1,6 +1,6 @@
 # 132 Task Work Review Acceptance Contract
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../030-task-backed-agent-workflow-contract-reset.md`
@@ -17,9 +17,15 @@ Define review and acceptance boundaries for task-backed work.
 
 ## Acceptance Criteria
 
-- Work can finish in review without silently completing the task.
-- Accepted work and task completion remain distinct.
-- Rework preserves provenance.
+- [x] Work can finish in review without silently completing the task.
+- [x] Accepted work and task completion remain distinct.
+- [x] Rework preserves provenance.
+
+## Result
+
+`023-task-backed-agent-workflow-contract.md` defines review entry evidence,
+operator decision fields, rejection/change/abandon reasons, and rework
+provenance. Review acceptance still does not complete the parent task.
 
 ## Validation
 

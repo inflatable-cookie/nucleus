@@ -195,6 +195,10 @@ Review surfaces may show:
 
 Review surfaces must not become the authority for change state.
 
+Task-backed review acceptance sequencing is owned by
+`023-task-backed-agent-workflow-contract.md`. This contract owns the checkpoint
+and diff evidence boundaries used by that review.
+
 ## Revert Rule
 
 Revert is an orchestrated workflow.
