@@ -101,4 +101,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/171-management-projection-revision-conflict-gates.md`.
+Execute `g02/batch-cards/172-management-projection-apply-receipts-and-audit.md`.

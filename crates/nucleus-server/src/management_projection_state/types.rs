@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use nucleus_core::RevisionId;
 use nucleus_engine::{
+    ManagementProjectionConflictReport,
     ManagementProjectionExportPlan, ManagementProjectionFileDocument, ManagementProjectionFileRef,
     ManagementProjectionRecordId, ManagementProjectionValidationReport,
 };
@@ -62,6 +63,7 @@ pub struct ManagementProjectionStagingIssue {
 pub struct ManagementProjectionImportApplyRequest {
     pub staged: Vec<ManagementProjectionStagedFile>,
     pub targets: Vec<ManagementProjectionApplyTarget>,
+    pub conflicts: Vec<ManagementProjectionConflictReport>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,6 +94,7 @@ pub struct ManagementProjectionApplyBlock {
     pub file_ref: ManagementProjectionFileRef,
     pub kind: ManagementProjectionApplyBlockKind,
     pub summary: String,
+    pub conflict: Option<ManagementProjectionConflictReport>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -100,5 +103,8 @@ pub enum ManagementProjectionApplyBlockKind {
     RecordIdMismatch,
     UnsupportedRecordKind,
     UnsupportedPayload,
-    InvalidValidationStatus,
+    InvalidRecord,
+    UnsupportedSchema,
+    RevisionConflict,
+    SemanticConflict,
 }

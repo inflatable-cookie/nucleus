@@ -1,6 +1,6 @@
 # 171 Management Projection Revision Conflict Gates
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../038-management-sync-apply-and-review.md`
@@ -35,3 +35,14 @@ unsupported records without silent state mutation.
 
 - Stop if conflict classification needs operator policy beyond the current
   contracts.
+
+## Result
+
+- Stale expected revisions now produce blocked apply records instead of hard
+  storage errors.
+- Invalid and unsupported staged records are blocked with distinct apply block
+  kinds.
+- Semantic conflict reports can be attached to apply requests and are preserved
+  on blocked records for review.
+- Apply remains all-or-nothing for the current request when any staged record
+  is blocked.
