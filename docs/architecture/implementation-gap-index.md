@@ -13,18 +13,19 @@ implementation lane can be chosen deliberately.
 
 ## Immediate Code Health Gaps
 
-### God-File Failure
+### God-File Pressure
 
 Current state:
 
-- `effigy doctor` fails on `scan.god-files`
-- one high finding exists in `crates/nucleus-command-policy/src/storage_codec.rs`
+- `effigy doctor` no longer fails on `scan.god-files`
+- the Codex task runtime high finding was split into focused runtime, type, and
+  test modules
+- `scan.god-files` still reports warning-sized files
 - multiple warning-sized files are growing in server DTOs, request handlers,
   desktop Tauri code, desktop CSS, local store, and TypeScript control helpers
 
 Needed:
 
-- split the high finding before treating doctor as healthy
 - treat warning files as pressure when those areas are touched
 - avoid adding more broad DTO or CSS surfaces until ownership is clearer
 
