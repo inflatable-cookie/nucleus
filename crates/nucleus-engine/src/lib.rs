@@ -92,9 +92,10 @@ pub use task_timeline::{
     EngineTaskTimelineProjection, EngineTaskTimelineSummary,
 };
 pub use task_work_items::{
-    EngineTaskWorkItemAssignment, EngineTaskWorkItemId, EngineTaskWorkItemRecord,
-    EngineTaskWorkItemRefs, EngineTaskWorkItemReviewDecision, EngineTaskWorkItemReviewError,
-    EngineTaskWorkItemReviewOutcome, EngineTaskWorkItemReviewState,
+    review_timeline_entry_from_transition, EngineTaskWorkItemAssignment, EngineTaskWorkItemId,
+    EngineTaskWorkItemRecord, EngineTaskWorkItemRefs, EngineTaskWorkItemReviewCommand,
+    EngineTaskWorkItemReviewDecision, EngineTaskWorkItemReviewError, EngineTaskWorkItemReviewOutcome,
+    EngineTaskWorkItemReviewState, EngineTaskWorkItemReviewTimelineEntry,
     EngineTaskWorkItemReviewTransition, EngineTaskWorkItemRuntimeLinkState,
     EngineTaskWorkItemRuntimeProjection, EngineTaskWorkItemRuntimeProjectionEntry,
     EngineTaskWorkItemRuntimeProjectionEntryKind, EngineTaskWorkItemRuntimeState,

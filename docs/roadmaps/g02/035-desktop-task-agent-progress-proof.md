@@ -1,6 +1,6 @@
 # 035 Desktop Task Agent Progress Proof
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -13,6 +13,7 @@ Expose task-backed agent work-unit state in the disposable desktop proof shell.
 - `docs/contracts/007-server-boundary-contract.md`
 - `docs/contracts/019-conversation-timeline-contract.md`
 - `docs/contracts/020-runtime-receipt-contract.md`
+- `docs/contracts/023-task-backed-agent-workflow-contract.md`
 - `docs/roadmaps/g02/026-desktop-diagnostics-proof-surface.md`
 
 ## Goals
@@ -31,9 +32,12 @@ Expose task-backed agent work-unit state in the disposable desktop proof shell.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/154-task-work-progress-control-dtos.md`
+
+Planned cards:
+
 - `batch-cards/155-desktop-task-work-progress-panel.md`
 - `batch-cards/156-desktop-task-work-wait-state-display.md`
 - `batch-cards/157-desktop-task-work-review-display.md`

@@ -1,6 +1,6 @@
 # 152 Task Work Review Timeline Projection
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../034-task-work-checkpoint-and-review-loop.md`
@@ -17,9 +17,14 @@ Project task work review state into task timeline/read models.
 
 ## Acceptance Criteria
 
-- Review state appears in task timeline.
-- Timeline entries preserve source refs.
-- Projection is deterministic.
+- [x] Review state appears in task timeline.
+- [x] Timeline entries preserve source refs.
+- [x] Projection is deterministic.
+
+## Result
+
+Added deterministic review timeline entry projection from review transitions,
+including checkpoint and diff refs.
 
 ## Validation
 

@@ -1,6 +1,6 @@
 # 034 Task Work Checkpoint And Review Loop
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -18,27 +18,24 @@ Add reviewable completion boundaries for task-backed work units.
 
 ## Goals
 
-- [ ] Attach checkpoint refs to task work-unit outcomes.
-- [ ] Attach diff summary refs without mutating SCM state.
-- [ ] Add review and acceptance commands for work-unit completion.
-- [ ] Project review state into task timeline/read models.
+- [x] Attach checkpoint refs to task work-unit outcomes.
+- [x] Attach diff summary refs without mutating SCM state.
+- [x] Add review and acceptance commands for work-unit completion.
+- [x] Project review state into task timeline/read models.
 
 ## Execution Plan
 
-- [ ] Checkpoint batch: connect checkpoint refs to work-unit outcomes.
-- [ ] Diff batch: connect diff summaries to review state.
-- [ ] Review command batch: add accept/reject/rework command shapes.
-- [ ] Timeline batch: project review state into task history.
-- [ ] Validation batch: prove no SCM mutation.
+- [x] Checkpoint batch: connect checkpoint refs to work-unit outcomes.
+- [x] Diff batch: connect diff summaries to review state.
+- [x] Review command batch: add accept/reject/rework command shapes.
+- [x] Timeline batch: project review state into task history.
+- [x] Validation batch: prove no SCM mutation.
 
 ## Batch Cards
 
-Ready cards:
+Completed cards:
 
 - `batch-cards/149-task-work-checkpoint-linkage.md`
-
-Planned cards:
-
 - `batch-cards/150-task-work-diff-summary-linkage.md`
 - `batch-cards/151-task-work-review-command-shapes.md`
 - `batch-cards/152-task-work-review-timeline-projection.md`
@@ -46,9 +43,15 @@ Planned cards:
 
 ## Acceptance Criteria
 
-- [ ] A work unit can end in review rather than silent completion.
-- [ ] Acceptance/rework state is auditable.
-- [ ] SCM mutation remains outside this milestone.
+- [x] A work unit can end in review rather than silent completion.
+- [x] Acceptance/rework state is auditable.
+- [x] SCM mutation remains outside this milestone.
+
+## Result
+
+Review decisions now carry validation, checkpoint, and diff evidence; review
+commands guard expected state; timeline entries are deterministic; SCM mutation
+is not part of the loop.
 
 ## Gate
 

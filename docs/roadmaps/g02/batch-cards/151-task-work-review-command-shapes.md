@@ -1,6 +1,6 @@
 # 151 Task Work Review Command Shapes
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../034-task-work-checkpoint-and-review-loop.md`
@@ -18,9 +18,14 @@ work units.
 
 ## Acceptance Criteria
 
-- Review commands are typed.
-- Invalid state transitions fail closed.
-- Accepting work does not silently complete unrelated task state.
+- [x] Review commands are typed.
+- [x] Invalid state transitions fail closed.
+- [x] Accepting work does not silently complete unrelated task state.
+
+## Result
+
+Added `EngineTaskWorkItemReviewCommand` with work-item identity and expected
+review-state checks. Acceptance still does not complete the task.
 
 ## Validation
 

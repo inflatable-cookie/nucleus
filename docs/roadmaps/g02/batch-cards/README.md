@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `149-task-work-checkpoint-linkage.md`
+- `154-task-work-progress-control-dtos.md`
 
 ## Planned Cards
 
-- `150-task-work-diff-summary-linkage.md`
-- `151-task-work-review-command-shapes.md`
-- `152-task-work-review-timeline-projection.md`
-- `153-task-work-review-validation.md`
-- `154-task-work-progress-control-dtos.md`
 - `155-desktop-task-work-progress-panel.md`
 - `156-desktop-task-work-wait-state-display.md`
 - `157-desktop-task-work-review-display.md`
@@ -179,3 +174,8 @@ Hold execution cards for `g02`.
 - `146-codex-task-permission-wait-states.md`
 - `147-codex-task-error-retry-classification.md`
 - `148-codex-task-event-ingestion-validation.md`
+- `149-task-work-checkpoint-linkage.md`
+- `150-task-work-diff-summary-linkage.md`
+- `151-task-work-review-command-shapes.md`
+- `152-task-work-review-timeline-projection.md`
+- `153-task-work-review-validation.md`

@@ -138,6 +138,7 @@
                 outcome: EngineTaskWorkItemReviewOutcome::Accept,
                 validation_refs: vec!["validation:effigy:qa".to_owned()],
                 checkpoint_ids: vec![EngineCheckpointRecordId("checkpoint:review".to_owned())],
+                diff_summary_ids: Vec::new(),
                 note: Some("accepted after validation".to_owned()),
             })
             .expect("review transition");
@@ -171,6 +172,7 @@
                 },
                 validation_refs: vec!["validation:manual".to_owned()],
                 checkpoint_ids: Vec::new(),
+                diff_summary_ids: Vec::new(),
                 note: None,
             })
             .expect("reject");
@@ -182,6 +184,7 @@
                 },
                 validation_refs: Vec::new(),
                 checkpoint_ids: vec![EngineCheckpointRecordId("checkpoint:review".to_owned())],
+                diff_summary_ids: Vec::new(),
                 note: None,
             })
             .expect("needs changes");
@@ -193,6 +196,7 @@
                 },
                 validation_refs: vec!["validation:manual".to_owned()],
                 checkpoint_ids: Vec::new(),
+                diff_summary_ids: Vec::new(),
                 note: None,
             })
             .expect("abandon");
@@ -222,6 +226,7 @@
                 outcome: EngineTaskWorkItemReviewOutcome::Accept,
                 validation_refs: vec!["validation:manual".to_owned()],
                 checkpoint_ids: Vec::new(),
+                diff_summary_ids: Vec::new(),
                 note: None,
             })
             .expect_err("running runtime cannot be reviewed");
@@ -234,8 +239,92 @@
                 outcome: EngineTaskWorkItemReviewOutcome::Accept,
                 validation_refs: Vec::new(),
                 checkpoint_ids: Vec::new(),
+                diff_summary_ids: Vec::new(),
                 note: None,
             })
             .expect_err("review evidence required");
         assert_eq!(error, EngineTaskWorkItemReviewError::MissingReviewEvidence);
+    }
+
+    #[test]
+    fn review_can_use_diff_summary_evidence_without_scm_mutation() {
+        let item = work_item("work:1", "task:1");
+
+        let transition = item
+            .apply_review_decision(EngineTaskWorkItemReviewDecision {
+                reviewer_ref: "operator:tom".to_owned(),
+                outcome: EngineTaskWorkItemReviewOutcome::NeedsChanges {
+                    reason: "diff shows missing docs".to_owned(),
+                },
+                validation_refs: Vec::new(),
+                checkpoint_ids: Vec::new(),
+                diff_summary_ids: vec![EngineDiffSummaryRecordId("diff:review".to_owned())],
+                note: None,
+            })
+            .expect("diff evidence can support review");
+
+        assert_eq!(
+            transition.to,
+            EngineTaskWorkItemReviewState::NeedsChanges("diff shows missing docs".to_owned())
+        );
+        assert!(transition
+            .work_item
+            .refs
+            .diff_summary_ids
+            .contains(&EngineDiffSummaryRecordId("diff:review".to_owned())));
+        assert!(!transition.task_completion_allowed);
+    }
+
+    #[test]
+    fn review_command_rejects_unexpected_review_state() {
+        let item = work_item("work:1", "task:1");
+
+        let error = item
+            .apply_review_command(EngineTaskWorkItemReviewCommand {
+                command_id: "command:review".to_owned(),
+                work_item_id: EngineTaskWorkItemId("work:1".to_owned()),
+                expected_review: Some(EngineTaskWorkItemReviewState::Accepted),
+                decision: EngineTaskWorkItemReviewDecision {
+                    reviewer_ref: "operator:tom".to_owned(),
+                    outcome: EngineTaskWorkItemReviewOutcome::Accept,
+                    validation_refs: vec!["validation:manual".to_owned()],
+                    checkpoint_ids: Vec::new(),
+                    diff_summary_ids: Vec::new(),
+                    note: None,
+                },
+            })
+            .expect_err("expected review state mismatch");
+
+        assert_eq!(error, EngineTaskWorkItemReviewError::ReviewStateConflict);
+    }
+
+    #[test]
+    fn review_transition_projects_to_timeline_entry() {
+        let item = work_item("work:1", "task:1");
+        let transition = item
+            .apply_review_command(EngineTaskWorkItemReviewCommand {
+                command_id: "command:review".to_owned(),
+                work_item_id: EngineTaskWorkItemId("work:1".to_owned()),
+                expected_review: Some(EngineTaskWorkItemReviewState::AwaitingReview),
+                decision: EngineTaskWorkItemReviewDecision {
+                    reviewer_ref: "operator:tom".to_owned(),
+                    outcome: EngineTaskWorkItemReviewOutcome::Accept,
+                    validation_refs: Vec::new(),
+                    checkpoint_ids: vec![EngineCheckpointRecordId("checkpoint:review".to_owned())],
+                    diff_summary_ids: vec![EngineDiffSummaryRecordId("diff:review".to_owned())],
+                    note: None,
+                },
+            })
+            .expect("review command");
+
+        let entry = review_timeline_entry_from_transition("command:review", &transition);
+
+        assert_eq!(entry.task_id, TaskId("task:1".to_owned()));
+        assert_eq!(entry.work_item_id, EngineTaskWorkItemId("work:1".to_owned()));
+        assert_eq!(entry.source_command_id, "command:review");
+        assert_eq!(entry.review_state, EngineTaskWorkItemReviewState::Accepted);
+        assert_eq!(
+            entry.diff_summary_ids,
+            vec![EngineDiffSummaryRecordId("diff:review".to_owned())]
+        );
     }

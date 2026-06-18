@@ -49,23 +49,18 @@ and engine boundary are settled.
 - `031-task-agent-work-unit-source-model.md` - completed
 - `032-codex-task-runtime-admission-bridge.md` - completed
 - `033-codex-task-event-ingestion-and-receipts.md` - completed
-- `034-task-work-checkpoint-and-review-loop.md` - active
-- `035-desktop-task-agent-progress-proof.md` - planned
+- `034-task-work-checkpoint-and-review-loop.md` - completed
+- `035-desktop-task-agent-progress-proof.md` - active
 - `036-task-backed-workflow-validation-and-next-lane.md` - planned
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/149-task-work-checkpoint-linkage.md`
+- `batch-cards/154-task-work-progress-control-dtos.md`
 
 Planned cards:
 
-- `batch-cards/150-task-work-diff-summary-linkage.md`
-- `batch-cards/151-task-work-review-command-shapes.md`
-- `batch-cards/152-task-work-review-timeline-projection.md`
-- `batch-cards/153-task-work-review-validation.md`
-- `batch-cards/154-task-work-progress-control-dtos.md`
 - `batch-cards/155-desktop-task-work-progress-panel.md`
 - `batch-cards/156-desktop-task-work-wait-state-display.md`
 - `batch-cards/157-desktop-task-work-review-display.md`
@@ -226,6 +221,11 @@ Completed cards:
 - `batch-cards/146-codex-task-permission-wait-states.md`
 - `batch-cards/147-codex-task-error-retry-classification.md`
 - `batch-cards/148-codex-task-event-ingestion-validation.md`
+- `batch-cards/149-task-work-checkpoint-linkage.md`
+- `batch-cards/150-task-work-diff-summary-linkage.md`
+- `batch-cards/151-task-work-review-command-shapes.md`
+- `batch-cards/152-task-work-review-timeline-projection.md`
+- `batch-cards/153-task-work-review-validation.md`
 
 ## Planned Runway Sequence
 
@@ -254,8 +254,8 @@ The next G02 suite is:
 21. task-agent work-unit source model - completed
 22. Codex task runtime admission bridge - completed
 23. Codex task event ingestion and receipts - completed
-24. task work checkpoint and review loop - active
-25. desktop task-agent progress proof - planned
+24. task work checkpoint and review loop - completed
+25. desktop task-agent progress proof - active
 26. task-backed workflow validation and next lane - planned
 
 This keeps code health and task authority clarity ahead of deeper provider

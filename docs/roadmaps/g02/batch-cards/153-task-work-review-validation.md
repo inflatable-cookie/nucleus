@@ -1,6 +1,6 @@
 # 153 Task Work Review Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../034-task-work-checkpoint-and-review-loop.md`
@@ -17,9 +17,14 @@ Validate checkpoint and review loop behavior.
 
 ## Acceptance Criteria
 
-- Review loop cards are complete or rehomed.
-- Work units can enter review and accepted/rework states.
-- Next ready card points to desktop proof.
+- [x] Review loop cards are complete or rehomed.
+- [x] Work units can enter review and accepted/rework states.
+- [x] Next ready card points to desktop proof.
+
+## Result
+
+Checkpoint/diff review loop behavior is complete. The next ready card is
+`154-task-work-progress-control-dtos.md`.
 
 ## Validation
 

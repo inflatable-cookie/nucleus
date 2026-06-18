@@ -1,6 +1,6 @@
 # 150 Task Work Diff Summary Linkage
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../034-task-work-checkpoint-and-review-loop.md`
@@ -17,9 +17,14 @@ Attach diff summary refs to task work review state.
 
 ## Acceptance Criteria
 
-- Review state can show diff summary refs.
-- Missing diff summaries are explicit.
-- No working copy mutation occurs.
+- [x] Review state can show diff summary refs.
+- [x] Missing diff summaries are explicit.
+- [x] No working copy mutation occurs.
+
+## Result
+
+Review decisions now accept diff summary refs as evidence and merge them into
+work-item review state.
 
 ## Validation
 

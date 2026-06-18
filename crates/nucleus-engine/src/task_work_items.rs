@@ -8,14 +8,15 @@ mod review;
 mod runtime_projection;
 mod types;
 
+pub use review::review_timeline_entry_from_transition;
 pub use types::{
     EngineTaskWorkItemAssignment, EngineTaskWorkItemId, EngineTaskWorkItemRecord,
-    EngineTaskWorkItemRefs, EngineTaskWorkItemReviewDecision, EngineTaskWorkItemReviewError,
-    EngineTaskWorkItemReviewOutcome, EngineTaskWorkItemReviewState,
-    EngineTaskWorkItemReviewTransition, EngineTaskWorkItemRuntimeLinkState,
-    EngineTaskWorkItemRuntimeProjection, EngineTaskWorkItemRuntimeProjectionEntry,
-    EngineTaskWorkItemRuntimeProjectionEntryKind, EngineTaskWorkItemRuntimeState,
-    EngineTaskWorkItemSet,
+    EngineTaskWorkItemRefs, EngineTaskWorkItemReviewCommand, EngineTaskWorkItemReviewDecision,
+    EngineTaskWorkItemReviewError, EngineTaskWorkItemReviewOutcome, EngineTaskWorkItemReviewState,
+    EngineTaskWorkItemReviewTimelineEntry, EngineTaskWorkItemReviewTransition,
+    EngineTaskWorkItemRuntimeLinkState, EngineTaskWorkItemRuntimeProjection,
+    EngineTaskWorkItemRuntimeProjectionEntry, EngineTaskWorkItemRuntimeProjectionEntryKind,
+    EngineTaskWorkItemRuntimeState, EngineTaskWorkItemSet,
 };
 
 #[cfg(test)]

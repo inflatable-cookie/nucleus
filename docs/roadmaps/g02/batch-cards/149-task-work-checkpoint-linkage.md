@@ -1,6 +1,6 @@
 # 149 Task Work Checkpoint Linkage
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../034-task-work-checkpoint-and-review-loop.md`
@@ -17,9 +17,14 @@ Attach checkpoint refs to task work-unit outcomes.
 
 ## Acceptance Criteria
 
-- Work-unit outcomes can reference checkpoints.
-- Missing checkpoints are explicit.
-- No SCM mutation occurs.
+- [x] Work-unit outcomes can reference checkpoints.
+- [x] Missing checkpoints are explicit.
+- [x] No SCM mutation occurs.
+
+## Result
+
+Review transitions preserve checkpoint refs as review evidence without
+creating SCM checkpoints.
 
 ## Validation
 

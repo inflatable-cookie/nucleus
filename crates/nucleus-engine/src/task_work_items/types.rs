@@ -131,6 +131,7 @@ pub struct EngineTaskWorkItemReviewDecision {
     pub outcome: EngineTaskWorkItemReviewOutcome,
     pub validation_refs: Vec<String>,
     pub checkpoint_ids: Vec<EngineCheckpointRecordId>,
+    pub diff_summary_ids: Vec<EngineDiffSummaryRecordId>,
     pub note: Option<String>,
 }
 
@@ -152,7 +153,30 @@ pub struct EngineTaskWorkItemReviewTransition {
     pub reviewer_ref: String,
     pub validation_refs: Vec<String>,
     pub checkpoint_ids: Vec<EngineCheckpointRecordId>,
+    pub diff_summary_ids: Vec<EngineDiffSummaryRecordId>,
     pub task_completion_allowed: bool,
+}
+
+/// Command wrapper for an operator review decision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineTaskWorkItemReviewCommand {
+    pub command_id: String,
+    pub work_item_id: EngineTaskWorkItemId,
+    pub expected_review: Option<EngineTaskWorkItemReviewState>,
+    pub decision: EngineTaskWorkItemReviewDecision,
+}
+
+/// Timeline entry derived from a review transition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineTaskWorkItemReviewTimelineEntry {
+    pub entry_id: String,
+    pub task_id: TaskId,
+    pub work_item_id: EngineTaskWorkItemId,
+    pub source_command_id: String,
+    pub review_state: EngineTaskWorkItemReviewState,
+    pub checkpoint_ids: Vec<EngineCheckpointRecordId>,
+    pub diff_summary_ids: Vec<EngineDiffSummaryRecordId>,
+    pub summary: String,
 }
 
 /// Review transition failure.
@@ -162,4 +186,6 @@ pub enum EngineTaskWorkItemReviewError {
     RuntimeNotComplete,
     MissingReviewEvidence,
     EmptyReason,
+    WorkItemMismatch,
+    ReviewStateConflict,
 }
