@@ -1,6 +1,6 @@
 # 113 Desktop Diagnostics Proof Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../026-desktop-diagnostics-proof-surface.md`
@@ -17,9 +17,14 @@ Validate and close the disposable desktop diagnostics proof surface.
 
 ## Acceptance Criteria
 
-- Desktop diagnostics proof cards are complete or rehomed.
-- Diagnostics remain read-only.
-- Next ready card points to source integration.
+- [x] Desktop diagnostics proof cards are complete or rehomed.
+- [x] Diagnostics remain read-only.
+- [x] Next ready card points to source integration.
+
+## Outcome
+
+Validated the desktop diagnostics proof surface and advanced the roadmap to
+diagnostics source integration.
 
 ## Validation
 

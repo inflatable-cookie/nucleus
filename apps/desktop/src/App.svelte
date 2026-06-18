@@ -2,6 +2,7 @@
   import { StatusIndicator, Text } from "@poodle/svelte";
   import CommandDiagnosticsPanel from "./lib/CommandDiagnosticsPanel.svelte";
   import ControlDiagnosticsPanel from "./lib/ControlDiagnosticsPanel.svelte";
+  import DiagnosticsProofPanel from "./lib/DiagnosticsProofPanel.svelte";
   import ProjectSwitcherPanel from "./lib/ProjectSwitcherPanel.svelte";
   import RuntimeReadinessPanel from "./lib/RuntimeReadinessPanel.svelte";
   import TaskDetailPanel from "./lib/TaskDetailPanel.svelte";
@@ -49,6 +50,7 @@
       />
       <RuntimeReadinessPanel />
       <CommandDiagnosticsPanel />
+      <DiagnosticsProofPanel />
       <ControlDiagnosticsPanel />
     </div>
   </section>

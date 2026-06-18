@@ -1,6 +1,6 @@
 # 110 Steward Effigy Diagnostics Panel
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../026-desktop-diagnostics-proof-surface.md`
@@ -17,9 +17,14 @@ Render steward and Effigy diagnostics in the disposable desktop proof UI.
 
 ## Acceptance Criteria
 
-- Steward proposal and command state is visible.
-- Effigy integration, health, and validation state is visible.
-- Panel cannot mutate state.
+- [x] Steward proposal and command state is visible.
+- [x] Effigy integration, health, and validation state is visible.
+- [x] Panel cannot mutate state.
+
+## Outcome
+
+Added a disposable desktop diagnostics panel with read-only steward and Effigy
+summaries.
 
 ## Validation
 

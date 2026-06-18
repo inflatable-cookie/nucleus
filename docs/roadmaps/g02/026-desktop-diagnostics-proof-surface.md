@@ -1,6 +1,6 @@
 # 026 Desktop Diagnostics Proof Surface
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -20,27 +20,24 @@ inspected from the client without client-side authority drift.
 
 ## Goals
 
-- [ ] Add desktop control helpers for diagnostics queries.
-- [ ] Add proof panels for steward and Effigy diagnostics.
-- [ ] Add proof panels for sync and SCM diagnostics.
-- [ ] Preserve loading, empty, unsupported, and error states.
+- [x] Add desktop control helpers for diagnostics queries.
+- [x] Add proof panels for steward and Effigy diagnostics.
+- [x] Add proof panels for sync and SCM diagnostics.
+- [x] Preserve loading, empty, unsupported, and error states.
 
 ## Execution Plan
 
-- [ ] Control helper batch: add TypeScript query helpers.
-- [ ] Steward/Effigy panel batch: render read-only diagnostics.
-- [ ] Sync/SCM panel batch: render read-only diagnostics.
-- [ ] State batch: handle loading, empty, unsupported, and errors.
-- [ ] Validation batch: run desktop checks and Rust gates.
+- [x] Control helper batch: add TypeScript query helpers.
+- [x] Steward/Effigy panel batch: render read-only diagnostics.
+- [x] Sync/SCM panel batch: render read-only diagnostics.
+- [x] State batch: handle loading, empty, unsupported, and errors.
+- [x] Validation batch: run desktop checks and Rust gates.
 
 ## Batch Cards
 
-Ready cards:
+Completed cards:
 
 - `batch-cards/109-desktop-diagnostics-control-helper.md`
-
-Planned cards:
-
 - `batch-cards/110-steward-effigy-diagnostics-panel.md`
 - `batch-cards/111-sync-scm-diagnostics-panel.md`
 - `batch-cards/112-desktop-diagnostics-loading-error-states.md`
@@ -48,9 +45,15 @@ Planned cards:
 
 ## Acceptance Criteria
 
-- [ ] Desktop can request and render diagnostics read models.
-- [ ] Desktop cannot mutate diagnostics state.
-- [ ] The proof surface remains explicitly disposable.
+- [x] Desktop can request and render diagnostics read models.
+- [x] Desktop cannot mutate diagnostics state.
+- [x] The proof surface remains explicitly disposable.
+
+## Outcome
+
+The desktop proof shell can query and render steward, Effigy, management sync,
+and SCM diagnostics through the control envelope. The panel is read-only and
+keeps loading, unsupported, error, and empty live-record states explicit.
 
 ## Gate
 

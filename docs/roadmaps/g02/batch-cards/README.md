@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `109-desktop-diagnostics-control-helper.md`
+- `114-steward-diagnostics-source-records.md`
 
 ## Planned Cards
 
-- `110-steward-effigy-diagnostics-panel.md`
-- `111-sync-scm-diagnostics-panel.md`
-- `112-desktop-diagnostics-loading-error-states.md`
-- `113-desktop-diagnostics-proof-validation.md`
-- `114-steward-diagnostics-source-records.md`
 - `115-effigy-diagnostics-source-records.md`
 - `116-sync-diagnostics-source-records.md`
 - `117-scm-diagnostics-source-records.md`
@@ -141,3 +136,8 @@ Cards 104-108 belong to `../025-diagnostics-control-dto-serialization.md`.
 - `106-tauri-ipc-diagnostics-boundary.md`
 - `107-diagnostics-dto-authority-guard-tests.md`
 - `108-diagnostics-dto-validation.md`
+- `109-desktop-diagnostics-control-helper.md`
+- `110-steward-effigy-diagnostics-panel.md`
+- `111-sync-scm-diagnostics-panel.md`
+- `112-desktop-diagnostics-loading-error-states.md`
+- `113-desktop-diagnostics-proof-validation.md`

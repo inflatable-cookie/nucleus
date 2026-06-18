@@ -1,6 +1,6 @@
 # 112 Desktop Diagnostics Loading Error States
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../026-desktop-diagnostics-proof-surface.md`
@@ -17,9 +17,14 @@ Make diagnostics loading, empty, unsupported, and error states explicit.
 
 ## Acceptance Criteria
 
-- Loading and error states are visually distinct.
-- Empty diagnostics are not treated as failures.
-- Unsupported diagnostics are not treated as ready.
+- [x] Loading and error states are visually distinct.
+- [x] Empty diagnostics are not treated as failures.
+- [x] Unsupported diagnostics are not treated as ready.
+
+## Outcome
+
+The proof panel distinguishes loading, error, unsupported, absent response, and
+empty live-record states.
 
 ## Validation
 

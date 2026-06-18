@@ -1,6 +1,6 @@
 # 114 Steward Diagnostics Source Records
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../027-diagnostics-read-model-source-integration.md`

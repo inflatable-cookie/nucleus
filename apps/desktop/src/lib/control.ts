@@ -8,6 +8,7 @@ export type RuntimeMetadataAction =
   | "list_artifact_metadata"
   | "list_command_evidence"
   | "get_local_runtime_readiness";
+export type DiagnosticsDomain = "steward" | "effigy" | "management_sync" | "scm_session" | "all";
 export type ControlStateDomain = "projects" | "tasks" | "workspaces";
 export type ControlTaskTransitionAction = "start" | "block" | "complete" | "archive";
 
@@ -59,6 +60,136 @@ export type ControlRuntimeReadinessDiagnosticDto = {
   summary: string | null;
 };
 
+export type StewardProposalDiagnosticDto = {
+  proposal_id: string;
+  kind: string;
+  review: string;
+  requires_human_approval: boolean;
+  evidence_refs: string[];
+  receipt_refs: string[];
+  summary: string | null;
+};
+
+export type StewardCommandAdmissionDiagnosticDto = {
+  command_id: string;
+  status: string;
+  terminal: boolean;
+};
+
+export type StewardCommandOutcomeDiagnosticDto = {
+  command_id: string;
+  status: string;
+  terminal: boolean;
+  proposal_refs: string[];
+  sync_assistance_refs: string[];
+};
+
+export type StewardDiagnosticsDto = {
+  proposals: StewardProposalDiagnosticDto[];
+  command_admissions: StewardCommandAdmissionDiagnosticDto[];
+  command_outcomes: StewardCommandOutcomeDiagnosticDto[];
+  client_can_mutate: false;
+};
+
+export type EffigyDiagnosticsDto = {
+  integration_status: string;
+  selector_refs: string[];
+  health_status: string | null;
+  validation_status: string | null;
+  evidence_refs: string[];
+  client_can_run_effigy: false;
+};
+
+export type SyncPlanDiagnosticDto = {
+  plan_id: string;
+  kind: string;
+  status: string;
+  file_refs: string[];
+  receipt_ids: string[];
+};
+
+export type SyncRepairDiagnosticDto = {
+  proposal_id: string;
+  kind: string;
+  review: string;
+  file_ref: string;
+  preserves_incoming_record: boolean;
+};
+
+export type SyncAssistanceDiagnosticDto = {
+  conflict_id: string;
+  kind: string;
+  review: string;
+  requires_human_approval: boolean;
+};
+
+export type SyncCapturePrepDiagnosticDto = {
+  prep_id: string;
+  plan_id: string;
+  status: string;
+  file_refs: string[];
+  receipt_ids: string[];
+  execution_available: boolean;
+};
+
+export type SyncDiagnosticsDto = {
+  plans: SyncPlanDiagnosticDto[];
+  repairs: SyncRepairDiagnosticDto[];
+  assistance_routes: SyncAssistanceDiagnosticDto[];
+  capture_preps: SyncCapturePrepDiagnosticDto[];
+  client_can_mutate_provider: false;
+};
+
+export type ScmSessionPlanDiagnosticDto = {
+  session_id: string;
+  repository_id: string;
+  provider_kind: string;
+  mode: string;
+  status: string;
+  user_can_test_in_known_directory: boolean;
+  runtime_constraints: string[];
+};
+
+export type ScmCommandAdmissionDiagnosticDto = {
+  command_id: string;
+  status: string;
+  required_capability: string;
+  executes_provider_command: boolean;
+};
+
+export type ScmWorkItemLinkDiagnosticDto = {
+  link_id: string;
+  task_id: string;
+  work_item_id: string;
+  work_session_id: string;
+  session_command_ids: string[];
+  change_refs: string[];
+  checkpoint_ids: string[];
+  diff_summary_ids: string[];
+  requires_repair: boolean;
+};
+
+export type ScmSessionDiagnosticsDto = {
+  sessions: ScmSessionPlanDiagnosticDto[];
+  admissions: ScmCommandAdmissionDiagnosticDto[];
+  work_item_links: ScmWorkItemLinkDiagnosticDto[];
+  client_can_mutate_working_copy: false;
+};
+
+export type ControlDiagnosticsSnapshotDto = {
+  steward: StewardDiagnosticsDto;
+  effigy: EffigyDiagnosticsDto;
+  management_sync: SyncDiagnosticsDto;
+  scm_session: ScmSessionDiagnosticsDto;
+};
+
+export type ControlDiagnosticsResultDto =
+  | { domain: "steward"; record: StewardDiagnosticsDto }
+  | { domain: "effigy"; record: EffigyDiagnosticsDto }
+  | { domain: "management_sync"; record: SyncDiagnosticsDto }
+  | { domain: "scm_session"; record: ScmSessionDiagnosticsDto }
+  | { domain: "all"; record: ControlDiagnosticsSnapshotDto };
+
 export type ControlQueryDto =
   | {
       kind: "runtime_metadata";
@@ -70,6 +201,11 @@ export type ControlQueryDto =
       query_id: string;
       domain: ControlStateDomain;
       scope: { type: "list" };
+    }
+  | {
+      kind: "diagnostics";
+      query_id: string;
+      domain: DiagnosticsDomain;
     };
 
 export type ControlCommandDto = {
@@ -121,6 +257,10 @@ export type ControlResponseEnvelopeDto = {
         type: "runtime_readiness_diagnostics";
         records: ControlRuntimeReadinessDiagnosticDto[];
       }
+    | {
+        type: "diagnostics";
+        result: ControlDiagnosticsResultDto;
+      }
     | { type: "state_records"; domain: string; records: unknown[] }
     | { type: "command_receipt"; command_id: string; status: string }
     | { type: "error"; kind: string; reason: string };
@@ -152,6 +292,28 @@ export type RuntimeReadinessQueryResult =
   | {
       state: "records";
       records: ControlRuntimeReadinessDiagnosticDto[];
+    }
+  | {
+      state: "empty";
+    }
+  | {
+      state: "unsupported";
+      reason: string;
+    }
+  | {
+      state: "error";
+      kind: string;
+      reason: string;
+    }
+  | {
+      state: "unexpected";
+      reason: string;
+    };
+
+export type DiagnosticsQueryResult =
+  | {
+      state: "records";
+      result: ControlDiagnosticsResultDto;
     }
   | {
       state: "empty";
@@ -236,6 +398,14 @@ export function buildCommandHistoryQuery(): ControlRequestEnvelopeDto {
 
 export function buildRuntimeReadinessQuery(): ControlRequestEnvelopeDto {
   return buildRuntimeMetadataQuery("get_local_runtime_readiness");
+}
+
+export function buildDiagnosticsQuery(domain: DiagnosticsDomain = "all"): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "diagnostics",
+    query_id: "",
+    domain,
+  });
 }
 
 export function buildTaskTransitionCommand(
@@ -350,6 +520,34 @@ export function runtimeReadinessFromResponse(
   }
 }
 
+export function diagnosticsFromResponse(response: ControlResponseEnvelopeDto): DiagnosticsQueryResult {
+  switch (response.body.type) {
+    case "diagnostics":
+      return {
+        state: "records",
+        result: response.body.result,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return {
+        state: "unsupported",
+        reason: response.body.reason,
+      };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected diagnostics response: ${response.body.type}`,
+      };
+  }
+}
+
 export async function queryCommandHistory(): Promise<CommandHistoryQueryResult> {
   const response = await submitControlEnvelope(buildCommandHistoryQuery());
   return commandHistoryFromResponse(response);
@@ -358,4 +556,11 @@ export async function queryCommandHistory(): Promise<CommandHistoryQueryResult> 
 export async function queryRuntimeReadiness(): Promise<RuntimeReadinessQueryResult> {
   const response = await submitControlEnvelope(buildRuntimeReadinessQuery());
   return runtimeReadinessFromResponse(response);
+}
+
+export async function queryDiagnostics(
+  domain: DiagnosticsDomain = "all",
+): Promise<DiagnosticsQueryResult> {
+  const response = await submitControlEnvelope(buildDiagnosticsQuery(domain));
+  return diagnosticsFromResponse(response);
 }

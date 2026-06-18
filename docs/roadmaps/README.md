@@ -30,8 +30,8 @@ shape.
 - `g02/023-client-read-model-and-diagnostics-runway.md` - completed
 - `g02/024-diagnostics-control-api-query-surface.md` - completed
 - `g02/025-diagnostics-control-dto-serialization.md` - completed
-- `g02/026-desktop-diagnostics-proof-surface.md` - active
-- `g02/027-diagnostics-read-model-source-integration.md` - planned
+- `g02/026-desktop-diagnostics-proof-surface.md` - completed
+- `g02/027-diagnostics-read-model-source-integration.md` - active
 - `g02/028-next-product-workflow-selection.md` - planned
 
 ## Previous Generation
@@ -91,5 +91,5 @@ shape.
 
 ## Next Task
 
-Continue `g02/026-desktop-diagnostics-proof-surface.md`, starting with
-`g02/batch-cards/109-desktop-diagnostics-control-helper.md`.
+Continue `g02/027-diagnostics-read-model-source-integration.md`, starting with
+`g02/batch-cards/114-steward-diagnostics-source-records.md`.

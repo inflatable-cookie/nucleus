@@ -1,6 +1,6 @@
 # 111 Sync SCM Diagnostics Panel
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../026-desktop-diagnostics-proof-surface.md`
@@ -17,9 +17,14 @@ Render sync and SCM diagnostics in the disposable desktop proof UI.
 
 ## Acceptance Criteria
 
-- Sync plan and conflict state is visible.
-- SCM session mode, testability, and repair state are visible.
-- Panel does not assume Git-only terms.
+- [x] Sync plan and conflict state is visible.
+- [x] SCM session mode, testability, and repair state is visible.
+- [x] Panel does not assume Git-only terms.
+
+## Outcome
+
+Added read-only management sync and SCM diagnostics summaries using
+provider-neutral labels.
 
 ## Validation
 

@@ -3,6 +3,7 @@
   import { send } from "@poodle/icons-lucide";
   import {
     buildCommandHistoryQuery,
+    buildDiagnosticsQuery,
     buildRuntimeMetadataQuery,
     buildStateListQuery,
     CONTROL_PROTOCOL_FAMILY,
@@ -28,6 +29,11 @@
       id: "command-evidence",
       label: "Command evidence",
       buildRequest: buildCommandHistoryQuery,
+    },
+    {
+      id: "agent-diagnostics",
+      label: "Agent diagnostics",
+      buildRequest: () => buildDiagnosticsQuery("all"),
     },
     {
       id: "projects",

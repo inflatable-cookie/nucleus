@@ -1,6 +1,6 @@
 # 109 Desktop Diagnostics Control Helper
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../026-desktop-diagnostics-proof-surface.md`
@@ -17,9 +17,14 @@ Add desktop-side control helpers for diagnostics queries.
 
 ## Acceptance Criteria
 
-- Desktop can request diagnostics.
-- Helpers do not expose mutation calls.
-- Unsupported responses are represented.
+- [x] Desktop can request diagnostics.
+- [x] Helpers do not expose mutation calls.
+- [x] Unsupported responses are represented.
+
+## Outcome
+
+Added typed desktop diagnostics query helpers and result mapping in
+`apps/desktop/src/lib/control.ts`.
 
 ## Validation
 

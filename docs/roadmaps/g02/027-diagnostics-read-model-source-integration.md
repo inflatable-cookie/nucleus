@@ -1,6 +1,6 @@
 # 027 Diagnostics Read Model Source Integration
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -44,9 +44,12 @@ unsupported diagnostics.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/114-steward-diagnostics-source-records.md`
+
+Planned cards:
+
 - `batch-cards/115-effigy-diagnostics-source-records.md`
 - `batch-cards/116-sync-diagnostics-source-records.md`
 - `batch-cards/117-scm-diagnostics-source-records.md`
