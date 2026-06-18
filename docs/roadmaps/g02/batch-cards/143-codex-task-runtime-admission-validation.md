@@ -1,6 +1,6 @@
 # 143 Codex Task Runtime Admission Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../032-codex-task-runtime-admission-bridge.md`
@@ -17,9 +17,14 @@ Validate Codex task runtime admission without execution.
 
 ## Acceptance Criteria
 
-- Admission bridge cards are complete or rehomed.
-- Runtime requests can be admitted or rejected.
-- Next ready card points to event ingestion.
+- [x] Admission bridge cards are complete or rehomed.
+- [x] Runtime requests can be admitted or rejected.
+- [x] Next ready card points to event ingestion.
+
+## Result
+
+The admission bridge is complete. The next ready card is
+`144-codex-task-progress-event-mapping.md`.
 
 ## Validation
 

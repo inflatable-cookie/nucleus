@@ -47,8 +47,8 @@ and engine boundary are settled.
 - `029-health-and-module-boundary-reset.md` - completed
 - `030-task-backed-agent-workflow-contract-reset.md` - completed
 - `031-task-agent-work-unit-source-model.md` - completed
-- `032-codex-task-runtime-admission-bridge.md` - active
-- `033-codex-task-event-ingestion-and-receipts.md` - planned
+- `032-codex-task-runtime-admission-bridge.md` - completed
+- `033-codex-task-event-ingestion-and-receipts.md` - active
 - `034-task-work-checkpoint-and-review-loop.md` - planned
 - `035-desktop-task-agent-progress-proof.md` - planned
 - `036-task-backed-workflow-validation-and-next-lane.md` - planned
@@ -57,15 +57,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/139-codex-task-runtime-request-records.md`
+- `batch-cards/144-codex-task-progress-event-mapping.md`
 
 Planned cards:
 
-- `batch-cards/140-task-runtime-scheduler-admission.md`
-- `batch-cards/141-codex-wait-state-task-linkage.md`
-- `batch-cards/142-codex-task-runtime-recovery-gates.md`
-- `batch-cards/143-codex-task-runtime-admission-validation.md`
-- `batch-cards/144-codex-task-progress-event-mapping.md`
 - `batch-cards/145-codex-task-command-receipt-linkage.md`
 - `batch-cards/146-codex-task-permission-wait-states.md`
 - `batch-cards/147-codex-task-error-retry-classification.md`
@@ -226,6 +221,11 @@ Completed cards:
 - `batch-cards/136-task-work-unit-state-projection.md`
 - `batch-cards/137-task-work-unit-diagnostics-read-model.md`
 - `batch-cards/138-task-work-unit-source-validation.md`
+- `batch-cards/139-codex-task-runtime-request-records.md`
+- `batch-cards/140-task-runtime-scheduler-admission.md`
+- `batch-cards/141-codex-wait-state-task-linkage.md`
+- `batch-cards/142-codex-task-runtime-recovery-gates.md`
+- `batch-cards/143-codex-task-runtime-admission-validation.md`
 
 ## Planned Runway Sequence
 
@@ -252,8 +252,8 @@ The next G02 suite is:
 19. health and module boundary reset - completed
 20. task-backed agent workflow contract reset - completed
 21. task-agent work-unit source model - completed
-22. Codex task runtime admission bridge - active
-23. Codex task event ingestion and receipts - planned
+22. Codex task runtime admission bridge - completed
+23. Codex task event ingestion and receipts - active
 24. task work checkpoint and review loop - planned
 25. desktop task-agent progress proof - planned
 26. task-backed workflow validation and next lane - planned

@@ -1,6 +1,6 @@
 # 144 Codex Task Progress Event Mapping
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../033-codex-task-event-ingestion-and-receipts.md`

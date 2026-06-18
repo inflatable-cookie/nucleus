@@ -1,6 +1,6 @@
 # 033 Codex Task Event Ingestion And Receipts
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -13,6 +13,7 @@ Map Codex runtime observations into task work-unit progress and receipts.
 - `docs/contracts/019-conversation-timeline-contract.md`
 - `docs/contracts/020-runtime-receipt-contract.md`
 - `docs/contracts/021-checkpoint-diff-contract.md`
+- `docs/contracts/023-task-backed-agent-workflow-contract.md`
 - `docs/roadmaps/g02/014-codex-live-runtime-supervision.md`
 
 ## Goals
@@ -32,9 +33,12 @@ Map Codex runtime observations into task work-unit progress and receipts.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/144-codex-task-progress-event-mapping.md`
+
+Planned cards:
+
 - `batch-cards/145-codex-task-command-receipt-linkage.md`
 - `batch-cards/146-codex-task-permission-wait-states.md`
 - `batch-cards/147-codex-task-error-retry-classification.md`

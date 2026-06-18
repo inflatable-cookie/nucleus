@@ -1,6 +1,6 @@
 # 139 Codex Task Runtime Request Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../032-codex-task-runtime-admission-bridge.md`
@@ -17,9 +17,14 @@ Model Codex runtime requests scoped to task work units.
 
 ## Acceptance Criteria
 
-- Codex task runtime requests are typed.
-- Generic work units do not depend on Codex-only fields.
-- No process launch occurs.
+- [x] Codex task runtime requests are typed.
+- [x] Generic work units do not depend on Codex-only fields.
+- [x] No process launch occurs.
+
+## Result
+
+Added `CodexTaskRuntimeRequestRecord` with task, work-unit, source, adapter,
+command, event, session, and Codex provider refs. The record is admission-only.
 
 ## Validation
 

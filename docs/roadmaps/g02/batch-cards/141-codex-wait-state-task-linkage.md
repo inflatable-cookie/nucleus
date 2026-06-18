@@ -1,6 +1,6 @@
 # 141 Codex Wait State Task Linkage
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../032-codex-task-runtime-admission-bridge.md`
@@ -17,9 +17,14 @@ Link Codex wait states to task work units.
 
 ## Acceptance Criteria
 
-- Wait states identify their task work unit.
-- Approval requirements do not imply automatic approval.
-- Recovery after wait is represented.
+- [x] Wait states identify their task work unit.
+- [x] Approval requirements do not imply automatic approval.
+- [x] Recovery after wait is represented.
+
+## Result
+
+Added `CodexTaskRuntimeWaitLink` and linkage from server-owned Codex wait
+states to task work units. Approval remains non-automatic.
 
 ## Validation
 

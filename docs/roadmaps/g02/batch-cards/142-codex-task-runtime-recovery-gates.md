@@ -1,6 +1,6 @@
 # 142 Codex Task Runtime Recovery Gates
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../032-codex-task-runtime-admission-bridge.md`
@@ -17,9 +17,15 @@ Represent cancellation, resume, and recovery blockers for Codex task work.
 
 ## Acceptance Criteria
 
-- Cancellation and resume states are explicit.
-- Recovery-required states carry evidence refs.
-- No retry side effect runs.
+- [x] Cancellation and resume states are explicit.
+- [x] Recovery-required states carry evidence refs.
+- [x] No retry side effect runs.
+
+## Result
+
+Added `CodexTaskRuntimeRecoveryGate` and recovery states for cancellation,
+resume blockers, and recovery-required cases. Retry execution is explicitly
+disabled.
 
 ## Validation
 

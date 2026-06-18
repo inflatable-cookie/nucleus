@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `139-codex-task-runtime-request-records.md`
+- `144-codex-task-progress-event-mapping.md`
 
 ## Planned Cards
 
-- `140-task-runtime-scheduler-admission.md`
-- `141-codex-wait-state-task-linkage.md`
-- `142-codex-task-runtime-recovery-gates.md`
-- `143-codex-task-runtime-admission-validation.md`
-- `144-codex-task-progress-event-mapping.md`
 - `145-codex-task-command-receipt-linkage.md`
 - `146-codex-task-permission-wait-states.md`
 - `147-codex-task-error-retry-classification.md`
@@ -179,3 +174,8 @@ Hold execution cards for `g02`.
 - `136-task-work-unit-state-projection.md`
 - `137-task-work-unit-diagnostics-read-model.md`
 - `138-task-work-unit-source-validation.md`
+- `139-codex-task-runtime-request-records.md`
+- `140-task-runtime-scheduler-admission.md`
+- `141-codex-wait-state-task-linkage.md`
+- `142-codex-task-runtime-recovery-gates.md`
+- `143-codex-task-runtime-admission-validation.md`

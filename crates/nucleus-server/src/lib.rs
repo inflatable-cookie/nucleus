@@ -12,6 +12,7 @@ pub mod client_protocol;
 pub mod clients;
 pub mod codex_runtime_validation;
 pub mod codex_supervision;
+pub mod codex_task_runtime;
 pub mod codex_wait_state;
 pub mod command_artifacts;
 pub mod command_evidence_state;
@@ -108,6 +109,12 @@ pub use codex_supervision::{
     CodexAppServerSupervisionReadiness, CodexAppServerSupervisionReadinessInput,
     CodexAppServerSupervisionReadinessStatus, CodexAppServerSupervisionRequest,
     CodexAppServerUnsupportedObservation, CodexRawPayloadPolicy,
+};
+pub use codex_task_runtime::{
+    admit_codex_task_runtime_request, codex_task_runtime_recovery_gate,
+    link_codex_wait_to_task_runtime, CodexTaskRuntimeAdmission, CodexTaskRuntimeProviderRefs,
+    CodexTaskRuntimeRecoveryGate, CodexTaskRuntimeRecoveryState, CodexTaskRuntimeRequestId,
+    CodexTaskRuntimeRequestRecord, CodexTaskRuntimeWaitLink,
 };
 pub use codex_wait_state::{
     cancel_codex_wait_state, route_codex_wait_state_from_ingestion, time_out_codex_wait_state,

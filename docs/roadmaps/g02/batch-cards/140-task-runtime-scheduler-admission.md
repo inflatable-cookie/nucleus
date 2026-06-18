@@ -1,6 +1,6 @@
 # 140 Task Runtime Scheduler Admission
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../032-codex-task-runtime-admission-bridge.md`
@@ -17,9 +17,15 @@ Bind task work units to scheduler admission records.
 
 ## Acceptance Criteria
 
-- Scheduler admission can accept a task work-unit request.
-- Missing refs fail closed.
-- Admission is not execution.
+- [x] Scheduler admission can accept a task work-unit request.
+- [x] Missing refs fail closed.
+- [x] Admission is not execution.
+
+## Result
+
+Added `admit_codex_task_runtime_request`, which validates authority refs and
+submits an inert `AgentSessionTurn` request to the scheduler without starting
+provider execution.
 
 ## Validation
 
