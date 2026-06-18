@@ -1,6 +1,6 @@
 # 084 Management Sync Plan Records
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../021-management-projection-sync-runtime.md`

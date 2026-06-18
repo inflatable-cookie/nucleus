@@ -1,6 +1,6 @@
 # 020 Effigy Command-Backed Inspection
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -34,14 +34,14 @@ stable.
   summaries.
 - [x] Repair hint batch: turn missing selector/manifest evidence into steward
   repair hints.
-- [ ] Validation batch: prove all Effigy evidence is summarized or referenced,
+- [x] Validation batch: prove all Effigy evidence is summarized or referenced,
   not copied raw.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/083-effigy-command-inspection-validation.md`
+- None.
 
 Planned cards:
 
@@ -53,6 +53,7 @@ Completed cards:
 - `batch-cards/080-effigy-doctor-summary-command.md`
 - `batch-cards/081-effigy-test-plan-summary-command.md`
 - `batch-cards/082-effigy-repair-hint-synthesis.md`
+- `batch-cards/083-effigy-command-inspection-validation.md`
 
 ## Acceptance Criteria
 

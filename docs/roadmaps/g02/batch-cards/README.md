@@ -10,11 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `083-effigy-command-inspection-validation.md`
+- `084-management-sync-plan-records.md`
 
 ## Planned Cards
 
-- `084-management-sync-plan-records.md`
 - `085-projection-import-repair-proposals.md`
 - `086-projection-conflict-assistance-routing.md`
 - `087-management-capture-prep-records.md`
@@ -30,7 +29,7 @@ Hold execution cards for `g02`.
 - `097-scm-session-diagnostics-read-model.md`
 - `098-client-diagnostics-dto-validation.md`
 
-These cards belong to `../018-steward-native-harness-and-effigy-tools.md`.
+Cards 084-088 belong to `../021-management-projection-sync-runtime.md`.
 
 ## Completed Cards
 

@@ -1,6 +1,6 @@
 # 083 Effigy Command Inspection Validation
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../020-effigy-command-backed-inspection.md`
@@ -17,19 +17,25 @@ Validate and close Effigy command-backed inspection.
 
 ## Acceptance Criteria
 
-- Effigy inspection cards are complete or rehomed.
-- Raw output exclusion is validated.
-- Next ready card points to projection sync runtime.
+- [x] Effigy inspection cards are complete or rehomed.
+- [x] Raw output exclusion is validated.
+- [x] Next ready card points to projection sync runtime.
+
+## Outcome
+
+- Validated the native harness, engine, docs, and roadmap pointer surfaces.
+- Closed Effigy command-backed inspection without adding command authority.
+- Advanced the next ready card to management projection sync runtime.
 
 ## Validation
 
-- `cargo test -p nucleus-native-harness`
-- `cargo test -p nucleus-engine`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `rg -n '^## Next Task' README.md AGENTS.md docs`
-- `git diff --check`
+- [x] `cargo test -p nucleus-native-harness`
+- [x] `cargo test -p nucleus-engine`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `rg -n '^## Next Task' README.md AGENTS.md docs`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

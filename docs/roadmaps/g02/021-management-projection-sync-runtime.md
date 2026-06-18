@@ -1,6 +1,6 @@
 # 021 Management Projection Sync Runtime
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -38,9 +38,12 @@ sync assistance into a policy-gated runtime flow.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/084-management-sync-plan-records.md`
+
+Planned cards:
+
 - `batch-cards/085-projection-import-repair-proposals.md`
 - `batch-cards/086-projection-conflict-assistance-routing.md`
 - `batch-cards/087-management-capture-prep-records.md`

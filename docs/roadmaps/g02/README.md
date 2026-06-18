@@ -35,8 +35,8 @@ and engine boundary are settled.
 - `017-scm-working-copy-and-change-request-workflows.md` - completed
 - `018-steward-native-harness-and-effigy-tools.md` - completed
 - `019-native-steward-command-boundary.md` - completed
-- `020-effigy-command-backed-inspection.md` - active
-- `021-management-projection-sync-runtime.md` - planned
+- `020-effigy-command-backed-inspection.md` - completed
+- `021-management-projection-sync-runtime.md` - active
 - `022-scm-working-session-runtime.md` - planned
 - `023-client-read-model-and-diagnostics-runway.md` - planned
 
@@ -118,11 +118,10 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/083-effigy-command-inspection-validation.md`
+- `batch-cards/084-management-sync-plan-records.md`
 
 Planned cards:
 
-- `batch-cards/084-management-sync-plan-records.md`
 - `batch-cards/085-projection-import-repair-proposals.md`
 - `batch-cards/086-projection-conflict-assistance-routing.md`
 - `batch-cards/087-management-capture-prep-records.md`
@@ -174,6 +173,7 @@ Completed cards:
 - `batch-cards/080-effigy-doctor-summary-command.md`
 - `batch-cards/081-effigy-test-plan-summary-command.md`
 - `batch-cards/082-effigy-repair-hint-synthesis.md`
+- `batch-cards/083-effigy-command-inspection-validation.md`
 
 Completed cards:
 
@@ -195,8 +195,8 @@ The next G02 suite is:
 7. SCM working-copy/change-request workflows - completed
 8. steward/native harness and Effigy tools - completed
 9. native steward command boundary - completed
-10. Effigy command-backed inspection - active
-11. management projection sync runtime - planned
+10. Effigy command-backed inspection - completed
+11. management projection sync runtime - active
 12. SCM working session runtime - planned
 13. client read model and diagnostics runway - planned
 
@@ -213,7 +213,8 @@ remote transport work.
 - `018` closed the record-only native steward runway.
 - `019` completed native steward command admission, receipt linkage, and server
   command boundaries.
-- `020` is the active Effigy command-backed inspection lane.
+- `020` completed Effigy command-backed inspection.
+- `021` is the active management projection sync runtime lane.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 
