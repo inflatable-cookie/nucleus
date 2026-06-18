@@ -1,6 +1,6 @@
 # 170 Management Projection Import Apply Command
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../038-management-sync-apply-and-review.md`

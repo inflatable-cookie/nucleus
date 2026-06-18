@@ -1,6 +1,6 @@
 # 169 Management Projection Apply Policy Contract
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../038-management-sync-apply-and-review.md`
@@ -37,3 +37,12 @@ server state.
 
 - Stop if applying projected records requires a new product decision about
   conflict resolution semantics.
+
+## Result
+
+- Added a storage projection apply rule separating validation, staging, apply,
+  and SCM sharing.
+- Added no-silent-overwrite, expected-revision, conflict, unsupported-schema,
+  and local-only gates to the SCM sync contract.
+- Kept apply limited to active server state; SCM capture and publication stay
+  outside this boundary.

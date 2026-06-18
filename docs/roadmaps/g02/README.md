@@ -59,11 +59,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/169-management-projection-apply-policy-contract.md`
+- `batch-cards/170-management-projection-import-apply-command.md`
 
 Planned cards:
 
-- `batch-cards/170-management-projection-import-apply-command.md`
 - `batch-cards/171-management-projection-revision-conflict-gates.md`
 - `batch-cards/172-management-projection-apply-receipts-and-audit.md`
 - `batch-cards/173-management-sync-review-read-model.md`

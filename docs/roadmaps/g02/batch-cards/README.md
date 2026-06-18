@@ -10,11 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `169-management-projection-apply-policy-contract.md`
+- `170-management-projection-import-apply-command.md`
 
 ## Planned Cards
 
-- `170-management-projection-import-apply-command.md`
 - `171-management-projection-revision-conflict-gates.md`
 - `172-management-projection-apply-receipts-and-audit.md`
 - `173-management-sync-review-read-model.md`
@@ -190,3 +189,4 @@ Hold execution cards for `g02`.
 - `166-projection-import-conflict-fixtures.md`
 - `167-management-sync-assistance-routing-proof.md`
 - `168-management-sync-hardening-validation.md`
+- `169-management-projection-apply-policy-contract.md`

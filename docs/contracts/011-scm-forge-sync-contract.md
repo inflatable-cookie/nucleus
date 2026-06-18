@@ -292,6 +292,41 @@ Schema validation must not be treated as Git conflict resolution. Git conflict
 resolution handles file merge shape. Projection validation handles record
 meaning and import safety after a candidate file state exists.
 
+## Projection Apply Boundary
+
+Projection apply is the step after validation and staging. It is not SCM
+capture, commit, snapshot, publication, push, promotion, merge, or review
+request creation.
+
+The active Nucleus authority host applies staged management projection records
+through admitted commands. SCM adapters may provide the candidate file state
+and may later share resulting projection changes, but they do not decide active
+project/task state by themselves.
+
+Apply policy is provider-neutral:
+
+- Git commits are one possible source or sharing artifact.
+- Convergence snaps, publications, gates, and future SCM authority units are
+  provider-specific sync artifacts.
+- The core apply model talks about staged records, expected revisions,
+  conflicts, apply receipts, and review decisions.
+
+No-silent-overwrite rules:
+
+- a staged record with a stale expected revision must not overwrite active
+  state
+- schema and semantic conflicts must remain distinct
+- project identity and repo membership changes require explicit review when
+  meaning changes
+- task status, acceptance criteria, assignment intent, deletion, and meaningful
+  history rewrites require explicit review when conflicting
+- unsupported schema records must be preserved and reported
+- local-only state must not become shared or active through projection apply
+
+The first implementation may apply only project and task projection records.
+Planning artifacts, memories, research synthesis, indexes, artifact indexes,
+and custom records remain review-only until their apply policy is promoted.
+
 Migration policy:
 
 - old schema records may be read-only until migrated

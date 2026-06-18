@@ -101,4 +101,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/169-management-projection-apply-policy-contract.md`.
+Execute `g02/batch-cards/170-management-projection-import-apply-command.md`.

@@ -193,6 +193,54 @@ Validation evidence should be recorded as sanitized state or artifact
 references. It must not include secrets, provider auth material, raw provider
 transcripts, or high-volume runtime event streams.
 
+## Projection Apply Rule
+
+Applying staged management projection records is an admitted state change, not
+an extension of validation.
+
+The first apply boundary separates four operations:
+
+- validation: classify projected records and preserve evidence
+- staging: keep candidate records available for review, repair, or apply
+- apply: mutate active project/task state through an admitted command
+- sharing: ask an SCM adapter to capture, publish, push, promote, or open a
+  provider-specific review boundary
+
+Validation and staging are non-mutating. Sharing is SCM adapter work. Apply is
+engine/server-state authority and must obey current host authority, policy,
+expected revision, and conflict gates.
+
+Apply commands must name:
+
+- actor or service role
+- staged import batch or record refs
+- target project id
+- record ids to apply
+- expected current revision where available
+- validation report refs
+- conflict resolution refs when a conflict was reviewed
+
+The apply boundary must fail closed when:
+
+- the staged record is invalid
+- the schema is unsupported or read-only until migrated
+- the record kind is local-only or unclassified
+- the target project/task id is missing or mismatched
+- the active revision does not match the expected revision
+- semantic conflict evidence exists without an approved resolution
+- the operation would import excluded state such as secrets, provider auth,
+  runtime streams, terminal/browser state, local caches, or local client layout
+
+Blocked records remain staged or become repair/review records. They must not be
+silently dropped, rewritten, or overwritten into active state.
+
+Apply receipts are durable sanitized evidence. They may record accepted,
+blocked, skipped, and review-required outcomes, plus staged record refs,
+validation report refs, conflict refs, actor refs, command refs, affected
+project/task ids, and short summaries. They must not store raw projection
+payloads, raw runtime streams, provider transcripts, secrets, or credential
+material by default.
+
 ## First Management Projection Implementation
 
 The first implementation is an in-memory planning and validation boundary.
