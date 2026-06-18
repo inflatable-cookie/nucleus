@@ -1,6 +1,6 @@
 # 146 Codex Task Permission Wait States
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../033-codex-task-event-ingestion-and-receipts.md`
@@ -17,9 +17,14 @@ Represent permission prompts and human approval waits in task progress.
 
 ## Acceptance Criteria
 
-- Permission waits are visible and not terminal by default.
-- Human approval remains explicit.
-- Timeout/cancellation states are distinct.
+- [x] Permission waits are visible and not terminal by default.
+- [x] Human approval remains explicit.
+- [x] Timeout/cancellation states are distinct.
+
+## Result
+
+Added wait progress projection from Codex wait links. Waiting is non-terminal;
+cancelled and timed-out waits are terminal progress facts.
 
 ## Validation
 

@@ -48,8 +48,8 @@ and engine boundary are settled.
 - `030-task-backed-agent-workflow-contract-reset.md` - completed
 - `031-task-agent-work-unit-source-model.md` - completed
 - `032-codex-task-runtime-admission-bridge.md` - completed
-- `033-codex-task-event-ingestion-and-receipts.md` - active
-- `034-task-work-checkpoint-and-review-loop.md` - planned
+- `033-codex-task-event-ingestion-and-receipts.md` - completed
+- `034-task-work-checkpoint-and-review-loop.md` - active
 - `035-desktop-task-agent-progress-proof.md` - planned
 - `036-task-backed-workflow-validation-and-next-lane.md` - planned
 
@@ -57,15 +57,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/144-codex-task-progress-event-mapping.md`
+- `batch-cards/149-task-work-checkpoint-linkage.md`
 
 Planned cards:
 
-- `batch-cards/145-codex-task-command-receipt-linkage.md`
-- `batch-cards/146-codex-task-permission-wait-states.md`
-- `batch-cards/147-codex-task-error-retry-classification.md`
-- `batch-cards/148-codex-task-event-ingestion-validation.md`
-- `batch-cards/149-task-work-checkpoint-linkage.md`
 - `batch-cards/150-task-work-diff-summary-linkage.md`
 - `batch-cards/151-task-work-review-command-shapes.md`
 - `batch-cards/152-task-work-review-timeline-projection.md`
@@ -226,6 +221,11 @@ Completed cards:
 - `batch-cards/141-codex-wait-state-task-linkage.md`
 - `batch-cards/142-codex-task-runtime-recovery-gates.md`
 - `batch-cards/143-codex-task-runtime-admission-validation.md`
+- `batch-cards/144-codex-task-progress-event-mapping.md`
+- `batch-cards/145-codex-task-command-receipt-linkage.md`
+- `batch-cards/146-codex-task-permission-wait-states.md`
+- `batch-cards/147-codex-task-error-retry-classification.md`
+- `batch-cards/148-codex-task-event-ingestion-validation.md`
 
 ## Planned Runway Sequence
 
@@ -253,8 +253,8 @@ The next G02 suite is:
 20. task-backed agent workflow contract reset - completed
 21. task-agent work-unit source model - completed
 22. Codex task runtime admission bridge - completed
-23. Codex task event ingestion and receipts - active
-24. task work checkpoint and review loop - planned
+23. Codex task event ingestion and receipts - completed
+24. task work checkpoint and review loop - active
 25. desktop task-agent progress proof - planned
 26. task-backed workflow validation and next lane - planned
 

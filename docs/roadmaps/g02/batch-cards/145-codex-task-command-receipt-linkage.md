@@ -1,6 +1,6 @@
 # 145 Codex Task Command Receipt Linkage
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../033-codex-task-event-ingestion-and-receipts.md`
@@ -17,9 +17,14 @@ Link Codex tool/command observations to runtime receipts.
 
 ## Acceptance Criteria
 
-- Receipts can identify command/tool causes.
-- Evidence is sanitized and reference-only.
-- Output payloads are not copied into DTOs.
+- [x] Receipts can identify command/tool causes.
+- [x] Evidence is sanitized and reference-only.
+- [x] Output payloads are not copied into DTOs.
+
+## Result
+
+Added `CodexTaskRuntimeReceiptLink`, mapping typed runtime receipt refs to
+client-safe references without copying output payloads.
 
 ## Validation
 

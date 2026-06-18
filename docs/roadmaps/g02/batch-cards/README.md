@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `144-codex-task-progress-event-mapping.md`
+- `149-task-work-checkpoint-linkage.md`
 
 ## Planned Cards
 
-- `145-codex-task-command-receipt-linkage.md`
-- `146-codex-task-permission-wait-states.md`
-- `147-codex-task-error-retry-classification.md`
-- `148-codex-task-event-ingestion-validation.md`
-- `149-task-work-checkpoint-linkage.md`
 - `150-task-work-diff-summary-linkage.md`
 - `151-task-work-review-command-shapes.md`
 - `152-task-work-review-timeline-projection.md`
@@ -179,3 +174,8 @@ Hold execution cards for `g02`.
 - `141-codex-wait-state-task-linkage.md`
 - `142-codex-task-runtime-recovery-gates.md`
 - `143-codex-task-runtime-admission-validation.md`
+- `144-codex-task-progress-event-mapping.md`
+- `145-codex-task-command-receipt-linkage.md`
+- `146-codex-task-permission-wait-states.md`
+- `147-codex-task-error-retry-classification.md`
+- `148-codex-task-event-ingestion-validation.md`

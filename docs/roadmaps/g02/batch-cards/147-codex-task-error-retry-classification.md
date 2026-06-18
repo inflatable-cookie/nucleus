@@ -1,6 +1,6 @@
 # 147 Codex Task Error Retry Classification
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../033-codex-task-event-ingestion-and-receipts.md`
@@ -17,9 +17,15 @@ Classify Codex task errors for retry, recovery, or terminal failure.
 
 ## Acceptance Criteria
 
-- Error classes are distinct and testable.
-- Retry eligibility is metadata only.
-- Recovery-required states are visible.
+- [x] Error classes are distinct and testable.
+- [x] Retry eligibility is metadata only.
+- [x] Recovery-required states are visible.
+
+## Result
+
+Added error classification for unsupported observations, provider runtime
+errors, permission denial, recovery-required, and unknown states. Retry remains
+metadata only.
 
 ## Validation
 

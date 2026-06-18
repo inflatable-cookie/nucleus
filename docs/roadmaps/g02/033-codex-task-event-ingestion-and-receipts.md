@@ -1,6 +1,6 @@
 # 033 Codex Task Event Ingestion And Receipts
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -18,27 +18,24 @@ Map Codex runtime observations into task work-unit progress and receipts.
 
 ## Goals
 
-- [ ] Map Codex events to task progress without raw provider payload storage.
-- [ ] Link command/tool receipts to work-unit state.
-- [ ] Preserve permission prompts and human approval waits.
-- [ ] Classify retryable, terminal, and recovery-required failures.
+- [x] Map Codex events to task progress without raw provider payload storage.
+- [x] Link command/tool receipts to work-unit state.
+- [x] Preserve permission prompts and human approval waits.
+- [x] Classify retryable, terminal, and recovery-required failures.
 
 ## Execution Plan
 
-- [ ] Progress batch: project Codex observations into work-unit progress.
-- [ ] Receipt batch: connect tool/command refs to runtime receipts.
-- [ ] Approval batch: preserve wait states and permission prompts.
-- [ ] Failure batch: classify retry and recovery states.
-- [ ] Validation batch: replay fixtures deterministically.
+- [x] Progress batch: project Codex observations into work-unit progress.
+- [x] Receipt batch: connect tool/command refs to runtime receipts.
+- [x] Approval batch: preserve wait states and permission prompts.
+- [x] Failure batch: classify retry and recovery states.
+- [x] Validation batch: replay fixtures deterministically.
 
 ## Batch Cards
 
-Ready cards:
+Completed cards:
 
 - `batch-cards/144-codex-task-progress-event-mapping.md`
-
-Planned cards:
-
 - `batch-cards/145-codex-task-command-receipt-linkage.md`
 - `batch-cards/146-codex-task-permission-wait-states.md`
 - `batch-cards/147-codex-task-error-retry-classification.md`
@@ -46,9 +43,14 @@ Planned cards:
 
 ## Acceptance Criteria
 
-- [ ] Work-unit progress can be rebuilt from Codex observations.
-- [ ] Receipts reference sanitized evidence only.
-- [ ] Wait and failure states are explicit.
+- [x] Work-unit progress can be rebuilt from Codex observations.
+- [x] Receipts reference sanitized evidence only.
+- [x] Wait and failure states are explicit.
+
+## Result
+
+Task-scoped Codex progress events, receipt links, wait progress, and error
+classification are implemented without raw provider payload storage.
 
 ## Gate
 

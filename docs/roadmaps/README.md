@@ -37,8 +37,8 @@ shape.
 - `g02/030-task-backed-agent-workflow-contract-reset.md` - completed
 - `g02/031-task-agent-work-unit-source-model.md` - completed
 - `g02/032-codex-task-runtime-admission-bridge.md` - completed
-- `g02/033-codex-task-event-ingestion-and-receipts.md` - active
-- `g02/034-task-work-checkpoint-and-review-loop.md` - planned
+- `g02/033-codex-task-event-ingestion-and-receipts.md` - completed
+- `g02/034-task-work-checkpoint-and-review-loop.md` - active
 - `g02/035-desktop-task-agent-progress-proof.md` - planned
 - `g02/036-task-backed-workflow-validation-and-next-lane.md` - planned
 
@@ -99,5 +99,5 @@ shape.
 
 ## Next Task
 
-Review `g02/033-codex-task-event-ingestion-and-receipts.md`, starting with
-`g02/batch-cards/144-codex-task-progress-event-mapping.md`.
+Review `g02/034-task-work-checkpoint-and-review-loop.md`, starting with
+`g02/batch-cards/149-task-work-checkpoint-linkage.md`.

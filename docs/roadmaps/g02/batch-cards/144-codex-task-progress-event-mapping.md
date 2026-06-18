@@ -1,6 +1,6 @@
 # 144 Codex Task Progress Event Mapping
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../033-codex-task-event-ingestion-and-receipts.md`
@@ -17,9 +17,14 @@ Map Codex runtime observations into task work-unit progress.
 
 ## Acceptance Criteria
 
-- Supported observations update work-unit progress.
-- Unsupported observations remain inspectable.
-- Raw provider payloads stay out of storage.
+- [x] Supported observations update work-unit progress.
+- [x] Unsupported observations remain inspectable.
+- [x] Raw provider payloads stay out of storage.
+
+## Result
+
+Added task-scoped Codex progress mapping for supported runtime events,
+runtime receipts, and unsupported observations without raw payload retention.
 
 ## Validation
 

@@ -1,6 +1,6 @@
 # 149 Task Work Checkpoint Linkage
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../034-task-work-checkpoint-and-review-loop.md`

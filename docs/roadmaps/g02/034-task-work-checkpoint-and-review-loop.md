@@ -1,6 +1,6 @@
 # 034 Task Work Checkpoint And Review Loop
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -13,6 +13,7 @@ Add reviewable completion boundaries for task-backed work units.
 - `docs/contracts/020-runtime-receipt-contract.md`
 - `docs/contracts/021-checkpoint-diff-contract.md`
 - `docs/contracts/011-scm-forge-sync-contract.md`
+- `docs/contracts/023-task-backed-agent-workflow-contract.md`
 - `docs/roadmaps/g02/006-checkpoint-and-diff-foundation.md`
 
 ## Goals
@@ -32,9 +33,12 @@ Add reviewable completion boundaries for task-backed work units.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/149-task-work-checkpoint-linkage.md`
+
+Planned cards:
+
 - `batch-cards/150-task-work-diff-summary-linkage.md`
 - `batch-cards/151-task-work-review-command-shapes.md`
 - `batch-cards/152-task-work-review-timeline-projection.md`

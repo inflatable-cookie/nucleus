@@ -1,6 +1,6 @@
 # 148 Codex Task Event Ingestion Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../033-codex-task-event-ingestion-and-receipts.md`
@@ -17,9 +17,14 @@ Validate Codex task event ingestion and receipt linkage.
 
 ## Acceptance Criteria
 
-- Event ingestion cards are complete or rehomed.
-- Work-unit progress is rebuildable.
-- Next ready card points to checkpoint/review work.
+- [x] Event ingestion cards are complete or rehomed.
+- [x] Work-unit progress is rebuildable.
+- [x] Next ready card points to checkpoint/review work.
+
+## Result
+
+The Codex task event ingestion lane is complete. The next ready card is
+`149-task-work-checkpoint-linkage.md`.
 
 ## Validation
 
