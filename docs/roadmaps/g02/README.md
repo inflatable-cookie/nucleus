@@ -38,7 +38,7 @@ and engine boundary are settled.
 - `020-effigy-command-backed-inspection.md` - completed
 - `021-management-projection-sync-runtime.md` - completed
 - `022-scm-working-session-runtime.md` - completed
-- `023-client-read-model-and-diagnostics-runway.md` - active
+- `023-client-read-model-and-diagnostics-runway.md` - completed
 
 ## Batch Cards
 
@@ -118,15 +118,12 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/094-steward-diagnostics-read-model.md`
+- None.
 
 Planned cards:
 
 - `batch-cards/094-steward-diagnostics-read-model.md`
-- `batch-cards/095-effigy-diagnostics-read-model.md`
-- `batch-cards/096-sync-diagnostics-read-model.md`
-- `batch-cards/097-scm-session-diagnostics-read-model.md`
-- `batch-cards/098-client-diagnostics-dto-validation.md`
+- None.
 
 Completed cards:
 
@@ -175,6 +172,11 @@ Completed cards:
 - `batch-cards/091-non-git-session-vocabulary-validation.md`
 - `batch-cards/092-scm-session-work-item-linkage.md`
 - `batch-cards/093-scm-session-runtime-validation.md`
+- `batch-cards/094-steward-diagnostics-read-model.md`
+- `batch-cards/095-effigy-diagnostics-read-model.md`
+- `batch-cards/096-sync-diagnostics-read-model.md`
+- `batch-cards/097-scm-session-diagnostics-read-model.md`
+- `batch-cards/098-client-diagnostics-dto-validation.md`
 
 Completed cards:
 
@@ -199,7 +201,7 @@ The next G02 suite is:
 10. Effigy command-backed inspection - completed
 11. management projection sync runtime - completed
 12. SCM working session runtime - completed
-13. client read model and diagnostics runway - active
+13. client read model and diagnostics runway - completed
 
 This keeps code health and authority-map clarity ahead of live provider and
 remote transport work.
@@ -217,7 +219,9 @@ remote transport work.
 - `020` completed Effigy command-backed inspection.
 - `021` completed management projection sync runtime records.
 - `022` completed SCM working-session runtime records.
-- `023` is the active diagnostics read-model lane.
+- `023` completed diagnostics read-model DTOs.
+- The next step is a planning checkpoint before compiling another
+  implementation runway.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

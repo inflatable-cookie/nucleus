@@ -1,6 +1,6 @@
 # 096 Sync Diagnostics Read Model
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../023-client-read-model-and-diagnostics-runway.md`
@@ -18,17 +18,23 @@ assistance to clients.
 
 ## Acceptance Criteria
 
-- Clients can inspect sync plan and conflict state.
-- Semantic conflict state is visible.
-- Read models cannot commit, push, or publish.
+- [x] Clients can inspect sync plan and conflict state.
+- [x] Semantic conflict state is visible.
+- [x] Read models cannot commit, push, or publish.
+
+## Outcome
+
+- Added management projection sync diagnostics DTOs for plans, repair
+  proposals, assistance routes, and capture preparations.
+- Kept provider mutation unavailable through read models.
 
 ## Validation
 
-- `cargo test -p nucleus-server management_projection`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server management_projection`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

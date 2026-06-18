@@ -1,6 +1,6 @@
 # 095 Effigy Diagnostics Read Model
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../023-client-read-model-and-diagnostics-runway.md`
@@ -18,17 +18,23 @@ state to clients.
 
 ## Acceptance Criteria
 
-- Clients can inspect Effigy health and planned validation.
-- DTOs retain sanitized refs only.
-- Disabled or missing Effigy state is explicit.
+- [x] Clients can inspect Effigy health and planned validation.
+- [x] DTOs retain sanitized refs only.
+- [x] Disabled or missing Effigy state is explicit.
+
+## Outcome
+
+- Added Effigy diagnostics DTOs for integration status, selector refs, health,
+  validation-plan state, and evidence refs.
+- Kept Effigy execution unavailable through diagnostics.
 
 ## Validation
 
-- `cargo test -p nucleus-server effigy`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server effigy`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

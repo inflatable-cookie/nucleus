@@ -21,6 +21,7 @@ pub mod control_api;
 pub mod control_envelope_dto;
 pub mod control_serialization_readiness;
 pub mod deployment;
+pub mod diagnostics_read_models;
 pub mod event_replay;
 pub mod events;
 pub mod host_authority;
@@ -146,6 +147,15 @@ pub use control_serialization_readiness::{
     CONTROL_API_PROTOCOL_FAMILY, CONTROL_API_PROTOCOL_VERSION_V1,
 };
 pub use deployment::{AccessEndpoint, DeploymentMode, ServerRuntime};
+pub use diagnostics_read_models::{
+    effigy_diagnostics, scm_session_diagnostics, steward_diagnostics, sync_diagnostics,
+    EffigyDiagnosticsDto, ScmCommandAdmissionDiagnosticDto, ScmSessionDiagnosticsDto,
+    ScmSessionPlanDiagnosticDto, ScmWorkItemLinkDiagnosticDto,
+    StewardCommandAdmissionDiagnosticDto, StewardCommandOutcomeDiagnosticDto,
+    StewardDiagnosticsDto, StewardProposalDiagnosticDto, SyncAssistanceDiagnosticDto,
+    SyncCapturePrepDiagnosticDto, SyncDiagnosticsDto, SyncPlanDiagnosticDto,
+    SyncRepairDiagnosticDto,
+};
 pub use event_replay::{
     ServerEventReplayError, ServerEventReplayQuery, ServerEventReplayQueryScope,
     ServerEventReplayResponse, ServerEventReplayService, ServerEventReplayStatus,

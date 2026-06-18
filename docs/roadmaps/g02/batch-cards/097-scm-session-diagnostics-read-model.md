@@ -1,6 +1,6 @@
 # 097 SCM Session Diagnostics Read Model
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../023-client-read-model-and-diagnostics-runway.md`
@@ -17,18 +17,24 @@ Expose SCM working-session plans, constraints, and task linkage to clients.
 
 ## Acceptance Criteria
 
-- Clients can inspect session mode, testability, and cleanup policy.
-- Task linkage and repair states are visible.
-- DTOs do not assume Git-only terms.
+- [x] Clients can inspect session mode, testability, and cleanup policy.
+- [x] Task linkage and repair states are visible.
+- [x] DTOs do not assume Git-only terms.
+
+## Outcome
+
+- Added SCM session diagnostics DTOs for session plans, command admissions, and
+  work-item linkage.
+- Preserved provider-neutral session mode and repair visibility.
 
 ## Validation
 
-- `cargo test -p nucleus-server scm`
-- `cargo test -p nucleus-scm-forge`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server scm`
+- [x] `cargo test -p nucleus-scm-forge`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

@@ -1,6 +1,6 @@
 # 094 Steward Diagnostics Read Model
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../023-client-read-model-and-diagnostics-runway.md`
@@ -17,17 +17,23 @@ Expose steward proposal, command, approval, and receipt state to clients.
 
 ## Acceptance Criteria
 
-- Clients can inspect steward proposal and command state.
-- Approval state is visible.
-- DTOs do not allow client-owned mutation.
+- [x] Clients can inspect steward proposal and command state.
+- [x] Approval state is visible.
+- [x] DTOs do not allow client-owned mutation.
+
+## Outcome
+
+- Added steward diagnostics DTOs for proposals, command admission, command
+  outcomes, approval state, refs, and summaries.
+- Kept diagnostics read-only.
 
 ## Validation
 
-- `cargo test -p nucleus-server steward`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server steward`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

@@ -27,7 +27,7 @@ shape.
 - `g02/020-effigy-command-backed-inspection.md` - completed
 - `g02/021-management-projection-sync-runtime.md` - completed
 - `g02/022-scm-working-session-runtime.md` - completed
-- `g02/023-client-read-model-and-diagnostics-runway.md` - active
+- `g02/023-client-read-model-and-diagnostics-runway.md` - completed
 
 ## Previous Generation
 
@@ -86,5 +86,6 @@ shape.
 
 ## Next Task
 
-Continue `g02/023-client-read-model-and-diagnostics-runway.md`, starting with
-`g02/batch-cards/094-steward-diagnostics-read-model.md`.
+Pause for a planning checkpoint: review the completed G02 command/runtime
+runway and compile the next roadmap suite before starting another implementation
+lane.

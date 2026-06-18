@@ -10,17 +10,15 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `094-steward-diagnostics-read-model.md`
+- None.
 
 ## Planned Cards
 
 - `094-steward-diagnostics-read-model.md`
-- `095-effigy-diagnostics-read-model.md`
-- `096-sync-diagnostics-read-model.md`
-- `097-scm-session-diagnostics-read-model.md`
-- `098-client-diagnostics-dto-validation.md`
+- None.
 
-Cards 094-098 belong to `../023-client-read-model-and-diagnostics-runway.md`.
+The current prepared runway is complete. Compile the next suite before marking
+new cards ready.
 
 ## Completed Cards
 
@@ -117,3 +115,8 @@ Cards 094-098 belong to `../023-client-read-model-and-diagnostics-runway.md`.
 - `091-non-git-session-vocabulary-validation.md`
 - `092-scm-session-work-item-linkage.md`
 - `093-scm-session-runtime-validation.md`
+- `094-steward-diagnostics-read-model.md`
+- `095-effigy-diagnostics-read-model.md`
+- `096-sync-diagnostics-read-model.md`
+- `097-scm-session-diagnostics-read-model.md`
+- `098-client-diagnostics-dto-validation.md`

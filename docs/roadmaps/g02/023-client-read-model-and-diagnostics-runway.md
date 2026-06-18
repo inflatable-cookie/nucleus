@@ -1,6 +1,6 @@
 # 023 Client Read Model And Diagnostics Runway
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -18,31 +18,36 @@ client-readable diagnostics before UI design hardens.
 
 ## Goals
 
-- [ ] Add read models for steward command/proposal state.
-- [ ] Add read models for Effigy integration and health state.
-- [ ] Add read models for projection sync and SCM session state.
-- [ ] Keep the current UI disposable and server-first.
+- [x] Add read models for steward command/proposal state.
+- [x] Add read models for Effigy integration and health state.
+- [x] Add read models for projection sync and SCM session state.
+- [x] Keep the current UI disposable and server-first.
 
 ## Execution Plan
 
-- [ ] Steward diagnostics batch: expose steward proposals, command status, and
+- [x] Steward diagnostics batch: expose steward proposals, command status, and
   approval state.
-- [ ] Effigy diagnostics batch: expose selector inventory, health summary, and
+- [x] Effigy diagnostics batch: expose selector inventory, health summary, and
   validation-plan state.
-- [ ] Sync diagnostics batch: expose management projection sync plans and
+- [x] Sync diagnostics batch: expose management projection sync plans and
   conflict assistance.
-- [ ] SCM diagnostics batch: expose working-session planning and task linkage.
-- [ ] Client DTO validation batch: prove read models serialize through the
+- [x] SCM diagnostics batch: expose working-session planning and task linkage.
+- [x] Client DTO validation batch: prove read models serialize through the
   server boundary without UI authority drift.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/094-steward-diagnostics-read-model.md`
+- None.
 
 Planned cards:
 
+- None.
+
+Completed cards:
+
+- `batch-cards/094-steward-diagnostics-read-model.md`
 - `batch-cards/095-effigy-diagnostics-read-model.md`
 - `batch-cards/096-sync-diagnostics-read-model.md`
 - `batch-cards/097-scm-session-diagnostics-read-model.md`
@@ -50,10 +55,10 @@ Planned cards:
 
 ## Acceptance Criteria
 
-- [ ] Clients can inspect steward, Effigy, sync, and SCM state without owning
+- [x] Clients can inspect steward, Effigy, sync, and SCM state without owning
   it.
-- [ ] DTOs preserve authority boundaries.
-- [ ] The desktop remains a disposable proof surface for server functions.
+- [x] DTOs preserve authority boundaries.
+- [x] The desktop remains a disposable proof surface for server functions.
 
 ## Gate
 
