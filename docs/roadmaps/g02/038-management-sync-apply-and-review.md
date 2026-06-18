@@ -1,0 +1,78 @@
+# 038 Management Sync Apply And Review
+
+Status: active
+Owner: Tom
+Updated: 2026-06-18
+
+## Purpose
+
+Move repo-backed management sync from export/import staging into an explicit,
+reviewable apply loop.
+
+This lane applies validated project and task projection records into the active
+server working set. It does not commit, publish, push, promote, merge, open
+review requests, or run provider-specific SCM authority transitions.
+
+## Governing Refs
+
+- `docs/contracts/008-storage-state-persistence-contract.md`
+- `docs/contracts/011-scm-forge-sync-contract.md`
+- `docs/contracts/018-orchestration-contract.md`
+- `docs/contracts/023-task-backed-agent-workflow-contract.md`
+- `docs/architecture/implementation-gap-index.md`
+- `docs/roadmaps/long-term-plan.md`
+
+## Goals
+
+- [ ] Define apply authority for staged management projection records.
+- [ ] Add a command/service boundary for applying validated project and task
+      projection records.
+- [ ] Enforce revision, conflict, and unsupported-schema gates before state
+      changes.
+- [ ] Record receipts and audit evidence for applied management projection
+      changes.
+- [ ] Expose review-ready sync state for clients or steward assistance without
+      making clients authoritative.
+
+## Execution Plan
+
+- [ ] Policy batch: promote import-apply authority, revision expectations, and
+      no-silent-overwrite rules into canonical contracts.
+- [ ] Apply batch: add a bounded import-apply command path for staged project
+      and task projection records.
+- [ ] Conflict batch: prove expected-revision and semantic-conflict gates with
+      fixtures.
+- [ ] Receipt batch: persist sanitized apply receipts and timeline evidence.
+- [ ] Review batch: expose review/apply/conflict read models without adding UI
+      polish or SCM capture behavior.
+- [ ] Validation batch: close the lane and select the next workflow checkpoint.
+
+## Batch Cards
+
+Ready cards:
+
+- `batch-cards/169-management-projection-apply-policy-contract.md`
+
+Planned cards:
+
+- `batch-cards/170-management-projection-import-apply-command.md`
+- `batch-cards/171-management-projection-revision-conflict-gates.md`
+- `batch-cards/172-management-projection-apply-receipts-and-audit.md`
+- `batch-cards/173-management-sync-review-read-model.md`
+- `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
+
+## Acceptance Criteria
+
+- [ ] Valid staged project/task projection records can be applied only through
+      an admitted command boundary.
+- [ ] Invalid, unsupported, stale, or semantically conflicting records do not
+      mutate active state.
+- [ ] Apply operations record sanitized receipts and preserve staged evidence.
+- [ ] SCM capture/publish work remains outside this lane.
+- [ ] The next lane is selected from the long-term plan rather than invented
+      from the final card.
+
+## Gate
+
+Do not build steward automatic sync, SCM capture/publish, or desktop sync
+controls until apply authority, conflict review, and receipts are proven.

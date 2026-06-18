@@ -23,7 +23,7 @@ committable source.
 - [x] Define local-only versus committable management records.
 - [x] Prove export/import behavior for project and task projection files.
 - [x] Surface conflicts without silent overwrite.
-- [ ] Keep runtime progress, provider state, UI layout, and secrets local-only.
+- [x] Keep runtime progress, provider state, UI layout, and secrets local-only.
 
 ## Execution Plan
 

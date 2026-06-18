@@ -53,16 +53,21 @@ and engine boundary are settled.
 - `035-desktop-task-agent-progress-proof.md` - completed
 - `036-task-backed-workflow-validation-and-next-lane.md` - completed
 - `037-repo-backed-management-sync-hardening.md` - completed
+- `038-management-sync-apply-and-review.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- None. Operator review gate.
+- `batch-cards/169-management-projection-apply-policy-contract.md`
 
 Planned cards:
 
-- None.
+- `batch-cards/170-management-projection-import-apply-command.md`
+- `batch-cards/171-management-projection-revision-conflict-gates.md`
+- `batch-cards/172-management-projection-apply-receipts-and-audit.md`
+- `batch-cards/173-management-sync-review-read-model.md`
+- `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
 
 Completed cards:
 

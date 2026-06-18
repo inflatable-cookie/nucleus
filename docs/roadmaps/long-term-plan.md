@@ -28,7 +28,7 @@ created inside an approved phase when the phase is ready for execution.
 G02 is the orchestration and engine-core generation. Milestones 001-028 are
 complete, and the next runway is now selected.
 
-Selected next workflow proof:
+Completed workflow proof:
 
 - task-backed agent work unit
 
@@ -52,19 +52,24 @@ Current G02 continuation sequence:
 4. Codex runtime bridge proof for task-backed work - complete
 5. checkpoint/review loop for completed work units - complete
 6. desktop proof surface for task-agent progress - complete
-7. validation and next workflow selection - active
+7. validation and next workflow selection - complete
+8. repo-backed management sync hardening - complete
+9. management sync apply and review - active
 
-Selected follow-on workflow:
+Selected current workflow:
 
-- repo-backed management sync hardening
+- management sync apply and review
 
 Reason:
 
 - task-backed agent work now has a proof path, but task/project state still
   needs committable projection discipline before multi-user workflow,
   steward automation, or richer UI work should expand
-- native steward remains the next likely workflow after management projection
-  sync has a stronger import/export/conflict base
+- export/import/conflict staging now exists, but staged incoming state still
+  needs an explicit apply/review loop before steward automation or SCM
+  capture/publish work can be safe
+- native steward remains a likely follow-on after management projection apply
+  has safe revision gates, receipts, and review surfaces
 
 This keeps execution focused on one real workflow while protecting the core
 engine boundary from more proof-surface sprawl.
@@ -146,6 +151,8 @@ Current roadmap coverage:
 
 - `g02/007-management-projection-sync-foundation.md`
 - `g02/016-management-projection-file-io-and-sync.md`
+- `g02/037-repo-backed-management-sync-hardening.md`
+- `g02/038-management-sync-apply-and-review.md`
 
 ## Phase 3: SCM And Forge Workflow Engine
 
@@ -352,3 +359,4 @@ Resolved decisions:
 - `nucleus-engine` and `nucleus-orchestration` exist as the portable engine and
   orchestration boundaries.
 - `nucleusd` remains a host wrapper, not the system core.
+- Codex is the first bridged runtime target for task-backed agent work.

@@ -115,15 +115,24 @@ Likely crate:
 
 ### Management Projection Runtime
 
+Current state:
+
+- repo-backed project-management projection files exist for project, repo, and
+  task records under `nucleus/`
+- export writes deterministic TOML projection files
+- import staging validates project/task projection files and preserves incoming
+  records for review
+- conflict detection and steward-assistance routing exist as non-mutating
+  proof paths
+- committable versus local-only policy is documented for first-pass records
+
 Missing:
 
-- repo-backed project-management projection files
-- import/export
-- conflict detection
-- steward-assisted sync policy
+- explicit import-apply command boundary
+- expected-revision and no-silent-overwrite gates during apply
+- apply receipts and audit records
+- client/steward read models for apply plans, conflicts, and repair proposals
 - projection schema migration
-- clear policy separating committable task/project/planning state from
-  local-only runtime progress, provider state, and UI layout
 
 Likely crates:
 
@@ -181,12 +190,16 @@ Missing runtime:
 
 ## Suggested Next Implementation Gate
 
-The orchestration decision has been made and the task-backed workflow proof has
-validated a read-only progress path through fixtures.
+The orchestration decision has been made, the task-backed workflow proof has
+validated a read-only progress path through fixtures, and repo-backed
+management projection export/import/conflict staging has been hardened.
 
 The most useful next code lane is likely:
 
-1. keep the high god-file doctor failure visible as a health gate
-2. harden repo-backed management projection for task/project files
-3. define local-only versus committable task-management records
-4. prove export/import/conflict behavior before more provider runtime work
+1. keep warning-level god-file pressure visible as a health guardrail
+2. add an explicit import-apply boundary for staged project/task projection
+   records
+3. prove expected-revision, invalid-record, unsupported-schema, and semantic
+   conflict gates before active state can change
+4. record sanitized apply receipts and expose review-ready sync state before
+   steward automation, SCM capture/publish, or UI sync controls expand

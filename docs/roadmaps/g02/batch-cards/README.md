@@ -10,11 +10,15 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- None. Operator review gate.
+- `169-management-projection-apply-policy-contract.md`
 
 ## Planned Cards
 
-- None.
+- `170-management-projection-import-apply-command.md`
+- `171-management-projection-revision-conflict-gates.md`
+- `172-management-projection-apply-receipts-and-audit.md`
+- `173-management-sync-review-read-model.md`
+- `174-management-sync-apply-validation-and-next-lane.md`
 
 ## Completed Cards
 

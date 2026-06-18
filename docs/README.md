@@ -63,6 +63,8 @@ Current planning artifacts:
 - `roadmaps/g02/034-task-work-checkpoint-and-review-loop.md`
 - `roadmaps/g02/035-desktop-task-agent-progress-proof.md`
 - `roadmaps/g02/036-task-backed-workflow-validation-and-next-lane.md`
+- `roadmaps/g02/037-repo-backed-management-sync-hardening.md`
+- `roadmaps/g02/038-management-sync-apply-and-review.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -70,7 +72,7 @@ Current planning artifacts:
 
 ## Guardrail
 
-Do not widen provider runtime, remote transport, or UI timeline behavior while
-the active G02 runway is proving task-backed Codex work units. Keep task
-authority, admission, wait states, receipts, checkpoints, and review boundaries
-ahead of UI polish or broader provider support.
+Do not widen provider runtime, remote transport, or UI sync controls while the
+active G02 runway proves repo-backed management sync apply/review behavior.
+Keep projection authority, conflict review, receipts, and no-silent-overwrite
+rules ahead of steward automation or SCM capture/publish work.

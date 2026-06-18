@@ -39,8 +39,10 @@ shape.
 - `g02/032-codex-task-runtime-admission-bridge.md` - completed
 - `g02/033-codex-task-event-ingestion-and-receipts.md` - completed
 - `g02/034-task-work-checkpoint-and-review-loop.md` - completed
-- `g02/035-desktop-task-agent-progress-proof.md` - active
-- `g02/036-task-backed-workflow-validation-and-next-lane.md` - planned
+- `g02/035-desktop-task-agent-progress-proof.md` - completed
+- `g02/036-task-backed-workflow-validation-and-next-lane.md` - completed
+- `g02/037-repo-backed-management-sync-hardening.md` - completed
+- `g02/038-management-sync-apply-and-review.md` - active
 
 ## Previous Generation
 
@@ -99,5 +101,4 @@ shape.
 
 ## Next Task
 
-Review `g02/037-repo-backed-management-sync-hardening.md` and choose the next
-implementation lane.
+Execute `g02/batch-cards/169-management-projection-apply-policy-contract.md`.
