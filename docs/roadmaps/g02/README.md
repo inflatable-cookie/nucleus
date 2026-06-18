@@ -39,6 +39,11 @@ and engine boundary are settled.
 - `021-management-projection-sync-runtime.md` - completed
 - `022-scm-working-session-runtime.md` - completed
 - `023-client-read-model-and-diagnostics-runway.md` - completed
+- `024-diagnostics-control-api-query-surface.md` - active
+- `025-diagnostics-control-dto-serialization.md` - planned
+- `026-desktop-diagnostics-proof-surface.md` - planned
+- `027-diagnostics-read-model-source-integration.md` - planned
+- `028-next-product-workflow-selection.md` - planned
 
 ## Batch Cards
 
@@ -118,12 +123,34 @@ Completed cards:
 
 Ready cards:
 
-- None.
+- `batch-cards/099-control-api-diagnostics-query-kinds.md`
 
 Planned cards:
 
-- `batch-cards/094-steward-diagnostics-read-model.md`
-- None.
+- `batch-cards/100-server-query-result-diagnostics-variants.md`
+- `batch-cards/101-request-handler-diagnostics-query-routing.md`
+- `batch-cards/102-diagnostics-query-fixture-tests.md`
+- `batch-cards/103-diagnostics-query-validation.md`
+- `batch-cards/104-diagnostics-control-dto-record-shapes.md`
+- `batch-cards/105-response-envelope-diagnostics-serialization.md`
+- `batch-cards/106-tauri-ipc-diagnostics-boundary.md`
+- `batch-cards/107-diagnostics-dto-authority-guard-tests.md`
+- `batch-cards/108-diagnostics-dto-validation.md`
+- `batch-cards/109-desktop-diagnostics-control-helper.md`
+- `batch-cards/110-steward-effigy-diagnostics-panel.md`
+- `batch-cards/111-sync-scm-diagnostics-panel.md`
+- `batch-cards/112-desktop-diagnostics-loading-error-states.md`
+- `batch-cards/113-desktop-diagnostics-proof-validation.md`
+- `batch-cards/114-steward-diagnostics-source-records.md`
+- `batch-cards/115-effigy-diagnostics-source-records.md`
+- `batch-cards/116-sync-diagnostics-source-records.md`
+- `batch-cards/117-scm-diagnostics-source-records.md`
+- `batch-cards/118-diagnostics-source-integration-validation.md`
+- `batch-cards/119-g02-product-workflow-options-review.md`
+- `batch-cards/120-task-backed-agent-workflow-readiness-gate.md`
+- `batch-cards/121-scm-management-sync-workflow-readiness-gate.md`
+- `batch-cards/122-native-steward-workflow-readiness-gate.md`
+- `batch-cards/123-next-runway-selection-and-closeout.md`
 
 Completed cards:
 
@@ -202,6 +229,11 @@ The next G02 suite is:
 11. management projection sync runtime - completed
 12. SCM working session runtime - completed
 13. client read model and diagnostics runway - completed
+14. diagnostics control API query surface - active
+15. diagnostics control DTO serialization - planned
+16. desktop diagnostics proof surface - planned
+17. diagnostics read-model source integration - planned
+18. next product workflow selection - planned
 
 This keeps code health and authority-map clarity ahead of live provider and
 remote transport work.
@@ -220,8 +252,11 @@ remote transport work.
 - `021` completed management projection sync runtime records.
 - `022` completed SCM working-session runtime records.
 - `023` completed diagnostics read-model DTOs.
-- The next step is a planning checkpoint before compiling another
-  implementation runway.
+- `024` is active and exposes diagnostics read models through control queries.
+- `025` serializes diagnostics through control DTO envelopes.
+- `026` adds a disposable desktop diagnostics proof surface.
+- `027` connects diagnostics queries to available source records.
+- `028` selects the next product workflow proof.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

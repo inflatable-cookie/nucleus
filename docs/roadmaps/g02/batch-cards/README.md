@@ -10,15 +10,36 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- None.
+- `099-control-api-diagnostics-query-kinds.md`
 
 ## Planned Cards
 
-- `094-steward-diagnostics-read-model.md`
-- None.
+- `100-server-query-result-diagnostics-variants.md`
+- `101-request-handler-diagnostics-query-routing.md`
+- `102-diagnostics-query-fixture-tests.md`
+- `103-diagnostics-query-validation.md`
+- `104-diagnostics-control-dto-record-shapes.md`
+- `105-response-envelope-diagnostics-serialization.md`
+- `106-tauri-ipc-diagnostics-boundary.md`
+- `107-diagnostics-dto-authority-guard-tests.md`
+- `108-diagnostics-dto-validation.md`
+- `109-desktop-diagnostics-control-helper.md`
+- `110-steward-effigy-diagnostics-panel.md`
+- `111-sync-scm-diagnostics-panel.md`
+- `112-desktop-diagnostics-loading-error-states.md`
+- `113-desktop-diagnostics-proof-validation.md`
+- `114-steward-diagnostics-source-records.md`
+- `115-effigy-diagnostics-source-records.md`
+- `116-sync-diagnostics-source-records.md`
+- `117-scm-diagnostics-source-records.md`
+- `118-diagnostics-source-integration-validation.md`
+- `119-g02-product-workflow-options-review.md`
+- `120-task-backed-agent-workflow-readiness-gate.md`
+- `121-scm-management-sync-workflow-readiness-gate.md`
+- `122-native-steward-workflow-readiness-gate.md`
+- `123-next-runway-selection-and-closeout.md`
 
-The current prepared runway is complete. Compile the next suite before marking
-new cards ready.
+Cards 099-103 belong to `../024-diagnostics-control-api-query-surface.md`.
 
 ## Completed Cards
 

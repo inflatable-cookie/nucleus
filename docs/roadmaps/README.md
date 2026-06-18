@@ -28,6 +28,11 @@ shape.
 - `g02/021-management-projection-sync-runtime.md` - completed
 - `g02/022-scm-working-session-runtime.md` - completed
 - `g02/023-client-read-model-and-diagnostics-runway.md` - completed
+- `g02/024-diagnostics-control-api-query-surface.md` - active
+- `g02/025-diagnostics-control-dto-serialization.md` - planned
+- `g02/026-desktop-diagnostics-proof-surface.md` - planned
+- `g02/027-diagnostics-read-model-source-integration.md` - planned
+- `g02/028-next-product-workflow-selection.md` - planned
 
 ## Previous Generation
 
@@ -86,6 +91,5 @@ shape.
 
 ## Next Task
 
-Pause for a planning checkpoint: review the completed G02 command/runtime
-runway and compile the next roadmap suite before starting another implementation
-lane.
+Continue `g02/024-diagnostics-control-api-query-surface.md`, starting with
+`g02/batch-cards/099-control-api-diagnostics-query-kinds.md`.
