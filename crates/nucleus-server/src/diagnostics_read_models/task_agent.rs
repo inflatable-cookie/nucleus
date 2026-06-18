@@ -28,6 +28,14 @@ pub struct TaskAgentWorkUnitDiagnosticDto {
     pub last_source_id: String,
     pub last_cursor: String,
     pub source_count: usize,
+    pub session_id: Option<String>,
+    pub turn_ids: Vec<String>,
+    pub receipt_ids: Vec<String>,
+    pub checkpoint_ids: Vec<String>,
+    pub diff_summary_ids: Vec<String>,
+    pub timeline_entry_ids: Vec<String>,
+    pub validation_refs: Vec<String>,
+    pub artifact_refs: Vec<String>,
     pub issues: Vec<TaskAgentWorkUnitIssueDto>,
     pub summary: String,
 }
@@ -69,6 +77,34 @@ impl From<&EngineTaskAgentWorkUnitProjection> for TaskAgentWorkUnitDiagnosticDto
             last_source_id: projection.last_source_id.0.clone(),
             last_cursor: projection.last_cursor.0.clone(),
             source_count: projection.source_count,
+            session_id: projection.refs.session_id.as_ref().map(|id| id.0.clone()),
+            turn_ids: projection.refs.turn_ids.iter().map(|id| id.0.clone()).collect(),
+            receipt_ids: projection
+                .refs
+                .receipt_ids
+                .iter()
+                .map(|id| id.0.clone())
+                .collect(),
+            checkpoint_ids: projection
+                .refs
+                .checkpoint_ids
+                .iter()
+                .map(|id| id.0.clone())
+                .collect(),
+            diff_summary_ids: projection
+                .refs
+                .diff_summary_ids
+                .iter()
+                .map(|id| id.0.clone())
+                .collect(),
+            timeline_entry_ids: projection
+                .refs
+                .timeline_entry_ids
+                .iter()
+                .map(|id| id.0.clone())
+                .collect(),
+            validation_refs: projection.refs.validation_refs.clone(),
+            artifact_refs: projection.refs.artifact_refs.clone(),
             issues: projection
                 .issues
                 .iter()

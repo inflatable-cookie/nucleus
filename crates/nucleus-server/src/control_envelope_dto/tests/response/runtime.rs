@@ -3,6 +3,7 @@ use crate::control_api::{
     ServerQueryResult, ServerStateRecordSet,
 };
 use crate::control_envelope_dto::*;
+use crate::diagnostics_read_models::TaskAgentWorkUnitDiagnosticDto;
 use crate::ids::{ServerCommandId, ServerControlRequestId};
 use crate::read_only_command_control::ReadOnlyCommandControlResult;
 use crate::runtime_readiness_diagnostics::local_host_runtime_readiness_diagnostics;
@@ -147,4 +148,53 @@ fn response_envelope_dto_serializes_runtime_readiness_without_payloads() {
             "runtime readiness DTO should not contain {forbidden}"
         );
     }
+}
+
+#[test]
+fn response_envelope_dto_serializes_task_work_progress_without_authority() {
+    let response = ServerControlResponse {
+        request_id: ServerControlRequestId("request:dto:task-work-progress".to_owned()),
+        status: ServerControlResponseStatus::Complete,
+        body: ServerControlResponseBody::Query(ServerQueryResult::TaskWorkProgress(vec![
+            TaskAgentWorkUnitDiagnosticDto {
+                work_item_id: "work:1".to_owned(),
+                project_id: "project:1".to_owned(),
+                task_id: "task:1".to_owned(),
+                runtime: "waiting_for_approval".to_owned(),
+                review: "awaiting_review".to_owned(),
+                last_source_id: "source:1".to_owned(),
+                last_cursor: "cursor:1".to_owned(),
+                source_count: 2,
+                session_id: Some("session:1".to_owned()),
+                turn_ids: Vec::new(),
+                receipt_ids: vec!["receipt:1".to_owned()],
+                checkpoint_ids: vec!["checkpoint:1".to_owned()],
+                diff_summary_ids: vec!["diff:1".to_owned()],
+                timeline_entry_ids: Vec::new(),
+                validation_refs: vec!["validation:1".to_owned()],
+                artifact_refs: vec!["artifact:summary".to_owned()],
+                issues: Vec::new(),
+                summary: "waiting for approval".to_owned(),
+            },
+        ])),
+    };
+
+    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
+    let json = serde_json::to_string(&dto).expect("json");
+
+    assert!(matches!(
+        dto.body,
+        ControlResponseBodyDto::TaskWorkProgressRecords {
+            records,
+            client_can_mutate: false,
+            provider_execution_available: false,
+        } if records.len() == 1
+            && records[0].runtime == "waiting_for_approval"
+            && records[0].review == "awaiting_review"
+            && records[0].checkpoint_ids == vec!["checkpoint:1".to_owned()]
+            && records[0].diff_summary_ids == vec!["diff:1".to_owned()]
+    ));
+    assert!(json.contains("\"type\":\"task_work_progress_records\""));
+    assert!(!json.contains("raw_stdout"));
+    assert!(!json.contains("provider_payload"));
 }

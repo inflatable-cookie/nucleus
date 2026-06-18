@@ -1,6 +1,6 @@
 # 158 Desktop Task Agent Progress Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../035-desktop-task-agent-progress-proof.md`
@@ -33,3 +33,9 @@ Validate the desktop task-agent progress proof surface.
 ## Stop Conditions
 
 - Stop if UI becomes product design work.
+
+## Result
+
+- Validated server DTO/query routing and the desktop progress proof shell.
+- Preserved read-only posture through DTO tests and panel shape.
+- Advanced the next ready card to workflow fixture validation.

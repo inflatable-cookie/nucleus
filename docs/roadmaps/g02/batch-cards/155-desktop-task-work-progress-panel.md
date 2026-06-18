@@ -1,6 +1,6 @@
 # 155 Desktop Task Work Progress Panel
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../035-desktop-task-agent-progress-proof.md`
@@ -31,3 +31,9 @@ Render task work-unit progress in the disposable desktop proof shell.
 ## Stop Conditions
 
 - Stop if panel work becomes final UI design.
+
+## Result
+
+- Added `TaskWorkProgressPanel.svelte` to the disposable desktop proof shell.
+- Reused the control envelope helpers and response mappers.
+- Rendered loading, empty, unsupported, error, list, and detail states.

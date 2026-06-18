@@ -19,7 +19,7 @@ use crate::client_protocol::ProjectAuthorityMapPublicationRecord;
 use crate::commands::ServerCommand;
 use crate::diagnostics_read_models::{
     EffigyDiagnosticsDto, ScmSessionDiagnosticsDto, StewardDiagnosticsDto, SyncDiagnosticsDto,
-    TaskAgentDiagnosticsDto,
+    TaskAgentDiagnosticsDto, TaskAgentWorkUnitDiagnosticDto,
 };
 use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
@@ -114,6 +114,7 @@ pub enum RuntimeMetadataQuery {
     ListRuntimeReceipts,
     ListCheckpointRecords,
     ListDiffSummaryRecords,
+    ListTaskWorkProgress,
     ListArtifactMetadata,
     GetLocalRuntimeReadiness,
 }
@@ -196,6 +197,7 @@ pub enum ServerQueryResult {
     RuntimeReceipts(Vec<EngineRuntimeReceiptRecord>),
     CheckpointRecords(Vec<EngineCheckpointRecord>),
     DiffSummaryRecords(Vec<EngineDiffSummaryRecord>),
+    TaskWorkProgress(Vec<TaskAgentWorkUnitDiagnosticDto>),
     Diagnostics(ServerDiagnosticsQueryResult),
     TaskTimeline(EngineTaskTimelineProjection),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),

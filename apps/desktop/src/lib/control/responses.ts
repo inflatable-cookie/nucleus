@@ -3,6 +3,7 @@ import type {
   ControlDiagnosticsResultDto,
   ControlProjectRecordDto,
   ControlRuntimeReadinessDiagnosticDto,
+  TaskAgentWorkUnitDiagnosticDto,
   ControlTaskRecordDto,
 } from "./types";
 import type { ControlResponseEnvelopeDto } from "./envelopes";
@@ -33,6 +34,30 @@ export type RuntimeReadinessQueryResult =
   | {
       state: "records";
       records: ControlRuntimeReadinessDiagnosticDto[];
+    }
+  | {
+      state: "empty";
+    }
+  | {
+      state: "unsupported";
+      reason: string;
+    }
+  | {
+      state: "error";
+      kind: string;
+      reason: string;
+    }
+  | {
+      state: "unexpected";
+      reason: string;
+    };
+
+export type TaskWorkProgressQueryResult =
+  | {
+      state: "records";
+      records: TaskAgentWorkUnitDiagnosticDto[];
+      client_can_mutate: false;
+      provider_execution_available: false;
     }
   | {
       state: "empty";
@@ -141,6 +166,38 @@ export function runtimeReadinessFromResponse(
       return {
         state: "unexpected",
         reason: `unexpected runtime readiness response: ${response.body.type}`,
+      };
+  }
+}
+
+export function taskWorkProgressFromResponse(
+  response: ControlResponseEnvelopeDto,
+): TaskWorkProgressQueryResult {
+  switch (response.body.type) {
+    case "task_work_progress_records":
+      return {
+        state: "records",
+        records: response.body.records,
+        client_can_mutate: response.body.client_can_mutate,
+        provider_execution_available: response.body.provider_execution_available,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return {
+        state: "unsupported",
+        reason: response.body.reason,
+      };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected task work progress response: ${response.body.type}`,
       };
   }
 }

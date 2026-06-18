@@ -99,5 +99,5 @@ shape.
 
 ## Next Task
 
-Review `g02/035-desktop-task-agent-progress-proof.md`, starting with
-`g02/batch-cards/154-task-work-progress-control-dtos.md`.
+Review `g02/036-task-backed-workflow-validation-and-next-lane.md`, starting
+with `g02/batch-cards/159-task-backed-workflow-fixture-validation.md`.

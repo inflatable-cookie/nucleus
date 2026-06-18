@@ -52,6 +52,7 @@ mod project_queries;
 mod read_only_commands;
 mod runtime_auth;
 mod steward_commands;
+mod task_work_progress_query;
 mod task_authoring;
 mod task_transitions;
 

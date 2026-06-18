@@ -159,6 +159,12 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                     action: "list_diff_summary_records".to_owned(),
                 })
             }
+            ServerQueryKind::RuntimeMetadata(RuntimeMetadataQuery::ListTaskWorkProgress) => {
+                Ok(Self::RuntimeMetadata {
+                    query_id: query.id.0.clone(),
+                    action: "list_task_work_progress".to_owned(),
+                })
+            }
             ServerQueryKind::RuntimeMetadata(RuntimeMetadataQuery::GetLocalRuntimeReadiness) => {
                 Ok(Self::RuntimeMetadata {
                     query_id: query.id.0.clone(),
@@ -230,6 +236,9 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
                 )),
                 "list_diff_summary_records" => Ok(ServerQueryKind::RuntimeMetadata(
                     RuntimeMetadataQuery::ListDiffSummaryRecords,
+                )),
+                "list_task_work_progress" => Ok(ServerQueryKind::RuntimeMetadata(
+                    RuntimeMetadataQuery::ListTaskWorkProgress,
                 )),
                 "get_local_runtime_readiness" => Ok(ServerQueryKind::RuntimeMetadata(
                     RuntimeMetadataQuery::GetLocalRuntimeReadiness,

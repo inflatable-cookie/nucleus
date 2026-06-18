@@ -8,7 +8,7 @@ use super::types::{
     EngineTaskAgentWorkUnitSourceCursor, EngineTaskAgentWorkUnitSourceId,
     EngineTaskAgentWorkUnitSourceRecord,
 };
-use crate::EngineTaskWorkItemId;
+use crate::{EngineTaskWorkItemId, EngineTaskWorkItemRefs};
 
 /// Rebuildable projection for one task-backed work unit.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -21,6 +21,7 @@ pub struct EngineTaskAgentWorkUnitProjection {
     pub last_source_id: EngineTaskAgentWorkUnitSourceId,
     pub last_cursor: EngineTaskAgentWorkUnitSourceCursor,
     pub source_count: usize,
+    pub refs: EngineTaskWorkItemRefs,
     pub issues: Vec<EngineTaskAgentWorkUnitProjectionIssue>,
     pub summary: String,
 }
@@ -60,6 +61,7 @@ pub fn project_task_agent_work_units(
                 last_source_id: latest.source_id.clone(),
                 last_cursor: latest.source_cursor.clone(),
                 source_count: group.len(),
+                refs: latest.refs.clone(),
                 issues: group
                     .iter()
                     .flat_map(|record| projection_issues(record))

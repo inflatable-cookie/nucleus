@@ -7,6 +7,7 @@ import {
   type ControlProjectRecordDto,
   type ControlRuntimeReadinessDiagnosticDto,
   type ControlStateDomain,
+  type TaskAgentWorkUnitDiagnosticDto,
   type ControlTaskRecordDto,
   type ControlTaskTransitionAction,
   type DiagnosticsDomain,
@@ -81,6 +82,12 @@ export type ControlResponseEnvelopeDto = {
         records: ControlRuntimeReadinessDiagnosticDto[];
       }
     | {
+        type: "task_work_progress_records";
+        records: TaskAgentWorkUnitDiagnosticDto[];
+        client_can_mutate: false;
+        provider_execution_available: false;
+      }
+    | {
         type: "diagnostics";
         result: ControlDiagnosticsResultDto;
       }
@@ -151,6 +158,10 @@ export function buildArtifactMetadataProbe(): ControlRequestEnvelopeDto {
 
 export function buildCommandHistoryQuery(): ControlRequestEnvelopeDto {
   return buildRuntimeMetadataQuery("list_command_evidence");
+}
+
+export function buildTaskWorkProgressQuery(): ControlRequestEnvelopeDto {
+  return buildRuntimeMetadataQuery("list_task_work_progress");
 }
 
 export function buildRuntimeReadinessQuery(): ControlRequestEnvelopeDto {

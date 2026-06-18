@@ -20,6 +20,7 @@ use super::records::{
 use crate::control_envelope_dto::{
     ControlApiCodecError, ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
 };
+use crate::diagnostics_read_models::TaskAgentWorkUnitDiagnosticDto;
 
 /// Serializable response body DTO.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -50,6 +51,11 @@ pub enum ControlResponseBodyDto {
     },
     DiffSummaryRecords {
         records: Vec<ControlDiffSummaryRecordDto>,
+    },
+    TaskWorkProgressRecords {
+        records: Vec<TaskAgentWorkUnitDiagnosticDto>,
+        client_can_mutate: bool,
+        provider_execution_available: bool,
     },
     RuntimeReadinessDiagnostics {
         records: Vec<ControlRuntimeReadinessDiagnosticDto>,
@@ -144,6 +150,13 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                         .iter()
                         .map(ControlDiffSummaryRecordDto::from)
                         .collect(),
+                })
+            }
+            ServerControlResponseBody::Query(ServerQueryResult::TaskWorkProgress(records)) => {
+                Ok(Self::TaskWorkProgressRecords {
+                    records: records.clone(),
+                    client_can_mutate: false,
+                    provider_execution_available: false,
                 })
             }
             ServerControlResponseBody::Query(ServerQueryResult::TaskTimeline(projection)) => {

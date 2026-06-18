@@ -243,7 +243,17 @@
             task_revision: None,
             runtime: EngineTaskAgentWorkUnitRuntimeStatus::Scheduled,
             review: EngineTaskAgentWorkUnitReviewStatus::NotReady,
-            refs: EngineTaskWorkItemRefs::default(),
+            refs: EngineTaskWorkItemRefs {
+                session_id: Some(nucleus_agent_protocol::AgentSessionId(
+                    "session:codex:1".to_owned(),
+                )),
+                receipt_ids: vec![EngineRuntimeReceiptRecordId("receipt:1".to_owned())],
+                checkpoint_ids: vec![EngineCheckpointRecordId("checkpoint:1".to_owned())],
+                diff_summary_ids: vec![EngineDiffSummaryRecordId("diff:1".to_owned())],
+                validation_refs: vec!["validation:1".to_owned()],
+                artifact_refs: vec!["artifact:summary".to_owned()],
+                ..EngineTaskWorkItemRefs::default()
+            },
             previous_source_id: None,
             summary: "provider execution deferred".to_owned(),
         };
@@ -256,6 +266,22 @@
         assert_eq!(diagnostics.source_status, "records");
         assert_eq!(diagnostics.work_units[0].runtime, "scheduled");
         assert_eq!(diagnostics.work_units[0].review, "not_ready");
+        assert_eq!(
+            diagnostics.work_units[0].session_id,
+            Some("session:codex:1".to_owned())
+        );
+        assert_eq!(
+            diagnostics.work_units[0].receipt_ids,
+            vec!["receipt:1".to_owned()]
+        );
+        assert_eq!(
+            diagnostics.work_units[0].checkpoint_ids,
+            vec!["checkpoint:1".to_owned()]
+        );
+        assert_eq!(
+            diagnostics.work_units[0].diff_summary_ids,
+            vec!["diff:1".to_owned()]
+        );
         assert!(!json.contains("raw_stdout"));
         assert!(!json.contains("provider payload"));
     }

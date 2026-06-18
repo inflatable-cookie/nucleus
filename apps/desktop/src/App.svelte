@@ -7,6 +7,7 @@
   import RuntimeReadinessPanel from "./lib/RuntimeReadinessPanel.svelte";
   import TaskDetailPanel from "./lib/TaskDetailPanel.svelte";
   import TaskListPanel from "./lib/TaskListPanel.svelte";
+  import TaskWorkProgressPanel from "./lib/TaskWorkProgressPanel.svelte";
   import type { ControlTaskRecordDto } from "./lib/control";
 
   let selectedProjectId = $state<string | null>(null);
@@ -49,6 +50,7 @@
         }}
       />
       <RuntimeReadinessPanel />
+      <TaskWorkProgressPanel />
       <CommandDiagnosticsPanel />
       <DiagnosticsProofPanel />
       <ControlDiagnosticsPanel />

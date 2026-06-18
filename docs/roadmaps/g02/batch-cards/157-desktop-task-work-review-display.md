@@ -1,6 +1,6 @@
 # 157 Desktop Task Work Review Display
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../035-desktop-task-agent-progress-proof.md`
@@ -31,3 +31,9 @@ Display task work-unit review state in the disposable desktop proof shell.
 ## Stop Conditions
 
 - Stop if review display needs real SCM actions.
+
+## Result
+
+- Displayed review state separately from runtime state.
+- Surfaced checkpoint and diff refs in the selected work-unit detail view.
+- Kept accept, reject, and SCM mutation controls absent.

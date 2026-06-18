@@ -1,6 +1,6 @@
 # 154 Task Work Progress Control DTOs
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../035-desktop-task-agent-progress-proof.md`
@@ -31,3 +31,11 @@ Add control DTOs for task work-unit progress.
 ## Stop Conditions
 
 - Stop if DTOs need final UI layout choices.
+
+## Result
+
+- Added `list_task_work_progress` as a read-only runtime metadata query.
+- Added task work progress response DTOs with mutation and provider execution
+  authority fixed to `false`.
+- Extended task-agent diagnostics records with session, receipt, checkpoint,
+  diff, validation, artifact, and timeline refs.

@@ -1,6 +1,6 @@
 # 036 Task Backed Workflow Validation And Next Lane
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -33,9 +33,12 @@ lane.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/159-task-backed-workflow-fixture-validation.md`
+
+Planned cards:
+
 - `batch-cards/160-task-backed-findings-promotion.md`
 - `batch-cards/161-post-runtime-health-gate.md`
 - `batch-cards/162-next-workflow-lane-selection.md`

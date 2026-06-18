@@ -1,6 +1,6 @@
 # 156 Desktop Task Work Wait State Display
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../035-desktop-task-agent-progress-proof.md`
@@ -31,3 +31,9 @@ Display task work-unit wait states without granting approval authority.
 ## Stop Conditions
 
 - Stop if approval UX needs product design.
+
+## Result
+
+- Displayed waiting runtime states as distinct read-only status pills.
+- Kept approval, resume, and cancellation controls absent.
+- Preserved source and evidence refs in detail rows.

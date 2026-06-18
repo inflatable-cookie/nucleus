@@ -50,22 +50,17 @@ and engine boundary are settled.
 - `032-codex-task-runtime-admission-bridge.md` - completed
 - `033-codex-task-event-ingestion-and-receipts.md` - completed
 - `034-task-work-checkpoint-and-review-loop.md` - completed
-- `035-desktop-task-agent-progress-proof.md` - active
-- `036-task-backed-workflow-validation-and-next-lane.md` - planned
+- `035-desktop-task-agent-progress-proof.md` - completed
+- `036-task-backed-workflow-validation-and-next-lane.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/154-task-work-progress-control-dtos.md`
+- `batch-cards/159-task-backed-workflow-fixture-validation.md`
 
 Planned cards:
 
-- `batch-cards/155-desktop-task-work-progress-panel.md`
-- `batch-cards/156-desktop-task-work-wait-state-display.md`
-- `batch-cards/157-desktop-task-work-review-display.md`
-- `batch-cards/158-desktop-task-agent-progress-validation.md`
-- `batch-cards/159-task-backed-workflow-fixture-validation.md`
 - `batch-cards/160-task-backed-findings-promotion.md`
 - `batch-cards/161-post-runtime-health-gate.md`
 - `batch-cards/162-next-workflow-lane-selection.md`
@@ -226,6 +221,11 @@ Completed cards:
 - `batch-cards/151-task-work-review-command-shapes.md`
 - `batch-cards/152-task-work-review-timeline-projection.md`
 - `batch-cards/153-task-work-review-validation.md`
+- `batch-cards/154-task-work-progress-control-dtos.md`
+- `batch-cards/155-desktop-task-work-progress-panel.md`
+- `batch-cards/156-desktop-task-work-wait-state-display.md`
+- `batch-cards/157-desktop-task-work-review-display.md`
+- `batch-cards/158-desktop-task-agent-progress-validation.md`
 
 ## Planned Runway Sequence
 

@@ -5,6 +5,7 @@ export const CONTROL_CLIENT_ID = "client:desktop";
 export type RuntimeMetadataAction =
   | "list_artifact_metadata"
   | "list_command_evidence"
+  | "list_task_work_progress"
   | "get_local_runtime_readiness";
 export type DiagnosticsDomain =
   | "steward"
@@ -202,6 +203,14 @@ export type TaskAgentWorkUnitDiagnosticDto = {
   last_source_id: string;
   last_cursor: string;
   source_count: number;
+  session_id: string | null;
+  turn_ids: string[];
+  receipt_ids: string[];
+  checkpoint_ids: string[];
+  diff_summary_ids: string[];
+  timeline_entry_ids: string[];
+  validation_refs: string[];
+  artifact_refs: string[];
   issues: TaskAgentWorkUnitIssueDto[];
   summary: string;
 };

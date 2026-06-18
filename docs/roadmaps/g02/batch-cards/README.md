@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `154-task-work-progress-control-dtos.md`
+- `159-task-backed-workflow-fixture-validation.md`
 
 ## Planned Cards
 
-- `155-desktop-task-work-progress-panel.md`
-- `156-desktop-task-work-wait-state-display.md`
-- `157-desktop-task-work-review-display.md`
-- `158-desktop-task-agent-progress-validation.md`
-- `159-task-backed-workflow-fixture-validation.md`
 - `160-task-backed-findings-promotion.md`
 - `161-post-runtime-health-gate.md`
 - `162-next-workflow-lane-selection.md`
@@ -179,3 +174,8 @@ Hold execution cards for `g02`.
 - `151-task-work-review-command-shapes.md`
 - `152-task-work-review-timeline-projection.md`
 - `153-task-work-review-validation.md`
+- `154-task-work-progress-control-dtos.md`
+- `155-desktop-task-work-progress-panel.md`
+- `156-desktop-task-work-wait-state-display.md`
+- `157-desktop-task-work-review-display.md`
+- `158-desktop-task-agent-progress-validation.md`

@@ -236,6 +236,9 @@ where
         RuntimeMetadataQuery::ListDiffSummaryRecords => read_diff_summary_records(handler.state())
             .map(ServerQueryResult::DiffSummaryRecords)
             .map_err(storage_error),
+        RuntimeMetadataQuery::ListTaskWorkProgress => Ok(ServerQueryResult::TaskWorkProgress(
+            empty_task_agent_diagnostics().work_units,
+        )),
         RuntimeMetadataQuery::ListArtifactMetadata => read_state_records(
             handler.state.artifact_metadata(),
             StateRecordQueryScope::List,

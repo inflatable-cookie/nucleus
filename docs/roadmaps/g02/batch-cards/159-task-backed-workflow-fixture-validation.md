@@ -1,6 +1,6 @@
 # 159 Task Backed Workflow Fixture Validation
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../036-task-backed-workflow-validation-and-next-lane.md`
