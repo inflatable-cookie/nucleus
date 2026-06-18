@@ -1,6 +1,6 @@
 # 090 Git Session Admission Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../022-scm-working-session-runtime.md`
@@ -17,17 +17,23 @@ Map Git branch and worktree possibilities into neutral admission records.
 
 ## Acceptance Criteria
 
-- Git branch/worktree labels do not leak into neutral core vocabulary.
-- Admission can represent blocked or unsupported runtime constraints.
-- No Git command is executed.
+- [x] Git branch/worktree labels do not leak into neutral core vocabulary.
+- [x] Admission can represent blocked or unsupported runtime constraints.
+- [x] No Git command is executed.
+
+## Outcome
+
+- Added admission records for Git-like primary and isolated session plans.
+- Admission can accept, block, require approval, reject, or report unsupported
+  capabilities without running Git.
 
 ## Validation
 
-- `cargo test -p nucleus-scm-forge git`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-scm-forge git`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

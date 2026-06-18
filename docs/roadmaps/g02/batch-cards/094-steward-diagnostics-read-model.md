@@ -1,6 +1,6 @@
 # 094 Steward Diagnostics Read Model
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../023-client-read-model-and-diagnostics-runway.md`

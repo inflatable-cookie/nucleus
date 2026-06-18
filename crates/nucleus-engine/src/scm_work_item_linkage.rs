@@ -4,7 +4,7 @@
 //! change refs, checkpoints, diff summaries, and receipts. They do not publish,
 //! merge, push, open review requests, or call forge APIs.
 
-use nucleus_scm_forge::{ScmChangeRef, ScmWorkSessionId};
+use nucleus_scm_forge::{ScmChangeRef, ScmSessionCommandId, ScmWorkSessionId};
 use nucleus_tasks::TaskId;
 
 use crate::{
@@ -23,6 +23,7 @@ pub struct EngineScmWorkItemLinkRecord {
     pub task_id: TaskId,
     pub work_item_id: EngineTaskWorkItemId,
     pub work_session_id: ScmWorkSessionId,
+    pub session_command_ids: Vec<ScmSessionCommandId>,
     pub change_refs: Vec<ScmChangeRef>,
     pub checkpoint_ids: Vec<EngineCheckpointRecordId>,
     pub diff_summary_ids: Vec<EngineDiffSummaryRecordId>,
@@ -45,6 +46,7 @@ impl EngineScmWorkItemLinkRecord {
             task_id: work_item.task_id.clone(),
             work_item_id: work_item.work_item_id.clone(),
             work_session_id,
+            session_command_ids: Vec::new(),
             change_refs,
             checkpoint_ids: work_item.refs.checkpoint_ids.clone(),
             diff_summary_ids: work_item.refs.diff_summary_ids.clone(),
@@ -81,6 +83,15 @@ impl EngineScmWorkItemLinkRecord {
                 | EngineScmWorkItemLinkState::SupersededChangeRef { .. }
                 | EngineScmWorkItemLinkState::RepairRequired(_)
         )
+    }
+
+    pub fn with_session_command_ids(mut self, command_ids: Vec<ScmSessionCommandId>) -> Self {
+        self.session_command_ids = command_ids;
+        self
+    }
+
+    pub fn has_session_command_evidence(&self) -> bool {
+        !self.session_command_ids.is_empty()
     }
 }
 
@@ -214,5 +225,24 @@ mod tests {
 
         assert!(missing.requires_repair());
         assert!(superseded.requires_repair());
+    }
+
+    #[test]
+    fn scm_session_command_evidence_links_to_work_items_by_reference() {
+        let link = EngineScmWorkItemLinkRecord::from_work_item(
+            EngineScmWorkItemLinkId("link:session-command".to_owned()),
+            &work_item(),
+            ScmWorkSessionId("scm-session:command".to_owned()),
+            vec![change_ref(ScmChangeKind::Snapshot, "snapshot:captured")],
+            EngineScmWorkItemLinkState::Linked,
+        )
+        .with_session_command_ids(vec![
+            ScmSessionCommandId("scm-command:prepare".to_owned()),
+            ScmSessionCommandId("scm-command:inspect".to_owned()),
+        ]);
+
+        assert!(link.has_session_command_evidence());
+        assert_eq!(link.session_command_ids.len(), 2);
+        assert!(link.keeps_checkpoint_diff_refs_separate_from_changes());
     }
 }

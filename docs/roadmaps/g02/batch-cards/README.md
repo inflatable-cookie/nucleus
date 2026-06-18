@@ -10,21 +10,17 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `089-scm-session-command-records.md`
+- `094-steward-diagnostics-read-model.md`
 
 ## Planned Cards
 
-- `090-git-session-admission-records.md`
-- `091-non-git-session-vocabulary-validation.md`
-- `092-scm-session-work-item-linkage.md`
-- `093-scm-session-runtime-validation.md`
 - `094-steward-diagnostics-read-model.md`
 - `095-effigy-diagnostics-read-model.md`
 - `096-sync-diagnostics-read-model.md`
 - `097-scm-session-diagnostics-read-model.md`
 - `098-client-diagnostics-dto-validation.md`
 
-Cards 089-093 belong to `../022-scm-working-session-runtime.md`.
+Cards 094-098 belong to `../023-client-read-model-and-diagnostics-runway.md`.
 
 ## Completed Cards
 
@@ -116,3 +112,8 @@ Cards 089-093 belong to `../022-scm-working-session-runtime.md`.
 - `086-projection-conflict-assistance-routing.md`
 - `087-management-capture-prep-records.md`
 - `088-management-sync-runtime-validation.md`
+- `089-scm-session-command-records.md`
+- `090-git-session-admission-records.md`
+- `091-non-git-session-vocabulary-validation.md`
+- `092-scm-session-work-item-linkage.md`
+- `093-scm-session-runtime-validation.md`

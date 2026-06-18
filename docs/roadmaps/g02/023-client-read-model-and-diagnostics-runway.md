@@ -1,6 +1,6 @@
 # 023 Client Read Model And Diagnostics Runway
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -37,9 +37,12 @@ client-readable diagnostics before UI design hardens.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/094-steward-diagnostics-read-model.md`
+
+Planned cards:
+
 - `batch-cards/095-effigy-diagnostics-read-model.md`
 - `batch-cards/096-sync-diagnostics-read-model.md`
 - `batch-cards/097-scm-session-diagnostics-read-model.md`

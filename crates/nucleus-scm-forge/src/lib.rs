@@ -20,6 +20,7 @@ pub mod runtime_effects;
 pub mod runtime_events;
 pub mod runtime_states;
 pub mod scm;
+pub mod session_commands;
 pub mod traits;
 pub mod webhooks;
 pub mod work_sessions;
@@ -81,6 +82,10 @@ pub use scm::{
     ScmBranchRef, ScmChangeKind, ScmChangeRef, ScmCommitRef, ScmProviderKind, ScmRemoteRef,
     ScmRepositoryRef, ScmRuntimeConstraint, ScmWorkIsolationMode, ScmWorkSession,
     ScmWorkSessionStatus, ScmWorkflowPrimitive, ScmWorkflowSemantics, ScmWorktreeRef,
+};
+pub use session_commands::{
+    ScmSessionCommandAdmission, ScmSessionCommandAdmissionStatus, ScmSessionCommandEvidenceRef,
+    ScmSessionCommandId, ScmSessionCommandKind, ScmSessionCommandRequest, ScmSessionCommandScope,
 };
 pub use traits::{
     AdapterReadiness, ForgeAdapterSurface, ObservationSourceSurface, ScmAdapterSurface,

@@ -1,6 +1,6 @@
 # 089 SCM Session Command Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../022-scm-working-session-runtime.md`
@@ -18,18 +18,24 @@ mutation.
 
 ## Acceptance Criteria
 
-- SCM session commands are provider-neutral.
-- Commands can represent unsupported provider capabilities.
-- Commands cannot imply commit, push, merge, or publication.
+- [x] SCM session commands are provider-neutral.
+- [x] Commands can represent unsupported provider capabilities.
+- [x] Commands cannot imply commit, push, merge, or publication.
+
+## Outcome
+
+- Added provider-neutral SCM session command records.
+- Commands can carry prepare, inspect, integrate, and cleanup intent without
+  executing provider mutation.
 
 ## Validation
 
-- `cargo test -p nucleus-scm-forge`
-- `cargo test -p nucleus-engine scm`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-scm-forge`
+- [x] `cargo test -p nucleus-engine scm`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

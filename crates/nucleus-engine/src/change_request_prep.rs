@@ -132,7 +132,9 @@ pub enum EngineChangeRequestPrepStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nucleus_scm_forge::{ScmChangeKind, ScmProviderRef, ScmRepositoryRefId, ScmWorkSessionId};
+    use nucleus_scm_forge::{
+        ScmChangeKind, ScmProviderRef, ScmRepositoryRefId, ScmSessionCommandId, ScmWorkSessionId,
+    };
 
     use crate::{EngineScmWorkItemLinkId, EngineScmWorkItemLinkRecord, EngineScmWorkItemLinkState};
 
@@ -151,6 +153,7 @@ mod tests {
             task_id: TaskId("task:1".to_owned()),
             work_item_id: EngineTaskWorkItemId("work:1".to_owned()),
             work_session_id: ScmWorkSessionId("session:scm".to_owned()),
+            session_command_ids: vec![ScmSessionCommandId("scm-command:1".to_owned())],
             change_refs: vec![change_ref],
             checkpoint_ids: vec![EngineCheckpointRecordId("checkpoint:1".to_owned())],
             diff_summary_ids: vec![EngineDiffSummaryRecordId("diff:1".to_owned())],

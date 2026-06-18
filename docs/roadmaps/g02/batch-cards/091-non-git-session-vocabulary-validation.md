@@ -1,6 +1,6 @@
 # 091 Non-Git Session Vocabulary Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../022-scm-working-session-runtime.md`
@@ -18,18 +18,24 @@ first-class.
 
 ## Acceptance Criteria
 
-- Non-Git session records remain viable.
-- Commit and branch are not required fields in neutral command records.
-- Publication/gate vocabulary can flow to change-request prep.
+- [x] Non-Git session records remain viable.
+- [x] Commit and branch are not required fields in neutral command records.
+- [x] Publication/gate vocabulary can flow to change-request prep.
+
+## Outcome
+
+- Added Convergence-style command/admission coverage for snapshot,
+  publication, and gate vocabulary.
+- Preserved non-Git change-request prep viability.
 
 ## Validation
 
-- `cargo test -p nucleus-scm-forge convergence`
-- `cargo test -p nucleus-engine change_request`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-scm-forge convergence`
+- [x] `cargo test -p nucleus-engine change_request`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 
