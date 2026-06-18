@@ -122,17 +122,31 @@ Current state:
 - export writes deterministic TOML projection files
 - import staging validates project/task projection files and preserves incoming
   records for review
-- conflict detection and steward-assistance routing exist as non-mutating
-  proof paths
+- explicit import-apply command authority exists for validated project/task
+  projection records
+- expected-revision and no-silent-overwrite gates block stale active-state
+  mutation
+- invalid records, unsupported schema versions, semantic conflicts, and
+  unresolved repair-required states block apply
+- conflict detection, repair proposal, and steward-assistance routing exist as
+  reviewable proof paths
+- sanitized runtime receipts are persisted for accepted, blocked, skipped, and
+  review-required apply outcomes
+- a management sync review read model exposes staged, applied, blocked,
+  conflict, repair, and receipt state to clients without making clients
+  authoritative
 - committable versus local-only policy is documented for first-pass records
+- SCM capture, share, publish, promote, and review-request behavior remains out
+  of scope for this runtime
 
 Missing:
 
-- explicit import-apply command boundary
-- expected-revision and no-silent-overwrite gates during apply
-- apply receipts and audit records
-- client/steward read models for apply plans, conflicts, and repair proposals
 - projection schema migration
+- applying planning, accepted-memory, research, index, and artifact-reference
+  projection records beyond first-pass project/task records
+- actual SCM capture/share/publish integration
+- steward automation over sync policy
+- desktop sync controls, if the proof UI continues beyond diagnostics
 
 Likely crates:
 
@@ -192,14 +206,15 @@ Missing runtime:
 
 The orchestration decision has been made, the task-backed workflow proof has
 validated a read-only progress path through fixtures, and repo-backed
-management projection export/import/conflict staging has been hardened.
+management projection export/import/conflict staging and explicit
+apply/review behavior have been hardened.
 
 The most useful next code lane is likely:
 
 1. keep warning-level god-file pressure visible as a health guardrail
-2. add an explicit import-apply boundary for staged project/task projection
-   records
-3. prove expected-revision, invalid-record, unsupported-schema, and semantic
-   conflict gates before active state can change
-4. record sanitized apply receipts and expose review-ready sync state before
-   steward automation, SCM capture/publish, or UI sync controls expand
+2. add provider-neutral management projection capture/share preparation after
+   local apply/review succeeds
+3. link capture requests to projection file refs, apply receipts, and review
+   state without assuming Git-only commit vocabulary
+4. keep push, publish, promote, and review-request behavior gated until the SCM
+   adapter boundary can prove Git and non-Git workflows separately

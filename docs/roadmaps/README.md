@@ -42,7 +42,8 @@ shape.
 - `g02/035-desktop-task-agent-progress-proof.md` - completed
 - `g02/036-task-backed-workflow-validation-and-next-lane.md` - completed
 - `g02/037-repo-backed-management-sync-hardening.md` - completed
-- `g02/038-management-sync-apply-and-review.md` - active
+- `g02/038-management-sync-apply-and-review.md` - completed
+- `g02/039-scm-management-capture-and-share-foundation.md` - active
 
 ## Previous Generation
 
@@ -101,4 +102,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/174-management-sync-apply-validation-and-next-lane.md`.
+Execute `g02/batch-cards/175-scm-management-capture-policy-reset.md`.

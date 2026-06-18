@@ -65,6 +65,7 @@ Current planning artifacts:
 - `roadmaps/g02/036-task-backed-workflow-validation-and-next-lane.md`
 - `roadmaps/g02/037-repo-backed-management-sync-hardening.md`
 - `roadmaps/g02/038-management-sync-apply-and-review.md`
+- `roadmaps/g02/039-scm-management-capture-and-share-foundation.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -73,6 +74,7 @@ Current planning artifacts:
 ## Guardrail
 
 Do not widen provider runtime, remote transport, or UI sync controls while the
-active G02 runway proves repo-backed management sync apply/review behavior.
-Keep projection authority, conflict review, receipts, and no-silent-overwrite
-rules ahead of steward automation or SCM capture/publish work.
+active G02 runway proves provider-neutral SCM capture/share preparation for
+management projection changes. Keep capture records, projection refs, apply
+receipts, and no-Git-assumption vocabulary ahead of steward automation,
+publish/promote behavior, forge review requests, or desktop sync polish.

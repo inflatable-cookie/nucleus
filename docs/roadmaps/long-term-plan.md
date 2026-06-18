@@ -54,22 +54,25 @@ Current G02 continuation sequence:
 6. desktop proof surface for task-agent progress - complete
 7. validation and next workflow selection - complete
 8. repo-backed management sync hardening - complete
-9. management sync apply and review - active
+9. management sync apply and review - complete
+10. SCM management capture and share foundation - active
 
 Selected current workflow:
 
-- management sync apply and review
+- SCM management capture and share foundation
 
 Reason:
 
 - task-backed agent work now has a proof path, but task/project state still
   needs committable projection discipline before multi-user workflow,
   steward automation, or richer UI work should expand
-- export/import/conflict staging now exists, but staged incoming state still
-  needs an explicit apply/review loop before steward automation or SCM
-  capture/publish work can be safe
-- native steward remains a likely follow-on after management projection apply
-  has safe revision gates, receipts, and review surfaces
+- export/import/conflict staging and explicit apply/review behavior now exist,
+  including revision gates, receipts, and review read models
+- the next useful checkpoint is provider-neutral SCM capture/share preparation
+  for accepted management projection changes
+- push, publish, promote, forge review requests, and steward automatic sync
+  remain later gates until capture records can prove Git-neutral and
+  Convergence-neutral vocabulary
 
 This keeps execution focused on one real workflow while protecting the core
 engine boundary from more proof-surface sprawl.
@@ -153,6 +156,7 @@ Current roadmap coverage:
 - `g02/016-management-projection-file-io-and-sync.md`
 - `g02/037-repo-backed-management-sync-hardening.md`
 - `g02/038-management-sync-apply-and-review.md`
+- `g02/039-scm-management-capture-and-share-foundation.md`
 
 ## Phase 3: SCM And Forge Workflow Engine
 
@@ -177,6 +181,7 @@ Current roadmap coverage:
 
 - `g02/008-scm-forge-driver-runway.md`
 - `g02/017-scm-working-copy-and-change-request-workflows.md`
+- `g02/039-scm-management-capture-and-share-foundation.md`
 
 ## Phase 4: Harness Runtime Foundation
 

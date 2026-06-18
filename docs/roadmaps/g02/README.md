@@ -53,17 +53,22 @@ and engine boundary are settled.
 - `035-desktop-task-agent-progress-proof.md` - completed
 - `036-task-backed-workflow-validation-and-next-lane.md` - completed
 - `037-repo-backed-management-sync-hardening.md` - completed
-- `038-management-sync-apply-and-review.md` - active
+- `038-management-sync-apply-and-review.md` - completed
+- `039-scm-management-capture-and-share-foundation.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
+- `batch-cards/175-scm-management-capture-policy-reset.md`
 
 Planned cards:
 
-- None.
+- `batch-cards/176-management-capture-command-records.md`
+- `batch-cards/177-management-capture-receipt-linkage.md`
+- `batch-cards/178-provider-neutral-share-gate-fixtures.md`
+- `batch-cards/179-management-capture-review-read-model.md`
+- `batch-cards/180-scm-management-capture-validation-and-next-lane.md`
 
 Completed cards:
 
@@ -235,6 +240,12 @@ Completed cards:
 - `batch-cards/166-projection-import-conflict-fixtures.md`
 - `batch-cards/167-management-sync-assistance-routing-proof.md`
 - `batch-cards/168-management-sync-hardening-validation.md`
+- `batch-cards/169-management-projection-apply-policy-contract.md`
+- `batch-cards/170-management-projection-import-apply-command.md`
+- `batch-cards/171-management-projection-revision-conflict-gates.md`
+- `batch-cards/172-management-projection-apply-receipts-and-audit.md`
+- `batch-cards/173-management-sync-review-read-model.md`
+- `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
 
 ## Planned Runway Sequence
 
@@ -267,6 +278,8 @@ The next G02 suite is:
 25. desktop task-agent progress proof - completed
 26. task-backed workflow validation and next lane - completed
 27. repo-backed management sync hardening - completed
+28. management sync apply and review - completed
+29. SCM management capture and share foundation - active
 
 This keeps code health and task authority clarity ahead of deeper provider
 runtime work.
@@ -291,7 +304,7 @@ runtime work.
 - `027` completed diagnostics source-status integration.
 - `028` selected task-backed agent work unit with Codex as the first bridged
   runtime target.
-- `029` repairs the red health gate before runtime work expands.
+- `029` repaired the red health gate before runtime work expanded.
 - `030` tightens task-backed workflow contracts.
 - `031` adds task work-unit source records.
 - `032` bridges task work units to Codex runtime admission without execution.
@@ -300,6 +313,10 @@ runtime work.
 - `035` exposes task-agent progress in the disposable desktop proof shell.
 - `036` validates the runway and chooses the next workflow.
 - `037` hardens repo-backed management projection authority.
+- `038` completed explicit import-apply, revision gates, receipts, and review
+  state for management projection sync.
+- `039` prepares provider-neutral SCM capture/share records for accepted
+  management projection changes without mutating SCM state.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

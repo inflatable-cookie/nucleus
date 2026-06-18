@@ -1,8 +1,8 @@
 # 038 Management Sync Apply And Review
 
-Status: active
+Status: completed
 Owner: Tom
-Updated: 2026-06-18
+Updated: 2026-06-19
 
 ## Purpose
 
@@ -45,13 +45,13 @@ review requests, or run provider-specific SCM authority transitions.
 - [x] Receipt batch: persist sanitized apply receipts and timeline evidence.
 - [x] Review batch: expose review/apply/conflict read models without adding UI
       polish or SCM capture behavior.
-- [ ] Validation batch: close the lane and select the next workflow checkpoint.
+- [x] Validation batch: close the lane and select the next workflow checkpoint.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
+- None.
 
 Planned cards:
 
@@ -64,6 +64,7 @@ Completed cards:
 - `batch-cards/171-management-projection-revision-conflict-gates.md`
 - `batch-cards/172-management-projection-apply-receipts-and-audit.md`
 - `batch-cards/173-management-sync-review-read-model.md`
+- `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
 
 ## Acceptance Criteria
 
@@ -73,10 +74,22 @@ Completed cards:
       mutate active state.
 - [x] Apply operations record sanitized receipts and preserve staged evidence.
 - [x] SCM capture/publish work remains outside this lane.
-- [ ] The next lane is selected from the long-term plan rather than invented
+- [x] The next lane is selected from the long-term plan rather than invented
       from the final card.
 
 ## Gate
 
 Do not build steward automatic sync, SCM capture/publish, or desktop sync
 controls until apply authority, conflict review, and receipts are proven.
+
+## Result
+
+The lane proved explicit import-apply command authority for validated
+project/task projection records, expected-revision and no-silent-overwrite
+gates, sanitized apply receipts, and a review read model for staged, applied,
+blocked, conflict, repair, and receipt state.
+
+The next lane is `039-scm-management-capture-and-share-foundation.md`, focused
+on provider-neutral capture/share preparation before SCM mutation,
+publish/promote behavior, forge review requests, steward automation, or UI sync
+controls expand.

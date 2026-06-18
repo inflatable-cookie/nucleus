@@ -1,8 +1,8 @@
 # 174 Management Sync Apply Validation And Next Lane
 
-Status: ready
+Status: completed
 Owner: Tom
-Updated: 2026-06-18
+Updated: 2026-06-19
 Milestone: `../038-management-sync-apply-and-review.md`
 
 ## Purpose
@@ -36,3 +36,17 @@ Validate the apply/review lane and choose the next workflow checkpoint.
 
 - Stop if validation exposes projection authority drift or unsafe apply
   behavior.
+
+## Result
+
+Targeted management sync validation passed before closeout:
+
+- `cargo test -p nucleus-engine management_sync`
+- `cargo test -p nucleus-server management_projection`
+- `cargo check --workspace`
+- `effigy qa:docs`
+- `effigy qa:northstar`
+- `git diff --check`
+
+No projection authority drift or unsafe apply behavior was found. The selected
+next lane is SCM management capture/share foundation.
