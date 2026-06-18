@@ -59,11 +59,11 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/173-management-sync-review-read-model.md`
+- `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
 
 Planned cards:
 
-- `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
+- None.
 
 Completed cards:
 

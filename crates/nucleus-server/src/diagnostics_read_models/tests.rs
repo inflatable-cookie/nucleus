@@ -1,6 +1,8 @@
     use super::*;
     use nucleus_engine::{
-        EngineCheckpointRecordId, EngineDiffSummaryRecordId, EngineRuntimeReceiptRecordId,
+        EngineCheckpointRecordId, EngineDiffSummaryRecordId, EngineRuntimeReceiptEffectFamily,
+        EngineRuntimeReceiptRecord, EngineRuntimeReceiptRecordId, EngineRuntimeReceiptRef,
+        EngineRuntimeReceiptStatus,
         EngineScmWorkItemLinkId, EngineScmWorkItemLinkRecord, EngineScmWorkItemLinkState,
         EngineTaskAgentWorkUnitReviewStatus, EngineTaskAgentWorkUnitRuntimeStatus,
         EngineTaskAgentWorkUnitSourceCursor, EngineTaskAgentWorkUnitSourceId,
@@ -8,11 +10,20 @@
         ManagementProjectionCapturePrepId,
         ManagementProjectionCapturePrepRecord, ManagementProjectionCapturePrepStatus,
         ManagementProjectionCaptureScope, ManagementProjectionConflictClass,
-        ManagementProjectionConflictReport, ManagementProjectionFileRef,
-        ManagementProjectionImportRepairProposal, ManagementProjectionImportRepairProposalId,
-        ManagementProjectionRecordId, ManagementProjectionSchemaConflictKind,
+        ManagementProjectionConflictReport, ManagementProjectionEnvelope, ManagementProjectionFileDocument,
+        ManagementProjectionFileRef, ManagementProjectionImportRepairProposal,
+        ManagementProjectionImportRepairProposalId, ManagementProjectionPayload,
+        ManagementProjectionRecordId, ManagementProjectionRecordKind,
+        ManagementProjectionSchemaConflictKind, ManagementProjectionSchemaVersion,
+        ManagementProjectionSemanticConflictKind,
         ManagementProjectionSyncAssistanceRoute, ManagementProjectionSyncPlan,
-        ManagementProjectionSyncPlanId,
+        ManagementProjectionSyncPlanId, ManagementProjectionValidationReport,
+        ManagementProjectionValidationStatus,
+    };
+    use crate::management_projection_state::{
+        ManagementProjectionAppliedRecord, ManagementProjectionApplyBlock,
+        ManagementProjectionApplyBlockKind, ManagementProjectionImportApplyReport,
+        ManagementProjectionImportStagingReport, ManagementProjectionStagedFile,
     };
     use nucleus_native_harness::{
         NativeEffigyHealthStatus, NativeEffigyHealthSummary, NativeEffigyIntegrationStatus,
@@ -167,6 +178,117 @@
         );
         assert!(!diagnostics.capture_preps[0].execution_available);
         assert!(!json.to_lowercase().contains("push"));
+    }
+
+    #[test]
+    fn management_sync_review_model_exposes_apply_review_state_without_raw_payloads() {
+        let file_ref = ManagementProjectionFileRef::task("task:1");
+        let staged = ManagementProjectionStagedFile {
+            file_ref: file_ref.clone(),
+            path: "repo/nucleus/tasks/task:1.toml".into(),
+            document: ManagementProjectionFileDocument {
+                envelope: ManagementProjectionEnvelope {
+                    schema_version: ManagementProjectionSchemaVersion::current(),
+                    record_id: ManagementProjectionRecordId("task:1".to_owned()),
+                    record_kind: ManagementProjectionRecordKind::Task,
+                    file_ref: file_ref.clone(),
+                },
+                payload: ManagementProjectionPayload::Unsupported {
+                    payload_kind: "task".to_owned(),
+                    retained_payload: "raw task payload should not appear".to_owned(),
+                },
+            },
+            validation: ManagementProjectionValidationReport {
+                file_ref: file_ref.clone(),
+                record_id: Some(ManagementProjectionRecordId("task:1".to_owned())),
+                status: ManagementProjectionValidationStatus::Valid,
+                issues: Vec::new(),
+            },
+        };
+        let conflict = ManagementProjectionConflictReport {
+            conflict_id: "conflict:task:1".to_owned(),
+            file_ref: file_ref.clone(),
+            local_record_ref: Some(ManagementProjectionRecordId("task:1".to_owned())),
+            incoming_record_ref: Some(ManagementProjectionRecordId("task:1".to_owned())),
+            class: ManagementProjectionConflictClass::Semantic(
+                ManagementProjectionSemanticConflictKind::AcceptanceCriteriaRewrite,
+            ),
+            summary: "acceptance criteria differ".to_owned(),
+        };
+        let receipt = EngineRuntimeReceiptRecord {
+            receipt_id: EngineRuntimeReceiptRecordId(
+                "receipt:management-projection-apply:task:1:blocked".to_owned(),
+            ),
+            family: EngineRuntimeReceiptEffectFamily::Custom(
+                "management_projection_apply".to_owned(),
+            ),
+            status: EngineRuntimeReceiptStatus::WaitingForApproval,
+            command_ref: None,
+            effect_ref: Some(EngineRuntimeReceiptRef::Custom(
+                "management_projection_apply".to_owned(),
+            )),
+            evidence_refs: vec![EngineRuntimeReceiptRef::Custom(
+                "conflict:conflict:task:1".to_owned(),
+            )],
+            artifact_refs: Vec::new(),
+            summary: Some("blocked management projection apply".to_owned()),
+        };
+        let apply = ManagementProjectionImportApplyReport {
+            applied: vec![ManagementProjectionAppliedRecord {
+                record_id: ManagementProjectionRecordId("task:2".to_owned()),
+                file_ref: ManagementProjectionFileRef::task("task:2"),
+                revision_id: nucleus_core::RevisionId("rev:projection-apply:task:2".to_owned()),
+                receipt_id: EngineRuntimeReceiptRecordId(
+                    "receipt:management-projection-apply:task:2:accepted".to_owned(),
+                ),
+                summary: "applied task projection record".to_owned(),
+            }],
+            blocked: vec![ManagementProjectionApplyBlock {
+                record_id: Some(ManagementProjectionRecordId("task:1".to_owned())),
+                file_ref: file_ref.clone(),
+                kind: ManagementProjectionApplyBlockKind::SemanticConflict,
+                summary: "semantic conflict requires review".to_owned(),
+                conflict: Some(conflict.clone()),
+                receipt_id: Some(receipt.receipt_id.clone()),
+            }],
+            receipts: vec![receipt.clone()],
+            authoritative_state_mutated: false,
+            scm_mutation_performed: false,
+        };
+        let staging = ManagementProjectionImportStagingReport {
+            repo_root: "repo".into(),
+            staged: vec![staged],
+            invalid: Vec::new(),
+            unsupported: Vec::new(),
+            authoritative_state_mutated: false,
+        };
+
+        let review = management_sync_review_model(
+            Some(&staging),
+            Some(&apply),
+            &[conflict],
+            &[],
+            &[],
+        );
+        let json = serde_json::to_string(&review).expect("serialize sync review model");
+
+        assert!(!review.client_can_mutate);
+        assert!(!review.client_can_mutate_provider);
+        assert_eq!(review.staged_records.len(), 1);
+        assert_eq!(review.applied_records.len(), 1);
+        assert_eq!(review.blocked_records[0].kind, "SemanticConflict");
+        assert_eq!(review.conflicts[0].class, "semantic");
+        assert!(review.conflicts[0].requires_human_review);
+        assert_eq!(review.receipts[0].status, "WaitingForApproval");
+        for forbidden in [
+            "raw task payload",
+            "provider_auth",
+            "raw_stdout",
+            "secret",
+            "push",
+        ] {
+            assert!(!json.contains(forbidden), "review model leaked {forbidden}");
+        }
     }
 
     #[test]

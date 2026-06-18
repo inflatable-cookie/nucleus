@@ -160,14 +160,15 @@ pub use control_serialization_readiness::{
 };
 pub use deployment::{AccessEndpoint, DeploymentMode, ServerRuntime};
 pub use diagnostics_read_models::{
-    effigy_diagnostics, scm_session_diagnostics, steward_diagnostics, sync_diagnostics,
-    task_agent_diagnostics, EffigyDiagnosticsDto, ScmCommandAdmissionDiagnosticDto,
-    ScmSessionDiagnosticsDto, ScmSessionPlanDiagnosticDto, ScmWorkItemLinkDiagnosticDto,
-    StewardCommandAdmissionDiagnosticDto, StewardCommandOutcomeDiagnosticDto,
-    StewardDiagnosticsDto, StewardProposalDiagnosticDto, SyncAssistanceDiagnosticDto,
-    SyncCapturePrepDiagnosticDto, SyncDiagnosticsDto, SyncPlanDiagnosticDto,
-    SyncRepairDiagnosticDto, TaskAgentDiagnosticsDto, TaskAgentWorkUnitDiagnosticDto,
-    TaskAgentWorkUnitIssueDto,
+    effigy_diagnostics, management_sync_review_model, scm_session_diagnostics,
+    steward_diagnostics, sync_diagnostics, task_agent_diagnostics, EffigyDiagnosticsDto,
+    ScmCommandAdmissionDiagnosticDto, ScmSessionDiagnosticsDto, ScmSessionPlanDiagnosticDto,
+    ScmWorkItemLinkDiagnosticDto, StewardCommandAdmissionDiagnosticDto,
+    StewardCommandOutcomeDiagnosticDto, StewardDiagnosticsDto, StewardProposalDiagnosticDto,
+    SyncAppliedRecordReviewDto, SyncApplyBlockReviewDto, SyncAssistanceDiagnosticDto,
+    SyncCapturePrepDiagnosticDto, SyncConflictReviewDto, SyncDiagnosticsDto, SyncPlanDiagnosticDto,
+    SyncReceiptReviewDto, SyncRepairDiagnosticDto, SyncReviewModelDto, SyncStagedRecordReviewDto,
+    TaskAgentDiagnosticsDto, TaskAgentWorkUnitDiagnosticDto, TaskAgentWorkUnitIssueDto,
 };
 pub use event_replay::{
     ServerEventReplayError, ServerEventReplayQuery, ServerEventReplayQueryScope,

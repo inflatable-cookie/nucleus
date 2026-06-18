@@ -1,6 +1,6 @@
 # 173 Management Sync Review Read Model
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../038-management-sync-apply-and-review.md`
@@ -33,3 +33,13 @@ Expose management sync review state without giving clients mutation authority.
 ## Stop Conditions
 
 - Stop if the read model requires UI design choices or SCM publication policy.
+
+## Result
+
+- Added `SyncReviewModelDto` for staged, invalid, unsupported, applied,
+  blocked, conflict, repair, and receipt review state.
+- Kept the read model client-safe: no raw projection payloads, raw runtime
+  streams, provider auth, or SCM mutation authority.
+- Split review DTOs into `diagnostics_read_models/sync_review.rs` so the sync
+  diagnostics module stays focused.
+- Did not add UI controls, SCM capture/publish behavior, or mutation routes.

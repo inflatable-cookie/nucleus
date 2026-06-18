@@ -10,11 +10,11 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `173-management-sync-review-read-model.md`
+- `174-management-sync-apply-validation-and-next-lane.md`
 
 ## Planned Cards
 
-- `174-management-sync-apply-validation-and-next-lane.md`
+- None.
 
 ## Completed Cards
 
@@ -190,3 +190,4 @@ Hold execution cards for `g02`.
 - `170-management-projection-import-apply-command.md`
 - `171-management-projection-revision-conflict-gates.md`
 - `172-management-projection-apply-receipts-and-audit.md`
+- `173-management-sync-review-read-model.md`

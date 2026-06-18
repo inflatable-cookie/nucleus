@@ -101,4 +101,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/173-management-sync-review-read-model.md`.
+Execute `g02/batch-cards/174-management-sync-apply-validation-and-next-lane.md`.

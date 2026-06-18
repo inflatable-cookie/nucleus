@@ -31,7 +31,7 @@ review requests, or run provider-specific SCM authority transitions.
       changes.
 - [x] Record receipts and audit evidence for applied management projection
       changes.
-- [ ] Expose review-ready sync state for clients or steward assistance without
+- [x] Expose review-ready sync state for clients or steward assistance without
       making clients authoritative.
 
 ## Execution Plan
@@ -43,7 +43,7 @@ review requests, or run provider-specific SCM authority transitions.
 - [x] Conflict batch: prove expected-revision and semantic-conflict gates with
       fixtures.
 - [x] Receipt batch: persist sanitized apply receipts and timeline evidence.
-- [ ] Review batch: expose review/apply/conflict read models without adding UI
+- [x] Review batch: expose review/apply/conflict read models without adding UI
       polish or SCM capture behavior.
 - [ ] Validation batch: close the lane and select the next workflow checkpoint.
 
@@ -51,11 +51,11 @@ review requests, or run provider-specific SCM authority transitions.
 
 Ready cards:
 
-- `batch-cards/173-management-sync-review-read-model.md`
+- `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
 
 Planned cards:
 
-- `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
+- None.
 
 Completed cards:
 
@@ -63,15 +63,16 @@ Completed cards:
 - `batch-cards/170-management-projection-import-apply-command.md`
 - `batch-cards/171-management-projection-revision-conflict-gates.md`
 - `batch-cards/172-management-projection-apply-receipts-and-audit.md`
+- `batch-cards/173-management-sync-review-read-model.md`
 
 ## Acceptance Criteria
 
-- [ ] Valid staged project/task projection records can be applied only through
+- [x] Valid staged project/task projection records can be applied only through
       an admitted command boundary.
-- [ ] Invalid, unsupported, stale, or semantically conflicting records do not
+- [x] Invalid, unsupported, stale, or semantically conflicting records do not
       mutate active state.
-- [ ] Apply operations record sanitized receipts and preserve staged evidence.
-- [ ] SCM capture/publish work remains outside this lane.
+- [x] Apply operations record sanitized receipts and preserve staged evidence.
+- [x] SCM capture/publish work remains outside this lane.
 - [ ] The next lane is selected from the long-term plan rather than invented
       from the final card.
 

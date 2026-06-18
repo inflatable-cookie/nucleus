@@ -8,6 +8,7 @@ mod helpers;
 mod scm;
 mod steward;
 mod sync;
+mod sync_review;
 mod task_agent;
 
 pub use effigy::{effigy_diagnostics, EffigyDiagnosticsDto};
@@ -22,6 +23,10 @@ pub use steward::{
 pub use sync::{
     sync_diagnostics, SyncAssistanceDiagnosticDto, SyncCapturePrepDiagnosticDto,
     SyncDiagnosticsDto, SyncPlanDiagnosticDto, SyncRepairDiagnosticDto,
+};
+pub use sync_review::{
+    management_sync_review_model, SyncAppliedRecordReviewDto, SyncApplyBlockReviewDto,
+    SyncConflictReviewDto, SyncReceiptReviewDto, SyncReviewModelDto, SyncStagedRecordReviewDto,
 };
 pub use task_agent::{
     task_agent_diagnostics, TaskAgentDiagnosticsDto, TaskAgentWorkUnitDiagnosticDto,
