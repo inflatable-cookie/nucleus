@@ -1,6 +1,6 @@
 # 170 Management Projection Import Apply Command
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../038-management-sync-apply-and-review.md`
@@ -36,3 +36,14 @@ task projection records to the active working set.
 
 - Stop if apply requires storage backend assumptions that violate the adapter
   boundary.
+
+## Result
+
+- Added engine-level management projection apply command vocabulary with
+  explicit record targets and no SCM mutation authority.
+- Added server-side import apply request/report types and a bounded apply
+  service for staged project/task projection records.
+- Applied records write through `ServerStateService` and backend revision
+  expectations rather than direct repository mutation.
+- Missing explicit targets and unsupported record kinds are retained as blocked
+  apply outcomes.

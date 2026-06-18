@@ -4,12 +4,19 @@
 //! import task state, overwrite meaning, create SCM captures, publish changes,
 //! or call provider adapters.
 
+mod apply;
 mod assistance;
 mod capture;
 mod plans;
 mod repairs;
 
-pub use assistance::{ManagementProjectionSyncAssistanceKind, ManagementProjectionSyncAssistanceRoute};
+pub use apply::{
+    ManagementProjectionApplyCommand, ManagementProjectionApplyCommandId,
+    ManagementProjectionApplyRecordTarget,
+};
+pub use assistance::{
+    ManagementProjectionSyncAssistanceKind, ManagementProjectionSyncAssistanceRoute,
+};
 pub use capture::{
     ManagementProjectionCapturePrepId, ManagementProjectionCapturePrepRecord,
     ManagementProjectionCapturePrepStatus, ManagementProjectionCaptureScope,

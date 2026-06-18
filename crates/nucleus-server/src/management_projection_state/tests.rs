@@ -3,6 +3,7 @@ use crate::project_seed::{seed_local_project, LocalProjectSeed};
 use crate::state::ServerStateService;
 use crate::task_seed::{seed_local_task, LocalTaskSeed};
 use super::helpers::{scoped_projection_path, write_projection_document};
+use nucleus_core::{PersistenceRecordId, RevisionId};
 use nucleus_engine::{
     ManagementProjectionConflictClass, ManagementProjectionConflictReport,
     ManagementProjectionExportPlan, ManagementProjectionFileDocument, ManagementProjectionFileRef,
@@ -11,7 +12,7 @@ use nucleus_engine::{
 };
 use nucleus_local_store::{LocalStoreError, SqliteBackend};
 use nucleus_projects::ImportanceLevel;
-use nucleus_tasks::{TaskActionType, TaskImportance};
+use nucleus_tasks::{decode_task_storage_record, TaskActionType, TaskImportance};
 
     #[test]
     fn management_projection_export_plan_reads_project_and_task_state() {
@@ -338,4 +339,132 @@ use nucleus_tasks::{TaskActionType, TaskImportance};
         assert_eq!(report.invalid[0].file_ref, invalid_ref);
         assert_eq!(report.unsupported[0].file_ref, unsupported_ref);
         assert!(!report.authoritative_state_mutated);
+    }
+
+    #[test]
+    fn management_projection_apply_import_updates_targeted_records_without_scm_mutation() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state =
+            ServerStateService::new(SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")));
+        seed_local_project(
+            &state,
+            LocalProjectSeed {
+                project_id: "project:nucleus".to_owned(),
+                display_name: "Old Nucleus".to_owned(),
+                importance_level: ImportanceLevel::High,
+            },
+        )
+        .expect("seed project");
+        seed_local_task(
+            &state,
+            LocalTaskSeed {
+                task_id: "task:projection".to_owned(),
+                project_id: "project:nucleus".to_owned(),
+                title: "Old projection".to_owned(),
+                action_type: TaskActionType::Execute,
+                importance: TaskImportance::High,
+            },
+        )
+        .expect("seed task");
+        let mut plan = build_management_projection_export_plan(&state).expect("export plan");
+        for entry in &mut plan.entries {
+            if let ManagementProjectionPayload::Task(task) = &mut entry.payload {
+                task.title = "Applied projection".to_owned();
+            }
+        }
+        let repo_root = temp_dir.path().join("repo");
+        let file_refs = plan
+            .entries
+            .iter()
+            .map(|entry| entry.envelope.file_ref.clone())
+            .collect::<Vec<_>>();
+        write_management_projection_export_files(ManagementProjectionExportFileRequest {
+            repo_root: repo_root.clone(),
+            plan,
+            overwrite_existing: false,
+        })
+        .expect("write projection files");
+        let staging =
+            stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+                repo_root,
+                file_refs,
+            })
+            .expect("stage import");
+
+        let report = apply_management_projection_import(
+            &state,
+            ManagementProjectionImportApplyRequest {
+                staged: staging.staged,
+                targets: vec![
+                    ManagementProjectionApplyTarget {
+                        record_id: ManagementProjectionRecordId("project:nucleus".to_owned()),
+                        expected_current_revision: Some(RevisionId("rev:seed:1".to_owned())),
+                    },
+                    ManagementProjectionApplyTarget {
+                        record_id: ManagementProjectionRecordId("task:projection".to_owned()),
+                        expected_current_revision: Some(RevisionId("rev:task-seed:1".to_owned())),
+                    },
+                ],
+            },
+        )
+        .expect("apply import");
+        let task = state
+            .tasks()
+            .get(&PersistenceRecordId("task:projection".to_owned()))
+            .expect("task get")
+            .expect("task record");
+        let decoded_task = decode_task_storage_record(&task.payload.bytes).expect("decode task");
+
+        assert!(report.authoritative_state_mutated);
+        assert!(!report.scm_mutation_performed);
+        assert!(report.blocked.is_empty());
+        assert_eq!(report.applied.len(), 2);
+        assert_eq!(decoded_task.title, "Applied projection");
+    }
+
+    #[test]
+    fn management_projection_apply_import_requires_explicit_targets() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state =
+            ServerStateService::new(SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")));
+        seed_local_project(
+            &state,
+            LocalProjectSeed {
+                project_id: "project:nucleus".to_owned(),
+                display_name: "Nucleus".to_owned(),
+                importance_level: ImportanceLevel::High,
+            },
+        )
+        .expect("seed project");
+        let plan = build_management_projection_export_plan(&state).expect("export plan");
+        let repo_root = temp_dir.path().join("repo");
+        write_management_projection_export_files(ManagementProjectionExportFileRequest {
+            repo_root: repo_root.clone(),
+            plan,
+            overwrite_existing: false,
+        })
+        .expect("write projection files");
+        let staging =
+            stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+                repo_root,
+                file_refs: vec![ManagementProjectionFileRef::project()],
+            })
+            .expect("stage import");
+
+        let report = apply_management_projection_import(
+            &state,
+            ManagementProjectionImportApplyRequest {
+                staged: staging.staged,
+                targets: Vec::new(),
+            },
+        )
+        .expect("apply import");
+
+        assert!(!report.authoritative_state_mutated);
+        assert!(report.applied.is_empty());
+        assert_eq!(report.blocked.len(), 1);
+        assert_eq!(
+            report.blocked[0].kind,
+            ManagementProjectionApplyBlockKind::MissingApplyTarget
+        );
     }

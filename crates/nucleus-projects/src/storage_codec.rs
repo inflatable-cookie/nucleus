@@ -79,6 +79,13 @@ pub fn encode_project_storage_record(
     serde_json::to_vec(&ProjectStorageRecord::from(project)).map_err(codec_error)
 }
 
+/// Encode an already decoded project storage record.
+pub fn encode_project_storage_payload(
+    record: &ProjectStorageRecord,
+) -> Result<Vec<u8>, ProjectRecordCodecError> {
+    serde_json::to_vec(record).map_err(codec_error)
+}
+
 /// Decode the first JSON storage payload into a display-ready record.
 pub fn decode_project_storage_record(
     bytes: &[u8],

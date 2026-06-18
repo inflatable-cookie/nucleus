@@ -25,7 +25,7 @@ review requests, or run provider-specific SCM authority transitions.
 ## Goals
 
 - [x] Define apply authority for staged management projection records.
-- [ ] Add a command/service boundary for applying validated project and task
+- [x] Add a command/service boundary for applying validated project and task
       projection records.
 - [ ] Enforce revision, conflict, and unsupported-schema gates before state
       changes.
@@ -38,7 +38,7 @@ review requests, or run provider-specific SCM authority transitions.
 
 - [x] Policy batch: promote import-apply authority, revision expectations, and
       no-silent-overwrite rules into canonical contracts.
-- [ ] Apply batch: add a bounded import-apply command path for staged project
+- [x] Apply batch: add a bounded import-apply command path for staged project
       and task projection records.
 - [ ] Conflict batch: prove expected-revision and semantic-conflict gates with
       fixtures.
@@ -51,11 +51,10 @@ review requests, or run provider-specific SCM authority transitions.
 
 Ready cards:
 
-- `batch-cards/170-management-projection-import-apply-command.md`
+- `batch-cards/171-management-projection-revision-conflict-gates.md`
 
 Planned cards:
 
-- `batch-cards/171-management-projection-revision-conflict-gates.md`
 - `batch-cards/172-management-projection-apply-receipts-and-audit.md`
 - `batch-cards/173-management-sync-review-read-model.md`
 - `batch-cards/174-management-sync-apply-validation-and-next-lane.md`
@@ -63,6 +62,7 @@ Planned cards:
 Completed cards:
 
 - `batch-cards/169-management-projection-apply-policy-contract.md`
+- `batch-cards/170-management-projection-import-apply-command.md`
 
 ## Acceptance Criteria
 

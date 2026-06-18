@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
+use nucleus_core::RevisionId;
 use nucleus_engine::{
     ManagementProjectionExportPlan, ManagementProjectionFileDocument, ManagementProjectionFileRef,
-    ManagementProjectionValidationReport,
+    ManagementProjectionRecordId, ManagementProjectionValidationReport,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -55,4 +56,49 @@ pub struct ManagementProjectionStagingIssue {
     pub file_ref: ManagementProjectionFileRef,
     pub path: PathBuf,
     pub summary: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManagementProjectionImportApplyRequest {
+    pub staged: Vec<ManagementProjectionStagedFile>,
+    pub targets: Vec<ManagementProjectionApplyTarget>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManagementProjectionApplyTarget {
+    pub record_id: ManagementProjectionRecordId,
+    pub expected_current_revision: Option<RevisionId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManagementProjectionImportApplyReport {
+    pub applied: Vec<ManagementProjectionAppliedRecord>,
+    pub blocked: Vec<ManagementProjectionApplyBlock>,
+    pub authoritative_state_mutated: bool,
+    pub scm_mutation_performed: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManagementProjectionAppliedRecord {
+    pub record_id: ManagementProjectionRecordId,
+    pub file_ref: ManagementProjectionFileRef,
+    pub revision_id: RevisionId,
+    pub summary: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManagementProjectionApplyBlock {
+    pub record_id: Option<ManagementProjectionRecordId>,
+    pub file_ref: ManagementProjectionFileRef,
+    pub kind: ManagementProjectionApplyBlockKind,
+    pub summary: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ManagementProjectionApplyBlockKind {
+    MissingApplyTarget,
+    RecordIdMismatch,
+    UnsupportedRecordKind,
+    UnsupportedPayload,
+    InvalidValidationStatus,
 }

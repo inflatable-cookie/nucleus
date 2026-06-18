@@ -53,12 +53,14 @@ pub use management_projection::{
     MANAGEMENT_PROJECTION_ROOT, MANAGEMENT_PROJECTION_SCHEMA_V1,
 };
 pub use management_sync::{
-    ManagementProjectionCapturePrepId, ManagementProjectionCapturePrepRecord,
-    ManagementProjectionCapturePrepStatus, ManagementProjectionCaptureScope,
-    ManagementProjectionImportRepairKind, ManagementProjectionImportRepairProposal,
-    ManagementProjectionImportRepairProposalId, ManagementProjectionImportRepairReview,
-    ManagementProjectionSyncAssistanceKind, ManagementProjectionSyncAssistanceRoute,
-    ManagementProjectionSyncPlan, ManagementProjectionSyncPlanId, ManagementProjectionSyncPlanKind,
+    ManagementProjectionApplyCommand, ManagementProjectionApplyCommandId,
+    ManagementProjectionApplyRecordTarget, ManagementProjectionCapturePrepId,
+    ManagementProjectionCapturePrepRecord, ManagementProjectionCapturePrepStatus,
+    ManagementProjectionCaptureScope, ManagementProjectionImportRepairKind,
+    ManagementProjectionImportRepairProposal, ManagementProjectionImportRepairProposalId,
+    ManagementProjectionImportRepairReview, ManagementProjectionSyncAssistanceKind,
+    ManagementProjectionSyncAssistanceRoute, ManagementProjectionSyncPlan,
+    ManagementProjectionSyncPlanId, ManagementProjectionSyncPlanKind,
     ManagementProjectionSyncPlanStatus,
 };
 pub use runtime_receipts::{
