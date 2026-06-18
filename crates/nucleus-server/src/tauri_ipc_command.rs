@@ -170,7 +170,7 @@ where
 mod tests {
     use super::*;
     use crate::control_api::{
-        RuntimeMetadataQuery, ServerControlError, ServerControlRequestKind,
+        DiagnosticsQuery, RuntimeMetadataQuery, ServerControlError, ServerControlRequestKind,
         ServerControlResponseBody, ServerControlResponseStatus, ServerQuery, ServerQueryKind,
         ServerQueryResult, ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope,
     };
@@ -373,6 +373,47 @@ mod tests {
             crate::control_envelope_dto::ControlResponseBodyDto::ProjectRecords { records }
                 if records.len() == 1 && records[0].display_name == "Tauri Adapter"
         ));
+    }
+
+    #[test]
+    fn control_command_adapter_routes_diagnostics_dto_without_ipc_authority() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let backend = SqliteBackend::new(temp_dir.path().join("nucleus.sqlite"));
+        let handler = LocalControlRequestHandler::new(backend, None);
+        let mut adapter = TauriIpcControlCommandAdapter::fixture_backed(handler);
+        let request = ControlRequestEnvelopeDto::try_from(&ServerControlRequest {
+            id: ServerControlRequestId("request:tauri-adapter:diagnostics".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerControlRequestKind::Query(ServerQuery {
+                id: ServerQueryId("query:tauri-adapter:diagnostics".to_owned()),
+                client_id: ClientId("client:desktop".to_owned()),
+                kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::All),
+            }),
+        })
+        .expect("request dto");
+
+        let response = adapter
+            .submit_control_envelope(request)
+            .expect("response dto");
+        let json = serde_json::to_string(&response).expect("response json");
+
+        assert_eq!(
+            adapter.boundary().posture,
+            TauriIpcCommandBoundaryPosture::FixtureBacked
+        );
+        assert_eq!(response.request_id, "request:tauri-adapter:diagnostics");
+        assert!(matches!(
+            response.body,
+            crate::control_envelope_dto::ControlResponseBodyDto::Diagnostics {
+                result: crate::control_envelope_dto::ControlDiagnosticsResultDto::All(snapshot),
+            } if !snapshot.steward.client_can_mutate
+                && !snapshot.effigy.client_can_run_effigy
+                && !snapshot.management_sync.client_can_mutate_provider
+                && !snapshot.scm_session.client_can_mutate_working_copy
+        ));
+        assert!(!json.contains("raw_stdout"));
+        assert!(!json.contains("raw_stderr"));
+        assert!(!json.contains("provider_payload"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # 105 Response Envelope Diagnostics Serialization
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../025-diagnostics-control-dto-serialization.md`
@@ -17,9 +17,14 @@ Serialize diagnostics query results through control response envelopes.
 
 ## Acceptance Criteria
 
-- Response envelopes can carry diagnostics results.
-- Unsupported diagnostics serialize distinctly.
-- Raw payloads stay absent.
+- [x] Response envelopes can carry diagnostics results.
+- [x] Unsupported diagnostics serialize distinctly.
+- [x] Raw payloads stay absent.
+
+## Outcome
+
+Diagnostics query results now serialize as a first-class control response body
+instead of falling back to `query_unsupported`.
 
 ## Validation
 

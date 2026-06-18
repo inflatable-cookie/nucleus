@@ -1,6 +1,6 @@
 # 104 Diagnostics Control DTO Record Shapes
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../025-diagnostics-control-dto-serialization.md`
@@ -17,9 +17,14 @@ Expose diagnostics records through control DTO modules.
 
 ## Acceptance Criteria
 
-- DTO record shapes cover all diagnostics domains.
-- DTOs serialize without raw payload fields.
-- DTOs do not become storage records.
+- [x] DTO record shapes cover all diagnostics domains.
+- [x] DTOs serialize without raw payload fields.
+- [x] DTOs do not become storage records.
+
+## Outcome
+
+Added control diagnostics response DTOs for steward, Effigy, management sync,
+SCM session, and combined snapshots, reusing diagnostics read-model data.
 
 ## Validation
 

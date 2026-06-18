@@ -8,8 +8,8 @@ mod records;
 pub use body::ControlResponseBodyDto;
 pub use envelope::{ControlResponseEnvelopeDto, ControlResponseStatusDto};
 pub use records::{
-    ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiffSummaryRecordDto,
-    ControlProjectAuthorityDomainDto, ControlProjectAuthorityIssueDto,
-    ControlProjectAuthorityMapDto, ControlRuntimeReadinessBlockerDto,
-    ControlRuntimeReadinessDiagnosticDto,
+    ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
+    ControlDiagnosticsSnapshotDto, ControlDiffSummaryRecordDto, ControlProjectAuthorityDomainDto,
+    ControlProjectAuthorityIssueDto, ControlProjectAuthorityMapDto,
+    ControlRuntimeReadinessBlockerDto, ControlRuntimeReadinessDiagnosticDto,
 };

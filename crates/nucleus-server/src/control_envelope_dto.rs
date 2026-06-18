@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::ServerCommand;
 use crate::control_api::{
-    RuntimeMetadataQuery, ServerControlRequest, ServerControlRequestKind, ServerQuery,
-    ServerQueryKind, StateRecordQuery, StateRecordQueryScope,
+    DiagnosticsQuery, RuntimeMetadataQuery, ServerControlRequest, ServerControlRequestKind,
+    ServerQuery, ServerQueryKind, StateRecordQuery, StateRecordQueryScope,
 };
 use crate::control_serialization_readiness::{
     CONTROL_API_PROTOCOL_FAMILY, CONTROL_API_PROTOCOL_VERSION_V1,
@@ -29,10 +29,10 @@ pub use error::ControlApiCodecError;
 pub use projects::ControlProjectRecordDto;
 pub use records::ControlStateRecordDto;
 pub use response::{
-    ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiffSummaryRecordDto,
-    ControlProjectAuthorityDomainDto, ControlProjectAuthorityIssueDto,
-    ControlProjectAuthorityMapDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
-    ControlResponseStatusDto, ControlRuntimeReadinessBlockerDto,
+    ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
+    ControlDiagnosticsSnapshotDto, ControlDiffSummaryRecordDto, ControlProjectAuthorityDomainDto,
+    ControlProjectAuthorityIssueDto, ControlProjectAuthorityMapDto, ControlResponseBodyDto,
+    ControlResponseEnvelopeDto, ControlResponseStatusDto, ControlRuntimeReadinessBlockerDto,
     ControlRuntimeReadinessDiagnosticDto,
 };
 pub use tasks::ControlTaskRecordDto;
@@ -115,6 +115,10 @@ pub enum ControlQueryDto {
         query_id: String,
         action: String,
     },
+    Diagnostics {
+        query_id: String,
+        domain: String,
+    },
 }
 
 impl TryFrom<&ServerQuery> for ControlQueryDto {
@@ -161,6 +165,10 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                     action: "get_local_runtime_readiness".to_owned(),
                 })
             }
+            ServerQueryKind::Diagnostics(diagnostics_query) => Ok(Self::Diagnostics {
+                query_id: query.id.0.clone(),
+                domain: diagnostics_domain_dto(diagnostics_query),
+            }),
             _ => Err(ControlApiCodecError::unsupported(
                 "query shape is not supported by the first control envelope",
             )),
@@ -230,6 +238,9 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
                     "runtime metadata action is not supported",
                 )),
             },
+            ControlQueryDto::Diagnostics { domain, .. } => Ok(ServerQueryKind::Diagnostics(
+                diagnostics_query_from_domain(&domain)?,
+            )),
         }
     }
 }
@@ -277,10 +288,33 @@ fn server_request_kind_from_body(
 impl ControlQueryDto {
     fn query_id(&self) -> String {
         match self {
-            Self::State { query_id, .. } | Self::RuntimeMetadata { query_id, .. } => {
-                query_id.clone()
-            }
+            Self::State { query_id, .. }
+            | Self::RuntimeMetadata { query_id, .. }
+            | Self::Diagnostics { query_id, .. } => query_id.clone(),
         }
+    }
+}
+
+fn diagnostics_domain_dto(query: &DiagnosticsQuery) -> String {
+    match query {
+        DiagnosticsQuery::Steward => "steward".to_owned(),
+        DiagnosticsQuery::Effigy => "effigy".to_owned(),
+        DiagnosticsQuery::ManagementSync => "management_sync".to_owned(),
+        DiagnosticsQuery::ScmSession => "scm_session".to_owned(),
+        DiagnosticsQuery::All => "all".to_owned(),
+    }
+}
+
+fn diagnostics_query_from_domain(domain: &str) -> Result<DiagnosticsQuery, ControlApiCodecError> {
+    match domain {
+        "steward" => Ok(DiagnosticsQuery::Steward),
+        "effigy" => Ok(DiagnosticsQuery::Effigy),
+        "management_sync" => Ok(DiagnosticsQuery::ManagementSync),
+        "scm_session" => Ok(DiagnosticsQuery::ScmSession),
+        "all" => Ok(DiagnosticsQuery::All),
+        _ => Err(ControlApiCodecError::unsupported(
+            "diagnostics query domain is not supported",
+        )),
     }
 }
 

@@ -1,6 +1,6 @@
 # 108 Diagnostics DTO Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../025-diagnostics-control-dto-serialization.md`
@@ -17,9 +17,14 @@ Validate and close diagnostics DTO serialization.
 
 ## Acceptance Criteria
 
-- Diagnostics DTO serialization cards are complete or rehomed.
-- Control envelopes can carry diagnostics responses.
-- Next ready card points to desktop diagnostics proof.
+- [x] Diagnostics DTO serialization cards are complete or rehomed.
+- [x] Control envelopes can carry diagnostics responses.
+- [x] Next ready card points to desktop diagnostics proof.
+
+## Outcome
+
+Validated diagnostics DTO serialization and advanced the runway to desktop
+diagnostics proof work.
 
 ## Validation
 

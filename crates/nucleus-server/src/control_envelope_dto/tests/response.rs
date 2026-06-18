@@ -4,9 +4,13 @@ use crate::client_protocol::{
 };
 use crate::control_api::{
     ServerControlError, ServerControlResponse, ServerControlResponseBody,
-    ServerControlResponseStatus, ServerQueryResult, ServerStateRecordSet,
+    ServerControlResponseStatus, ServerDiagnosticsQueryResult, ServerDiagnosticsSnapshot,
+    ServerQueryResult, ServerStateRecordSet,
 };
 use crate::control_envelope_dto::*;
+use crate::diagnostics_read_models::{
+    effigy_diagnostics, scm_session_diagnostics, steward_diagnostics, sync_diagnostics,
+};
 use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ServerCommandId, ServerControlRequestId};
 use crate::read_only_command_control::ReadOnlyCommandControlResult;
@@ -14,6 +18,7 @@ use crate::runtime_readiness_diagnostics::local_host_runtime_readiness_diagnosti
 use crate::{unsupported_local_host_runtime_discovery, EngineHostId};
 use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
 use nucleus_local_store::{LocalStoreRecord, LocalStoreRecordPayload};
+use nucleus_native_harness::NativeEffigyProjectIntegration;
 use nucleus_projects::{
     encode_project_storage_record, ImportanceBaseline, ImportanceLevel, Project, ProjectActivity,
     ProjectId, ProjectStatus,
@@ -357,6 +362,91 @@ fn response_envelope_dto_serializes_runtime_readiness_without_payloads() {
         assert!(
             !json.contains(forbidden),
             "runtime readiness DTO should not contain {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn response_envelope_dto_serializes_all_diagnostics_without_authority() {
+    let response = ServerControlResponse {
+        request_id: ServerControlRequestId("request:dto:diagnostics:all".to_owned()),
+        status: ServerControlResponseStatus::Complete,
+        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::All(empty_diagnostics_snapshot()),
+        )),
+    };
+
+    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlResponseEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+
+    assert!(matches!(
+        decoded.body,
+        ControlResponseBodyDto::Diagnostics {
+            result: ControlDiagnosticsResultDto::All(snapshot),
+        } if !snapshot.steward.client_can_mutate
+            && !snapshot.effigy.client_can_run_effigy
+            && !snapshot.management_sync.client_can_mutate_provider
+            && !snapshot.scm_session.client_can_mutate_working_copy
+    ));
+    assert!(json.contains("\"type\":\"diagnostics\""));
+    assert!(json.contains("\"domain\":\"all\""));
+    assert_diagnostics_json_is_sanitized(&json);
+}
+
+#[test]
+fn response_envelope_dto_serializes_single_diagnostics_domain() {
+    let response = ServerControlResponse {
+        request_id: ServerControlRequestId("request:dto:diagnostics:steward".to_owned()),
+        status: ServerControlResponseStatus::Complete,
+        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::Steward(steward_diagnostics(&[], &[], &[])),
+        )),
+    };
+
+    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
+    let json = serde_json::to_string(&dto).expect("json");
+
+    assert!(matches!(
+        dto.body,
+        ControlResponseBodyDto::Diagnostics {
+            result: ControlDiagnosticsResultDto::Steward(record),
+        } if !record.client_can_mutate
+            && record.proposals.is_empty()
+            && record.command_admissions.is_empty()
+            && record.command_outcomes.is_empty()
+    ));
+    assert!(json.contains("\"domain\":\"steward\""));
+    assert_diagnostics_json_is_sanitized(&json);
+}
+
+fn empty_diagnostics_snapshot() -> ServerDiagnosticsSnapshot {
+    ServerDiagnosticsSnapshot {
+        steward: steward_diagnostics(&[], &[], &[]),
+        effigy: effigy_diagnostics(
+            &NativeEffigyProjectIntegration::disabled("effigy unavailable"),
+            None,
+            None,
+        ),
+        management_sync: sync_diagnostics(&[], &[], &[], &[]),
+        scm_session: scm_session_diagnostics(&[], &[], &[]),
+    }
+}
+
+fn assert_diagnostics_json_is_sanitized(json: &str) {
+    for forbidden in [
+        "raw_stdout",
+        "raw_stderr",
+        "payload",
+        "bytes",
+        "credential",
+        "secret",
+        "command_request",
+        "provider_payload",
+    ] {
+        assert!(
+            !json.contains(forbidden),
+            "diagnostics DTO should not contain {forbidden}"
         );
     }
 }

@@ -12,9 +12,10 @@ use super::helpers::{
     state_record_set_dto,
 };
 use super::records::{
-    ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiffSummaryRecordDto,
-    ControlProjectAuthorityMapDto, ControlRuntimeReadinessDiagnosticDto,
-    ControlRuntimeReceiptRecordDto, ControlTaskTimelineEntryDto,
+    ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
+    ControlDiffSummaryRecordDto, ControlProjectAuthorityMapDto,
+    ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
+    ControlTaskTimelineEntryDto,
 };
 use crate::control_envelope_dto::{
     ControlApiCodecError, ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -52,6 +53,9 @@ pub enum ControlResponseBodyDto {
     },
     RuntimeReadinessDiagnostics {
         records: Vec<ControlRuntimeReadinessDiagnosticDto>,
+    },
+    Diagnostics {
+        result: ControlDiagnosticsResultDto,
     },
     TaskTimeline {
         task_id: String,
@@ -99,9 +103,9 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                     reason: reason.clone(),
                 })
             }
-            ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(_)) => {
-                Ok(Self::QueryUnsupported {
-                    reason: "diagnostics DTO serialization is not implemented".to_owned(),
+            ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(result)) => {
+                Ok(Self::Diagnostics {
+                    result: ControlDiagnosticsResultDto::from(result),
                 })
             }
             ServerControlResponseBody::Query(ServerQueryResult::StateRecords(records))

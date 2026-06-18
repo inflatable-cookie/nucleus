@@ -1,6 +1,6 @@
 # 109 Desktop Diagnostics Control Helper
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../026-desktop-diagnostics-proof-surface.md`

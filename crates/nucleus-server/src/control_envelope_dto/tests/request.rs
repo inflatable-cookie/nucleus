@@ -1,6 +1,6 @@
 use crate::control_api::{
-    ServerControlRequest, ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
-    StateRecordQueryScope,
+    DiagnosticsQuery, ServerControlRequest, ServerControlRequestKind, ServerQuery, ServerQueryKind,
+    StateRecordQuery, StateRecordQueryScope,
 };
 use crate::control_envelope_dto::*;
 use crate::control_serialization_readiness::ControlApiCodecFailure;
@@ -232,4 +232,55 @@ fn request_envelope_dto_serializes_runtime_readiness_query() {
             ..
         })
     ));
+}
+
+#[test]
+fn request_envelope_dto_serializes_diagnostics_query() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:diagnostics".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:dto:diagnostics".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::All),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert!(json.contains("\"kind\":\"diagnostics\""));
+    assert!(json.contains("\"domain\":\"all\""));
+    assert!(matches!(
+        restored.kind,
+        ServerControlRequestKind::Query(ServerQuery {
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::All),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn request_envelope_rejects_unknown_diagnostics_domain() {
+    let dto = ControlRequestEnvelopeDto {
+        protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),
+        protocol_version: CONTROL_API_PROTOCOL_VERSION_V1,
+        request_id: "request:dto:bad-diagnostics".to_owned(),
+        client_id: "client:desktop".to_owned(),
+        body: ControlRequestBodyDto::Query {
+            query: ControlQueryDto::Diagnostics {
+                query_id: "query:dto:bad-diagnostics".to_owned(),
+                domain: "provider_shell".to_owned(),
+            },
+        },
+    };
+
+    let error = ServerControlRequest::try_from(dto).expect_err("bad diagnostics domain");
+
+    assert_eq!(
+        error.failure,
+        ControlApiCodecFailure::UnsupportedPayloadShape
+    );
 }

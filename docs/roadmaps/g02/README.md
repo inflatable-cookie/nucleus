@@ -40,8 +40,8 @@ and engine boundary are settled.
 - `022-scm-working-session-runtime.md` - completed
 - `023-client-read-model-and-diagnostics-runway.md` - completed
 - `024-diagnostics-control-api-query-surface.md` - completed
-- `025-diagnostics-control-dto-serialization.md` - active
-- `026-desktop-diagnostics-proof-surface.md` - planned
+- `025-diagnostics-control-dto-serialization.md` - completed
+- `026-desktop-diagnostics-proof-surface.md` - active
 - `027-diagnostics-read-model-source-integration.md` - planned
 - `028-next-product-workflow-selection.md` - planned
 
@@ -123,16 +123,10 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/104-diagnostics-control-dto-record-shapes.md`
+- `batch-cards/109-desktop-diagnostics-control-helper.md`
 
 Planned cards:
 
-- `batch-cards/104-diagnostics-control-dto-record-shapes.md`
-- `batch-cards/105-response-envelope-diagnostics-serialization.md`
-- `batch-cards/106-tauri-ipc-diagnostics-boundary.md`
-- `batch-cards/107-diagnostics-dto-authority-guard-tests.md`
-- `batch-cards/108-diagnostics-dto-validation.md`
-- `batch-cards/109-desktop-diagnostics-control-helper.md`
 - `batch-cards/110-steward-effigy-diagnostics-panel.md`
 - `batch-cards/111-sync-scm-diagnostics-panel.md`
 - `batch-cards/112-desktop-diagnostics-loading-error-states.md`
@@ -205,6 +199,11 @@ Completed cards:
 - `batch-cards/101-request-handler-diagnostics-query-routing.md`
 - `batch-cards/102-diagnostics-query-fixture-tests.md`
 - `batch-cards/103-diagnostics-query-validation.md`
+- `batch-cards/104-diagnostics-control-dto-record-shapes.md`
+- `batch-cards/105-response-envelope-diagnostics-serialization.md`
+- `batch-cards/106-tauri-ipc-diagnostics-boundary.md`
+- `batch-cards/107-diagnostics-dto-authority-guard-tests.md`
+- `batch-cards/108-diagnostics-dto-validation.md`
 
 Completed cards:
 

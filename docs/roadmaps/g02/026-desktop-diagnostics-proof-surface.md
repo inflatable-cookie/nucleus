@@ -1,6 +1,6 @@
 # 026 Desktop Diagnostics Proof Surface
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -35,9 +35,12 @@ inspected from the client without client-side authority drift.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/109-desktop-diagnostics-control-helper.md`
+
+Planned cards:
+
 - `batch-cards/110-steward-effigy-diagnostics-panel.md`
 - `batch-cards/111-sync-scm-diagnostics-panel.md`
 - `batch-cards/112-desktop-diagnostics-loading-error-states.md`

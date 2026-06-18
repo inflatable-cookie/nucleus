@@ -1,6 +1,6 @@
 # 106 Tauri IPC Diagnostics Boundary
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../025-diagnostics-control-dto-serialization.md`
@@ -17,9 +17,14 @@ Keep diagnostics DTOs usable through Tauri IPC without making IPC authoritative.
 
 ## Acceptance Criteria
 
-- Tauri IPC can carry diagnostics DTOs.
-- IPC remains transport-only.
-- Desktop state remains non-authoritative.
+- [x] Tauri IPC can carry diagnostics DTOs.
+- [x] IPC remains transport-only.
+- [x] Desktop state remains non-authoritative.
+
+## Outcome
+
+Added fixture-backed Tauri IPC coverage for diagnostics requests and responses
+without adding IPC-owned diagnostics state.
 
 ## Validation
 

@@ -1,6 +1,6 @@
 # 107 Diagnostics DTO Authority Guard Tests
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../025-diagnostics-control-dto-serialization.md`
@@ -17,9 +17,14 @@ Prove diagnostics DTOs cannot perform or imply mutation.
 
 ## Acceptance Criteria
 
-- DTOs expose read-only state only.
-- DTOs do not contain command request bodies.
-- Sanitization rules are tested.
+- [x] DTOs expose read-only state only.
+- [x] DTOs do not contain command request bodies.
+- [x] Sanitization rules are tested.
+
+## Outcome
+
+Added response and IPC guard tests for read-only mutation flags and sanitized
+JSON payloads.
 
 ## Validation
 
