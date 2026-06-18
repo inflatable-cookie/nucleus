@@ -1,6 +1,6 @@
 # 165 Project Task Projection Export Hardening
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../037-repo-backed-management-sync-hardening.md`
@@ -31,3 +31,10 @@ Harden export behavior for project and task management projection files.
 ## Stop Conditions
 
 - Stop if export policy is still ambiguous.
+
+## Result
+
+- Made project/task projection export deterministic by scoped file ref and
+  record id.
+- Added fixture coverage for deterministic task export ordering.
+- Preserved runtime/local-only exclusion posture.

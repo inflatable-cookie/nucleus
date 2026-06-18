@@ -52,6 +52,10 @@ impl ManagementProjectionSyncAssistanceRoute {
     pub fn requires_human_approval(&self) -> bool {
         self.review == ManagementProjectionImportRepairReview::NeedsHumanApproval
     }
+
+    pub fn can_mutate_shared_projection(&self) -> bool {
+        false
+    }
 }
 
 fn scm_assistance_kind(

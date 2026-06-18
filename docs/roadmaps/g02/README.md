@@ -52,19 +52,17 @@ and engine boundary are settled.
 - `034-task-work-checkpoint-and-review-loop.md` - completed
 - `035-desktop-task-agent-progress-proof.md` - completed
 - `036-task-backed-workflow-validation-and-next-lane.md` - completed
-- `037-repo-backed-management-sync-hardening.md` - active
+- `037-repo-backed-management-sync-hardening.md` - completed
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/165-project-task-projection-export-hardening.md`
+- None. Operator review gate.
 
 Planned cards:
 
-- `batch-cards/166-projection-import-conflict-fixtures.md`
-- `batch-cards/167-management-sync-assistance-routing-proof.md`
-- `batch-cards/168-management-sync-hardening-validation.md`
+- None.
 
 Completed cards:
 
@@ -232,6 +230,10 @@ Completed cards:
 - `batch-cards/162-next-workflow-lane-selection.md`
 - `batch-cards/163-g02-task-backed-runway-closeout.md`
 - `batch-cards/164-management-projection-authority-policy.md`
+- `batch-cards/165-project-task-projection-export-hardening.md`
+- `batch-cards/166-projection-import-conflict-fixtures.md`
+- `batch-cards/167-management-sync-assistance-routing-proof.md`
+- `batch-cards/168-management-sync-hardening-validation.md`
 
 ## Planned Runway Sequence
 
@@ -263,7 +265,7 @@ The next G02 suite is:
 24. task work checkpoint and review loop - completed
 25. desktop task-agent progress proof - completed
 26. task-backed workflow validation and next lane - completed
-27. repo-backed management sync hardening - active
+27. repo-backed management sync hardening - completed
 
 This keeps code health and task authority clarity ahead of deeper provider
 runtime work.

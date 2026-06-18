@@ -81,6 +81,46 @@ use nucleus_tasks::{
     }
 
     #[test]
+    fn management_projection_export_plan_is_deterministic_by_file_ref() {
+        let first = TaskStorageRecord {
+            task_id: "task:z".to_owned(),
+            project_id: "project:nucleus".to_owned(),
+            title: "Z task".to_owned(),
+            description: None,
+            acceptance_criteria: Vec::new(),
+            importance: TaskStorageImportance::Normal,
+            action_type: TaskStorageActionType::Plan,
+            activity: TaskStorageActivityState::Ready,
+            assignment_intent: None,
+            agent_ready: false,
+            required_context_refs: Vec::new(),
+            allowed_actions: vec![TaskStorageActionType::Plan],
+            stop_conditions: Vec::new(),
+            validation_commands: Vec::new(),
+        };
+        let second = TaskStorageRecord {
+            task_id: "task:a".to_owned(),
+            title: "A task".to_owned(),
+            ..first.clone()
+        };
+
+        let plan = export_project_task_projection(&[], &[first, second]);
+        let file_refs = plan
+            .entries
+            .iter()
+            .map(|entry| entry.envelope.file_ref.0.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            file_refs,
+            vec![
+                "nucleus/tasks/task:a.toml".to_owned(),
+                "nucleus/tasks/task:z.toml".to_owned()
+            ]
+        );
+    }
+
+    #[test]
     fn management_projection_file_document_round_trips_project_and_task_entries() {
         let project = ProjectStorageRecord {
             project_id: "project:nucleus".to_owned(),

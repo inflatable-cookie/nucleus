@@ -1,6 +1,6 @@
 # 166 Projection Import Conflict Fixtures
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../037-repo-backed-management-sync-hardening.md`
@@ -33,3 +33,10 @@ management projection files.
 ## Stop Conditions
 
 - Stop if conflict policy needs a new contract pass.
+
+## Result
+
+- Added a server fixture that stages a divergent incoming task projection for
+  conflict review without mutating authoritative state.
+- Preserved incoming task payload and semantic conflict evidence.
+- Kept silent overwrite out of the import path.

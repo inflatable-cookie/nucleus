@@ -1,6 +1,6 @@
 # 168 Management Sync Hardening Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../037-repo-backed-management-sync-hardening.md`
@@ -33,3 +33,11 @@ Validate repo-backed management sync hardening and choose the next lane.
 ## Stop Conditions
 
 - Stop if validation shows committable state policy is wrong.
+
+## Result
+
+- Targeted management projection, management sync, diagnostics, and workspace
+  checks passed.
+- Docs and Northstar validation passed after closeout.
+- No next implementation lane was created; the roadmap pauses at operator
+  review.

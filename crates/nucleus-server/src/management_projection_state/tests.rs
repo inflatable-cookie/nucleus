@@ -4,8 +4,10 @@ use crate::state::ServerStateService;
 use crate::task_seed::{seed_local_task, LocalTaskSeed};
 use super::helpers::{scoped_projection_path, write_projection_document};
 use nucleus_engine::{
+    ManagementProjectionConflictClass, ManagementProjectionConflictReport,
     ManagementProjectionExportPlan, ManagementProjectionFileDocument, ManagementProjectionFileRef,
-    ManagementProjectionValidationStatus,
+    ManagementProjectionPayload, ManagementProjectionRecordId,
+    ManagementProjectionSemanticConflictKind, ManagementProjectionValidationStatus,
 };
 use nucleus_local_store::{LocalStoreError, SqliteBackend};
 use nucleus_projects::ImportanceLevel;
@@ -206,6 +208,88 @@ use nucleus_tasks::{TaskActionType, TaskImportance};
             staged.file_ref == ManagementProjectionFileRef::task("task:projection")
                 && staged.validation.status == ManagementProjectionValidationStatus::Valid
         }));
+    }
+
+    #[test]
+    fn management_projection_import_stages_divergent_task_for_conflict_review() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state =
+            ServerStateService::new(SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")));
+        seed_local_project(
+            &state,
+            LocalProjectSeed {
+                project_id: "project:nucleus".to_owned(),
+                display_name: "Nucleus".to_owned(),
+                importance_level: ImportanceLevel::High,
+            },
+        )
+        .expect("seed project");
+        seed_local_task(
+            &state,
+            LocalTaskSeed {
+                task_id: "task:projection".to_owned(),
+                project_id: "project:nucleus".to_owned(),
+                title: "Local projection".to_owned(),
+                action_type: TaskActionType::Execute,
+                importance: TaskImportance::High,
+            },
+        )
+        .expect("seed task");
+        let mut plan = build_management_projection_export_plan(&state).expect("export plan");
+        let task_entry = plan
+            .entries
+            .iter_mut()
+            .find(|entry| entry.envelope.file_ref == ManagementProjectionFileRef::task("task:projection"))
+            .expect("task entry");
+        if let ManagementProjectionPayload::Task(task) = &mut task_entry.payload {
+            task.title = "Incoming projection".to_owned();
+            task.acceptance_criteria.push(nucleus_tasks::TaskStorageAcceptanceCriterion {
+                text: "Incoming criteria".to_owned(),
+                required: true,
+            });
+        }
+        let repo_root = temp_dir.path().join("repo");
+        write_management_projection_export_files(ManagementProjectionExportFileRequest {
+            repo_root: repo_root.clone(),
+            plan,
+            overwrite_existing: false,
+        })
+        .expect("write divergent projection");
+
+        let report =
+            stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+                repo_root,
+                file_refs: vec![ManagementProjectionFileRef::task("task:projection")],
+            })
+            .expect("stage import");
+        let conflict = ManagementProjectionConflictReport {
+            conflict_id: "conflict:task:projection:title".to_owned(),
+            file_ref: ManagementProjectionFileRef::task("task:projection"),
+            local_record_ref: Some(ManagementProjectionRecordId("task:projection".to_owned())),
+            incoming_record_ref: Some(ManagementProjectionRecordId("task:projection".to_owned())),
+            class: ManagementProjectionConflictClass::Semantic(
+                ManagementProjectionSemanticConflictKind::AcceptanceCriteriaRewrite,
+            ),
+            summary: "incoming task projection diverges from local task state".to_owned(),
+        };
+
+        assert!(!report.authoritative_state_mutated);
+        assert_eq!(report.staged.len(), 1);
+        assert_eq!(report.staged[0].validation.status, ManagementProjectionValidationStatus::Valid);
+        assert!(matches!(
+            &report.staged[0].document.payload,
+            ManagementProjectionPayload::Task(task)
+                if task.title == "Incoming projection"
+                    && task.acceptance_criteria.iter().any(|criterion| {
+                        criterion.text == "Incoming criteria"
+                    })
+        ));
+        assert_eq!(
+            conflict.class,
+            ManagementProjectionConflictClass::Semantic(
+                ManagementProjectionSemanticConflictKind::AcceptanceCriteriaRewrite
+            )
+        );
     }
 
     #[test]

@@ -10,13 +10,11 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `165-project-task-projection-export-hardening.md`
+- None. Operator review gate.
 
 ## Planned Cards
 
-- `166-projection-import-conflict-fixtures.md`
-- `167-management-sync-assistance-routing-proof.md`
-- `168-management-sync-hardening-validation.md`
+- None.
 
 ## Completed Cards
 
@@ -184,3 +182,7 @@ Hold execution cards for `g02`.
 - `162-next-workflow-lane-selection.md`
 - `163-g02-task-backed-runway-closeout.md`
 - `164-management-projection-authority-policy.md`
+- `165-project-task-projection-export-hardening.md`
+- `166-projection-import-conflict-fixtures.md`
+- `167-management-sync-assistance-routing-proof.md`
+- `168-management-sync-hardening-validation.md`

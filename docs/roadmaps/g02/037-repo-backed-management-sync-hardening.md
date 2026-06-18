@@ -1,6 +1,6 @@
 # 037 Repo Backed Management Sync Hardening
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -21,44 +21,46 @@ committable source.
 ## Goals
 
 - [x] Define local-only versus committable management records.
-- [ ] Prove export/import behavior for project and task projection files.
-- [ ] Surface conflicts without silent overwrite.
+- [x] Prove export/import behavior for project and task projection files.
+- [x] Surface conflicts without silent overwrite.
 - [ ] Keep runtime progress, provider state, UI layout, and secrets local-only.
 
 ## Execution Plan
 
 - [x] Policy batch: document projection authority and local-only exclusions.
-- [ ] Export batch: harden project/task projection file output.
-- [ ] Import batch: harden deterministic import staging and conflict detection.
-- [ ] Assistance batch: route sync conflicts into steward-assistable proposals.
-- [ ] Validation batch: run repo-backed projection tests and close the lane.
+- [x] Export batch: harden project/task projection file output.
+- [x] Import batch: harden deterministic import staging and conflict detection.
+- [x] Assistance batch: route sync conflicts into steward-assistable proposals.
+- [x] Validation batch: run repo-backed projection tests and close the lane.
 
 ## Batch Cards
-
-Ready cards:
-
-- `batch-cards/165-project-task-projection-export-hardening.md`
 
 Completed cards:
 
 - `batch-cards/164-management-projection-authority-policy.md`
-
-Planned cards:
-
+- `batch-cards/165-project-task-projection-export-hardening.md`
 - `batch-cards/166-projection-import-conflict-fixtures.md`
 - `batch-cards/167-management-sync-assistance-routing-proof.md`
 - `batch-cards/168-management-sync-hardening-validation.md`
 
 ## Acceptance Criteria
 
-- [ ] The repo-backed projection rules distinguish shared management state from
+- [x] The repo-backed projection rules distinguish shared management state from
       local runtime state.
-- [ ] Export/import tests cover project and task records.
-- [ ] Conflict handling is deterministic and visible.
-- [ ] No runtime provider payloads, UI layout, local session state, secrets, or
+- [x] Export/import tests cover project and task records.
+- [x] Conflict handling is deterministic and visible.
+- [x] No runtime provider payloads, UI layout, local session state, secrets, or
       command output are made committable by default.
 
 ## Gate
 
 Do not start steward automation or richer UI workflow work until projection
 authority is clearer.
+
+## Result
+
+- Projection authority policy now separates committable shared records from
+  local-only runtime/provider/UI/cache/secret state.
+- Export order is deterministic.
+- Import staging preserves divergent incoming task records for review.
+- Assistance routes remain non-mutating and review-first.

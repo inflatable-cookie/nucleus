@@ -36,6 +36,13 @@ pub fn export_project_task_projection(
             payload: ManagementProjectionPayload::Task(task.clone()),
         });
     }
+    entries.sort_by(|left, right| {
+        left.envelope
+            .file_ref
+            .0
+            .cmp(&right.envelope.file_ref.0)
+            .then_with(|| left.envelope.record_id.0.cmp(&right.envelope.record_id.0))
+    });
 
     ManagementProjectionExportPlan {
         root: ManagementProjectionRoot::default(),
