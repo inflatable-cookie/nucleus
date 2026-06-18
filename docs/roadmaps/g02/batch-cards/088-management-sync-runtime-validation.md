@@ -1,6 +1,6 @@
 # 088 Management Sync Runtime Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../021-management-projection-sync-runtime.md`
@@ -17,19 +17,25 @@ Validate and close management projection sync runtime.
 
 ## Acceptance Criteria
 
-- Projection sync runtime cards are complete or rehomed.
-- No import flow silently overwrites task meaning.
-- Next ready card points to SCM session runtime.
+- [x] Projection sync runtime cards are complete or rehomed.
+- [x] No import flow silently overwrites task meaning.
+- [x] Next ready card points to SCM session runtime.
+
+## Outcome
+
+- Validated engine, native harness steward, docs, roadmap pointer, and format
+  gates for the management sync runtime lane.
+- Advanced the next ready card to SCM working-session runtime.
 
 ## Validation
 
-- `cargo test -p nucleus-engine`
-- `cargo test -p nucleus-native-harness`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `rg -n '^## Next Task' README.md AGENTS.md docs`
-- `git diff --check`
+- [x] `cargo test -p nucleus-engine management_projection`
+- [x] `cargo test -p nucleus-native-harness steward`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `rg -n '^## Next Task' README.md AGENTS.md docs`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

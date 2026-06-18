@@ -36,8 +36,8 @@ and engine boundary are settled.
 - `018-steward-native-harness-and-effigy-tools.md` - completed
 - `019-native-steward-command-boundary.md` - completed
 - `020-effigy-command-backed-inspection.md` - completed
-- `021-management-projection-sync-runtime.md` - active
-- `022-scm-working-session-runtime.md` - planned
+- `021-management-projection-sync-runtime.md` - completed
+- `022-scm-working-session-runtime.md` - active
 - `023-client-read-model-and-diagnostics-runway.md` - planned
 
 ## Batch Cards
@@ -118,15 +118,10 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/084-management-sync-plan-records.md`
+- `batch-cards/089-scm-session-command-records.md`
 
 Planned cards:
 
-- `batch-cards/085-projection-import-repair-proposals.md`
-- `batch-cards/086-projection-conflict-assistance-routing.md`
-- `batch-cards/087-management-capture-prep-records.md`
-- `batch-cards/088-management-sync-runtime-validation.md`
-- `batch-cards/089-scm-session-command-records.md`
 - `batch-cards/090-git-session-admission-records.md`
 - `batch-cards/091-non-git-session-vocabulary-validation.md`
 - `batch-cards/092-scm-session-work-item-linkage.md`
@@ -174,6 +169,11 @@ Completed cards:
 - `batch-cards/081-effigy-test-plan-summary-command.md`
 - `batch-cards/082-effigy-repair-hint-synthesis.md`
 - `batch-cards/083-effigy-command-inspection-validation.md`
+- `batch-cards/084-management-sync-plan-records.md`
+- `batch-cards/085-projection-import-repair-proposals.md`
+- `batch-cards/086-projection-conflict-assistance-routing.md`
+- `batch-cards/087-management-capture-prep-records.md`
+- `batch-cards/088-management-sync-runtime-validation.md`
 
 Completed cards:
 
@@ -196,8 +196,8 @@ The next G02 suite is:
 8. steward/native harness and Effigy tools - completed
 9. native steward command boundary - completed
 10. Effigy command-backed inspection - completed
-11. management projection sync runtime - active
-12. SCM working session runtime - planned
+11. management projection sync runtime - completed
+12. SCM working session runtime - active
 13. client read model and diagnostics runway - planned
 
 This keeps code health and authority-map clarity ahead of live provider and
@@ -214,7 +214,8 @@ remote transport work.
 - `019` completed native steward command admission, receipt linkage, and server
   command boundaries.
 - `020` completed Effigy command-backed inspection.
-- `021` is the active management projection sync runtime lane.
+- `021` completed management projection sync runtime records.
+- `022` is the active SCM working-session runtime lane.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

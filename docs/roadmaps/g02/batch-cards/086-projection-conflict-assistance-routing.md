@@ -1,6 +1,6 @@
 # 086 Projection Conflict Assistance Routing
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../021-management-projection-sync-runtime.md`
@@ -18,18 +18,25 @@ Route projection conflict reports to mechanical repair or semantic escalation.
 
 ## Acceptance Criteria
 
-- Mechanical conflict assistance never hides semantic conflicts.
-- Semantic conflicts require human approval.
-- Unsupported records remain preserved.
+- [x] Mechanical conflict assistance never hides semantic conflicts.
+- [x] Semantic conflicts require human approval.
+- [x] Unsupported records remain preserved.
+
+## Outcome
+
+- Added conflict assistance routing records for schema, semantic, unsupported,
+  and SCM conflict classes.
+- Preserved semantic escalation and unsupported-record handling as explicit
+  review states.
 
 ## Validation
 
-- `cargo test -p nucleus-engine management_projection`
-- `cargo test -p nucleus-native-harness steward`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-engine management_projection`
+- [x] `cargo test -p nucleus-native-harness steward`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

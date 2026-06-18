@@ -12,6 +12,7 @@ pub mod codex_runtime_receipts;
 pub mod commands;
 pub mod effects;
 pub mod management_projection;
+pub mod management_sync;
 pub mod projections;
 pub mod repositories;
 pub mod runtime_receipts;
@@ -49,6 +50,15 @@ pub use management_projection::{
     ManagementProjectionValidationIssue, ManagementProjectionValidationIssueKind,
     ManagementProjectionValidationReport, ManagementProjectionValidationStatus,
     MANAGEMENT_PROJECTION_ROOT, MANAGEMENT_PROJECTION_SCHEMA_V1,
+};
+pub use management_sync::{
+    ManagementProjectionCapturePrepId, ManagementProjectionCapturePrepRecord,
+    ManagementProjectionCapturePrepStatus, ManagementProjectionCaptureScope,
+    ManagementProjectionImportRepairKind, ManagementProjectionImportRepairProposal,
+    ManagementProjectionImportRepairProposalId, ManagementProjectionImportRepairReview,
+    ManagementProjectionSyncAssistanceKind, ManagementProjectionSyncAssistanceRoute,
+    ManagementProjectionSyncPlan, ManagementProjectionSyncPlanId, ManagementProjectionSyncPlanKind,
+    ManagementProjectionSyncPlanStatus,
 };
 pub use runtime_receipts::{
     decode_runtime_receipt_record, encode_runtime_receipt_record, EngineRuntimeReceiptEffectFamily,

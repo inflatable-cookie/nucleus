@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `084-management-sync-plan-records.md`
+- `089-scm-session-command-records.md`
 
 ## Planned Cards
 
-- `085-projection-import-repair-proposals.md`
-- `086-projection-conflict-assistance-routing.md`
-- `087-management-capture-prep-records.md`
-- `088-management-sync-runtime-validation.md`
-- `089-scm-session-command-records.md`
 - `090-git-session-admission-records.md`
 - `091-non-git-session-vocabulary-validation.md`
 - `092-scm-session-work-item-linkage.md`
@@ -29,7 +24,7 @@ Hold execution cards for `g02`.
 - `097-scm-session-diagnostics-read-model.md`
 - `098-client-diagnostics-dto-validation.md`
 
-Cards 084-088 belong to `../021-management-projection-sync-runtime.md`.
+Cards 089-093 belong to `../022-scm-working-session-runtime.md`.
 
 ## Completed Cards
 
@@ -115,3 +110,9 @@ Cards 084-088 belong to `../021-management-projection-sync-runtime.md`.
 - `080-effigy-doctor-summary-command.md`
 - `081-effigy-test-plan-summary-command.md`
 - `082-effigy-repair-hint-synthesis.md`
+- `083-effigy-command-inspection-validation.md`
+- `084-management-sync-plan-records.md`
+- `085-projection-import-repair-proposals.md`
+- `086-projection-conflict-assistance-routing.md`
+- `087-management-capture-prep-records.md`
+- `088-management-sync-runtime-validation.md`

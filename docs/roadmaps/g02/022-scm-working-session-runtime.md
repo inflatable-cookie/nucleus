@@ -1,6 +1,6 @@
 # 022 SCM Working Session Runtime
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -40,9 +40,12 @@ admission and runtime evidence.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/089-scm-session-command-records.md`
+
+Planned cards:
+
 - `batch-cards/090-git-session-admission-records.md`
 - `batch-cards/091-non-git-session-vocabulary-validation.md`
 - `batch-cards/092-scm-session-work-item-linkage.md`

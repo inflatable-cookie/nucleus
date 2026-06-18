@@ -25,8 +25,8 @@ shape.
 - `g02/018-steward-native-harness-and-effigy-tools.md` - completed
 - `g02/019-native-steward-command-boundary.md` - completed
 - `g02/020-effigy-command-backed-inspection.md` - completed
-- `g02/021-management-projection-sync-runtime.md` - active
-- `g02/022-scm-working-session-runtime.md` - planned
+- `g02/021-management-projection-sync-runtime.md` - completed
+- `g02/022-scm-working-session-runtime.md` - active
 - `g02/023-client-read-model-and-diagnostics-runway.md` - planned
 
 ## Previous Generation
@@ -86,5 +86,5 @@ shape.
 
 ## Next Task
 
-Continue `g02/021-management-projection-sync-runtime.md`, starting with
-`g02/batch-cards/084-management-sync-plan-records.md`.
+Continue `g02/022-scm-working-session-runtime.md`, starting with
+`g02/batch-cards/089-scm-session-command-records.md`.

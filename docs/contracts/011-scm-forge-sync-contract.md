@@ -259,6 +259,17 @@ credentials, or mutate the working copy.
 The sync layer must validate projection records before importing them into the
 active server working set.
 
+The first runtime sync records are provider-neutral plan, repair, assistance,
+and capture-preparation records. They can cite projection files, validation
+reports, conflict reports, runtime receipts, and steward assistance refs.
+
+They must not silently overwrite task meaning. Invalid or unsupported imports
+produce repair proposals. Semantic conflicts require human approval.
+
+Capture preparation is not capture execution. It may prepare a management-state
+handoff, but SCM adapters still own commits, snapshots, publications, pushes,
+review boundaries, promotions, gates, and provider-specific authority changes.
+
 Validation outcomes:
 
 - valid: record can be imported

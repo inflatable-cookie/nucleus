@@ -1,6 +1,6 @@
 # 089 SCM Session Command Records
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../022-scm-working-session-runtime.md`

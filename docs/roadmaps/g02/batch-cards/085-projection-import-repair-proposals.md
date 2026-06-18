@@ -1,6 +1,6 @@
 # 085 Projection Import Repair Proposals
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../021-management-projection-sync-runtime.md`
@@ -17,18 +17,24 @@ Route invalid, unsupported, or risky projection imports into repair proposals.
 
 ## Acceptance Criteria
 
-- Invalid imports produce repair evidence instead of silent overwrite.
-- Unsupported schema records are preserved.
-- Semantic repair requires approval.
+- [x] Invalid imports produce repair evidence instead of silent overwrite.
+- [x] Unsupported schema records are preserved.
+- [x] Semantic repair requires approval.
+
+## Outcome
+
+- Added import repair proposal records for invalid and unsupported projection
+  reports.
+- Preserved incoming records and blocked silent task-meaning overwrites.
 
 ## Validation
 
-- `cargo test -p nucleus-engine management_projection`
-- `cargo test -p nucleus-native-harness steward`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-engine management_projection`
+- [x] `cargo test -p nucleus-native-harness steward`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

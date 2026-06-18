@@ -1,6 +1,6 @@
 # 087 Management Capture Prep Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../021-management-projection-sync-runtime.md`
@@ -17,18 +17,24 @@ Create management capture preparation records from accepted sync assistance.
 
 ## Acceptance Criteria
 
-- Capture prep is separate from capture execution.
-- Capture prep can cite projection files and receipts.
-- Provider-specific authority transitions remain out of scope.
+- [x] Capture prep is separate from capture execution.
+- [x] Capture prep can cite projection files and receipts.
+- [x] Provider-specific authority transitions remain out of scope.
+
+## Outcome
+
+- Added management capture preparation records built from sync plans.
+- Kept capture preparation separate from SCM commits, snapshots,
+  publications, pushes, and gates.
 
 ## Validation
 
-- `cargo test -p nucleus-engine management_projection`
-- `cargo test -p nucleus-native-harness steward`
-- `cargo check --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo test -p nucleus-engine management_projection`
+- [x] `cargo test -p nucleus-native-harness steward`
+- [x] `cargo check --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`
 
 ## Stop Conditions
 
