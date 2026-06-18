@@ -210,6 +210,47 @@ snaps, scopes, publications, gates, bundles, promotions, and releases.
 
 The current implementation is metadata only. It does not mutate SCM state.
 
+## Management Capture And Share Authority
+
+Management capture preparation is the neutral boundary between local
+management projection apply/review and provider-specific SCM authority.
+
+Core records may say:
+
+- prepare management capture
+- capture candidate
+- capture evidence
+- share readiness
+- review boundary readiness
+- provider action required
+
+Core records must not treat these as universal terms:
+
+- commit
+- branch
+- worktree
+- push
+- pull request
+- merge
+- snap
+- publication
+- gate
+- promotion
+
+Those terms belong to adapter descriptors, UI labels, provider-specific
+command records, or forge-specific workflows.
+
+Git-like adapters may map an accepted management capture to a commit and a
+later share step to push or pull-request preparation. Convergence-like adapters
+may map local capture to snaps and shared authority to publication or gate
+flows. Nucleus core must keep those mappings explicit instead of pretending one
+SCM object model is universal.
+
+The first management capture implementation may prepare a request, validate
+policy gates, name projection file refs, link apply receipts, and expose review
+state. It must not execute provider commands, mutate refs, create snapshots,
+publish, push, promote, open review requests, or integrate changes.
+
 ## First Driver Registry Implementation
 
 The first SCM/forge registry is a metadata-only descriptor registry.

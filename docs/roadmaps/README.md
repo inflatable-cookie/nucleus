@@ -102,4 +102,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/175-scm-management-capture-policy-reset.md`.
+Execute `g02/batch-cards/176-management-capture-command-records.md`.

@@ -38,7 +38,7 @@ and review state needed before those actions are allowed.
 
 ## Execution Plan
 
-- [ ] Policy batch: clarify provider-neutral capture/share terms and keep SCM
+- [x] Policy batch: clarify provider-neutral capture/share terms and keep SCM
       mutation outside the current lane.
 - [ ] Command-record batch: add management capture command/prep records without
       running provider commands.
@@ -54,11 +54,10 @@ and review state needed before those actions are allowed.
 
 Ready cards:
 
-- `batch-cards/175-scm-management-capture-policy-reset.md`
+- `batch-cards/176-management-capture-command-records.md`
 
 Planned cards:
 
-- `batch-cards/176-management-capture-command-records.md`
 - `batch-cards/177-management-capture-receipt-linkage.md`
 - `batch-cards/178-provider-neutral-share-gate-fixtures.md`
 - `batch-cards/179-management-capture-review-read-model.md`
@@ -66,7 +65,7 @@ Planned cards:
 
 Completed cards:
 
-- None.
+- `batch-cards/175-scm-management-capture-policy-reset.md`
 
 ## Acceptance Criteria
 

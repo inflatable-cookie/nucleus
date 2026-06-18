@@ -10,11 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `175-scm-management-capture-policy-reset.md`
+- `176-management-capture-command-records.md`
 
 ## Planned Cards
 
-- `176-management-capture-command-records.md`
 - `177-management-capture-receipt-linkage.md`
 - `178-provider-neutral-share-gate-fixtures.md`
 - `179-management-capture-review-read-model.md`
@@ -196,3 +195,4 @@ Hold execution cards for `g02`.
 - `172-management-projection-apply-receipts-and-audit.md`
 - `173-management-sync-review-read-model.md`
 - `174-management-sync-apply-validation-and-next-lane.md`
+- `175-scm-management-capture-policy-reset.md`

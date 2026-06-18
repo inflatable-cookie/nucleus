@@ -1,6 +1,6 @@
 # 176 Management Capture Command Records
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../039-scm-management-capture-and-share-foundation.md`

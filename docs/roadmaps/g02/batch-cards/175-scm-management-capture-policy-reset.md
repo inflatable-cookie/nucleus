@@ -1,6 +1,6 @@
 # 175 SCM Management Capture Policy Reset
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../039-scm-management-capture-and-share-foundation.md`
@@ -37,3 +37,14 @@ Promote the next lane policy before implementation starts.
 
 - Stop if the contract cannot define capture/share without choosing a
   provider-specific authority model.
+
+## Result
+
+`docs/contracts/011-scm-forge-sync-contract.md` now defines management capture
+and share authority as a provider-neutral preparation boundary. Git commit,
+branch, worktree, push, pull request, and merge terms stay provider-specific;
+Convergence snap, publication, gate, and promotion terms also stay
+provider-specific.
+
+The next implementation card can add capture command records without reopening
+SCM authority policy.
