@@ -146,6 +146,9 @@ Project management state also has a repo-backed projection path.
   mechanical conflicts under explicit policy
 - live runtime state, provider state, local caches, and secrets do not belong
   in the committable project projection by default
+- terminal/browser state, client layout state, raw validation output, live
+  agent sessions, and unclassified custom record kinds are local-only by
+  default
 
 Remote deployment is modeled above the adapter layer.
 

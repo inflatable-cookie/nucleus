@@ -100,4 +100,4 @@ shape.
 ## Next Task
 
 Review `g02/037-repo-backed-management-sync-hardening.md`, starting with
-`g02/batch-cards/164-management-projection-authority-policy.md`.
+`g02/batch-cards/165-project-task-projection-export-hardening.md`.

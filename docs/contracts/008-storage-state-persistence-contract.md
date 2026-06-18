@@ -220,6 +220,46 @@ records, write scoped TOML projection files under `nucleus/`, and stage
 projection files for import validation. They do not apply imports, run
 migrations, resolve conflicts, commit, push, publish, or call SCM adapters.
 
+## Management Projection Authority Policy
+
+Repo-backed management projection files are shared intent, not active runtime
+state.
+
+Default committable shared records:
+
+- project records
+- repo membership records
+- task records
+- index and artifact index records
+- accepted planning artifacts
+- accepted shared memories
+- accepted research synthesis
+
+Default local-only records and state:
+
+- provider auth material
+- provider-native transcripts
+- live runtime event streams
+- live agent sessions
+- terminal and browser state
+- local caches and local indexes
+- global display/window/surface layout
+- per-project panel layout
+- raw validation output
+- secrets and credential material
+- unclassified custom record kinds
+
+SCM adapters may synchronize projection files, but projection authority must
+not assume Git-only vocabulary. Git commits, Convergence snapshots, or future
+SCM publication units are provider-specific sync artifacts, not the definition
+of management projection authority.
+
+The first Rust policy surface is
+`ManagementProjectionAuthorityPolicy`. `Project`, `RepoMembership`, `Task`,
+`Index`, `ArtifactIndex`, `PlanningArtifact`, `SharedMemory`, and
+`ResearchSynthesis` are committable by default. `Custom` record kinds are
+local-only until a contract explicitly promotes them.
+
 ## Projection Migration Rule
 
 Projection migrations are explicit policy actions.

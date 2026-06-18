@@ -58,11 +58,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/164-management-projection-authority-policy.md`
+- `batch-cards/165-project-task-projection-export-hardening.md`
 
 Planned cards:
 
-- `batch-cards/165-project-task-projection-export-hardening.md`
 - `batch-cards/166-projection-import-conflict-fixtures.md`
 - `batch-cards/167-management-sync-assistance-routing-proof.md`
 - `batch-cards/168-management-sync-hardening-validation.md`
@@ -232,6 +231,7 @@ Completed cards:
 - `batch-cards/161-post-runtime-health-gate.md`
 - `batch-cards/162-next-workflow-lane-selection.md`
 - `batch-cards/163-g02-task-backed-runway-closeout.md`
+- `batch-cards/164-management-projection-authority-policy.md`
 
 ## Planned Runway Sequence
 

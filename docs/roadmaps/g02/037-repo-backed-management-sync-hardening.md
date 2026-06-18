@@ -20,14 +20,14 @@ committable source.
 
 ## Goals
 
-- [ ] Define local-only versus committable management records.
+- [x] Define local-only versus committable management records.
 - [ ] Prove export/import behavior for project and task projection files.
 - [ ] Surface conflicts without silent overwrite.
 - [ ] Keep runtime progress, provider state, UI layout, and secrets local-only.
 
 ## Execution Plan
 
-- [ ] Policy batch: document projection authority and local-only exclusions.
+- [x] Policy batch: document projection authority and local-only exclusions.
 - [ ] Export batch: harden project/task projection file output.
 - [ ] Import batch: harden deterministic import staging and conflict detection.
 - [ ] Assistance batch: route sync conflicts into steward-assistable proposals.
@@ -37,11 +37,14 @@ committable source.
 
 Ready cards:
 
+- `batch-cards/165-project-task-projection-export-hardening.md`
+
+Completed cards:
+
 - `batch-cards/164-management-projection-authority-policy.md`
 
 Planned cards:
 
-- `batch-cards/165-project-task-projection-export-hardening.md`
 - `batch-cards/166-projection-import-conflict-fixtures.md`
 - `batch-cards/167-management-sync-assistance-routing-proof.md`
 - `batch-cards/168-management-sync-hardening-validation.md`

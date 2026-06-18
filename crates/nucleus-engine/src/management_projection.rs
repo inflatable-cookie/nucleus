@@ -6,6 +6,7 @@
 mod codec;
 mod conflicts;
 mod export;
+mod policy;
 mod types;
 mod validation;
 
@@ -19,6 +20,10 @@ pub use conflicts::{
     ManagementProjectionSemanticConflictKind, ManagementProjectionUnsupportedConflictKind,
 };
 pub use export::export_project_task_projection;
+pub use policy::{
+    default_local_only_projection_markers, projection_record_authority_policy,
+    ManagementProjectionAuthorityPolicy,
+};
 pub use types::{
     ManagementProjectionEnvelope, ManagementProjectionExportEntry, ManagementProjectionExportPlan,
     ManagementProjectionFileCodecError, ManagementProjectionFileDocument,

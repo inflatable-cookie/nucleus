@@ -206,6 +206,29 @@ use nucleus_tasks::{
     }
 
     #[test]
+    fn management_projection_authority_policy_separates_shared_and_local_only_state() {
+        assert_eq!(
+            projection_record_authority_policy(&ManagementProjectionRecordKind::Project),
+            ManagementProjectionAuthorityPolicy::CommittableShared
+        );
+        assert_eq!(
+            projection_record_authority_policy(&ManagementProjectionRecordKind::Task),
+            ManagementProjectionAuthorityPolicy::CommittableShared
+        );
+        assert_eq!(
+            projection_record_authority_policy(&ManagementProjectionRecordKind::Custom(
+                "provider_runtime".to_owned()
+            )),
+            ManagementProjectionAuthorityPolicy::LocalOnly
+        );
+
+        let markers = default_local_only_projection_markers();
+        assert!(markers.contains(&ManagementProjectionExcludedStateMarker::LiveAgentSession));
+        assert!(markers.contains(&ManagementProjectionExcludedStateMarker::PerProjectPanelLayout));
+        assert!(markers.contains(&ManagementProjectionExcludedStateMarker::RawValidationOutput));
+    }
+
+    #[test]
     fn management_projection_validation_preserves_invalid_and_unsupported_records() {
         let invalid = ManagementProjectionEnvelope {
             schema_version: ManagementProjectionSchemaVersion::current(),

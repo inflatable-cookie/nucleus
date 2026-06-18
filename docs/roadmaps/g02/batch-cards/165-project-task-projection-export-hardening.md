@@ -1,6 +1,6 @@
 # 165 Project Task Projection Export Hardening
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../037-repo-backed-management-sync-hardening.md`

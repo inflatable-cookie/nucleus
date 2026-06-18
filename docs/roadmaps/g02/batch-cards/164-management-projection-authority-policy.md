@@ -1,6 +1,6 @@
 # 164 Management Projection Authority Policy
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../037-repo-backed-management-sync-hardening.md`
@@ -31,3 +31,11 @@ records must remain local-only.
 ## Stop Conditions
 
 - Stop if the policy requires operator product direction.
+
+## Result
+
+- Added `ManagementProjectionAuthorityPolicy` in `nucleus-engine`.
+- Documented committable shared records and local-only exclusions in the
+  storage/state persistence contract.
+- Kept SCM terminology adapter-neutral; the policy does not assume Git commits
+  as the only publication unit.
