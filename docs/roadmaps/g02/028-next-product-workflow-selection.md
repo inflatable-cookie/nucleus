@@ -1,6 +1,6 @@
 # 028 Next Product Workflow Selection
 
-Status: paused
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -24,8 +24,8 @@ workflow instead of widening every subsystem at once.
 - [x] Review current implementation state after diagnostics are queryable.
 - [x] Compare task-backed agent work, SCM management sync, and native steward
   workflow proofs.
-- [ ] Pick one next runway.
-- [ ] Compile follow-on roadmap/cards only after the choice is explicit.
+- [x] Pick one next runway.
+- [x] Compile follow-on roadmap/cards only after the choice is explicit.
 
 ## Execution Plan
 
@@ -37,10 +37,6 @@ workflow instead of widening every subsystem at once.
 
 ## Batch Cards
 
-Ready cards:
-
-- none; paused for operator workflow selection
-
 Completed cards:
 
 - `batch-cards/119-g02-product-workflow-options-review.md`
@@ -51,7 +47,7 @@ Completed cards:
 
 ## Acceptance Criteria
 
-- [ ] The next workflow is chosen with evidence.
+- [x] The next workflow is chosen with evidence.
 - [x] G02 does not split into parallel speculative lanes.
 - [x] Roadmap pointer is explicit at closeout.
 
@@ -111,23 +107,28 @@ Blockers:
 
 ## Recommendation
 
-Do not open another implementation lane until Tom chooses the next workflow.
+Selected runway: task-backed agent work unit.
 
-Engineering default, if Tom wants a recommendation: task-backed agent work unit.
-It proves the core Nucleus promise most directly, but it also forces the first
-runtime-target decision. Repo-backed management sync is the lower-risk
-alternative if the next goal is multi-user project-management state before
-provider execution. Native steward should follow once either task-backed work
-or management sync has a real loop for the steward to manage.
+First bridged runtime target: Codex.
+
+Reason: task-backed work proves the core Nucleus promise most directly, and
+Codex runtime supervision already has the strongest existing runway.
+Repo-backed management sync is the lower-risk follow-on if the next goal is
+multi-user project-management state. Native steward should follow once either
+task-backed work or management sync has a real loop for the steward to manage.
 
 ## Pause Point
 
-Operator decision required:
+Next runway compiled:
 
-- choose task-backed agent work unit
-- choose repo-backed management sync
-- choose native steward workflow
-- choose a different workflow and create the next runway from that
+- `029-health-and-module-boundary-reset.md`
+- `030-task-backed-agent-workflow-contract-reset.md`
+- `031-task-agent-work-unit-source-model.md`
+- `032-codex-task-runtime-admission-bridge.md`
+- `033-codex-task-event-ingestion-and-receipts.md`
+- `034-task-work-checkpoint-and-review-loop.md`
+- `035-desktop-task-agent-progress-proof.md`
+- `036-task-backed-workflow-validation-and-next-lane.md`
 
 ## Gate
 

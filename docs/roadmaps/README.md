@@ -32,7 +32,15 @@ shape.
 - `g02/025-diagnostics-control-dto-serialization.md` - completed
 - `g02/026-desktop-diagnostics-proof-surface.md` - completed
 - `g02/027-diagnostics-read-model-source-integration.md` - completed
-- `g02/028-next-product-workflow-selection.md` - paused
+- `g02/028-next-product-workflow-selection.md` - completed
+- `g02/029-health-and-module-boundary-reset.md` - active
+- `g02/030-task-backed-agent-workflow-contract-reset.md` - planned
+- `g02/031-task-agent-work-unit-source-model.md` - planned
+- `g02/032-codex-task-runtime-admission-bridge.md` - planned
+- `g02/033-codex-task-event-ingestion-and-receipts.md` - planned
+- `g02/034-task-work-checkpoint-and-review-loop.md` - planned
+- `g02/035-desktop-task-agent-progress-proof.md` - planned
+- `g02/036-task-backed-workflow-validation-and-next-lane.md` - planned
 
 ## Previous Generation
 
@@ -91,5 +99,5 @@ shape.
 
 ## Next Task
 
-Review `g02/028-next-product-workflow-selection.md` and choose the next
-workflow runway.
+Review `g02/029-health-and-module-boundary-reset.md`, starting with
+`g02/batch-cards/124-doctor-god-file-triage.md`.

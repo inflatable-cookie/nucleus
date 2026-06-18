@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-17
+Updated: 2026-06-18
 
 ## Purpose
 
@@ -10,13 +10,49 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- none; paused for operator workflow selection
+- `124-doctor-god-file-triage.md`
 
 ## Planned Cards
 
-- none until the next workflow runway is chosen
-
-Cards 104-108 belong to `../025-diagnostics-control-dto-serialization.md`.
+- `125-command-policy-storage-codec-split.md`
+- `126-server-dto-module-pressure-review.md`
+- `127-desktop-proof-surface-module-pressure-review.md`
+- `128-health-reset-validation.md`
+- `129-task-backed-workflow-lifecycle-contract.md`
+- `130-task-work-unit-state-gap-review.md`
+- `131-codex-task-runtime-binding-contract.md`
+- `132-task-work-review-acceptance-contract.md`
+- `133-task-backed-contract-validation.md`
+- `134-task-work-unit-source-records.md`
+- `135-task-delegation-work-unit-admission.md`
+- `136-task-work-unit-state-projection.md`
+- `137-task-work-unit-diagnostics-read-model.md`
+- `138-task-work-unit-source-validation.md`
+- `139-codex-task-runtime-request-records.md`
+- `140-task-runtime-scheduler-admission.md`
+- `141-codex-wait-state-task-linkage.md`
+- `142-codex-task-runtime-recovery-gates.md`
+- `143-codex-task-runtime-admission-validation.md`
+- `144-codex-task-progress-event-mapping.md`
+- `145-codex-task-command-receipt-linkage.md`
+- `146-codex-task-permission-wait-states.md`
+- `147-codex-task-error-retry-classification.md`
+- `148-codex-task-event-ingestion-validation.md`
+- `149-task-work-checkpoint-linkage.md`
+- `150-task-work-diff-summary-linkage.md`
+- `151-task-work-review-command-shapes.md`
+- `152-task-work-review-timeline-projection.md`
+- `153-task-work-review-validation.md`
+- `154-task-work-progress-control-dtos.md`
+- `155-desktop-task-work-progress-panel.md`
+- `156-desktop-task-work-wait-state-display.md`
+- `157-desktop-task-work-review-display.md`
+- `158-desktop-task-agent-progress-validation.md`
+- `159-task-backed-workflow-fixture-validation.md`
+- `160-task-backed-findings-promotion.md`
+- `161-post-runtime-health-gate.md`
+- `162-next-workflow-lane-selection.md`
+- `163-g02-task-backed-runway-closeout.md`
 
 ## Completed Cards
 

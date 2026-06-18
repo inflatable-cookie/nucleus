@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-17
+Updated: 2026-06-18
 
 ## Purpose
 
@@ -43,9 +43,63 @@ and engine boundary are settled.
 - `025-diagnostics-control-dto-serialization.md` - completed
 - `026-desktop-diagnostics-proof-surface.md` - completed
 - `027-diagnostics-read-model-source-integration.md` - completed
-- `028-next-product-workflow-selection.md` - paused
+- `028-next-product-workflow-selection.md` - completed
+- `029-health-and-module-boundary-reset.md` - active
+- `030-task-backed-agent-workflow-contract-reset.md` - planned
+- `031-task-agent-work-unit-source-model.md` - planned
+- `032-codex-task-runtime-admission-bridge.md` - planned
+- `033-codex-task-event-ingestion-and-receipts.md` - planned
+- `034-task-work-checkpoint-and-review-loop.md` - planned
+- `035-desktop-task-agent-progress-proof.md` - planned
+- `036-task-backed-workflow-validation-and-next-lane.md` - planned
 
 ## Batch Cards
+
+Ready cards:
+
+- `batch-cards/124-doctor-god-file-triage.md`
+
+Planned cards:
+
+- `batch-cards/125-command-policy-storage-codec-split.md`
+- `batch-cards/126-server-dto-module-pressure-review.md`
+- `batch-cards/127-desktop-proof-surface-module-pressure-review.md`
+- `batch-cards/128-health-reset-validation.md`
+- `batch-cards/129-task-backed-workflow-lifecycle-contract.md`
+- `batch-cards/130-task-work-unit-state-gap-review.md`
+- `batch-cards/131-codex-task-runtime-binding-contract.md`
+- `batch-cards/132-task-work-review-acceptance-contract.md`
+- `batch-cards/133-task-backed-contract-validation.md`
+- `batch-cards/134-task-work-unit-source-records.md`
+- `batch-cards/135-task-delegation-work-unit-admission.md`
+- `batch-cards/136-task-work-unit-state-projection.md`
+- `batch-cards/137-task-work-unit-diagnostics-read-model.md`
+- `batch-cards/138-task-work-unit-source-validation.md`
+- `batch-cards/139-codex-task-runtime-request-records.md`
+- `batch-cards/140-task-runtime-scheduler-admission.md`
+- `batch-cards/141-codex-wait-state-task-linkage.md`
+- `batch-cards/142-codex-task-runtime-recovery-gates.md`
+- `batch-cards/143-codex-task-runtime-admission-validation.md`
+- `batch-cards/144-codex-task-progress-event-mapping.md`
+- `batch-cards/145-codex-task-command-receipt-linkage.md`
+- `batch-cards/146-codex-task-permission-wait-states.md`
+- `batch-cards/147-codex-task-error-retry-classification.md`
+- `batch-cards/148-codex-task-event-ingestion-validation.md`
+- `batch-cards/149-task-work-checkpoint-linkage.md`
+- `batch-cards/150-task-work-diff-summary-linkage.md`
+- `batch-cards/151-task-work-review-command-shapes.md`
+- `batch-cards/152-task-work-review-timeline-projection.md`
+- `batch-cards/153-task-work-review-validation.md`
+- `batch-cards/154-task-work-progress-control-dtos.md`
+- `batch-cards/155-desktop-task-work-progress-panel.md`
+- `batch-cards/156-desktop-task-work-wait-state-display.md`
+- `batch-cards/157-desktop-task-work-review-display.md`
+- `batch-cards/158-desktop-task-agent-progress-validation.md`
+- `batch-cards/159-task-backed-workflow-fixture-validation.md`
+- `batch-cards/160-task-backed-findings-promotion.md`
+- `batch-cards/161-post-runtime-health-gate.md`
+- `batch-cards/162-next-workflow-lane-selection.md`
+- `batch-cards/163-g02-task-backed-runway-closeout.md`
 
 Completed cards:
 
@@ -53,51 +107,30 @@ Completed cards:
 - `batch-cards/002-event-store-repository-boundary.md`
 - `batch-cards/003-command-projection-replay-integrity.md`
 - `batch-cards/004-event-store-hardening-validation.md`
-
-Completed cards:
-
 - `batch-cards/005-engine-task-command-service.md`
 - `batch-cards/006-task-command-admission-and-mutation-tests.md`
 - `batch-cards/007-request-handler-task-command-delegation.md`
 - `batch-cards/008-engine-task-command-validation.md`
-
-Completed cards:
-
 - `batch-cards/009-task-timeline-record-shape.md`
 - `batch-cards/010-task-command-event-to-timeline-projection.md`
 - `batch-cards/011-task-timeline-query-boundary.md`
 - `batch-cards/012-task-timeline-validation.md`
-
-Completed cards:
-
 - `batch-cards/013-runtime-receipt-record-shape.md`
 - `batch-cards/014-read-only-command-receipt-reactor.md`
 - `batch-cards/015-runtime-receipt-projection-query.md`
 - `batch-cards/016-runtime-receipt-validation.md`
-
-Completed cards:
-
 - `batch-cards/017-checkpoint-record-shape.md`
 - `batch-cards/018-diff-summary-record-shape.md`
 - `batch-cards/019-checkpoint-diff-query-boundary.md`
 - `batch-cards/020-checkpoint-diff-validation.md`
-
-Completed cards:
-
 - `batch-cards/021-management-projection-schema-envelope.md`
 - `batch-cards/022-minimal-project-task-projection-export.md`
 - `batch-cards/023-management-projection-import-validation.md`
 - `batch-cards/024-management-projection-conflict-reporting.md`
-
-Completed cards:
-
 - `batch-cards/025-convergence-shape-and-vocabulary-risk-pass.md`
 - `batch-cards/026-scm-forge-capability-neutralization.md`
 - `batch-cards/027-driver-registry-and-fixture-surfaces.md`
 - `batch-cards/028-workflow-gate-and-follow-on-runway.md`
-
-Completed cards:
-
 - `batch-cards/029-harness-evidence-refresh.md`
 - `batch-cards/030-harness-runtime-risk-comparison.md`
 - `batch-cards/031-first-harness-target-decision.md`
@@ -106,31 +139,18 @@ Completed cards:
 - `batch-cards/034-codex-adapter-registry-descriptor.md`
 - `batch-cards/035-codex-session-lifecycle-identity.md`
 - `batch-cards/036-codex-event-ingestion-fixtures.md`
-
-Completed cards:
-
 - `batch-cards/037-error-god-file-module-splits.md`
 - `batch-cards/038-server-boundary-authority-split.md`
 - `batch-cards/039-g02-roadmap-suite-normalization.md`
 - `batch-cards/040-health-reset-validation.md`
-
-Completed cards:
-
 - `batch-cards/041-client-protocol-envelope-profile.md`
 - `batch-cards/042-host-capability-advertisement-records.md`
 - `batch-cards/043-client-auth-posture-records.md`
 - `batch-cards/044-local-transport-selection-runway.md`
-
-Ready cards:
-
-- none; paused for operator workflow selection
-
-Planned cards:
-
-- none until the next workflow runway is chosen
-
-Completed cards:
-
+- `batch-cards/045-project-authority-map-record-shape.md`
+- `batch-cards/046-host-authority-read-model-query.md`
+- `batch-cards/047-protocol-authority-map-dto.md`
+- `batch-cards/048-host-authority-map-validation.md`
 - `batch-cards/049-codex-process-supervision-boundary.md`
 - `batch-cards/050-codex-handshake-preflight.md`
 - `batch-cards/051-codex-live-event-ingestion.md`
@@ -207,13 +227,6 @@ Completed cards:
 - `batch-cards/122-native-steward-workflow-readiness-gate.md`
 - `batch-cards/123-next-runway-selection-and-closeout.md`
 
-Completed cards:
-
-- `batch-cards/045-project-authority-map-record-shape.md`
-- `batch-cards/046-host-authority-read-model-query.md`
-- `batch-cards/047-protocol-authority-map-dto.md`
-- `batch-cards/048-host-authority-map-validation.md`
-
 ## Planned Runway Sequence
 
 The next G02 suite is:
@@ -232,17 +245,25 @@ The next G02 suite is:
 12. SCM working session runtime - completed
 13. client read model and diagnostics runway - completed
 14. diagnostics control API query surface - completed
-15. diagnostics control DTO serialization - active
-16. desktop diagnostics proof surface - planned
-17. diagnostics read-model source integration - planned
-18. next product workflow selection - planned
+15. diagnostics control DTO serialization - completed
+16. desktop diagnostics proof surface - completed
+17. diagnostics read-model source integration - completed
+18. next product workflow selection - completed
+19. health and module boundary reset - active
+20. task-backed agent workflow contract reset - planned
+21. task-agent work-unit source model - planned
+22. Codex task runtime admission bridge - planned
+23. Codex task event ingestion and receipts - planned
+24. task work checkpoint and review loop - planned
+25. desktop task-agent progress proof - planned
+26. task-backed workflow validation and next lane - planned
 
-This keeps code health and authority-map clarity ahead of live provider and
-remote transport work.
+This keeps code health and task authority clarity ahead of deeper provider
+runtime work.
 
 ## Planning Rules
 
-- `018` is the active planning milestone.
+- `029` is the active planning milestone.
 - `014` proved the first compile-only live provider runtime supervision spine.
 - `015` proved the first task-backed agent work unit.
 - `016` built committable projection file IO.
@@ -255,10 +276,19 @@ remote transport work.
 - `022` completed SCM working-session runtime records.
 - `023` completed diagnostics read-model DTOs.
 - `024` completed diagnostics control queries.
-- `025` is active and serializes diagnostics through control DTO envelopes.
-- `026` adds a disposable desktop diagnostics proof surface.
-- `027` connects diagnostics queries to available source records.
-- `028` selects the next product workflow proof.
+- `025` completed diagnostics control DTO serialization.
+- `026` completed a disposable desktop diagnostics proof surface.
+- `027` completed diagnostics source-status integration.
+- `028` selected task-backed agent work unit with Codex as the first bridged
+  runtime target.
+- `029` repairs the red health gate before runtime work expands.
+- `030` tightens task-backed workflow contracts.
+- `031` adds task work-unit source records.
+- `032` bridges task work units to Codex runtime admission without execution.
+- `033` maps Codex observations into task progress and receipts.
+- `034` adds checkpoint/review boundaries.
+- `035` exposes task-agent progress in the disposable desktop proof shell.
+- `036` validates the runway and chooses the next workflow.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

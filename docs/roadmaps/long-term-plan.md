@@ -2,7 +2,7 @@
 
 Status: proposed
 Owner: Tom
-Updated: 2026-06-17
+Updated: 2026-06-18
 
 ## Purpose
 
@@ -25,23 +25,36 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. The current runway is:
+G02 is the orchestration and engine-core generation. Milestones 001-028 are
+complete, and the next runway is now selected.
 
-1. `012-health-and-authority-surface-reset.md` - completed
-2. `010-client-protocol-and-host-transport-runway.md` - completed
-3. `013-host-authority-map-and-client-protocol-records.md` - completed
-4. `014-codex-live-runtime-supervision.md` - active
-5. `015-task-backed-agent-work-unit-proof.md`
-6. `016-management-projection-file-io-and-sync.md`
-7. `017-scm-working-copy-and-change-request-workflows.md`
-8. `018-steward-native-harness-and-effigy-tools.md`
+Selected next workflow proof:
 
-Only `014` is active. Later milestones are planned and should not receive
-batch cards until the predecessor gate is clear.
+- task-backed agent work unit
 
-This order intentionally pulls client protocol and authority-map records ahead
-of live provider work so embedded, sidecar, and remote host behavior share the
-same vocabulary before runtime supervision expands.
+First bridged runtime target:
+
+- Codex
+
+Reason:
+
+- this proves the core product loop most directly
+- Codex supervision has the strongest existing runtime runway
+- native steward and repo-backed management sync remain follow-on workflows,
+  not parallel implementation lanes
+
+Current G02 continuation sequence:
+
+1. code-health repair for the red doctor gate
+2. task-backed agent workflow contract hardening
+3. task work-unit source records and admission path
+4. Codex runtime bridge proof for task-backed work
+5. checkpoint/review loop for completed work units
+6. desktop proof surface for task-agent progress
+7. validation and next workflow selection
+
+This keeps execution focused on one real workflow while protecting the core
+engine boundary from more proof-surface sprawl.
 
 ## Phase 0: Reassessment And Planning Base
 

@@ -24,6 +24,7 @@ Current planning artifacts:
 
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`
+- `logs/2026-06-18-stocktake.md`
 - `roadmaps/long-term-plan.md`
 - `roadmaps/reassessment-decision-queue.md`
 - `roadmaps/g02/001-orchestration-and-engine-boundary.md`
@@ -44,6 +45,24 @@ Current planning artifacts:
 - `roadmaps/g02/016-management-projection-file-io-and-sync.md`
 - `roadmaps/g02/017-scm-working-copy-and-change-request-workflows.md`
 - `roadmaps/g02/018-steward-native-harness-and-effigy-tools.md`
+- `roadmaps/g02/019-native-steward-command-boundary.md`
+- `roadmaps/g02/020-effigy-command-backed-inspection.md`
+- `roadmaps/g02/021-management-projection-sync-runtime.md`
+- `roadmaps/g02/022-scm-working-session-runtime.md`
+- `roadmaps/g02/023-client-read-model-and-diagnostics-runway.md`
+- `roadmaps/g02/024-diagnostics-control-api-query-surface.md`
+- `roadmaps/g02/025-diagnostics-control-dto-serialization.md`
+- `roadmaps/g02/026-desktop-diagnostics-proof-surface.md`
+- `roadmaps/g02/027-diagnostics-read-model-source-integration.md`
+- `roadmaps/g02/028-next-product-workflow-selection.md`
+- `roadmaps/g02/029-health-and-module-boundary-reset.md`
+- `roadmaps/g02/030-task-backed-agent-workflow-contract-reset.md`
+- `roadmaps/g02/031-task-agent-work-unit-source-model.md`
+- `roadmaps/g02/032-codex-task-runtime-admission-bridge.md`
+- `roadmaps/g02/033-codex-task-event-ingestion-and-receipts.md`
+- `roadmaps/g02/034-task-work-checkpoint-and-review-loop.md`
+- `roadmaps/g02/035-desktop-task-agent-progress-proof.md`
+- `roadmaps/g02/036-task-backed-workflow-validation-and-next-lane.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -51,6 +70,7 @@ Current planning artifacts:
 
 ## Guardrail
 
-Do not build provider runtime, remote transport, or UI timeline behavior until
-SCM driver contracts, harness runtime target selection, and client protocol
-transport have moved into the active implementation lane.
+Do not widen provider runtime, remote transport, or UI timeline behavior while
+the active G02 runway is proving task-backed Codex work units. Keep task
+authority, admission, wait states, receipts, checkpoints, and review boundaries
+ahead of UI polish or broader provider support.
