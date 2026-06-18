@@ -32,7 +32,7 @@ shape.
 - `g02/025-diagnostics-control-dto-serialization.md` - completed
 - `g02/026-desktop-diagnostics-proof-surface.md` - completed
 - `g02/027-diagnostics-read-model-source-integration.md` - completed
-- `g02/028-next-product-workflow-selection.md` - active
+- `g02/028-next-product-workflow-selection.md` - paused
 
 ## Previous Generation
 
@@ -91,5 +91,5 @@ shape.
 
 ## Next Task
 
-Continue `g02/028-next-product-workflow-selection.md`, starting with
-`g02/batch-cards/119-g02-product-workflow-options-review.md`.
+Review `g02/028-next-product-workflow-selection.md` and choose the next
+workflow runway.

@@ -10,14 +10,11 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `119-g02-product-workflow-options-review.md`
+- none; paused for operator workflow selection
 
 ## Planned Cards
 
-- `120-task-backed-agent-workflow-readiness-gate.md`
-- `121-scm-management-sync-workflow-readiness-gate.md`
-- `122-native-steward-workflow-readiness-gate.md`
-- `123-next-runway-selection-and-closeout.md`
+- none until the next workflow runway is chosen
 
 Cards 104-108 belong to `../025-diagnostics-control-dto-serialization.md`.
 
@@ -141,3 +138,8 @@ Cards 104-108 belong to `../025-diagnostics-control-dto-serialization.md`.
 - `116-sync-diagnostics-source-records.md`
 - `117-scm-diagnostics-source-records.md`
 - `118-diagnostics-source-integration-validation.md`
+- `119-g02-product-workflow-options-review.md`
+- `120-task-backed-agent-workflow-readiness-gate.md`
+- `121-scm-management-sync-workflow-readiness-gate.md`
+- `122-native-steward-workflow-readiness-gate.md`
+- `123-next-runway-selection-and-closeout.md`

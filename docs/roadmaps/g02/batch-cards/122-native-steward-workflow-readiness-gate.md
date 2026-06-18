@@ -1,6 +1,6 @@
 # 122 Native Steward Workflow Readiness Gate
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../028-next-product-workflow-selection.md`
@@ -17,9 +17,14 @@ Assess readiness for a native steward workflow proof.
 
 ## Acceptance Criteria
 
-- Readiness and blockers are explicit.
-- Model/backend assumptions are named.
-- Steward authority stays bounded.
+- [x] Readiness and blockers are explicit.
+- [x] Model/backend assumptions are named.
+- [x] Steward authority stays bounded.
+
+## Outcome
+
+Native steward is strategically important, but model/backend strategy and
+approval policy need operator direction before autonomous execution work.
 
 ## Validation
 

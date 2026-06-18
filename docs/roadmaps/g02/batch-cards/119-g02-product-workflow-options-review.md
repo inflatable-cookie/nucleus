@@ -1,6 +1,6 @@
 # 119 G02 Product Workflow Options Review
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../028-next-product-workflow-selection.md`
@@ -18,9 +18,14 @@ Summarize viable next product workflow proofs after diagnostics are queryable.
 
 ## Acceptance Criteria
 
-- Viable workflow options are listed with blockers.
-- Recommendation criteria are explicit.
-- No implementation starts from this card.
+- [x] Viable workflow options are listed with blockers.
+- [x] Recommendation criteria are explicit.
+- [x] No implementation starts from this card.
+
+## Outcome
+
+Compared task-backed agent work, repo-backed management sync, and native
+steward workflow proofs in `../028-next-product-workflow-selection.md`.
 
 ## Validation
 

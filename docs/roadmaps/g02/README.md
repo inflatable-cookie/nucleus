@@ -43,7 +43,7 @@ and engine boundary are settled.
 - `025-diagnostics-control-dto-serialization.md` - completed
 - `026-desktop-diagnostics-proof-surface.md` - completed
 - `027-diagnostics-read-model-source-integration.md` - completed
-- `028-next-product-workflow-selection.md` - active
+- `028-next-product-workflow-selection.md` - paused
 
 ## Batch Cards
 
@@ -123,14 +123,11 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/119-g02-product-workflow-options-review.md`
+- none; paused for operator workflow selection
 
 Planned cards:
 
-- `batch-cards/120-task-backed-agent-workflow-readiness-gate.md`
-- `batch-cards/121-scm-management-sync-workflow-readiness-gate.md`
-- `batch-cards/122-native-steward-workflow-readiness-gate.md`
-- `batch-cards/123-next-runway-selection-and-closeout.md`
+- none until the next workflow runway is chosen
 
 Completed cards:
 
@@ -204,6 +201,11 @@ Completed cards:
 - `batch-cards/116-sync-diagnostics-source-records.md`
 - `batch-cards/117-scm-diagnostics-source-records.md`
 - `batch-cards/118-diagnostics-source-integration-validation.md`
+- `batch-cards/119-g02-product-workflow-options-review.md`
+- `batch-cards/120-task-backed-agent-workflow-readiness-gate.md`
+- `batch-cards/121-scm-management-sync-workflow-readiness-gate.md`
+- `batch-cards/122-native-steward-workflow-readiness-gate.md`
+- `batch-cards/123-next-runway-selection-and-closeout.md`
 
 Completed cards:
 

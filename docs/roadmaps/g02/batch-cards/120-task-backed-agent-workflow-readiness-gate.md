@@ -1,6 +1,6 @@
 # 120 Task Backed Agent Workflow Readiness Gate
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../028-next-product-workflow-selection.md`
@@ -18,9 +18,14 @@ Assess readiness for a task-backed agent workflow proof.
 
 ## Acceptance Criteria
 
-- Readiness and blockers are explicit.
-- Required contracts are named.
-- No speculative runtime target is chosen.
+- [x] Readiness and blockers are explicit.
+- [x] Required contracts are named.
+- [x] No speculative runtime target is chosen.
+
+## Outcome
+
+Task-backed agent work is the engineering default recommendation, but it still
+requires a first runtime target decision before implementation starts.
 
 ## Validation
 
