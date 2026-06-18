@@ -14,6 +14,10 @@ fn handler_returns_empty_diagnostics_snapshot_without_mutation() {
             && !snapshot.effigy.client_can_run_effigy
             && !snapshot.management_sync.client_can_mutate_provider
             && !snapshot.scm_session.client_can_mutate_working_copy
+            && snapshot.steward.source_status == "empty"
+            && snapshot.effigy.source_status == "disabled"
+            && snapshot.management_sync.source_status == "empty"
+            && snapshot.scm_session.source_status == "empty"
     ));
 }
 

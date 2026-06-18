@@ -1,6 +1,6 @@
 # 116 Sync Diagnostics Source Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../027-diagnostics-read-model-source-integration.md`
@@ -17,9 +17,14 @@ Source management sync diagnostics from available engine/server records.
 
 ## Acceptance Criteria
 
-- Sync diagnostics use available source records.
-- Empty state is explicit.
-- Query execution cannot commit, push, publish, or capture.
+- [x] Sync diagnostics use available source records.
+- [x] Empty state is explicit.
+- [x] Query execution cannot commit, push, publish, or capture.
+
+## Outcome
+
+Management sync diagnostics now expose source status and summary. Populated
+sync read-model fixtures report `records`; empty handler state is explicit.
 
 ## Validation
 

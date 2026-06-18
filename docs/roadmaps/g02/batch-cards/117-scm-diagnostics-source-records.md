@@ -1,6 +1,6 @@
 # 117 SCM Diagnostics Source Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../027-diagnostics-read-model-source-integration.md`
@@ -17,9 +17,15 @@ Source SCM diagnostics from available session and work-item linkage records.
 
 ## Acceptance Criteria
 
-- SCM diagnostics use available source records.
-- Missing session evidence surfaces as repair or empty state.
-- Query execution does not mutate working copies.
+- [x] SCM diagnostics use available source records.
+- [x] Missing session evidence surfaces as repair or empty state.
+- [x] Query execution does not mutate working copies.
+
+## Outcome
+
+SCM diagnostics now expose source status and summary. Populated session/link
+read-model fixtures report `records`; empty handler state is explicit and
+provider-neutral.
 
 ## Validation
 

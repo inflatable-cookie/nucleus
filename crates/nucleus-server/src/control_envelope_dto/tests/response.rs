@@ -388,6 +388,10 @@ fn response_envelope_dto_serializes_all_diagnostics_without_authority() {
             && !snapshot.effigy.client_can_run_effigy
             && !snapshot.management_sync.client_can_mutate_provider
             && !snapshot.scm_session.client_can_mutate_working_copy
+            && snapshot.steward.source_status == "empty"
+            && snapshot.effigy.source_status == "disabled"
+            && snapshot.management_sync.source_status == "empty"
+            && snapshot.scm_session.source_status == "empty"
     ));
     assert!(json.contains("\"type\":\"diagnostics\""));
     assert!(json.contains("\"domain\":\"all\""));
@@ -412,6 +416,7 @@ fn response_envelope_dto_serializes_single_diagnostics_domain() {
         ControlResponseBodyDto::Diagnostics {
             result: ControlDiagnosticsResultDto::Steward(record),
         } if !record.client_can_mutate
+            && record.source_status == "empty"
             && record.proposals.is_empty()
             && record.command_admissions.is_empty()
             && record.command_outcomes.is_empty()

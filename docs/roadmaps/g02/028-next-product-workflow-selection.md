@@ -1,6 +1,6 @@
 # 028 Next Product Workflow Selection
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -37,9 +37,12 @@ workflow instead of widening every subsystem at once.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/119-g02-product-workflow-options-review.md`
+
+Planned cards:
+
 - `batch-cards/120-task-backed-agent-workflow-readiness-gate.md`
 - `batch-cards/121-scm-management-sync-workflow-readiness-gate.md`
 - `batch-cards/122-native-steward-workflow-readiness-gate.md`

@@ -11,8 +11,9 @@ use nucleus_engine::{
     ManagementProjectionSyncPlan,
 };
 use nucleus_native_harness::{
-    NativeEffigyHealthSummary, NativeEffigyProjectIntegration, NativeEffigyValidationPlanSummary,
-    NativeStewardCommandAdmission, NativeStewardCommandOutcome, NativeStewardProposal,
+    NativeEffigyHealthSummary, NativeEffigyIntegrationStatus, NativeEffigyProjectIntegration,
+    NativeEffigyValidationPlanSummary, NativeStewardCommandAdmission, NativeStewardCommandOutcome,
+    NativeStewardProposal,
 };
 use nucleus_scm_forge::{
     ScmSessionCommandAdmission, ScmWorkingCopySessionMode, ScmWorkingCopySessionPlan,
@@ -25,6 +26,8 @@ pub struct StewardDiagnosticsDto {
     pub command_admissions: Vec<StewardCommandAdmissionDiagnosticDto>,
     pub command_outcomes: Vec<StewardCommandOutcomeDiagnosticDto>,
     pub client_can_mutate: bool,
+    pub source_status: String,
+    pub source_summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -59,6 +62,7 @@ pub fn steward_diagnostics(
     admissions: &[NativeStewardCommandAdmission],
     outcomes: &[NativeStewardCommandOutcome],
 ) -> StewardDiagnosticsDto {
+    let record_count = proposals.len() + admissions.len() + outcomes.len();
     StewardDiagnosticsDto {
         proposals: proposals
             .iter()
@@ -73,6 +77,12 @@ pub fn steward_diagnostics(
             .map(StewardCommandOutcomeDiagnosticDto::from)
             .collect(),
         client_can_mutate: false,
+        source_status: source_status(record_count),
+        source_summary: Some(source_summary(
+            record_count,
+            "steward source records are not persisted yet",
+            "steward diagnostics loaded from source records",
+        )),
     }
 }
 
@@ -137,6 +147,8 @@ pub struct EffigyDiagnosticsDto {
     pub validation_status: Option<String>,
     pub evidence_refs: Vec<String>,
     pub client_can_run_effigy: bool,
+    pub source_status: String,
+    pub source_summary: Option<String>,
 }
 
 pub fn effigy_diagnostics(
@@ -144,6 +156,10 @@ pub fn effigy_diagnostics(
     health: Option<&NativeEffigyHealthSummary>,
     validation: Option<&NativeEffigyValidationPlanSummary>,
 ) -> EffigyDiagnosticsDto {
+    let record_count = integration.selectors.len()
+        + integration.evidence_refs.len()
+        + usize::from(health.is_some())
+        + usize::from(validation.is_some());
     EffigyDiagnosticsDto {
         integration_status: format!("{:?}", integration.status),
         selector_refs: integration
@@ -159,6 +175,14 @@ pub fn effigy_diagnostics(
             .map(|evidence| evidence.0.clone())
             .collect(),
         client_can_run_effigy: false,
+        source_status: effigy_source_status(integration, record_count),
+        source_summary: integration.summary.clone().or_else(|| {
+            Some(source_summary(
+                record_count,
+                "effigy source records are not persisted yet",
+                "effigy diagnostics loaded from source records",
+            ))
+        }),
     }
 }
 
@@ -170,6 +194,8 @@ pub struct SyncDiagnosticsDto {
     pub assistance_routes: Vec<SyncAssistanceDiagnosticDto>,
     pub capture_preps: Vec<SyncCapturePrepDiagnosticDto>,
     pub client_can_mutate_provider: bool,
+    pub source_status: String,
+    pub source_summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -214,6 +240,7 @@ pub fn sync_diagnostics(
     routes: &[ManagementProjectionSyncAssistanceRoute],
     capture_preps: &[ManagementProjectionCapturePrepRecord],
 ) -> SyncDiagnosticsDto {
+    let record_count = plans.len() + repairs.len() + routes.len() + capture_preps.len();
     SyncDiagnosticsDto {
         plans: plans.iter().map(SyncPlanDiagnosticDto::from).collect(),
         repairs: repairs.iter().map(SyncRepairDiagnosticDto::from).collect(),
@@ -226,6 +253,12 @@ pub fn sync_diagnostics(
             .map(SyncCapturePrepDiagnosticDto::from)
             .collect(),
         client_can_mutate_provider: false,
+        source_status: source_status(record_count),
+        source_summary: Some(source_summary(
+            record_count,
+            "management sync source records are not persisted yet",
+            "management sync diagnostics loaded from source records",
+        )),
     }
 }
 
@@ -292,6 +325,8 @@ pub struct ScmSessionDiagnosticsDto {
     pub admissions: Vec<ScmCommandAdmissionDiagnosticDto>,
     pub work_item_links: Vec<ScmWorkItemLinkDiagnosticDto>,
     pub client_can_mutate_working_copy: bool,
+    pub source_status: String,
+    pub source_summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -331,6 +366,7 @@ pub fn scm_session_diagnostics(
     admissions: &[ScmSessionCommandAdmission],
     links: &[EngineScmWorkItemLinkRecord],
 ) -> ScmSessionDiagnosticsDto {
+    let record_count = sessions.len() + admissions.len() + links.len();
     ScmSessionDiagnosticsDto {
         sessions: sessions
             .iter()
@@ -345,6 +381,12 @@ pub fn scm_session_diagnostics(
             .map(ScmWorkItemLinkDiagnosticDto::from)
             .collect(),
         client_can_mutate_working_copy: false,
+        source_status: source_status(record_count),
+        source_summary: Some(source_summary(
+            record_count,
+            "scm session source records are not persisted yet",
+            "scm session diagnostics loaded from source records",
+        )),
     }
 }
 
@@ -415,6 +457,33 @@ fn session_mode(mode: &ScmWorkingCopySessionMode) -> String {
         ScmWorkingCopySessionMode::IsolatedLocation { .. } => "isolated_location".to_owned(),
         ScmWorkingCopySessionMode::ExternalManaged { .. } => "external_managed".to_owned(),
         ScmWorkingCopySessionMode::Unsupported { .. } => "unsupported".to_owned(),
+    }
+}
+
+fn source_status(record_count: usize) -> String {
+    if record_count == 0 {
+        "empty".to_owned()
+    } else {
+        "records".to_owned()
+    }
+}
+
+fn effigy_source_status(
+    integration: &NativeEffigyProjectIntegration,
+    record_count: usize,
+) -> String {
+    if integration.status == NativeEffigyIntegrationStatus::Disabled {
+        "disabled".to_owned()
+    } else {
+        source_status(record_count)
+    }
+}
+
+fn source_summary(record_count: usize, empty: &str, records: &str) -> String {
+    if record_count == 0 {
+        empty.to_owned()
+    } else {
+        records.to_owned()
     }
 }
 
@@ -490,6 +559,7 @@ mod tests {
         let json = serde_json::to_string(&diagnostics).expect("serialize steward diagnostics");
 
         assert!(!diagnostics.client_can_mutate);
+        assert_eq!(diagnostics.source_status, "records");
         assert!(diagnostics.proposals[0].requires_human_approval);
         assert_eq!(diagnostics.command_admissions[0].status, "RequiresApproval");
         assert!(!json.contains("raw_stdout"));
@@ -531,6 +601,7 @@ mod tests {
         assert_eq!(diagnostics.integration_status, "Enabled");
         assert_eq!(diagnostics.selector_refs, vec!["qa:northstar".to_owned()]);
         assert!(!diagnostics.client_can_run_effigy);
+        assert_eq!(diagnostics.source_status, "records");
         assert!(!json.contains("raw_stdout"));
     }
 
@@ -576,6 +647,7 @@ mod tests {
         let json = serde_json::to_string(&diagnostics).expect("serialize sync diagnostics");
 
         assert!(!diagnostics.client_can_mutate_provider);
+        assert_eq!(diagnostics.source_status, "records");
         assert_eq!(
             diagnostics.assistance_routes[0].kind,
             "MechanicalConflictRepair"
@@ -629,6 +701,7 @@ mod tests {
         let json = serde_json::to_string(&diagnostics).expect("serialize scm diagnostics");
 
         assert!(!diagnostics.client_can_mutate_working_copy);
+        assert_eq!(diagnostics.source_status, "records");
         assert_eq!(diagnostics.sessions[0].mode, "isolated_location");
         assert_eq!(
             diagnostics.admissions[0].status,
@@ -648,10 +721,13 @@ mod tests {
             admissions: Vec::new(),
             work_item_links: Vec::new(),
             client_can_mutate_working_copy: false,
+            source_status: "empty".to_owned(),
+            source_summary: Some("scm session source records are not persisted yet".to_owned()),
         };
         let json = serde_json::to_string(&diagnostics).expect("serialize diagnostics");
 
         assert!(json.contains("client_can_mutate_working_copy"));
+        assert!(json.contains("source_status"));
         assert!(!json.contains("raw_stdout"));
         assert!(!json.contains("provider payload"));
     }

@@ -89,6 +89,8 @@ export type StewardDiagnosticsDto = {
   command_admissions: StewardCommandAdmissionDiagnosticDto[];
   command_outcomes: StewardCommandOutcomeDiagnosticDto[];
   client_can_mutate: false;
+  source_status: string;
+  source_summary: string | null;
 };
 
 export type EffigyDiagnosticsDto = {
@@ -98,6 +100,8 @@ export type EffigyDiagnosticsDto = {
   validation_status: string | null;
   evidence_refs: string[];
   client_can_run_effigy: false;
+  source_status: string;
+  source_summary: string | null;
 };
 
 export type SyncPlanDiagnosticDto = {
@@ -138,6 +142,8 @@ export type SyncDiagnosticsDto = {
   assistance_routes: SyncAssistanceDiagnosticDto[];
   capture_preps: SyncCapturePrepDiagnosticDto[];
   client_can_mutate_provider: false;
+  source_status: string;
+  source_summary: string | null;
 };
 
 export type ScmSessionPlanDiagnosticDto = {
@@ -174,6 +180,8 @@ export type ScmSessionDiagnosticsDto = {
   admissions: ScmCommandAdmissionDiagnosticDto[];
   work_item_links: ScmWorkItemLinkDiagnosticDto[];
   client_can_mutate_working_copy: false;
+  source_status: string;
+  source_summary: string | null;
 };
 
 export type ControlDiagnosticsSnapshotDto = {

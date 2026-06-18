@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `114-steward-diagnostics-source-records.md`
+- `119-g02-product-workflow-options-review.md`
 
 ## Planned Cards
 
-- `115-effigy-diagnostics-source-records.md`
-- `116-sync-diagnostics-source-records.md`
-- `117-scm-diagnostics-source-records.md`
-- `118-diagnostics-source-integration-validation.md`
-- `119-g02-product-workflow-options-review.md`
 - `120-task-backed-agent-workflow-readiness-gate.md`
 - `121-scm-management-sync-workflow-readiness-gate.md`
 - `122-native-steward-workflow-readiness-gate.md`
@@ -141,3 +136,8 @@ Cards 104-108 belong to `../025-diagnostics-control-dto-serialization.md`.
 - `111-sync-scm-diagnostics-panel.md`
 - `112-desktop-diagnostics-loading-error-states.md`
 - `113-desktop-diagnostics-proof-validation.md`
+- `114-steward-diagnostics-source-records.md`
+- `115-effigy-diagnostics-source-records.md`
+- `116-sync-diagnostics-source-records.md`
+- `117-scm-diagnostics-source-records.md`
+- `118-diagnostics-source-integration-validation.md`

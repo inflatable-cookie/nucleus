@@ -42,8 +42,8 @@ and engine boundary are settled.
 - `024-diagnostics-control-api-query-surface.md` - completed
 - `025-diagnostics-control-dto-serialization.md` - completed
 - `026-desktop-diagnostics-proof-surface.md` - completed
-- `027-diagnostics-read-model-source-integration.md` - active
-- `028-next-product-workflow-selection.md` - planned
+- `027-diagnostics-read-model-source-integration.md` - completed
+- `028-next-product-workflow-selection.md` - active
 
 ## Batch Cards
 
@@ -123,15 +123,10 @@ Completed cards:
 
 Ready cards:
 
-- `batch-cards/114-steward-diagnostics-source-records.md`
+- `batch-cards/119-g02-product-workflow-options-review.md`
 
 Planned cards:
 
-- `batch-cards/115-effigy-diagnostics-source-records.md`
-- `batch-cards/116-sync-diagnostics-source-records.md`
-- `batch-cards/117-scm-diagnostics-source-records.md`
-- `batch-cards/118-diagnostics-source-integration-validation.md`
-- `batch-cards/119-g02-product-workflow-options-review.md`
 - `batch-cards/120-task-backed-agent-workflow-readiness-gate.md`
 - `batch-cards/121-scm-management-sync-workflow-readiness-gate.md`
 - `batch-cards/122-native-steward-workflow-readiness-gate.md`
@@ -204,6 +199,11 @@ Completed cards:
 - `batch-cards/111-sync-scm-diagnostics-panel.md`
 - `batch-cards/112-desktop-diagnostics-loading-error-states.md`
 - `batch-cards/113-desktop-diagnostics-proof-validation.md`
+- `batch-cards/114-steward-diagnostics-source-records.md`
+- `batch-cards/115-effigy-diagnostics-source-records.md`
+- `batch-cards/116-sync-diagnostics-source-records.md`
+- `batch-cards/117-scm-diagnostics-source-records.md`
+- `batch-cards/118-diagnostics-source-integration-validation.md`
 
 Completed cards:
 

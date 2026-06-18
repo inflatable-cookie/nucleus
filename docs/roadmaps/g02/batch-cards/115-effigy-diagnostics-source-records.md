@@ -1,6 +1,6 @@
 # 115 Effigy Diagnostics Source Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../027-diagnostics-read-model-source-integration.md`
@@ -17,9 +17,14 @@ Source Effigy diagnostics from available native harness or server records.
 
 ## Acceptance Criteria
 
-- Effigy diagnostics use available source records.
-- Missing or disabled state is explicit.
-- Query execution does not run selectors.
+- [x] Effigy diagnostics use available source records.
+- [x] Missing or disabled state is explicit.
+- [x] Query execution does not run selectors.
+
+## Outcome
+
+Effigy diagnostics now expose source status and summary. Disabled Effigy state
+is serialized as `disabled`; populated read-model fixtures report `records`.
 
 ## Validation
 

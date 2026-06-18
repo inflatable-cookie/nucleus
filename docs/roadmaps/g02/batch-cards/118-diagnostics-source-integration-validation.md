@@ -1,6 +1,6 @@
 # 118 Diagnostics Source Integration Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../027-diagnostics-read-model-source-integration.md`
@@ -17,9 +17,14 @@ Validate and close diagnostics source integration.
 
 ## Acceptance Criteria
 
-- Source integration cards are complete or rehomed.
-- No query execution writes domain records.
-- Next ready card points to workflow selection.
+- [x] Source integration cards are complete or rehomed.
+- [x] No query execution writes domain records.
+- [x] Next ready card points to workflow selection.
+
+## Outcome
+
+Validated diagnostics source status across server, SCM, desktop DTO, and docs
+surfaces. The next ready card points to workflow selection.
 
 ## Validation
 

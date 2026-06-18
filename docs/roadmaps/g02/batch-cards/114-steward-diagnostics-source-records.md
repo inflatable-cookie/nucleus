@@ -1,6 +1,6 @@
 # 114 Steward Diagnostics Source Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../027-diagnostics-read-model-source-integration.md`
@@ -17,9 +17,15 @@ Source steward diagnostics from available server-side steward records.
 
 ## Acceptance Criteria
 
-- Steward diagnostics use real source records when available.
-- Missing source records are explicit.
-- Query execution does not write records.
+- [x] Steward diagnostics use real source records when available.
+- [x] Missing source records are explicit.
+- [x] Query execution does not write records.
+
+## Outcome
+
+Steward diagnostics now expose source status and summary. Populated steward
+read-model fixtures report `records`; the handler reports explicit empty state
+while no persisted steward source store exists.
 
 ## Validation
 

@@ -91,6 +91,17 @@
     return record.health_status ?? record.validation_status ?? record.integration_status;
   }
 
+  function sourceSummary(snapshot: ControlDiagnosticsSnapshotDto): string {
+    return [
+      snapshot.steward.source_summary,
+      snapshot.effigy.source_summary,
+      snapshot.management_sync.source_summary,
+      snapshot.scm_session.source_summary,
+    ]
+      .filter(Boolean)
+      .join(" / ");
+  }
+
   $effect(() => {
     void loadDiagnostics();
   });
@@ -132,12 +143,12 @@
           <h3>Steward</h3>
           <dl>
             <div>
-              <dt>Records</dt>
-              <dd>{stewardCount(snapshot.steward)}</dd>
+              <dt>Source</dt>
+              <dd>{snapshot.steward.source_status}</dd>
             </div>
             <div>
-              <dt>Can mutate</dt>
-              <dd>{snapshot.steward.client_can_mutate ? "yes" : "no"}</dd>
+              <dt>Records</dt>
+              <dd>{stewardCount(snapshot.steward)}</dd>
             </div>
           </dl>
         </section>
@@ -146,12 +157,12 @@
           <h3>Effigy</h3>
           <dl>
             <div>
-              <dt>Status</dt>
-              <dd>{effigyState(snapshot.effigy)}</dd>
+              <dt>Source</dt>
+              <dd>{snapshot.effigy.source_status}</dd>
             </div>
             <div>
-              <dt>Can run</dt>
-              <dd>{snapshot.effigy.client_can_run_effigy ? "yes" : "no"}</dd>
+              <dt>Status</dt>
+              <dd>{effigyState(snapshot.effigy)}</dd>
             </div>
           </dl>
         </section>
@@ -160,12 +171,12 @@
           <h3>Sync</h3>
           <dl>
             <div>
-              <dt>Records</dt>
-              <dd>{syncCount(snapshot.management_sync)}</dd>
+              <dt>Source</dt>
+              <dd>{snapshot.management_sync.source_status}</dd>
             </div>
             <div>
-              <dt>Can mutate</dt>
-              <dd>{snapshot.management_sync.client_can_mutate_provider ? "yes" : "no"}</dd>
+              <dt>Records</dt>
+              <dd>{syncCount(snapshot.management_sync)}</dd>
             </div>
           </dl>
         </section>
@@ -174,12 +185,12 @@
           <h3>SCM</h3>
           <dl>
             <div>
-              <dt>Records</dt>
-              <dd>{scmCount(snapshot.scm_session)}</dd>
+              <dt>Source</dt>
+              <dd>{snapshot.scm_session.source_status}</dd>
             </div>
             <div>
-              <dt>Can mutate</dt>
-              <dd>{snapshot.scm_session.client_can_mutate_working_copy ? "yes" : "no"}</dd>
+              <dt>Records</dt>
+              <dd>{scmCount(snapshot.scm_session)}</dd>
             </div>
           </dl>
         </section>
@@ -187,7 +198,7 @@
 
       {#if liveRecordCount === 0}
         <div class="panel-message">
-          <Text tone="muted">No live diagnostics records yet.</Text>
+          <Text tone="muted">{sourceSummary(snapshot)}</Text>
         </div>
       {/if}
     {:else}
