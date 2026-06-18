@@ -174,17 +174,23 @@ Current engine proof records already have useful shape:
 - review transitions require completed runtime plus evidence
 - review acceptance does not complete the parent task
 - projections summarize linked evidence without copying raw runtime streams
+- task-agent progress DTOs are read-only and expose mutation/provider
+  execution authority as explicit `false` fields
+- source-record projections are deterministic only when cursor ordering is
+  stable and monotonic inside a work item
 
 Missing or incomplete surfaces before runtime implementation:
 
-- source record for the work-item lifecycle command stream
 - explicit transition validation for all runtime state changes
 - provider-runtime binding record for Codex session/thread/turn/item refs
 - wait-state records for approval and user input
 - recovery record for interrupted, unsupported, partial, or uncertain sessions
-- DTO/read-model shape for task work progress and review state
 - timeline mapping for work-item lifecycle events beyond task command summaries
 - idempotency and expected-revision rules for review and rework commands
+- persistence for task-agent work-unit source records; current control progress
+  fixtures rebuild from in-memory source records
+- repo-backed projection policy for which task-management records are
+  committable and which runtime records remain local-only
 
 These gaps are assigned to the next implementation runway. They do not block
 the contract reset.

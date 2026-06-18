@@ -1,6 +1,6 @@
 # 036 Task Backed Workflow Validation And Next Lane
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -18,27 +18,24 @@ lane.
 
 ## Goals
 
-- [ ] Prove the task-backed work-unit path through fixtures and control DTOs.
-- [ ] Re-run health gates after module and runtime work.
-- [ ] Promote any durable findings into architecture/contracts.
-- [ ] Choose the next workflow: repo-backed management sync or native steward.
+- [x] Prove the task-backed work-unit path through fixtures and control DTOs.
+- [x] Re-run health gates after module and runtime work.
+- [x] Promote any durable findings into architecture/contracts.
+- [x] Choose the next workflow: repo-backed management sync or native steward.
 
 ## Execution Plan
 
-- [ ] Fixture batch: build a complete task work-unit proof fixture.
-- [ ] Promotion batch: update architecture/contracts from implementation facts.
-- [ ] Health batch: re-run doctor, Rust, desktop, and docs gates.
-- [ ] Selection batch: choose the next workflow lane.
-- [ ] Closeout batch: update roadmap pointers.
+- [x] Fixture batch: build a complete task work-unit proof fixture.
+- [x] Promotion batch: update architecture/contracts from implementation facts.
+- [x] Health batch: re-run doctor, Rust, desktop, and docs gates.
+- [x] Selection batch: choose the next workflow lane.
+- [x] Closeout batch: update roadmap pointers.
 
 ## Batch Cards
 
-Ready cards:
+Completed cards:
 
 - `batch-cards/159-task-backed-workflow-fixture-validation.md`
-
-Planned cards:
-
 - `batch-cards/160-task-backed-findings-promotion.md`
 - `batch-cards/161-post-runtime-health-gate.md`
 - `batch-cards/162-next-workflow-lane-selection.md`
@@ -46,10 +43,20 @@ Planned cards:
 
 ## Acceptance Criteria
 
-- [ ] The task-backed workflow proof is inspectable and replayable.
-- [ ] Doctor and QA status are recorded.
-- [ ] The next lane is explicit and not parallelized.
+- [x] The task-backed workflow proof is inspectable and replayable.
+- [x] Doctor and QA status are recorded.
+- [x] The next lane is explicit and not parallelized.
 
 ## Gate
 
 Stop if validation shows the workflow model needs another contract pass.
+
+## Result
+
+- Task-backed workflow fixture validation passed without provider execution or
+  SCM mutation.
+- Durable findings were promoted into the task-backed workflow contract and
+  implementation gap index.
+- Health gate passed except for the known `effigy doctor` `scan.god-files`
+  failure: 36 findings, 35 warnings, 1 error.
+- Next workflow lane selected: repo-backed management sync hardening.

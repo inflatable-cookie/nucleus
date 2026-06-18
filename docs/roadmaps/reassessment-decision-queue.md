@@ -151,6 +151,14 @@ Decision output:
 - acceptance criteria stated before implementation
 - UI remains proof-only until the workflow model is real
 
+Current follow-on:
+
+- task-backed agent work-unit proof is now implemented through source records,
+  runtime admission fixtures, review evidence, and read-only desktop progress
+  DTOs
+- next workflow selection moves to repo-backed management sync hardening so
+  project/task state can become a reliable committable surface
+
 ## Decision 6: First Runtime Target
 
 Question:

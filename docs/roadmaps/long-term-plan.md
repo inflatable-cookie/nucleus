@@ -45,13 +45,26 @@ Reason:
 
 Current G02 continuation sequence:
 
-1. code-health repair for the red doctor gate
-2. task-backed agent workflow contract hardening
-3. task work-unit source records and admission path
-4. Codex runtime bridge proof for task-backed work
-5. checkpoint/review loop for completed work units
-6. desktop proof surface for task-agent progress
-7. validation and next workflow selection
+1. code-health repair for the red doctor gate - complete enough to proceed with
+   doctor risk recorded
+2. task-backed agent workflow contract hardening - complete
+3. task work-unit source records and admission path - complete
+4. Codex runtime bridge proof for task-backed work - complete
+5. checkpoint/review loop for completed work units - complete
+6. desktop proof surface for task-agent progress - complete
+7. validation and next workflow selection - active
+
+Selected follow-on workflow:
+
+- repo-backed management sync hardening
+
+Reason:
+
+- task-backed agent work now has a proof path, but task/project state still
+  needs committable projection discipline before multi-user workflow,
+  steward automation, or richer UI work should expand
+- native steward remains the next likely workflow after management projection
+  sync has a stronger import/export/conflict base
 
 This keeps execution focused on one real workflow while protecting the core
 engine boundary from more proof-surface sprawl.

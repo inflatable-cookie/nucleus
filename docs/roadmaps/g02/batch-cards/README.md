@@ -10,14 +10,14 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `159-task-backed-workflow-fixture-validation.md`
+- `164-management-projection-authority-policy.md`
 
 ## Planned Cards
 
-- `160-task-backed-findings-promotion.md`
-- `161-post-runtime-health-gate.md`
-- `162-next-workflow-lane-selection.md`
-- `163-g02-task-backed-runway-closeout.md`
+- `165-project-task-projection-export-hardening.md`
+- `166-projection-import-conflict-fixtures.md`
+- `167-management-sync-assistance-routing-proof.md`
+- `168-management-sync-hardening-validation.md`
 
 ## Completed Cards
 
@@ -179,3 +179,8 @@ Hold execution cards for `g02`.
 - `156-desktop-task-work-wait-state-display.md`
 - `157-desktop-task-work-review-display.md`
 - `158-desktop-task-agent-progress-validation.md`
+- `159-task-backed-workflow-fixture-validation.md`
+- `160-task-backed-findings-promotion.md`
+- `161-post-runtime-health-gate.md`
+- `162-next-workflow-lane-selection.md`
+- `163-g02-task-backed-runway-closeout.md`

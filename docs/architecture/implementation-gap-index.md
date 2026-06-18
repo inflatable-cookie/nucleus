@@ -52,6 +52,7 @@ Current state:
 - desktop panels are useful for diagnostics
 - UI design direction is not settled
 - TypeScript and CSS are already large enough to need splitting
+- task work progress is now visible in the proof shell through read-only DTOs
 
 Needed:
 
@@ -120,6 +121,8 @@ Missing:
 - conflict detection
 - steward-assisted sync policy
 - projection schema migration
+- clear policy separating committable task/project/planning state from
+  local-only runtime progress, provider state, and UI layout
 
 Likely crates:
 
@@ -177,12 +180,12 @@ Missing runtime:
 
 ## Suggested Next Implementation Gate
 
-Do not pick a provider, UI panel, or remote transport as the next major lane
-until the orchestration decision is made.
+The orchestration decision has been made and the task-backed workflow proof has
+validated a read-only progress path through fixtures.
 
 The most useful next code lane is likely:
 
-1. split the high god-file
-2. decide and document the orchestration model
-3. scaffold the orchestration/engine boundary
-4. migrate one existing project/task read path through the new boundary
+1. keep the high god-file doctor failure visible as a health gate
+2. harden repo-backed management projection for task/project files
+3. define local-only versus committable task-management records
+4. prove export/import/conflict behavior before more provider runtime work

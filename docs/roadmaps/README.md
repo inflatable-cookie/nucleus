@@ -99,5 +99,5 @@ shape.
 
 ## Next Task
 
-Review `g02/036-task-backed-workflow-validation-and-next-lane.md`, starting
-with `g02/batch-cards/159-task-backed-workflow-fixture-validation.md`.
+Review `g02/037-repo-backed-management-sync-hardening.md`, starting with
+`g02/batch-cards/164-management-projection-authority-policy.md`.

@@ -51,20 +51,21 @@ and engine boundary are settled.
 - `033-codex-task-event-ingestion-and-receipts.md` - completed
 - `034-task-work-checkpoint-and-review-loop.md` - completed
 - `035-desktop-task-agent-progress-proof.md` - completed
-- `036-task-backed-workflow-validation-and-next-lane.md` - active
+- `036-task-backed-workflow-validation-and-next-lane.md` - completed
+- `037-repo-backed-management-sync-hardening.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/159-task-backed-workflow-fixture-validation.md`
+- `batch-cards/164-management-projection-authority-policy.md`
 
 Planned cards:
 
-- `batch-cards/160-task-backed-findings-promotion.md`
-- `batch-cards/161-post-runtime-health-gate.md`
-- `batch-cards/162-next-workflow-lane-selection.md`
-- `batch-cards/163-g02-task-backed-runway-closeout.md`
+- `batch-cards/165-project-task-projection-export-hardening.md`
+- `batch-cards/166-projection-import-conflict-fixtures.md`
+- `batch-cards/167-management-sync-assistance-routing-proof.md`
+- `batch-cards/168-management-sync-hardening-validation.md`
 
 Completed cards:
 
@@ -226,6 +227,11 @@ Completed cards:
 - `batch-cards/156-desktop-task-work-wait-state-display.md`
 - `batch-cards/157-desktop-task-work-review-display.md`
 - `batch-cards/158-desktop-task-agent-progress-validation.md`
+- `batch-cards/159-task-backed-workflow-fixture-validation.md`
+- `batch-cards/160-task-backed-findings-promotion.md`
+- `batch-cards/161-post-runtime-health-gate.md`
+- `batch-cards/162-next-workflow-lane-selection.md`
+- `batch-cards/163-g02-task-backed-runway-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -255,8 +261,9 @@ The next G02 suite is:
 22. Codex task runtime admission bridge - completed
 23. Codex task event ingestion and receipts - completed
 24. task work checkpoint and review loop - completed
-25. desktop task-agent progress proof - active
-26. task-backed workflow validation and next lane - planned
+25. desktop task-agent progress proof - completed
+26. task-backed workflow validation and next lane - completed
+27. repo-backed management sync hardening - active
 
 This keeps code health and task authority clarity ahead of deeper provider
 runtime work.
@@ -289,6 +296,7 @@ runtime work.
 - `034` adds checkpoint/review boundaries.
 - `035` exposes task-agent progress in the disposable desktop proof shell.
 - `036` validates the runway and chooses the next workflow.
+- `037` hardens repo-backed management projection authority.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

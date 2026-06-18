@@ -1,6 +1,6 @@
 # 159 Task Backed Workflow Fixture Validation
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../036-task-backed-workflow-validation-and-next-lane.md`
@@ -31,3 +31,11 @@ Build and validate one complete task-backed workflow fixture.
 ## Stop Conditions
 
 - Stop if the fixture needs live provider execution.
+
+## Result
+
+- Added an integrated fixture proving admission, scheduler queueing, wait
+  progress, receipt linkage, review transition, task-agent projection, and
+  control progress DTO serialization.
+- Kept the fixture provider-free and SCM-mutation-free.
+- Confirmed source cursor ordering is part of deterministic projection replay.

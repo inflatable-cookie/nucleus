@@ -1,6 +1,6 @@
 # 160 Task Backed Findings Promotion
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../036-task-backed-workflow-validation-and-next-lane.md`
@@ -31,3 +31,12 @@ contracts.
 ## Stop Conditions
 
 - Stop if findings require product direction.
+
+## Result
+
+- Promoted read-only progress DTO behavior and source cursor ordering into the
+  task-backed workflow contract.
+- Updated the implementation gap index and long-term plan with the follow-on
+  repo-backed management sync lane.
+- Kept runtime persistence gaps visible instead of treating fixtures as durable
+  storage.
