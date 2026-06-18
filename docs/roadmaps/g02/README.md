@@ -44,8 +44,8 @@ and engine boundary are settled.
 - `026-desktop-diagnostics-proof-surface.md` - completed
 - `027-diagnostics-read-model-source-integration.md` - completed
 - `028-next-product-workflow-selection.md` - completed
-- `029-health-and-module-boundary-reset.md` - active
-- `030-task-backed-agent-workflow-contract-reset.md` - planned
+- `029-health-and-module-boundary-reset.md` - completed
+- `030-task-backed-agent-workflow-contract-reset.md` - active
 - `031-task-agent-work-unit-source-model.md` - planned
 - `032-codex-task-runtime-admission-bridge.md` - planned
 - `033-codex-task-event-ingestion-and-receipts.md` - planned
@@ -57,15 +57,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/124-doctor-god-file-triage.md`
+- `batch-cards/129-task-backed-workflow-lifecycle-contract.md`
 
 Planned cards:
 
-- `batch-cards/125-command-policy-storage-codec-split.md`
-- `batch-cards/126-server-dto-module-pressure-review.md`
-- `batch-cards/127-desktop-proof-surface-module-pressure-review.md`
-- `batch-cards/128-health-reset-validation.md`
-- `batch-cards/129-task-backed-workflow-lifecycle-contract.md`
 - `batch-cards/130-task-work-unit-state-gap-review.md`
 - `batch-cards/131-codex-task-runtime-binding-contract.md`
 - `batch-cards/132-task-work-review-acceptance-contract.md`
@@ -226,6 +221,11 @@ Completed cards:
 - `batch-cards/121-scm-management-sync-workflow-readiness-gate.md`
 - `batch-cards/122-native-steward-workflow-readiness-gate.md`
 - `batch-cards/123-next-runway-selection-and-closeout.md`
+- `batch-cards/124-doctor-god-file-triage.md`
+- `batch-cards/125-god-file-module-splits.md`
+- `batch-cards/126-server-dto-module-pressure-review.md`
+- `batch-cards/127-desktop-proof-surface-module-pressure-review.md`
+- `batch-cards/128-health-reset-validation.md`
 
 ## Planned Runway Sequence
 
@@ -249,8 +249,8 @@ The next G02 suite is:
 16. desktop diagnostics proof surface - completed
 17. diagnostics read-model source integration - completed
 18. next product workflow selection - completed
-19. health and module boundary reset - active
-20. task-backed agent workflow contract reset - planned
+19. health and module boundary reset - completed
+20. task-backed agent workflow contract reset - active
 21. task-agent work-unit source model - planned
 22. Codex task runtime admission bridge - planned
 23. Codex task event ingestion and receipts - planned

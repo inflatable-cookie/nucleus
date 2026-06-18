@@ -1,6 +1,6 @@
 # 126 Server DTO Module Pressure Review
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../029-health-and-module-boundary-reset.md`
@@ -18,12 +18,20 @@ request-handler files.
 
 ## Acceptance Criteria
 
-- Server pressure points are named.
-- Task-agent DTO work has a target module location.
-- No runtime behavior is added.
+- [x] Server pressure points are named.
+- [x] Task-agent DTO work has a target module location.
+- [x] No runtime behavior is added.
+
+## Result
+
+Server pressure was reduced through module splits instead of docs-only
+deferral. New task-agent DTO work should extend the focused DTO modules under
+`crates/nucleus-server/src/control_envelope_dto/` and avoid growing
+request-handler or response front-door files.
 
 ## Validation
 
+- `cargo test -p nucleus-server control_envelope_dto::tests::response`
 - `effigy doctor`
 - `effigy qa:docs`
 - `effigy qa:northstar`

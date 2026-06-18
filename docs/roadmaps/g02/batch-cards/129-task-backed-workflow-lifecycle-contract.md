@@ -1,6 +1,6 @@
 # 129 Task Backed Workflow Lifecycle Contract
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../030-task-backed-agent-workflow-contract-reset.md`

@@ -1,6 +1,6 @@
 # 127 Desktop Proof Surface Module Pressure Review
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 Milestone: `../029-health-and-module-boundary-reset.md`
@@ -18,14 +18,25 @@ surface or a large TypeScript catch-all.
 
 ## Acceptance Criteria
 
-- Desktop helper and style split targets are named.
-- Future task-agent panel work has a bounded location.
-- No final UI design work starts.
+- [x] Desktop helper and style split targets are named.
+- [x] Future task-agent panel work has a bounded location.
+- [x] No final UI design work starts.
+
+## Result
+
+`apps/desktop/src/lib/control.ts` is now a small barrel over:
+
+- `control/types.ts`
+- `control/envelopes.ts`
+- `control/responses.ts`
+- `control/client.ts`
+
+Future proof UI can import from `$lib/control` while keeping DTOs, envelope
+builders, response readers, and Tauri invocation separate.
 
 ## Validation
 
 - `effigy desktop:check`
-- `effigy desktop:build`
 - `effigy qa:docs`
 - `git diff --check`
 

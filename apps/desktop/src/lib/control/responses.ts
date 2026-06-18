@@ -1,0 +1,174 @@
+import type {
+  ControlCommandEvidenceRecordDto,
+  ControlDiagnosticsResultDto,
+  ControlProjectRecordDto,
+  ControlRuntimeReadinessDiagnosticDto,
+  ControlTaskRecordDto,
+} from "./types";
+import type { ControlResponseEnvelopeDto } from "./envelopes";
+
+export type CommandHistoryQueryResult =
+  | {
+      state: "records";
+      records: ControlCommandEvidenceRecordDto[];
+    }
+  | {
+      state: "empty";
+    }
+  | {
+      state: "unsupported";
+      reason: string;
+    }
+  | {
+      state: "error";
+      kind: string;
+      reason: string;
+    }
+  | {
+      state: "unexpected";
+      reason: string;
+    };
+
+export type RuntimeReadinessQueryResult =
+  | {
+      state: "records";
+      records: ControlRuntimeReadinessDiagnosticDto[];
+    }
+  | {
+      state: "empty";
+    }
+  | {
+      state: "unsupported";
+      reason: string;
+    }
+  | {
+      state: "error";
+      kind: string;
+      reason: string;
+    }
+  | {
+      state: "unexpected";
+      reason: string;
+    };
+
+export type DiagnosticsQueryResult =
+  | {
+      state: "records";
+      result: ControlDiagnosticsResultDto;
+    }
+  | {
+      state: "empty";
+    }
+  | {
+      state: "unsupported";
+      reason: string;
+    }
+  | {
+      state: "error";
+      kind: string;
+      reason: string;
+    }
+  | {
+      state: "unexpected";
+      reason: string;
+    };
+
+export function projectRecordsFromResponse(
+  response: ControlResponseEnvelopeDto,
+): ControlProjectRecordDto[] {
+  return response.body.type === "project_records" ? response.body.records : [];
+}
+
+export function taskRecordsFromResponse(
+  response: ControlResponseEnvelopeDto,
+): ControlTaskRecordDto[] {
+  return response.body.type === "task_records" ? response.body.records : [];
+}
+
+export function commandHistoryFromResponse(
+  response: ControlResponseEnvelopeDto,
+): CommandHistoryQueryResult {
+  switch (response.body.type) {
+    case "command_evidence_records":
+      return {
+        state: "records",
+        records: response.body.records,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return {
+        state: "unsupported",
+        reason: response.body.reason,
+      };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected command history response: ${response.body.type}`,
+      };
+  }
+}
+
+export function runtimeReadinessFromResponse(
+  response: ControlResponseEnvelopeDto,
+): RuntimeReadinessQueryResult {
+  switch (response.body.type) {
+    case "runtime_readiness_diagnostics":
+      return {
+        state: "records",
+        records: response.body.records,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return {
+        state: "unsupported",
+        reason: response.body.reason,
+      };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected runtime readiness response: ${response.body.type}`,
+      };
+  }
+}
+
+export function diagnosticsFromResponse(response: ControlResponseEnvelopeDto): DiagnosticsQueryResult {
+  switch (response.body.type) {
+    case "diagnostics":
+      return {
+        state: "records",
+        result: response.body.result,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return {
+        state: "unsupported",
+        reason: response.body.reason,
+      };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected diagnostics response: ${response.body.type}`,
+      };
+  }
+}

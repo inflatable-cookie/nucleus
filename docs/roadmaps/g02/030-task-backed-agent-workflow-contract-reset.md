@@ -1,6 +1,6 @@
 # 030 Task Backed Agent Workflow Contract Reset
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-18
 
@@ -37,9 +37,12 @@ into a runtime path.
 
 ## Batch Cards
 
-Planned cards:
+Ready cards:
 
 - `batch-cards/129-task-backed-workflow-lifecycle-contract.md`
+
+Planned cards:
+
 - `batch-cards/130-task-work-unit-state-gap-review.md`
 - `batch-cards/131-codex-task-runtime-binding-contract.md`
 - `batch-cards/132-task-work-review-acceptance-contract.md`

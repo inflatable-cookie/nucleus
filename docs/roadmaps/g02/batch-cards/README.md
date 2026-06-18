@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `124-doctor-god-file-triage.md`
+- `129-task-backed-workflow-lifecycle-contract.md`
 
 ## Planned Cards
 
-- `125-command-policy-storage-codec-split.md`
-- `126-server-dto-module-pressure-review.md`
-- `127-desktop-proof-surface-module-pressure-review.md`
-- `128-health-reset-validation.md`
-- `129-task-backed-workflow-lifecycle-contract.md`
 - `130-task-work-unit-state-gap-review.md`
 - `131-codex-task-runtime-binding-contract.md`
 - `132-task-work-review-acceptance-contract.md`
@@ -179,3 +174,8 @@ Hold execution cards for `g02`.
 - `121-scm-management-sync-workflow-readiness-gate.md`
 - `122-native-steward-workflow-readiness-gate.md`
 - `123-next-runway-selection-and-closeout.md`
+- `124-doctor-god-file-triage.md`
+- `125-god-file-module-splits.md`
+- `126-server-dto-module-pressure-review.md`
+- `127-desktop-proof-surface-module-pressure-review.md`
+- `128-health-reset-validation.md`

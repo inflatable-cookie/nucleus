@@ -1,6 +1,6 @@
 # 029 Health And Module Boundary Reset
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-18
 
@@ -18,38 +18,42 @@ runtime work expands command policy, server DTOs, and desktop proof surfaces.
 
 ## Goals
 
-- [ ] Split the high `scan.god-files` finding.
-- [ ] Keep Rust modules small and named by responsibility.
-- [ ] Identify warning-sized files that should not grow in the next runway.
-- [ ] Restore `effigy doctor` or document any residual non-blocking warnings.
+- [x] Split the high `scan.god-files` finding.
+- [x] Keep Rust modules small and named by responsibility.
+- [x] Identify warning-sized files that should not grow in the next runway.
+- [x] Restore `effigy doctor` or document any residual non-blocking warnings.
 
 ## Execution Plan
 
-- [ ] Doctor triage batch: capture current scan findings and split targets.
-- [ ] Command-policy split batch: break `storage_codec.rs` into focused modules.
-- [ ] Server/desktop pressure batch: document files that must not absorb more
+- [x] Doctor triage batch: capture current scan findings and split targets.
+- [x] Actual god-file split batch: split high-pressure files into focused modules.
+- [x] Server/desktop pressure batch: document files that must not absorb more
   task-agent workflow code.
-- [ ] Validation batch: run doctor, focused Rust tests, and docs gates.
+- [x] Validation batch: run doctor, focused Rust tests, and docs gates.
 
 ## Batch Cards
 
-Ready cards:
+Completed cards:
 
 - `batch-cards/124-doctor-god-file-triage.md`
-
-Planned cards:
-
-- `batch-cards/125-command-policy-storage-codec-split.md`
+- `batch-cards/125-god-file-module-splits.md`
 - `batch-cards/126-server-dto-module-pressure-review.md`
 - `batch-cards/127-desktop-proof-surface-module-pressure-review.md`
 - `batch-cards/128-health-reset-validation.md`
 
 ## Acceptance Criteria
 
-- [ ] `effigy doctor` no longer fails on the high god-file finding, or the
+- [x] `effigy doctor` no longer fails on the high god-file finding, or the
   remaining issue is explicitly rehomed with evidence.
-- [ ] Command policy codec responsibilities are split into named files.
-- [ ] Next runtime work has clear module boundaries.
+- [x] Actual high-pressure responsibilities are split into named files.
+- [x] Next runtime work has clear module boundaries.
+
+## Result
+
+`effigy doctor` exits successfully with only warning-level god-file findings:
+33 warnings and 0 errors. The stale command-policy split expectation was
+superseded by current doctor evidence; the actual split covered native
+harness, engine, server, DTO, and desktop proof surfaces.
 
 ## Gate
 
