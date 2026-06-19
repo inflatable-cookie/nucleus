@@ -123,4 +123,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/268-codex-interruption-envelope-receipts.md`.
+Execute `g02/batch-cards/269-codex-interruption-diagnostics.md`.

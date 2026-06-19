@@ -1,6 +1,6 @@
 # 268 Codex Interruption Envelope Receipts
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../060-codex-provider-interruption-gate.md`
@@ -31,3 +31,10 @@ Map accepted Codex interruptions to sanitized provider envelopes and receipts.
 ## Stop Conditions
 
 - Stop if envelope mapping needs refreshed Codex schema evidence.
+
+## Result
+
+- Added sanitized Codex interruption envelopes using `turn/interrupt`.
+- Added interruption outcome records and runtime receipt mapping.
+- Covered accepted, blocked, failed, and unsupported outcomes.
+- Kept raw payload retention, recovery, and task mutation out of scope.

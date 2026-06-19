@@ -12,6 +12,8 @@ mod event_store_linkage;
 mod handshake;
 mod idempotency;
 mod interruption_admission;
+mod interruption_envelope;
+mod interruption_outcome;
 mod interruption_request;
 mod live_ingestion;
 mod live_spawn_smoke_evidence;
@@ -72,6 +74,16 @@ pub use interruption_admission::{
     CodexAppServerInterruptionAdmissionBlocker, CodexAppServerInterruptionAdmissionId,
     CodexAppServerInterruptionAdmissionInput, CodexAppServerInterruptionAdmissionStatus,
     CodexAppServerInterruptionTargetState,
+};
+pub use interruption_envelope::{
+    codex_interruption_envelope, CodexAppServerInterruptionEnvelopeId,
+    CodexAppServerInterruptionEnvelopeRecord, CodexAppServerInterruptionEnvelopeRejection,
+};
+pub use interruption_outcome::{
+    codex_interruption_failed_outcome, codex_interruption_outcome_from_admission,
+    codex_interruption_outcome_from_envelope, codex_receipt_from_interruption_outcome,
+    CodexAppServerInterruptionOutcomeId, CodexAppServerInterruptionOutcomeRecord,
+    CodexAppServerInterruptionOutcomeStatus,
 };
 pub use interruption_request::{
     codex_interruption_request, CodexAppServerInterruptionReasonRef,
