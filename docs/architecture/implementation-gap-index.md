@@ -93,8 +93,9 @@ Current state:
   expectations, server-owned session binding records, decoded-frame ingestion
   source records, decoded-frame ingestion through fixture mapping, unsupported
   observation records, duplicate-safe frame acceptance records, out-of-order
-  and recovery-required frame classification, wait-state routing, task-runtime
-  admission, progress projection, receipt linkage, and recovery gates.
+  and recovery-required frame classification, runtime-observation event-store
+  linkage records, wait-state routing, task-runtime admission, progress
+  projection, receipt linkage, and recovery gates.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 
@@ -105,7 +106,7 @@ Missing:
 - real provider adapters
 - Codex process spawning and stdio lifecycle ownership
 - live JSON-RPC/app-server decoding from a supervised process
-- event ingestion into the orchestration event store
+- persistence for accepted runtime-observation event-store records
 - provider command reactor for `thread/start`, `turn/start`, callback
   responses, interruption, and close/unsubscribe
 - cancellation that reaches the provider and records local/provider outcomes
@@ -115,7 +116,8 @@ Missing:
 - persistence for idempotency state across reconnect or restart
 - backpressure behavior for high-volume deltas
 - payload retention policy beyond metadata-only/evidence-ref records
-- task-backed state transition admission from runtime observations
+- task-backed observation link records and later state transition admission
+  from runtime observations
 
 Likely crates:
 

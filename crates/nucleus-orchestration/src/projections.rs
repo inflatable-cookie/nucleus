@@ -63,6 +63,11 @@ mod tests {
                 OrchestrationCommandFamily::Project,
                 Some("project:1".to_owned()),
             ),
+            OrchestrationEventRecord::runtime_observation_accepted(
+                OrchestrationEventId("event:runtime:1".to_owned()),
+                OrchestrationCommandId("command:runtime:1".to_owned()),
+                Some("binding:1".to_owned()),
+            ),
         ];
 
         let projection = CommandAdmissionProjection::rebuild(&events);

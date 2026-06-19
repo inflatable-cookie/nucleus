@@ -4,12 +4,17 @@
 //! app-server process. They do not spawn Codex, open stdio, probe auth, read
 //! provider payloads, or ingest live events.
 
+mod event_store_linkage;
 mod handshake;
 mod idempotency;
 mod live_ingestion;
 mod readiness;
 mod session_binding;
 
+pub use event_store_linkage::{
+    link_codex_observation_to_event_store, CodexAppServerObservationEventLink,
+    CodexAppServerObservationEventLinkStatus,
+};
 pub use handshake::{
     assess_codex_app_server_handshake, CodexAppServerHandshakeBlocker,
     CodexAppServerHandshakeExpectation, CodexAppServerHandshakeObservation,

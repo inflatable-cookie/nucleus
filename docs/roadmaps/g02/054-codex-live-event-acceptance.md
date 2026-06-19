@@ -25,7 +25,7 @@ Nucleus-owned records without broadening provider command execution.
 
 - [x] Add durable Codex session binding and ingestion source records.
 - [x] Define idempotent provider-frame acceptance before event-store append.
-- [ ] Persist accepted canonical runtime event refs and unsupported observation
+- [x] Persist accepted canonical runtime event refs and unsupported observation
       refs.
 - [ ] Link accepted observations to task work items and sanitized receipts
       without mutating task state directly.
@@ -46,7 +46,7 @@ Nucleus-owned records without broadening provider command execution.
 - [x] Record batch: introduce Codex session binding and ingestion source types.
 - [x] Idempotency batch: define frame keys, duplicate handling, and recovery
       states.
-- [ ] Orchestration batch: map accepted observations to event-store envelopes
+- [x] Orchestration batch: map accepted observations to event-store envelopes
       and runtime receipt refs.
 - [ ] Task linkage batch: expose task-work links without direct task mutation.
 - [ ] Diagnostics batch: add read-only query/projection state.
@@ -56,11 +56,10 @@ Nucleus-owned records without broadening provider command execution.
 
 Ready cards:
 
-- `batch-cards/237-codex-observation-event-store-linkage.md`
+- `batch-cards/238-codex-task-runtime-observation-links.md`
 
 Planned cards:
 
-- `batch-cards/238-codex-task-runtime-observation-links.md`
 - `batch-cards/239-codex-ingestion-diagnostics-query.md`
 - `batch-cards/240-codex-live-event-acceptance-closeout.md`
 
@@ -68,13 +67,14 @@ Completed cards:
 
 - `batch-cards/235-codex-session-binding-records.md`
 - `batch-cards/236-codex-ingestion-idempotency.md`
+- `batch-cards/237-codex-observation-event-store-linkage.md`
 
 ## Acceptance Criteria
 
 - [x] Codex session binding records preserve Nucleus and provider ids.
 - [x] Ingestion source records can distinguish accepted, duplicated,
       unsupported, and recovery-required observations.
-- [ ] Accepted observations produce event-store or receipt refs without
+- [x] Accepted observations produce event-store or receipt refs without
       retaining raw provider payloads by default.
 - [ ] Task work-item linkage remains reference-only and engine-owned.
 - [ ] `cargo check --workspace` passes.

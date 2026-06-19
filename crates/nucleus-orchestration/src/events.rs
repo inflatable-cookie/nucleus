@@ -14,6 +14,7 @@ pub struct OrchestrationEventId(pub String);
 #[serde(rename_all = "snake_case")]
 pub enum OrchestrationEventKind {
     CommandAdmitted,
+    RuntimeObservationAccepted,
 }
 
 /// First event-journal payload for orchestration events.
@@ -44,6 +45,26 @@ impl OrchestrationEventRecord {
             kind: OrchestrationEventKind::CommandAdmitted,
             command_id,
             family,
+            target_ref,
+            projection_cursor,
+        }
+    }
+
+    pub fn runtime_observation_accepted(
+        event_id: OrchestrationEventId,
+        command_id: OrchestrationCommandId,
+        target_ref: Option<String>,
+    ) -> Self {
+        let projection_cursor = OrchestrationProjectionCursor {
+            projection_id: "projection:runtime-observation".to_owned(),
+            source_event_id: event_id.0.clone(),
+        };
+
+        Self {
+            event_id,
+            kind: OrchestrationEventKind::RuntimeObservationAccepted,
+            command_id,
+            family: OrchestrationCommandFamily::Runtime,
             target_ref,
             projection_cursor,
         }
@@ -80,5 +101,24 @@ mod tests {
 
         assert_eq!(decoded, record);
         assert_eq!(decoded.projection_cursor.source_event_id, "event:command:1");
+    }
+
+    #[test]
+    fn runtime_observation_event_round_trips_with_projection_cursor() {
+        let record = OrchestrationEventRecord::runtime_observation_accepted(
+            OrchestrationEventId("event:runtime:1".to_owned()),
+            OrchestrationCommandId("command:runtime:1".to_owned()),
+            Some("binding:1".to_owned()),
+        );
+
+        let bytes = encode_orchestration_event_record(&record).expect("encode event");
+        let decoded = decode_orchestration_event_record(&bytes).expect("decode event");
+
+        assert_eq!(decoded, record);
+        assert_eq!(
+            decoded.kind,
+            OrchestrationEventKind::RuntimeObservationAccepted
+        );
+        assert_eq!(decoded.projection_cursor.source_event_id, "event:runtime:1");
     }
 }

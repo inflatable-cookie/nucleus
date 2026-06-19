@@ -10,11 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `237-codex-observation-event-store-linkage.md`
+- `238-codex-task-runtime-observation-links.md`
 
 ## Planned Cards
 
-- `238-codex-task-runtime-observation-links.md`
 - `239-codex-ingestion-diagnostics-query.md`
 - `240-codex-live-event-acceptance-closeout.md`
 
@@ -256,3 +255,4 @@ Hold execution cards for `g02`.
 - `234-harness-runtime-rebaseline-closeout.md`
 - `235-codex-session-binding-records.md`
 - `236-codex-ingestion-idempotency.md`
+- `237-codex-observation-event-store-linkage.md`

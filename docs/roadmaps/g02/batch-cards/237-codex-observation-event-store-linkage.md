@@ -1,6 +1,6 @@
 # 237 Codex Observation Event Store Linkage
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../054-codex-live-event-acceptance.md`
@@ -22,6 +22,18 @@ Link accepted Codex observations to orchestration-owned event-store records.
 - Accepted observations have stable event-store refs.
 - Runtime receipt refs remain sanitized and replay-safe.
 - Projection replay reads records and does not re-run provider work.
+
+## Result
+
+`nucleus-orchestration` now has a `RuntimeObservationAccepted` event kind.
+
+`nucleus-server` now links accepted Codex observations to event-store envelopes
+and optional sanitized runtime receipt refs through
+`codex_supervision/event_store_linkage.rs`.
+
+Duplicate, unsupported, out-of-order, and recovery-required observations do
+not produce accepted event-store records. Replay remains record-only and does
+not run provider work.
 
 ## Validation
 
