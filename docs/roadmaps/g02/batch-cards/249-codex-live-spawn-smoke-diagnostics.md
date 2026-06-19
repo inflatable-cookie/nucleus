@@ -1,6 +1,6 @@
 # 249 Codex Live Spawn Smoke Diagnostics
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../056-codex-live-spawn-smoke-gate.md`
@@ -19,6 +19,12 @@ Expose read-only diagnostics for Codex live spawn smoke results.
 
 - Clients can inspect smoke readiness/result state without authority.
 - Diagnostics do not expose raw output or credentials.
+
+## Result
+
+Implemented `codex_live_spawn_smoke_diagnostics` with read-only, client-safe
+DTOs for accepted, blocked, failed, timed-out, and cleanup-required smoke
+evidence.
 
 ## Validation
 

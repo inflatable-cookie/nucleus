@@ -16,10 +16,10 @@ use nucleus_engine::{
     ManagementProjectionCapturePolicyGate, ManagementProjectionCapturePrepId,
     ManagementProjectionCapturePrepRecord, ManagementProjectionCaptureReason,
     ManagementProjectionCaptureScope, ManagementProjectionConflictClass,
-    ManagementProjectionConflictReport, ManagementProjectionEnvelope, ManagementProjectionFileDocument,
-    ManagementProjectionFileRef, ManagementProjectionImportRepairProposal,
-    ManagementProjectionImportRepairProposalId, ManagementProjectionPayload,
-    ManagementProjectionRecordId, ManagementProjectionRecordKind,
+    ManagementProjectionConflictReport, ManagementProjectionEnvelope,
+    ManagementProjectionFileDocument, ManagementProjectionFileRef,
+    ManagementProjectionImportRepairProposal, ManagementProjectionImportRepairProposalId,
+    ManagementProjectionPayload, ManagementProjectionRecordId, ManagementProjectionRecordKind,
     ManagementProjectionSchemaConflictKind, ManagementProjectionSchemaVersion,
     ManagementProjectionSemanticConflictKind, ManagementProjectionSyncAssistanceRoute,
     ManagementProjectionSyncPlan, ManagementProjectionSyncPlanId,
@@ -34,8 +34,8 @@ use nucleus_native_harness::{
     NativeStewardEvidenceSource, NativeStewardProposal, NativeStewardProposalId,
     NativeStewardProposalKind, NativeStewardProposalReview, NativeStewardProposalTarget,
     NativeStewardSyncAssistance, NativeStewardSyncAssistanceId, NativeStewardSyncAssistanceKind,
-    NativeStewardSyncAssistanceLinks, NativeStewardSyncDecisionId,
-    NativeStewardSyncDecisionRecord, NativeStewardSyncNextAction,
+    NativeStewardSyncAssistanceLinks, NativeStewardSyncDecisionId, NativeStewardSyncDecisionRecord,
+    NativeStewardSyncNextAction,
 };
 use nucleus_projects::{ProjectId, RepoMembershipId};
 use nucleus_scm_forge::{
@@ -47,6 +47,7 @@ use nucleus_scm_forge::{
 use nucleus_tasks::TaskId;
 
 mod codex_ingestion;
+mod codex_live_spawn;
 mod effigy;
 mod scm;
 mod serialization;

@@ -77,11 +77,11 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/249-codex-live-spawn-smoke-diagnostics.md`
+- `batch-cards/250-codex-live-spawn-smoke-closeout.md`
 
 Planned cards:
 
-- `batch-cards/250-codex-live-spawn-smoke-closeout.md`
+- None.
 
 Completed cards:
 
@@ -333,6 +333,7 @@ Completed cards:
 - `batch-cards/246-codex-live-spawn-smoke-request.md`
 - `batch-cards/247-codex-live-spawn-smoke-runner.md`
 - `batch-cards/248-codex-live-spawn-smoke-evidence.md`
+- `batch-cards/249-codex-live-spawn-smoke-diagnostics.md`
 
 ## Planned Runway Sequence
 

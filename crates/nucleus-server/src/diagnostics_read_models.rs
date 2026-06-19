@@ -4,6 +4,7 @@
 //! clients without granting command authority or copying raw provider output.
 
 mod codex_ingestion;
+mod codex_live_spawn;
 mod effigy;
 mod helpers;
 mod scm;
@@ -17,14 +18,18 @@ pub use codex_ingestion::{
     codex_ingestion_diagnostics, CodexIngestionDiagnosticsDto,
     CodexIngestionObservationDiagnosticDto,
 };
+pub use codex_live_spawn::{
+    codex_live_spawn_smoke_diagnostics, CodexLiveSpawnSmokeDiagnosticDto,
+    CodexLiveSpawnSmokeDiagnosticsDto,
+};
 pub use effigy::{effigy_diagnostics, EffigyDiagnosticsDto};
 pub use scm::{
     scm_session_diagnostics, ScmCommandAdmissionDiagnosticDto, ScmSessionDiagnosticsDto,
     ScmSessionPlanDiagnosticDto, ScmWorkItemLinkDiagnosticDto,
 };
 pub use steward::{
-    steward_diagnostics, StewardCommandAdmissionDiagnosticDto, StewardCommandOutcomeDiagnosticDto,
-    StewardDiagnosticsDto, StewardProposalDiagnosticDto, steward_sync_diagnostics,
+    steward_diagnostics, steward_sync_diagnostics, StewardCommandAdmissionDiagnosticDto,
+    StewardCommandOutcomeDiagnosticDto, StewardDiagnosticsDto, StewardProposalDiagnosticDto,
     StewardSyncDecisionDiagnosticDto, StewardSyncDiagnosticsDto,
 };
 pub use sync::{

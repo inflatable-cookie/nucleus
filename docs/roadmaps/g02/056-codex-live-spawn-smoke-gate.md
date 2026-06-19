@@ -29,7 +29,7 @@ evidence, and stop cleanly.
 - [x] Capture bounded startup stdout/stderr metadata without raw stream
       retention by default.
 - [ ] Stop the process cleanly in the smoke path.
-- [ ] Surface accepted, blocked, failed, timed-out, and cleanup-required smoke
+- [x] Surface accepted, blocked, failed, timed-out, and cleanup-required smoke
       receipts.
 
 ## Non-Goals
@@ -47,7 +47,7 @@ evidence, and stop cleanly.
 - [x] Runner batch: wire the request to existing local process-control/read-only
       spawn primitives where safe.
 - [x] Evidence batch: capture bounded startup evidence and cleanup outcomes.
-- [ ] Diagnostics batch: expose smoke results through read-only diagnostics.
+- [x] Diagnostics batch: expose smoke results through read-only diagnostics.
 - [ ] Closeout batch: validate and select turn-start, callback, cancellation,
       recovery, or subscription as the next gate.
 
@@ -55,17 +55,18 @@ evidence, and stop cleanly.
 
 Ready cards:
 
-- `batch-cards/249-codex-live-spawn-smoke-diagnostics.md`
+- `batch-cards/250-codex-live-spawn-smoke-closeout.md`
 
 Planned cards:
 
-- `batch-cards/250-codex-live-spawn-smoke-closeout.md`
+- None.
 
 Completed cards:
 
 - `batch-cards/246-codex-live-spawn-smoke-request.md`
 - `batch-cards/247-codex-live-spawn-smoke-runner.md`
 - `batch-cards/248-codex-live-spawn-smoke-evidence.md`
+- `batch-cards/249-codex-live-spawn-smoke-diagnostics.md`
 
 ## Acceptance Criteria
 
