@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-17
+Updated: 2026-06-19
 
 ## Purpose
 
@@ -126,9 +126,10 @@ Likely correction:
 
 No implementation exists for:
 
-- real harness/provider adapters
-- provider runtime ingestion
-- provider command reactor
+- live harness/provider adapters
+- provider process lifecycle execution
+- durable provider runtime ingestion into the orchestration event store
+- provider command reactor beyond inert scheduler admission
 - live runtime event subscription
 - conversation timeline
 - checkpointing
@@ -144,6 +145,45 @@ No implementation exists for:
 
 These are not small gaps. They define the real product architecture.
 
+### Codex Runtime Rebaseline
+
+Current Codex runtime code is a boundary proof, not a live integration.
+
+Implemented surfaces:
+
+- metadata-only Codex app-server adapter descriptor and method allowlist
+- capability and runtime ownership records for a Nucleus-owned local app-server
+- schema evidence records from the probed Codex CLI surface
+- lifecycle mapping records for thread, turn, interrupt, rollback, and close
+- fixture-backed projection from Codex-shaped events into canonical runtime
+  events or harness-provider receipt fixtures
+- compile-only supervision readiness and handshake expectation records
+- decoded-frame ingestion through the existing fixture projector
+- unsupported observation records with metadata-only raw payload policy
+- approval and user-input wait-state routing records
+- task-scoped Codex runtime admission records into the inert scheduler
+- task progress projection from accepted event, receipt, wait, and unsupported
+  observations
+- recovery gates that record uncertainty without retrying or resuming Codex
+- sanitized Codex runtime receipt projection in the engine
+
+Not implemented:
+
+- spawning or supervising a real Codex app-server process
+- stdio transport, JSON-RPC framing, reconnect, or process restart handling
+- persisted provider session binding records
+- appending provider observations to the orchestration event store
+- deduplicating provider frames across replay or reconnect
+- responding to approval or user-input callbacks
+- provider-reaching cancellation/interruption from a task work item
+- resume/recovery from durable state after host restart
+- moving task work-item state from runtime observations through admitted
+  orchestration events
+- live client subscriptions for provider runtime progress
+
+The next implementation lane should therefore start with live event acceptance
+and persistence. It should not yet start broad provider execution or UI growth.
+
 ## Recommended Remediation Order
 
 1. Stop proof-panel growth.
@@ -153,7 +193,9 @@ These are not small gaps. They define the real product architecture.
 5. Split or create engine/orchestration crate boundaries.
 6. Treat warning-sized files as pressure when touched.
 7. Rebaseline harness runtime before adding provider behavior.
-8. Implement the next feature only through the new core model.
+8. Implement Codex live event acceptance through orchestration-owned event,
+   receipt, session, and work-item refs.
+9. Implement later features only through the new core model.
 
 ## Code Audit Questions
 

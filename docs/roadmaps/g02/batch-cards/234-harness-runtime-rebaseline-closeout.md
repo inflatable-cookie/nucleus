@@ -1,6 +1,6 @@
 # 234 Harness Runtime Rebaseline Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../053-harness-runtime-rebaseline.md`
@@ -21,6 +21,10 @@ card.
 - Roadmap state has one clear next task.
 - Docs QA passes.
 - Rust workspace check passes if code was touched.
+
+## Result
+
+Roadmap `053` is complete. Roadmap `054` is the next active lane.
 
 ## Validation
 

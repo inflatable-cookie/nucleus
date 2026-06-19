@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-19
 
 ## Purpose
 
@@ -146,6 +146,16 @@ The server now has compile-only Codex runtime validation records for the first
 supervision closeout. Recovery fallback, unsupported event observation,
 interruption/cancellation, failure receipt, and wait-state evidence must all be
 visible before task-backed Codex work is admitted.
+
+2026-06-19 rebaseline:
+
+- current Codex session handling is descriptive and fixture-backed
+- no durable live provider session binding is persisted yet
+- no provider process is resumed after restart
+- no replacement provider thread may be presented as the same Nucleus session
+  without explicit recovery evidence
+- the next implementation lane must record live session bindings before
+  runtime observations can advance task-backed work
 
 ## Cursor ACP Mapping
 

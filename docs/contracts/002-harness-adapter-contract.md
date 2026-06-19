@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-19
 
 ## Purpose
 
@@ -204,6 +204,27 @@ trait split, canonical payload families, and runtime ownership semantics are
 now named, but provider implementations, process spawning, stream parsing,
 network clients, sidecar protocols, and async runtime behavior remain out of
 scope.
+
+## 2026-06-19 Rebaseline
+
+The current Codex adapter surface is metadata and fixture-backed projection.
+It may describe:
+
+- adapter identity and configured instance shape
+- transport and runtime ownership posture
+- capability support
+- method allowlists
+- probe policy
+- fixture-to-canonical event mapping
+- unsupported observation records
+
+It must not be treated as a live provider adapter until the next runtime lane
+adds durable session binding, transport ingestion, event-store append, receipt
+linkage, and recovery records.
+
+The next implementation gate is event acceptance. Provider command execution,
+callback responses, cancellation, resume, and task mutation stay gated until
+the accepted-event path is proven.
 
 ## First Runtime Target Selection
 

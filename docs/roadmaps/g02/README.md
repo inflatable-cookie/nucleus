@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-18
+Updated: 2026-06-19
 
 ## Purpose
 
@@ -68,20 +68,22 @@ and engine boundary are settled.
 - `050-management-projection-apply-import-split.md` - completed
 - `051-change-request-prep-module-split.md` - completed
 - `052-health-reset-validation-and-next-runtime-lane.md` - completed
-- `053-harness-runtime-rebaseline.md` - active
+- `053-harness-runtime-rebaseline.md` - completed
+- `054-codex-live-event-acceptance.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/230-harness-runtime-contract-gap-review.md`
+- `batch-cards/235-codex-session-binding-records.md`
 
 Planned cards:
 
-- `batch-cards/231-codex-runtime-code-audit.md`
-- `batch-cards/232-provider-session-boundary-rebaseline.md`
-- `batch-cards/233-harness-event-ingestion-runway.md`
-- `batch-cards/234-harness-runtime-rebaseline-closeout.md`
+- `batch-cards/236-codex-ingestion-idempotency.md`
+- `batch-cards/237-codex-observation-event-store-linkage.md`
+- `batch-cards/238-codex-task-runtime-observation-links.md`
+- `batch-cards/239-codex-ingestion-diagnostics-query.md`
+- `batch-cards/240-codex-live-event-acceptance-closeout.md`
 
 Completed cards:
 
@@ -314,6 +316,11 @@ Completed cards:
 - `batch-cards/227-gap-index-health-rebaseline.md`
 - `batch-cards/228-next-runtime-lane-readiness.md`
 - `batch-cards/229-health-runway-closeout.md`
+- `batch-cards/230-harness-runtime-contract-gap-review.md`
+- `batch-cards/231-codex-runtime-code-audit.md`
+- `batch-cards/232-provider-session-boundary-rebaseline.md`
+- `batch-cards/233-harness-event-ingestion-runway.md`
+- `batch-cards/234-harness-runtime-rebaseline-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -361,14 +368,15 @@ The next G02 suite is:
 40. management projection apply/import split - completed
 41. change-request prep module split - completed
 42. health reset validation and next runtime lane - completed
-43. harness runtime rebaseline - active
+43. harness runtime rebaseline - completed
+44. Codex live event acceptance - active
 
 This keeps code health and task authority clarity ahead of deeper provider
 runtime work.
 
 ## Planning Rules
 
-- `029` is the active planning milestone.
+- `054` is the active planning milestone.
 - `014` proved the first compile-only live provider runtime supervision spine.
 - `015` proved the first task-backed agent work unit.
 - `016` built committable projection file IO.
@@ -425,8 +433,10 @@ runtime work.
   changing behavior.
 - `052` cleared the red doctor gate and selected harness runtime rebaseline as
   the next lane.
-- `053` rechecks harness runtime contracts and the current Codex runtime code
+- `053` rechecked harness runtime contracts and the current Codex runtime code
   before opening more provider behavior.
+- `054` implements durable Codex live event acceptance before provider command
+  execution widens.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

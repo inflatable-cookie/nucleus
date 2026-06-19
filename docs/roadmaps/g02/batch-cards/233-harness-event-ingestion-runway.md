@@ -1,6 +1,6 @@
 # 233 Harness Event Ingestion Runway
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../053-harness-runtime-rebaseline.md`
@@ -21,6 +21,13 @@ Prepare the next harness event-ingestion implementation runway.
 
 - A next implementation card can be marked ready without fresh planning.
 - Event ingestion is tied to runtime receipts and task work units.
+
+## Result
+
+The next lane is Codex live event acceptance. It should add durable ingestion
+source records, session binding records, idempotency keys, accepted runtime
+event records, unsupported observation records, and read-only query state
+before provider command execution widens.
 
 ## Validation
 

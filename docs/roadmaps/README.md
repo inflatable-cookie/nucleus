@@ -57,7 +57,8 @@ shape.
 - `g02/050-management-projection-apply-import-split.md` - completed
 - `g02/051-change-request-prep-module-split.md` - completed
 - `g02/052-health-reset-validation-and-next-runtime-lane.md` - completed
-- `g02/053-harness-runtime-rebaseline.md` - active
+- `g02/053-harness-runtime-rebaseline.md` - completed
+- `g02/054-codex-live-event-acceptance.md` - active
 
 ## Previous Generation
 
@@ -116,4 +117,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/230-harness-runtime-contract-gap-review.md`.
+Execute `g02/batch-cards/235-codex-session-binding-records.md`.

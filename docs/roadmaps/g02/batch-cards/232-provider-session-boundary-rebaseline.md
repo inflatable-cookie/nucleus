@@ -1,6 +1,6 @@
 # 232 Provider Session Boundary Rebaseline
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../053-harness-runtime-rebaseline.md`
@@ -20,6 +20,12 @@ Define the next provider session boundary before implementation resumes.
 
 - Provider session boundary is ready for one implementation lane.
 - Capability differences remain visible.
+
+## Result
+
+The next provider session boundary is durable Codex session binding plus
+accepted-event persistence. Provider callback responses, cancellation,
+resume/recovery execution, and automatic task mutation stay gated.
 
 ## Validation
 

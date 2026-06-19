@@ -1,6 +1,6 @@
 # 231 Codex Runtime Code Audit
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../053-harness-runtime-rebaseline.md`
@@ -21,6 +21,13 @@ Audit current Codex runtime code against harness runtime contracts.
 
 - Current Codex runtime state is accurately documented.
 - Drift between docs and code is recorded.
+
+## Result
+
+Codex runtime code is currently descriptor, fixture projection, supervision
+readiness, wait-state routing, task-runtime admission/progress, and sanitized
+receipt projection. It does not spawn Codex, own stdio transport, append live
+provider events, answer callbacks, or recover sessions after restart.
 
 ## Validation
 

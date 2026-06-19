@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-18
+Updated: 2026-06-19
 
 ## Purpose
 
@@ -10,14 +10,15 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `230-harness-runtime-contract-gap-review.md`
+- `235-codex-session-binding-records.md`
 
 ## Planned Cards
 
-- `231-codex-runtime-code-audit.md`
-- `232-provider-session-boundary-rebaseline.md`
-- `233-harness-event-ingestion-runway.md`
-- `234-harness-runtime-rebaseline-closeout.md`
+- `236-codex-ingestion-idempotency.md`
+- `237-codex-observation-event-store-linkage.md`
+- `238-codex-task-runtime-observation-links.md`
+- `239-codex-ingestion-diagnostics-query.md`
+- `240-codex-live-event-acceptance-closeout.md`
 
 ## Completed Cards
 
@@ -250,3 +251,8 @@ Hold execution cards for `g02`.
 - `227-gap-index-health-rebaseline.md`
 - `228-next-runtime-lane-readiness.md`
 - `229-health-runway-closeout.md`
+- `230-harness-runtime-contract-gap-review.md`
+- `231-codex-runtime-code-audit.md`
+- `232-provider-session-boundary-rebaseline.md`
+- `233-harness-event-ingestion-runway.md`
+- `234-harness-runtime-rebaseline-closeout.md`

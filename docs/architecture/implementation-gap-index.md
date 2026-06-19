@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-17
+Updated: 2026-06-19
 
 ## Purpose
 
@@ -80,22 +80,57 @@ Likely crate:
 
 ### Harness Runtime
 
+Current state:
+
+- Codex is the selected first bridged runtime target.
+- `nucleus-agent-adapters` has a metadata-only Codex app-server descriptor,
+  schema evidence, method allowlist, capability profile, runtime ownership
+  metadata, and probe policy.
+- `nucleus-agent-protocol` has Codex fixture projection, lifecycle mapping,
+  canonical event payloads, runtime ownership metadata, and provider-ref
+  retention types.
+- `nucleus-server` has compile-only Codex supervision readiness, handshake
+  expectations, decoded-frame ingestion through fixture mapping, unsupported
+  observation records, wait-state routing, task-runtime admission, progress
+  projection, receipt linkage, and recovery gates.
+- `nucleus-engine` can project Codex fixture receipts into sanitized
+  harness-provider runtime receipt records.
+
+These are useful boundary proofs. They are not a live provider runtime.
+
 Missing:
 
 - real provider adapters
-- provider process/session runtime
-- provider event ingestion
-- provider command reactor
-- cancellation
-- permission prompts
-- resume/recovery
+- Codex process spawning and stdio lifecycle ownership
+- live JSON-RPC/app-server decoding from a supervised process
+- durable provider session binding records
+- event ingestion into the orchestration event store
+- provider command reactor for `thread/start`, `turn/start`, callback
+  responses, interruption, and close/unsubscribe
+- cancellation that reaches the provider and records local/provider outcomes
+- permission and user-input callback responses
+- resume/recovery after server restart, process exit, or provider reconnect
 - provider instance configuration and hot reload
+- idempotency across duplicated provider frames or reconnect replay
+- backpressure behavior for high-volume deltas
+- payload retention policy beyond metadata-only/evidence-ref records
+- task-backed state transition admission from runtime observations
 
 Likely crates:
 
 - `nucleus-agent-protocol`
 - `nucleus-agent-adapters`
-- possible runtime module under engine/server boundary
+- `nucleus-engine`
+- `nucleus-orchestration`
+- `nucleus-server`
+
+Next gate:
+
+- start with Codex live session event ingestion, not broader provider behavior
+- keep provider process spawning, callback responses, and task mutation behind
+  explicit follow-up gates
+- prove provider-native ids map to Nucleus-owned event, receipt, session, and
+  work-item refs before letting runtime observations move task state
 
 ### SCM And Forge Runtime
 
@@ -244,9 +279,12 @@ apply/review behavior have been hardened.
 
 The most useful next checkpoint is:
 
-1. rebaseline harness runtime contracts after the health reset
-2. audit current Codex runtime code against those contracts
-3. prepare the next provider-session and event-ingestion implementation lane
+1. implement a narrow Codex live event acceptance lane
+2. add durable session binding and ingestion source records
+3. map accepted provider frames into orchestration-owned events and sanitized
+   receipts
+4. expose read-only query state for accepted, unsupported, duplicated, and
+   recovery-required observations
 4. keep checkout, worktree creation, commit, push, branch mutation, publish,
    promote, merge, and review-request behavior gated until provider-specific
    adapter authority is proven

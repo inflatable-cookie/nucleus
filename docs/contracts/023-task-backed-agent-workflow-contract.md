@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-18
+Updated: 2026-06-19
 
 ## Purpose
 
@@ -194,6 +194,25 @@ Missing or incomplete surfaces before runtime implementation:
 
 These gaps are assigned to the next implementation runway. They do not block
 the contract reset.
+
+## 2026-06-19 Rebaseline
+
+Current Codex task runtime code can admit a task-scoped request into the inert
+scheduler, project fixture-backed runtime observations into progress records,
+link sanitized receipts, route wait states, and classify unsupported or failed
+observations.
+
+It cannot yet move task work-item runtime state from live provider events.
+That requires:
+
+- durable provider session binding
+- accepted provider event records in the orchestration event store
+- idempotent frame/event ingestion
+- receipt linkage for wait, cancellation, failure, and completion outcomes
+- admitted state-transition commands or events owned by the engine
+
+The next lane should implement those records before provider callbacks,
+provider-reaching cancellation, or automatic task state mutation.
 
 ## Relationship To Other Contracts
 

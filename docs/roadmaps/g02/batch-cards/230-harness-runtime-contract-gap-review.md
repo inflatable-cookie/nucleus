@@ -1,6 +1,6 @@
 # 230 Harness Runtime Contract Gap Review
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../053-harness-runtime-rebaseline.md`
@@ -20,6 +20,13 @@ Review harness runtime contracts before the next provider implementation lane.
 
 - Harness runtime contract gaps are explicit.
 - Any blocker is visible before code work starts.
+
+## Result
+
+Contracts now state that the current Codex adapter surface is metadata,
+fixture, and compile-only proof work. Live session binding, transport
+ingestion, event-store append, receipt linkage, and recovery records remain
+the next gate.
 
 ## Validation
 

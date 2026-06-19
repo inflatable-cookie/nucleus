@@ -25,8 +25,8 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-052 are
-complete, and milestone 053 is the active harness runtime rebaseline.
+G02 is the orchestration and engine-core generation. Milestones 001-053 are
+complete, and milestone 054 is the active Codex live event acceptance lane.
 
 Completed workflow proof:
 
@@ -69,11 +69,12 @@ Current G02 continuation sequence:
 21. management projection apply/import split - complete
 22. change-request prep module split - complete
 23. health reset validation and next runtime lane - complete
-24. harness runtime rebaseline - active
+24. harness runtime rebaseline - complete
+25. Codex live event acceptance - active
 
 Selected current workflow:
 
-- harness runtime rebaseline
+- Codex live event acceptance
 
 Reason:
 
@@ -97,8 +98,11 @@ Reason:
 - `effigy doctor` now reports zero god-file error findings
 - widening remote transport, workspace panels, or provider SCM execution would
   still distract from the next core runtime question
-- harness runtime is the next Phase 4 lane, but it should start with a
-  contract/code rebaseline before more provider behavior is added
+- harness runtime rebaseline confirmed the current Codex code is descriptor,
+  fixture, compile-only supervision, wait-state, task admission, progress,
+  receipt, and recovery-gate proof work
+- the next Phase 4 lane is durable Codex live event acceptance before provider
+  command execution widens
 - checkout, worktree creation, push, publish, promote, forge review requests,
   merge, and steward automatic sync remain later gates
 
@@ -280,6 +284,7 @@ Current roadmap coverage:
 - `g02/011-codex-app-server-runtime-runway.md`
 - `g02/014-codex-live-runtime-supervision.md`
 - `g02/053-harness-runtime-rebaseline.md`
+- `g02/054-codex-live-event-acceptance.md`
 
 ## Phase 5: Native Harness And Steward
 
