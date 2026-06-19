@@ -207,6 +207,8 @@ Updated: 2026-06-16
   Codex stdio frame source records now describe direction, sequence, decode
   status, payload-retention posture, and evidence refs without opening stdio
   or retaining raw frames.
+  Codex spawn-intent admission records now compose readiness blockers and
+  runtime instance state without starting a provider process.
   Command handling still treats other state-shaped commands as accepted for
   later state mutation handling, while runtime session commands are rejected
   through scheduler admission or explicit deferred runtime-control errors. Local

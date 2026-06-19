@@ -118,4 +118,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/243-codex-spawn-intent-admission.md`.
+Execute `g02/batch-cards/244-codex-startup-and-decode-receipts.md`.

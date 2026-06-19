@@ -1,6 +1,6 @@
 # 243 Codex Spawn Intent Admission
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../055-codex-process-and-transport-acceptance.md`
@@ -21,6 +21,15 @@ Compose existing readiness gates into Codex spawn-intent admission records.
 - Spawn intent is blocked when any required gate is missing.
 - Accepted intent remains an admission record, not process execution.
 - Blocked intent includes actionable reasons.
+
+## Result
+
+`nucleus-server` now has Codex spawn-intent admission records under
+`codex_supervision/spawn_intent.rs`.
+
+The records compose runtime instance state and supervision readiness blockers,
+return accepted or blocked status, preserve evidence refs, and explicitly keep
+`spawn_started` false.
 
 ## Validation
 

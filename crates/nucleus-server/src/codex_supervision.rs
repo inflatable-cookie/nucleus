@@ -11,6 +11,7 @@ mod live_ingestion;
 mod readiness;
 mod runtime_instance;
 mod session_binding;
+mod spawn_intent;
 mod stdio_frames;
 
 pub use event_store_linkage::{
@@ -49,6 +50,10 @@ pub use session_binding::{
     CodexAppServerBindingStatus, CodexAppServerIngestionIdentityQuality,
     CodexAppServerIngestionSourceId, CodexAppServerIngestionSourceRecord,
     CodexAppServerSessionBindingId, CodexAppServerSessionBindingRecord,
+};
+pub use spawn_intent::{
+    admit_codex_spawn_intent, CodexAppServerSpawnIntentAdmission,
+    CodexAppServerSpawnIntentAdmissionStatus, CodexAppServerSpawnIntentId,
 };
 pub use stdio_frames::{
     codex_stdio_frame_source_record, CodexAppServerStdioDecodeStatus,
