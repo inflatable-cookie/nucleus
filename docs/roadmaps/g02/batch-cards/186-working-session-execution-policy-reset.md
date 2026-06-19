@@ -1,6 +1,6 @@
 # 186 Working Session Execution Policy Reset
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../041-scm-working-session-execution-prep.md`

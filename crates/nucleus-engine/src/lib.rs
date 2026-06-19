@@ -53,6 +53,10 @@ pub use management_projection::{
     MANAGEMENT_PROJECTION_ROOT, MANAGEMENT_PROJECTION_SCHEMA_V1,
 };
 pub use management_sync::{
+    GitCaptureDryRunAdmission, GitCaptureDryRunAdmissionStatus, GitCaptureDryRunCheck,
+    GitCaptureDryRunEnvelope, GitCaptureDryRunEnvelopeId, GitManagementCaptureDescriptor,
+    GitManagementCaptureEvidence, GitManagementCapturePlan, GitManagementCapturePlanId,
+    GitManagementCapturePlanStatus,
     ManagementProjectionApplyCommand, ManagementProjectionApplyCommandId,
     ManagementProjectionApplyRecordTarget, ManagementProjectionCaptureAdmission,
     ManagementProjectionCaptureAdmissionStatus, ManagementProjectionCaptureCommand,

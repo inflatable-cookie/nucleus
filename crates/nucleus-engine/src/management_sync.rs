@@ -7,6 +7,7 @@
 mod apply;
 mod assistance;
 mod capture;
+mod git_capture;
 mod plans;
 mod repairs;
 
@@ -24,6 +25,12 @@ pub use capture::{
     ManagementProjectionCapturePrepId, ManagementProjectionCapturePrepRecord,
     ManagementProjectionCapturePrepStatus, ManagementProjectionCaptureReason,
     ManagementProjectionCaptureScope, ManagementProjectionCaptureShareReadiness,
+};
+pub use git_capture::{
+    GitCaptureDryRunAdmission, GitCaptureDryRunAdmissionStatus, GitCaptureDryRunCheck,
+    GitCaptureDryRunEnvelope, GitCaptureDryRunEnvelopeId, GitManagementCaptureDescriptor,
+    GitManagementCaptureEvidence, GitManagementCapturePlan, GitManagementCapturePlanId,
+    GitManagementCapturePlanStatus,
 };
 pub use plans::{
     ManagementProjectionSyncPlan, ManagementProjectionSyncPlanId, ManagementProjectionSyncPlanKind,

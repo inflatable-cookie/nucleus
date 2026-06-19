@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `181-git-capture-descriptor-policy.md`
+- `186-working-session-execution-policy-reset.md`
 
 ## Planned Cards
 
-- `182-git-management-capture-plan-records.md`
-- `183-git-capture-command-envelope-dry-run.md`
-- `184-git-capture-status-and-diff-evidence.md`
-- `185-git-capture-validation-and-next-lane.md`
-- `186-working-session-execution-policy-reset.md`
 - `187-primary-tree-branch-session-plan-records.md`
 - `188-isolated-worktree-session-plan-records.md`
 - `189-working-session-cleanup-and-repair-records.md`
@@ -221,3 +216,8 @@ Hold execution cards for `g02`.
 - `178-provider-neutral-share-gate-fixtures.md`
 - `179-management-capture-review-read-model.md`
 - `180-scm-management-capture-validation-and-next-lane.md`
+- `181-git-capture-descriptor-policy.md`
+- `182-git-management-capture-plan-records.md`
+- `183-git-capture-command-envelope-dry-run.md`
+- `184-git-capture-status-and-diff-evidence.md`
+- `185-git-capture-validation-and-next-lane.md`

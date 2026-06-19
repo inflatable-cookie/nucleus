@@ -55,8 +55,8 @@ and engine boundary are settled.
 - `037-repo-backed-management-sync-hardening.md` - completed
 - `038-management-sync-apply-and-review.md` - completed
 - `039-scm-management-capture-and-share-foundation.md` - completed
-- `040-git-management-capture-adapter-proof.md` - active
-- `041-scm-working-session-execution-prep.md` - planned
+- `040-git-management-capture-adapter-proof.md` - completed
+- `041-scm-working-session-execution-prep.md` - active
 - `042-change-request-preparation-boundary.md` - planned
 - `043-steward-scm-sync-automation-gate.md` - planned
 - `044-scm-workflow-closeout-and-next-phase-selection.md` - planned
@@ -65,15 +65,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/181-git-capture-descriptor-policy.md`
+- `batch-cards/186-working-session-execution-policy-reset.md`
 
 Planned cards:
 
-- `batch-cards/182-git-management-capture-plan-records.md`
-- `batch-cards/183-git-capture-command-envelope-dry-run.md`
-- `batch-cards/184-git-capture-status-and-diff-evidence.md`
-- `batch-cards/185-git-capture-validation-and-next-lane.md`
-- `batch-cards/186-working-session-execution-policy-reset.md`
 - `batch-cards/187-primary-tree-branch-session-plan-records.md`
 - `batch-cards/188-isolated-worktree-session-plan-records.md`
 - `batch-cards/189-working-session-cleanup-and-repair-records.md`
@@ -276,6 +271,11 @@ Completed cards:
 - `batch-cards/178-provider-neutral-share-gate-fixtures.md`
 - `batch-cards/179-management-capture-review-read-model.md`
 - `batch-cards/180-scm-management-capture-validation-and-next-lane.md`
+- `batch-cards/181-git-capture-descriptor-policy.md`
+- `batch-cards/182-git-management-capture-plan-records.md`
+- `batch-cards/183-git-capture-command-envelope-dry-run.md`
+- `batch-cards/184-git-capture-status-and-diff-evidence.md`
+- `batch-cards/185-git-capture-validation-and-next-lane.md`
 
 ## Planned Runway Sequence
 
@@ -310,8 +310,8 @@ The next G02 suite is:
 27. repo-backed management sync hardening - completed
 28. management sync apply and review - completed
 29. SCM management capture and share foundation - completed
-30. Git management capture adapter proof - active
-31. SCM working-session execution prep - planned
+30. Git management capture adapter proof - completed
+31. SCM working-session execution prep - active
 32. change-request preparation boundary - planned
 33. steward SCM sync automation gate - planned
 34. SCM workflow closeout and next phase selection - planned

@@ -79,7 +79,8 @@ Current planning artifacts:
 ## Guardrail
 
 Do not widen provider runtime, remote transport, or UI sync controls while the
-active G02 runway proves Git adapter mapping for management capture
-preparation. Keep capture plans, dry-run evidence, status/diff summaries, and
-no-provider-mutation gates ahead of commits, pushes, publications, forge review
-requests, steward automation, or desktop sync polish.
+active G02 runway prepares SCM working-session execution records. Keep
+primary-tree and isolated-worktree plans, cleanup/repair records, and
+no-provider-mutation gates ahead of checkout, worktree creation, commits,
+pushes, publications, forge review requests, steward automation, or desktop
+sync polish.

@@ -1,6 +1,6 @@
 # 041 SCM Working Session Execution Prep
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-19
 
@@ -44,11 +44,10 @@ worktree, clean up a session, or repair a broken session.
 
 Ready cards:
 
-- None.
+- `batch-cards/186-working-session-execution-policy-reset.md`
 
 Planned cards:
 
-- `batch-cards/186-working-session-execution-policy-reset.md`
 - `batch-cards/187-primary-tree-branch-session-plan-records.md`
 - `batch-cards/188-isolated-worktree-session-plan-records.md`
 - `batch-cards/189-working-session-cleanup-and-repair-records.md`

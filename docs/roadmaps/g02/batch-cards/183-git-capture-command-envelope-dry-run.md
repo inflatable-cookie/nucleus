@@ -1,6 +1,6 @@
 # 183 Git Capture Command Envelope Dry Run
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../040-git-management-capture-adapter-proof.md`
@@ -28,3 +28,8 @@ Define dry-run command envelopes for Git capture readiness inspection.
 ## Stop Conditions
 
 - Stop if read-only and mutating Git commands cannot be separated clearly.
+
+## Result
+
+Added Git capture dry-run command envelopes. Admission accepts read-only status
+and diff checks and blocks mutating provider commands.

@@ -251,6 +251,21 @@ policy gates, name projection file refs, link apply receipts, and expose review
 state. It must not execute provider commands, mutate refs, create snapshots,
 publish, push, promote, open review requests, or integrate changes.
 
+## Git Management Capture Adapter Mapping
+
+Git management capture is an adapter mapping from neutral management capture
+records.
+
+Git-specific records may use Git labels such as commit, status, diff, branch,
+and push when they describe adapter behavior or UI labels. Neutral management
+capture records must continue to use capture, evidence, share readiness, review
+boundary readiness, and provider action required.
+
+The first Git mapping may build a dry-run capture plan, request read-only
+status and diff evidence, and decide whether the plan is ready for review. It
+must not stage files, create commits, push refs, switch branches, open pull
+requests, or mutate Git state.
+
 ## First Driver Registry Implementation
 
 The first SCM/forge registry is a metadata-only descriptor registry.

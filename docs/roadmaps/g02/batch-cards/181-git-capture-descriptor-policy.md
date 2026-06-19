@@ -1,6 +1,6 @@
 # 181 Git Capture Descriptor Policy
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../040-git-management-capture-adapter-proof.md`
@@ -30,3 +30,9 @@ records.
 ## Stop Conditions
 
 - Stop if policy requires Git vocabulary in core capture records.
+
+## Result
+
+`docs/contracts/011-scm-forge-sync-contract.md` now defines Git management
+capture as an adapter mapping from neutral capture records. Git commit, status,
+diff, branch, and push labels stay adapter-specific.
