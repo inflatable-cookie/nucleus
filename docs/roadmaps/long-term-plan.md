@@ -25,9 +25,8 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-044 are
-complete, and milestones 045-052 are the active red god-file health gate
-runway.
+G02 is the orchestration and engine-core generation. Milestones 001-052 are
+complete, and milestone 053 is the active harness runtime rebaseline.
 
 Completed workflow proof:
 
@@ -62,18 +61,19 @@ Current G02 continuation sequence:
 13. change-request preparation boundary - complete
 14. steward SCM sync automation gate - complete
 15. SCM workflow closeout and next phase selection - complete
-16. god-file health gate rebaseline - active
-17. management projection state test split - planned
-18. SCM work sessions module split - planned
-19. diagnostics read-model test split - planned
-20. engine management sync test split - planned
-21. management projection apply/import split - planned
-22. change-request prep module split - planned
-23. health reset validation and next runtime lane - planned
+16. god-file health gate rebaseline - complete
+17. management projection state test split - complete
+18. SCM work sessions module split - complete
+19. diagnostics read-model test split - complete
+20. engine management sync test split - complete
+21. management projection apply/import split - complete
+22. change-request prep module split - complete
+23. health reset validation and next runtime lane - complete
+24. harness runtime rebaseline - active
 
 Selected current workflow:
 
-- red god-file health gate
+- harness runtime rebaseline
 
 Reason:
 
@@ -94,9 +94,11 @@ Reason:
   capture/apply/review evidence without provider mutation authority
 - the SCM closeout confirmed the runway is complete as record, policy, and
   diagnostics work, not as a provider-executing SCM engine
-- `effigy doctor` now reports six god-file error findings
-- widening harness runtime, remote transport, workspace panels, or provider SCM
-  execution would compound module pressure
+- `effigy doctor` now reports zero god-file error findings
+- widening remote transport, workspace panels, or provider SCM execution would
+  still distract from the next core runtime question
+- harness runtime is the next Phase 4 lane, but it should start with a
+  contract/code rebaseline before more provider behavior is added
 - checkout, worktree creation, push, publish, promote, forge review requests,
   merge, and steward automatic sync remain later gates
 
@@ -247,6 +249,12 @@ Current roadmap coverage:
 - `g02/051-change-request-prep-module-split.md`
 - `g02/052-health-reset-validation-and-next-runtime-lane.md`
 
+Current result:
+
+- the red god-file gate is clear
+- 38 warning-sized files remain as pressure when touched
+- behavior was preserved through mechanical module/test splits
+
 ## Phase 4: Harness Runtime Foundation
 
 Goal: run useful agent sessions through stable runtime boundaries.
@@ -271,6 +279,7 @@ Current roadmap coverage:
 - `g02/009-harness-runtime-target-selection.md`
 - `g02/011-codex-app-server-runtime-runway.md`
 - `g02/014-codex-live-runtime-supervision.md`
+- `g02/053-harness-runtime-rebaseline.md`
 
 ## Phase 5: Native Harness And Steward
 

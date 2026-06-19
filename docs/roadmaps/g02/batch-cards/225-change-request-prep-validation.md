@@ -1,6 +1,6 @@
 # 225 Change Request Prep Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../051-change-request-prep-module-split.md`
@@ -30,3 +30,8 @@ Validate the change-request prep module split.
 ## Stop Conditions
 
 - Stop if provider-neutral semantics changed.
+
+## Result
+
+`cargo test -p nucleus-engine change_request` and `cargo check --workspace`
+pass. `effigy doctor` god-file errors dropped from one to zero.

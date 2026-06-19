@@ -1,6 +1,6 @@
 # 228 Next Runtime Lane Readiness
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../052-health-reset-validation-and-next-runtime-lane.md`
@@ -29,3 +29,8 @@ Select the next runtime lane after the health gate.
 ## Stop Conditions
 
 - Stop if operator intent is needed before selecting the lane.
+
+## Result
+
+Selected harness runtime rebaseline as the next lane. The first ready card is
+`230-harness-runtime-contract-gap-review.md`.

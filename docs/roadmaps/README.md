@@ -49,14 +49,15 @@ shape.
 - `g02/042-change-request-preparation-boundary.md` - completed
 - `g02/043-steward-scm-sync-automation-gate.md` - completed
 - `g02/044-scm-workflow-closeout-and-next-phase-selection.md` - completed
-- `g02/045-god-file-health-gate-rebaseline.md` - active
-- `g02/046-management-projection-state-test-split.md` - planned
-- `g02/047-scm-work-sessions-module-split.md` - planned
-- `g02/048-diagnostics-read-model-test-split.md` - planned
-- `g02/049-engine-management-sync-test-split.md` - planned
-- `g02/050-management-projection-apply-import-split.md` - planned
-- `g02/051-change-request-prep-module-split.md` - planned
-- `g02/052-health-reset-validation-and-next-runtime-lane.md` - planned
+- `g02/045-god-file-health-gate-rebaseline.md` - completed
+- `g02/046-management-projection-state-test-split.md` - completed
+- `g02/047-scm-work-sessions-module-split.md` - completed
+- `g02/048-diagnostics-read-model-test-split.md` - completed
+- `g02/049-engine-management-sync-test-split.md` - completed
+- `g02/050-management-projection-apply-import-split.md` - completed
+- `g02/051-change-request-prep-module-split.md` - completed
+- `g02/052-health-reset-validation-and-next-runtime-lane.md` - completed
+- `g02/053-harness-runtime-rebaseline.md` - active
 
 ## Previous Generation
 
@@ -115,4 +116,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/223-change-request-prep-type-split.md`.
+Execute `g02/batch-cards/230-harness-runtime-contract-gap-review.md`.

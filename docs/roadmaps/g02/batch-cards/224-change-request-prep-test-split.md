@@ -1,6 +1,6 @@
 # 224 Change Request Prep Test Split
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../051-change-request-prep-module-split.md`
@@ -28,3 +28,9 @@ Split change-request prep tests by behavior.
 ## Stop Conditions
 
 - Stop if tests need broader behavior changes.
+
+## Result
+
+Change-request prep tests moved into `change_request_prep/tests.rs` and still
+cover GitHub, Convergence-like publication, candidates, descriptors, and
+evidence packages.

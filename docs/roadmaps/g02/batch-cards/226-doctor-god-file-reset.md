@@ -1,6 +1,6 @@
 # 226 Doctor God File Reset
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../052-health-reset-validation-and-next-runtime-lane.md`
@@ -29,3 +29,7 @@ Run the health gate after all planned splits.
 ## Stop Conditions
 
 - Stop if doctor errors remain and the cause is not mechanical.
+
+## Result
+
+`effigy doctor` reports zero god-file errors and 38 warning findings.

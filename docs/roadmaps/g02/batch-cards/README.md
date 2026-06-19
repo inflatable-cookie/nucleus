@@ -10,16 +10,14 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `223-change-request-prep-type-split.md`
+- `230-harness-runtime-contract-gap-review.md`
 
 ## Planned Cards
 
-- `224-change-request-prep-test-split.md`
-- `225-change-request-prep-validation.md`
-- `226-doctor-god-file-reset.md`
-- `227-gap-index-health-rebaseline.md`
-- `228-next-runtime-lane-readiness.md`
-- `229-health-runway-closeout.md`
+- `231-codex-runtime-code-audit.md`
+- `232-provider-session-boundary-rebaseline.md`
+- `233-harness-event-ingestion-runway.md`
+- `234-harness-runtime-rebaseline-closeout.md`
 
 ## Completed Cards
 
@@ -245,3 +243,10 @@ Hold execution cards for `g02`.
 - `220-management-projection-apply-import-module-split.md`
 - `221-management-projection-apply-import-test-split.md`
 - `222-management-projection-apply-import-validation.md`
+- `223-change-request-prep-type-split.md`
+- `224-change-request-prep-test-split.md`
+- `225-change-request-prep-validation.md`
+- `226-doctor-god-file-reset.md`
+- `227-gap-index-health-rebaseline.md`
+- `228-next-runtime-lane-readiness.md`
+- `229-health-runway-closeout.md`

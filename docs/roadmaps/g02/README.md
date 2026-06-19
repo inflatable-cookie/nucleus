@@ -66,23 +66,22 @@ and engine boundary are settled.
 - `048-diagnostics-read-model-test-split.md` - completed
 - `049-engine-management-sync-test-split.md` - completed
 - `050-management-projection-apply-import-split.md` - completed
-- `051-change-request-prep-module-split.md` - active
-- `052-health-reset-validation-and-next-runtime-lane.md` - planned
+- `051-change-request-prep-module-split.md` - completed
+- `052-health-reset-validation-and-next-runtime-lane.md` - completed
+- `053-harness-runtime-rebaseline.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/223-change-request-prep-type-split.md`
+- `batch-cards/230-harness-runtime-contract-gap-review.md`
 
 Planned cards:
 
-- `batch-cards/224-change-request-prep-test-split.md`
-- `batch-cards/225-change-request-prep-validation.md`
-- `batch-cards/226-doctor-god-file-reset.md`
-- `batch-cards/227-gap-index-health-rebaseline.md`
-- `batch-cards/228-next-runtime-lane-readiness.md`
-- `batch-cards/229-health-runway-closeout.md`
+- `batch-cards/231-codex-runtime-code-audit.md`
+- `batch-cards/232-provider-session-boundary-rebaseline.md`
+- `batch-cards/233-harness-event-ingestion-runway.md`
+- `batch-cards/234-harness-runtime-rebaseline-closeout.md`
 
 Completed cards:
 
@@ -308,6 +307,13 @@ Completed cards:
 - `batch-cards/220-management-projection-apply-import-module-split.md`
 - `batch-cards/221-management-projection-apply-import-test-split.md`
 - `batch-cards/222-management-projection-apply-import-validation.md`
+- `batch-cards/223-change-request-prep-type-split.md`
+- `batch-cards/224-change-request-prep-test-split.md`
+- `batch-cards/225-change-request-prep-validation.md`
+- `batch-cards/226-doctor-god-file-reset.md`
+- `batch-cards/227-gap-index-health-rebaseline.md`
+- `batch-cards/228-next-runtime-lane-readiness.md`
+- `batch-cards/229-health-runway-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -353,8 +359,9 @@ The next G02 suite is:
 38. diagnostics read-model test split - completed
 39. engine management sync test split - completed
 40. management projection apply/import split - completed
-41. change-request prep module split - active
-42. health reset validation and next runtime lane - planned
+41. change-request prep module split - completed
+42. health reset validation and next runtime lane - completed
+43. harness runtime rebaseline - active
 
 This keeps code health and task authority clarity ahead of deeper provider
 runtime work.
@@ -414,9 +421,12 @@ runtime work.
   from three to two.
 - `050` split management projection apply/import, dropping doctor god-file
   errors from two to one.
-- `051` splits the remaining error-sized change-request prep file without
+- `051` split the remaining error-sized change-request prep file without
   changing behavior.
-- `052` validates doctor health and selects the next runtime lane.
+- `052` cleared the red doctor gate and selected harness runtime rebaseline as
+  the next lane.
+- `053` rechecks harness runtime contracts and the current Codex runtime code
+  before opening more provider behavior.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

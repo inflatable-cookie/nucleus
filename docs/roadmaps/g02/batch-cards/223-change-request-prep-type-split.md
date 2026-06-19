@@ -1,6 +1,6 @@
 # 223 Change Request Prep Type Split
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../051-change-request-prep-module-split.md`
@@ -28,3 +28,8 @@ Split change-request prep production types into focused modules.
 ## Stop Conditions
 
 - Stop if the split would alter forge or SCM authority semantics.
+
+## Result
+
+Change-request prep production types are split into candidate, descriptor,
+evidence package, prep, and target modules.

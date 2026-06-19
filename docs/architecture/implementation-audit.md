@@ -31,7 +31,9 @@ missing, and what should block more feature work.
 
 ### God Files
 
-`effigy doctor` fails because `scan.god-files` reports six error findings:
+`effigy doctor` no longer has god-file error findings.
+
+The former error findings were split:
 
 - `crates/nucleus-server/src/management_projection_state/tests.rs`
 - `crates/nucleus-scm-forge/src/work_sessions.rs`
@@ -40,7 +42,8 @@ missing, and what should block more feature work.
 - `crates/nucleus-server/src/management_projection_state/apply_import.rs`
 - `crates/nucleus-engine/src/change_request_prep.rs`
 
-Warning-sized files are also accumulating in:
+`effigy doctor` still reports 38 warning findings. The largest warning files
+are:
 
 - `crates/nucleus-server/src/request_handler/queries.rs`
 - `crates/nucleus-server/src/codex_task_runtime/tests.rs`
@@ -148,8 +151,8 @@ These are not small gaps. They define the real product architecture.
 3. Split oversized docs into authority indexes and focused contracts.
 4. Decide the orchestration model.
 5. Split or create engine/orchestration crate boundaries.
-6. Reduce god-file findings that block `effigy doctor`.
-7. Re-run the SCM closeout after the red health gate clears.
+6. Treat warning-sized files as pressure when touched.
+7. Rebaseline harness runtime before adding provider behavior.
 8. Implement the next feature only through the new core model.
 
 ## Code Audit Questions

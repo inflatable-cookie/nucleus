@@ -17,21 +17,15 @@ implementation lane can be chosen deliberately.
 
 Current state:
 
-- `effigy doctor` fails on `scan.god-files`
-- current error findings are:
-  `crates/nucleus-server/src/management_projection_state/tests.rs`,
-  `crates/nucleus-scm-forge/src/work_sessions.rs`,
-  `crates/nucleus-server/src/diagnostics_read_models/tests.rs`,
-  `crates/nucleus-engine/src/management_sync/tests.rs`,
-  `crates/nucleus-server/src/management_projection_state/apply_import.rs`,
-  and `crates/nucleus-engine/src/change_request_prep.rs`
-- `scan.god-files` also reports warning-sized files across server DTOs,
+- `effigy doctor` no longer fails on `scan.god-files`
+- the current doctor report has zero god-file errors and 38 warning findings
+- former error files were split into focused module/test groups
+- `scan.god-files` still reports warning-sized files across server DTOs,
   request handlers, desktop Tauri code, desktop CSS, local store, SCM, native
   harness, and engine test surfaces
 
 Needed:
 
-- split current error-sized files before widening runtime work
 - treat warning files as pressure when those areas are touched
 - avoid adding more broad DTO or CSS surfaces until ownership is clearer
 
@@ -250,11 +244,9 @@ apply/review behavior have been hardened.
 
 The most useful next checkpoint is:
 
-1. clear the current red god-file health gate
-2. preserve behavior while splitting oversized test and implementation files
-3. re-run `effigy doctor`, docs QA, and workspace Rust checks
-4. then choose the next runtime lane: harness runtime, native steward depth,
-   remote transport, workspace panels, or planning/memory/research
-5. keep checkout, worktree creation, commit, push, branch mutation, publish,
+1. rebaseline harness runtime contracts after the health reset
+2. audit current Codex runtime code against those contracts
+3. prepare the next provider-session and event-ingestion implementation lane
+4. keep checkout, worktree creation, commit, push, branch mutation, publish,
    promote, merge, and review-request behavior gated until provider-specific
    adapter authority is proven
