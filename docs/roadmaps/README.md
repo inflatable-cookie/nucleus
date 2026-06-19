@@ -118,4 +118,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/241-codex-runtime-instance-records.md`.
+Execute `g02/batch-cards/242-codex-stdio-frame-source-records.md`.

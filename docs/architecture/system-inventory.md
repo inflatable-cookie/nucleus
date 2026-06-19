@@ -201,7 +201,9 @@ Updated: 2026-06-16
   observation refs to task work items without granting task state mutation.
   Read-only Codex ingestion diagnostics DTOs expose observation status, next
   action, event refs, receipt refs, evidence refs, and mutation-authority flags
-  without adding UI panels.
+  without adding UI panels. Codex owned-runtime instance records now describe
+  host, adapter, process owner, binary, endpoint, payload retention, lifecycle
+  state, and evidence refs without storing process handles or spawning Codex.
   Command handling still treats other state-shaped commands as accepted for
   later state mutation handling, while runtime session commands are rejected
   through scheduler admission or explicit deferred runtime-control errors. Local

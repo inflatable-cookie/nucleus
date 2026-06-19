@@ -9,6 +9,7 @@ mod handshake;
 mod idempotency;
 mod live_ingestion;
 mod readiness;
+mod runtime_instance;
 mod session_binding;
 
 pub use event_store_linkage::{
@@ -35,6 +36,11 @@ pub use readiness::{
     CodexAppServerSupervisionBlocker, CodexAppServerSupervisionLimits,
     CodexAppServerSupervisionReadiness, CodexAppServerSupervisionReadinessInput,
     CodexAppServerSupervisionReadinessStatus, CodexAppServerSupervisionRequest,
+};
+pub use runtime_instance::{
+    codex_runtime_instance_from_supervision_request, CodexAppServerPayloadRetentionPolicy,
+    CodexAppServerRuntimeInstanceId, CodexAppServerRuntimeInstanceRecord,
+    CodexAppServerRuntimeInstanceState,
 };
 pub use session_binding::{
     codex_ingestion_source_from_live_frame, codex_replacement_thread_recovery_binding,

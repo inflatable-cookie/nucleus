@@ -96,7 +96,8 @@ Current state:
   and recovery-required frame classification, runtime-observation event-store
   linkage records, task-work observation link records, wait-state routing,
   task-runtime admission, progress projection, receipt linkage, and recovery
-  gates, and read-only Codex ingestion diagnostics DTOs.
+  gates, read-only Codex ingestion diagnostics DTOs, and pre-spawn
+  owned-runtime instance records.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 
@@ -105,7 +106,7 @@ These are useful boundary proofs. They are not a live provider runtime.
 Missing:
 
 - real provider adapters
-- Codex process spawning and stdio lifecycle ownership
+- Codex process spawning and stdio lifecycle execution
 - live JSON-RPC/app-server decoding from a supervised process
 - persistence for accepted runtime-observation event-store records
 - provider command reactor for `thread/start`, `turn/start`, callback
