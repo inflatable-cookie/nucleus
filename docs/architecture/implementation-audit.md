@@ -31,25 +31,34 @@ missing, and what should block more feature work.
 
 ### God Files
 
-`effigy doctor` fails because `scan.god-files` reports one high finding:
+`effigy doctor` fails because `scan.god-files` reports six error findings:
 
-- `crates/nucleus-command-policy/src/storage_codec.rs`
+- `crates/nucleus-server/src/management_projection_state/tests.rs`
+- `crates/nucleus-scm-forge/src/work_sessions.rs`
+- `crates/nucleus-server/src/diagnostics_read_models/tests.rs`
+- `crates/nucleus-engine/src/management_sync/tests.rs`
+- `crates/nucleus-server/src/management_projection_state/apply_import.rs`
+- `crates/nucleus-engine/src/change_request_prep.rs`
 
 Warning-sized files are also accumulating in:
 
+- `crates/nucleus-server/src/request_handler/queries.rs`
+- `crates/nucleus-server/src/codex_task_runtime/tests.rs`
 - `crates/nucleus-tasks/src/storage_codec.rs`
 - `apps/desktop/src/styles.css`
-- `crates/nucleus-server/src/control_envelope_dto/response.rs`
 - `apps/desktop/src-tauri/src/lib.rs`
-- `crates/nucleus-server/src/request_handler/task_commands.rs`
+- `crates/nucleus-server/src/control_envelope_dto.rs`
 - `crates/nucleus-local-store/src/sqlite.rs`
-- `crates/nucleus-server/src/request_handler/tests.rs`
+- `crates/nucleus-native-harness/src/effigy/tests.rs`
+- `crates/nucleus-agent-adapters/src/codex.rs`
+- `crates/nucleus-server/src/codex_wait_state.rs`
 - `crates/nucleus-server/src/tauri_ipc_command.rs`
 - `crates/nucleus-server/src/control_serialization_readiness.rs`
-- `apps/desktop/src/lib/control.ts`
 - `crates/nucleus-server/src/control_envelope_dto/commands.rs`
 - `crates/nucleus-server/src/secret_store.rs`
-- `crates/nucleus-server/src/control_envelope_dto.rs`
+- `crates/nucleus-scm-forge/src/git_inspection.rs`
+- `crates/nucleus-scm-forge/src/session_commands.rs`
+- more warning findings are listed in `.effigy/reports/doctor/scan-god-files.md`
 
 This should be treated as structural debt, not style cleanup.
 
@@ -140,7 +149,8 @@ These are not small gaps. They define the real product architecture.
 4. Decide the orchestration model.
 5. Split or create engine/orchestration crate boundaries.
 6. Reduce god-file findings that block `effigy doctor`.
-7. Implement the next feature only through the new core model.
+7. Re-run the SCM closeout after the red health gate clears.
+8. Implement the next feature only through the new core model.
 
 ## Code Audit Questions
 
@@ -154,4 +164,3 @@ These are not small gaps. They define the real product architecture.
 - Which UI helpers should move out of `control.ts`?
 - Which CSS belongs in components instead of global styles?
 - Which current tests are fixtures that should not become product contracts?
-

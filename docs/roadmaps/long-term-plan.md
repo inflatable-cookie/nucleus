@@ -25,8 +25,9 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-043 are
-complete, and milestone 044 is the active SCM workflow closeout checkpoint.
+G02 is the orchestration and engine-core generation. Milestones 001-044 are
+complete, and milestones 045-052 are the active red god-file health gate
+runway.
 
 Completed workflow proof:
 
@@ -60,11 +61,19 @@ Current G02 continuation sequence:
 12. SCM working-session execution prep - complete
 13. change-request preparation boundary - complete
 14. steward SCM sync automation gate - complete
-15. SCM workflow closeout and next phase selection - active
+15. SCM workflow closeout and next phase selection - complete
+16. god-file health gate rebaseline - active
+17. management projection state test split - planned
+18. SCM work sessions module split - planned
+19. diagnostics read-model test split - planned
+20. engine management sync test split - planned
+21. management projection apply/import split - planned
+22. change-request prep module split - planned
+23. health reset validation and next runtime lane - planned
 
 Selected current workflow:
 
-- SCM workflow closeout and next phase selection
+- red god-file health gate
 
 Reason:
 
@@ -83,8 +92,11 @@ Reason:
   evidence packages now exist without forge network calls
 - steward SCM sync decision records and diagnostics now sit over
   capture/apply/review evidence without provider mutation authority
-- the next useful checkpoint is to compare Phase 3 exit criteria against
-  implemented behavior, then select the next phase deliberately
+- the SCM closeout confirmed the runway is complete as record, policy, and
+  diagnostics work, not as a provider-executing SCM engine
+- `effigy doctor` now reports six god-file error findings
+- widening harness runtime, remote transport, workspace panels, or provider SCM
+  execution would compound module pressure
 - checkout, worktree creation, push, publish, promote, forge review requests,
   merge, and steward automatic sync remain later gates
 
@@ -201,6 +213,39 @@ Current roadmap coverage:
 - `g02/042-change-request-preparation-boundary.md`
 - `g02/043-steward-scm-sync-automation-gate.md`
 - `g02/044-scm-workflow-closeout-and-next-phase-selection.md`
+
+Current result:
+
+- Phase 3 is complete as a record, policy, descriptor, and diagnostics runway.
+- Provider-executing SCM and forge behavior remains a later runtime lane.
+
+## Phase 3b: Code Health Gate
+
+Goal: clear red god-file pressure before expanding runtime behavior.
+
+Work:
+
+- Split current error-sized test and implementation files.
+- Preserve public behavior and re-exports.
+- Keep validation scoped by crate.
+- Rebaseline `effigy doctor` after the splits.
+
+Exit criteria:
+
+- current god-file error findings are cleared or explicit blockers are logged
+- `cargo check --workspace` passes
+- docs and roadmap front doors point at the next runtime lane
+
+Current roadmap coverage:
+
+- `g02/045-god-file-health-gate-rebaseline.md`
+- `g02/046-management-projection-state-test-split.md`
+- `g02/047-scm-work-sessions-module-split.md`
+- `g02/048-diagnostics-read-model-test-split.md`
+- `g02/049-engine-management-sync-test-split.md`
+- `g02/050-management-projection-apply-import-split.md`
+- `g02/051-change-request-prep-module-split.md`
+- `g02/052-health-reset-validation-and-next-runtime-lane.md`
 
 ## Phase 4: Harness Runtime Foundation
 

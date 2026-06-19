@@ -25,6 +25,7 @@ Current planning artifacts:
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`
 - `logs/2026-06-18-stocktake.md`
+- `logs/2026-06-19-scm-runway-closeout.md`
 - `roadmaps/long-term-plan.md`
 - `roadmaps/reassessment-decision-queue.md`
 - `roadmaps/g02/001-orchestration-and-engine-boundary.md`
@@ -71,6 +72,14 @@ Current planning artifacts:
 - `roadmaps/g02/042-change-request-preparation-boundary.md`
 - `roadmaps/g02/043-steward-scm-sync-automation-gate.md`
 - `roadmaps/g02/044-scm-workflow-closeout-and-next-phase-selection.md`
+- `roadmaps/g02/045-god-file-health-gate-rebaseline.md`
+- `roadmaps/g02/046-management-projection-state-test-split.md`
+- `roadmaps/g02/047-scm-work-sessions-module-split.md`
+- `roadmaps/g02/048-diagnostics-read-model-test-split.md`
+- `roadmaps/g02/049-engine-management-sync-test-split.md`
+- `roadmaps/g02/050-management-projection-apply-import-split.md`
+- `roadmaps/g02/051-change-request-prep-module-split.md`
+- `roadmaps/g02/052-health-reset-validation-and-next-runtime-lane.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -78,8 +87,7 @@ Current planning artifacts:
 
 ## Guardrail
 
-Do not widen provider runtime, remote transport, or UI sync controls until the
-SCM runway closeout has reviewed remaining gaps and selected the next phase.
-Steward sync decisions are advisory and evidence-linked only; autonomous
-checkout, commits, pushes, publications, forge review requests, merge, and
-desktop sync polish remain later gates.
+Do not widen provider runtime, remote transport, or UI sync controls while
+`effigy doctor` has red god-file errors. The current lane is mechanical module
+and test splitting only. Behavior changes, provider mutation, and new UI
+surfaces remain out of scope.

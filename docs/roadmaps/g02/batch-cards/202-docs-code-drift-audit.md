@@ -1,6 +1,6 @@
 # 202 Docs Code Drift Audit
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../044-scm-workflow-closeout-and-next-phase-selection.md`
@@ -29,3 +29,8 @@ Compare roadmap and contract claims to current code.
 ## Stop Conditions
 
 - Stop if drift reveals a safety issue that should block phase selection.
+
+## Result
+
+Docs were corrected to separate metadata/type surfaces from provider-executing
+SCM runtime. The current doctor report is now reflected in the audit docs.

@@ -10,14 +10,33 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `201-phase3-scm-gap-review.md`
+- `206-current-god-file-report-normalization.md`
 
 ## Planned Cards
 
-- `202-docs-code-drift-audit.md`
-- `203-next-phase-readiness-decision.md`
-- `204-long-term-plan-rebaseline.md`
-- `205-g02-scm-runway-closeout.md`
+- `207-god-file-split-order-and-risk-map.md`
+- `208-management-projection-state-test-fixture-extraction.md`
+- `209-management-projection-state-test-apply-cases-split.md`
+- `210-management-projection-state-test-validation.md`
+- `211-scm-work-session-policy-type-split.md`
+- `212-scm-work-session-recovery-type-split.md`
+- `213-scm-work-session-validation.md`
+- `214-diagnostics-read-model-test-fixture-extraction.md`
+- `215-diagnostics-read-model-domain-test-split.md`
+- `216-diagnostics-read-model-validation.md`
+- `217-engine-management-sync-test-fixture-extraction.md`
+- `218-engine-management-sync-test-domain-split.md`
+- `219-engine-management-sync-validation.md`
+- `220-management-projection-apply-import-module-split.md`
+- `221-management-projection-apply-import-test-split.md`
+- `222-management-projection-apply-import-validation.md`
+- `223-change-request-prep-type-split.md`
+- `224-change-request-prep-test-split.md`
+- `225-change-request-prep-validation.md`
+- `226-doctor-god-file-reset.md`
+- `227-gap-index-health-rebaseline.md`
+- `228-next-runtime-lane-readiness.md`
+- `229-health-runway-closeout.md`
 
 ## Completed Cards
 
@@ -221,3 +240,8 @@ Hold execution cards for `g02`.
 - `198-steward-capture-apply-loop-fixtures.md`
 - `199-steward-sync-diagnostics-read-model.md`
 - `200-steward-sync-validation-and-next-lane.md`
+- `201-phase3-scm-gap-review.md`
+- `202-docs-code-drift-audit.md`
+- `203-next-phase-readiness-decision.md`
+- `204-long-term-plan-rebaseline.md`
+- `205-g02-scm-runway-closeout.md`

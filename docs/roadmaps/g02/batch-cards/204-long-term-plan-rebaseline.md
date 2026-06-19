@@ -1,6 +1,6 @@
 # 204 Long Term Plan Rebaseline
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../044-scm-workflow-closeout-and-next-phase-selection.md`
@@ -29,3 +29,8 @@ Rebaseline the long-term plan after SCM workflow closeout.
 ## Stop Conditions
 
 - Stop if rebaseline would hide unresolved SCM gaps.
+
+## Result
+
+Long-term and gap indexes now show SCM as a closed record/prep runway with
+provider execution still missing. The next runway is code-health repair.

@@ -125,7 +125,11 @@ Current state:
 
 - SCM/forge sync contract is adapter-based
 - Git is not assumed as the only possible SCM
-- no implemented driver registry exists
+- a metadata-only SCM/forge driver registry exists
+- static SCM, forge, and observation-source trait skeletons exist
+- runtime effect vocabulary and state types exist
+- no provider command execution, network client, scheduler, replay, or
+  credential integration exists
 
 Why it matters:
 
@@ -133,7 +137,7 @@ Why it matters:
 - GitHub/GitLab/Bitbucket-style provider workflows are not the same as SCM
   storage workflows
 
-Decision needed:
+Decision:
 
 - separate SCM driver capability model from forge/source-control provider
   discovery, auth, and publication workflows
@@ -143,6 +147,12 @@ Likely documents:
 - update `011-scm-forge-sync-contract.md`
 - add capability terms for snapshots, commits, change requests, publication,
   review, merge, and repair
+
+Remaining gap:
+
+- turn the current type-only and metadata-only surfaces into provider-specific
+  runtime adapters only after the next health gate clears oversized module
+  pressure
 
 ### Host Authority And Remote Auth
 

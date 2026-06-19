@@ -59,20 +59,47 @@ and engine boundary are settled.
 - `041-scm-working-session-execution-prep.md` - completed
 - `042-change-request-preparation-boundary.md` - completed
 - `043-steward-scm-sync-automation-gate.md` - completed
-- `044-scm-workflow-closeout-and-next-phase-selection.md` - active
+- `044-scm-workflow-closeout-and-next-phase-selection.md` - completed
+- `045-god-file-health-gate-rebaseline.md` - active
+- `046-management-projection-state-test-split.md` - planned
+- `047-scm-work-sessions-module-split.md` - planned
+- `048-diagnostics-read-model-test-split.md` - planned
+- `049-engine-management-sync-test-split.md` - planned
+- `050-management-projection-apply-import-split.md` - planned
+- `051-change-request-prep-module-split.md` - planned
+- `052-health-reset-validation-and-next-runtime-lane.md` - planned
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/201-phase3-scm-gap-review.md`
+- `batch-cards/206-current-god-file-report-normalization.md`
 
 Planned cards:
 
-- `batch-cards/202-docs-code-drift-audit.md`
-- `batch-cards/203-next-phase-readiness-decision.md`
-- `batch-cards/204-long-term-plan-rebaseline.md`
-- `batch-cards/205-g02-scm-runway-closeout.md`
+- `batch-cards/207-god-file-split-order-and-risk-map.md`
+- `batch-cards/208-management-projection-state-test-fixture-extraction.md`
+- `batch-cards/209-management-projection-state-test-apply-cases-split.md`
+- `batch-cards/210-management-projection-state-test-validation.md`
+- `batch-cards/211-scm-work-session-policy-type-split.md`
+- `batch-cards/212-scm-work-session-recovery-type-split.md`
+- `batch-cards/213-scm-work-session-validation.md`
+- `batch-cards/214-diagnostics-read-model-test-fixture-extraction.md`
+- `batch-cards/215-diagnostics-read-model-domain-test-split.md`
+- `batch-cards/216-diagnostics-read-model-validation.md`
+- `batch-cards/217-engine-management-sync-test-fixture-extraction.md`
+- `batch-cards/218-engine-management-sync-test-domain-split.md`
+- `batch-cards/219-engine-management-sync-validation.md`
+- `batch-cards/220-management-projection-apply-import-module-split.md`
+- `batch-cards/221-management-projection-apply-import-test-split.md`
+- `batch-cards/222-management-projection-apply-import-validation.md`
+- `batch-cards/223-change-request-prep-type-split.md`
+- `batch-cards/224-change-request-prep-test-split.md`
+- `batch-cards/225-change-request-prep-validation.md`
+- `batch-cards/226-doctor-god-file-reset.md`
+- `batch-cards/227-gap-index-health-rebaseline.md`
+- `batch-cards/228-next-runtime-lane-readiness.md`
+- `batch-cards/229-health-runway-closeout.md`
 
 Completed cards:
 
@@ -276,6 +303,11 @@ Completed cards:
 - `batch-cards/198-steward-capture-apply-loop-fixtures.md`
 - `batch-cards/199-steward-sync-diagnostics-read-model.md`
 - `batch-cards/200-steward-sync-validation-and-next-lane.md`
+- `batch-cards/201-phase3-scm-gap-review.md`
+- `batch-cards/202-docs-code-drift-audit.md`
+- `batch-cards/203-next-phase-readiness-decision.md`
+- `batch-cards/204-long-term-plan-rebaseline.md`
+- `batch-cards/205-g02-scm-runway-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -314,7 +346,15 @@ The next G02 suite is:
 31. SCM working-session execution prep - completed
 32. change-request preparation boundary - completed
 33. steward SCM sync automation gate - completed
-34. SCM workflow closeout and next phase selection - active
+34. SCM workflow closeout and next phase selection - completed
+35. god-file health gate rebaseline - active
+36. management projection state test split - planned
+37. SCM work sessions module split - planned
+38. diagnostics read-model test split - planned
+39. engine management sync test split - planned
+40. management projection apply/import split - planned
+41. change-request prep module split - planned
+42. health reset validation and next runtime lane - planned
 
 This keeps code health and task authority clarity ahead of deeper provider
 runtime work.
@@ -360,8 +400,13 @@ runtime work.
   network or forge mutation.
 - `043` completed evidence-linked steward sync decisions and read-only
   diagnostics without provider mutation authority.
-- `044` closes the SCM runway, audits drift, and selects the next phase from
-  the long-term plan.
+- `044` closed the SCM record/prep runway and selected the red god-file health
+  gate as the next phase before wider runtime work.
+- `045` rebaselines the current `effigy doctor` god-file report and split
+  order.
+- `046`-`051` split the six current error-sized files without changing
+  behavior.
+- `052` validates doctor health and selects the next runtime lane.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

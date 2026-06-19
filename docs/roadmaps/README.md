@@ -48,7 +48,15 @@ shape.
 - `g02/041-scm-working-session-execution-prep.md` - completed
 - `g02/042-change-request-preparation-boundary.md` - completed
 - `g02/043-steward-scm-sync-automation-gate.md` - completed
-- `g02/044-scm-workflow-closeout-and-next-phase-selection.md` - active
+- `g02/044-scm-workflow-closeout-and-next-phase-selection.md` - completed
+- `g02/045-god-file-health-gate-rebaseline.md` - active
+- `g02/046-management-projection-state-test-split.md` - planned
+- `g02/047-scm-work-sessions-module-split.md` - planned
+- `g02/048-diagnostics-read-model-test-split.md` - planned
+- `g02/049-engine-management-sync-test-split.md` - planned
+- `g02/050-management-projection-apply-import-split.md` - planned
+- `g02/051-change-request-prep-module-split.md` - planned
+- `g02/052-health-reset-validation-and-next-runtime-lane.md` - planned
 
 ## Previous Generation
 
@@ -107,4 +115,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/201-phase3-scm-gap-review.md`.
+Execute `g02/batch-cards/206-current-god-file-report-normalization.md`.
