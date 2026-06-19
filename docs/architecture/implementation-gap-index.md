@@ -135,16 +135,26 @@ Current state:
 - a management sync review read model exposes staged, applied, blocked,
   conflict, repair, and receipt state to clients without making clients
   authoritative
+- provider-neutral management capture command/admission records exist for
+  accepted projection changes
+- capture prep records link projection file refs, apply receipts, and review
+  summary refs before share readiness can become review-ready
+- Git-like and Convergence-like capture paths are represented without forcing
+  commit, push, branch, pull-request, snap, or publication vocabulary into core
+  records
+- a management capture review read model exposes capture readiness, evidence,
+  blocked reasons, and next actions without client authority
 - committable versus local-only policy is documented for first-pass records
-- SCM capture, share, publish, promote, and review-request behavior remains out
-  of scope for this runtime
+- provider SCM mutation, share, publish, promote, and review-request behavior
+  remains out of scope for this runtime
 
 Missing:
 
 - projection schema migration
 - applying planning, accepted-memory, research, index, and artifact-reference
   projection records beyond first-pass project/task records
-- actual SCM capture/share/publish integration
+- Git adapter mapping from neutral capture prep to dry-run status/diff evidence
+- actual provider SCM capture/share/publish integration
 - steward automation over sync policy
 - desktop sync controls, if the proof UI continues beyond diagnostics
 
@@ -212,9 +222,9 @@ apply/review behavior have been hardened.
 The most useful next code lane is likely:
 
 1. keep warning-level god-file pressure visible as a health guardrail
-2. add provider-neutral management projection capture/share preparation after
-   local apply/review succeeds
-3. link capture requests to projection file refs, apply receipts, and review
-   state without assuming Git-only commit vocabulary
-4. keep push, publish, promote, and review-request behavior gated until the SCM
+2. map neutral management capture prep to Git-specific dry-run planning and
+   sanitized status/diff evidence
+3. keep commit, push, branch mutation, publish, promote, and review-request
+   behavior gated until provider-specific adapter authority is proven
+4. keep non-Git vocabulary checks active until Convergence-like flows prove the
    adapter boundary can prove Git and non-Git workflows separately

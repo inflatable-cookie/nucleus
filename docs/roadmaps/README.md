@@ -43,8 +43,8 @@ shape.
 - `g02/036-task-backed-workflow-validation-and-next-lane.md` - completed
 - `g02/037-repo-backed-management-sync-hardening.md` - completed
 - `g02/038-management-sync-apply-and-review.md` - completed
-- `g02/039-scm-management-capture-and-share-foundation.md` - active
-- `g02/040-git-management-capture-adapter-proof.md` - planned
+- `g02/039-scm-management-capture-and-share-foundation.md` - completed
+- `g02/040-git-management-capture-adapter-proof.md` - active
 - `g02/041-scm-working-session-execution-prep.md` - planned
 - `g02/042-change-request-preparation-boundary.md` - planned
 - `g02/043-steward-scm-sync-automation-gate.md` - planned
@@ -107,4 +107,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/176-management-capture-command-records.md`.
+Execute `g02/batch-cards/181-git-capture-descriptor-policy.md`.

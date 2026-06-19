@@ -1,6 +1,6 @@
 # 180 SCM Management Capture Validation And Next Lane
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../039-scm-management-capture-and-share-foundation.md`
@@ -36,3 +36,8 @@ checkpoint.
 
 - Stop if validation exposes provider-specific SCM assumptions in core capture
   records.
+
+## Result
+
+Targeted capture tests, workspace check, docs validation, and whitespace checks
+passed. The next lane is Git management capture adapter proof.

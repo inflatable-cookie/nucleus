@@ -1,6 +1,6 @@
 # 040 Git Management Capture Adapter Proof
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-19
 
@@ -41,11 +41,10 @@ records remain provider-neutral.
 
 Ready cards:
 
-- None.
+- `batch-cards/181-git-capture-descriptor-policy.md`
 
 Planned cards:
 
-- `batch-cards/181-git-capture-descriptor-policy.md`
 - `batch-cards/182-git-management-capture-plan-records.md`
 - `batch-cards/183-git-capture-command-envelope-dry-run.md`
 - `batch-cards/184-git-capture-status-and-diff-evidence.md`

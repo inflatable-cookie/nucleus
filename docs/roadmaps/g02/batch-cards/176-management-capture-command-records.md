@@ -1,6 +1,6 @@
 # 176 Management Capture Command Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../039-scm-management-capture-and-share-foundation.md`
@@ -34,3 +34,10 @@ executing SCM provider commands.
 
 - Stop if the record model requires provider-specific SCM vocabulary to express
   the core operation.
+
+## Result
+
+Added provider-neutral management capture command and admission records in
+`nucleus-engine`. Capture commands name project, repo membership, repository
+ref, projection root, file refs, reason, policy gates, and evidence without
+creating provider SCM mutations.

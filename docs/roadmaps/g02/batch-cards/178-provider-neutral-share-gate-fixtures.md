@@ -1,6 +1,6 @@
 # 178 Provider Neutral Share Gate Fixtures
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../039-scm-management-capture-and-share-foundation.md`
@@ -37,3 +37,9 @@ Prove that capture/share gates do not assume Git-only commits or pushes.
 
 - Stop if neutral records cannot describe Convergence-like capture/share
   without pretending snaps are commits.
+
+## Result
+
+Added fixtures proving Git-like and Convergence-like capture commands can be
+represented without core records containing commit, push, branch, pull-request,
+snap, or publication vocabulary.

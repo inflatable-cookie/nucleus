@@ -18,8 +18,12 @@ pub use assistance::{
     ManagementProjectionSyncAssistanceKind, ManagementProjectionSyncAssistanceRoute,
 };
 pub use capture::{
+    ManagementProjectionCaptureAdmission, ManagementProjectionCaptureAdmissionStatus,
+    ManagementProjectionCaptureCommand, ManagementProjectionCaptureCommandId,
+    ManagementProjectionCaptureEvidence, ManagementProjectionCapturePolicyGate,
     ManagementProjectionCapturePrepId, ManagementProjectionCapturePrepRecord,
-    ManagementProjectionCapturePrepStatus, ManagementProjectionCaptureScope,
+    ManagementProjectionCapturePrepStatus, ManagementProjectionCaptureReason,
+    ManagementProjectionCaptureScope, ManagementProjectionCaptureShareReadiness,
 };
 pub use plans::{
     ManagementProjectionSyncPlan, ManagementProjectionSyncPlanId, ManagementProjectionSyncPlanKind,

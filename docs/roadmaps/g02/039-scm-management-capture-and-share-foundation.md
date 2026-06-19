@@ -1,6 +1,6 @@
 # 039 SCM Management Capture And Share Foundation
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -26,57 +26,59 @@ and review state needed before those actions are allowed.
 
 ## Goals
 
-- [ ] Define capture/share authority after local management projection
+- [x] Define capture/share authority after local management projection
       apply/review succeeds.
-- [ ] Add management capture request and admission record shapes without
+- [x] Add management capture request and admission record shapes without
       provider execution.
-- [ ] Link capture preparation to projection file refs, apply receipts, and
+- [x] Link capture preparation to projection file refs, apply receipts, and
       review state.
-- [ ] Prove Git-neutral and Convergence-neutral vocabulary in fixtures.
-- [ ] Keep publish, push, promote, merge, and review-request behavior gated
+- [x] Prove Git-neutral and Convergence-neutral vocabulary in fixtures.
+- [x] Keep publish, push, promote, merge, and review-request behavior gated
       behind later adapter-specific work.
 
 ## Execution Plan
 
 - [x] Policy batch: clarify provider-neutral capture/share terms and keep SCM
       mutation outside the current lane.
-- [ ] Command-record batch: add management capture command/prep records without
+- [x] Command-record batch: add management capture command/prep records without
       running provider commands.
-- [ ] Evidence-linkage batch: connect capture prep to projection refs, apply
+- [x] Evidence-linkage batch: connect capture prep to projection refs, apply
       receipts, and review summaries.
-- [ ] Neutrality batch: add fixtures and tests proving Git-only commit/push
+- [x] Neutrality batch: add fixtures and tests proving Git-only commit/push
       assumptions do not leak into core records.
-- [ ] Review-model batch: expose capture/share gate state to clients without
+- [x] Review-model batch: expose capture/share gate state to clients without
       making clients authoritative.
-- [ ] Validation batch: close the lane and select the next workflow checkpoint.
+- [x] Validation batch: close the lane and select the next workflow checkpoint.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/176-management-capture-command-records.md`
+- None.
 
 Planned cards:
 
+- None.
+
+Completed cards:
+
+- `batch-cards/175-scm-management-capture-policy-reset.md`
+- `batch-cards/176-management-capture-command-records.md`
 - `batch-cards/177-management-capture-receipt-linkage.md`
 - `batch-cards/178-provider-neutral-share-gate-fixtures.md`
 - `batch-cards/179-management-capture-review-read-model.md`
 - `batch-cards/180-scm-management-capture-validation-and-next-lane.md`
 
-Completed cards:
-
-- `batch-cards/175-scm-management-capture-policy-reset.md`
-
 ## Acceptance Criteria
 
-- [ ] A command boundary exists for preparing management projection capture.
-- [ ] Records use provider-neutral capture/share terminology, not Git-only
+- [x] A command boundary exists for preparing management projection capture.
+- [x] Records use provider-neutral capture/share terminology, not Git-only
       commit/push vocabulary.
-- [ ] Capture preparation is separated from provider-specific share, publish,
+- [x] Capture preparation is separated from provider-specific share, publish,
       promote, merge, and review-request operations.
-- [ ] Capture evidence links to projection file refs, apply receipts, and
+- [x] Capture evidence links to projection file refs, apply receipts, and
       review state.
-- [ ] The next lane is selected from the long-term plan rather than invented
+- [x] The next lane is selected from the long-term plan rather than invented
       from the final card.
 
 ## Gate
@@ -84,3 +86,13 @@ Completed cards:
 Do not implement provider SCM mutation, forge review requests, steward
 automatic sync, or desktop sync polish until capture/share preparation records
 are provider-neutral and linked to reviewable evidence.
+
+## Result
+
+The lane added provider-neutral management capture command/admission records,
+evidence-linked capture prep records, Git-like and Convergence-like neutrality
+fixtures, and a client-safe management capture review read model.
+
+The next lane is `040-git-management-capture-adapter-proof.md`, focused on
+mapping neutral capture prep to Git-specific dry-run planning and sanitized
+status/diff evidence without committing, pushing, or mutating refs.

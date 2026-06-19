@@ -9,7 +9,10 @@
         EngineTaskAgentWorkUnitSourceRecord, EngineTaskWorkItemId, EngineTaskWorkItemRefs,
         ManagementProjectionCapturePrepId,
         ManagementProjectionCapturePrepRecord, ManagementProjectionCapturePrepStatus,
-        ManagementProjectionCaptureScope, ManagementProjectionConflictClass,
+        ManagementProjectionCaptureReason, ManagementProjectionCaptureScope,
+        ManagementProjectionCaptureCommand, ManagementProjectionCaptureCommandId,
+        ManagementProjectionCaptureEvidence, ManagementProjectionCapturePolicyGate,
+        ManagementProjectionConflictClass,
         ManagementProjectionConflictReport, ManagementProjectionEnvelope, ManagementProjectionFileDocument,
         ManagementProjectionFileRef, ManagementProjectionImportRepairProposal,
         ManagementProjectionImportRepairProposalId, ManagementProjectionPayload,
@@ -40,7 +43,7 @@
         ScmSessionCommandId, ScmSessionCommandKind, ScmSessionCommandRequest,
         ScmSessionCommandScope, ScmWorkSessionId, ScmWorkingCopySessionPlan,
     };
-    use nucleus_projects::ProjectId;
+    use nucleus_projects::{ProjectId, RepoMembershipId};
     use nucleus_tasks::TaskId;
 
     #[test]
@@ -178,6 +181,65 @@
         );
         assert!(!diagnostics.capture_preps[0].execution_available);
         assert!(!json.to_lowercase().contains("push"));
+    }
+
+    #[test]
+    fn management_capture_review_model_exposes_readiness_without_provider_mutation() {
+        let command = ManagementProjectionCaptureCommand {
+            command_id: ManagementProjectionCaptureCommandId("capture-command:1".to_owned()),
+            actor_ref: "actor:steward".to_owned(),
+            target_project_id: ProjectId("project:nucleus".to_owned()),
+            repo_membership_id: Some(RepoMembershipId("repo:nucleus".to_owned())),
+            repository_id: Some(ScmRepositoryRefId("scm-repo:nucleus".to_owned())),
+            projection_root: nucleus_engine::ManagementProjectionRoot::default(),
+            requested_file_refs: vec![ManagementProjectionFileRef::task("task:1")],
+            reason: ManagementProjectionCaptureReason::AppliedManagementProjection,
+            scope: ManagementProjectionCaptureScope::ManagementProjection,
+            policy_gates: vec![
+                ManagementProjectionCapturePolicyGate::ProjectionApplied,
+                ManagementProjectionCapturePolicyGate::EvidenceSanitized,
+            ],
+            evidence: ManagementProjectionCaptureEvidence {
+                projection_file_refs: vec![ManagementProjectionFileRef::task("task:1")],
+                apply_receipt_ids: vec![EngineRuntimeReceiptRecordId(
+                    "receipt:management-projection-apply:task:1:accepted".to_owned(),
+                )],
+                review_summary_refs: vec!["sync-review:1".to_owned()],
+                validation_report_refs: vec!["validation:1".to_owned()],
+                blocked_reasons: Vec::new(),
+            },
+        };
+        let admission = command.admit();
+        let prep = ManagementProjectionCapturePrepRecord::from_admitted_command(
+            ManagementProjectionCapturePrepId("capture-prep:1".to_owned()),
+            &command,
+            &admission,
+        );
+        let review = management_capture_review_model(&[prep], &[admission]);
+        let json = serde_json::to_string(&review).expect("serialize capture review");
+
+        assert!(!review.client_can_mutate);
+        assert!(!review.client_can_mutate_provider);
+        assert_eq!(review.source_status, "records");
+        assert_eq!(
+            review.capture_preps[0].share_readiness,
+            "ReadyForReviewBoundary"
+        );
+        assert_eq!(
+            review.capture_preps[0].next_actions,
+            vec!["review_capture_evidence".to_owned()]
+        );
+        assert!(!review.admissions[0].provider_mutation_allowed);
+        for forbidden in [
+            "raw_stdout",
+            "raw_stderr",
+            "provider_auth",
+            "push",
+            "pull request",
+            "secret",
+        ] {
+            assert!(!json.contains(forbidden), "capture review leaked {forbidden}");
+        }
     }
 
     #[test]

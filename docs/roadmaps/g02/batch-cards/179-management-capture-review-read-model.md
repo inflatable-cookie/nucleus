@@ -1,6 +1,6 @@
 # 179 Management Capture Review Read Model
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../039-scm-management-capture-and-share-foundation.md`
@@ -34,3 +34,9 @@ clients authoritative.
 
 - Stop if the read model requires clients to own authority over capture/share
   decisions.
+
+## Result
+
+Added a client-safe management capture review model exposing capture prep
+readiness, evidence refs, blocked reasons, and next action kinds while keeping
+client mutation and provider mutation flags false.

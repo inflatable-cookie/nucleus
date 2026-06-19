@@ -54,9 +54,13 @@ pub use management_projection::{
 };
 pub use management_sync::{
     ManagementProjectionApplyCommand, ManagementProjectionApplyCommandId,
-    ManagementProjectionApplyRecordTarget, ManagementProjectionCapturePrepId,
+    ManagementProjectionApplyRecordTarget, ManagementProjectionCaptureAdmission,
+    ManagementProjectionCaptureAdmissionStatus, ManagementProjectionCaptureCommand,
+    ManagementProjectionCaptureCommandId, ManagementProjectionCaptureEvidence,
+    ManagementProjectionCapturePolicyGate, ManagementProjectionCapturePrepId,
     ManagementProjectionCapturePrepRecord, ManagementProjectionCapturePrepStatus,
-    ManagementProjectionCaptureScope, ManagementProjectionImportRepairKind,
+    ManagementProjectionCaptureReason, ManagementProjectionCaptureScope,
+    ManagementProjectionCaptureShareReadiness, ManagementProjectionImportRepairKind,
     ManagementProjectionImportRepairProposal, ManagementProjectionImportRepairProposalId,
     ManagementProjectionImportRepairReview, ManagementProjectionSyncAssistanceKind,
     ManagementProjectionSyncAssistanceRoute, ManagementProjectionSyncPlan,
@@ -96,10 +100,10 @@ pub use task_timeline::{
 pub use task_work_items::{
     review_timeline_entry_from_transition, EngineTaskWorkItemAssignment, EngineTaskWorkItemId,
     EngineTaskWorkItemRecord, EngineTaskWorkItemRefs, EngineTaskWorkItemReviewCommand,
-    EngineTaskWorkItemReviewDecision, EngineTaskWorkItemReviewError, EngineTaskWorkItemReviewOutcome,
-    EngineTaskWorkItemReviewState, EngineTaskWorkItemReviewTimelineEntry,
-    EngineTaskWorkItemReviewTransition, EngineTaskWorkItemRuntimeLinkState,
-    EngineTaskWorkItemRuntimeProjection, EngineTaskWorkItemRuntimeProjectionEntry,
-    EngineTaskWorkItemRuntimeProjectionEntryKind, EngineTaskWorkItemRuntimeState,
-    EngineTaskWorkItemSet,
+    EngineTaskWorkItemReviewDecision, EngineTaskWorkItemReviewError,
+    EngineTaskWorkItemReviewOutcome, EngineTaskWorkItemReviewState,
+    EngineTaskWorkItemReviewTimelineEntry, EngineTaskWorkItemReviewTransition,
+    EngineTaskWorkItemRuntimeLinkState, EngineTaskWorkItemRuntimeProjection,
+    EngineTaskWorkItemRuntimeProjectionEntry, EngineTaskWorkItemRuntimeProjectionEntryKind,
+    EngineTaskWorkItemRuntimeState, EngineTaskWorkItemSet,
 };

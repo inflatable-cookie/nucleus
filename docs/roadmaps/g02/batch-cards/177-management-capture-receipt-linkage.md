@@ -1,6 +1,6 @@
 # 177 Management Capture Receipt Linkage
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../039-scm-management-capture-and-share-foundation.md`
@@ -34,3 +34,9 @@ apply/review.
 
 - Stop if capture prep can proceed without traceable projection or apply
   evidence.
+
+## Result
+
+Capture preparation now requires projection file refs and apply receipts before
+share readiness can become review-ready. Missing evidence or blocking policy
+gates produce blocked admissions and blocked prep state.

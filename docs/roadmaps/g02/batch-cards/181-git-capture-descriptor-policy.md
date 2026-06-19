@@ -1,6 +1,6 @@
 # 181 Git Capture Descriptor Policy
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../040-git-management-capture-adapter-proof.md`

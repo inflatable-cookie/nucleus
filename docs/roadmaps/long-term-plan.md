@@ -56,8 +56,8 @@ Current G02 continuation sequence:
 7. validation and next workflow selection - complete
 8. repo-backed management sync hardening - complete
 9. management sync apply and review - complete
-10. SCM management capture and share foundation - active
-11. Git management capture adapter proof - planned
+10. SCM management capture and share foundation - complete
+11. Git management capture adapter proof - active
 12. SCM working-session execution prep - planned
 13. change-request preparation boundary - planned
 14. steward SCM sync automation gate - planned
@@ -65,7 +65,7 @@ Current G02 continuation sequence:
 
 Selected current workflow:
 
-- SCM management capture and share foundation
+- Git management capture adapter proof
 
 Reason:
 
@@ -74,8 +74,11 @@ Reason:
   steward automation, or richer UI work should expand
 - export/import/conflict staging and explicit apply/review behavior now exist,
   including revision gates, receipts, and review read models
-- the next useful checkpoint is provider-neutral SCM capture/share preparation
-  for accepted management projection changes
+- provider-neutral SCM capture/share preparation now exists for accepted
+  management projection changes
+- the next useful checkpoint is mapping neutral capture prep to Git-specific
+  dry-run planning and sanitized status/diff evidence without committing or
+  pushing
 - push, publish, promote, forge review requests, and steward automatic sync
   remain later gates until capture records can prove Git-neutral and
   Convergence-neutral vocabulary
