@@ -1,6 +1,6 @@
 # 268 Codex Interruption Envelope Receipts
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../060-codex-provider-interruption-gate.md`

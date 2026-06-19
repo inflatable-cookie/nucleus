@@ -1,6 +1,6 @@
 # 267 Codex Interruption Admission Policy
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../060-codex-provider-interruption-gate.md`
@@ -31,3 +31,11 @@ Gate Codex interruption requests before provider send.
 ## Stop Conditions
 
 - Stop if provider interruption policy needs unresolved operator intent.
+
+## Result
+
+- Added Codex interruption admission policy.
+- Required explicit authority, runtime evidence, interruptible target state,
+  duplicate checks, and raw-payload policy confirmation.
+- Reported accepted, blocked, and unsupported states without provider send.
+- Kept recovery and task mutation out of admission.

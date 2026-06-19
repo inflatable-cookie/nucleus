@@ -11,6 +11,7 @@ mod callback_response_outcome;
 mod event_store_linkage;
 mod handshake;
 mod idempotency;
+mod interruption_admission;
 mod interruption_request;
 mod live_ingestion;
 mod live_spawn_smoke_evidence;
@@ -65,6 +66,12 @@ pub use idempotency::{
     accept_codex_ingestion_source, codex_frame_key_from_source,
     CodexAppServerFrameAcceptanceContext, CodexAppServerFrameAcceptanceRecord,
     CodexAppServerFrameAcceptanceStatus, CodexAppServerFrameKey, CodexAppServerObservationKind,
+};
+pub use interruption_admission::{
+    admit_codex_interruption, CodexAppServerInterruptionAdmission,
+    CodexAppServerInterruptionAdmissionBlocker, CodexAppServerInterruptionAdmissionId,
+    CodexAppServerInterruptionAdmissionInput, CodexAppServerInterruptionAdmissionStatus,
+    CodexAppServerInterruptionTargetState,
 };
 pub use interruption_request::{
     codex_interruption_request, CodexAppServerInterruptionReasonRef,
