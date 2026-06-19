@@ -1,6 +1,6 @@
 # 059 Codex Callback Response Gate
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -29,7 +29,7 @@ boundary for permission and user-input callbacks.
       policy.
 - [x] Map accepted callback responses to sanitized provider envelope records.
 - [x] Expose callback outcomes through receipts and read-only diagnostics.
-- [ ] Keep cancellation, recovery, and task mutation out of scope.
+- [x] Keep cancellation, recovery, and task mutation out of scope.
 
 ## Non-Goals
 
@@ -44,14 +44,14 @@ boundary for permission and user-input callbacks.
 - [x] Admission batch: gate callback response policy.
 - [x] Envelope batch: map accepted callback responses to provider envelopes.
 - [x] Receipts/diagnostics batch: expose callback outcomes safely.
-- [ ] Closeout batch: validate and select cancellation, recovery, or
+- [x] Closeout batch: validate and select cancellation, recovery, or
       task-mutation as the next gate.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/265-codex-callback-closeout.md`
+- None.
 
 Planned cards:
 
@@ -63,6 +63,7 @@ Completed cards:
 - `batch-cards/262-codex-callback-response-admission.md`
 - `batch-cards/263-codex-callback-response-envelope.md`
 - `batch-cards/264-codex-callback-receipts-diagnostics.md`
+- `batch-cards/265-codex-callback-closeout.md`
 
 ## Acceptance Criteria
 
@@ -70,9 +71,9 @@ Completed cards:
 - [x] Callback response admission blocks unsupported or unauthorized responses.
 - [x] Response envelopes are sanitized and replay-safe.
 - [x] Receipts and diagnostics exclude raw provider payloads.
-- [ ] Validation passes.
+- [x] Validation passes.
 
 ## Gate
 
-Do not cancel provider work, resume sessions, or mutate tasks until callback
-response state is explicit and tested.
+Callback response state is explicit and tested. Next gate:
+`060-codex-provider-interruption-gate.md`.

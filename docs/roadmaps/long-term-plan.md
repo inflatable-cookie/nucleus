@@ -75,11 +75,12 @@ Current G02 continuation sequence:
 27. Codex live spawn smoke gate - complete
 28. Codex turn-start admission gate - complete
 29. Codex turn-start send/subscription gate - complete
-30. Codex callback response gate - active
+30. Codex callback response gate - complete
+31. Codex provider interruption gate - active
 
 Selected current workflow:
 
-- Codex callback response gate
+- Codex provider interruption gate
 
 Reason:
 
@@ -110,6 +111,10 @@ Reason:
   diagnostics work
 - the next Phase 4 lane is Codex process and transport acceptance before
   callback, cancellation, resume, or task mutation behavior widens
+- Codex callback response request, admission, envelope, receipt, and
+  diagnostics records are complete without raw provider payload retention
+- provider-reaching interruption/cancellation is the next runtime gate before
+  resume/recovery or task-state mutation
 - checkout, worktree creation, push, publish, promote, forge review requests,
   merge, and steward automatic sync remain later gates
 

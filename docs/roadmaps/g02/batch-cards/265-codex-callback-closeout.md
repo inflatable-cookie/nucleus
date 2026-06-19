@@ -1,6 +1,6 @@
 # 265 Codex Callback Closeout
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../059-codex-callback-response-gate.md`
@@ -33,3 +33,10 @@ Close the callback response lane and select the next runtime gate.
 ## Stop Conditions
 
 - Stop if the next gate needs operator intent.
+
+## Result
+
+- Closed the callback response lane after request, admission, envelope,
+  receipt, and diagnostics records were implemented.
+- Selected provider interruption/cancellation as the next runtime gate.
+- Kept recovery/resume and task-state mutation behind later explicit gates.

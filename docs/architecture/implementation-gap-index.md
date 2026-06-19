@@ -103,6 +103,9 @@ Current state:
   adapter over the bounded local spawn path, sanitized smoke evidence and
   receipt mapping, and read-only diagnostics for accepted, blocked, failed,
   timed-out, and cleanup-required smoke outcomes.
+- `nucleus-server` has Codex callback response request, admission, sanitized
+  envelope, outcome, receipt, and read-only diagnostics records for permission
+  and structured user-input callbacks.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 
@@ -114,14 +117,14 @@ Missing:
 - full Codex process spawning and stdio lifecycle execution after admission
 - live JSON-RPC/app-server decoding from a supervised process
 - turn-start command admission, policy, request envelope, and first response
-  callback response handling
+  callback response execution against the provider
 - persistence for stdio frame source, decode outcome, and transport receipt
   records
 - persistence for accepted runtime-observation event-store records
 - provider command reactor for `thread/start`, `turn/start`, callback
   responses, interruption, and close/unsubscribe
 - cancellation that reaches the provider and records local/provider outcomes
-- permission and user-input callback responses
+- persistence for permission and user-input callback response records
 - resume/recovery after server restart, process exit, or provider reconnect
 - provider instance configuration and hot reload
 - persistence for idempotency state across reconnect or restart
@@ -139,9 +142,8 @@ Likely crates:
 
 Next gate:
 
-- start with Codex callback response admission and envelope records
-- keep provider-reaching cancellation, resume/recovery, and task mutation
-  behind explicit follow-up gates
+- start with Codex provider interruption/cancellation records
+- keep resume/recovery and task mutation behind explicit follow-up gates
 - prove provider-native ids map to Nucleus-owned event, receipt, session, and
   work-item refs before letting runtime observations move task state
 

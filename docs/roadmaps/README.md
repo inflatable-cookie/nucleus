@@ -63,7 +63,8 @@ shape.
 - `g02/056-codex-live-spawn-smoke-gate.md` - completed
 - `g02/057-codex-turn-start-admission-gate.md` - completed
 - `g02/058-codex-turn-start-send-and-subscription-gate.md` - completed
-- `g02/059-codex-callback-response-gate.md` - active
+- `g02/059-codex-callback-response-gate.md` - completed
+- `g02/060-codex-provider-interruption-gate.md` - active
 
 ## Previous Generation
 
@@ -122,4 +123,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/265-codex-callback-closeout.md`.
+Execute `g02/batch-cards/266-codex-interruption-request-records.md`.
