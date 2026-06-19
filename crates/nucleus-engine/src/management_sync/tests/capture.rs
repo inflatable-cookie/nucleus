@@ -107,11 +107,15 @@ fn management_capture_command_blocks_policy_gates() {
 
 #[test]
 fn management_capture_records_allow_git_and_convergence_mappings_without_core_terms() {
-    let git = capture_command(vec![ManagementProjectionCapturePolicyGate::ProjectionApplied]);
+    let git = capture_command(vec![
+        ManagementProjectionCapturePolicyGate::ProjectionApplied,
+    ]);
     let convergence = ManagementProjectionCaptureCommand {
         repository_id: Some(ScmRepositoryRefId("scm-repo:convergence".to_owned())),
         reason: ManagementProjectionCaptureReason::StewardRecommended,
-        ..capture_command(vec![ManagementProjectionCapturePolicyGate::ProjectionApplied])
+        ..capture_command(vec![
+            ManagementProjectionCapturePolicyGate::ProjectionApplied,
+        ])
     };
     let debug = format!("{git:?}{convergence:?}");
 

@@ -51,6 +51,22 @@ fn command_runner_read_only_spawn_smoke_persists_sanitized_evidence() {
 }
 
 #[test]
+fn command_runner_codex_turn_start_real_write_smoke_stays_dry_run() {
+    crate::run(vec![
+        "command-runner".to_owned(),
+        "codex-turn-start-real-write-smoke".to_owned(),
+    ])
+    .expect("run blocked codex real-write smoke boundary");
+
+    crate::run(vec![
+        "command-runner".to_owned(),
+        "codex-turn-start-real-write-smoke".to_owned(),
+        "--confirm-real-write".to_owned(),
+    ])
+    .expect("run confirmed codex real-write smoke boundary");
+}
+
+#[test]
 fn command_runner_read_only_command_persists_sanitized_evidence() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let state_path = temp_dir.path().join("nucleus.sqlite");

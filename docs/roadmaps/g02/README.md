@@ -82,12 +82,20 @@ and engine boundary are settled.
 - `064-codex-live-provider-send-readiness.md` - completed
 - `065-codex-turn-start-transport-executor-handoff.md` - completed
 - `066-task-backed-workflow-hardening.md` - completed
+- `067-codex-direct-connection-smoke-gate.md` - completed
+- `068-codex-live-executor-integration.md` - completed
+- `069-codex-task-backed-live-execution-gate.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-None.
+- `batch-cards/311-task-work-live-executor-receipt-linkage.md`
+
+Paused cards:
+
+- `batch-cards/312-task-backed-live-execution-diagnostics.md`
+- `batch-cards/313-task-backed-live-execution-validation-closeout.md`
 
 Planned cards:
 
@@ -95,6 +103,8 @@ None.
 
 Completed cards:
 
+- `batch-cards/309-task-backed-live-execution-policy-gate.md`
+- `batch-cards/310-task-work-live-executor-admission-records.md`
 - `batch-cards/001-event-store-record-contract-and-codec.md`
 - `batch-cards/002-event-store-repository-boundary.md`
 - `batch-cards/003-command-projection-replay-integrity.md`
@@ -396,6 +406,13 @@ Completed cards:
 - `batch-cards/299-task-work-progress-query-from-state.md`
 - `batch-cards/300-task-agent-transition-validation.md`
 - `batch-cards/301-task-backed-hardening-closeout.md`
+- `batch-cards/302-codex-direct-smoke-cli-boundary.md`
+- `batch-cards/303-codex-direct-real-write-decision.md`
+- `batch-cards/304-codex-live-smoke-evidence-promotion.md`
+- `batch-cards/305-codex-live-executor-outcome-records.md`
+- `batch-cards/306-codex-live-executor-receipt-persistence.md`
+- `batch-cards/307-codex-live-executor-diagnostics.md`
+- `batch-cards/308-codex-live-executor-integration-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -445,14 +462,27 @@ The next G02 suite is:
 42. health reset validation and next runtime lane - completed
 43. harness runtime rebaseline - completed
 44. Codex live event acceptance - completed
-45. Codex process and transport acceptance - active
+45. Codex process and transport acceptance - completed
+46. Codex live spawn smoke gate - completed
+47. Codex turn-start admission gate - completed
+48. Codex turn-start send/subscription gate - completed
+49. Codex callback response gate - completed
+50. Codex provider interruption gate - completed
+51. Codex session recovery gate - completed
+52. provider runtime materialisation gate - completed
+53. provider command reactor gate - completed
+54. Codex live provider send readiness - completed
+55. Codex turn-start transport-executor handoff - completed
+56. task-backed workflow hardening - completed
+57. Codex direct-connection smoke gate - completed
+58. Codex live executor integration - active
 
 This keeps code health and task authority clarity ahead of deeper provider
 runtime work.
 
 ## Planning Rules
 
-- `054` is the active planning milestone.
+- `068` is the active planning milestone.
 - `014` proved the first compile-only live provider runtime supervision spine.
 - `015` proved the first task-backed agent work unit.
 - `016` built committable projection file IO.
@@ -517,6 +547,11 @@ runtime work.
   callbacks, cancellation, resume, and task mutation gated.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
+- `067` exposed the stopped-by-default direct-connection smoke boundary through
+  `nucleusd` and completed the approved live smoke through `turn/completed`
+  with sanitized output only.
+- `068` promotes the successful direct Codex smoke into durable executor
+  records, persistence, and read-only diagnostics.
 
 Keep future cards broad enough to execute meaningful chunks. Do not create
 one-card turns unless the card is risky or blocked.

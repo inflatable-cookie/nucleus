@@ -190,6 +190,16 @@ and steward automation. Effigy invocation still goes through host command
 authority; Nucleus does not let harnesses bypass command policy just because a
 selector exists.
 
+Nucleus should expose project tools through a low-cardinality portal model
+where possible. Effigy is the model case: one canonical Effigy tool family can
+publish action metadata for selector inventory, doctor summaries, validation
+plans, selector execution requests, repair hints, and manifest proposals. This
+avoids flooding agents with many narrow tools while still giving them a
+discoverable action catalogue. If a bridged harness cannot expose dynamic
+action metadata, the adapter must report that limitation and Nucleus should
+fall back to a smaller portal, skill/prompt instructions, or server-side
+execution with summarized evidence.
+
 Workspace panels are client-rendered surfaces over authoritative host state.
 Terminal and browser panels attach to host-managed runtime resources. Text and
 code editor panels attach to host-authorized file and language-service state.
@@ -366,6 +376,27 @@ Kimi readiness research adds these rules:
 - Kimi Wire remains a second research path for richer native event access.
 - Terminal reverse-RPC is unsupported in current Kimi ACP, so shell execution
   remains owned by the Kimi process environment.
+
+## Harness Mediation And Tool Projection
+
+Nucleus has a canonical mediation layer around bridged harnesses.
+
+The mediation layer can provide:
+
+- canonical tool families projected into each harness by capability
+- proactive steering messages backed by task, goal, roadmap, or evidence state
+- sidecar tool execution with summarized results when direct tool injection is
+  unavailable
+- visible work forks for meaningful subagent work
+- private helpers only for bounded summarization or classification
+
+This layer must not claim all harnesses have equal tool support. Each adapter
+declares whether a tool family can be projected through native tool
+registration, MCP, ACP, SDK sidecar, prompt/skill instructions, sidecar
+execution, or not at all.
+
+Tool projection is governed by
+`docs/contracts/024-harness-mediation-tool-projection-contract.md`.
 
 ## Model Routing Layer
 
@@ -544,6 +575,23 @@ deeply enough to inspect selectors, run health checks, plan validation, and
 summarize evidence into task readiness and task history proposals. Effigy
 knowledge is a tool capability, not hidden model intuition.
 
+## Goals, Loops, And Next Task Selection
+
+Goals, tasks, work items, loops, and next tasks are separate concepts.
+
+A goal describes a desired outcome. A task is an actionable durable unit. A
+work item is one execution attempt for a task. A loop is a runtime process that
+advances a goal, task, or work item until explicit stop conditions are reached.
+
+Nucleus should never provide a next task merely to satisfy a reporting ritual.
+A next task must come from a known pathway: roadmap, project task queue, goal
+decomposition, accepted planning artifact, validation repair path, recovery
+state, or operator instruction. If no pathway is current, Nucleus should say
+that planning is blocked instead of inventing work.
+
+This is governed by
+`docs/contracts/025-goal-loop-next-task-contract.md`.
+
 ## Workspace Model
 
 Workspace layout belongs to the project and persists across clients where
@@ -573,6 +621,9 @@ Expected workspace surfaces:
 - Deep research must preserve source provenance and confidence, not just final
   prose.
 - The project steward agent must operate under explicit sync policy.
+- Tool projection must prefer portal tools and capability declarations over
+  large flat tool lists.
+- Next-task selection must be pathway-backed, not generated from thin air.
 - Native harnesses must expose their app-owned authority boundary.
 - Specs and contracts must lead major implementation work.
 

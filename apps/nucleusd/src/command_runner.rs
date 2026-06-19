@@ -20,6 +20,8 @@ use nucleus_server::{
 use crate::cli::{CliReadOnlyCommand, CommandRunnerCommand};
 use crate::labels::{command_status_label, retention_label};
 
+mod codex_smoke;
+
 pub(crate) fn print_command_runner(
     handler: &mut LocalControlRequestHandler<SqliteBackend>,
     state_path: &PathBuf,
@@ -29,6 +31,9 @@ pub(crate) fn print_command_runner(
         CommandRunnerCommand::Smoke => print_command_runner_smoke(handler),
         CommandRunnerCommand::ReadOnlySpawnSmoke => {
             print_read_only_spawn_smoke(handler, state_path)
+        }
+        CommandRunnerCommand::CodexTurnStartRealWriteSmoke(command) => {
+            codex_smoke::print_codex_turn_start_real_write_smoke(command)
         }
         CommandRunnerCommand::ReadOnly(command) => print_read_only_command(handler, command),
     }

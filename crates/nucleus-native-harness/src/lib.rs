@@ -45,8 +45,8 @@ pub use steward::{
     NativeStewardProposalReview, NativeStewardProposalTarget, NativeStewardProposedChange,
     NativeStewardSyncAssistance, NativeStewardSyncAssistanceId, NativeStewardSyncAssistanceKind,
     NativeStewardSyncAssistanceLinks, NativeStewardSyncDecisionConfidence,
-    NativeStewardSyncDecisionId, NativeStewardSyncDecisionKind,
-    NativeStewardSyncDecisionRecord, NativeStewardSyncNextAction,
+    NativeStewardSyncDecisionId, NativeStewardSyncDecisionKind, NativeStewardSyncDecisionRecord,
+    NativeStewardSyncNextAction,
 };
 pub use steward_commands::{
     NativeStewardCommandAdmission, NativeStewardCommandAdmissionStatus, NativeStewardCommandId,

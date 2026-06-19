@@ -53,6 +53,7 @@ impl CliConfig {
 pub(crate) enum CommandRunnerCommand {
     Smoke,
     ReadOnlySpawnSmoke,
+    CodexTurnStartRealWriteSmoke(CliCodexTurnStartRealWriteSmoke),
     ReadOnly(CliReadOnlyCommand),
 }
 
@@ -63,6 +64,9 @@ impl CommandRunnerCommand {
     {
         match command.as_str() {
             "read-only" => CliReadOnlyCommand::parse(iter).map(Self::ReadOnly),
+            "codex-turn-start-real-write-smoke" => {
+                CliCodexTurnStartRealWriteSmoke::parse(iter).map(Self::CodexTurnStartRealWriteSmoke)
+            }
             _ => Self::parse_static(&command),
         }
     }
@@ -73,6 +77,31 @@ impl CommandRunnerCommand {
             "read-only-spawn-smoke" => Ok(Self::ReadOnlySpawnSmoke),
             _ => Err(format!("unsupported command-runner command: {value}")),
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CliCodexTurnStartRealWriteSmoke {
+    pub(crate) confirm_real_write: bool,
+    pub(crate) execute_provider_write: bool,
+}
+
+impl CliCodexTurnStartRealWriteSmoke {
+    fn parse<I>(iter: &mut I) -> Result<Self, String>
+    where
+        I: Iterator<Item = String>,
+    {
+        let mut config = Self::default();
+        for arg in iter {
+            match arg.as_str() {
+                "--confirm-real-write" => config.confirm_real_write = true,
+                "--execute-provider-write" => config.execute_provider_write = true,
+                _ => {
+                    return Err(format!("unsupported codex turn/start smoke flag: {arg}"));
+                }
+            }
+        }
+        Ok(config)
     }
 }
 
@@ -225,6 +254,7 @@ pub(crate) fn print_help() {
     println!("  nucleusd [--state <path>] query <projects|tasks|workspaces|command-evidence>");
     println!("  nucleusd command-runner smoke");
     println!("  nucleusd command-runner read-only-spawn-smoke");
+    println!("  nucleusd command-runner codex-turn-start-real-write-smoke [--confirm-real-write] [--execute-provider-write]");
     println!("  nucleusd command-runner read-only [--cwd <dir>] [--timeout-ms <ms>] [--stdout-limit <bytes>] [--stderr-limit <bytes>] -- <executable> [args...]");
     println!();
     println!("Options:");

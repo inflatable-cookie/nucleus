@@ -12,9 +12,12 @@ path = "src/main.rs"
 [dependencies]
 nucleus-command-policy = { path = "../../crates/nucleus-command-policy" }
 nucleus-core = { path = "../../crates/nucleus-core" }
+nucleus-engine = { path = "../../crates/nucleus-engine" }
 nucleus-local-store = { path = "../../crates/nucleus-local-store" }
+nucleus-orchestration = { path = "../../crates/nucleus-orchestration" }
 nucleus-projects = { path = "../../crates/nucleus-projects" }
 nucleus-server = { path = "../../crates/nucleus-server" }
+serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -18,7 +18,7 @@ implementation lane can be chosen deliberately.
 Current state:
 
 - `effigy doctor` currently fails on `scan.god-files`
-- the current doctor report has two god-file errors and warning-sized files
+- the current doctor report has six god-file errors and warning-sized files
   remain across active server surfaces
 - `crates/nucleus-server/src/lib.rs` has been restored to a compact crate
   front door
@@ -146,6 +146,39 @@ Current state:
   authority.
 - `nucleus-server` validates first-pass task-agent source-record runtime and
   review transitions before persistence.
+- `nucleusd` exposes a Codex direct-connection `turn/start` real-write smoke
+  gate. Default mode is blocked, confirmed mode is eligible, and both modes
+  still report `provider_write_executed=false`.
+- With explicit operator approval, `nucleusd` executed a local Codex app-server
+  smoke through `initialize`, `initialized`, `thread/start`, `turn/start`, and
+  `turn/completed`. The command retained only sanitized ids, counts, and status
+  fields.
+- `nucleus-server` has typed Codex live executor outcome records for accepted,
+  completed, failed, timed-out, blocked, and cleanup-required attempts. These
+  records preserve provider instance, write attempt, receipt, thread, turn,
+  method-sequence, evidence, and cleanup identity while rejecting raw payload,
+  raw stream, task mutation, callback response, cancellation, and resume
+  authority.
+- `nucleus-server` persists Codex live executor outcomes, runtime receipts, and
+  completion observation events through local-store-backed state. Duplicate
+  write attempt ids are rejected deterministically, records survive reopen, and
+  persisted payloads retain sanitized refs and counts only.
+- `nucleus-server` exposes persisted Codex live executor outcomes through the
+  read-only Codex provider diagnostics surface. Diagnostics cover completed,
+  failed, timed-out, blocked, accepted, and cleanup-required states without
+  granting provider write, callback, cancellation, resume, or task mutation
+  authority.
+- `nucleus-server` has a task-backed Codex live execution policy gate that
+  requires work item, task, project, runtime, adapter, host, operator, pathway,
+  and tool-capability evidence before live executor admission. The gate blocks
+  callback response, cancellation, resume, task completion, review acceptance,
+  SCM mutation, raw provider material retention, invented next-task state, and
+  large flat tool menus.
+- `nucleus-server` has task-work-to-live-executor admission records that
+  preserve task, project, provider instance, runtime session, live executor
+  write attempt, and idempotency identity. The records block non-accepted
+  policy, missing or mismatched identity, executor invocation, raw provider
+  material requests, and task mutation requests.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 
@@ -158,8 +191,8 @@ Missing:
 - live JSON-RPC/app-server decoding from a supervised process
 - turn-start command admission, policy, request envelope, and first response
   callback response execution against the provider
-- explicit operator confirmation and transport-executor handoff for the first
-  Codex `turn/start` live write
+- durable server-owned execution of Codex live writes outside the one-off
+  `nucleusd` smoke command
 - persistence for stdio frame source, decode outcome, and transport receipt
   records
 - persistence for accepted runtime-observation event-store records
@@ -192,9 +225,9 @@ Likely crates:
 
 Next gate:
 
-- require explicit operator confirmation before running the Codex
-  direct-connection `turn/start` real-write smoke
-- keep actual live provider writes behind explicit operator confirmation
+- create task work live executor receipt linkage
+- keep future live provider writes behind explicit operator confirmation until
+  they are routed through server-owned executor policy
 - keep callback, cancellation, resume, and task mutation widening blocked until
   task-backed workflow state is harder to corrupt
 

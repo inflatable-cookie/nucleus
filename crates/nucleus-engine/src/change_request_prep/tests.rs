@@ -141,8 +141,8 @@ fn change_request_candidate_blocks_missing_evidence_or_policy_gates() {
 #[test]
 fn github_review_boundary_descriptor_stays_provider_specific() {
     let candidate = candidate_record();
-    let descriptor =
-        EngineGitHubReviewBoundaryDescriptor::from_candidate(&candidate).expect("github descriptor");
+    let descriptor = EngineGitHubReviewBoundaryDescriptor::from_candidate(&candidate)
+        .expect("github descriptor");
 
     assert_eq!(
         descriptor.provider,

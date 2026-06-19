@@ -1,6 +1,6 @@
 use nucleus_scm_forge::{
-    git_scm_driver_descriptor, ScmCapability, ScmDriverId, ScmInspectionAccess,
-    ScmRepositoryRefId, ScmWorkingCopyInspection,
+    git_scm_driver_descriptor, ScmCapability, ScmDriverId, ScmInspectionAccess, ScmRepositoryRefId,
+    ScmWorkingCopyInspection,
 };
 
 use crate::{

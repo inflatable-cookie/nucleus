@@ -233,3 +233,39 @@ same session.
 
 Task-backed recovery sequencing is owned by
 `023-task-backed-agent-workflow-contract.md`.
+
+## Codex Live Executor Evidence
+
+The first approved Codex live smoke is evidence for a narrow executor receipt
+family.
+
+Allowed durable fields:
+
+- provider instance id
+- transport kind
+- method sequence
+- write attempt id
+- receipt id
+- thread id
+- turn id
+- final turn status
+- notification count
+- server request count
+- sanitized evidence refs
+- cleanup status
+
+Forbidden durable fields:
+
+- raw prompt text unless a later policy explicitly allows it
+- raw provider response text
+- raw JSON-RPC frames
+- stdout or stderr content
+- stream deltas
+- model reasoning text
+- tool payload bodies
+- secrets or credential material
+
+Codex live executor completion is a harness-provider runtime fact. It must not
+complete a task, accept a task work item, publish SCM changes, answer callback
+requests, resume a session, or cancel a provider turn without a separate
+admitted command.

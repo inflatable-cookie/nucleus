@@ -47,6 +47,7 @@ use nucleus_scm_forge::{
 use nucleus_tasks::TaskId;
 
 mod codex_ingestion;
+mod codex_live_executor;
 mod codex_live_spawn;
 mod codex_subscription;
 mod codex_transport_executor;

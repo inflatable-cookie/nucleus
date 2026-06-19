@@ -26,6 +26,7 @@ Current planning artifacts:
 - `logs/2026-06-17-g02-rollover.md`
 - `logs/2026-06-18-stocktake.md`
 - `logs/2026-06-19-scm-runway-closeout.md`
+- `logs/2026-06-19-codex-live-smoke-evidence.md`
 - `roadmaps/long-term-plan.md`
 - `roadmaps/reassessment-decision-queue.md`
 - `roadmaps/g02/001-orchestration-and-engine-boundary.md`
@@ -94,6 +95,9 @@ Current planning artifacts:
 - `roadmaps/g02/064-codex-live-provider-send-readiness.md`
 - `roadmaps/g02/065-codex-turn-start-transport-executor-handoff.md`
 - `roadmaps/g02/066-task-backed-workflow-hardening.md`
+- `roadmaps/g02/067-codex-direct-connection-smoke-gate.md`
+- `roadmaps/g02/068-codex-live-executor-integration.md`
+- `roadmaps/g02/069-codex-task-backed-live-execution-gate.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -113,7 +117,15 @@ Codex `turn/start` transport-executor handoff is complete through authority
 records, sanitized execution envelopes, persistence, first-response frame
 evidence, diagnostics, and a stopped-by-default real-write smoke boundary.
 
-Live provider writes and task-state mutation remain blocked. The current lane
-has hardened task-backed workflow state before any direct Codex provider write.
-The next step requires explicit operator confirmation before the Codex
-direct-connection `turn/start` real-write smoke may run.
+The first approved direct Codex `turn/start` smoke completed through local
+Codex app-server with sanitized output only. Task-state mutation remains
+blocked behind the task-backed live execution gate.
+
+Harness mediation and next-task selection are now explicit contract surfaces.
+Tool integrations should prefer low-cardinality portal tools, such as one
+Effigy tool family with typed actions, over large flat tool lists. Next-task
+pointers must come from roadmaps, task queues, goals, planning artifacts,
+recovery paths, validation repair paths, or operator instructions; they must
+not be invented for ceremony.
+blocked. The current lane promotes the successful smoke into durable
+server-owned executor records, persistence, and read-only diagnostics.

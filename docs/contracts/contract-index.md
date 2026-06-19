@@ -31,6 +31,8 @@ Updated: 2026-06-17
 | `021-checkpoint-diff-contract.md` | draft | Checkpoint and diff ownership across SCM, tasks, turns, and review workflows. |
 | `022-engine-orchestration-boundary-contract.md` | draft | Portable engine, orchestration, and host/server crate ownership boundary. |
 | `023-task-backed-agent-workflow-contract.md` | draft | Task-owned agent work-item lifecycle, Codex binding, wait states, review, and implementation gaps. |
+| `024-harness-mediation-tool-projection-contract.md` | draft | Nucleus-owned tool projection and conversation steering across bridged harnesses. |
+| `025-goal-loop-next-task-contract.md` | draft | Goal, loop, pathway, and next-task selection rules. |
 
 ## Needed Contracts
 
@@ -38,7 +40,7 @@ The 2026-06-17 stocktake found gaps that should become contracts before more
 runtime implementation depends on them:
 
 - remote host pairing/session contract
-- tool broker, preview, and MCP contract
+- browser/preview control contract
 - observability and diagnostics contract
 
 ## Authority Ownership Notes
@@ -55,6 +57,8 @@ When it overlaps focused contracts, the focused contract owns the durable rule:
 - `022` owns engine, orchestration, and host/server crate boundaries.
 - `023` owns task-backed work-item lifecycle, runtime binding, wait, recovery,
   and review sequencing.
+- `024` owns harness mediation, portal tools, tool projection, and steering.
+- `025` owns goals, loops, pathway records, and next-task selection.
 - `011`, `008`, and `002` own SCM/forge, storage, and harness-adapter rules.
 
 Source refs:

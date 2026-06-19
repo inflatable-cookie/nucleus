@@ -10,7 +10,12 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-None.
+- `311-task-work-live-executor-receipt-linkage.md`
+
+## Paused Cards
+
+- `312-task-backed-live-execution-diagnostics.md`
+- `313-task-backed-live-execution-validation-closeout.md`
 
 ## Planned Cards
 
@@ -18,6 +23,8 @@ None.
 
 ## Completed Cards
 
+- `309-task-backed-live-execution-policy-gate.md`
+- `310-task-work-live-executor-admission-records.md`
 - `001-event-store-record-contract-and-codec.md`
 - `002-event-store-repository-boundary.md`
 - `003-command-projection-replay-integrity.md`
@@ -319,3 +326,10 @@ None.
 - `299-task-work-progress-query-from-state.md`
 - `300-task-agent-transition-validation.md`
 - `301-task-backed-hardening-closeout.md`
+- `302-codex-direct-smoke-cli-boundary.md`
+- `303-codex-direct-real-write-decision.md`
+- `304-codex-live-smoke-evidence-promotion.md`
+- `305-codex-live-executor-outcome-records.md`
+- `306-codex-live-executor-receipt-persistence.md`
+- `307-codex-live-executor-diagnostics.md`
+- `308-codex-live-executor-integration-closeout.md`

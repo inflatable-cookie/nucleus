@@ -8,3 +8,4 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-06-17-g02-rollover.md`
 - `2026-06-18-stocktake.md`
 - `2026-06-19-scm-runway-closeout.md`
+- `2026-06-19-codex-live-smoke-evidence.md`

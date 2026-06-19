@@ -1,8 +1,8 @@
 use super::types::{
-    EngineTaskWorkItemRecord, EngineTaskWorkItemReviewDecision, EngineTaskWorkItemReviewError,
-    EngineTaskWorkItemReviewCommand, EngineTaskWorkItemReviewOutcome,
-    EngineTaskWorkItemReviewState, EngineTaskWorkItemReviewTimelineEntry,
-    EngineTaskWorkItemReviewTransition, EngineTaskWorkItemRuntimeState,
+    EngineTaskWorkItemRecord, EngineTaskWorkItemReviewCommand, EngineTaskWorkItemReviewDecision,
+    EngineTaskWorkItemReviewError, EngineTaskWorkItemReviewOutcome, EngineTaskWorkItemReviewState,
+    EngineTaskWorkItemReviewTimelineEntry, EngineTaskWorkItemReviewTransition,
+    EngineTaskWorkItemRuntimeState,
 };
 
 impl EngineTaskWorkItemRecord {
@@ -53,10 +53,7 @@ pub fn review_timeline_entry_from_transition(
     transition: &EngineTaskWorkItemReviewTransition,
 ) -> EngineTaskWorkItemReviewTimelineEntry {
     EngineTaskWorkItemReviewTimelineEntry {
-        entry_id: format!(
-            "timeline:{}:{}",
-            transition.work_item.task_id.0, command_id
-        ),
+        entry_id: format!("timeline:{}:{}", transition.work_item.task_id.0, command_id),
         task_id: transition.work_item.task_id.clone(),
         work_item_id: transition.work_item.work_item_id.clone(),
         source_command_id: command_id.to_owned(),
@@ -127,7 +124,10 @@ fn merge_review_refs(
     }
     for diff_summary_id in &decision.diff_summary_ids {
         if !work_item.refs.diff_summary_ids.contains(diff_summary_id) {
-            work_item.refs.diff_summary_ids.push(diff_summary_id.clone());
+            work_item
+                .refs
+                .diff_summary_ids
+                .push(diff_summary_id.clone());
         }
     }
 }

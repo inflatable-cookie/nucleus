@@ -27,6 +27,8 @@ Contracts define durable rules and interfaces.
 - `021-checkpoint-diff-contract.md`
 - `022-engine-orchestration-boundary-contract.md`
 - `023-task-backed-agent-workflow-contract.md`
+- `024-harness-mediation-tool-projection-contract.md`
+- `025-goal-loop-next-task-contract.md`
 - `contract-index.md`
 
 ## Promotion Rule
@@ -38,7 +40,7 @@ repo is ready to enforce or design against.
 
 `007-server-boundary-contract.md` is now the host/API boundary. Durable system
 authority belongs to the focused contracts listed in `contract-index.md`,
-especially `017` through `022`.
+especially `017` through `025`.
 
 ## Current Gaps
 

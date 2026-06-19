@@ -1,4 +1,6 @@
-use crate::personas::{NativeActionApproval, NativePersonaId, NativePersonaPolicy, NativePrivilegedAction};
+use crate::personas::{
+    NativeActionApproval, NativePersonaId, NativePersonaPolicy, NativePrivilegedAction,
+};
 use crate::steward::NativeStewardEvidenceRef;
 use crate::tools::NativeToolActionId;
 

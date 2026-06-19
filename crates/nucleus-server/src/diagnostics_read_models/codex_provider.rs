@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     CodexCallbackDiagnosticsDto, CodexIngestionDiagnosticsDto, CodexInterruptionDiagnosticsDto,
-    CodexLiveSpawnSmokeDiagnosticsDto, CodexRecoveryDiagnosticsDto,
-    CodexSubscriptionDiagnosticsDto, CodexTransportExecutorDiagnosticsDto,
-    CodexTurnStartDiagnosticsDto,
+    CodexLiveExecutorDiagnosticsDto, CodexLiveSpawnSmokeDiagnosticsDto,
+    CodexRecoveryDiagnosticsDto, CodexSubscriptionDiagnosticsDto,
+    CodexTransportExecutorDiagnosticsDto, CodexTurnStartDiagnosticsDto,
 };
 
 /// Client-safe combined diagnostics for Codex provider runtime surfaces.
@@ -12,6 +12,7 @@ use super::{
 pub struct CodexProviderDiagnosticsDto {
     pub ingestion: CodexIngestionDiagnosticsDto,
     pub live_spawn_smoke: CodexLiveSpawnSmokeDiagnosticsDto,
+    pub live_executor: CodexLiveExecutorDiagnosticsDto,
     pub turn_start: CodexTurnStartDiagnosticsDto,
     pub subscription: CodexSubscriptionDiagnosticsDto,
     pub transport_executor: CodexTransportExecutorDiagnosticsDto,
@@ -28,6 +29,7 @@ pub struct CodexProviderDiagnosticsDto {
 pub fn codex_provider_diagnostics(
     ingestion: CodexIngestionDiagnosticsDto,
     live_spawn_smoke: CodexLiveSpawnSmokeDiagnosticsDto,
+    live_executor: CodexLiveExecutorDiagnosticsDto,
     turn_start: CodexTurnStartDiagnosticsDto,
     subscription: CodexSubscriptionDiagnosticsDto,
     transport_executor: CodexTransportExecutorDiagnosticsDto,
@@ -38,6 +40,7 @@ pub fn codex_provider_diagnostics(
     let source_status = if [
         &ingestion.source_status,
         &live_spawn_smoke.source_status,
+        &live_executor.source_status,
         &turn_start.source_status,
         &subscription.source_status,
         &transport_executor.source_status,
@@ -57,6 +60,7 @@ pub fn codex_provider_diagnostics(
     CodexProviderDiagnosticsDto {
         ingestion,
         live_spawn_smoke,
+        live_executor,
         turn_start,
         subscription,
         transport_executor,

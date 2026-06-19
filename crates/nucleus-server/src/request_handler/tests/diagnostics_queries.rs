@@ -99,6 +99,52 @@ fn handler_reads_task_agent_diagnostics_from_persisted_task_history() {
     ));
 }
 
+#[test]
+fn handler_reads_codex_live_executor_diagnostics_from_persisted_outcomes() {
+    let (_temp_dir, mut handler) = handler(None);
+    for outcome in [
+        live_executor_outcome(
+            "completed",
+            crate::CodexAppServerLiveExecutorOutcomeStatus::Completed,
+        ),
+        live_executor_outcome(
+            "failed",
+            crate::CodexAppServerLiveExecutorOutcomeStatus::Failed("provider exited".to_owned()),
+        ),
+        live_executor_outcome(
+            "timeout",
+            crate::CodexAppServerLiveExecutorOutcomeStatus::TimedOut,
+        ),
+    ] {
+        crate::persist_codex_live_executor_outcome(
+            handler.state(),
+            crate::CodexAppServerLiveExecutorOutcomePersistenceInput { outcome },
+        )
+        .expect("persist live executor outcome");
+    }
+
+    let response = handler.handle(diagnostics_request(DiagnosticsQuery::CodexProvider));
+
+    assert_eq!(response.status, ServerControlResponseStatus::Complete);
+    assert!(matches!(
+        response.body,
+        ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::CodexProvider(record)
+        )) if record.source_status == "available"
+            && record.live_executor.source_status == "records"
+            && record.live_executor.attempts.len() == 3
+            && record.live_executor.attempts[0].status == "completed"
+            && record.live_executor.attempts[1].status == "failed"
+            && record.live_executor.attempts[2].status == "timed_out"
+            && !record.client_can_control_provider
+            && !record.client_can_mutate_tasks
+            && !record.live_executor.client_can_execute_provider_write
+            && !record.live_executor.client_can_cancel_provider
+            && !record.live_executor.client_can_resume_provider
+            && !record.live_executor.client_can_mutate_tasks
+    ));
+}
+
 fn diagnostics_request(query: DiagnosticsQuery) -> ServerControlRequest {
     ServerControlRequest {
         id: ServerControlRequestId("request:diagnostics".to_owned()),
@@ -109,4 +155,44 @@ fn diagnostics_request(query: DiagnosticsQuery) -> ServerControlRequest {
             kind: ServerQueryKind::Diagnostics(query),
         }),
     }
+}
+
+fn live_executor_outcome(
+    suffix: &str,
+    status: crate::CodexAppServerLiveExecutorOutcomeStatus,
+) -> crate::CodexAppServerLiveExecutorOutcomeRecord {
+    crate::codex_live_executor_outcome_record(crate::CodexAppServerLiveExecutorOutcomeInput {
+        provider_instance_id: "codex:local-default".to_owned(),
+        write_attempt_id: format!("provider-transport-write:handler-{suffix}"),
+        receipt_refs: vec![format!("receipt:handler-{suffix}")],
+        thread_id: Some(format!("thread:handler-{suffix}")),
+        turn_id: Some(format!("turn:handler-{suffix}")),
+        final_turn_status: Some(live_executor_status_label(&status)),
+        status,
+        method_sequence: vec![
+            crate::CodexAppServerLiveExecutorMethod::Initialize,
+            crate::CodexAppServerLiveExecutorMethod::InitializedNotification,
+            crate::CodexAppServerLiveExecutorMethod::ThreadStart,
+            crate::CodexAppServerLiveExecutorMethod::TurnStart,
+            crate::CodexAppServerLiveExecutorMethod::TurnCompleted,
+            crate::CodexAppServerLiveExecutorMethod::Cleanup,
+        ],
+        notification_count: 1,
+        server_request_count: 0,
+        cleanup_status: crate::CodexAppServerLiveExecutorCleanupStatus::Completed,
+        evidence_refs: vec![format!("evidence:handler-{suffix}")],
+        provider_write_executed: true,
+    })
+}
+
+fn live_executor_status_label(status: &crate::CodexAppServerLiveExecutorOutcomeStatus) -> String {
+    match status {
+        crate::CodexAppServerLiveExecutorOutcomeStatus::Accepted => "accepted",
+        crate::CodexAppServerLiveExecutorOutcomeStatus::Completed => "completed",
+        crate::CodexAppServerLiveExecutorOutcomeStatus::Failed(_) => "failed",
+        crate::CodexAppServerLiveExecutorOutcomeStatus::TimedOut => "timed_out",
+        crate::CodexAppServerLiveExecutorOutcomeStatus::Blocked(_) => "blocked",
+        crate::CodexAppServerLiveExecutorOutcomeStatus::CleanupRequired(_) => "cleanup_required",
+    }
+    .to_owned()
 }

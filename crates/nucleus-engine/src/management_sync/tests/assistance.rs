@@ -42,5 +42,8 @@ fn management_projection_conflict_routes_keep_mechanical_and_semantic_separate()
     assert!(unsupported_route.requires_human_approval());
     assert!(!schema_route.can_mutate_shared_projection());
     assert!(!semantic_route.can_mutate_shared_projection());
-    assert_eq!(semantic_route.file_ref, ManagementProjectionFileRef::task("task:1"));
+    assert_eq!(
+        semantic_route.file_ref,
+        ManagementProjectionFileRef::task("task:1")
+    );
 }

@@ -25,9 +25,8 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-064 are
-complete, and milestone 065 is the active Codex `turn/start`
-transport-executor handoff lane.
+G02 is the orchestration and engine-core generation. Milestones 001-067 are
+complete, and milestone 068 is the active Codex live executor integration lane.
 
 Completed workflow proof:
 
@@ -82,11 +81,14 @@ Current G02 continuation sequence:
 33. provider runtime materialisation gate - complete
 34. provider command reactor gate - complete
 35. Codex live provider send readiness - complete
-36. Codex `turn/start` transport-executor handoff - active
+36. Codex `turn/start` transport-executor handoff - complete
+37. task-backed workflow hardening - complete
+38. Codex direct-connection smoke gate - complete
+39. Codex live executor integration - active
 
 Selected current workflow:
 
-- Codex `turn/start` transport-executor handoff
+- Codex live executor integration
 
 Reason:
 
@@ -138,6 +140,14 @@ Reason:
 - the next handoff lane must define executor authority, sanitized execution
   envelopes, persistence, frame/decode evidence, diagnostics, and a
   stopped-by-default smoke boundary before any provider write runs
+- the handoff lane and task-backed workflow hardening are complete; `nucleusd`
+  exposes a direct-connection smoke gate whose confirmed mode reports
+  eligibility and whose execution mode requires a separate effect flag
+- the approved direct Codex provider smoke executed through local app-server
+  and reached `turn/completed` with sanitized output only
+- the next lane must turn the smoke path into durable server-owned executor
+  records, persisted receipts, and read-only diagnostics before task-backed
+  provider execution widens
 - checkout, worktree creation, push, publish, promote, forge review requests,
   merge, and steward automatic sync remain later gates
 
@@ -418,6 +428,10 @@ Work:
 - Add memory proposals, review, scope, sensitivity, and retention.
 - Add Effigy task discovery, health summaries, validation planning, and
   steward tooling.
+- Add harness mediation and tool projection so bridged agents can receive
+  Nucleus-owned portal tools without large flat tool menus.
+- Add goal, loop, pathway, and next-task records so proactive steering follows
+  known plans instead of invented prompts.
 
 Exit criteria:
 
@@ -427,6 +441,8 @@ Exit criteria:
 Current roadmap coverage:
 
 - `g02/018-steward-native-harness-and-effigy-tools.md`
+- `docs/contracts/024-harness-mediation-tool-projection-contract.md`
+- `docs/contracts/025-goal-loop-next-task-contract.md`
 
 ## Phase 8a: Product Workflow Proof
 
@@ -471,9 +487,6 @@ Exit criteria:
 
 ## Open Decisions
 
-- Whether to run the first explicitly confirmed Codex `turn/start` real-write
-  smoke after task-backed workflow hardening, or continue product hardening
-  before live provider writes.
 - Should the first SCM implementation focus on GitHub/Git or include
   Convergence from the start as an adapter-shape test?
 - How much of T3's remote/auth/relay design should influence Nucleus?
@@ -489,7 +502,9 @@ Resolved decisions:
 - Codex `turn/start` transport-executor handoff is complete through a
   stopped-by-default real-write smoke boundary; actual provider writes remain
   blocked until explicit operator intent.
-- Product workflow hardening is the current lane before direct Codex provider
 - Product workflow hardening has persisted task-agent source records, moved
   progress/diagnostics reads onto durable task history, and added first-pass
   runtime/review transition validation.
+- The first explicitly confirmed Codex `turn/start` real-write smoke completed
+  through `turn/completed` with sanitized evidence only.
+- The current runtime lane is task-backed Codex live execution admission.

@@ -5,10 +5,10 @@ use crate::control_api::{
 use crate::control_envelope_dto::*;
 use crate::diagnostics_read_models::{
     codex_callback_diagnostics, codex_ingestion_diagnostics, codex_interruption_diagnostics,
-    codex_live_spawn_smoke_diagnostics, codex_provider_diagnostics, codex_recovery_diagnostics,
-    codex_subscription_diagnostics, codex_transport_executor_diagnostics,
-    codex_turn_start_diagnostics, effigy_diagnostics, scm_session_diagnostics, steward_diagnostics,
-    sync_diagnostics, task_agent_diagnostics,
+    codex_live_executor_diagnostics, codex_live_spawn_smoke_diagnostics,
+    codex_provider_diagnostics, codex_recovery_diagnostics, codex_subscription_diagnostics,
+    codex_transport_executor_diagnostics, codex_turn_start_diagnostics, effigy_diagnostics,
+    scm_session_diagnostics, steward_diagnostics, sync_diagnostics, task_agent_diagnostics,
 };
 use crate::ids::ServerControlRequestId;
 use nucleus_native_harness::NativeEffigyProjectIntegration;
@@ -68,6 +68,7 @@ fn response_envelope_dto_serializes_codex_provider_diagnostics_domain() {
         } if record.source_status == "empty"
             && !record.client_can_control_provider
             && !record.client_can_mutate_tasks
+            && !record.live_executor.client_can_execute_provider_write
             && !record.recovery.client_can_resume_provider
     ));
     assert!(json.contains("\"domain\":\"codex_provider\""));
@@ -120,6 +121,7 @@ fn empty_codex_provider_diagnostics() -> crate::CodexProviderDiagnosticsDto {
     codex_provider_diagnostics(
         codex_ingestion_diagnostics(&[]),
         codex_live_spawn_smoke_diagnostics(&[]),
+        codex_live_executor_diagnostics(&[]),
         codex_turn_start_diagnostics(&[]),
         codex_subscription_diagnostics(&[], &[]),
         codex_transport_executor_diagnostics(&[], &[], &[], &[]),

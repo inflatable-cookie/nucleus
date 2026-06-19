@@ -1,6 +1,9 @@
 use nucleus_scm_forge::ForgeProviderKind;
 
-use super::candidate::{EngineChangeRequestCandidateId, EngineChangeRequestCandidateRecord, EngineChangeRequestEvidenceRef};
+use super::candidate::{
+    EngineChangeRequestCandidateId, EngineChangeRequestCandidateRecord,
+    EngineChangeRequestEvidenceRef,
+};
 use super::target::EngineChangeRequestTarget;
 
 /// GitHub-specific review-boundary descriptor.
@@ -19,7 +22,8 @@ impl EngineGitHubReviewBoundaryDescriptor {
         let EngineChangeRequestTarget::ForgeReview {
             provider: ForgeProviderKind::GitHub,
             target_branch,
-        } = &candidate.target else {
+        } = &candidate.target
+        else {
             return None;
         };
 

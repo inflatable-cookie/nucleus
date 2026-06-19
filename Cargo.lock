@@ -2020,9 +2020,12 @@ version = "0.0.0"
 dependencies = [
  "nucleus-command-policy",
  "nucleus-core",
+ "nucleus-engine",
  "nucleus-local-store",
+ "nucleus-orchestration",
  "nucleus-projects",
  "nucleus-server",
+ "serde_json",
  "tempfile",
 ]
 

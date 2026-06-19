@@ -62,6 +62,59 @@ fn cli_config_parses_command_runner_read_only_spawn_smoke() {
 }
 
 #[test]
+fn cli_config_parses_codex_turn_start_real_write_smoke_confirmation() {
+    let config = CliConfig::parse(vec![
+        "command-runner".to_owned(),
+        "codex-turn-start-real-write-smoke".to_owned(),
+        "--confirm-real-write".to_owned(),
+    ])
+    .expect("parse codex smoke");
+
+    assert_eq!(
+        config.command_runner,
+        Some(CommandRunnerCommand::CodexTurnStartRealWriteSmoke(
+            CliCodexTurnStartRealWriteSmoke {
+                confirm_real_write: true,
+                execute_provider_write: false,
+            }
+        ))
+    );
+}
+
+#[test]
+fn cli_config_parses_codex_turn_start_real_write_smoke_execution() {
+    let config = CliConfig::parse(vec![
+        "command-runner".to_owned(),
+        "codex-turn-start-real-write-smoke".to_owned(),
+        "--confirm-real-write".to_owned(),
+        "--execute-provider-write".to_owned(),
+    ])
+    .expect("parse codex smoke execution");
+
+    assert_eq!(
+        config.command_runner,
+        Some(CommandRunnerCommand::CodexTurnStartRealWriteSmoke(
+            CliCodexTurnStartRealWriteSmoke {
+                confirm_real_write: true,
+                execute_provider_write: true,
+            }
+        ))
+    );
+}
+
+#[test]
+fn cli_config_rejects_unknown_codex_smoke_flag() {
+    let error = CliConfig::parse(vec![
+        "command-runner".to_owned(),
+        "codex-turn-start-real-write-smoke".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect_err("unknown codex smoke flag");
+
+    assert_eq!(error, "unsupported codex turn/start smoke flag: --yes");
+}
+
+#[test]
 fn cli_config_parses_command_runner_read_only_structured_command() {
     let config = CliConfig::parse(vec![
         "command-runner".to_owned(),

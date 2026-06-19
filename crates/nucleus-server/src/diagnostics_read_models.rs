@@ -6,6 +6,7 @@
 mod codex_callback;
 mod codex_ingestion;
 mod codex_interruption;
+mod codex_live_executor;
 mod codex_live_spawn;
 mod codex_provider;
 mod codex_recovery;
@@ -30,6 +31,10 @@ pub use codex_ingestion::{
 };
 pub use codex_interruption::{
     codex_interruption_diagnostics, CodexInterruptionDiagnosticDto, CodexInterruptionDiagnosticsDto,
+};
+pub use codex_live_executor::{
+    codex_live_executor_diagnostics, CodexLiveExecutorAttemptDiagnosticDto,
+    CodexLiveExecutorDiagnosticsDto,
 };
 pub use codex_live_spawn::{
     codex_live_spawn_smoke_diagnostics, CodexLiveSpawnSmokeDiagnosticDto,

@@ -2,7 +2,9 @@ use super::*;
 
 #[test]
 fn git_capture_plan_maps_neutral_capture_without_execution() {
-    let command = capture_command(vec![ManagementProjectionCapturePolicyGate::ProjectionApplied]);
+    let command = capture_command(vec![
+        ManagementProjectionCapturePolicyGate::ProjectionApplied,
+    ]);
     let admission = command.admit();
     let plan = GitManagementCapturePlan::from_capture_admission(
         GitManagementCapturePlanId("git-capture-plan:1".to_owned()),

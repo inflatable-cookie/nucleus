@@ -71,6 +71,9 @@ shape.
 - `g02/064-codex-live-provider-send-readiness.md` - completed
 - `g02/065-codex-turn-start-transport-executor-handoff.md` - completed
 - `g02/066-task-backed-workflow-hardening.md` - completed
+- `g02/067-codex-direct-connection-smoke-gate.md` - completed
+- `g02/068-codex-live-executor-integration.md` - completed
+- `g02/069-codex-task-backed-live-execution-gate.md` - active
 
 ## Previous Generation
 
@@ -129,5 +132,4 @@ shape.
 
 ## Next Task
 
-Review explicit operator confirmation for the Codex direct-connection
-`turn/start` real-write smoke.
+Create task work live executor receipt linkage.
