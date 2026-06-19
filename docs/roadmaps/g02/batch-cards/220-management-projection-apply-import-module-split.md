@@ -1,6 +1,6 @@
 # 220 Management Projection Apply Import Module Split
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../050-management-projection-apply-import-split.md`
@@ -28,3 +28,9 @@ Split management projection apply/import implementation helpers.
 ## Stop Conditions
 
 - Stop if helper movement changes apply authority behavior.
+
+## Result
+
+Apply/import batch orchestration remains in the front module. Record
+preparation moved to `apply_import/prepare.rs`; receipt writing moved to
+`apply_import/receipts.rs`.

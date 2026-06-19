@@ -1,6 +1,6 @@
 # 221 Management Projection Apply Import Test Split
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../050-management-projection-apply-import-split.md`
@@ -27,3 +27,9 @@ Split local apply/import tests after implementation helpers move.
 ## Stop Conditions
 
 - Stop if tests reveal a real behavior defect that should be fixed separately.
+
+## Result
+
+Apply/import test coverage was already split by the earlier
+management-projection-state test split and still covers stale revision, block,
+receipt, and successful apply paths.

@@ -65,21 +65,18 @@ and engine boundary are settled.
 - `047-scm-work-sessions-module-split.md` - completed
 - `048-diagnostics-read-model-test-split.md` - completed
 - `049-engine-management-sync-test-split.md` - completed
-- `050-management-projection-apply-import-split.md` - active
-- `051-change-request-prep-module-split.md` - planned
+- `050-management-projection-apply-import-split.md` - completed
+- `051-change-request-prep-module-split.md` - active
 - `052-health-reset-validation-and-next-runtime-lane.md` - planned
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/220-management-projection-apply-import-module-split.md`
+- `batch-cards/223-change-request-prep-type-split.md`
 
 Planned cards:
 
-- `batch-cards/221-management-projection-apply-import-test-split.md`
-- `batch-cards/222-management-projection-apply-import-validation.md`
-- `batch-cards/223-change-request-prep-type-split.md`
 - `batch-cards/224-change-request-prep-test-split.md`
 - `batch-cards/225-change-request-prep-validation.md`
 - `batch-cards/226-doctor-god-file-reset.md`
@@ -308,6 +305,9 @@ Completed cards:
 - `batch-cards/217-engine-management-sync-test-fixture-extraction.md`
 - `batch-cards/218-engine-management-sync-test-domain-split.md`
 - `batch-cards/219-engine-management-sync-validation.md`
+- `batch-cards/220-management-projection-apply-import-module-split.md`
+- `batch-cards/221-management-projection-apply-import-test-split.md`
+- `batch-cards/222-management-projection-apply-import-validation.md`
 
 ## Planned Runway Sequence
 
@@ -352,8 +352,8 @@ The next G02 suite is:
 37. SCM work sessions module split - completed
 38. diagnostics read-model test split - completed
 39. engine management sync test split - completed
-40. management projection apply/import split - active
-41. change-request prep module split - planned
+40. management projection apply/import split - completed
+41. change-request prep module split - active
 42. health reset validation and next runtime lane - planned
 
 This keeps code health and task authority clarity ahead of deeper provider
@@ -412,8 +412,9 @@ runtime work.
   from four to three.
 - `049` split engine management sync tests, dropping doctor god-file errors
   from three to two.
-- `050` splits management projection apply/import without changing behavior.
-- `051` continues splitting the remaining error-sized file without
+- `050` split management projection apply/import, dropping doctor god-file
+  errors from two to one.
+- `051` splits the remaining error-sized change-request prep file without
   changing behavior.
 - `052` validates doctor health and selects the next runtime lane.
 - Later milestones have full planned cards, but only the current card should

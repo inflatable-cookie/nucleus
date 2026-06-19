@@ -10,13 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `220-management-projection-apply-import-module-split.md`
+- `223-change-request-prep-type-split.md`
 
 ## Planned Cards
 
-- `221-management-projection-apply-import-test-split.md`
-- `222-management-projection-apply-import-validation.md`
-- `223-change-request-prep-type-split.md`
 - `224-change-request-prep-test-split.md`
 - `225-change-request-prep-validation.md`
 - `226-doctor-god-file-reset.md`
@@ -245,3 +242,6 @@ Hold execution cards for `g02`.
 - `217-engine-management-sync-test-fixture-extraction.md`
 - `218-engine-management-sync-test-domain-split.md`
 - `219-engine-management-sync-validation.md`
+- `220-management-projection-apply-import-module-split.md`
+- `221-management-projection-apply-import-test-split.md`
+- `222-management-projection-apply-import-validation.md`

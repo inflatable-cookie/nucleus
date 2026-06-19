@@ -1,6 +1,6 @@
 # 050 Management Projection Apply Import Split
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -16,37 +16,43 @@ into focused implementation and test modules.
 
 ## Goals
 
-- [ ] Separate apply report building, block classification, and state mutation
+- [x] Separate apply report building, block classification, and state mutation
       helpers.
-- [ ] Split local tests away from implementation where useful.
-- [ ] Keep projection apply behavior unchanged.
+- [x] Split local tests away from implementation where useful.
+- [x] Keep projection apply behavior unchanged.
 
 ## Execution Plan
 
-- [ ] Module batch: split implementation helpers.
-- [ ] Test batch: split apply/import unit tests.
-- [ ] Validation batch: run scoped server tests.
+- [x] Module batch: split implementation helpers.
+- [x] Test batch: split apply/import unit tests.
+- [x] Validation batch: run scoped server tests.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/220-management-projection-apply-import-module-split.md`
+- None.
 
 Planned cards:
 
-- `batch-cards/221-management-projection-apply-import-test-split.md`
-- `batch-cards/222-management-projection-apply-import-validation.md`
+- None.
 
 Completed cards:
 
-- None.
+- `batch-cards/220-management-projection-apply-import-module-split.md`
+- `batch-cards/221-management-projection-apply-import-test-split.md`
+- `batch-cards/222-management-projection-apply-import-validation.md`
 
 ## Acceptance Criteria
 
-- [ ] `apply_import.rs` is below the error threshold.
-- [ ] Apply blocks, receipts, and revision gates still pass tests.
-- [ ] No projection authority behavior changes.
+- [x] `apply_import.rs` is below the error threshold.
+- [x] Apply blocks, receipts, and revision gates still pass tests.
+- [x] No projection authority behavior changes.
+
+## Result
+
+`apply_import.rs` is now a front door with preparation and receipt modules.
+Scoped management projection state tests and workspace check pass.
 
 ## Gate
 

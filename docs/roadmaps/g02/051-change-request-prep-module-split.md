@@ -1,6 +1,6 @@
 # 051 Change Request Prep Module Split
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-19
 
@@ -31,11 +31,10 @@ test modules.
 
 Ready cards:
 
-- None.
+- `batch-cards/223-change-request-prep-type-split.md`
 
 Planned cards:
 
-- `batch-cards/223-change-request-prep-type-split.md`
 - `batch-cards/224-change-request-prep-test-split.md`
 - `batch-cards/225-change-request-prep-validation.md`
 
