@@ -120,4 +120,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/251-codex-turn-start-request-records.md`.
+Execute `g02/batch-cards/252-codex-turn-start-admission-policy.md`.

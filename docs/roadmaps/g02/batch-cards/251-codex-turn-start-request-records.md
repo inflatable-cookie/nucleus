@@ -1,6 +1,6 @@
 # 251 Codex Turn Start Request Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../057-codex-turn-start-admission-gate.md`
@@ -22,6 +22,12 @@ refs.
 - Turn-start request records cannot omit runtime/session/work identity.
 - Raw provider payload retention remains explicit and off by default.
 - Request records do not mutate task state.
+
+## Result
+
+Implemented `CodexAppServerTurnStartRequest` with a validating constructor
+that requires runtime, session, task, work-item, prompt ref, prompt summary,
+and metadata-only retention before any provider send exists.
 
 ## Validation
 

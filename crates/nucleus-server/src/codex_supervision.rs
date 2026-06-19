@@ -16,6 +16,7 @@ mod runtime_instance;
 mod session_binding;
 mod spawn_intent;
 mod stdio_frames;
+mod turn_start_request;
 mod transport_receipts;
 
 pub use event_store_linkage::{
@@ -76,6 +77,11 @@ pub use stdio_frames::{
     codex_stdio_frame_source_record, CodexAppServerStdioDecodeStatus,
     CodexAppServerStdioFrameDirection, CodexAppServerStdioFrameSourceId,
     CodexAppServerStdioFrameSourceRecord,
+};
+pub use turn_start_request::{
+    codex_turn_start_request, CodexAppServerTurnStartPromptRef,
+    CodexAppServerTurnStartPromptRetentionPolicy, CodexAppServerTurnStartRequest,
+    CodexAppServerTurnStartRequestId, CodexAppServerTurnStartRequestRejection,
 };
 pub use transport_receipts::{
     codex_receipt_from_spawn_intent, codex_receipt_from_stdio_frame,
