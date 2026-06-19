@@ -172,3 +172,46 @@ use crate::tools::{NativeRuntimeReceiptRef, NativeToolActionId};
 
         assert!(!assistance.uses_reference_only_evidence());
     }
+
+    #[test]
+    fn steward_sync_decisions_are_advisory_and_evidence_linked() {
+        let assistance =
+            sync_assistance(NativeStewardSyncAssistanceKind::ManagementCapturePreparation);
+        let decision = NativeStewardSyncDecisionRecord::recommendation(
+            NativeStewardSyncDecisionId("sync-decision:1".to_owned()),
+            &assistance,
+            NativeStewardSyncNextAction::ReviewCaptureEvidence,
+        );
+
+        assert!(decision.is_advisory_only());
+        assert!(!decision.provider_mutation_allowed);
+        assert_eq!(decision.assistance_id, Some(assistance.id));
+        assert_eq!(decision.evidence_refs.len(), 3);
+        assert_eq!(
+            decision.requested_next_action,
+            NativeStewardSyncNextAction::ReviewCaptureEvidence
+        );
+    }
+
+    #[test]
+    fn steward_sync_decisions_block_instead_of_bypassing_sync_gates() {
+        let assistance =
+            sync_assistance(NativeStewardSyncAssistanceKind::ChangeRequestPreparation);
+        let decision = NativeStewardSyncDecisionRecord::blocked(
+            NativeStewardSyncDecisionId("sync-decision:blocked".to_owned()),
+            &assistance,
+            "capture evidence is missing".to_owned(),
+        );
+
+        assert!(decision.is_advisory_only());
+        assert_eq!(decision.kind, NativeStewardSyncDecisionKind::Blocked);
+        assert_eq!(
+            decision.requested_next_action,
+            NativeStewardSyncNextAction::RequestHumanReview
+        );
+        assert_eq!(
+            decision.blocked_reasons,
+            vec!["capture evidence is missing".to_owned()]
+        );
+        assert!(!decision.provider_mutation_allowed);
+    }

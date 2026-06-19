@@ -47,8 +47,8 @@ shape.
 - `g02/040-git-management-capture-adapter-proof.md` - completed
 - `g02/041-scm-working-session-execution-prep.md` - completed
 - `g02/042-change-request-preparation-boundary.md` - completed
-- `g02/043-steward-scm-sync-automation-gate.md` - active
-- `g02/044-scm-workflow-closeout-and-next-phase-selection.md` - planned
+- `g02/043-steward-scm-sync-automation-gate.md` - completed
+- `g02/044-scm-workflow-closeout-and-next-phase-selection.md` - active
 
 ## Previous Generation
 
@@ -107,4 +107,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/196-steward-sync-authority-contract.md`.
+Execute `g02/batch-cards/201-phase3-scm-gap-review.md`.

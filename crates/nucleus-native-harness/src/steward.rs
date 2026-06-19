@@ -15,6 +15,9 @@ pub use records::{
     NativeStewardProposalTarget, NativeStewardProposedChange,
 };
 pub use sync_assistance::{
+    NativeStewardSyncDecisionConfidence, NativeStewardSyncDecisionId,
+    NativeStewardSyncDecisionKind, NativeStewardSyncDecisionRecord,
+    NativeStewardSyncNextAction,
     NativeStewardManagementCapturePlan, NativeStewardManagementCapturePlanStatus,
     NativeStewardManagementCaptureScope, NativeStewardSyncAssistance,
     NativeStewardSyncAssistanceId, NativeStewardSyncAssistanceKind,

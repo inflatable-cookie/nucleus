@@ -571,6 +571,51 @@ Abandoned and superseded conflicts must retain an audit trail. They must not
 be deleted merely because a branch, worktree, review request, or provider-side
 object was closed.
 
+## First Steward Sync Decision Boundary
+
+Steward sync decisions are advisory records over existing management sync, SCM
+capture, work-session, and change-request evidence.
+
+They may:
+
+- recommend that capture evidence be reviewed
+- recommend management capture preparation
+- recommend change-request preparation
+- block when evidence, policy, or approval is missing
+- request human review
+- report that provider mutation is out of scope
+
+They must include:
+
+- stable decision id
+- optional sync-assistance id
+- decision kind
+- coarse confidence
+- sanitized evidence refs
+- requested next action
+- blocked reasons where applicable
+- explicit provider-mutation flag
+
+The first implementation must set provider mutation to false. It must not
+checkout, switch, branch, create worktrees, stage, commit, snap, publish, push,
+promote, open review requests, merge, or call a forge.
+
+Authority levels stay distinct:
+
+- propose: record a recommendation or block reason
+- prepare: create reviewable management capture or change-request prep records
+- request: ask for human review or later provider action
+- execute: perform provider mutation
+
+The first steward sync decision boundary covers propose and request only. It
+may point at preparation records created elsewhere, but it does not execute
+preparation commands by itself.
+
+Diagnostics over steward sync decisions are read-only. Clients may inspect
+decision kind, evidence refs, blocked reasons, confidence, advisory state, and
+requested next action. Clients must not receive provider authority from
+diagnostic DTOs.
+
 ## Forge Boundary
 
 Forges are adapters over collaboration surfaces.

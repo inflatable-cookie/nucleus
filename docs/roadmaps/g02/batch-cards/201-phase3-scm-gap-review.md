@@ -1,6 +1,6 @@
 # 201 Phase 3 SCM Gap Review
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../044-scm-workflow-closeout-and-next-phase-selection.md`

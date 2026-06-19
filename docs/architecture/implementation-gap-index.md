@@ -160,6 +160,13 @@ Current state:
 - change-request evidence packages expose capture refs, work-session refs,
   status/diff summaries, validation summaries, and blocked reasons without
   client provider authority
+- steward SCM sync decision records exist for recommendation, blocked,
+  review-required, and no-action states
+- steward sync decisions link sanitized evidence refs, assistance refs, blocked
+  reasons, confidence, and requested next actions
+- steward sync decisions are advisory only and keep provider mutation disabled
+- steward sync diagnostics expose decision state to clients without client or
+  provider mutation authority
 - committable versus local-only policy is documented for first-pass records
 - provider SCM mutation, share, publish, promote, and review-request behavior
   remains out of scope for this runtime
@@ -170,9 +177,8 @@ Missing:
 - applying planning, accepted-memory, research, index, and artifact-reference
   projection records beyond first-pass project/task records
 - provider command execution for checkout/worktree creation/cleanup
-- steward SCM sync authority, decision records, and diagnostics
 - actual provider SCM capture/share/publish integration
-- steward automation over sync policy
+- steward execute-level automation over sync policy
 - desktop sync controls, if the proof UI continues beyond diagnostics
 
 Likely crates:
@@ -236,13 +242,14 @@ validated a read-only progress path through fixtures, and repo-backed
 management projection export/import/conflict staging and explicit
 apply/review behavior have been hardened.
 
-The most useful next code lane is likely:
+The most useful next checkpoint is likely:
 
-1. keep warning-level god-file pressure visible as a health guardrail
-2. add steward SCM sync authority, decision records, and diagnostics over
-   capture/apply/review evidence
-3. keep checkout, worktree creation, commit, push, branch mutation, publish,
+1. close the Phase 3 SCM runway with a gap review
+2. compare roadmap and contract claims to current code
+3. decide whether the next phase is harness runtime, native steward depth,
+   remote transport, workspace panels, or planning/memory/research
+4. keep checkout, worktree creation, commit, push, branch mutation, publish,
    promote, merge, and review-request behavior gated until provider-specific
    adapter authority is proven
-4. keep non-Git vocabulary checks active until Convergence-like flows prove the
+5. keep non-Git vocabulary checks active until Convergence-like flows prove the
    adapter boundary can prove Git and non-Git workflows separately

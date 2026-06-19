@@ -25,9 +25,8 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-038 are
-complete, milestone 039 is active, and milestones 040-044 are the planned SCM
-workflow runway.
+G02 is the orchestration and engine-core generation. Milestones 001-043 are
+complete, and milestone 044 is the active SCM workflow closeout checkpoint.
 
 Completed workflow proof:
 
@@ -60,12 +59,12 @@ Current G02 continuation sequence:
 11. Git management capture adapter proof - complete
 12. SCM working-session execution prep - complete
 13. change-request preparation boundary - complete
-14. steward SCM sync automation gate - active
-15. SCM workflow closeout and next phase selection - planned
+14. steward SCM sync automation gate - complete
+15. SCM workflow closeout and next phase selection - active
 
 Selected current workflow:
 
-- steward SCM sync automation gate
+- SCM workflow closeout and next phase selection
 
 Reason:
 
@@ -82,8 +81,10 @@ Reason:
   guard checks, cleanup policy, repair records, and no-provider-mutation gates
 - provider-neutral change-request candidates, GitHub descriptor mapping, and
   evidence packages now exist without forge network calls
-- the next useful checkpoint is steward SCM sync authority and diagnostics over
-  capture/apply/review evidence
+- steward SCM sync decision records and diagnostics now sit over
+  capture/apply/review evidence without provider mutation authority
+- the next useful checkpoint is to compare Phase 3 exit criteria against
+  implemented behavior, then select the next phase deliberately
 - checkout, worktree creation, push, publish, promote, forge review requests,
   merge, and steward automatic sync remain later gates
 

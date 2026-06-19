@@ -1,6 +1,6 @@
 # 198 Steward Capture Apply Loop Fixtures
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../043-steward-scm-sync-automation-gate.md`
@@ -29,3 +29,8 @@ readiness loops.
 ## Stop Conditions
 
 - Stop if steward fixtures bypass apply or capture evidence.
+
+## Result
+
+Added targeted steward sync tests proving decisions stay advisory, evidence
+linked, and blocked when capture or review gates are missing.

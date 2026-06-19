@@ -1,6 +1,6 @@
 # 197 Steward Sync Decision Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../043-steward-scm-sync-automation-gate.md`
@@ -29,3 +29,9 @@ Add steward SCM sync decision records.
 ## Stop Conditions
 
 - Stop if decision records imply autonomous mutation.
+
+## Result
+
+Added steward sync decision records with stable ids, assistance refs, evidence
+refs, confidence, blocked reasons, requested next actions, and an explicit
+provider-mutation flag that remains false in the first implementation.

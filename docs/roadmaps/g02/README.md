@@ -58,22 +58,17 @@ and engine boundary are settled.
 - `040-git-management-capture-adapter-proof.md` - completed
 - `041-scm-working-session-execution-prep.md` - completed
 - `042-change-request-preparation-boundary.md` - completed
-- `043-steward-scm-sync-automation-gate.md` - active
-- `044-scm-workflow-closeout-and-next-phase-selection.md` - planned
+- `043-steward-scm-sync-automation-gate.md` - completed
+- `044-scm-workflow-closeout-and-next-phase-selection.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/196-steward-sync-authority-contract.md`
+- `batch-cards/201-phase3-scm-gap-review.md`
 
 Planned cards:
 
-- `batch-cards/197-steward-sync-decision-records.md`
-- `batch-cards/198-steward-capture-apply-loop-fixtures.md`
-- `batch-cards/199-steward-sync-diagnostics-read-model.md`
-- `batch-cards/200-steward-sync-validation-and-next-lane.md`
-- `batch-cards/201-phase3-scm-gap-review.md`
 - `batch-cards/202-docs-code-drift-audit.md`
 - `batch-cards/203-next-phase-readiness-decision.md`
 - `batch-cards/204-long-term-plan-rebaseline.md`
@@ -276,6 +271,11 @@ Completed cards:
 - `batch-cards/193-github-review-boundary-descriptor.md`
 - `batch-cards/194-change-request-evidence-package-read-model.md`
 - `batch-cards/195-change-request-prep-validation-and-next-lane.md`
+- `batch-cards/196-steward-sync-authority-contract.md`
+- `batch-cards/197-steward-sync-decision-records.md`
+- `batch-cards/198-steward-capture-apply-loop-fixtures.md`
+- `batch-cards/199-steward-sync-diagnostics-read-model.md`
+- `batch-cards/200-steward-sync-validation-and-next-lane.md`
 
 ## Planned Runway Sequence
 
@@ -313,8 +313,8 @@ The next G02 suite is:
 30. Git management capture adapter proof - completed
 31. SCM working-session execution prep - completed
 32. change-request preparation boundary - completed
-33. steward SCM sync automation gate - active
-34. SCM workflow closeout and next phase selection - planned
+33. steward SCM sync automation gate - completed
+34. SCM workflow closeout and next phase selection - active
 
 This keeps code health and task authority clarity ahead of deeper provider
 runtime work.
@@ -358,8 +358,8 @@ runtime work.
   isolated-worktree modes.
 - `042` prepares change-request records and GitHub descriptor mapping without
   network or forge mutation.
-- `043` gates steward SCM sync automation behind evidence, policy, and
-  reviewable decisions.
+- `043` completed evidence-linked steward sync decisions and read-only
+  diagnostics without provider mutation authority.
 - `044` closes the SCM runway, audits drift, and selects the next phase from
   the long-term plan.
 - Later milestones have full planned cards, but only the current card should

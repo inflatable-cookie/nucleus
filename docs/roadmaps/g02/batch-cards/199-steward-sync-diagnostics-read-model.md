@@ -1,6 +1,6 @@
 # 199 Steward Sync Diagnostics Read Model
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../043-steward-scm-sync-automation-gate.md`
@@ -29,3 +29,9 @@ Expose steward SCM sync diagnostics without action authority leakage.
 ## Stop Conditions
 
 - Stop if diagnostics expose mutating action authority.
+
+## Result
+
+Added steward sync diagnostics DTOs that expose decisions, evidence refs,
+blocked reasons, requested next action, and advisory state while keeping client
+and provider mutation disabled.

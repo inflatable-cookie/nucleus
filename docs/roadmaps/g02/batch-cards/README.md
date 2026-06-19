@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `196-steward-sync-authority-contract.md`
+- `201-phase3-scm-gap-review.md`
 
 ## Planned Cards
 
-- `197-steward-sync-decision-records.md`
-- `198-steward-capture-apply-loop-fixtures.md`
-- `199-steward-sync-diagnostics-read-model.md`
-- `200-steward-sync-validation-and-next-lane.md`
-- `201-phase3-scm-gap-review.md`
 - `202-docs-code-drift-audit.md`
 - `203-next-phase-readiness-decision.md`
 - `204-long-term-plan-rebaseline.md`
@@ -221,3 +216,8 @@ Hold execution cards for `g02`.
 - `193-github-review-boundary-descriptor.md`
 - `194-change-request-evidence-package-read-model.md`
 - `195-change-request-prep-validation-and-next-lane.md`
+- `196-steward-sync-authority-contract.md`
+- `197-steward-sync-decision-records.md`
+- `198-steward-capture-apply-loop-fixtures.md`
+- `199-steward-sync-diagnostics-read-model.md`
+- `200-steward-sync-validation-and-next-lane.md`

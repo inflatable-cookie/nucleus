@@ -1,6 +1,6 @@
 # 200 Steward Sync Validation And Next Lane
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../043-steward-scm-sync-automation-gate.md`
@@ -34,3 +34,9 @@ checkpoint.
 ## Stop Conditions
 
 - Stop if validation shows steward authority leakage.
+
+## Result
+
+Targeted steward sync tests pass. The next lane is
+`044-scm-workflow-closeout-and-next-phase-selection.md`, starting with
+`201-phase3-scm-gap-review.md`.

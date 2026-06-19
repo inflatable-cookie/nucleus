@@ -19,7 +19,8 @@ pub use scm::{
 };
 pub use steward::{
     steward_diagnostics, StewardCommandAdmissionDiagnosticDto, StewardCommandOutcomeDiagnosticDto,
-    StewardDiagnosticsDto, StewardProposalDiagnosticDto,
+    StewardDiagnosticsDto, StewardProposalDiagnosticDto, steward_sync_diagnostics,
+    StewardSyncDecisionDiagnosticDto, StewardSyncDiagnosticsDto,
 };
 pub use sync::{
     sync_diagnostics, SyncAssistanceDiagnosticDto, SyncCapturePrepDiagnosticDto,

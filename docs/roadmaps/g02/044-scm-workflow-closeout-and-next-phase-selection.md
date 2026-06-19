@@ -1,6 +1,6 @@
 # 044 SCM Workflow Closeout And Next Phase Selection
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-19
 
@@ -46,11 +46,10 @@ phase.
 
 Ready cards:
 
-- None.
+- `batch-cards/201-phase3-scm-gap-review.md`
 
 Planned cards:
 
-- `batch-cards/201-phase3-scm-gap-review.md`
 - `batch-cards/202-docs-code-drift-audit.md`
 - `batch-cards/203-next-phase-readiness-decision.md`
 - `batch-cards/204-long-term-plan-rebaseline.md`

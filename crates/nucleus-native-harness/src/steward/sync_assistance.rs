@@ -154,3 +154,103 @@ pub enum NativeStewardManagementCaptureScope {
     ProjectMetadata,
     Custom(String),
 }
+
+/// Stable steward sync decision id.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct NativeStewardSyncDecisionId(pub String);
+
+/// Steward decision over management sync and SCM preparation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeStewardSyncDecisionRecord {
+    pub id: NativeStewardSyncDecisionId,
+    pub assistance_id: Option<NativeStewardSyncAssistanceId>,
+    pub kind: NativeStewardSyncDecisionKind,
+    pub confidence: NativeStewardSyncDecisionConfidence,
+    pub evidence_refs: Vec<NativeStewardEvidenceRef>,
+    pub requested_next_action: NativeStewardSyncNextAction,
+    pub blocked_reasons: Vec<String>,
+    pub provider_mutation_allowed: bool,
+    pub summary: Option<String>,
+}
+
+impl NativeStewardSyncDecisionRecord {
+    pub fn recommendation(
+        id: NativeStewardSyncDecisionId,
+        assistance: &NativeStewardSyncAssistance,
+        requested_next_action: NativeStewardSyncNextAction,
+    ) -> Self {
+        Self {
+            id,
+            assistance_id: Some(assistance.id.clone()),
+            kind: NativeStewardSyncDecisionKind::Recommendation,
+            confidence: NativeStewardSyncDecisionConfidence::Medium,
+            evidence_refs: assistance.evidence_refs.clone(),
+            requested_next_action,
+            blocked_reasons: Vec::new(),
+            provider_mutation_allowed: false,
+            summary: assistance.summary.clone(),
+        }
+    }
+
+    pub fn blocked(
+        id: NativeStewardSyncDecisionId,
+        assistance: &NativeStewardSyncAssistance,
+        reason: String,
+    ) -> Self {
+        Self {
+            id,
+            assistance_id: Some(assistance.id.clone()),
+            kind: NativeStewardSyncDecisionKind::Blocked,
+            confidence: NativeStewardSyncDecisionConfidence::Low,
+            evidence_refs: assistance.evidence_refs.clone(),
+            requested_next_action: NativeStewardSyncNextAction::RequestHumanReview,
+            blocked_reasons: vec![reason],
+            provider_mutation_allowed: false,
+            summary: assistance.summary.clone(),
+        }
+    }
+
+    pub fn is_advisory_only(&self) -> bool {
+        !self.provider_mutation_allowed
+            && self
+                .blocked_reasons
+                .iter()
+                .all(|reason| !contains_forbidden_steward_term(reason))
+            && self
+                .summary
+                .as_ref()
+                .map(|summary| !contains_forbidden_steward_term(summary))
+                .unwrap_or(true)
+            && self
+                .evidence_refs
+                .iter()
+                .all(NativeStewardEvidenceRef::uses_reference_only_evidence)
+    }
+}
+
+/// Steward sync decision kind.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeStewardSyncDecisionKind {
+    Recommendation,
+    Blocked,
+    ReviewRequired,
+    NoAction,
+}
+
+/// Coarse confidence for steward sync recommendations.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeStewardSyncDecisionConfidence {
+    Low,
+    Medium,
+    High,
+}
+
+/// Next action requested by a steward sync decision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeStewardSyncNextAction {
+    ReviewCaptureEvidence,
+    PrepareManagementCapture,
+    PrepareChangeRequest,
+    RequestHumanReview,
+    ProviderMutationOutOfScope,
+}

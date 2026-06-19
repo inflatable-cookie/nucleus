@@ -1,6 +1,6 @@
 # 043 Steward SCM Sync Automation Gate
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -26,43 +26,55 @@ change-request evidence exists.
 
 ## Goals
 
-- [ ] Define steward authority for SCM sync assistance.
-- [ ] Add steward sync decision records.
-- [ ] Prove capture/apply loop fixtures for steward recommendations.
-- [ ] Expose steward SCM sync diagnostics without action authority leakage.
-- [ ] Keep autonomous provider mutation gated.
+- [x] Define steward authority for SCM sync assistance.
+- [x] Add steward sync decision records.
+- [x] Prove capture/apply loop fixtures for steward recommendations.
+- [x] Expose steward SCM sync diagnostics without action authority leakage.
+- [x] Keep autonomous provider mutation gated.
 
 ## Execution Plan
 
-- [ ] Authority batch: define what the steward may decide, propose, or request.
-- [ ] Decision batch: add steward sync decision records.
-- [ ] Fixture batch: prove apply/capture/review loops under steward guidance.
-- [ ] Diagnostics batch: expose steward sync state to clients.
-- [ ] Validation batch: close the lane and select the next workflow checkpoint.
+- [x] Authority batch: define what the steward may decide, propose, or request.
+- [x] Decision batch: add steward sync decision records.
+- [x] Fixture batch: prove apply/capture/review loops under steward guidance.
+- [x] Diagnostics batch: expose steward sync state to clients.
+- [x] Validation batch: close the lane and select the next workflow checkpoint.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/196-steward-sync-authority-contract.md`
+- None.
 
 Planned cards:
 
+- None.
+
+Completed cards:
+
+- `batch-cards/196-steward-sync-authority-contract.md`
 - `batch-cards/197-steward-sync-decision-records.md`
 - `batch-cards/198-steward-capture-apply-loop-fixtures.md`
 - `batch-cards/199-steward-sync-diagnostics-read-model.md`
 - `batch-cards/200-steward-sync-validation-and-next-lane.md`
 
-Completed cards:
-
-- None.
-
 ## Acceptance Criteria
 
-- [ ] Steward sync decisions are evidence-linked and reviewable.
-- [ ] Steward recommendations do not bypass SCM or projection gates.
-- [ ] Diagnostics distinguish recommendation, preparation, and execution.
-- [ ] The next lane is selected from the long-term plan.
+- [x] Steward sync decisions are evidence-linked and reviewable.
+- [x] Steward recommendations do not bypass SCM or projection gates.
+- [x] Diagnostics distinguish recommendation, preparation, and execution.
+- [x] The next lane is selected from the long-term plan.
+
+## Result
+
+Steward sync decisions are record-only and advisory. They link sync-assistance
+records, sanitized evidence refs, confidence, requested next actions, and
+blocked reasons. Provider mutation remains disabled in the first
+implementation.
+
+Read-only diagnostics expose steward sync decisions to clients without granting
+client or provider mutation authority. The next lane is
+`044-scm-workflow-closeout-and-next-phase-selection.md`.
 
 ## Gate
 
