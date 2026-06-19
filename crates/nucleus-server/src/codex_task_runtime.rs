@@ -16,8 +16,13 @@ use crate::scheduler::{
     RuntimeSchedulerRequestRefs,
 };
 
+mod observation_links;
 mod types;
 
+pub use observation_links::{
+    link_codex_observation_to_task_runtime, CodexTaskRuntimeObservationLink,
+    CodexTaskRuntimeObservationLinkStatus,
+};
 pub use types::{
     CodexTaskRuntimeAdmission, CodexTaskRuntimeErrorClass, CodexTaskRuntimeErrorClassification,
     CodexTaskRuntimeProgressEvent, CodexTaskRuntimeProgressKind, CodexTaskRuntimeProviderRefs,

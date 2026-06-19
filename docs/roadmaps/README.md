@@ -117,4 +117,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/238-codex-task-runtime-observation-links.md`.
+Execute `g02/batch-cards/239-codex-ingestion-diagnostics-query.md`.

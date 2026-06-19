@@ -27,7 +27,7 @@ Nucleus-owned records without broadening provider command execution.
 - [x] Define idempotent provider-frame acceptance before event-store append.
 - [x] Persist accepted canonical runtime event refs and unsupported observation
       refs.
-- [ ] Link accepted observations to task work items and sanitized receipts
+- [x] Link accepted observations to task work items and sanitized receipts
       without mutating task state directly.
 - [ ] Expose read-only diagnostics/query state for accepted, duplicated,
       unsupported, and recovery-required observations.
@@ -48,7 +48,7 @@ Nucleus-owned records without broadening provider command execution.
       states.
 - [x] Orchestration batch: map accepted observations to event-store envelopes
       and runtime receipt refs.
-- [ ] Task linkage batch: expose task-work links without direct task mutation.
+- [x] Task linkage batch: expose task-work links without direct task mutation.
 - [ ] Diagnostics batch: add read-only query/projection state.
 - [ ] Closeout batch: validate, update gap indexes, and select the next gate.
 
@@ -56,11 +56,10 @@ Nucleus-owned records without broadening provider command execution.
 
 Ready cards:
 
-- `batch-cards/238-codex-task-runtime-observation-links.md`
+- `batch-cards/239-codex-ingestion-diagnostics-query.md`
 
 Planned cards:
 
-- `batch-cards/239-codex-ingestion-diagnostics-query.md`
 - `batch-cards/240-codex-live-event-acceptance-closeout.md`
 
 Completed cards:
@@ -68,6 +67,7 @@ Completed cards:
 - `batch-cards/235-codex-session-binding-records.md`
 - `batch-cards/236-codex-ingestion-idempotency.md`
 - `batch-cards/237-codex-observation-event-store-linkage.md`
+- `batch-cards/238-codex-task-runtime-observation-links.md`
 
 ## Acceptance Criteria
 
@@ -76,7 +76,7 @@ Completed cards:
       unsupported, and recovery-required observations.
 - [x] Accepted observations produce event-store or receipt refs without
       retaining raw provider payloads by default.
-- [ ] Task work-item linkage remains reference-only and engine-owned.
+- [x] Task work-item linkage remains reference-only and engine-owned.
 - [ ] `cargo check --workspace` passes.
 - [ ] `effigy qa:docs` and `effigy qa:northstar` pass.
 

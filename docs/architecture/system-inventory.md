@@ -196,7 +196,9 @@ Updated: 2026-06-16
   provider commands. Runtime-observation event-store linkage records now map
   accepted Codex observations to orchestration event-store envelopes and
   optional sanitized runtime receipt refs. They do not append records or replay
-  provider work.
+  provider work. Task-runtime observation link records now attach those
+  accepted, receipt-only, duplicate, unsupported, or recovery-required
+  observation refs to task work items without granting task state mutation.
   Command handling still treats other state-shaped commands as accepted for
   later state mutation handling, while runtime session commands are rejected
   through scheduler admission or explicit deferred runtime-control errors. Local

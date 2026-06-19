@@ -75,11 +75,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/238-codex-task-runtime-observation-links.md`
+- `batch-cards/239-codex-ingestion-diagnostics-query.md`
 
 Planned cards:
 
-- `batch-cards/239-codex-ingestion-diagnostics-query.md`
 - `batch-cards/240-codex-live-event-acceptance-closeout.md`
 
 Completed cards:
@@ -321,6 +320,7 @@ Completed cards:
 - `batch-cards/235-codex-session-binding-records.md`
 - `batch-cards/236-codex-ingestion-idempotency.md`
 - `batch-cards/237-codex-observation-event-store-linkage.md`
+- `batch-cards/238-codex-task-runtime-observation-links.md`
 
 ## Planned Runway Sequence
 

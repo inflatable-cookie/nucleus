@@ -123,12 +123,13 @@ pub use codex_supervision::{
 pub use codex_task_runtime::{
     admit_codex_task_runtime_request, classify_codex_task_runtime_error,
     codex_task_runtime_recovery_gate, link_codex_task_runtime_receipt,
-    link_codex_wait_to_task_runtime, map_codex_task_progress_from_ingestion,
-    progress_from_codex_wait_link, CodexTaskRuntimeAdmission, CodexTaskRuntimeErrorClass,
-    CodexTaskRuntimeErrorClassification, CodexTaskRuntimeProgressEvent,
-    CodexTaskRuntimeProgressKind, CodexTaskRuntimeProviderRefs, CodexTaskRuntimeReceiptLink,
-    CodexTaskRuntimeRecoveryGate, CodexTaskRuntimeRecoveryState, CodexTaskRuntimeRequestId,
-    CodexTaskRuntimeRequestRecord, CodexTaskRuntimeWaitLink,
+    link_codex_observation_to_task_runtime, link_codex_wait_to_task_runtime,
+    map_codex_task_progress_from_ingestion, progress_from_codex_wait_link,
+    CodexTaskRuntimeAdmission, CodexTaskRuntimeErrorClass, CodexTaskRuntimeErrorClassification,
+    CodexTaskRuntimeObservationLink, CodexTaskRuntimeObservationLinkStatus,
+    CodexTaskRuntimeProgressEvent, CodexTaskRuntimeProgressKind, CodexTaskRuntimeProviderRefs,
+    CodexTaskRuntimeReceiptLink, CodexTaskRuntimeRecoveryGate, CodexTaskRuntimeRecoveryState,
+    CodexTaskRuntimeRequestId, CodexTaskRuntimeRequestRecord, CodexTaskRuntimeWaitLink,
 };
 pub use codex_wait_state::{
     cancel_codex_wait_state, route_codex_wait_state_from_ingestion, time_out_codex_wait_state,
