@@ -121,4 +121,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/258-codex-turn-start-send-receipts.md`.
+Execute `g02/batch-cards/259-codex-subscription-diagnostics.md`.

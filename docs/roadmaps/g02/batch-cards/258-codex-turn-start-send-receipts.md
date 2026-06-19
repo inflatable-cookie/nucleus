@@ -1,6 +1,6 @@
 # 258 Codex Turn Start Send Receipts
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../058-codex-turn-start-send-and-subscription-gate.md`
@@ -21,6 +21,12 @@ Map provider send and subscription outcomes to sanitized runtime receipts.
 - Receipt status vocabulary covers send/subscription outcomes.
 - Receipts are replay-safe and artifact-free by default.
 - Callback/cancellation behavior is not implied.
+
+## Result
+
+Implemented sanitized runtime receipt mappings for Codex stdio write and
+subscription state records, including queued, completed, blocked, failed, and
+recovery-required outcomes without raw stream or provider payload retention.
 
 ## Validation
 

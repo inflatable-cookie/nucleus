@@ -28,7 +28,7 @@ state records, sanitized receipts, and diagnostics.
       envelopes.
 - [x] Add stdio write and subscription state records without raw stream
       retention.
-- [ ] Map send/subscription outcomes to sanitized receipts.
+- [x] Map send/subscription outcomes to sanitized receipts.
 - [ ] Expose send/subscription diagnostics without command authority.
 - [ ] Keep callbacks, cancellation, recovery, and task mutation out of scope.
 
@@ -44,7 +44,7 @@ state records, sanitized receipts, and diagnostics.
 
 - [x] Command boundary batch: add provider-send command records.
 - [x] Subscription state batch: add stdio write and subscription records.
-- [ ] Receipt batch: map send/subscription outcomes to sanitized receipts.
+- [x] Receipt batch: map send/subscription outcomes to sanitized receipts.
 - [ ] Diagnostics batch: expose send/subscription state read-only.
 - [ ] Closeout batch: validate and select callback, cancellation, recovery, or
       task-mutation as the next gate.
@@ -53,17 +53,17 @@ state records, sanitized receipts, and diagnostics.
 
 Ready cards:
 
-- `batch-cards/258-codex-turn-start-send-receipts.md`
+- `batch-cards/259-codex-subscription-diagnostics.md`
 
 Planned cards:
 
-- `batch-cards/259-codex-subscription-diagnostics.md`
 - `batch-cards/260-codex-send-subscription-closeout.md`
 
 Completed cards:
 
 - `batch-cards/256-codex-provider-send-command-boundary.md`
 - `batch-cards/257-codex-stdio-write-subscription-state.md`
+- `batch-cards/258-codex-turn-start-send-receipts.md`
 
 ## Acceptance Criteria
 

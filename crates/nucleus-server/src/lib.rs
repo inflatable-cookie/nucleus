@@ -148,6 +148,7 @@ pub use codex_supervision::{
     CodexAppServerSubscriptionStateId, CodexAppServerSubscriptionStateRecord,
     CodexAppServerStdioWriteState, CodexAppServerStdioWriteStateId,
     CodexAppServerStdioWriteStateRecord, admit_codex_turn_start,
+    codex_receipt_from_subscription_state, codex_receipt_from_stdio_write_state,
     codex_receipt_from_turn_start_outcome, codex_subscription_state_from_send_command,
     codex_stdio_write_state_from_send_command, codex_turn_start_envelope,
     codex_turn_start_outcome_from_admission, codex_turn_start_outcome_from_envelope,
