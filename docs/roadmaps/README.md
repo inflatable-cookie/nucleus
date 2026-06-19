@@ -120,4 +120,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/252-codex-turn-start-admission-policy.md`.
+Execute `g02/batch-cards/253-codex-turn-start-envelope-mapping.md`.

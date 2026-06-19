@@ -26,7 +26,7 @@ letting provider observations mutate task state.
 
 - [x] Add Codex turn-start request records linked to runtime, session, and work
       refs.
-- [ ] Gate turn-start admission through live-spawn evidence, task-work
+- [x] Gate turn-start admission through live-spawn evidence, task-work
       readiness, payload retention, and callback posture.
 - [ ] Map accepted turn-start requests to provider envelope records without
       sending callbacks or retaining raw payloads.
@@ -48,7 +48,7 @@ letting provider observations mutate task state.
 ## Execution Plan
 
 - [x] Request batch: add turn-start request records.
-- [ ] Admission batch: gate turn-start policy before provider send.
+- [x] Admission batch: gate turn-start policy before provider send.
 - [ ] Envelope batch: map accepted requests to provider envelope records.
 - [ ] Receipts/diagnostics batch: expose outcomes through sanitized receipts
       and read-only diagnostics.
@@ -59,22 +59,22 @@ letting provider observations mutate task state.
 
 Ready cards:
 
-- `batch-cards/252-codex-turn-start-admission-policy.md`
+- `batch-cards/253-codex-turn-start-envelope-mapping.md`
 
 Planned cards:
 
-- `batch-cards/253-codex-turn-start-envelope-mapping.md`
 - `batch-cards/254-codex-turn-start-receipts-diagnostics.md`
 - `batch-cards/255-codex-turn-start-closeout.md`
 
 Completed cards:
 
 - `batch-cards/251-codex-turn-start-request-records.md`
+- `batch-cards/252-codex-turn-start-admission-policy.md`
 
 ## Acceptance Criteria
 
 - [x] Turn-start cannot be requested without runtime/session/work refs.
-- [ ] Admission is blocked without live-spawn evidence and task-work readiness.
+- [x] Admission is blocked without live-spawn evidence and task-work readiness.
 - [ ] Provider envelope records are sanitized and replay-safe.
 - [ ] Receipts and diagnostics expose outcomes without command authority.
 - [ ] Validation passes.

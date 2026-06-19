@@ -16,6 +16,7 @@ mod runtime_instance;
 mod session_binding;
 mod spawn_intent;
 mod stdio_frames;
+mod turn_start_admission;
 mod turn_start_request;
 mod transport_receipts;
 
@@ -77,6 +78,12 @@ pub use stdio_frames::{
     codex_stdio_frame_source_record, CodexAppServerStdioDecodeStatus,
     CodexAppServerStdioFrameDirection, CodexAppServerStdioFrameSourceId,
     CodexAppServerStdioFrameSourceRecord,
+};
+pub use turn_start_admission::{
+    admit_codex_turn_start, CodexAppServerTurnStartAdmission,
+    CodexAppServerTurnStartAdmissionBlocker, CodexAppServerTurnStartAdmissionId,
+    CodexAppServerTurnStartAdmissionInput, CodexAppServerTurnStartAdmissionStatus,
+    CodexAppServerTurnStartDeferredPolicy,
 };
 pub use turn_start_request::{
     codex_turn_start_request, CodexAppServerTurnStartPromptRef,

@@ -1,6 +1,6 @@
 # 253 Codex Turn Start Envelope Mapping
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../057-codex-turn-start-admission-gate.md`

@@ -1,6 +1,6 @@
 # 252 Codex Turn Start Admission Policy
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../057-codex-turn-start-admission-gate.md`
@@ -21,6 +21,13 @@ Gate Codex turn-start requests before provider send.
 - Admission reports accepted, blocked, and unsupported states.
 - Blockers are actionable and replay-safe.
 - Task state is not mutated by admission.
+
+## Result
+
+Implemented `admit_codex_turn_start` with explicit blockers for missing runtime
+evidence, task-work readiness, assignment readiness, callback/cancellation
+policy, and raw payload policy confirmation. Admission still does not start
+provider send or mutate task state.
 
 ## Validation
 
