@@ -59,7 +59,8 @@ shape.
 - `g02/052-health-reset-validation-and-next-runtime-lane.md` - completed
 - `g02/053-harness-runtime-rebaseline.md` - completed
 - `g02/054-codex-live-event-acceptance.md` - completed
-- `g02/055-codex-process-and-transport-acceptance.md` - active
+- `g02/055-codex-process-and-transport-acceptance.md` - completed
+- `g02/056-codex-live-spawn-smoke-gate.md` - active
 
 ## Previous Generation
 
@@ -118,4 +119,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/245-codex-process-transport-closeout.md`.
+Execute `g02/batch-cards/246-codex-live-spawn-smoke-request.md`.

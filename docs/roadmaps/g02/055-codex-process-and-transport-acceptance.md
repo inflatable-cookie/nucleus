@@ -1,6 +1,6 @@
 # 055 Codex Process And Transport Acceptance
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -32,7 +32,7 @@ readiness, and failure receipts.
       transport, process-control, and payload-retention readiness.
 - [x] Link startup, handshake, decode, and process-exit failures to sanitized
       runtime receipts.
-- [ ] Keep provider callbacks, cancellation, resume, and task mutation out of
+- [x] Keep provider callbacks, cancellation, resume, and task mutation out of
       scope.
 
 ## Non-Goals
@@ -49,14 +49,14 @@ readiness, and failure receipts.
 - [x] Transport batch: add stdio frame source and decode outcome records.
 - [x] Startup gate batch: compose readiness into spawn-intent admission records.
 - [x] Receipt batch: map startup/decode/exit failures to runtime receipts.
-- [ ] Closeout batch: validate and select callback, cancellation, recovery, or
+- [x] Closeout batch: validate and select callback, cancellation, recovery, or
       subscription as the next gate.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/245-codex-process-transport-closeout.md`
+- None.
 
 Planned cards:
 
@@ -68,6 +68,7 @@ Completed cards:
 - `batch-cards/242-codex-stdio-frame-source-records.md`
 - `batch-cards/243-codex-spawn-intent-admission.md`
 - `batch-cards/244-codex-startup-and-decode-receipts.md`
+- `batch-cards/245-codex-process-transport-closeout.md`
 
 ## Acceptance Criteria
 
@@ -78,7 +79,30 @@ Completed cards:
 - [x] Spawn intent is blocked unless host/process/auth/schema/transport gates
       are ready.
 - [x] Startup and decode failure receipts are sanitized and replay-safe.
-- [ ] Validation passes.
+- [x] Validation passes.
+
+## Result
+
+Codex process and transport acceptance is complete as record, admission, and
+receipt work.
+
+Implemented:
+
+- pre-spawn owned-runtime instance records
+- stdio frame source and decode outcome records
+- spawn-intent admission records over runtime readiness blockers
+- sanitized startup and decode receipt mappings
+
+Not implemented:
+
+- live Codex process spawn
+- live stdio byte parsing
+- callback responses
+- cancellation
+- resume/recovery execution
+- task state mutation
+
+Next gate: `056-codex-live-spawn-smoke-gate.md`.
 
 ## Gate
 
