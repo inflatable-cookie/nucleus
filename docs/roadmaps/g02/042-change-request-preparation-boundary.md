@@ -1,6 +1,6 @@
 # 042 Change Request Preparation Boundary
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-19
 
@@ -42,11 +42,10 @@ provider-specific forge mutation.
 
 Ready cards:
 
-- None.
+- `batch-cards/191-forge-share-policy-reset.md`
 
 Planned cards:
 
-- `batch-cards/191-forge-share-policy-reset.md`
 - `batch-cards/192-change-request-candidate-records.md`
 - `batch-cards/193-github-review-boundary-descriptor.md`
 - `batch-cards/194-change-request-evidence-package-read-model.md`

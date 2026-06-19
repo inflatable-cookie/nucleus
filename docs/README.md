@@ -79,8 +79,7 @@ Current planning artifacts:
 ## Guardrail
 
 Do not widen provider runtime, remote transport, or UI sync controls while the
-active G02 runway prepares SCM working-session execution records. Keep
-primary-tree and isolated-worktree plans, cleanup/repair records, and
-no-provider-mutation gates ahead of checkout, worktree creation, commits,
-pushes, publications, forge review requests, steward automation, or desktop
-sync polish.
+active G02 runway prepares change-request records and evidence packages. Keep
+provider-neutral candidates, GitHub descriptor mapping, and no-network gates
+ahead of pull-request creation, publication, promotion, merge, steward
+automation, or desktop sync polish.

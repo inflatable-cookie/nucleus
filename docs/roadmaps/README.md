@@ -45,8 +45,8 @@ shape.
 - `g02/038-management-sync-apply-and-review.md` - completed
 - `g02/039-scm-management-capture-and-share-foundation.md` - completed
 - `g02/040-git-management-capture-adapter-proof.md` - completed
-- `g02/041-scm-working-session-execution-prep.md` - active
-- `g02/042-change-request-preparation-boundary.md` - planned
+- `g02/041-scm-working-session-execution-prep.md` - completed
+- `g02/042-change-request-preparation-boundary.md` - active
 - `g02/043-steward-scm-sync-automation-gate.md` - planned
 - `g02/044-scm-workflow-closeout-and-next-phase-selection.md` - planned
 
@@ -107,4 +107,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/186-working-session-execution-policy-reset.md`.
+Execute `g02/batch-cards/191-forge-share-policy-reset.md`.

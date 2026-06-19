@@ -95,6 +95,9 @@ pub use webhooks::{
     WebhookVerificationMethod, WebhookVerificationPolicy, WebhookVerificationStatus,
 };
 pub use work_sessions::{
-    ScmIsolationSurface, ScmSessionCleanupPolicy, ScmSessionTestLocation, ScmSessionTestability,
-    ScmWorkingCopyLocation, ScmWorkingCopySessionMode, ScmWorkingCopySessionPlan,
+    ScmIsolationSurface, ScmSessionCleanupPolicy, ScmSessionGuardCheck,
+    ScmSessionRecoveryRecord, ScmSessionRecoveryRecordId, ScmSessionRecoveryState,
+    ScmSessionTestLocation, ScmSessionTestability, ScmWorkingCopyLocation,
+    ScmWorkingCopySessionMode, ScmWorkingCopySessionPlan, ScmWorkingSessionExecutionPrep,
+    ScmWorkingSessionExecutionPrepStatus,
 };

@@ -150,6 +150,10 @@ Current state:
   mutating provider commands
 - sanitized Git status and diff evidence can make a Git capture plan
   review-ready
+- primary-tree and isolated-location working-session execution prep records
+  exist with guard checks, cleanup policy, and provider-mutation gates
+- cleanup-ready and repair-required recovery records retain evidence refs and
+  human approval requirements before destructive provider action
 - committable versus local-only policy is documented for first-pass records
 - provider SCM mutation, share, publish, promote, and review-request behavior
   remains out of scope for this runtime
@@ -159,8 +163,8 @@ Missing:
 - projection schema migration
 - applying planning, accepted-memory, research, index, and artifact-reference
   projection records beyond first-pass project/task records
-- working-session execution planning for primary-tree and isolated-worktree
-  workflows
+- provider command execution for checkout/worktree creation/cleanup
+- change-request candidate and evidence package preparation
 - actual provider SCM capture/share/publish integration
 - steward automation over sync policy
 - desktop sync controls, if the proof UI continues beyond diagnostics
@@ -229,10 +233,9 @@ apply/review behavior have been hardened.
 The most useful next code lane is likely:
 
 1. keep warning-level god-file pressure visible as a health guardrail
-2. add working-session execution prep for primary-tree and isolated-worktree
-   modes
+2. add provider-neutral change-request candidate records and evidence packages
 3. keep checkout, worktree creation, commit, push, branch mutation, publish,
-   promote, and review-request
-   behavior gated until provider-specific adapter authority is proven
+   promote, merge, and review-request behavior gated until provider-specific
+   adapter authority is proven
 4. keep non-Git vocabulary checks active until Convergence-like flows prove the
    adapter boundary can prove Git and non-Git workflows separately

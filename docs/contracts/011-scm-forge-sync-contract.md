@@ -1022,6 +1022,20 @@ them to snapshot scopes or provider-managed surfaces.
 This implementation does not create branches, create worktrees, switch refs,
 delete directories, merge, publish, or mutate provider state.
 
+## Working Session Execution Prep
+
+Working-session execution prep is a reviewable pre-provider boundary.
+
+Primary-tree prep must record guard checks for clean or recoverable state,
+target ref review, runtime constraints, and restore policy. Isolated-location
+prep must record location review, cleanup policy review, runtime constraints,
+and testability tradeoffs.
+
+Cleanup and repair records must retain evidence refs and human approval
+requirements before any destructive provider action can run. Cleanup-ready does
+not mean cleanup has happened. Repair-required does not mean the adapter may
+delete branches, worktrees, files, scopes, snapshots, or provider objects.
+
 ## First SCM Work Item Linkage Implementation
 
 The first SCM work item linkage surface is engine-owned and reference-only.

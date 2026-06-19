@@ -187,6 +187,167 @@ pub enum ScmSessionTestLocation {
     Unknown,
 }
 
+/// Pre-execution review record for a working-copy session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScmWorkingSessionExecutionPrep {
+    pub session_id: ScmWorkSessionId,
+    pub repository_id: ScmRepositoryRefId,
+    pub mode: ScmWorkingCopySessionMode,
+    pub guard_checks: Vec<ScmSessionGuardCheck>,
+    pub cleanup: ScmSessionCleanupPolicy,
+    pub status: ScmWorkingSessionExecutionPrepStatus,
+    pub provider_mutation_allowed: bool,
+}
+
+impl ScmWorkingSessionExecutionPrep {
+    pub fn from_plan(plan: &ScmWorkingCopySessionPlan) -> Self {
+        let mut guard_checks = vec![ScmSessionGuardCheck::RuntimeConstraintsKnown];
+        match &plan.mode {
+            ScmWorkingCopySessionMode::PrimaryTree { .. } => {
+                guard_checks.push(ScmSessionGuardCheck::CleanOrRecoverablePrimaryTree);
+                guard_checks.push(ScmSessionGuardCheck::TargetRefReviewed);
+            }
+            ScmWorkingCopySessionMode::IsolatedLocation { location, .. } => {
+                guard_checks.push(ScmSessionGuardCheck::IsolatedLocationReviewed(
+                    location.clone(),
+                ));
+                guard_checks.push(ScmSessionGuardCheck::CleanupPolicyReviewed);
+            }
+            ScmWorkingCopySessionMode::ExternalManaged { .. } => {
+                guard_checks.push(ScmSessionGuardCheck::ProviderManagedSurfaceReviewed);
+            }
+            ScmWorkingCopySessionMode::Unsupported { reason } => {
+                return Self {
+                    session_id: plan.id.clone(),
+                    repository_id: plan.repository_id.clone(),
+                    mode: plan.mode.clone(),
+                    guard_checks,
+                    cleanup: plan.cleanup.clone(),
+                    status: ScmWorkingSessionExecutionPrepStatus::Blocked(reason.clone()),
+                    provider_mutation_allowed: false,
+                };
+            }
+        }
+
+        let status = if plan
+            .runtime_constraints
+            .contains(&ScmRuntimeConstraint::Unknown)
+        {
+            ScmWorkingSessionExecutionPrepStatus::Blocked(
+                "runtime constraints must be known before execution".to_owned(),
+            )
+        } else {
+            ScmWorkingSessionExecutionPrepStatus::ReadyForAdmission
+        };
+
+        Self {
+            session_id: plan.id.clone(),
+            repository_id: plan.repository_id.clone(),
+            mode: plan.mode.clone(),
+            guard_checks,
+            cleanup: plan.cleanup.clone(),
+            status,
+            provider_mutation_allowed: false,
+        }
+    }
+}
+
+/// Guard check that must be reviewed before session execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ScmSessionGuardCheck {
+    RuntimeConstraintsKnown,
+    CleanOrRecoverablePrimaryTree,
+    TargetRefReviewed,
+    IsolatedLocationReviewed(ScmWorkingCopyLocation),
+    CleanupPolicyReviewed,
+    ProviderManagedSurfaceReviewed,
+}
+
+/// Working-session execution prep state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ScmWorkingSessionExecutionPrepStatus {
+    ReadyForAdmission,
+    Blocked(String),
+}
+
+/// Stable id for a working-session cleanup or repair record.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ScmSessionRecoveryRecordId(pub String);
+
+/// Cleanup or repair record for interrupted working sessions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScmSessionRecoveryRecord {
+    pub id: ScmSessionRecoveryRecordId,
+    pub session_id: ScmWorkSessionId,
+    pub state: ScmSessionRecoveryState,
+    pub cleanup: ScmSessionCleanupPolicy,
+    pub evidence_refs: Vec<String>,
+    pub requires_human_approval: bool,
+    pub provider_mutation_allowed: bool,
+}
+
+impl ScmSessionRecoveryRecord {
+    pub fn cleanup_ready(
+        id: ScmSessionRecoveryRecordId,
+        plan: &ScmWorkingCopySessionPlan,
+        evidence_refs: Vec<String>,
+    ) -> Self {
+        Self {
+            id,
+            session_id: plan.id.clone(),
+            state: ScmSessionRecoveryState::CleanupReady,
+            cleanup: plan.cleanup.clone(),
+            evidence_refs,
+            requires_human_approval: plan.cleanup.requires_human_approval(),
+            provider_mutation_allowed: false,
+        }
+    }
+
+    pub fn repair_required(
+        id: ScmSessionRecoveryRecordId,
+        plan: &ScmWorkingCopySessionPlan,
+        reason: String,
+        evidence_refs: Vec<String>,
+    ) -> Self {
+        Self {
+            id,
+            session_id: plan.id.clone(),
+            state: ScmSessionRecoveryState::RepairRequired(reason),
+            cleanup: plan.cleanup.clone(),
+            evidence_refs,
+            requires_human_approval: true,
+            provider_mutation_allowed: false,
+        }
+    }
+}
+
+/// Recovery state for interrupted working sessions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ScmSessionRecoveryState {
+    Abandoned,
+    Blocked(String),
+    RepairRequired(String),
+    CleanupReady,
+}
+
+impl ScmSessionCleanupPolicy {
+    pub fn requires_human_approval(&self) -> bool {
+        match self {
+            Self::RestorePrimaryTree {
+                retain_unmerged_work,
+                ..
+            } => *retain_unmerged_work,
+            Self::RemoveIsolatedLocation {
+                require_human_approval_before_discard,
+                ..
+            } => *require_human_approval_before_discard,
+            Self::RetainForManualReview => true,
+            Self::ProviderManaged => true,
+            Self::Unsupported => true,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +476,115 @@ mod tests {
         ));
         assert!(!plan.is_primary_tree());
         assert!(!plan.is_isolated_location());
+    }
+
+    #[test]
+    fn primary_tree_execution_prep_requires_clean_or_recoverable_state_without_mutation() {
+        let plan = ScmWorkingCopySessionPlan::primary_tree_session(
+            session_id("session:primary:prep"),
+            repo_id(),
+            ScmProviderKind::Git,
+            Some(branch("nucleus/task-123")),
+            Some(change_ref()),
+            Some(branch("main")),
+        );
+        let prep = ScmWorkingSessionExecutionPrep::from_plan(&plan);
+
+        assert_eq!(
+            prep.status,
+            ScmWorkingSessionExecutionPrepStatus::ReadyForAdmission
+        );
+        assert!(prep
+            .guard_checks
+            .contains(&ScmSessionGuardCheck::CleanOrRecoverablePrimaryTree));
+        assert!(!prep.provider_mutation_allowed);
+        assert!(prep.cleanup.requires_human_approval());
+    }
+
+    #[test]
+    fn isolated_execution_prep_records_location_and_cleanup_review() {
+        let worktree = ScmWorktreeRef {
+            id: ScmWorktreeRefId("worktree:task-456".to_owned()),
+            repository_id: repo_id(),
+            path_hint: Some("../nucleus-task-456".to_owned()),
+            branch: Some(branch("nucleus/task-456")),
+            dirty_state: ScmWorktreeDirtyState::Clean,
+        };
+        let plan = ScmWorkingCopySessionPlan::isolated_location_session(
+            session_id("session:isolated:prep"),
+            repo_id(),
+            ScmProviderKind::Git,
+            Some(worktree),
+            Some(branch("nucleus/task-456")),
+            Some(change_ref()),
+            Some(branch("main")),
+        );
+        let prep = ScmWorkingSessionExecutionPrep::from_plan(&plan);
+
+        assert_eq!(
+            prep.status,
+            ScmWorkingSessionExecutionPrepStatus::ReadyForAdmission
+        );
+        assert!(prep
+            .guard_checks
+            .iter()
+            .any(|check| matches!(check, ScmSessionGuardCheck::IsolatedLocationReviewed(_))));
+        assert!(prep
+            .guard_checks
+            .contains(&ScmSessionGuardCheck::CleanupPolicyReviewed));
+        assert!(!prep.provider_mutation_allowed);
+    }
+
+    #[test]
+    fn execution_prep_blocks_unknown_runtime_constraints() {
+        let mut plan = ScmWorkingCopySessionPlan::primary_tree_session(
+            session_id("session:blocked:prep"),
+            repo_id(),
+            ScmProviderKind::Git,
+            Some(branch("nucleus/task-789")),
+            Some(change_ref()),
+            Some(branch("main")),
+        );
+        plan.runtime_constraints = vec![ScmRuntimeConstraint::Unknown];
+        let prep = ScmWorkingSessionExecutionPrep::from_plan(&plan);
+
+        assert!(matches!(
+            prep.status,
+            ScmWorkingSessionExecutionPrepStatus::Blocked(_)
+        ));
+        assert!(!prep.provider_mutation_allowed);
+    }
+
+    #[test]
+    fn recovery_records_keep_cleanup_and_repair_reviewable() {
+        let plan = ScmWorkingCopySessionPlan::primary_tree_session(
+            session_id("session:recovery"),
+            repo_id(),
+            ScmProviderKind::Git,
+            Some(branch("nucleus/task-recovery")),
+            Some(change_ref()),
+            Some(branch("main")),
+        );
+        let cleanup = ScmSessionRecoveryRecord::cleanup_ready(
+            ScmSessionRecoveryRecordId("recovery:cleanup".to_owned()),
+            &plan,
+            vec!["evidence:status-clean".to_owned()],
+        );
+        let repair = ScmSessionRecoveryRecord::repair_required(
+            ScmSessionRecoveryRecordId("recovery:repair".to_owned()),
+            &plan,
+            "session target ref missing".to_owned(),
+            vec!["evidence:missing-ref".to_owned()],
+        );
+
+        assert_eq!(cleanup.state, ScmSessionRecoveryState::CleanupReady);
+        assert!(cleanup.requires_human_approval);
+        assert!(!cleanup.provider_mutation_allowed);
+        assert!(matches!(
+            repair.state,
+            ScmSessionRecoveryState::RepairRequired(_)
+        ));
+        assert!(repair.requires_human_approval);
+        assert!(!repair.provider_mutation_allowed);
     }
 }

@@ -1,6 +1,6 @@
 # 189 Working Session Cleanup And Repair Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../041-scm-working-session-execution-prep.md`
@@ -29,3 +29,9 @@ Represent cleanup and repair records for interrupted SCM working sessions.
 ## Stop Conditions
 
 - Stop if cleanup records imply automatic destructive behavior.
+
+## Result
+
+Added cleanup-ready and repair-required recovery records for interrupted
+working sessions. Records retain evidence refs and human approval requirements
+without allowing destructive provider mutation.

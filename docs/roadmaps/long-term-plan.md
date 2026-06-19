@@ -58,14 +58,14 @@ Current G02 continuation sequence:
 9. management sync apply and review - complete
 10. SCM management capture and share foundation - complete
 11. Git management capture adapter proof - complete
-12. SCM working-session execution prep - active
-13. change-request preparation boundary - planned
+12. SCM working-session execution prep - complete
+13. change-request preparation boundary - active
 14. steward SCM sync automation gate - planned
 15. SCM workflow closeout and next phase selection - planned
 
 Selected current workflow:
 
-- SCM working-session execution prep
+- change-request preparation boundary
 
 Reason:
 
@@ -78,10 +78,12 @@ Reason:
   management projection changes
 - Git-specific dry-run planning and sanitized status/diff evidence now exist
   without committing or pushing
-- the next useful checkpoint is modeling working-session execution prep for
-  primary-tree and isolated-worktree modes
+- working-session execution prep now models primary-tree and isolated-location
+  guard checks, cleanup policy, repair records, and no-provider-mutation gates
+- the next useful checkpoint is provider-neutral change-request candidate and
+  evidence package preparation
 - checkout, worktree creation, push, publish, promote, forge review requests,
-  and steward automatic sync remain later gates
+  merge, and steward automatic sync remain later gates
 
 This keeps execution focused on one real workflow while protecting the core
 engine boundary from more proof-surface sprawl.

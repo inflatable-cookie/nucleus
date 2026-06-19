@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `186-working-session-execution-policy-reset.md`
+- `191-forge-share-policy-reset.md`
 
 ## Planned Cards
 
-- `187-primary-tree-branch-session-plan-records.md`
-- `188-isolated-worktree-session-plan-records.md`
-- `189-working-session-cleanup-and-repair-records.md`
-- `190-working-session-execution-validation-and-next-lane.md`
-- `191-forge-share-policy-reset.md`
 - `192-change-request-candidate-records.md`
 - `193-github-review-boundary-descriptor.md`
 - `194-change-request-evidence-package-read-model.md`
@@ -221,3 +216,8 @@ Hold execution cards for `g02`.
 - `183-git-capture-command-envelope-dry-run.md`
 - `184-git-capture-status-and-diff-evidence.md`
 - `185-git-capture-validation-and-next-lane.md`
+- `186-working-session-execution-policy-reset.md`
+- `187-primary-tree-branch-session-plan-records.md`
+- `188-isolated-worktree-session-plan-records.md`
+- `189-working-session-cleanup-and-repair-records.md`
+- `190-working-session-execution-validation-and-next-lane.md`
