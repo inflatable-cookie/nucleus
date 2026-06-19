@@ -13,6 +13,7 @@ mod runtime_instance;
 mod session_binding;
 mod spawn_intent;
 mod stdio_frames;
+mod transport_receipts;
 
 pub use event_store_linkage::{
     link_codex_observation_to_event_store, CodexAppServerObservationEventLink,
@@ -59,6 +60,10 @@ pub use stdio_frames::{
     codex_stdio_frame_source_record, CodexAppServerStdioDecodeStatus,
     CodexAppServerStdioFrameDirection, CodexAppServerStdioFrameSourceId,
     CodexAppServerStdioFrameSourceRecord,
+};
+pub use transport_receipts::{
+    codex_receipt_from_spawn_intent, codex_receipt_from_stdio_frame,
+    CodexAppServerTransportReceiptKind,
 };
 
 #[cfg(test)]

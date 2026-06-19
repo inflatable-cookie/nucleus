@@ -209,6 +209,9 @@ Updated: 2026-06-16
   or retaining raw frames.
   Codex spawn-intent admission records now compose readiness blockers and
   runtime instance state without starting a provider process.
+  Codex startup and decode receipt mappings now turn blocked spawn intent,
+  malformed frames, unsupported frames, and recovery-required frames into
+  sanitized harness-provider runtime receipts without raw stream retention.
   Command handling still treats other state-shaped commands as accepted for
   later state mutation handling, while runtime session commands are rejected
   through scheduler admission or explicit deferred runtime-control errors. Local

@@ -118,4 +118,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/244-codex-startup-and-decode-receipts.md`.
+Execute `g02/batch-cards/245-codex-process-transport-closeout.md`.

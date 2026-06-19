@@ -1,6 +1,6 @@
 # 244 Codex Startup And Decode Receipts
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../055-codex-process-and-transport-acceptance.md`
@@ -22,6 +22,16 @@ runtime receipts.
 - Failure receipts are replay-safe.
 - Receipt refs can be surfaced by diagnostics without raw payloads.
 - Process failure does not imply task failure or rollback.
+
+## Result
+
+`nucleus-server` now has Codex transport receipt mappings under
+`codex_supervision/transport_receipts.rs`.
+
+Blocked spawn intent, malformed frames, unsupported frames, decoded frames, and
+recovery-required frames map to sanitized harness-provider runtime receipts.
+The mappings do not spawn, decode live bytes, retain raw streams, or imply task
+failure or rollback.
 
 ## Validation
 

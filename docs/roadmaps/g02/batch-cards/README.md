@@ -10,11 +10,11 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `244-codex-startup-and-decode-receipts.md`
+- `245-codex-process-transport-closeout.md`
 
 ## Planned Cards
 
-- `245-codex-process-transport-closeout.md`
+- None.
 
 ## Completed Cards
 
@@ -261,3 +261,4 @@ Hold execution cards for `g02`.
 - `241-codex-runtime-instance-records.md`
 - `242-codex-stdio-frame-source-records.md`
 - `243-codex-spawn-intent-admission.md`
+- `244-codex-startup-and-decode-receipts.md`

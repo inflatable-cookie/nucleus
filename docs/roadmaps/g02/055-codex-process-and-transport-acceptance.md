@@ -30,7 +30,7 @@ readiness, and failure receipts.
 - [x] Define stdio transport frame source and decode-failure records.
 - [x] Gate process spawn intent through host authority, binary, auth, schema,
       transport, process-control, and payload-retention readiness.
-- [ ] Link startup, handshake, decode, and process-exit failures to sanitized
+- [x] Link startup, handshake, decode, and process-exit failures to sanitized
       runtime receipts.
 - [ ] Keep provider callbacks, cancellation, resume, and task mutation out of
       scope.
@@ -48,7 +48,7 @@ readiness, and failure receipts.
 - [x] Runtime instance batch: add Codex process/runtime instance records.
 - [x] Transport batch: add stdio frame source and decode outcome records.
 - [x] Startup gate batch: compose readiness into spawn-intent admission records.
-- [ ] Receipt batch: map startup/decode/exit failures to runtime receipts.
+- [x] Receipt batch: map startup/decode/exit failures to runtime receipts.
 - [ ] Closeout batch: validate and select callback, cancellation, recovery, or
       subscription as the next gate.
 
@@ -56,17 +56,18 @@ readiness, and failure receipts.
 
 Ready cards:
 
-- `batch-cards/244-codex-startup-and-decode-receipts.md`
+- `batch-cards/245-codex-process-transport-closeout.md`
 
 Planned cards:
 
-- `batch-cards/245-codex-process-transport-closeout.md`
+- None.
 
 Completed cards:
 
 - `batch-cards/241-codex-runtime-instance-records.md`
 - `batch-cards/242-codex-stdio-frame-source-records.md`
 - `batch-cards/243-codex-spawn-intent-admission.md`
+- `batch-cards/244-codex-startup-and-decode-receipts.md`
 
 ## Acceptance Criteria
 
@@ -76,7 +77,7 @@ Completed cards:
       and recovery-required frames.
 - [x] Spawn intent is blocked unless host/process/auth/schema/transport gates
       are ready.
-- [ ] Startup and decode failure receipts are sanitized and replay-safe.
+- [x] Startup and decode failure receipts are sanitized and replay-safe.
 - [ ] Validation passes.
 
 ## Gate
