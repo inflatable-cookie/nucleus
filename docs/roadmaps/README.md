@@ -117,4 +117,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/235-codex-session-binding-records.md`.
+Execute `g02/batch-cards/236-codex-ingestion-idempotency.md`.

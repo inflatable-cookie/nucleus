@@ -185,7 +185,12 @@ Updated: 2026-06-16
   task authoring input, project existence validation, title validation,
   agent-readiness checks, revision expectations, and read-after-write DTO
   visibility. It does not open transports, start providers, execute runtime
-  work, or deliver subscriptions.
+  work, or deliver subscriptions. Codex supervision now also contains
+  server-owned session binding and ingestion source record types that preserve
+  Nucleus session authority, provider refs, binding confidence, recovery
+  state, frame method, transport sequence, and raw-payload retention policy.
+  These records do not open stdio, decode live transport, append event-store
+  records, or run provider commands.
   Command handling still treats other state-shaped commands as accepted for
   later state mutation handling, while runtime session commands are rejected
   through scheduler admission or explicit deferred runtime-control errors. Local

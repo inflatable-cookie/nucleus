@@ -100,15 +100,19 @@ pub use codex_runtime_validation::{
 };
 pub use codex_supervision::{
     assess_codex_app_server_handshake, assess_codex_app_server_supervision,
-    ingest_codex_app_server_live_frame, CodexAppServerBinary, CodexAppServerHandshakeBlocker,
-    CodexAppServerHandshakeExpectation, CodexAppServerHandshakeObservation,
-    CodexAppServerHandshakePreflight, CodexAppServerHandshakePreflightStatus,
-    CodexAppServerLiveFrame, CodexAppServerLiveIngestion, CodexAppServerLiveIngestionStatus,
-    CodexAppServerLiveProjection, CodexAppServerSchemaEvidenceRef,
-    CodexAppServerSupervisionBlocker, CodexAppServerSupervisionLimits,
-    CodexAppServerSupervisionReadiness, CodexAppServerSupervisionReadinessInput,
-    CodexAppServerSupervisionReadinessStatus, CodexAppServerSupervisionRequest,
-    CodexAppServerUnsupportedObservation, CodexRawPayloadPolicy,
+    codex_ingestion_source_from_live_frame, codex_replacement_thread_recovery_binding,
+    codex_session_binding_from_live_frame, ingest_codex_app_server_live_frame,
+    CodexAppServerBinary, CodexAppServerBindingConfidence, CodexAppServerBindingStatus,
+    CodexAppServerHandshakeBlocker, CodexAppServerHandshakeExpectation,
+    CodexAppServerHandshakeObservation, CodexAppServerHandshakePreflight,
+    CodexAppServerHandshakePreflightStatus, CodexAppServerIngestionIdentityQuality,
+    CodexAppServerIngestionSourceId, CodexAppServerIngestionSourceRecord, CodexAppServerLiveFrame,
+    CodexAppServerLiveIngestion, CodexAppServerLiveIngestionStatus, CodexAppServerLiveProjection,
+    CodexAppServerSchemaEvidenceRef, CodexAppServerSessionBindingId,
+    CodexAppServerSessionBindingRecord, CodexAppServerSupervisionBlocker,
+    CodexAppServerSupervisionLimits, CodexAppServerSupervisionReadiness,
+    CodexAppServerSupervisionReadinessInput, CodexAppServerSupervisionReadinessStatus,
+    CodexAppServerSupervisionRequest, CodexAppServerUnsupportedObservation, CodexRawPayloadPolicy,
 };
 pub use codex_task_runtime::{
     admit_codex_task_runtime_request, classify_codex_task_runtime_error,
@@ -160,8 +164,8 @@ pub use control_serialization_readiness::{
 };
 pub use deployment::{AccessEndpoint, DeploymentMode, ServerRuntime};
 pub use diagnostics_read_models::{
-    effigy_diagnostics, management_sync_review_model, scm_session_diagnostics,
-    steward_diagnostics, sync_diagnostics, task_agent_diagnostics, EffigyDiagnosticsDto,
+    effigy_diagnostics, management_sync_review_model, scm_session_diagnostics, steward_diagnostics,
+    sync_diagnostics, task_agent_diagnostics, EffigyDiagnosticsDto,
     ScmCommandAdmissionDiagnosticDto, ScmSessionDiagnosticsDto, ScmSessionPlanDiagnosticDto,
     ScmWorkItemLinkDiagnosticDto, StewardCommandAdmissionDiagnosticDto,
     StewardCommandOutcomeDiagnosticDto, StewardDiagnosticsDto, StewardProposalDiagnosticDto,

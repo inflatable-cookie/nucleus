@@ -90,7 +90,8 @@ Current state:
   canonical event payloads, runtime ownership metadata, and provider-ref
   retention types.
 - `nucleus-server` has compile-only Codex supervision readiness, handshake
-  expectations, decoded-frame ingestion through fixture mapping, unsupported
+  expectations, server-owned session binding records, decoded-frame ingestion
+  source records, decoded-frame ingestion through fixture mapping, unsupported
   observation records, wait-state routing, task-runtime admission, progress
   projection, receipt linkage, and recovery gates.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
@@ -103,7 +104,6 @@ Missing:
 - real provider adapters
 - Codex process spawning and stdio lifecycle ownership
 - live JSON-RPC/app-server decoding from a supervised process
-- durable provider session binding records
 - event ingestion into the orchestration event store
 - provider command reactor for `thread/start`, `turn/start`, callback
   responses, interruption, and close/unsubscribe
