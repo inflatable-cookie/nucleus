@@ -10,11 +10,14 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `260-codex-send-subscription-closeout.md`
+- `261-codex-callback-request-records.md`
 
 ## Planned Cards
 
-- None.
+- `262-codex-callback-response-admission.md`
+- `263-codex-callback-response-envelope.md`
+- `264-codex-callback-receipts-diagnostics.md`
+- `265-codex-callback-closeout.md`
 
 ## Completed Cards
 
@@ -277,3 +280,4 @@ Hold execution cards for `g02`.
 - `257-codex-stdio-write-subscription-state.md`
 - `258-codex-turn-start-send-receipts.md`
 - `259-codex-subscription-diagnostics.md`
+- `260-codex-send-subscription-closeout.md`

@@ -25,9 +25,8 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-057 are
-complete, and milestone 058 is the active Codex turn-start send/subscription
-lane.
+G02 is the orchestration and engine-core generation. Milestones 001-058 are
+complete, and milestone 059 is the active Codex callback response lane.
 
 Completed workflow proof:
 
@@ -75,11 +74,12 @@ Current G02 continuation sequence:
 26. Codex process and transport acceptance - complete
 27. Codex live spawn smoke gate - complete
 28. Codex turn-start admission gate - complete
-29. Codex turn-start send/subscription gate - active
+29. Codex turn-start send/subscription gate - complete
+30. Codex callback response gate - active
 
 Selected current workflow:
 
-- Codex turn-start send/subscription gate
+- Codex callback response gate
 
 Reason:
 
@@ -296,6 +296,7 @@ Current roadmap coverage:
 - `g02/056-codex-live-spawn-smoke-gate.md`
 - `g02/057-codex-turn-start-admission-gate.md`
 - `g02/058-codex-turn-start-send-and-subscription-gate.md`
+- `g02/059-codex-callback-response-gate.md`
 
 ## Phase 5: Native Harness And Steward
 

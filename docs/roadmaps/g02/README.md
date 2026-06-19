@@ -73,17 +73,21 @@ and engine boundary are settled.
 - `055-codex-process-and-transport-acceptance.md` - completed
 - `056-codex-live-spawn-smoke-gate.md` - completed
 - `057-codex-turn-start-admission-gate.md` - completed
-- `058-codex-turn-start-send-and-subscription-gate.md` - active
+- `058-codex-turn-start-send-and-subscription-gate.md` - completed
+- `059-codex-callback-response-gate.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/260-codex-send-subscription-closeout.md`
+- `batch-cards/261-codex-callback-request-records.md`
 
 Planned cards:
 
-- None.
+- `batch-cards/262-codex-callback-response-admission.md`
+- `batch-cards/263-codex-callback-response-envelope.md`
+- `batch-cards/264-codex-callback-receipts-diagnostics.md`
+- `batch-cards/265-codex-callback-closeout.md`
 
 Completed cards:
 
@@ -346,6 +350,7 @@ Completed cards:
 - `batch-cards/257-codex-stdio-write-subscription-state.md`
 - `batch-cards/258-codex-turn-start-send-receipts.md`
 - `batch-cards/259-codex-subscription-diagnostics.md`
+- `batch-cards/260-codex-send-subscription-closeout.md`
 
 ## Planned Runway Sequence
 

@@ -114,7 +114,7 @@ Missing:
 - full Codex process spawning and stdio lifecycle execution after admission
 - live JSON-RPC/app-server decoding from a supervised process
 - turn-start command admission, policy, request envelope, and first response
-  send/subscription execution
+  callback response handling
 - persistence for stdio frame source, decode outcome, and transport receipt
   records
 - persistence for accepted runtime-observation event-store records
@@ -139,8 +139,8 @@ Likely crates:
 
 Next gate:
 
-- start with Codex turn-start send and subscription boundary
-- keep callback responses, cancellation, resume/recovery, and task mutation
+- start with Codex callback response admission and envelope records
+- keep provider-reaching cancellation, resume/recovery, and task mutation
   behind explicit follow-up gates
 - prove provider-native ids map to Nucleus-owned event, receipt, session, and
   work-item refs before letting runtime observations move task state

@@ -1,6 +1,6 @@
 # 058 Codex Turn Start Send And Subscription Gate
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -30,7 +30,7 @@ state records, sanitized receipts, and diagnostics.
       retention.
 - [x] Map send/subscription outcomes to sanitized receipts.
 - [x] Expose send/subscription diagnostics without command authority.
-- [ ] Keep callbacks, cancellation, recovery, and task mutation out of scope.
+- [x] Keep callbacks, cancellation, recovery, and task mutation out of scope.
 
 ## Non-Goals
 
@@ -46,14 +46,14 @@ state records, sanitized receipts, and diagnostics.
 - [x] Subscription state batch: add stdio write and subscription records.
 - [x] Receipt batch: map send/subscription outcomes to sanitized receipts.
 - [x] Diagnostics batch: expose send/subscription state read-only.
-- [ ] Closeout batch: validate and select callback, cancellation, recovery, or
+- [x] Closeout batch: validate and select callback, cancellation, recovery, or
       task-mutation as the next gate.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/260-codex-send-subscription-closeout.md`
+- None.
 
 Planned cards:
 
@@ -65,14 +65,36 @@ Completed cards:
 - `batch-cards/257-codex-stdio-write-subscription-state.md`
 - `batch-cards/258-codex-turn-start-send-receipts.md`
 - `batch-cards/259-codex-subscription-diagnostics.md`
+- `batch-cards/260-codex-send-subscription-closeout.md`
 
 ## Acceptance Criteria
 
 - [x] Provider send cannot start without an accepted turn-start envelope.
 - [x] Subscription state is explicit and replay-safe.
 - [x] Receipts and diagnostics exclude raw prompts/provider payloads.
-- [ ] Callback/cancellation/recovery/task-mutation behavior remains blocked.
-- [ ] Validation passes.
+- [x] Callback/cancellation/recovery/task-mutation behavior remains blocked.
+- [x] Validation passes.
+
+## Result
+
+Codex turn-start send/subscription gate is complete as record, receipt, and
+diagnostics work.
+
+Implemented:
+
+- provider-send command records
+- stdio write and subscription state records
+- send/subscription receipt mappings
+- read-only send/subscription diagnostics
+
+Not implemented:
+
+- callback responses
+- provider-reaching cancellation
+- resume/recovery execution
+- task mutation from provider observations
+
+Next gate: `059-codex-callback-response-gate.md`.
 
 ## Gate
 
