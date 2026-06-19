@@ -1,6 +1,6 @@
 # 056 Codex Live Spawn Smoke Gate
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -28,7 +28,7 @@ evidence, and stop cleanly.
 - [x] Require accepted spawn intent and local process-control readiness.
 - [x] Capture bounded startup stdout/stderr metadata without raw stream
       retention by default.
-- [ ] Stop the process cleanly in the smoke path.
+- [x] Stop the process cleanly in the smoke path.
 - [x] Surface accepted, blocked, failed, timed-out, and cleanup-required smoke
       receipts.
 
@@ -48,14 +48,14 @@ evidence, and stop cleanly.
       spawn primitives where safe.
 - [x] Evidence batch: capture bounded startup evidence and cleanup outcomes.
 - [x] Diagnostics batch: expose smoke results through read-only diagnostics.
-- [ ] Closeout batch: validate and select turn-start, callback, cancellation,
+- [x] Closeout batch: validate and select turn-start, callback, cancellation,
       recovery, or subscription as the next gate.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/250-codex-live-spawn-smoke-closeout.md`
+- None.
 
 Planned cards:
 
@@ -67,6 +67,7 @@ Completed cards:
 - `batch-cards/247-codex-live-spawn-smoke-runner.md`
 - `batch-cards/248-codex-live-spawn-smoke-evidence.md`
 - `batch-cards/249-codex-live-spawn-smoke-diagnostics.md`
+- `batch-cards/250-codex-live-spawn-smoke-closeout.md`
 
 ## Acceptance Criteria
 
@@ -74,7 +75,29 @@ Completed cards:
 - [x] Smoke path has bounded output and timeout policy.
 - [x] Cleanup outcome is explicit.
 - [x] Receipts are sanitized and replay-safe.
-- [ ] Validation passes.
+- [x] Validation passes.
+
+## Result
+
+Codex live spawn smoke gate is complete as a bounded server-side proof.
+
+Implemented:
+
+- request construction gated by accepted spawn intent and explicit limits
+- local spawn runner adapter over existing bounded process primitives
+- sanitized evidence and runtime receipt mapping
+- read-only diagnostics for smoke outcomes
+
+Not implemented:
+
+- provider turn start
+- callback responses
+- provider-reaching cancellation
+- resume/recovery execution
+- subscriptions
+- task mutation from runtime observations
+
+Next gate: `057-codex-turn-start-admission-gate.md`.
 
 ## Gate
 

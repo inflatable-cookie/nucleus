@@ -99,6 +99,10 @@ Current state:
   gates, read-only Codex ingestion diagnostics DTOs, and pre-spawn
   owned-runtime instance, stdio frame source, and spawn-intent admission
   records, plus sanitized startup/decode receipt mappings.
+- `nucleus-server` has a constrained Codex live spawn smoke request, runner
+  adapter over the bounded local spawn path, sanitized smoke evidence and
+  receipt mapping, and read-only diagnostics for accepted, blocked, failed,
+  timed-out, and cleanup-required smoke outcomes.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 
@@ -107,8 +111,10 @@ These are useful boundary proofs. They are not a live provider runtime.
 Missing:
 
 - real provider adapters
-- Codex process spawning and stdio lifecycle execution after admission
+- full Codex process spawning and stdio lifecycle execution after admission
 - live JSON-RPC/app-server decoding from a supervised process
+- turn-start command admission, policy, request envelope, and first response
+  receipt mapping
 - persistence for stdio frame source, decode outcome, and transport receipt
   records
 - persistence for accepted runtime-observation event-store records
@@ -133,9 +139,9 @@ Likely crates:
 
 Next gate:
 
-- start with Codex live session event ingestion, not broader provider behavior
-- keep provider process spawning, callback responses, and task mutation behind
-  explicit follow-up gates
+- start with Codex turn-start admission and request envelope shape
+- keep callback responses, cancellation, resume/recovery, subscriptions, and
+  task mutation behind explicit follow-up gates
 - prove provider-native ids map to Nucleus-owned event, receipt, session, and
   work-item refs before letting runtime observations move task state
 

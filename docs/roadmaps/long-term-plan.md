@@ -25,8 +25,8 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-055 are
-complete, and milestone 056 is the active Codex live spawn smoke lane.
+G02 is the orchestration and engine-core generation. Milestones 001-056 are
+complete, and milestone 057 is the active Codex turn-start admission lane.
 
 Completed workflow proof:
 
@@ -72,11 +72,12 @@ Current G02 continuation sequence:
 24. harness runtime rebaseline - complete
 25. Codex live event acceptance - complete
 26. Codex process and transport acceptance - complete
-27. Codex live spawn smoke gate - active
+27. Codex live spawn smoke gate - complete
+28. Codex turn-start admission gate - active
 
 Selected current workflow:
 
-- Codex live spawn smoke gate
+- Codex turn-start admission gate
 
 Reason:
 
@@ -291,6 +292,7 @@ Current roadmap coverage:
 - `g02/054-codex-live-event-acceptance.md`
 - `g02/055-codex-process-and-transport-acceptance.md`
 - `g02/056-codex-live-spawn-smoke-gate.md`
+- `g02/057-codex-turn-start-admission-gate.md`
 
 ## Phase 5: Native Harness And Steward
 

@@ -10,11 +10,14 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `250-codex-live-spawn-smoke-closeout.md`
+- `251-codex-turn-start-request-records.md`
 
 ## Planned Cards
 
-- None.
+- `252-codex-turn-start-admission-policy.md`
+- `253-codex-turn-start-envelope-mapping.md`
+- `254-codex-turn-start-receipts-diagnostics.md`
+- `255-codex-turn-start-closeout.md`
 
 ## Completed Cards
 
@@ -267,3 +270,4 @@ Hold execution cards for `g02`.
 - `247-codex-live-spawn-smoke-runner.md`
 - `248-codex-live-spawn-smoke-evidence.md`
 - `249-codex-live-spawn-smoke-diagnostics.md`
+- `250-codex-live-spawn-smoke-closeout.md`

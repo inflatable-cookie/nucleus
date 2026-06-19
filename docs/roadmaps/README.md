@@ -60,7 +60,8 @@ shape.
 - `g02/053-harness-runtime-rebaseline.md` - completed
 - `g02/054-codex-live-event-acceptance.md` - completed
 - `g02/055-codex-process-and-transport-acceptance.md` - completed
-- `g02/056-codex-live-spawn-smoke-gate.md` - active
+- `g02/056-codex-live-spawn-smoke-gate.md` - completed
+- `g02/057-codex-turn-start-admission-gate.md` - active
 
 ## Previous Generation
 
@@ -119,4 +120,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/250-codex-live-spawn-smoke-closeout.md`.
+Execute `g02/batch-cards/251-codex-turn-start-request-records.md`.

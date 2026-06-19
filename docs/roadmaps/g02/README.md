@@ -71,17 +71,21 @@ and engine boundary are settled.
 - `053-harness-runtime-rebaseline.md` - completed
 - `054-codex-live-event-acceptance.md` - completed
 - `055-codex-process-and-transport-acceptance.md` - completed
-- `056-codex-live-spawn-smoke-gate.md` - active
+- `056-codex-live-spawn-smoke-gate.md` - completed
+- `057-codex-turn-start-admission-gate.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/250-codex-live-spawn-smoke-closeout.md`
+- `batch-cards/251-codex-turn-start-request-records.md`
 
 Planned cards:
 
-- None.
+- `batch-cards/252-codex-turn-start-admission-policy.md`
+- `batch-cards/253-codex-turn-start-envelope-mapping.md`
+- `batch-cards/254-codex-turn-start-receipts-diagnostics.md`
+- `batch-cards/255-codex-turn-start-closeout.md`
 
 Completed cards:
 
@@ -334,6 +338,7 @@ Completed cards:
 - `batch-cards/247-codex-live-spawn-smoke-runner.md`
 - `batch-cards/248-codex-live-spawn-smoke-evidence.md`
 - `batch-cards/249-codex-live-spawn-smoke-diagnostics.md`
+- `batch-cards/250-codex-live-spawn-smoke-closeout.md`
 
 ## Planned Runway Sequence
 
