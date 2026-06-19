@@ -10,13 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `246-codex-live-spawn-smoke-request.md`
+- `249-codex-live-spawn-smoke-diagnostics.md`
 
 ## Planned Cards
 
-- `247-codex-live-spawn-smoke-runner.md`
-- `248-codex-live-spawn-smoke-evidence.md`
-- `249-codex-live-spawn-smoke-diagnostics.md`
 - `250-codex-live-spawn-smoke-closeout.md`
 
 ## Completed Cards
@@ -266,3 +263,6 @@ Hold execution cards for `g02`.
 - `243-codex-spawn-intent-admission.md`
 - `244-codex-startup-and-decode-receipts.md`
 - `245-codex-process-transport-closeout.md`
+- `246-codex-live-spawn-smoke-request.md`
+- `247-codex-live-spawn-smoke-runner.md`
+- `248-codex-live-spawn-smoke-evidence.md`

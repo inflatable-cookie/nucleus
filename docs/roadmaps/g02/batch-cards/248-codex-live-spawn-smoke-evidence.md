@@ -1,6 +1,6 @@
 # 248 Codex Live Spawn Smoke Evidence
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../056-codex-live-spawn-smoke-gate.md`
@@ -20,6 +20,12 @@ Capture smoke startup evidence and cleanup outcomes safely.
 - Evidence excludes credentials and raw provider payloads.
 - Cleanup-required state is visible.
 - Receipts remain replay-safe.
+
+## Result
+
+Implemented sanitized smoke evidence and runtime receipt mapping with command
+evidence refs, output byte counts, truncation flags, cleanup-required state,
+and no raw stream retention.
 
 ## Validation
 

@@ -8,6 +8,9 @@ mod event_store_linkage;
 mod handshake;
 mod idempotency;
 mod live_ingestion;
+mod live_spawn_smoke_evidence;
+mod live_spawn_smoke_request;
+mod live_spawn_smoke_runner;
 mod readiness;
 mod runtime_instance;
 mod session_binding;
@@ -33,6 +36,19 @@ pub use live_ingestion::{
     ingest_codex_app_server_live_frame, CodexAppServerLiveFrame, CodexAppServerLiveIngestion,
     CodexAppServerLiveIngestionStatus, CodexAppServerLiveProjection,
     CodexAppServerUnsupportedObservation, CodexRawPayloadPolicy,
+};
+pub use live_spawn_smoke_evidence::{
+    codex_live_spawn_smoke_evidence, codex_receipt_from_live_spawn_smoke_evidence,
+    CodexAppServerLiveSpawnSmokeEvidenceRecord, CodexAppServerLiveSpawnSmokeEvidenceRecordId,
+};
+pub use live_spawn_smoke_request::{
+    codex_live_spawn_smoke_request, CodexAppServerLiveSpawnSmokeCleanupPolicy,
+    CodexAppServerLiveSpawnSmokeLimits, CodexAppServerLiveSpawnSmokeRequest,
+    CodexAppServerLiveSpawnSmokeRequestId, CodexAppServerLiveSpawnSmokeRequestRejection,
+};
+pub use live_spawn_smoke_runner::{
+    run_codex_live_spawn_smoke, CodexAppServerLiveSpawnSmokeOutcome,
+    CodexAppServerLiveSpawnSmokeRunnerInput, CodexAppServerLiveSpawnSmokeRunnerResult,
 };
 pub use readiness::{
     assess_codex_app_server_supervision, CodexAppServerBinary, CodexAppServerSchemaEvidenceRef,

@@ -24,9 +24,9 @@ evidence, and stop cleanly.
 
 ## Goals
 
-- [ ] Add a constrained Codex process spawn smoke request.
-- [ ] Require accepted spawn intent and local process-control readiness.
-- [ ] Capture bounded startup stdout/stderr metadata without raw stream
+- [x] Add a constrained Codex process spawn smoke request.
+- [x] Require accepted spawn intent and local process-control readiness.
+- [x] Capture bounded startup stdout/stderr metadata without raw stream
       retention by default.
 - [ ] Stop the process cleanly in the smoke path.
 - [ ] Surface accepted, blocked, failed, timed-out, and cleanup-required smoke
@@ -43,10 +43,10 @@ evidence, and stop cleanly.
 
 ## Execution Plan
 
-- [ ] Smoke request batch: add constrained live spawn smoke request records.
-- [ ] Runner batch: wire the request to existing local process-control/read-only
+- [x] Smoke request batch: add constrained live spawn smoke request records.
+- [x] Runner batch: wire the request to existing local process-control/read-only
       spawn primitives where safe.
-- [ ] Evidence batch: capture bounded startup evidence and cleanup outcomes.
+- [x] Evidence batch: capture bounded startup evidence and cleanup outcomes.
 - [ ] Diagnostics batch: expose smoke results through read-only diagnostics.
 - [ ] Closeout batch: validate and select turn-start, callback, cancellation,
       recovery, or subscription as the next gate.
@@ -55,25 +55,24 @@ evidence, and stop cleanly.
 
 Ready cards:
 
-- `batch-cards/246-codex-live-spawn-smoke-request.md`
+- `batch-cards/249-codex-live-spawn-smoke-diagnostics.md`
 
 Planned cards:
 
-- `batch-cards/247-codex-live-spawn-smoke-runner.md`
-- `batch-cards/248-codex-live-spawn-smoke-evidence.md`
-- `batch-cards/249-codex-live-spawn-smoke-diagnostics.md`
 - `batch-cards/250-codex-live-spawn-smoke-closeout.md`
 
 Completed cards:
 
-- None.
+- `batch-cards/246-codex-live-spawn-smoke-request.md`
+- `batch-cards/247-codex-live-spawn-smoke-runner.md`
+- `batch-cards/248-codex-live-spawn-smoke-evidence.md`
 
 ## Acceptance Criteria
 
-- [ ] Smoke spawn cannot run without accepted spawn intent.
-- [ ] Smoke path has bounded output and timeout policy.
-- [ ] Cleanup outcome is explicit.
-- [ ] Receipts are sanitized and replay-safe.
+- [x] Smoke spawn cannot run without accepted spawn intent.
+- [x] Smoke path has bounded output and timeout policy.
+- [x] Cleanup outcome is explicit.
+- [x] Receipts are sanitized and replay-safe.
 - [ ] Validation passes.
 
 ## Gate

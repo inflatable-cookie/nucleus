@@ -1,6 +1,6 @@
 # 249 Codex Live Spawn Smoke Diagnostics
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../056-codex-live-spawn-smoke-gate.md`

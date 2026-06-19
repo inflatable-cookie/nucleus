@@ -119,4 +119,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/246-codex-live-spawn-smoke-request.md`.
+Execute `g02/batch-cards/249-codex-live-spawn-smoke-diagnostics.md`.

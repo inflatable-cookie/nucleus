@@ -1,6 +1,6 @@
 # 247 Codex Live Spawn Smoke Runner
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../056-codex-live-spawn-smoke-gate.md`
@@ -22,6 +22,12 @@ safe.
   outcomes.
 - Output capture remains bounded.
 - Process cleanup is explicit.
+
+## Result
+
+Implemented `run_codex_live_spawn_smoke`, adapting the constrained Codex smoke
+request into the existing local read-only spawn boundary and mapping results
+into Codex-specific smoke outcomes.
 
 ## Validation
 
