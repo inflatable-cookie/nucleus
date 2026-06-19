@@ -30,7 +30,7 @@ letting provider observations mutate task state.
       readiness, payload retention, and callback posture.
 - [x] Map accepted turn-start requests to provider envelope records without
       sending callbacks or retaining raw payloads.
-- [ ] Map accepted, blocked, failed, and unsupported turn-start outcomes to
+- [x] Map accepted, blocked, failed, and unsupported turn-start outcomes to
       sanitized receipts and diagnostics.
 - [ ] Keep task mutation out of scope until runtime observations are accepted
       by a later gate.
@@ -50,7 +50,7 @@ letting provider observations mutate task state.
 - [x] Request batch: add turn-start request records.
 - [x] Admission batch: gate turn-start policy before provider send.
 - [x] Envelope batch: map accepted requests to provider envelope records.
-- [ ] Receipts/diagnostics batch: expose outcomes through sanitized receipts
+- [x] Receipts/diagnostics batch: expose outcomes through sanitized receipts
       and read-only diagnostics.
 - [ ] Closeout batch: validate and select callback, cancellation, recovery,
       subscription, or task-mutation as the next gate.
@@ -59,24 +59,25 @@ letting provider observations mutate task state.
 
 Ready cards:
 
-- `batch-cards/254-codex-turn-start-receipts-diagnostics.md`
+- `batch-cards/255-codex-turn-start-closeout.md`
 
 Planned cards:
 
-- `batch-cards/255-codex-turn-start-closeout.md`
+- None.
 
 Completed cards:
 
 - `batch-cards/251-codex-turn-start-request-records.md`
 - `batch-cards/252-codex-turn-start-admission-policy.md`
 - `batch-cards/253-codex-turn-start-envelope-mapping.md`
+- `batch-cards/254-codex-turn-start-receipts-diagnostics.md`
 
 ## Acceptance Criteria
 
 - [x] Turn-start cannot be requested without runtime/session/work refs.
 - [x] Admission is blocked without live-spawn evidence and task-work readiness.
 - [x] Provider envelope records are sanitized and replay-safe.
-- [ ] Receipts and diagnostics expose outcomes without command authority.
+- [x] Receipts and diagnostics expose outcomes without command authority.
 - [ ] Validation passes.
 
 ## Gate

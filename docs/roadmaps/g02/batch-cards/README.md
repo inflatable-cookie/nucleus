@@ -10,11 +10,11 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `254-codex-turn-start-receipts-diagnostics.md`
+- `255-codex-turn-start-closeout.md`
 
 ## Planned Cards
 
-- `255-codex-turn-start-closeout.md`
+- None.
 
 ## Completed Cards
 
@@ -271,3 +271,4 @@ Hold execution cards for `g02`.
 - `251-codex-turn-start-request-records.md`
 - `252-codex-turn-start-admission-policy.md`
 - `253-codex-turn-start-envelope-mapping.md`
+- `254-codex-turn-start-receipts-diagnostics.md`

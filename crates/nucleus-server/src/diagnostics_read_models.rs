@@ -5,6 +5,7 @@
 
 mod codex_ingestion;
 mod codex_live_spawn;
+mod codex_turn_start;
 mod effigy;
 mod helpers;
 mod scm;
@@ -21,6 +22,9 @@ pub use codex_ingestion::{
 pub use codex_live_spawn::{
     codex_live_spawn_smoke_diagnostics, CodexLiveSpawnSmokeDiagnosticDto,
     CodexLiveSpawnSmokeDiagnosticsDto,
+};
+pub use codex_turn_start::{
+    codex_turn_start_diagnostics, CodexTurnStartDiagnosticDto, CodexTurnStartDiagnosticsDto,
 };
 pub use effigy::{effigy_diagnostics, EffigyDiagnosticsDto};
 pub use scm::{

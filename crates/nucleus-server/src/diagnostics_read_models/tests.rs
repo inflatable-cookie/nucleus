@@ -48,6 +48,7 @@ use nucleus_tasks::TaskId;
 
 mod codex_ingestion;
 mod codex_live_spawn;
+mod codex_turn_start;
 mod effigy;
 mod scm;
 mod serialization;

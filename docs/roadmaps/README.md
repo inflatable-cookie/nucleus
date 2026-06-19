@@ -120,4 +120,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/254-codex-turn-start-receipts-diagnostics.md`.
+Execute `g02/batch-cards/255-codex-turn-start-closeout.md`.

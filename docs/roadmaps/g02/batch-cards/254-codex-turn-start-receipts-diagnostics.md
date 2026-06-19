@@ -1,6 +1,6 @@
 # 254 Codex Turn Start Receipts Diagnostics
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../057-codex-turn-start-admission-gate.md`
@@ -21,6 +21,13 @@ Expose turn-start outcomes through sanitized receipts and read-only diagnostics.
 - Clients can inspect turn-start status without authority.
 - Receipts and diagnostics do not leak raw prompt/provider data.
 - Unsupported callback/cancellation states are visible.
+
+## Result
+
+Implemented turn-start outcome records, sanitized runtime receipt mapping, and
+read-only diagnostics for accepted, blocked, failed, and unsupported outcomes.
+Diagnostics expose next actions without command authority, raw prompt data, or
+provider payloads.
 
 ## Validation
 

@@ -78,11 +78,11 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/254-codex-turn-start-receipts-diagnostics.md`
+- `batch-cards/255-codex-turn-start-closeout.md`
 
 Planned cards:
 
-- `batch-cards/255-codex-turn-start-closeout.md`
+- None.
 
 Completed cards:
 
@@ -339,6 +339,7 @@ Completed cards:
 - `batch-cards/251-codex-turn-start-request-records.md`
 - `batch-cards/252-codex-turn-start-admission-policy.md`
 - `batch-cards/253-codex-turn-start-envelope-mapping.md`
+- `batch-cards/254-codex-turn-start-receipts-diagnostics.md`
 
 ## Planned Runway Sequence
 
