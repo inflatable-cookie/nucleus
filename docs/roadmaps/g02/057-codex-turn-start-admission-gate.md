@@ -1,6 +1,6 @@
 # 057 Codex Turn Start Admission Gate
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -32,7 +32,7 @@ letting provider observations mutate task state.
       sending callbacks or retaining raw payloads.
 - [x] Map accepted, blocked, failed, and unsupported turn-start outcomes to
       sanitized receipts and diagnostics.
-- [ ] Keep task mutation out of scope until runtime observations are accepted
+- [x] Keep task mutation out of scope until runtime observations are accepted
       by a later gate.
 
 ## Non-Goals
@@ -52,14 +52,14 @@ letting provider observations mutate task state.
 - [x] Envelope batch: map accepted requests to provider envelope records.
 - [x] Receipts/diagnostics batch: expose outcomes through sanitized receipts
       and read-only diagnostics.
-- [ ] Closeout batch: validate and select callback, cancellation, recovery,
+- [x] Closeout batch: validate and select callback, cancellation, recovery,
       subscription, or task-mutation as the next gate.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/255-codex-turn-start-closeout.md`
+- None.
 
 Planned cards:
 
@@ -71,6 +71,7 @@ Completed cards:
 - `batch-cards/252-codex-turn-start-admission-policy.md`
 - `batch-cards/253-codex-turn-start-envelope-mapping.md`
 - `batch-cards/254-codex-turn-start-receipts-diagnostics.md`
+- `batch-cards/255-codex-turn-start-closeout.md`
 
 ## Acceptance Criteria
 
@@ -78,7 +79,29 @@ Completed cards:
 - [x] Admission is blocked without live-spawn evidence and task-work readiness.
 - [x] Provider envelope records are sanitized and replay-safe.
 - [x] Receipts and diagnostics expose outcomes without command authority.
-- [ ] Validation passes.
+- [x] Validation passes.
+
+## Result
+
+Codex turn-start admission gate is complete as a pre-send boundary.
+
+Implemented:
+
+- turn-start request records over Nucleus-owned runtime/session/task/work refs
+- admission policy with explicit deferred callback and cancellation posture
+- sanitized `turn/start` envelope records
+- turn-start outcome receipt mapping and read-only diagnostics
+
+Not implemented:
+
+- provider send/write
+- event subscription lifecycle
+- callback responses
+- provider-reaching cancellation
+- resume/recovery execution
+- task mutation from provider observations
+
+Next gate: `058-codex-turn-start-send-and-subscription-gate.md`.
 
 ## Gate
 

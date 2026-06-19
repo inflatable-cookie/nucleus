@@ -85,6 +85,7 @@ Current planning artifacts:
 - `roadmaps/g02/055-codex-process-and-transport-acceptance.md`
 - `roadmaps/g02/056-codex-live-spawn-smoke-gate.md`
 - `roadmaps/g02/057-codex-turn-start-admission-gate.md`
+- `roadmaps/g02/058-codex-turn-start-send-and-subscription-gate.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -92,8 +93,8 @@ Current planning artifacts:
 
 ## Guardrail
 
-Do not widen provider callbacks, cancellation, resume execution, subscriptions,
-remote transport, task mutation, or UI sync controls until the Codex turn-start
-admission gate proves the request, policy, envelope, receipt, and diagnostics
-shape. The red god-file gate is clear, but warning-sized files remain pressure
-when touched.
+Do not widen provider callbacks, cancellation, resume execution, task mutation,
+remote transport, or UI sync controls until the Codex turn-start
+send/subscription gate proves provider-write and subscription state without raw
+payload retention. The red god-file gate is clear, but warning-sized files
+remain pressure when touched.

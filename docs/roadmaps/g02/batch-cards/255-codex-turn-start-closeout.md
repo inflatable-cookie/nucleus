@@ -1,6 +1,6 @@
 # 255 Codex Turn Start Closeout
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../057-codex-turn-start-admission-gate.md`
@@ -21,6 +21,12 @@ Close the Codex turn-start admission lane and select the next runtime gate.
 - Roadmap state has one clear next task.
 - The next gate is explicit.
 - Validation passes or blockers are recorded.
+
+## Result
+
+Roadmap `057` is complete. Roadmap `058` is the next active lane, focused on
+provider send and subscription state before callback, cancellation, recovery,
+or task-mutation behavior expands.
 
 ## Validation
 

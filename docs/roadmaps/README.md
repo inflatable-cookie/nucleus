@@ -61,7 +61,8 @@ shape.
 - `g02/054-codex-live-event-acceptance.md` - completed
 - `g02/055-codex-process-and-transport-acceptance.md` - completed
 - `g02/056-codex-live-spawn-smoke-gate.md` - completed
-- `g02/057-codex-turn-start-admission-gate.md` - active
+- `g02/057-codex-turn-start-admission-gate.md` - completed
+- `g02/058-codex-turn-start-send-and-subscription-gate.md` - active
 
 ## Previous Generation
 
@@ -120,4 +121,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/255-codex-turn-start-closeout.md`.
+Execute `g02/batch-cards/256-codex-provider-send-command-boundary.md`.
