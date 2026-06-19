@@ -17,6 +17,7 @@ mod session_binding;
 mod spawn_intent;
 mod stdio_frames;
 mod turn_start_admission;
+mod turn_start_envelope;
 mod turn_start_request;
 mod transport_receipts;
 
@@ -84,6 +85,10 @@ pub use turn_start_admission::{
     CodexAppServerTurnStartAdmissionBlocker, CodexAppServerTurnStartAdmissionId,
     CodexAppServerTurnStartAdmissionInput, CodexAppServerTurnStartAdmissionStatus,
     CodexAppServerTurnStartDeferredPolicy,
+};
+pub use turn_start_envelope::{
+    codex_turn_start_envelope, CodexAppServerTurnStartEnvelopeId,
+    CodexAppServerTurnStartEnvelopeRecord, CodexAppServerTurnStartEnvelopeRejection,
 };
 pub use turn_start_request::{
     codex_turn_start_request, CodexAppServerTurnStartPromptRef,

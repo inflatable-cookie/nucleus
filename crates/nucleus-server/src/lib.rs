@@ -135,10 +135,13 @@ pub use codex_supervision::{
     CodexAppServerTurnStartAdmission, CodexAppServerTurnStartAdmissionBlocker,
     CodexAppServerTurnStartAdmissionId, CodexAppServerTurnStartAdmissionInput,
     CodexAppServerTurnStartAdmissionStatus, CodexAppServerTurnStartDeferredPolicy,
+    CodexAppServerTurnStartEnvelopeId, CodexAppServerTurnStartEnvelopeRecord,
+    CodexAppServerTurnStartEnvelopeRejection,
     CodexAppServerTurnStartPromptRef, CodexAppServerTurnStartPromptRetentionPolicy,
     CodexAppServerTurnStartRequest, CodexAppServerTurnStartRequestId,
     CodexAppServerTurnStartRequestRejection, CodexAppServerUnsupportedObservation,
-    CodexRawPayloadPolicy, admit_codex_turn_start, codex_turn_start_request,
+    CodexRawPayloadPolicy, admit_codex_turn_start, codex_turn_start_envelope,
+    codex_turn_start_request,
 };
 pub use codex_task_runtime::{
     admit_codex_task_runtime_request, classify_codex_task_runtime_error,

@@ -1,6 +1,6 @@
 # 253 Codex Turn Start Envelope Mapping
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../057-codex-turn-start-admission-gate.md`
@@ -21,6 +21,12 @@ Map accepted turn-start admissions to sanitized provider envelope records.
 - Envelope records are replay-safe and idempotency-friendly.
 - Provider send payload construction has explicit payload-retention policy.
 - No callback or cancellation path is implied.
+
+## Result
+
+Implemented `codex_turn_start_envelope`, which maps accepted turn-start
+admissions to sanitized `turn/start` envelope records without provider send,
+raw payload retention, callback handling, or task mutation.
 
 ## Validation
 
