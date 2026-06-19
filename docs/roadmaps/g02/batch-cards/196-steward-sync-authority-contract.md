@@ -1,6 +1,6 @@
 # 196 Steward Sync Authority Contract
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../043-steward-scm-sync-automation-gate.md`

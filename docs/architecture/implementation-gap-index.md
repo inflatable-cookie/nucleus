@@ -154,6 +154,12 @@ Current state:
   exist with guard checks, cleanup policy, and provider-mutation gates
 - cleanup-ready and repair-required recovery records retain evidence refs and
   human approval requirements before destructive provider action
+- provider-neutral change-request candidate records exist with evidence refs,
+  review-boundary target, policy gates, and admission
+- GitHub review-boundary descriptor mapping exists without network execution
+- change-request evidence packages expose capture refs, work-session refs,
+  status/diff summaries, validation summaries, and blocked reasons without
+  client provider authority
 - committable versus local-only policy is documented for first-pass records
 - provider SCM mutation, share, publish, promote, and review-request behavior
   remains out of scope for this runtime
@@ -164,7 +170,7 @@ Missing:
 - applying planning, accepted-memory, research, index, and artifact-reference
   projection records beyond first-pass project/task records
 - provider command execution for checkout/worktree creation/cleanup
-- change-request candidate and evidence package preparation
+- steward SCM sync authority, decision records, and diagnostics
 - actual provider SCM capture/share/publish integration
 - steward automation over sync policy
 - desktop sync controls, if the proof UI continues beyond diagnostics
@@ -233,7 +239,8 @@ apply/review behavior have been hardened.
 The most useful next code lane is likely:
 
 1. keep warning-level god-file pressure visible as a health guardrail
-2. add provider-neutral change-request candidate records and evidence packages
+2. add steward SCM sync authority, decision records, and diagnostics over
+   capture/apply/review evidence
 3. keep checkout, worktree creation, commit, push, branch mutation, publish,
    promote, merge, and review-request behavior gated until provider-specific
    adapter authority is proven

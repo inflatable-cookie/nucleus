@@ -24,9 +24,13 @@ pub mod task_timeline;
 pub mod task_work_items;
 
 pub use change_request_prep::{
+    EngineChangeRequestCandidateAdmission, EngineChangeRequestCandidateAdmissionStatus,
+    EngineChangeRequestCandidateId, EngineChangeRequestCandidateRecord,
+    EngineChangeRequestCandidateStatus, EngineChangeRequestEvidencePackage,
+    EngineChangeRequestEvidenceRef, EngineChangeRequestPolicyGate,
     EngineChangeRequestPrepId, EngineChangeRequestPrepRecord, EngineChangeRequestPrepStatus,
     EngineChangeRequestPublicationState, EngineChangeRequestReviewPolicy,
-    EngineChangeRequestTarget,
+    EngineChangeRequestTarget, EngineGitHubReviewBoundaryDescriptor,
 };
 pub use checkpoint_diff::{
     decode_checkpoint_record, decode_diff_summary_record, encode_checkpoint_record,

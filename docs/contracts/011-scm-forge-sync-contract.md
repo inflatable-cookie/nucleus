@@ -1085,6 +1085,24 @@ sets publication to not requested. It does not create pull requests, publish
 snapshots, open gates, merge, push, promote, resolve credentials, call remote
 APIs, or mutate provider state.
 
+## Change Request Preparation Boundary
+
+Change-request candidates are provider-neutral evidence packages for a future
+review boundary.
+
+Candidate records may name title, summary, target review boundary, capture
+refs, work-session refs, validation evidence, status/diff evidence, and policy
+gates. They must not open pull requests, publish snapshots, promote gates,
+merge, push, or call forge networks.
+
+GitHub descriptors may map candidates to pull-request fields, required refs,
+and target branches. That mapping is provider-specific. Neutral candidates must
+not require GitHub-only fields.
+
+Evidence packages are read models. They make readiness, missing evidence, and
+blocked reasons visible to clients without granting provider mutation
+authority.
+
 ## SCM Diff And Commit Control Surface
 
 Nucleus should provide first-class SCM changes, diff, and commit control

@@ -1,6 +1,6 @@
 # 192 Change Request Candidate Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../042-change-request-preparation-boundary.md`
@@ -29,3 +29,9 @@ Add provider-neutral change-request candidate records.
 ## Stop Conditions
 
 - Stop if candidates become GitHub pull-request records by default.
+
+## Result
+
+Added provider-neutral change-request candidate records and admission gates.
+Candidates require evidence and policy gates and do not allow provider network
+mutation.

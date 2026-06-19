@@ -79,7 +79,7 @@ Current planning artifacts:
 ## Guardrail
 
 Do not widen provider runtime, remote transport, or UI sync controls while the
-active G02 runway prepares change-request records and evidence packages. Keep
-provider-neutral candidates, GitHub descriptor mapping, and no-network gates
-ahead of pull-request creation, publication, promotion, merge, steward
-automation, or desktop sync polish.
+active G02 runway gates steward SCM sync automation. Keep steward authority,
+decision records, evidence-linked recommendations, and diagnostics ahead of
+autonomous checkout, commits, pushes, publications, forge review requests,
+merge, or desktop sync polish.

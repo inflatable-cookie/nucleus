@@ -1,6 +1,6 @@
 # 193 GitHub Review Boundary Descriptor
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../042-change-request-preparation-boundary.md`
@@ -29,3 +29,9 @@ execution.
 ## Stop Conditions
 
 - Stop if GitHub fields leak into neutral candidate records.
+
+## Result
+
+Added GitHub review-boundary descriptors that map candidates to pull-request
+labels and refs without network calls or leaking GitHub-only fields into
+neutral candidate records.

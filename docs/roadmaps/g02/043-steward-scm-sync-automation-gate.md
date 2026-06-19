@@ -1,6 +1,6 @@
 # 043 Steward SCM Sync Automation Gate
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-19
 
@@ -44,11 +44,10 @@ change-request evidence exists.
 
 Ready cards:
 
-- None.
+- `batch-cards/196-steward-sync-authority-contract.md`
 
 Planned cards:
 
-- `batch-cards/196-steward-sync-authority-contract.md`
 - `batch-cards/197-steward-sync-decision-records.md`
 - `batch-cards/198-steward-capture-apply-loop-fixtures.md`
 - `batch-cards/199-steward-sync-diagnostics-read-model.md`

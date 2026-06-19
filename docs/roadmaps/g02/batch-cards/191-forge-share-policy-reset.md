@@ -1,6 +1,6 @@
 # 191 Forge Share Policy Reset
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../042-change-request-preparation-boundary.md`
@@ -30,3 +30,9 @@ implemented.
 ## Stop Conditions
 
 - Stop if provider-neutral candidates require GitHub-only fields.
+
+## Result
+
+`docs/contracts/011-scm-forge-sync-contract.md` now defines change-request
+candidates as provider-neutral evidence packages. Forge-specific terms stay in
+provider descriptors.

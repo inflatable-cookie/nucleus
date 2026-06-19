@@ -10,15 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `191-forge-share-policy-reset.md`
+- `196-steward-sync-authority-contract.md`
 
 ## Planned Cards
 
-- `192-change-request-candidate-records.md`
-- `193-github-review-boundary-descriptor.md`
-- `194-change-request-evidence-package-read-model.md`
-- `195-change-request-prep-validation-and-next-lane.md`
-- `196-steward-sync-authority-contract.md`
 - `197-steward-sync-decision-records.md`
 - `198-steward-capture-apply-loop-fixtures.md`
 - `199-steward-sync-diagnostics-read-model.md`
@@ -221,3 +216,8 @@ Hold execution cards for `g02`.
 - `188-isolated-worktree-session-plan-records.md`
 - `189-working-session-cleanup-and-repair-records.md`
 - `190-working-session-execution-validation-and-next-lane.md`
+- `191-forge-share-policy-reset.md`
+- `192-change-request-candidate-records.md`
+- `193-github-review-boundary-descriptor.md`
+- `194-change-request-evidence-package-read-model.md`
+- `195-change-request-prep-validation-and-next-lane.md`

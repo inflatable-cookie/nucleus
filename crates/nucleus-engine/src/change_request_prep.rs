@@ -129,6 +129,193 @@ pub enum EngineChangeRequestPrepStatus {
     Abandoned(String),
 }
 
+/// Stable id for a provider-neutral change-request candidate.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct EngineChangeRequestCandidateId(pub String);
+
+/// Provider-neutral change-request candidate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineChangeRequestCandidateRecord {
+    pub candidate_id: EngineChangeRequestCandidateId,
+    pub title: String,
+    pub summary: String,
+    pub target: EngineChangeRequestTarget,
+    pub evidence_refs: Vec<EngineChangeRequestEvidenceRef>,
+    pub capture_refs: Vec<String>,
+    pub work_session_refs: Vec<ScmWorkSessionId>,
+    pub policy_gates: Vec<EngineChangeRequestPolicyGate>,
+    pub status: EngineChangeRequestCandidateStatus,
+}
+
+impl EngineChangeRequestCandidateRecord {
+    pub fn admit(&self) -> EngineChangeRequestCandidateAdmission {
+        let blocked_reason = self.blocked_reason();
+        EngineChangeRequestCandidateAdmission {
+            candidate_id: self.candidate_id.clone(),
+            status: match blocked_reason {
+                Some(reason) => EngineChangeRequestCandidateAdmissionStatus::Blocked(reason),
+                None => EngineChangeRequestCandidateAdmissionStatus::Accepted,
+            },
+            evidence_refs: self.evidence_refs.clone(),
+            provider_network_allowed: false,
+        }
+    }
+
+    fn blocked_reason(&self) -> Option<String> {
+        if self.title.trim().is_empty() {
+            return Some("change-request candidate requires a title".to_owned());
+        }
+        if self.summary.trim().is_empty() {
+            return Some("change-request candidate requires a summary".to_owned());
+        }
+        if self.evidence_refs.is_empty() {
+            return Some("change-request candidate requires evidence".to_owned());
+        }
+        if self.policy_gates.iter().any(|gate| gate.blocks_candidate()) {
+            return Some("change-request candidate has blocking policy gates".to_owned());
+        }
+        None
+    }
+}
+
+/// Candidate evidence reference.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct EngineChangeRequestEvidenceRef(pub String);
+
+/// Candidate policy gate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EngineChangeRequestPolicyGate {
+    CaptureEvidenceReviewed,
+    WorkingSessionReviewed,
+    ValidationReviewed,
+    HumanReviewRequired,
+    Blocked(String),
+}
+
+impl EngineChangeRequestPolicyGate {
+    fn blocks_candidate(&self) -> bool {
+        matches!(self, Self::Blocked(_))
+    }
+}
+
+/// Candidate lifecycle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EngineChangeRequestCandidateStatus {
+    Draft,
+    ReadyForReview,
+    Blocked(String),
+    Superseded(String),
+}
+
+/// Candidate admission.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineChangeRequestCandidateAdmission {
+    pub candidate_id: EngineChangeRequestCandidateId,
+    pub status: EngineChangeRequestCandidateAdmissionStatus,
+    pub evidence_refs: Vec<EngineChangeRequestEvidenceRef>,
+    pub provider_network_allowed: bool,
+}
+
+impl EngineChangeRequestCandidateAdmission {
+    pub fn is_accepted(&self) -> bool {
+        matches!(
+            self.status,
+            EngineChangeRequestCandidateAdmissionStatus::Accepted
+        )
+    }
+}
+
+/// Candidate admission status.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EngineChangeRequestCandidateAdmissionStatus {
+    Accepted,
+    Blocked(String),
+}
+
+/// GitHub-specific review-boundary descriptor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineGitHubReviewBoundaryDescriptor {
+    pub candidate_id: EngineChangeRequestCandidateId,
+    pub provider: ForgeProviderKind,
+    pub provider_label: String,
+    pub required_refs: Vec<EngineChangeRequestEvidenceRef>,
+    pub target_branch: Option<ScmBranchRef>,
+    pub network_call_allowed: bool,
+}
+
+impl EngineGitHubReviewBoundaryDescriptor {
+    pub fn from_candidate(candidate: &EngineChangeRequestCandidateRecord) -> Option<Self> {
+        let EngineChangeRequestTarget::ForgeReview {
+            provider: ForgeProviderKind::GitHub,
+            target_branch,
+        } = &candidate.target else {
+            return None;
+        };
+
+        Some(Self {
+            candidate_id: candidate.candidate_id.clone(),
+            provider: ForgeProviderKind::GitHub,
+            provider_label: "pull_request".to_owned(),
+            required_refs: candidate.evidence_refs.clone(),
+            target_branch: target_branch.clone(),
+            network_call_allowed: false,
+        })
+    }
+}
+
+/// Client-safe evidence package for a change-request candidate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineChangeRequestEvidencePackage {
+    pub candidate_id: EngineChangeRequestCandidateId,
+    pub title: String,
+    pub capture_refs: Vec<String>,
+    pub work_session_refs: Vec<ScmWorkSessionId>,
+    pub status_diff_summary_refs: Vec<EngineChangeRequestEvidenceRef>,
+    pub validation_summary_refs: Vec<EngineChangeRequestEvidenceRef>,
+    pub blocked_reasons: Vec<String>,
+    pub client_can_mutate_provider: bool,
+}
+
+impl EngineChangeRequestEvidencePackage {
+    pub fn from_candidate(candidate: &EngineChangeRequestCandidateRecord) -> Self {
+        let mut status_diff_summary_refs = Vec::new();
+        let mut validation_summary_refs = Vec::new();
+
+        for evidence in &candidate.evidence_refs {
+            if evidence.0.contains("diff") || evidence.0.contains("status") {
+                status_diff_summary_refs.push(evidence.clone());
+            }
+            if evidence.0.contains("validation") {
+                validation_summary_refs.push(evidence.clone());
+            }
+        }
+
+        Self {
+            candidate_id: candidate.candidate_id.clone(),
+            title: candidate.title.clone(),
+            capture_refs: candidate.capture_refs.clone(),
+            work_session_refs: candidate.work_session_refs.clone(),
+            status_diff_summary_refs,
+            validation_summary_refs,
+            blocked_reasons: candidate
+                .policy_gates
+                .iter()
+                .filter_map(|gate| match gate {
+                    EngineChangeRequestPolicyGate::Blocked(reason) => Some(reason.clone()),
+                    _ => None,
+                })
+                .collect(),
+            client_can_mutate_provider: false,
+        }
+    }
+
+    pub fn is_review_ready(&self) -> bool {
+        self.blocked_reasons.is_empty()
+            && !self.status_diff_summary_refs.is_empty()
+            && !self.validation_summary_refs.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +419,100 @@ mod tests {
             prep.target,
             EngineChangeRequestTarget::ManualHandoff
         ));
+    }
+
+    #[test]
+    fn change_request_candidate_admission_requires_evidence_without_network_access() {
+        let candidate = candidate_record();
+        let admission = candidate.admit();
+
+        assert!(admission.is_accepted());
+        assert!(!admission.provider_network_allowed);
+        assert_eq!(admission.evidence_refs.len(), 3);
+    }
+
+    #[test]
+    fn change_request_candidate_blocks_missing_evidence_or_policy_gates() {
+        let mut missing_evidence = candidate_record();
+        missing_evidence.evidence_refs.clear();
+        let missing_admission = missing_evidence.admit();
+
+        assert!(!missing_admission.is_accepted());
+
+        let mut blocked = candidate_record();
+        blocked
+            .policy_gates
+            .push(EngineChangeRequestPolicyGate::Blocked(
+                "validation failed".to_owned(),
+            ));
+        let blocked_admission = blocked.admit();
+
+        assert!(matches!(
+            missing_admission.status,
+            EngineChangeRequestCandidateAdmissionStatus::Blocked(_)
+        ));
+        assert!(matches!(
+            blocked_admission.status,
+            EngineChangeRequestCandidateAdmissionStatus::Blocked(_)
+        ));
+        assert!(!blocked_admission.provider_network_allowed);
+    }
+
+    #[test]
+    fn github_review_boundary_descriptor_stays_provider_specific() {
+        let candidate = candidate_record();
+        let descriptor = EngineGitHubReviewBoundaryDescriptor::from_candidate(&candidate)
+            .expect("github descriptor");
+
+        assert_eq!(descriptor.provider, ForgeProviderKind::GitHub);
+        assert_eq!(descriptor.provider_label, "pull_request");
+        assert_eq!(descriptor.required_refs, candidate.evidence_refs);
+        assert!(!descriptor.network_call_allowed);
+
+        let mut manual = candidate;
+        manual.target = EngineChangeRequestTarget::ManualHandoff;
+        assert!(EngineGitHubReviewBoundaryDescriptor::from_candidate(&manual).is_none());
+    }
+
+    #[test]
+    fn evidence_package_exposes_review_readiness_without_provider_authority() {
+        let candidate = candidate_record();
+        let package = EngineChangeRequestEvidencePackage::from_candidate(&candidate);
+
+        assert!(package.is_review_ready());
+        assert!(!package.client_can_mutate_provider);
+        assert_eq!(package.capture_refs, vec!["capture-prep:1".to_owned()]);
+        assert_eq!(
+            package.work_session_refs,
+            vec![ScmWorkSessionId("session:scm".to_owned())]
+        );
+        assert_eq!(package.status_diff_summary_refs.len(), 2);
+        assert_eq!(package.validation_summary_refs.len(), 1);
+    }
+
+    fn candidate_record() -> EngineChangeRequestCandidateRecord {
+        EngineChangeRequestCandidateRecord {
+            candidate_id: EngineChangeRequestCandidateId("candidate:1".to_owned()),
+            title: "Prepare management sync review".to_owned(),
+            summary: "Review captured management projection changes".to_owned(),
+            target: EngineChangeRequestTarget::ForgeReview {
+                provider: ForgeProviderKind::GitHub,
+                target_branch: None,
+            },
+            evidence_refs: vec![
+                EngineChangeRequestEvidenceRef("evidence:git-status".to_owned()),
+                EngineChangeRequestEvidenceRef("evidence:diff-summary".to_owned()),
+                EngineChangeRequestEvidenceRef("evidence:validation-summary".to_owned()),
+            ],
+            capture_refs: vec!["capture-prep:1".to_owned()],
+            work_session_refs: vec![ScmWorkSessionId("session:scm".to_owned())],
+            policy_gates: vec![
+                EngineChangeRequestPolicyGate::CaptureEvidenceReviewed,
+                EngineChangeRequestPolicyGate::WorkingSessionReviewed,
+                EngineChangeRequestPolicyGate::ValidationReviewed,
+                EngineChangeRequestPolicyGate::HumanReviewRequired,
+            ],
+            status: EngineChangeRequestCandidateStatus::ReadyForReview,
+        }
     }
 }

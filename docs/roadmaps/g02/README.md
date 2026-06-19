@@ -57,23 +57,18 @@ and engine boundary are settled.
 - `039-scm-management-capture-and-share-foundation.md` - completed
 - `040-git-management-capture-adapter-proof.md` - completed
 - `041-scm-working-session-execution-prep.md` - completed
-- `042-change-request-preparation-boundary.md` - active
-- `043-steward-scm-sync-automation-gate.md` - planned
+- `042-change-request-preparation-boundary.md` - completed
+- `043-steward-scm-sync-automation-gate.md` - active
 - `044-scm-workflow-closeout-and-next-phase-selection.md` - planned
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/191-forge-share-policy-reset.md`
+- `batch-cards/196-steward-sync-authority-contract.md`
 
 Planned cards:
 
-- `batch-cards/192-change-request-candidate-records.md`
-- `batch-cards/193-github-review-boundary-descriptor.md`
-- `batch-cards/194-change-request-evidence-package-read-model.md`
-- `batch-cards/195-change-request-prep-validation-and-next-lane.md`
-- `batch-cards/196-steward-sync-authority-contract.md`
 - `batch-cards/197-steward-sync-decision-records.md`
 - `batch-cards/198-steward-capture-apply-loop-fixtures.md`
 - `batch-cards/199-steward-sync-diagnostics-read-model.md`
@@ -276,6 +271,11 @@ Completed cards:
 - `batch-cards/188-isolated-worktree-session-plan-records.md`
 - `batch-cards/189-working-session-cleanup-and-repair-records.md`
 - `batch-cards/190-working-session-execution-validation-and-next-lane.md`
+- `batch-cards/191-forge-share-policy-reset.md`
+- `batch-cards/192-change-request-candidate-records.md`
+- `batch-cards/193-github-review-boundary-descriptor.md`
+- `batch-cards/194-change-request-evidence-package-read-model.md`
+- `batch-cards/195-change-request-prep-validation-and-next-lane.md`
 
 ## Planned Runway Sequence
 
@@ -312,8 +312,8 @@ The next G02 suite is:
 29. SCM management capture and share foundation - completed
 30. Git management capture adapter proof - completed
 31. SCM working-session execution prep - completed
-32. change-request preparation boundary - active
-33. steward SCM sync automation gate - planned
+32. change-request preparation boundary - completed
+33. steward SCM sync automation gate - active
 34. SCM workflow closeout and next phase selection - planned
 
 This keeps code health and task authority clarity ahead of deeper provider
