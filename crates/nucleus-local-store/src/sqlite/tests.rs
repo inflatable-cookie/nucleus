@@ -16,6 +16,11 @@ fn sqlite_supported_domains() -> Vec<(PersistenceDomain, PersistenceRecordKind, 
             "task:1",
         ),
         (
+            PersistenceDomain::TaskHistory,
+            PersistenceRecordKind::TaskHistoryEntry,
+            "task:history:1",
+        ),
+        (
             PersistenceDomain::Workspaces,
             PersistenceRecordKind::WorkspaceLayout,
             "workspace:1",

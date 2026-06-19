@@ -311,6 +311,7 @@ fn diagnostics_domain_dto(query: &DiagnosticsQuery) -> String {
         DiagnosticsQuery::ManagementSync => "management_sync".to_owned(),
         DiagnosticsQuery::ScmSession => "scm_session".to_owned(),
         DiagnosticsQuery::TaskAgent => "task_agent".to_owned(),
+        DiagnosticsQuery::CodexProvider => "codex_provider".to_owned(),
         DiagnosticsQuery::All => "all".to_owned(),
     }
 }
@@ -322,6 +323,7 @@ fn diagnostics_query_from_domain(domain: &str) -> Result<DiagnosticsQuery, Contr
         "management_sync" => Ok(DiagnosticsQuery::ManagementSync),
         "scm_session" => Ok(DiagnosticsQuery::ScmSession),
         "task_agent" => Ok(DiagnosticsQuery::TaskAgent),
+        "codex_provider" => Ok(DiagnosticsQuery::CodexProvider),
         "all" => Ok(DiagnosticsQuery::All),
         _ => Err(ControlApiCodecError::unsupported(
             "diagnostics query domain is not supported",

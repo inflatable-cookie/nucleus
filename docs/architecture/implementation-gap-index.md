@@ -17,9 +17,15 @@ implementation lane can be chosen deliberately.
 
 Current state:
 
-- `effigy doctor` no longer fails on `scan.god-files`
-- the current doctor report has zero god-file errors and 38 warning findings
-- former error files were split into focused module/test groups
+- `effigy doctor` currently fails on `scan.god-files`
+- the current doctor report has two god-file errors and warning-sized files
+  remain across active server surfaces
+- `crates/nucleus-server/src/lib.rs` has been restored to a compact crate
+  front door
+- shared Codex supervision test fixtures now reduce repeated callback,
+  interruption, and recovery setup
+- warning-sized Codex supervision files still show pressure across callback,
+  interruption, turn-start, smoke, and session surfaces
 - `scan.god-files` still reports warning-sized files across server DTOs,
   request handlers, desktop Tauri code, desktop CSS, local store, SCM, native
   harness, and engine test surfaces
@@ -109,6 +115,37 @@ Current state:
 - `nucleus-server` has Codex provider interruption request, admission,
   sanitized `turn/interrupt` envelope, outcome, receipt, and read-only
   diagnostics records.
+- `nucleus-server` has Codex recovery need, admission, sanitized
+  `thread/resume` envelope, outcome, receipt, and read-only diagnostics
+  records for process exit, reconnect, server restart, provider identity
+  mismatch, repair-required, replacement-thread, failed, and unsupported
+  recovery states.
+- `nucleus-server` routes combined Codex provider diagnostics through the
+  control API as a read-only `codex_provider` diagnostics domain.
+- `nucleus-server` has provider-service ownership records for service-owned
+  command lanes, runtime streams, and reactor readiness without client command
+  authority or task mutation authority.
+- `nucleus-server` has provider instance registry records that separate
+  configured provider instance ids from provider driver kinds and reject config
+  evidence marked as containing secret material.
+- `nucleus-server` has generic provider runtime outcome records that map to
+  `HarnessProvider` runtime receipts and runtime observation event-store
+  records while recording task-projection gaps.
+- `nucleus-server` has provider command reactor records for admission, queueing,
+  dispatch attempts, dry-run outcomes, and sanitized outcome persistence.
+- `nucleus-server` routes Codex turn-start and callback response envelopes
+  through provider command reactor dry-run paths without provider writes.
+- `nucleus-server` now has Codex live-send preflight records, provider
+  transport write attempt records, turn-start live-send receipt/event linkage,
+  and a constrained live-send smoke boundary. These records select
+  `turn/start` as the first live-write target while keeping execution blocked
+  by default.
+- `nucleus-server` persists task-agent work-unit source records as sanitized
+  task-history entries and reads task work progress/task-agent diagnostics from
+  those durable records without granting client mutation or provider execution
+  authority.
+- `nucleus-server` validates first-pass task-agent source-record runtime and
+  review transitions before persistence.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 
@@ -121,20 +158,29 @@ Missing:
 - live JSON-RPC/app-server decoding from a supervised process
 - turn-start command admission, policy, request envelope, and first response
   callback response execution against the provider
+- explicit operator confirmation and transport-executor handoff for the first
+  Codex `turn/start` live write
 - persistence for stdio frame source, decode outcome, and transport receipt
   records
 - persistence for accepted runtime-observation event-store records
-- provider command reactor for `thread/start`, `turn/start`, callback
-  responses, interruption, and close/unsubscribe
 - cancellation that reaches the provider and records local/provider outcomes
 - persistence for interruption/cancellation records
 - persistence for permission and user-input callback response records
-- resume/recovery after server restart, process exit, or provider reconnect
+- persistence for recovery records after server restart, process exit, or
+  provider reconnect
 - provider instance configuration and hot reload
 - persistence for idempotency state across reconnect or restart
 - backpressure behavior for high-volume deltas
 - payload retention policy beyond metadata-only/evidence-ref records
 - task-backed state transition admission from runtime observations
+- broader task-agent transition admission after live provider observations
+  start entering the orchestration event store
+- checkpoint/diff/worktree linkage for turns and task work units
+- concrete pairing/session/revocation protocol for remote provider hosts
+- ACP callback, elicitation, terminal, file, session-mode, and cancellation
+  handling beyond the Codex-first path
+- observability contract for provider traces, process/resource metrics, and
+  support bundles
 
 Likely crates:
 
@@ -146,10 +192,11 @@ Likely crates:
 
 Next gate:
 
-- start with Codex session recovery/resume records
-- keep task mutation behind an explicit follow-up gate
-- prove provider-native ids map to Nucleus-owned event, receipt, session, and
-  work-item refs before letting runtime observations move task state
+- require explicit operator confirmation before running the Codex
+  direct-connection `turn/start` real-write smoke
+- keep actual live provider writes behind explicit operator confirmation
+- keep callback, cancellation, resume, and task mutation widening blocked until
+  task-backed workflow state is harder to corrupt
 
 ### SCM And Forge Runtime
 
@@ -291,19 +338,21 @@ Missing runtime:
 
 ## Suggested Next Implementation Gate
 
-The orchestration decision has been made, the task-backed workflow proof has
-validated a read-only progress path through fixtures, and repo-backed
-management projection export/import/conflict staging and explicit
-apply/review behavior have been hardened.
+The orchestration decision has been made, task-backed workflow proof is
+implemented through read-only progress paths, repo-backed management projection
+sync has explicit apply/review behavior, and Codex `turn/start`
+transport-executor handoff now has authority, envelope, persistence,
+first-response frame evidence, diagnostics, and a stopped-by-default real-write
+smoke boundary.
 
-The most useful next checkpoint is:
+The next checkpoint needs operator intent before implementation continues:
 
-1. implement a narrow Codex live event acceptance lane
-2. add durable session binding and ingestion source records
-3. map accepted provider frames into orchestration-owned events and sanitized
-   receipts
-4. expose read-only query state for accepted, unsupported, duplicated, and
-   recovery-required observations
-4. keep checkout, worktree creation, commit, push, branch mutation, publish,
-   promote, merge, and review-request behavior gated until provider-specific
-   adapter authority is proven
+1. explicitly confirm a Codex `turn/start` real-write smoke lane, with the
+   operator accepting that Codex may receive a real provider write
+2. choose a different runtime lane that remains record-only or read-only
+3. return to product workflow hardening before running live provider writes
+
+Until that decision is made, keep checkout, worktree creation, commit, push,
+branch mutation, publish, promote, merge, provider cancellation, provider
+resume, callback response execution, task mutation, and real provider writes
+gated.

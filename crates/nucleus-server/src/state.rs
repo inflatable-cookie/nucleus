@@ -16,6 +16,7 @@ use nucleus_local_store::{
 pub enum ServerStateDomain {
     Projects,
     Tasks,
+    TaskHistory,
     Workspaces,
     AdapterRegistry,
     AgentSessions,
@@ -32,6 +33,7 @@ impl ServerStateDomain {
         match self {
             Self::Projects => PersistenceDomain::Projects,
             Self::Tasks => PersistenceDomain::Tasks,
+            Self::TaskHistory => PersistenceDomain::TaskHistory,
             Self::Workspaces => PersistenceDomain::Workspaces,
             Self::AdapterRegistry => PersistenceDomain::AdapterRegistry,
             Self::AgentSessions => PersistenceDomain::AgentSessions,
@@ -78,6 +80,10 @@ where
 
     pub fn tasks(&self) -> ServerStateDomainService<'_, B> {
         self.domain(ServerStateDomain::Tasks)
+    }
+
+    pub fn task_history(&self) -> ServerStateDomainService<'_, B> {
+        self.domain(ServerStateDomain::TaskHistory)
     }
 
     pub fn workspaces(&self) -> ServerStateDomainService<'_, B> {

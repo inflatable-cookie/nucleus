@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use nucleus_engine::{
-    EngineRuntimeReceiptRecord, ManagementProjectionConflictClass, ManagementProjectionConflictReport,
-    ManagementProjectionImportRepairProposal,
+    EngineRuntimeReceiptRecord, ManagementProjectionConflictClass,
+    ManagementProjectionConflictReport, ManagementProjectionImportRepairProposal,
 };
 
 use crate::management_projection_state::{
@@ -226,7 +226,10 @@ impl From<&ManagementProjectionConflictReport> for SyncConflictReviewDto {
         Self {
             conflict_id: conflict.conflict_id.clone(),
             file_ref: conflict.file_ref.0.clone(),
-            local_record_ref: conflict.local_record_ref.as_ref().map(|record| record.0.clone()),
+            local_record_ref: conflict
+                .local_record_ref
+                .as_ref()
+                .map(|record| record.0.clone()),
             incoming_record_ref: conflict
                 .incoming_record_ref
                 .as_ref()

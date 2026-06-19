@@ -81,10 +81,11 @@ fn management_projection_export_writes_scoped_project_and_task_files_without_scm
     assert!(!report.scm_mutation_performed);
     assert_eq!(report.writes.len(), 2);
     assert!(repo_root.join("nucleus/project.toml").exists());
-    assert!(repo_root.join("nucleus/tasks/task:projection.toml").exists());
-    let task_file =
-        std::fs::read_to_string(repo_root.join("nucleus/tasks/task:projection.toml"))
-            .expect("task file");
+    assert!(repo_root
+        .join("nucleus/tasks/task:projection.toml")
+        .exists());
+    let task_file = std::fs::read_to_string(repo_root.join("nucleus/tasks/task:projection.toml"))
+        .expect("task file");
     assert!(task_file.contains("schema_version"));
     assert!(task_file.contains("Export projection"));
     for forbidden in [
@@ -107,18 +108,19 @@ fn management_projection_export_rejects_unscoped_file_refs() {
         root: nucleus_engine::ManagementProjectionRoot::default(),
         entries: Vec::new(),
     };
-    plan.entries.push(nucleus_engine::ManagementProjectionExportEntry {
-        envelope: nucleus_engine::ManagementProjectionEnvelope {
-            schema_version: nucleus_engine::ManagementProjectionSchemaVersion::current(),
-            record_id: nucleus_engine::ManagementProjectionRecordId("task:bad".to_owned()),
-            record_kind: nucleus_engine::ManagementProjectionRecordKind::Task,
-            file_ref: ManagementProjectionFileRef("../outside.toml".to_owned()),
-        },
-        payload: nucleus_engine::ManagementProjectionPayload::Unsupported {
-            payload_kind: "bad".to_owned(),
-            retained_payload: "{}".to_owned(),
-        },
-    });
+    plan.entries
+        .push(nucleus_engine::ManagementProjectionExportEntry {
+            envelope: nucleus_engine::ManagementProjectionEnvelope {
+                schema_version: nucleus_engine::ManagementProjectionSchemaVersion::current(),
+                record_id: nucleus_engine::ManagementProjectionRecordId("task:bad".to_owned()),
+                record_kind: nucleus_engine::ManagementProjectionRecordKind::Task,
+                file_ref: ManagementProjectionFileRef("../outside.toml".to_owned()),
+            },
+            payload: nucleus_engine::ManagementProjectionPayload::Unsupported {
+                payload_kind: "bad".to_owned(),
+                retained_payload: "{}".to_owned(),
+            },
+        });
 
     let error = write_management_projection_export_files(ManagementProjectionExportFileRequest {
         repo_root: temp_dir.path().join("repo"),

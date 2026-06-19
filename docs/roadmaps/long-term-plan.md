@@ -25,8 +25,9 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-058 are
-complete, and milestone 059 is the active Codex callback response lane.
+G02 is the orchestration and engine-core generation. Milestones 001-064 are
+complete, and milestone 065 is the active Codex `turn/start`
+transport-executor handoff lane.
 
 Completed workflow proof:
 
@@ -77,11 +78,15 @@ Current G02 continuation sequence:
 29. Codex turn-start send/subscription gate - complete
 30. Codex callback response gate - complete
 31. Codex provider interruption gate - complete
-32. Codex session recovery gate - active
+32. Codex session recovery gate - complete
+33. provider runtime materialisation gate - complete
+34. provider command reactor gate - complete
+35. Codex live provider send readiness - complete
+36. Codex `turn/start` transport-executor handoff - active
 
 Selected current workflow:
 
-- Codex session recovery gate
+- Codex `turn/start` transport-executor handoff
 
 Reason:
 
@@ -102,7 +107,8 @@ Reason:
   capture/apply/review evidence without provider mutation authority
 - the SCM closeout confirmed the runway is complete as record, policy, and
   diagnostics work, not as a provider-executing SCM engine
-- `effigy doctor` now reports zero god-file error findings
+- `effigy doctor` still has recorded god-file risk; this should be handled as
+  a bounded health lane, not mixed into live-provider execution work
 - widening remote transport, workspace panels, or provider SCM execution would
   still distract from the next core runtime question
 - harness runtime rebaseline confirmed the current Codex code is descriptor,
@@ -116,7 +122,22 @@ Reason:
   diagnostics records are complete without raw provider payload retention
 - provider-reaching interruption/cancellation records are complete without raw
   provider payload retention
-- session recovery/resume is the next runtime gate before task-state mutation
+- session recovery/resume is complete as record, admission, envelope, receipt,
+  and diagnostics work
+- provider runtime materialisation is complete as read-only diagnostics,
+  provider-service ownership, provider instance registry/config, and service
+  outcome receipt/event linkage
+- provider command reactor dry-run work is complete as admission, queue,
+  dispatch, outcome persistence, and Codex turn-start/callback dry-run routing
+- Codex live-send readiness is complete as record-layer preflight evidence,
+  transport write attempts, receipt/event linkage, and opt-in smoke-boundary
+  gating
+- `turn/start` is the selected first live-write target; execution remains
+  blocked until explicit operator intent and a transport-executor handoff are
+  planned
+- the next handoff lane must define executor authority, sanitized execution
+  envelopes, persistence, frame/decode evidence, diagnostics, and a
+  stopped-by-default smoke boundary before any provider write runs
 - checkout, worktree creation, push, publish, promote, forge review requests,
   merge, and steward automatic sync remain later gates
 
@@ -269,7 +290,8 @@ Current roadmap coverage:
 
 Current result:
 
-- the red god-file gate is clear
+- the red god-file gate is a recorded health blocker, separate from this
+  runtime lane
 - 38 warning-sized files remain as pressure when touched
 - behavior was preserved through mechanical module/test splits
 
@@ -449,7 +471,9 @@ Exit criteria:
 
 ## Open Decisions
 
-- Which first real harness target should prove the adapter system?
+- Whether to run the first explicitly confirmed Codex `turn/start` real-write
+  smoke after task-backed workflow hardening, or continue product hardening
+  before live provider writes.
 - Should the first SCM implementation focus on GitHub/Git or include
   Convergence from the start as an adapter-shape test?
 - How much of T3's remote/auth/relay design should influence Nucleus?
@@ -462,3 +486,10 @@ Resolved decisions:
   orchestration boundaries.
 - `nucleusd` remains a host wrapper, not the system core.
 - Codex is the first bridged runtime target for task-backed agent work.
+- Codex `turn/start` transport-executor handoff is complete through a
+  stopped-by-default real-write smoke boundary; actual provider writes remain
+  blocked until explicit operator intent.
+- Product workflow hardening is the current lane before direct Codex provider
+- Product workflow hardening has persisted task-agent source records, moved
+  progress/diagnostics reads onto durable task history, and added first-pass
+  runtime/review transition validation.

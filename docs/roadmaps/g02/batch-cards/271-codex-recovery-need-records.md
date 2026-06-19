@@ -1,6 +1,6 @@
 # 271 Codex Recovery Need Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../061-codex-session-recovery-gate.md`
@@ -19,15 +19,27 @@ Add Codex recovery need records for sessions that may require resume or repair.
 
 ## Acceptance Criteria
 
-- Recovery records preserve Nucleus and provider identity.
-- Raw provider payload retention is disabled by default.
-- Records do not mutate task state.
+- [x] Recovery records preserve Nucleus and provider identity.
+- [x] Raw provider payload retention is disabled by default.
+- [x] Records do not mutate task state.
+
+## Closeout
+
+Added Codex recovery need records under `nucleus-server` with explicit runtime,
+session, provider thread/session/turn/request, task, and work-item refs.
+Recovery triggers now cover process exit, reconnect, server restart, and
+provider identity mismatch. Records are recovery-required by default, issue no
+resume command, retain no raw provider payload, and do not permit task
+mutation.
+
+Shared Codex supervision test fixtures were extracted while implementing this
+card so the recovery lane does not add more duplicated runtime setup.
 
 ## Validation
 
-- targeted server tests
-- `cargo check --workspace`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server recovery_need -- --nocapture`
+- [x] `cargo check --workspace`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

@@ -43,11 +43,12 @@ fn management_projection_apply_import_updates_targeted_records_without_scm_mutat
         overwrite_existing: false,
     })
     .expect("write projection files");
-    let staging = stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
-        repo_root,
-        file_refs,
-    })
-    .expect("stage import");
+    let staging =
+        stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+            repo_root,
+            file_refs,
+        })
+        .expect("stage import");
 
     let report = apply_management_projection_import(
         &state,
@@ -138,11 +139,12 @@ fn management_projection_apply_import_requires_explicit_targets() {
         overwrite_existing: false,
     })
     .expect("write projection files");
-    let staging = stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
-        repo_root,
-        file_refs,
-    })
-    .expect("stage import");
+    let staging =
+        stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+            repo_root,
+            file_refs,
+        })
+        .expect("stage import");
 
     let report = apply_management_projection_import(
         &state,
@@ -193,11 +195,12 @@ fn management_projection_apply_import_blocks_stale_expected_revision() {
         overwrite_existing: false,
     })
     .expect("write projection files");
-    let staging = stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
-        repo_root,
-        file_refs: vec![ManagementProjectionFileRef::project()],
-    })
-    .expect("stage import");
+    let staging =
+        stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+            repo_root,
+            file_refs: vec![ManagementProjectionFileRef::project()],
+        })
+        .expect("stage import");
 
     let report = apply_management_projection_import(
         &state,
@@ -261,11 +264,12 @@ fn management_projection_apply_import_blocks_semantic_conflicts_with_evidence() 
         overwrite_existing: false,
     })
     .expect("write projection files");
-    let staging = stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
-        repo_root,
-        file_refs: vec![ManagementProjectionFileRef::task("task:projection")],
-    })
-    .expect("stage import");
+    let staging =
+        stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+            repo_root,
+            file_refs: vec![ManagementProjectionFileRef::task("task:projection")],
+        })
+        .expect("stage import");
     let conflict = ManagementProjectionConflictReport {
         conflict_id: "conflict:task:projection:title".to_owned(),
         file_ref: ManagementProjectionFileRef::task("task:projection"),

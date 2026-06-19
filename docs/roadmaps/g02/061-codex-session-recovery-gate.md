@@ -1,6 +1,6 @@
 # 061 Codex Session Recovery Gate
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -24,14 +24,14 @@ before task-state mutation from runtime observations widens.
 
 ## Goals
 
-- [ ] Add recovery need records for exited, disconnected, or restarted Codex
+- [x] Add recovery need records for exited, disconnected, or restarted Codex
       runtime sessions.
-- [ ] Gate resume attempts through authority, provider identity, and payload
+- [x] Gate resume attempts through authority, provider identity, and payload
       retention policy.
-- [ ] Map accepted resume attempts to sanitized provider envelopes and
+- [x] Map accepted resume attempts to sanitized provider envelopes and
       receipts.
-- [ ] Expose recovery outcomes through read-only diagnostics.
-- [ ] Keep task-state mutation out of scope.
+- [x] Expose recovery outcomes through read-only diagnostics.
+- [x] Keep task-state mutation out of scope.
 
 ## Non-Goals
 
@@ -42,38 +42,39 @@ before task-state mutation from runtime observations widens.
 
 ## Execution Plan
 
-- [ ] Need batch: add recovery need records.
-- [ ] Admission batch: gate recovery/resume policy.
-- [ ] Envelope/receipt batch: map accepted resume attempts safely.
-- [ ] Diagnostics batch: expose recovery state safely.
-- [ ] Closeout batch: validate and select task-state mutation as the next gate.
+- [x] Need batch: add recovery need records.
+- [x] Admission batch: gate recovery/resume policy.
+- [x] Envelope/receipt batch: map accepted resume attempts safely.
+- [x] Diagnostics batch: expose recovery state safely.
+- [x] Closeout batch: validate and select task-state mutation as the next gate.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/271-codex-recovery-need-records.md`
+- None.
 
 Planned cards:
 
+- None.
+
+Completed cards:
+
+- `batch-cards/271-codex-recovery-need-records.md`
 - `batch-cards/272-codex-recovery-admission-policy.md`
 - `batch-cards/273-codex-recovery-envelope-receipts.md`
 - `batch-cards/274-codex-recovery-diagnostics.md`
 - `batch-cards/275-codex-recovery-closeout.md`
 
-Completed cards:
-
-- None.
-
 ## Acceptance Criteria
 
-- [ ] Recovery records preserve Nucleus and provider identity.
-- [ ] Admission blocks unsupported, unauthorized, or unsafe resume attempts.
-- [ ] Envelope and receipts are sanitized and replay-safe.
-- [ ] Diagnostics expose no raw provider payloads.
-- [ ] Validation passes.
+- [x] Recovery records preserve Nucleus and provider identity.
+- [x] Admission blocks unsupported, unauthorized, or unsafe resume attempts.
+- [x] Envelope and receipts are sanitized and replay-safe.
+- [x] Diagnostics expose no raw provider payloads.
+- [x] Validation passes.
 
 ## Gate
 
-Do not mutate task state from runtime observations until recovery/resume state
-is explicit and tested.
+Recovery/resume state is explicit and tested. Next gate:
+`062-provider-runtime-materialisation-gate.md`.

@@ -218,5 +218,108 @@ Promote these into contracts before more implementation:
 - SCM driver and source-control provider discovery contract split
 - remote host pairing/session contract
 - preview automation and MCP tool broker contract
-- observability and diagnostics contract
 
+## Materialisation Assessment
+
+Status: active planning correction
+Updated: 2026-06-19
+
+The comparison has been promoted far enough to guide early Codex runtime
+records, but not far enough to shape the runtime service layer. The current
+Nucleus implementation is still lower-level than T3 Code: it models request,
+admission, envelope, outcome, receipt, and diagnostics records before it has a
+provider service that owns runtime sessions and streams.
+
+This is useful as boundary proof, but it becomes churn if it continues without
+service integration.
+
+### T3 Lessons Not Yet Materialised
+
+Provider service ownership:
+
+- T3 has a `ProviderService` surface that routes through adapter and provider
+  instance registries.
+- Nucleus has provider identities and Codex record gates, but no service that
+  owns provider instances, session runtimes, command routing, stream lifecycle,
+  or recovery policy.
+
+Provider instance registry:
+
+- T3 separates driver kind from provider instance configuration.
+- Nucleus needs a runtime registry with instance config, capability discovery,
+  auth readiness, hot reload posture, and process ownership before more
+  provider commands are added.
+
+Command, event, projection, and reactor loop:
+
+- T3 connects provider runtime events to orchestration events, projections, and
+  checkpoint reactors.
+- Nucleus has records and read models, but the current Codex path is not yet a
+  full command/event/projection/reactor loop.
+
+Runtime event streams:
+
+- T3 treats provider sessions as streaming runtimes.
+- Nucleus has live frame ingestion and receipts, but not a long-lived service
+  that continuously decodes provider events, applies idempotency, persists
+  projections, and publishes client-visible state.
+
+Checkpoint, diff, and worktree coupling:
+
+- T3 makes turns, checkpoints, diffs, and source-control actions part of the
+  same workflow.
+- Nucleus has stronger SCM neutrality, but Codex turns, task work units,
+  checkpoints, and SCM work sessions are not yet integrated as one execution
+  path.
+
+Control-plane query routing:
+
+- T3 exposes runtime state through client-facing projections.
+- Nucleus has some diagnostics DTOs that are modeled and exported before all of
+  them are routed through the control API.
+
+Remote access and auth:
+
+- T3 has concrete pairing, auth, relay, endpoint, and session surfaces.
+- Nucleus has authority and readiness vocabulary, but not the actual host
+  pairing/session/revocation protocol.
+
+ACP callback details:
+
+- T3's Cursor/OpenCode/ACP surfaces include practical callback, elicitation,
+  cancellation, terminal, file, and session-mode handling.
+- Nucleus should inspect those paths before implementing non-Codex adapters.
+
+Observability:
+
+- T3 has trace, process, metric, and relay diagnostics.
+- Nucleus has read-model diagnostics, but not a runtime observability contract
+  covering metrics, traces, support bundles, or resource monitors.
+
+Test and module structure:
+
+- T3's runtime structure keeps adapter/service boundaries visible.
+- Nucleus Codex supervision has started duplicating fixture setup across small
+  record modules. This creates god-file pressure and makes later service
+  integration harder.
+
+### Corrective Direction
+
+Do not keep widening provider record gates in isolation.
+
+The next provider-runtime tranche should:
+
+- extract shared Codex supervision fixtures and reduce oversized modules
+- route new diagnostics through the control API before adding more UI-visible
+  state
+- introduce a provider-service/runtime skeleton shaped by T3's adapter service
+  model
+- add provider instance registry/config records before more provider commands
+- connect provider outcomes into orchestration events and projections
+- bind Codex turns, checkpoints, diffs, task work units, and SCM work sessions
+  through one execution workflow
+
+Intentional divergence remains intact: Nucleus is Rust-first, project-first,
+task-first, SCM-adapter-neutral, and engine-first. T3 is a specimen, not a
+target architecture.
+- observability and diagnostics contract

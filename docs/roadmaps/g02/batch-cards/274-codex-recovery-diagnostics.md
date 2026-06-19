@@ -1,6 +1,6 @@
 # 274 Codex Recovery Diagnostics
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../061-codex-session-recovery-gate.md`
@@ -18,15 +18,28 @@ Expose Codex recovery outcomes through read-only diagnostics.
 
 ## Acceptance Criteria
 
-- Clients can inspect recovery status without command authority.
-- Diagnostics serialize without raw provider data.
-- Task-mutation gaps remain explicit.
+- [x] Clients can inspect recovery status without command authority.
+- [x] Diagnostics serialize without raw provider data.
+- [x] Task-mutation gaps remain explicit.
+
+## Closeout
+
+Added read-only Codex recovery diagnostics from sanitized recovery outcome
+records. The DTO exposes need, admission, envelope, provider-thread,
+replacement-thread, receipt, evidence, status, next-action, and task-mutation
+state without granting resume, repair, or task mutation authority.
+
+Diagnostics now distinguish resume accepted, blocked, repair required,
+replacement-thread observed, failed, and unsupported recovery outcomes.
+Serialization tests assert that raw provider payloads, provider-send state, and
+recovery authority input do not leak into client diagnostics.
 
 ## Validation
 
-- targeted serialization tests
-- `cargo check --workspace`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server recovery -- --nocapture`
+- [x] `cargo test -p nucleus-server codex_recovery -- --nocapture`
+- [x] `cargo check --workspace`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

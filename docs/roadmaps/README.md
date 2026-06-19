@@ -65,7 +65,12 @@ shape.
 - `g02/058-codex-turn-start-send-and-subscription-gate.md` - completed
 - `g02/059-codex-callback-response-gate.md` - completed
 - `g02/060-codex-provider-interruption-gate.md` - completed
-- `g02/061-codex-session-recovery-gate.md` - active
+- `g02/061-codex-session-recovery-gate.md` - completed
+- `g02/062-provider-runtime-materialisation-gate.md` - completed
+- `g02/063-provider-command-reactor-gate.md` - completed
+- `g02/064-codex-live-provider-send-readiness.md` - completed
+- `g02/065-codex-turn-start-transport-executor-handoff.md` - completed
+- `g02/066-task-backed-workflow-hardening.md` - completed
 
 ## Previous Generation
 
@@ -124,4 +129,5 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/271-codex-recovery-need-records.md`.
+Review explicit operator confirmation for the Codex direct-connection
+`turn/start` real-write smoke.

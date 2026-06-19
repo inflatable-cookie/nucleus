@@ -38,11 +38,12 @@ fn management_projection_import_stages_exported_files_without_mutating_state() {
     })
     .expect("write projection files");
 
-    let report = stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
-        repo_root,
-        file_refs,
-    })
-    .expect("stage import");
+    let report =
+        stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+            repo_root,
+            file_refs,
+        })
+        .expect("stage import");
 
     assert!(!report.authoritative_state_mutated);
     assert_eq!(report.staged.len(), 2);
@@ -82,14 +83,17 @@ fn management_projection_import_stages_divergent_task_for_conflict_review() {
     let task_entry = plan
         .entries
         .iter_mut()
-        .find(|entry| entry.envelope.file_ref == ManagementProjectionFileRef::task("task:projection"))
+        .find(|entry| {
+            entry.envelope.file_ref == ManagementProjectionFileRef::task("task:projection")
+        })
         .expect("task entry");
     if let ManagementProjectionPayload::Task(task) = &mut task_entry.payload {
         task.title = "Incoming projection".to_owned();
-        task.acceptance_criteria.push(nucleus_tasks::TaskStorageAcceptanceCriterion {
-            text: "Incoming criteria".to_owned(),
-            required: true,
-        });
+        task.acceptance_criteria
+            .push(nucleus_tasks::TaskStorageAcceptanceCriterion {
+                text: "Incoming criteria".to_owned(),
+                required: true,
+            });
     }
     let repo_root = temp_dir.path().join("repo");
     write_management_projection_export_files(ManagementProjectionExportFileRequest {
@@ -99,11 +103,12 @@ fn management_projection_import_stages_divergent_task_for_conflict_review() {
     })
     .expect("write divergent projection");
 
-    let report = stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
-        repo_root,
-        file_refs: vec![ManagementProjectionFileRef::task("task:projection")],
-    })
-    .expect("stage import");
+    let report =
+        stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+            repo_root,
+            file_refs: vec![ManagementProjectionFileRef::task("task:projection")],
+        })
+        .expect("stage import");
     let conflict = ManagementProjectionConflictReport {
         conflict_id: "conflict:task:projection:title".to_owned(),
         file_ref: ManagementProjectionFileRef::task("task:projection"),
@@ -117,7 +122,10 @@ fn management_projection_import_stages_divergent_task_for_conflict_review() {
 
     assert!(!report.authoritative_state_mutated);
     assert_eq!(report.staged.len(), 1);
-    assert_eq!(report.staged[0].validation.status, ManagementProjectionValidationStatus::Valid);
+    assert_eq!(
+        report.staged[0].validation.status,
+        ManagementProjectionValidationStatus::Valid
+    );
     assert!(matches!(
         &report.staged[0].document.payload,
         ManagementProjectionPayload::Task(task)
@@ -164,11 +172,12 @@ fn management_projection_import_reports_invalid_and_unsupported_files_separately
     )
     .expect("write unsupported");
 
-    let report = stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
-        repo_root,
-        file_refs: vec![invalid_ref.clone(), unsupported_ref.clone()],
-    })
-    .expect("stage import");
+    let report =
+        stage_management_projection_import_files(ManagementProjectionImportStagingRequest {
+            repo_root,
+            file_refs: vec![invalid_ref.clone(), unsupported_ref.clone()],
+        })
+        .expect("stage import");
 
     assert!(report.staged.is_empty());
     assert_eq!(report.invalid.len(), 1);

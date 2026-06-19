@@ -19,14 +19,18 @@ use crate::control_api::{
     StateRecordQueryScope, TaskTimelineQuery,
 };
 use crate::diagnostics_read_models::{
-    effigy_diagnostics, scm_session_diagnostics, steward_diagnostics, sync_diagnostics,
-    task_agent_diagnostics,
+    codex_callback_diagnostics, codex_ingestion_diagnostics, codex_interruption_diagnostics,
+    codex_live_spawn_smoke_diagnostics, codex_provider_diagnostics, codex_recovery_diagnostics,
+    codex_subscription_diagnostics, codex_transport_executor_diagnostics,
+    codex_turn_start_diagnostics, effigy_diagnostics, scm_session_diagnostics, steward_diagnostics,
+    sync_diagnostics, task_agent_diagnostics,
 };
 use crate::ids::ServerControlRequestId;
 use crate::runtime_readiness_diagnostics::local_host_runtime_readiness_diagnostics;
 use crate::runtime_receipt_state::read_runtime_receipts;
 use crate::state::ServerStateService;
 use crate::state::{ServerStateDomain, ServerStateDomainService};
+use crate::task_agent_work_unit_state::read_task_agent_work_unit_source_records;
 use crate::{unsupported_local_host_runtime_discovery, EngineHostId};
 
 pub(crate) fn handle_query<B>(
@@ -74,13 +78,25 @@ where
         ServerQueryKind::AdapterSession(query) => adapter_session_query(handler, query),
         ServerQueryKind::ModelRoute(query) => model_route_query(handler, query),
         ServerQueryKind::RuntimeMetadata(query) => runtime_metadata_query(handler, query),
-        ServerQueryKind::Diagnostics(query) => diagnostics_query(query),
+        ServerQueryKind::Diagnostics(query) => diagnostics_query(handler, query),
         ServerQueryKind::TaskTimeline(query) => task_timeline_query(handler, query),
         ServerQueryKind::ProjectAuthorityMap(query) => project_authority_map_query(query),
     }
 }
 
-fn diagnostics_query(query: DiagnosticsQuery) -> Result<ServerQueryResult, ServerControlError> {
+fn diagnostics_query<B>(
+    handler: &LocalControlRequestHandler<B>,
+    query: DiagnosticsQuery,
+) -> Result<ServerQueryResult, ServerControlError>
+where
+    B: LocalStoreBackend + Clone,
+{
+    let task_agent = || {
+        read_task_agent_work_unit_source_records(handler.state())
+            .map(|records| task_agent_diagnostics(&records))
+            .map_err(storage_error)
+    };
+
     match query {
         DiagnosticsQuery::Steward => Ok(ServerQueryResult::Diagnostics(
             ServerDiagnosticsQueryResult::Steward(empty_steward_diagnostics()),
@@ -95,7 +111,10 @@ fn diagnostics_query(query: DiagnosticsQuery) -> Result<ServerQueryResult, Serve
             ServerDiagnosticsQueryResult::ScmSession(empty_scm_session_diagnostics()),
         )),
         DiagnosticsQuery::TaskAgent => Ok(ServerQueryResult::Diagnostics(
-            ServerDiagnosticsQueryResult::TaskAgent(empty_task_agent_diagnostics()),
+            ServerDiagnosticsQueryResult::TaskAgent(task_agent()?),
+        )),
+        DiagnosticsQuery::CodexProvider => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::CodexProvider(empty_codex_provider_diagnostics()),
         )),
         DiagnosticsQuery::All => Ok(ServerQueryResult::Diagnostics(
             ServerDiagnosticsQueryResult::All(ServerDiagnosticsSnapshot {
@@ -103,7 +122,8 @@ fn diagnostics_query(query: DiagnosticsQuery) -> Result<ServerQueryResult, Serve
                 effigy: empty_effigy_diagnostics(),
                 management_sync: empty_sync_diagnostics(),
                 scm_session: empty_scm_session_diagnostics(),
-                task_agent: empty_task_agent_diagnostics(),
+                task_agent: task_agent()?,
+                codex_provider: empty_codex_provider_diagnostics(),
             }),
         )),
     }
@@ -127,8 +147,17 @@ fn empty_scm_session_diagnostics() -> crate::ScmSessionDiagnosticsDto {
     scm_session_diagnostics(&[], &[], &[])
 }
 
-fn empty_task_agent_diagnostics() -> crate::TaskAgentDiagnosticsDto {
-    task_agent_diagnostics(&[])
+fn empty_codex_provider_diagnostics() -> crate::CodexProviderDiagnosticsDto {
+    codex_provider_diagnostics(
+        codex_ingestion_diagnostics(&[]),
+        codex_live_spawn_smoke_diagnostics(&[]),
+        codex_turn_start_diagnostics(&[]),
+        codex_subscription_diagnostics(&[], &[]),
+        codex_transport_executor_diagnostics(&[], &[], &[], &[]),
+        codex_callback_diagnostics(&[]),
+        codex_interruption_diagnostics(&[]),
+        codex_recovery_diagnostics(&[]),
+    )
 }
 
 fn state_record_query<B>(
@@ -236,9 +265,13 @@ where
         RuntimeMetadataQuery::ListDiffSummaryRecords => read_diff_summary_records(handler.state())
             .map(ServerQueryResult::DiffSummaryRecords)
             .map_err(storage_error),
-        RuntimeMetadataQuery::ListTaskWorkProgress => Ok(ServerQueryResult::TaskWorkProgress(
-            empty_task_agent_diagnostics().work_units,
-        )),
+        RuntimeMetadataQuery::ListTaskWorkProgress => {
+            let records =
+                read_task_agent_work_unit_source_records(handler.state()).map_err(storage_error)?;
+            Ok(ServerQueryResult::TaskWorkProgress(
+                task_agent_diagnostics(&records).work_units,
+            ))
+        }
         RuntimeMetadataQuery::ListArtifactMetadata => read_state_records(
             handler.state.artifact_metadata(),
             StateRecordQueryScope::List,

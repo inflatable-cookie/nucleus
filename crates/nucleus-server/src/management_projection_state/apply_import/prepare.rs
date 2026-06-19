@@ -1,6 +1,4 @@
-use nucleus_core::{
-    PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId,
-};
+use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
 use nucleus_engine::{
     EngineRuntimeReceiptRecordId, ManagementProjectionConflictClass,
     ManagementProjectionConflictReport, ManagementProjectionPayload, ManagementProjectionRecordId,
@@ -211,9 +209,7 @@ fn preflight_revision(
             kind: ManagementProjectionApplyBlockKind::RevisionConflict,
             summary: format!(
                 "management projection apply revision conflict for {}; expected {:?}, actual {:?}",
-                staged.document.envelope.record_id.0,
-                target.expected_current_revision,
-                actual
+                staged.document.envelope.record_id.0, target.expected_current_revision, actual
             ),
             conflict: None,
             receipt_id: None,
@@ -226,9 +222,11 @@ fn semantic_conflict_for<'a>(
     conflicts: &'a [ManagementProjectionConflictReport],
 ) -> Option<&'a ManagementProjectionConflictReport> {
     conflicts.iter().find(|conflict| {
-        matches!(conflict.class, ManagementProjectionConflictClass::Semantic(_))
-            && (conflict.local_record_ref.as_ref() == Some(record_id)
-                || conflict.incoming_record_ref.as_ref() == Some(record_id))
+        matches!(
+            conflict.class,
+            ManagementProjectionConflictClass::Semantic(_)
+        ) && (conflict.local_record_ref.as_ref() == Some(record_id)
+            || conflict.incoming_record_ref.as_ref() == Some(record_id))
     })
 }
 

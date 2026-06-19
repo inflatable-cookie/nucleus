@@ -49,6 +49,7 @@ use nucleus_tasks::TaskId;
 mod codex_ingestion;
 mod codex_live_spawn;
 mod codex_subscription;
+mod codex_transport_executor;
 mod codex_turn_start;
 mod effigy;
 mod scm;

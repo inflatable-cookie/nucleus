@@ -10,14 +10,11 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `271-codex-recovery-need-records.md`
+None.
 
 ## Planned Cards
 
-- `272-codex-recovery-admission-policy.md`
-- `273-codex-recovery-envelope-receipts.md`
-- `274-codex-recovery-diagnostics.md`
-- `275-codex-recovery-closeout.md`
+None.
 
 ## Completed Cards
 
@@ -291,3 +288,34 @@ Hold execution cards for `g02`.
 - `268-codex-interruption-envelope-receipts.md`
 - `269-codex-interruption-diagnostics.md`
 - `270-codex-interruption-closeout.md`
+- `271-codex-recovery-need-records.md`
+- `272-codex-recovery-admission-policy.md`
+- `273-codex-recovery-envelope-receipts.md`
+- `274-codex-recovery-diagnostics.md`
+- `275-codex-recovery-closeout.md`
+- `276-codex-diagnostics-control-routing.md`
+- `277-provider-service-ownership-records.md`
+- `278-provider-instance-registry-records.md`
+- `279-provider-runtime-orchestration-linkage.md`
+- `280-provider-runtime-materialisation-closeout.md`
+- `281-provider-command-reactor-records.md`
+- `282-provider-command-outcome-persistence.md`
+- `283-codex-turn-start-reactor-dry-run.md`
+- `284-codex-callback-response-reactor-dry-run.md`
+- `285-provider-command-reactor-closeout.md`
+- `286-codex-live-send-preflight-records.md`
+- `287-provider-transport-write-attempt-records.md`
+- `288-codex-turn-start-live-send-receipts.md`
+- `289-codex-constrained-live-send-smoke-boundary.md`
+- `290-codex-live-provider-send-closeout.md`
+- `291-codex-transport-executor-authority-records.md`
+- `292-codex-turn-start-stdio-execution-envelope.md`
+- `293-codex-transport-execution-persistence.md`
+- `294-codex-stdio-frame-ingestion-persistence.md`
+- `295-codex-transport-executor-diagnostics.md`
+- `296-codex-turn-start-executor-smoke-boundary.md`
+- `297-codex-transport-executor-closeout.md`
+- `298-task-agent-source-record-persistence.md`
+- `299-task-work-progress-query-from-state.md`
+- `300-task-agent-transition-validation.md`
+- `301-task-backed-hardening-closeout.md`

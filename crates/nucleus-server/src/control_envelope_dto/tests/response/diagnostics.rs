@@ -4,8 +4,11 @@ use crate::control_api::{
 };
 use crate::control_envelope_dto::*;
 use crate::diagnostics_read_models::{
-    effigy_diagnostics, scm_session_diagnostics, steward_diagnostics, sync_diagnostics,
-    task_agent_diagnostics,
+    codex_callback_diagnostics, codex_ingestion_diagnostics, codex_interruption_diagnostics,
+    codex_live_spawn_smoke_diagnostics, codex_provider_diagnostics, codex_recovery_diagnostics,
+    codex_subscription_diagnostics, codex_transport_executor_diagnostics,
+    codex_turn_start_diagnostics, effigy_diagnostics, scm_session_diagnostics, steward_diagnostics,
+    sync_diagnostics, task_agent_diagnostics,
 };
 use crate::ids::ServerControlRequestId;
 use nucleus_native_harness::NativeEffigyProjectIntegration;
@@ -37,9 +40,37 @@ fn response_envelope_dto_serializes_all_diagnostics_without_authority() {
             && snapshot.management_sync.source_status == "empty"
             && snapshot.scm_session.source_status == "empty"
             && snapshot.task_agent.source_status == "empty"
+            && snapshot.codex_provider.source_status == "empty"
+            && !snapshot.codex_provider.client_can_control_provider
     ));
     assert!(json.contains("\"type\":\"diagnostics\""));
     assert!(json.contains("\"domain\":\"all\""));
+    assert_diagnostics_json_is_sanitized(&json);
+}
+
+#[test]
+fn response_envelope_dto_serializes_codex_provider_diagnostics_domain() {
+    let response = ServerControlResponse {
+        request_id: ServerControlRequestId("request:dto:diagnostics:codex".to_owned()),
+        status: ServerControlResponseStatus::Complete,
+        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::CodexProvider(empty_codex_provider_diagnostics()),
+        )),
+    };
+
+    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
+    let json = serde_json::to_string(&dto).expect("json");
+
+    assert!(matches!(
+        dto.body,
+        ControlResponseBodyDto::Diagnostics {
+            result: ControlDiagnosticsResultDto::CodexProvider(record),
+        } if record.source_status == "empty"
+            && !record.client_can_control_provider
+            && !record.client_can_mutate_tasks
+            && !record.recovery.client_can_resume_provider
+    ));
+    assert!(json.contains("\"domain\":\"codex_provider\""));
     assert_diagnostics_json_is_sanitized(&json);
 }
 
@@ -81,7 +112,21 @@ fn empty_diagnostics_snapshot() -> ServerDiagnosticsSnapshot {
         management_sync: sync_diagnostics(&[], &[], &[], &[]),
         scm_session: scm_session_diagnostics(&[], &[], &[]),
         task_agent: task_agent_diagnostics(&[]),
+        codex_provider: empty_codex_provider_diagnostics(),
     }
+}
+
+fn empty_codex_provider_diagnostics() -> crate::CodexProviderDiagnosticsDto {
+    codex_provider_diagnostics(
+        codex_ingestion_diagnostics(&[]),
+        codex_live_spawn_smoke_diagnostics(&[]),
+        codex_turn_start_diagnostics(&[]),
+        codex_subscription_diagnostics(&[], &[]),
+        codex_transport_executor_diagnostics(&[], &[], &[], &[]),
+        codex_callback_diagnostics(&[]),
+        codex_interruption_diagnostics(&[]),
+        codex_recovery_diagnostics(&[]),
+    )
 }
 
 fn assert_diagnostics_json_is_sanitized(json: &str) {

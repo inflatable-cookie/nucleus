@@ -3,11 +3,14 @@
 //! These DTOs expose steward, Effigy, management sync, and SCM session state to
 //! clients without granting command authority or copying raw provider output.
 
-mod codex_ingestion;
 mod codex_callback;
+mod codex_ingestion;
 mod codex_interruption;
 mod codex_live_spawn;
+mod codex_provider;
+mod codex_recovery;
 mod codex_subscription;
+mod codex_transport_executor;
 mod codex_turn_start;
 mod effigy;
 mod helpers;
@@ -18,24 +21,32 @@ mod sync_capture;
 mod sync_review;
 mod task_agent;
 
+pub use codex_callback::{
+    codex_callback_diagnostics, CodexCallbackDiagnosticDto, CodexCallbackDiagnosticsDto,
+};
 pub use codex_ingestion::{
     codex_ingestion_diagnostics, CodexIngestionDiagnosticsDto,
     CodexIngestionObservationDiagnosticDto,
 };
-pub use codex_callback::{
-    codex_callback_diagnostics, CodexCallbackDiagnosticDto, CodexCallbackDiagnosticsDto,
-};
 pub use codex_interruption::{
-    codex_interruption_diagnostics, CodexInterruptionDiagnosticDto,
-    CodexInterruptionDiagnosticsDto,
+    codex_interruption_diagnostics, CodexInterruptionDiagnosticDto, CodexInterruptionDiagnosticsDto,
 };
 pub use codex_live_spawn::{
     codex_live_spawn_smoke_diagnostics, CodexLiveSpawnSmokeDiagnosticDto,
     CodexLiveSpawnSmokeDiagnosticsDto,
 };
+pub use codex_provider::{codex_provider_diagnostics, CodexProviderDiagnosticsDto};
+pub use codex_recovery::{
+    codex_recovery_diagnostics, CodexRecoveryDiagnosticDto, CodexRecoveryDiagnosticsDto,
+};
 pub use codex_subscription::{
-    codex_subscription_diagnostics, CodexStdioWriteDiagnosticDto,
-    CodexSubscriptionDiagnosticDto, CodexSubscriptionDiagnosticsDto,
+    codex_subscription_diagnostics, CodexStdioWriteDiagnosticDto, CodexSubscriptionDiagnosticDto,
+    CodexSubscriptionDiagnosticsDto,
+};
+pub use codex_transport_executor::{
+    codex_transport_executor_diagnostics, CodexStdioFrameIngestionDiagnosticDto,
+    CodexTransportExecutionDiagnosticDto, CodexTransportExecutorAuthorityDiagnosticDto,
+    CodexTransportExecutorDiagnosticsDto, CodexTransportExecutorEnvelopeDiagnosticDto,
 };
 pub use codex_turn_start::{
     codex_turn_start_diagnostics, CodexTurnStartDiagnosticDto, CodexTurnStartDiagnosticsDto,

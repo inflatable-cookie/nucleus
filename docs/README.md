@@ -89,6 +89,11 @@ Current planning artifacts:
 - `roadmaps/g02/059-codex-callback-response-gate.md`
 - `roadmaps/g02/060-codex-provider-interruption-gate.md`
 - `roadmaps/g02/061-codex-session-recovery-gate.md`
+- `roadmaps/g02/062-provider-runtime-materialisation-gate.md`
+- `roadmaps/g02/063-provider-command-reactor-gate.md`
+- `roadmaps/g02/064-codex-live-provider-send-readiness.md`
+- `roadmaps/g02/065-codex-turn-start-transport-executor-handoff.md`
+- `roadmaps/g02/066-task-backed-workflow-hardening.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -98,6 +103,17 @@ Current planning artifacts:
 
 Do not widen provider-reaching cancellation, resume execution, task mutation,
 remote transport, or UI sync controls until the Codex session recovery gate
-proves recovery need, admission, resume envelope, receipt, and diagnostics
-state without raw payload retention. The red god-file gate is clear, but
-warning-sized files remain pressure when touched.
+proves provider diagnostics routing, provider-service ownership, provider
+instance registry shape, and provider runtime orchestration linkage without
+provider execution, raw payload retention, or task mutation. The god-file
+doctor gate is a recorded health blocker and warning-sized files remain
+pressure when touched.
+
+Codex `turn/start` transport-executor handoff is complete through authority
+records, sanitized execution envelopes, persistence, first-response frame
+evidence, diagnostics, and a stopped-by-default real-write smoke boundary.
+
+Live provider writes and task-state mutation remain blocked. The current lane
+has hardened task-backed workflow state before any direct Codex provider write.
+The next step requires explicit operator confirmation before the Codex
+direct-connection `turn/start` real-write smoke may run.

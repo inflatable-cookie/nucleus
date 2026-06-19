@@ -257,83 +257,27 @@ fn blocker_summary(blockers: &[CodexAppServerCallbackResponseAdmissionBlocker]) 
 mod tests {
     use super::*;
     use crate::codex_supervision::{
-        codex_callback_request, codex_runtime_instance_from_supervision_request,
-        CodexAppServerBinary, CodexAppServerCallbackPromptRef,
-        CodexAppServerCallbackPromptRetentionPolicy, CodexAppServerPayloadRetentionPolicy,
-        CodexAppServerRuntimeInstanceRecord, CodexAppServerRuntimeInstanceState,
-        CodexAppServerSchemaEvidenceRef, CodexAppServerSupervisionLimits,
-        CodexAppServerSupervisionRequest,
+        codex_callback_request,
+        test_support::{
+            callback_prompt_ref, metadata_only, runtime, session_id, task_id, work_item_id,
+        },
     };
-    use crate::host_authority::EngineHostId;
-    use nucleus_agent_protocol::{
-        AdapterIdentity, AgentSessionId, AuthenticationPreflight, ProviderDriverKind,
-        TransportFamily, VersionDiscovery,
-    };
-    use nucleus_engine::EngineTaskWorkItemId;
-    use nucleus_projects::ProjectId;
-    use nucleus_tasks::TaskId;
-
-    fn runtime() -> CodexAppServerRuntimeInstanceRecord {
-        codex_runtime_instance_from_supervision_request(
-            &CodexAppServerSupervisionRequest {
-                project_id: ProjectId("project:1".to_owned()),
-                execution_host_id: EngineHostId("host:local".to_owned()),
-                adapter: AdapterIdentity {
-                    adapter_id: "codex-app-server".to_owned(),
-                    provider_driver_kind: ProviderDriverKind::Codex,
-                    provider_instance_id: "codex:local-default".to_owned(),
-                    provider_name: "OpenAI Codex".to_owned(),
-                    harness_name: "Codex app-server".to_owned(),
-                    transport_family: TransportFamily::StructuredAppServerRuntime,
-                    version_discovery: VersionDiscovery::Command("codex --version".to_owned()),
-                    authentication_preflight: AuthenticationPreflight::Command(
-                        "codex doctor --json".to_owned(),
-                    ),
-                },
-                binary: CodexAppServerBinary {
-                    command: "codex".to_owned(),
-                    version_label: Some("codex-cli 0.140.0".to_owned()),
-                    available: true,
-                },
-                schema_evidence: CodexAppServerSchemaEvidenceRef {
-                    evidence_ref: "evidence:codex-schema".to_owned(),
-                    codex_version: "codex-cli 0.140.0".to_owned(),
-                    generated_json_schema: true,
-                    generated_ts_bindings: true,
-                },
-                supervision_limits: CodexAppServerSupervisionLimits {
-                    max_sessions: 1,
-                    allow_raw_provider_payload_storage: false,
-                    allow_live_spawn: true,
-                },
-            },
-            CodexAppServerRuntimeInstanceState::ReadyForSpawn,
-        )
-    }
-
-    fn prompt_ref() -> CodexAppServerCallbackPromptRef {
-        CodexAppServerCallbackPromptRef {
-            prompt_ref: "callback-prompt:1".to_owned(),
-            summary: "callback summary".to_owned(),
-            retention: CodexAppServerCallbackPromptRetentionPolicy::SummaryAndRefOnly,
-        }
-    }
 
     fn permission_request() -> CodexAppServerCallbackRequest {
         codex_callback_request(
             &runtime(),
             CodexAppServerProviderCallbackId("provider-callback:1".to_owned()),
-            AgentSessionId("session:1".to_owned()),
+            session_id(),
             Some("turn:provider:1".to_owned()),
             Some("item:provider:1".to_owned()),
-            TaskId("task:1".to_owned()),
-            EngineTaskWorkItemId("work:1".to_owned()),
+            task_id(),
+            work_item_id(),
             CodexAppServerCallbackRequestKind::Permission {
                 scope: ApprovalScope::Command,
                 options: vec!["allow".to_owned(), "deny".to_owned()],
             },
-            prompt_ref(),
-            CodexAppServerPayloadRetentionPolicy::MetadataOnly,
+            callback_prompt_ref(),
+            metadata_only(),
         )
         .expect("callback request")
     }
@@ -342,17 +286,17 @@ mod tests {
         codex_callback_request(
             &runtime(),
             CodexAppServerProviderCallbackId("provider-callback:input".to_owned()),
-            AgentSessionId("session:1".to_owned()),
+            session_id(),
             Some("turn:provider:1".to_owned()),
             Some("item:provider:input".to_owned()),
-            TaskId("task:1".to_owned()),
-            EngineTaskWorkItemId("work:1".to_owned()),
+            task_id(),
+            work_item_id(),
             CodexAppServerCallbackRequestKind::UserInput {
                 kind,
                 options: vec!["first".to_owned(), "second".to_owned()],
             },
-            prompt_ref(),
-            CodexAppServerPayloadRetentionPolicy::MetadataOnly,
+            callback_prompt_ref(),
+            metadata_only(),
         )
         .expect("callback request")
     }

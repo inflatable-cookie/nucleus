@@ -106,7 +106,10 @@ fn management_capture_review_model_exposes_readiness_without_provider_mutation()
         "pull request",
         "secret",
     ] {
-        assert!(!json.contains(forbidden), "capture review leaked {forbidden}");
+        assert!(
+            !json.contains(forbidden),
+            "capture review leaked {forbidden}"
+        );
     }
 }
 

@@ -1,6 +1,6 @@
 # 272 Codex Recovery Admission Policy
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../061-codex-session-recovery-gate.md`
@@ -18,15 +18,27 @@ Gate Codex recovery/resume attempts before provider send.
 
 ## Acceptance Criteria
 
-- Admission reports accepted, blocked, and unsupported states.
-- Blockers are actionable and replay-safe.
-- Task state is not mutated by admission.
+- [x] Admission reports accepted, blocked, and unsupported states.
+- [x] Blockers are actionable and replay-safe.
+- [x] Task state is not mutated by admission.
+
+## Closeout
+
+Added Codex recovery admission records that gate recovery/resume attempts
+before provider send. Admission now requires recovery authority, runtime-ready
+evidence, provider-identity evidence, thread-resume capability, provider
+thread identity, and raw payload policy confirmation.
+
+Unsafe replacement-thread and provider identity mismatch cases are blocked.
+Repair-only and unsupported resume capabilities are reported as unsupported.
+Admission records never start provider send, retain raw provider payloads, or
+permit task mutation.
 
 ## Validation
 
-- targeted server tests
-- `cargo check --workspace`
-- `git diff --check`
+- [x] `cargo test -p nucleus-server recovery -- --nocapture`
+- [x] `cargo check --workspace`
+- [x] `git diff --check`
 
 ## Stop Conditions
 

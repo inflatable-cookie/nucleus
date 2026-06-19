@@ -263,83 +263,22 @@ fn target_identity(target: &CodexAppServerInterruptionTarget) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex_supervision::{
-        codex_runtime_instance_from_supervision_request, CodexAppServerBinary,
-        CodexAppServerRuntimeInstanceRecord, CodexAppServerRuntimeInstanceState,
-        CodexAppServerSchemaEvidenceRef, CodexAppServerSupervisionLimits,
-        CodexAppServerSupervisionRequest,
+    use crate::codex_supervision::test_support::{
+        interruption_reason_ref, interruption_target, metadata_only, runtime, session_id, task_id,
+        work_item_id,
     };
-    use crate::host_authority::EngineHostId;
-    use nucleus_agent_protocol::{
-        AdapterIdentity, AuthenticationPreflight, ProviderDriverKind, TransportFamily,
-        VersionDiscovery,
-    };
-    use nucleus_projects::ProjectId;
-
-    fn runtime() -> CodexAppServerRuntimeInstanceRecord {
-        codex_runtime_instance_from_supervision_request(
-            &CodexAppServerSupervisionRequest {
-                project_id: ProjectId("project:1".to_owned()),
-                execution_host_id: EngineHostId("host:local".to_owned()),
-                adapter: AdapterIdentity {
-                    adapter_id: "codex-app-server".to_owned(),
-                    provider_driver_kind: ProviderDriverKind::Codex,
-                    provider_instance_id: "codex:local-default".to_owned(),
-                    provider_name: "OpenAI Codex".to_owned(),
-                    harness_name: "Codex app-server".to_owned(),
-                    transport_family: TransportFamily::StructuredAppServerRuntime,
-                    version_discovery: VersionDiscovery::Command("codex --version".to_owned()),
-                    authentication_preflight: AuthenticationPreflight::Command(
-                        "codex doctor --json".to_owned(),
-                    ),
-                },
-                binary: CodexAppServerBinary {
-                    command: "codex".to_owned(),
-                    version_label: Some("codex-cli 0.140.0".to_owned()),
-                    available: true,
-                },
-                schema_evidence: CodexAppServerSchemaEvidenceRef {
-                    evidence_ref: "evidence:codex-schema".to_owned(),
-                    codex_version: "codex-cli 0.140.0".to_owned(),
-                    generated_json_schema: true,
-                    generated_ts_bindings: true,
-                },
-                supervision_limits: CodexAppServerSupervisionLimits {
-                    max_sessions: 1,
-                    allow_raw_provider_payload_storage: false,
-                    allow_live_spawn: true,
-                },
-            },
-            CodexAppServerRuntimeInstanceState::ReadyForSpawn,
-        )
-    }
-
-    fn reason_ref() -> CodexAppServerInterruptionReasonRef {
-        CodexAppServerInterruptionReasonRef {
-            reason_ref: "interruption-reason:1".to_owned(),
-            summary: "operator stopped the active turn".to_owned(),
-            retention: CodexAppServerInterruptionReasonRetentionPolicy::SummaryAndRefOnly,
-        }
-    }
-
-    fn target() -> CodexAppServerInterruptionTarget {
-        CodexAppServerInterruptionTarget::ActiveTurn {
-            provider_turn_id: "turn:provider:1".to_owned(),
-            provider_request_id: Some("request:provider:1".to_owned()),
-        }
-    }
 
     #[test]
     fn interruption_request_preserves_provider_and_nucleus_identity_without_send() {
         let request = codex_interruption_request(
             &runtime(),
             CodexAppServerInterruptionRequestRef("interrupt:1".to_owned()),
-            AgentSessionId("session:1".to_owned()),
-            target(),
-            TaskId("task:1".to_owned()),
-            EngineTaskWorkItemId("work:1".to_owned()),
-            reason_ref(),
-            CodexAppServerPayloadRetentionPolicy::MetadataOnly,
+            session_id(),
+            interruption_target(),
+            task_id(),
+            work_item_id(),
+            interruption_reason_ref(),
+            metadata_only(),
         )
         .expect("interruption request");
 
@@ -388,15 +327,15 @@ mod tests {
         let rejection = codex_interruption_request(
             &runtime(),
             CodexAppServerInterruptionRequestRef("interrupt:1".to_owned()),
-            AgentSessionId("session:1".to_owned()),
+            session_id(),
             CodexAppServerInterruptionTarget::ActiveTurn {
                 provider_turn_id: String::new(),
                 provider_request_id: None,
             },
-            TaskId("task:1".to_owned()),
-            EngineTaskWorkItemId("work:1".to_owned()),
-            reason_ref(),
-            CodexAppServerPayloadRetentionPolicy::MetadataOnly,
+            task_id(),
+            work_item_id(),
+            interruption_reason_ref(),
+            metadata_only(),
         )
         .expect_err("missing turn id");
 
@@ -408,11 +347,11 @@ mod tests {
         let rejection = codex_interruption_request(
             &runtime(),
             CodexAppServerInterruptionRequestRef("interrupt:1".to_owned()),
-            AgentSessionId("session:1".to_owned()),
-            target(),
-            TaskId("task:1".to_owned()),
-            EngineTaskWorkItemId("work:1".to_owned()),
-            reason_ref(),
+            session_id(),
+            interruption_target(),
+            task_id(),
+            work_item_id(),
+            interruption_reason_ref(),
             CodexAppServerPayloadRetentionPolicy::RawProviderPayloadsAllowed,
         )
         .expect_err("raw payload retention");

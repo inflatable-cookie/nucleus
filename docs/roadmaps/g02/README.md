@@ -76,20 +76,22 @@ and engine boundary are settled.
 - `058-codex-turn-start-send-and-subscription-gate.md` - completed
 - `059-codex-callback-response-gate.md` - completed
 - `060-codex-provider-interruption-gate.md` - completed
-- `061-codex-session-recovery-gate.md` - active
+- `061-codex-session-recovery-gate.md` - completed
+- `062-provider-runtime-materialisation-gate.md` - completed
+- `063-provider-command-reactor-gate.md` - completed
+- `064-codex-live-provider-send-readiness.md` - completed
+- `065-codex-turn-start-transport-executor-handoff.md` - completed
+- `066-task-backed-workflow-hardening.md` - completed
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/271-codex-recovery-need-records.md`
+None.
 
 Planned cards:
 
-- `batch-cards/272-codex-recovery-admission-policy.md`
-- `batch-cards/273-codex-recovery-envelope-receipts.md`
-- `batch-cards/274-codex-recovery-diagnostics.md`
-- `batch-cards/275-codex-recovery-closeout.md`
+None.
 
 Completed cards:
 
@@ -363,6 +365,37 @@ Completed cards:
 - `batch-cards/268-codex-interruption-envelope-receipts.md`
 - `batch-cards/269-codex-interruption-diagnostics.md`
 - `batch-cards/270-codex-interruption-closeout.md`
+- `batch-cards/271-codex-recovery-need-records.md`
+- `batch-cards/272-codex-recovery-admission-policy.md`
+- `batch-cards/273-codex-recovery-envelope-receipts.md`
+- `batch-cards/274-codex-recovery-diagnostics.md`
+- `batch-cards/275-codex-recovery-closeout.md`
+- `batch-cards/276-codex-diagnostics-control-routing.md`
+- `batch-cards/277-provider-service-ownership-records.md`
+- `batch-cards/278-provider-instance-registry-records.md`
+- `batch-cards/279-provider-runtime-orchestration-linkage.md`
+- `batch-cards/280-provider-runtime-materialisation-closeout.md`
+- `batch-cards/281-provider-command-reactor-records.md`
+- `batch-cards/282-provider-command-outcome-persistence.md`
+- `batch-cards/283-codex-turn-start-reactor-dry-run.md`
+- `batch-cards/284-codex-callback-response-reactor-dry-run.md`
+- `batch-cards/285-provider-command-reactor-closeout.md`
+- `batch-cards/286-codex-live-send-preflight-records.md`
+- `batch-cards/287-provider-transport-write-attempt-records.md`
+- `batch-cards/288-codex-turn-start-live-send-receipts.md`
+- `batch-cards/289-codex-constrained-live-send-smoke-boundary.md`
+- `batch-cards/290-codex-live-provider-send-closeout.md`
+- `batch-cards/291-codex-transport-executor-authority-records.md`
+- `batch-cards/292-codex-turn-start-stdio-execution-envelope.md`
+- `batch-cards/293-codex-transport-execution-persistence.md`
+- `batch-cards/294-codex-stdio-frame-ingestion-persistence.md`
+- `batch-cards/295-codex-transport-executor-diagnostics.md`
+- `batch-cards/296-codex-turn-start-executor-smoke-boundary.md`
+- `batch-cards/297-codex-transport-executor-closeout.md`
+- `batch-cards/298-task-agent-source-record-persistence.md`
+- `batch-cards/299-task-work-progress-query-from-state.md`
+- `batch-cards/300-task-agent-transition-validation.md`
+- `batch-cards/301-task-backed-hardening-closeout.md`
 
 ## Planned Runway Sequence
 

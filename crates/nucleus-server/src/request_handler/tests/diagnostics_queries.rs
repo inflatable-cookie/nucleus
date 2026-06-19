@@ -21,6 +21,9 @@ fn handler_returns_empty_diagnostics_snapshot_without_mutation() {
             && snapshot.task_agent.source_status == "empty"
             && !snapshot.task_agent.client_can_mutate_work_units
             && !snapshot.task_agent.provider_execution_available
+            && snapshot.codex_provider.source_status == "empty"
+            && !snapshot.codex_provider.client_can_control_provider
+            && !snapshot.codex_provider.client_can_mutate_tasks
     ));
 }
 
@@ -33,6 +36,7 @@ fn handler_routes_each_diagnostics_query_kind() {
     let sync = handler.handle(diagnostics_request(DiagnosticsQuery::ManagementSync));
     let scm = handler.handle(diagnostics_request(DiagnosticsQuery::ScmSession));
     let task_agent = handler.handle(diagnostics_request(DiagnosticsQuery::TaskAgent));
+    let codex = handler.handle(diagnostics_request(DiagnosticsQuery::CodexProvider));
 
     assert!(matches!(
         steward.body,
@@ -63,6 +67,35 @@ fn handler_routes_each_diagnostics_query_kind() {
         ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
             ServerDiagnosticsQueryResult::TaskAgent(_)
         ))
+    ));
+    assert!(matches!(
+        codex.body,
+        ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::CodexProvider(record)
+        )) if !record.client_can_control_provider
+            && !record.client_can_mutate_tasks
+            && record.source_status == "empty"
+    ));
+}
+
+#[test]
+fn handler_reads_task_agent_diagnostics_from_persisted_task_history() {
+    let (_temp_dir, mut handler) = handler(None);
+    let source = persist_task_agent_source(&handler);
+
+    let response = handler.handle(diagnostics_request(DiagnosticsQuery::TaskAgent));
+
+    assert_eq!(response.status, ServerControlResponseStatus::Complete);
+    assert!(matches!(
+        response.body,
+        ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::TaskAgent(record)
+        )) if record.source_status == "records"
+            && record.work_units.len() == 1
+            && record.work_units[0].last_source_id == source.source_id.0
+            && record.work_units[0].summary == source.summary
+            && !record.client_can_mutate_work_units
+            && !record.provider_execution_available
     ));
 }
 

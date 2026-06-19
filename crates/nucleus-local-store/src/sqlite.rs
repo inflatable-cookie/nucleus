@@ -267,6 +267,13 @@ fn initialize_schema(connection: &Connection) -> LocalStoreResult<()> {
                 media_type TEXT,
                 payload BLOB NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS task_history (
+                id TEXT PRIMARY KEY NOT NULL,
+                kind TEXT NOT NULL,
+                revision_id TEXT NOT NULL,
+                media_type TEXT,
+                payload BLOB NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS workspace_layouts (
                 id TEXT PRIMARY KEY NOT NULL,
                 kind TEXT NOT NULL,
@@ -332,6 +339,7 @@ fn table_for_domain(domain: &PersistenceDomain) -> LocalStoreResult<&'static str
     match domain {
         PersistenceDomain::Projects => Ok("projects"),
         PersistenceDomain::Tasks => Ok("tasks"),
+        PersistenceDomain::TaskHistory => Ok("task_history"),
         PersistenceDomain::Workspaces => Ok("workspace_layouts"),
         PersistenceDomain::AdapterRegistry => Ok("adapter_instances"),
         PersistenceDomain::AgentSessions => Ok("agent_sessions"),

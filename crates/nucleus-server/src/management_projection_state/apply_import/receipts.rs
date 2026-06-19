@@ -45,7 +45,9 @@ pub(super) fn receipt_for_applied(
     )
 }
 
-pub(super) fn receipt_for_block(block: &ManagementProjectionApplyBlock) -> EngineRuntimeReceiptRecord {
+pub(super) fn receipt_for_block(
+    block: &ManagementProjectionApplyBlock,
+) -> EngineRuntimeReceiptRecord {
     let record_id = block
         .record_id
         .clone()

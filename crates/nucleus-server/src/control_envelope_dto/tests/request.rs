@@ -294,6 +294,33 @@ fn request_envelope_dto_serializes_diagnostics_query() {
 }
 
 #[test]
+fn request_envelope_dto_round_trips_codex_provider_diagnostics_query() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:diagnostics:codex".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:dto:diagnostics:codex".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::CodexProvider),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let server_request = ServerControlRequest::try_from(decoded).expect("server request");
+
+    assert!(json.contains("\"domain\":\"codex_provider\""));
+    assert!(matches!(
+        server_request.kind,
+        ServerControlRequestKind::Query(ServerQuery {
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::CodexProvider),
+            ..
+        })
+    ));
+}
+
+#[test]
 fn request_envelope_rejects_unknown_diagnostics_domain() {
     let dto = ControlRequestEnvelopeDto {
         protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),

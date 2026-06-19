@@ -113,6 +113,31 @@ Work-item records and projections must not copy full provider transcripts,
 terminal streams, raw stdout/stderr, raw tool payloads, secrets, or credential
 material by default.
 
+## Projection Policy
+
+Task-backed workflow state has two different persistence roles.
+
+Authoritative local/server state:
+
+- task-agent work-unit source records
+- runtime receipts
+- checkpoint and diff summary refs
+- review decisions and task timeline events
+- provider session, turn, callback, interruption, and recovery refs
+
+Repo-backed management projections:
+
+- task summaries suitable for collaboration
+- accepted planning metadata
+- task readiness and review summaries
+- stable evidence refs, not evidence payloads
+
+Repo-backed projections are shareable coordination artifacts. They are not the
+authority for live runtime state, provider sessions, local client layout,
+credential material, raw output, or review acceptance. If a projection is stale
+or missing, the server rebuilds it from authoritative state or records a repair
+proposal; it must not import projection files as live task-agent state.
+
 ## Codex Binding Rule
 
 Codex app-server integration is one runtime binding, not the generic model.
@@ -181,16 +206,13 @@ Current engine proof records already have useful shape:
 
 Missing or incomplete surfaces before runtime implementation:
 
-- explicit transition validation for all runtime state changes
 - provider-runtime binding record for Codex session/thread/turn/item refs
 - wait-state records for approval and user input
 - recovery record for interrupted, unsupported, partial, or uncertain sessions
 - timeline mapping for work-item lifecycle events beyond task command summaries
 - idempotency and expected-revision rules for review and rework commands
-- persistence for task-agent work-unit source records; current control progress
-  fixtures rebuild from in-memory source records
-- repo-backed projection policy for which task-management records are
-  committable and which runtime records remain local-only
+- broader task-agent transition validation after live provider observations
+  start entering the orchestration event store
 
 These gaps are assigned to the next implementation runway. They do not block
 the contract reset.
@@ -213,6 +235,17 @@ That requires:
 
 The next lane should implement those records before provider callbacks,
 provider-reaching cancellation, or automatic task state mutation.
+
+## 2026-06-19 Hardening Update
+
+The server now persists task-agent work-unit source records as sanitized
+task-history records. Task work progress and task-agent diagnostics read from
+those source records. The write path rejects raw provider material and validates
+first-pass runtime/review transitions before persistence.
+
+This closes the proof-only in-memory progress path. It does not authorize live
+provider writes, provider callbacks, provider-reaching cancellation, resume, or
+automatic task mutation.
 
 ## Relationship To Other Contracts
 

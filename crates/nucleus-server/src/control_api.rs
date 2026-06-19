@@ -18,8 +18,9 @@ use nucleus_workspaces::WorkspaceLayoutId;
 use crate::client_protocol::ProjectAuthorityMapPublicationRecord;
 use crate::commands::ServerCommand;
 use crate::diagnostics_read_models::{
-    EffigyDiagnosticsDto, ScmSessionDiagnosticsDto, StewardDiagnosticsDto, SyncDiagnosticsDto,
-    TaskAgentDiagnosticsDto, TaskAgentWorkUnitDiagnosticDto,
+    CodexProviderDiagnosticsDto, EffigyDiagnosticsDto, ScmSessionDiagnosticsDto,
+    StewardDiagnosticsDto, SyncDiagnosticsDto, TaskAgentDiagnosticsDto,
+    TaskAgentWorkUnitDiagnosticDto,
 };
 use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
@@ -127,6 +128,7 @@ pub enum DiagnosticsQuery {
     ManagementSync,
     ScmSession,
     TaskAgent,
+    CodexProvider,
     All,
 }
 
@@ -213,6 +215,7 @@ pub enum ServerDiagnosticsQueryResult {
     ManagementSync(SyncDiagnosticsDto),
     ScmSession(ScmSessionDiagnosticsDto),
     TaskAgent(TaskAgentDiagnosticsDto),
+    CodexProvider(CodexProviderDiagnosticsDto),
     All(ServerDiagnosticsSnapshot),
 }
 
@@ -224,6 +227,7 @@ pub struct ServerDiagnosticsSnapshot {
     pub management_sync: SyncDiagnosticsDto,
     pub scm_session: ScmSessionDiagnosticsDto,
     pub task_agent: TaskAgentDiagnosticsDto,
+    pub codex_provider: CodexProviderDiagnosticsDto,
 }
 
 /// State records returned from the local state facade.

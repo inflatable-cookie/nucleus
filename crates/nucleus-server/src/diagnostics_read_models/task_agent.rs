@@ -60,7 +60,7 @@ pub fn task_agent_diagnostics(
         source_status: source_status(records.len()),
         source_summary: Some(source_summary(
             records.len(),
-            "task-agent work-unit source records are not persisted yet",
+            "no persisted task-agent work-unit source records",
             "task-agent diagnostics loaded from source records",
         )),
     }
@@ -78,7 +78,12 @@ impl From<&EngineTaskAgentWorkUnitProjection> for TaskAgentWorkUnitDiagnosticDto
             last_cursor: projection.last_cursor.0.clone(),
             source_count: projection.source_count,
             session_id: projection.refs.session_id.as_ref().map(|id| id.0.clone()),
-            turn_ids: projection.refs.turn_ids.iter().map(|id| id.0.clone()).collect(),
+            turn_ids: projection
+                .refs
+                .turn_ids
+                .iter()
+                .map(|id| id.0.clone())
+                .collect(),
             receipt_ids: projection
                 .refs
                 .receipt_ids
