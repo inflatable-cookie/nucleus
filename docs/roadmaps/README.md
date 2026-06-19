@@ -64,7 +64,8 @@ shape.
 - `g02/057-codex-turn-start-admission-gate.md` - completed
 - `g02/058-codex-turn-start-send-and-subscription-gate.md` - completed
 - `g02/059-codex-callback-response-gate.md` - completed
-- `g02/060-codex-provider-interruption-gate.md` - active
+- `g02/060-codex-provider-interruption-gate.md` - completed
+- `g02/061-codex-session-recovery-gate.md` - active
 
 ## Previous Generation
 
@@ -123,4 +124,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/270-codex-interruption-closeout.md`.
+Execute `g02/batch-cards/271-codex-recovery-need-records.md`.

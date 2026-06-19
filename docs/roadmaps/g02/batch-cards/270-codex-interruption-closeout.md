@@ -1,6 +1,6 @@
 # 270 Codex Interruption Closeout
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../060-codex-provider-interruption-gate.md`
@@ -33,3 +33,10 @@ Close the provider interruption lane and select the next runtime gate.
 ## Stop Conditions
 
 - Stop if the next gate needs operator intent.
+
+## Result
+
+- Closed the provider interruption lane after request, admission, envelope,
+  receipt, and diagnostics records were implemented.
+- Selected Codex session recovery/resume as the next runtime gate.
+- Kept task-state mutation behind a later explicit gate.

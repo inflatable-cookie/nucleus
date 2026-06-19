@@ -88,6 +88,7 @@ Current planning artifacts:
 - `roadmaps/g02/058-codex-turn-start-send-and-subscription-gate.md`
 - `roadmaps/g02/059-codex-callback-response-gate.md`
 - `roadmaps/g02/060-codex-provider-interruption-gate.md`
+- `roadmaps/g02/061-codex-session-recovery-gate.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -96,7 +97,7 @@ Current planning artifacts:
 ## Guardrail
 
 Do not widen provider-reaching cancellation, resume execution, task mutation,
-remote transport, or UI sync controls until the Codex provider interruption
-gate proves provider-reaching interruption request, admission, envelope,
-receipt, and diagnostics state without raw payload retention. The red god-file
-gate is clear, but warning-sized files remain pressure when touched.
+remote transport, or UI sync controls until the Codex session recovery gate
+proves recovery need, admission, resume envelope, receipt, and diagnostics
+state without raw payload retention. The red god-file gate is clear, but
+warning-sized files remain pressure when touched.

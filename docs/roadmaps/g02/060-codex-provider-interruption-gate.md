@@ -1,6 +1,6 @@
 # 060 Codex Provider Interruption Gate
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -27,7 +27,7 @@ operator-authorized interruption without resume/recovery or task mutation.
 - [x] Gate interruption through authority, runtime readiness, and target state.
 - [x] Map accepted interruption to sanitized provider envelope and receipts.
 - [x] Expose interruption outcomes through read-only diagnostics.
-- [ ] Keep recovery/resume and task mutation out of scope.
+- [x] Keep recovery/resume and task mutation out of scope.
 
 ## Non-Goals
 
@@ -44,14 +44,14 @@ operator-authorized interruption without resume/recovery or task mutation.
 - [x] Envelope/receipt batch: map accepted interruptions to sanitized provider
       send intent and outcomes.
 - [x] Diagnostics batch: expose interruption state safely.
-- [ ] Closeout batch: validate and select recovery or task-mutation as the
+- [x] Closeout batch: validate and select recovery or task-mutation as the
       next gate.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/270-codex-interruption-closeout.md`
+- None.
 
 Planned cards:
 
@@ -63,6 +63,7 @@ Completed cards:
 - `batch-cards/267-codex-interruption-admission-policy.md`
 - `batch-cards/268-codex-interruption-envelope-receipts.md`
 - `batch-cards/269-codex-interruption-diagnostics.md`
+- `batch-cards/270-codex-interruption-closeout.md`
 
 ## Acceptance Criteria
 
@@ -71,9 +72,9 @@ Completed cards:
       targets.
 - [x] Envelope and receipts are sanitized and replay-safe.
 - [x] Diagnostics expose no raw provider payloads.
-- [ ] Validation passes.
+- [x] Validation passes.
 
 ## Gate
 
-Do not resume sessions or mutate task state until provider interruption state is
-explicit and tested.
+Provider interruption state is explicit and tested. Next gate:
+`061-codex-session-recovery-gate.md`.

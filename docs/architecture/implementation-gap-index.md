@@ -106,6 +106,9 @@ Current state:
 - `nucleus-server` has Codex callback response request, admission, sanitized
   envelope, outcome, receipt, and read-only diagnostics records for permission
   and structured user-input callbacks.
+- `nucleus-server` has Codex provider interruption request, admission,
+  sanitized `turn/interrupt` envelope, outcome, receipt, and read-only
+  diagnostics records.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 
@@ -124,6 +127,7 @@ Missing:
 - provider command reactor for `thread/start`, `turn/start`, callback
   responses, interruption, and close/unsubscribe
 - cancellation that reaches the provider and records local/provider outcomes
+- persistence for interruption/cancellation records
 - persistence for permission and user-input callback response records
 - resume/recovery after server restart, process exit, or provider reconnect
 - provider instance configuration and hot reload
@@ -142,8 +146,8 @@ Likely crates:
 
 Next gate:
 
-- start with Codex provider interruption/cancellation records
-- keep resume/recovery and task mutation behind explicit follow-up gates
+- start with Codex session recovery/resume records
+- keep task mutation behind an explicit follow-up gate
 - prove provider-native ids map to Nucleus-owned event, receipt, session, and
   work-item refs before letting runtime observations move task state
 
