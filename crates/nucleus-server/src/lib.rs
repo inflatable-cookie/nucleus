@@ -206,11 +206,13 @@ pub use control_serialization_readiness::{
 pub use deployment::{AccessEndpoint, DeploymentMode, ServerRuntime};
 pub use diagnostics_read_models::{
     codex_ingestion_diagnostics, codex_live_spawn_smoke_diagnostics, effigy_diagnostics,
-    codex_turn_start_diagnostics, management_sync_review_model, scm_session_diagnostics,
-    steward_diagnostics, sync_diagnostics, task_agent_diagnostics, CodexIngestionDiagnosticsDto,
-    CodexIngestionObservationDiagnosticDto, CodexLiveSpawnSmokeDiagnosticDto,
-    CodexLiveSpawnSmokeDiagnosticsDto, CodexTurnStartDiagnosticDto,
-    CodexTurnStartDiagnosticsDto, EffigyDiagnosticsDto,
+    codex_subscription_diagnostics, codex_turn_start_diagnostics, management_sync_review_model,
+    scm_session_diagnostics, steward_diagnostics, sync_diagnostics, task_agent_diagnostics,
+    CodexIngestionDiagnosticsDto, CodexIngestionObservationDiagnosticDto,
+    CodexLiveSpawnSmokeDiagnosticDto, CodexLiveSpawnSmokeDiagnosticsDto,
+    CodexStdioWriteDiagnosticDto, CodexSubscriptionDiagnosticDto,
+    CodexSubscriptionDiagnosticsDto, CodexTurnStartDiagnosticDto, CodexTurnStartDiagnosticsDto,
+    EffigyDiagnosticsDto,
     ScmCommandAdmissionDiagnosticDto, ScmSessionDiagnosticsDto, ScmSessionPlanDiagnosticDto,
     ScmWorkItemLinkDiagnosticDto, StewardCommandAdmissionDiagnosticDto,
     StewardCommandOutcomeDiagnosticDto, StewardDiagnosticsDto, StewardProposalDiagnosticDto,

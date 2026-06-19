@@ -121,4 +121,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/259-codex-subscription-diagnostics.md`.
+Execute `g02/batch-cards/260-codex-send-subscription-closeout.md`.

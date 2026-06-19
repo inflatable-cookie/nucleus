@@ -1,6 +1,6 @@
 # 259 Codex Subscription Diagnostics
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../058-codex-turn-start-send-and-subscription-gate.md`
@@ -21,6 +21,13 @@ Expose provider-send and subscription state through read-only diagnostics.
 - Clients can inspect send/subscription state without authority.
 - Diagnostics do not leak raw prompt/provider data.
 - Callback/cancellation/recovery gaps remain explicit.
+
+## Result
+
+Implemented read-only send/subscription diagnostics for stdio write and
+subscription state records, including receipt refs, next actions, and explicit
+no-authority flags for provider writes, callbacks, cancellation, and task
+mutation.
 
 ## Validation
 
