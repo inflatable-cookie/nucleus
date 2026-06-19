@@ -1,6 +1,6 @@
 # 266 Codex Interruption Request Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../060-codex-provider-interruption-gate.md`
@@ -32,3 +32,11 @@ Add Codex interruption request records for provider-running work.
 ## Stop Conditions
 
 - Stop if interruption identity cannot be stable before provider send.
+
+## Result
+
+- Added Codex interruption request records for active provider turns.
+- Preserved runtime, session, provider turn/request, task, and work item refs.
+- Required a reason summary/ref and blocked raw reason/provider payload
+  retention.
+- Kept provider send, recovery, and task mutation out of scope.

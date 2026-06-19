@@ -10,11 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `266-codex-interruption-request-records.md`
+- `267-codex-interruption-admission-policy.md`
 
 ## Planned Cards
 
-- `267-codex-interruption-admission-policy.md`
 - `268-codex-interruption-envelope-receipts.md`
 - `269-codex-interruption-diagnostics.md`
 - `270-codex-interruption-closeout.md`
@@ -286,3 +285,4 @@ Hold execution cards for `g02`.
 - `263-codex-callback-response-envelope.md`
 - `264-codex-callback-receipts-diagnostics.md`
 - `265-codex-callback-closeout.md`
+- `266-codex-interruption-request-records.md`

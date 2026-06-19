@@ -123,4 +123,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/266-codex-interruption-request-records.md`.
+Execute `g02/batch-cards/267-codex-interruption-admission-policy.md`.
