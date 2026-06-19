@@ -5,6 +5,7 @@
 //! provider payloads, or ingest live events.
 
 mod handshake;
+mod idempotency;
 mod live_ingestion;
 mod readiness;
 mod session_binding;
@@ -13,6 +14,11 @@ pub use handshake::{
     assess_codex_app_server_handshake, CodexAppServerHandshakeBlocker,
     CodexAppServerHandshakeExpectation, CodexAppServerHandshakeObservation,
     CodexAppServerHandshakePreflight, CodexAppServerHandshakePreflightStatus,
+};
+pub use idempotency::{
+    accept_codex_ingestion_source, codex_frame_key_from_source,
+    CodexAppServerFrameAcceptanceContext, CodexAppServerFrameAcceptanceRecord,
+    CodexAppServerFrameAcceptanceStatus, CodexAppServerFrameKey, CodexAppServerObservationKind,
 };
 pub use live_ingestion::{
     ingest_codex_app_server_live_frame, CodexAppServerLiveFrame, CodexAppServerLiveIngestion,

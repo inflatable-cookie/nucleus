@@ -117,4 +117,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/236-codex-ingestion-idempotency.md`.
+Execute `g02/batch-cards/237-codex-observation-event-store-linkage.md`.

@@ -92,8 +92,9 @@ Current state:
 - `nucleus-server` has compile-only Codex supervision readiness, handshake
   expectations, server-owned session binding records, decoded-frame ingestion
   source records, decoded-frame ingestion through fixture mapping, unsupported
-  observation records, wait-state routing, task-runtime admission, progress
-  projection, receipt linkage, and recovery gates.
+  observation records, duplicate-safe frame acceptance records, out-of-order
+  and recovery-required frame classification, wait-state routing, task-runtime
+  admission, progress projection, receipt linkage, and recovery gates.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 
@@ -111,7 +112,7 @@ Missing:
 - permission and user-input callback responses
 - resume/recovery after server restart, process exit, or provider reconnect
 - provider instance configuration and hot reload
-- idempotency across duplicated provider frames or reconnect replay
+- persistence for idempotency state across reconnect or restart
 - backpressure behavior for high-volume deltas
 - payload retention policy beyond metadata-only/evidence-ref records
 - task-backed state transition admission from runtime observations

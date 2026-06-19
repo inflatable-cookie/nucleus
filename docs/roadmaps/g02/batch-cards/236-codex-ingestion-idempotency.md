@@ -1,6 +1,6 @@
 # 236 Codex Ingestion Idempotency
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../054-codex-live-event-acceptance.md`
@@ -23,6 +23,18 @@ Define and implement duplicate-safe acceptance for decoded Codex observations.
 - Unsupported observations remain visible.
 - Out-of-order or uncertain observations require recovery instead of silent
   success.
+
+## Result
+
+`nucleus-server` now has Codex frame idempotency records under
+`codex_supervision/idempotency.rs`.
+
+The records define stable frame keys, acceptance context, observation kind, and
+accepted, duplicate, unsupported, out-of-order, and recovery-required outcomes.
+Provider ids are preferred for duplicate detection. Synthetic event identity
+falls back to transport sequence and remains explicit.
+
+Full `nucleus-server` tests pass.
 
 ## Validation
 

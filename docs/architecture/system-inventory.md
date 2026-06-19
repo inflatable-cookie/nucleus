@@ -189,8 +189,11 @@ Updated: 2026-06-16
   server-owned session binding and ingestion source record types that preserve
   Nucleus session authority, provider refs, binding confidence, recovery
   state, frame method, transport sequence, and raw-payload retention policy.
-  These records do not open stdio, decode live transport, append event-store
-  records, or run provider commands.
+  Duplicate-safe Codex frame acceptance records now classify accepted,
+  duplicate, unsupported, out-of-order, and recovery-required observations
+  before event-store append. These records do not open stdio, decode live
+  transport, persist idempotency state, append event-store records, or run
+  provider commands.
   Command handling still treats other state-shaped commands as accepted for
   later state mutation handling, while runtime session commands are rejected
   through scheduler admission or explicit deferred runtime-control errors. Local

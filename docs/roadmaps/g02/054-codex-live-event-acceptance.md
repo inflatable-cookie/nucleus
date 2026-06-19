@@ -24,7 +24,7 @@ Nucleus-owned records without broadening provider command execution.
 ## Goals
 
 - [x] Add durable Codex session binding and ingestion source records.
-- [ ] Define idempotent provider-frame acceptance before event-store append.
+- [x] Define idempotent provider-frame acceptance before event-store append.
 - [ ] Persist accepted canonical runtime event refs and unsupported observation
       refs.
 - [ ] Link accepted observations to task work items and sanitized receipts
@@ -44,7 +44,7 @@ Nucleus-owned records without broadening provider command execution.
 ## Execution Plan
 
 - [x] Record batch: introduce Codex session binding and ingestion source types.
-- [ ] Idempotency batch: define frame keys, duplicate handling, and recovery
+- [x] Idempotency batch: define frame keys, duplicate handling, and recovery
       states.
 - [ ] Orchestration batch: map accepted observations to event-store envelopes
       and runtime receipt refs.
@@ -56,11 +56,10 @@ Nucleus-owned records without broadening provider command execution.
 
 Ready cards:
 
-- `batch-cards/236-codex-ingestion-idempotency.md`
+- `batch-cards/237-codex-observation-event-store-linkage.md`
 
 Planned cards:
 
-- `batch-cards/237-codex-observation-event-store-linkage.md`
 - `batch-cards/238-codex-task-runtime-observation-links.md`
 - `batch-cards/239-codex-ingestion-diagnostics-query.md`
 - `batch-cards/240-codex-live-event-acceptance-closeout.md`
@@ -68,11 +67,12 @@ Planned cards:
 Completed cards:
 
 - `batch-cards/235-codex-session-binding-records.md`
+- `batch-cards/236-codex-ingestion-idempotency.md`
 
 ## Acceptance Criteria
 
 - [x] Codex session binding records preserve Nucleus and provider ids.
-- [ ] Ingestion source records can distinguish accepted, duplicated,
+- [x] Ingestion source records can distinguish accepted, duplicated,
       unsupported, and recovery-required observations.
 - [ ] Accepted observations produce event-store or receipt refs without
       retaining raw provider payloads by default.
