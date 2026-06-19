@@ -26,7 +26,7 @@ operator-authorized interruption without resume/recovery or task mutation.
 - [x] Add interruption request records with provider and Nucleus identity.
 - [x] Gate interruption through authority, runtime readiness, and target state.
 - [x] Map accepted interruption to sanitized provider envelope and receipts.
-- [ ] Expose interruption outcomes through read-only diagnostics.
+- [x] Expose interruption outcomes through read-only diagnostics.
 - [ ] Keep recovery/resume and task mutation out of scope.
 
 ## Non-Goals
@@ -43,7 +43,7 @@ operator-authorized interruption without resume/recovery or task mutation.
 - [x] Admission batch: gate interruption policy.
 - [x] Envelope/receipt batch: map accepted interruptions to sanitized provider
       send intent and outcomes.
-- [ ] Diagnostics batch: expose interruption state safely.
+- [x] Diagnostics batch: expose interruption state safely.
 - [ ] Closeout batch: validate and select recovery or task-mutation as the
       next gate.
 
@@ -51,17 +51,18 @@ operator-authorized interruption without resume/recovery or task mutation.
 
 Ready cards:
 
-- `batch-cards/269-codex-interruption-diagnostics.md`
+- `batch-cards/270-codex-interruption-closeout.md`
 
 Planned cards:
 
-- `batch-cards/270-codex-interruption-closeout.md`
+- None.
 
 Completed cards:
 
 - `batch-cards/266-codex-interruption-request-records.md`
 - `batch-cards/267-codex-interruption-admission-policy.md`
 - `batch-cards/268-codex-interruption-envelope-receipts.md`
+- `batch-cards/269-codex-interruption-diagnostics.md`
 
 ## Acceptance Criteria
 
@@ -69,7 +70,7 @@ Completed cards:
 - [x] Admission blocks unsupported, unauthorized, or stale interruption
       targets.
 - [x] Envelope and receipts are sanitized and replay-safe.
-- [ ] Diagnostics expose no raw provider payloads.
+- [x] Diagnostics expose no raw provider payloads.
 - [ ] Validation passes.
 
 ## Gate

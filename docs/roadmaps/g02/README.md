@@ -81,11 +81,11 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/269-codex-interruption-diagnostics.md`
+- `batch-cards/270-codex-interruption-closeout.md`
 
 Planned cards:
 
-- `batch-cards/270-codex-interruption-closeout.md`
+- None.
 
 Completed cards:
 
@@ -357,6 +357,7 @@ Completed cards:
 - `batch-cards/266-codex-interruption-request-records.md`
 - `batch-cards/267-codex-interruption-admission-policy.md`
 - `batch-cards/268-codex-interruption-envelope-receipts.md`
+- `batch-cards/269-codex-interruption-diagnostics.md`
 
 ## Planned Runway Sequence
 

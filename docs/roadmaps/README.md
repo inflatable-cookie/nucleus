@@ -123,4 +123,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/269-codex-interruption-diagnostics.md`.
+Execute `g02/batch-cards/270-codex-interruption-closeout.md`.

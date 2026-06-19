@@ -1,6 +1,6 @@
 # 269 Codex Interruption Diagnostics
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../060-codex-provider-interruption-gate.md`
@@ -31,3 +31,12 @@ Expose Codex interruption outcomes through read-only diagnostics.
 ## Stop Conditions
 
 - Stop if diagnostics need UI design decisions.
+
+## Result
+
+- Added client-safe Codex interruption diagnostics.
+- Included next action hints for accepted, blocked, failed, and unsupported
+  outcomes.
+- Kept provider interruption, recovery, and task mutation authority out of the
+  read-only DTO.
+- Verified serialization does not expose raw provider payload or reason refs.

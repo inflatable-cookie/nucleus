@@ -5,6 +5,7 @@
 
 mod codex_ingestion;
 mod codex_callback;
+mod codex_interruption;
 mod codex_live_spawn;
 mod codex_subscription;
 mod codex_turn_start;
@@ -23,6 +24,10 @@ pub use codex_ingestion::{
 };
 pub use codex_callback::{
     codex_callback_diagnostics, CodexCallbackDiagnosticDto, CodexCallbackDiagnosticsDto,
+};
+pub use codex_interruption::{
+    codex_interruption_diagnostics, CodexInterruptionDiagnosticDto,
+    CodexInterruptionDiagnosticsDto,
 };
 pub use codex_live_spawn::{
     codex_live_spawn_smoke_diagnostics, CodexLiveSpawnSmokeDiagnosticDto,
