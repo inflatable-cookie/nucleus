@@ -1,6 +1,6 @@
 # 264 Codex Callback Receipts Diagnostics
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../059-codex-callback-response-gate.md`
@@ -31,3 +31,11 @@ Expose callback outcomes through sanitized receipts and read-only diagnostics.
 ## Stop Conditions
 
 - Stop if diagnostics need UI design decisions.
+
+## Result
+
+- Added callback response outcome records and runtime receipt mapping.
+- Added client-safe callback diagnostics with next action hints.
+- Covered accepted, blocked, failed, and unsupported outcomes.
+- Kept raw payloads, cancellation, recovery, and task mutation out of
+  diagnostics authority.

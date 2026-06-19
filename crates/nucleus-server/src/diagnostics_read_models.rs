@@ -4,6 +4,7 @@
 //! clients without granting command authority or copying raw provider output.
 
 mod codex_ingestion;
+mod codex_callback;
 mod codex_live_spawn;
 mod codex_subscription;
 mod codex_turn_start;
@@ -19,6 +20,9 @@ mod task_agent;
 pub use codex_ingestion::{
     codex_ingestion_diagnostics, CodexIngestionDiagnosticsDto,
     CodexIngestionObservationDiagnosticDto,
+};
+pub use codex_callback::{
+    codex_callback_diagnostics, CodexCallbackDiagnosticDto, CodexCallbackDiagnosticsDto,
 };
 pub use codex_live_spawn::{
     codex_live_spawn_smoke_diagnostics, CodexLiveSpawnSmokeDiagnosticDto,

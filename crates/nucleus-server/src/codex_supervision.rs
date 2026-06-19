@@ -7,6 +7,7 @@
 mod callback_request;
 mod callback_response_admission;
 mod callback_response_envelope;
+mod callback_response_outcome;
 mod event_store_linkage;
 mod handshake;
 mod idempotency;
@@ -43,6 +44,12 @@ pub use callback_response_admission::{
 pub use callback_response_envelope::{
     codex_callback_response_envelope, CodexAppServerCallbackResponseEnvelopeId,
     CodexAppServerCallbackResponseEnvelopeRecord, CodexAppServerCallbackResponseEnvelopeRejection,
+};
+pub use callback_response_outcome::{
+    codex_callback_response_failed_outcome, codex_callback_response_outcome_from_admission,
+    codex_callback_response_outcome_from_envelope, codex_receipt_from_callback_response_outcome,
+    CodexAppServerCallbackResponseOutcomeId, CodexAppServerCallbackResponseOutcomeRecord,
+    CodexAppServerCallbackResponseOutcomeStatus,
 };
 pub use event_store_linkage::{
     link_codex_observation_to_event_store, CodexAppServerObservationEventLink,

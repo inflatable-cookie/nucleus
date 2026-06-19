@@ -105,8 +105,9 @@ pub use codex_supervision::{
     codex_ingestion_source_from_live_frame, codex_live_spawn_smoke_evidence,
     codex_live_spawn_smoke_request, codex_receipt_from_live_spawn_smoke_evidence,
     codex_receipt_from_spawn_intent, codex_receipt_from_stdio_frame,
-    codex_replacement_thread_recovery_binding, codex_runtime_instance_from_supervision_request,
-    codex_session_binding_from_live_frame, codex_stdio_frame_source_record,
+    codex_receipt_from_callback_response_outcome, codex_replacement_thread_recovery_binding,
+    codex_runtime_instance_from_supervision_request, codex_session_binding_from_live_frame,
+    codex_stdio_frame_source_record,
     ingest_codex_app_server_live_frame, link_codex_observation_to_event_store,
     run_codex_live_spawn_smoke, CodexAppServerBinary, CodexAppServerBindingConfidence,
     CodexAppServerBindingStatus, CodexAppServerFrameAcceptanceContext,
@@ -129,6 +130,8 @@ pub use codex_supervision::{
     CodexAppServerCallbackResponseAdmissionInput, CodexAppServerCallbackResponseAdmissionStatus,
     CodexAppServerCallbackResponseEnvelopeId, CodexAppServerCallbackResponseEnvelopeRecord,
     CodexAppServerCallbackResponseEnvelopeRejection,
+    CodexAppServerCallbackResponseOutcomeId, CodexAppServerCallbackResponseOutcomeRecord,
+    CodexAppServerCallbackResponseOutcomeStatus,
     CodexAppServerProviderCallbackId,
     CodexAppServerObservationEventLink, CodexAppServerObservationEventLinkStatus,
     CodexAppServerObservationKind, CodexAppServerPayloadRetentionPolicy,
@@ -161,9 +164,10 @@ pub use codex_supervision::{
     codex_receipt_from_subscription_state, codex_receipt_from_stdio_write_state,
     codex_receipt_from_turn_start_outcome, codex_subscription_state_from_send_command,
     codex_stdio_write_state_from_send_command, codex_callback_response_envelope,
-    codex_turn_start_envelope, codex_turn_start_outcome_from_admission,
-    codex_turn_start_outcome_from_envelope, codex_turn_start_request,
-    codex_turn_start_send_command,
+    codex_callback_response_failed_outcome, codex_callback_response_outcome_from_admission,
+    codex_callback_response_outcome_from_envelope, codex_turn_start_envelope,
+    codex_turn_start_outcome_from_admission, codex_turn_start_outcome_from_envelope,
+    codex_turn_start_request, codex_turn_start_send_command,
 };
 pub use codex_task_runtime::{
     admit_codex_task_runtime_request, classify_codex_task_runtime_error,
@@ -216,9 +220,10 @@ pub use control_serialization_readiness::{
 };
 pub use deployment::{AccessEndpoint, DeploymentMode, ServerRuntime};
 pub use diagnostics_read_models::{
-    codex_ingestion_diagnostics, codex_live_spawn_smoke_diagnostics, effigy_diagnostics,
-    codex_subscription_diagnostics, codex_turn_start_diagnostics, management_sync_review_model,
-    scm_session_diagnostics, steward_diagnostics, sync_diagnostics, task_agent_diagnostics,
+    codex_callback_diagnostics, codex_ingestion_diagnostics, codex_live_spawn_smoke_diagnostics,
+    effigy_diagnostics, codex_subscription_diagnostics, codex_turn_start_diagnostics,
+    management_sync_review_model, scm_session_diagnostics, steward_diagnostics, sync_diagnostics,
+    task_agent_diagnostics, CodexCallbackDiagnosticDto, CodexCallbackDiagnosticsDto,
     CodexIngestionDiagnosticsDto, CodexIngestionObservationDiagnosticDto,
     CodexLiveSpawnSmokeDiagnosticDto, CodexLiveSpawnSmokeDiagnosticsDto,
     CodexStdioWriteDiagnosticDto, CodexSubscriptionDiagnosticDto,
