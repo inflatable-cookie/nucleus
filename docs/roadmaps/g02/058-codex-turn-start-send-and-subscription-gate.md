@@ -26,7 +26,7 @@ state records, sanitized receipts, and diagnostics.
 
 - [x] Add provider-send command boundary records for accepted turn-start
       envelopes.
-- [ ] Add stdio write and subscription state records without raw stream
+- [x] Add stdio write and subscription state records without raw stream
       retention.
 - [ ] Map send/subscription outcomes to sanitized receipts.
 - [ ] Expose send/subscription diagnostics without command authority.
@@ -43,7 +43,7 @@ state records, sanitized receipts, and diagnostics.
 ## Execution Plan
 
 - [x] Command boundary batch: add provider-send command records.
-- [ ] Subscription state batch: add stdio write and subscription records.
+- [x] Subscription state batch: add stdio write and subscription records.
 - [ ] Receipt batch: map send/subscription outcomes to sanitized receipts.
 - [ ] Diagnostics batch: expose send/subscription state read-only.
 - [ ] Closeout batch: validate and select callback, cancellation, recovery, or
@@ -53,22 +53,22 @@ state records, sanitized receipts, and diagnostics.
 
 Ready cards:
 
-- `batch-cards/257-codex-stdio-write-subscription-state.md`
+- `batch-cards/258-codex-turn-start-send-receipts.md`
 
 Planned cards:
 
-- `batch-cards/258-codex-turn-start-send-receipts.md`
 - `batch-cards/259-codex-subscription-diagnostics.md`
 - `batch-cards/260-codex-send-subscription-closeout.md`
 
 Completed cards:
 
 - `batch-cards/256-codex-provider-send-command-boundary.md`
+- `batch-cards/257-codex-stdio-write-subscription-state.md`
 
 ## Acceptance Criteria
 
 - [x] Provider send cannot start without an accepted turn-start envelope.
-- [ ] Subscription state is explicit and replay-safe.
+- [x] Subscription state is explicit and replay-safe.
 - [ ] Receipts and diagnostics exclude raw prompts/provider payloads.
 - [ ] Callback/cancellation/recovery/task-mutation behavior remains blocked.
 - [ ] Validation passes.

@@ -10,11 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `257-codex-stdio-write-subscription-state.md`
+- `258-codex-turn-start-send-receipts.md`
 
 ## Planned Cards
 
-- `258-codex-turn-start-send-receipts.md`
 - `259-codex-subscription-diagnostics.md`
 - `260-codex-send-subscription-closeout.md`
 
@@ -276,3 +275,4 @@ Hold execution cards for `g02`.
 - `254-codex-turn-start-receipts-diagnostics.md`
 - `255-codex-turn-start-closeout.md`
 - `256-codex-provider-send-command-boundary.md`
+- `257-codex-stdio-write-subscription-state.md`

@@ -20,6 +20,7 @@ mod turn_start_admission;
 mod turn_start_envelope;
 mod turn_start_outcome;
 mod turn_start_send_command;
+mod turn_start_subscription;
 mod turn_start_request;
 mod transport_receipts;
 
@@ -101,6 +102,12 @@ pub use turn_start_send_command::{
     codex_turn_start_send_command, CodexAppServerTurnStartSendCommandId,
     CodexAppServerTurnStartSendCommandRecord, CodexAppServerTurnStartSendCommandRejection,
     CodexAppServerTurnStartWriteTarget,
+};
+pub use turn_start_subscription::{
+    codex_subscription_state_from_send_command, codex_stdio_write_state_from_send_command,
+    CodexAppServerSubscriptionState, CodexAppServerSubscriptionStateId,
+    CodexAppServerSubscriptionStateRecord, CodexAppServerStdioWriteState,
+    CodexAppServerStdioWriteStateId, CodexAppServerStdioWriteStateRecord,
 };
 pub use turn_start_request::{
     codex_turn_start_request, CodexAppServerTurnStartPromptRef,

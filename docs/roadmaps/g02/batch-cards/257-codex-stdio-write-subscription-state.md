@@ -1,6 +1,6 @@
 # 257 Codex Stdio Write Subscription State
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../058-codex-turn-start-send-and-subscription-gate.md`
@@ -21,6 +21,12 @@ Add stdio write and subscription state records for Codex provider send.
 - Subscription state can show open, closed, blocked, failed, and recovery
   required.
 - Raw stream retention remains absent.
+
+## Result
+
+Implemented sanitized stdio write and subscription state records derived from
+provider-send commands, with raw stream retention, callbacks, cancellation, and
+task mutation disabled.
 
 ## Validation
 

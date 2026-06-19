@@ -1,6 +1,6 @@
 # 258 Codex Turn Start Send Receipts
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../058-codex-turn-start-send-and-subscription-gate.md`
