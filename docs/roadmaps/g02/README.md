@@ -55,6 +55,11 @@ and engine boundary are settled.
 - `037-repo-backed-management-sync-hardening.md` - completed
 - `038-management-sync-apply-and-review.md` - completed
 - `039-scm-management-capture-and-share-foundation.md` - active
+- `040-git-management-capture-adapter-proof.md` - planned
+- `041-scm-working-session-execution-prep.md` - planned
+- `042-change-request-preparation-boundary.md` - planned
+- `043-steward-scm-sync-automation-gate.md` - planned
+- `044-scm-workflow-closeout-and-next-phase-selection.md` - planned
 
 ## Batch Cards
 
@@ -68,6 +73,31 @@ Planned cards:
 - `batch-cards/178-provider-neutral-share-gate-fixtures.md`
 - `batch-cards/179-management-capture-review-read-model.md`
 - `batch-cards/180-scm-management-capture-validation-and-next-lane.md`
+- `batch-cards/181-git-capture-descriptor-policy.md`
+- `batch-cards/182-git-management-capture-plan-records.md`
+- `batch-cards/183-git-capture-command-envelope-dry-run.md`
+- `batch-cards/184-git-capture-status-and-diff-evidence.md`
+- `batch-cards/185-git-capture-validation-and-next-lane.md`
+- `batch-cards/186-working-session-execution-policy-reset.md`
+- `batch-cards/187-primary-tree-branch-session-plan-records.md`
+- `batch-cards/188-isolated-worktree-session-plan-records.md`
+- `batch-cards/189-working-session-cleanup-and-repair-records.md`
+- `batch-cards/190-working-session-execution-validation-and-next-lane.md`
+- `batch-cards/191-forge-share-policy-reset.md`
+- `batch-cards/192-change-request-candidate-records.md`
+- `batch-cards/193-github-review-boundary-descriptor.md`
+- `batch-cards/194-change-request-evidence-package-read-model.md`
+- `batch-cards/195-change-request-prep-validation-and-next-lane.md`
+- `batch-cards/196-steward-sync-authority-contract.md`
+- `batch-cards/197-steward-sync-decision-records.md`
+- `batch-cards/198-steward-capture-apply-loop-fixtures.md`
+- `batch-cards/199-steward-sync-diagnostics-read-model.md`
+- `batch-cards/200-steward-sync-validation-and-next-lane.md`
+- `batch-cards/201-phase3-scm-gap-review.md`
+- `batch-cards/202-docs-code-drift-audit.md`
+- `batch-cards/203-next-phase-readiness-decision.md`
+- `batch-cards/204-long-term-plan-rebaseline.md`
+- `batch-cards/205-g02-scm-runway-closeout.md`
 
 Completed cards:
 
@@ -280,6 +310,11 @@ The next G02 suite is:
 27. repo-backed management sync hardening - completed
 28. management sync apply and review - completed
 29. SCM management capture and share foundation - active
+30. Git management capture adapter proof - planned
+31. SCM working-session execution prep - planned
+32. change-request preparation boundary - planned
+33. steward SCM sync automation gate - planned
+34. SCM workflow closeout and next phase selection - planned
 
 This keeps code health and task authority clarity ahead of deeper provider
 runtime work.
@@ -317,6 +352,16 @@ runtime work.
   state for management projection sync.
 - `039` prepares provider-neutral SCM capture/share records for accepted
   management projection changes without mutating SCM state.
+- `040` maps neutral management capture to Git-specific planning and evidence
+  without committing or pushing.
+- `041` prepares working-session execution records for primary-tree and
+  isolated-worktree modes.
+- `042` prepares change-request records and GitHub descriptor mapping without
+  network or forge mutation.
+- `043` gates steward SCM sync automation behind evidence, policy, and
+  reviewable decisions.
+- `044` closes the SCM runway, audits drift, and selects the next phase from
+  the long-term plan.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

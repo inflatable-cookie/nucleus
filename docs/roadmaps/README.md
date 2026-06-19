@@ -44,6 +44,11 @@ shape.
 - `g02/037-repo-backed-management-sync-hardening.md` - completed
 - `g02/038-management-sync-apply-and-review.md` - completed
 - `g02/039-scm-management-capture-and-share-foundation.md` - active
+- `g02/040-git-management-capture-adapter-proof.md` - planned
+- `g02/041-scm-working-session-execution-prep.md` - planned
+- `g02/042-change-request-preparation-boundary.md` - planned
+- `g02/043-steward-scm-sync-automation-gate.md` - planned
+- `g02/044-scm-workflow-closeout-and-next-phase-selection.md` - planned
 
 ## Previous Generation
 

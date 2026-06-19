@@ -66,6 +66,11 @@ Current planning artifacts:
 - `roadmaps/g02/037-repo-backed-management-sync-hardening.md`
 - `roadmaps/g02/038-management-sync-apply-and-review.md`
 - `roadmaps/g02/039-scm-management-capture-and-share-foundation.md`
+- `roadmaps/g02/040-git-management-capture-adapter-proof.md`
+- `roadmaps/g02/041-scm-working-session-execution-prep.md`
+- `roadmaps/g02/042-change-request-preparation-boundary.md`
+- `roadmaps/g02/043-steward-scm-sync-automation-gate.md`
+- `roadmaps/g02/044-scm-workflow-closeout-and-next-phase-selection.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`

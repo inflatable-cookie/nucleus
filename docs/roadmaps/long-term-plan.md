@@ -25,8 +25,9 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-028 are
-complete, and the next runway is now selected.
+G02 is the orchestration and engine-core generation. Milestones 001-038 are
+complete, milestone 039 is active, and milestones 040-044 are the planned SCM
+workflow runway.
 
 Completed workflow proof:
 
@@ -56,6 +57,11 @@ Current G02 continuation sequence:
 8. repo-backed management sync hardening - complete
 9. management sync apply and review - complete
 10. SCM management capture and share foundation - active
+11. Git management capture adapter proof - planned
+12. SCM working-session execution prep - planned
+13. change-request preparation boundary - planned
+14. steward SCM sync automation gate - planned
+15. SCM workflow closeout and next phase selection - planned
 
 Selected current workflow:
 
@@ -182,6 +188,11 @@ Current roadmap coverage:
 - `g02/008-scm-forge-driver-runway.md`
 - `g02/017-scm-working-copy-and-change-request-workflows.md`
 - `g02/039-scm-management-capture-and-share-foundation.md`
+- `g02/040-git-management-capture-adapter-proof.md`
+- `g02/041-scm-working-session-execution-prep.md`
+- `g02/042-change-request-preparation-boundary.md`
+- `g02/043-steward-scm-sync-automation-gate.md`
+- `g02/044-scm-workflow-closeout-and-next-phase-selection.md`
 
 ## Phase 4: Harness Runtime Foundation
 
