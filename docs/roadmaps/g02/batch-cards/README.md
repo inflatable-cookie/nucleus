@@ -10,11 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `263-codex-callback-response-envelope.md`
+- `264-codex-callback-receipts-diagnostics.md`
 
 ## Planned Cards
 
-- `264-codex-callback-receipts-diagnostics.md`
 - `265-codex-callback-closeout.md`
 
 ## Completed Cards
@@ -281,3 +280,4 @@ Hold execution cards for `g02`.
 - `260-codex-send-subscription-closeout.md`
 - `261-codex-callback-request-records.md`
 - `262-codex-callback-response-admission.md`
+- `263-codex-callback-response-envelope.md`

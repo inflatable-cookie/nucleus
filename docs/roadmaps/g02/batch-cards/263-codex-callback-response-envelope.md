@@ -1,6 +1,6 @@
 # 263 Codex Callback Response Envelope
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../059-codex-callback-response-gate.md`
@@ -30,3 +30,12 @@ Map accepted callback responses to sanitized provider envelope records.
 ## Stop Conditions
 
 - Stop if callback envelope mapping needs refreshed Codex schema evidence.
+
+## Result
+
+- Added sanitized callback response envelope records for accepted admissions.
+- Used `serverRequest/resolved` as the provider method label based on local
+  Codex runtime evidence.
+- Preserved callback, runtime, session, task, work, and provider item refs.
+- Kept raw payload retention, provider send, cancellation, and task mutation
+  disabled.

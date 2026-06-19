@@ -1,6 +1,6 @@
 # 264 Codex Callback Receipts Diagnostics
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../059-codex-callback-response-gate.md`

@@ -38,6 +38,7 @@ pub struct CodexAppServerCallbackResponseAdmission {
     pub admission_id: CodexAppServerCallbackResponseAdmissionId,
     pub request_id: String,
     pub provider_callback_id: CodexAppServerProviderCallbackId,
+    pub response: CodexAppServerCallbackResponse,
     pub status: CodexAppServerCallbackResponseAdmissionStatus,
     pub blockers: Vec<CodexAppServerCallbackResponseAdmissionBlocker>,
     pub evidence_refs: Vec<String>,
@@ -93,6 +94,7 @@ pub fn admit_codex_callback_response(
         )),
         request_id,
         provider_callback_id: input.request.provider_callback_id().clone(),
+        response: input.response,
         status,
         blockers,
         evidence_refs,
@@ -384,6 +386,12 @@ mod tests {
         assert_eq!(
             admission.provider_callback_id,
             CodexAppServerProviderCallbackId("provider-callback:1".to_owned())
+        );
+        assert_eq!(
+            admission.response,
+            CodexAppServerCallbackResponse::Permission {
+                selected_option: "allow".to_owned()
+            }
         );
         assert!(admission
             .evidence_refs

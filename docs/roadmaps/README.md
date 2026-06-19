@@ -122,4 +122,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/263-codex-callback-response-envelope.md`.
+Execute `g02/batch-cards/264-codex-callback-receipts-diagnostics.md`.
