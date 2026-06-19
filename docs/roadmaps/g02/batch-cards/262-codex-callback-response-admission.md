@@ -1,6 +1,6 @@
 # 262 Codex Callback Response Admission
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../059-codex-callback-response-gate.md`
@@ -30,3 +30,11 @@ Gate Codex callback responses before provider send.
 ## Stop Conditions
 
 - Stop if callback response policy needs unresolved operator intent.
+
+## Result
+
+- Added callback response admission for permission and user-input responses.
+- Required explicit response authority, runtime evidence, and raw-payload
+  policy confirmation.
+- Reported accepted, blocked, and unsupported states without provider send.
+- Kept task mutation out of admission.

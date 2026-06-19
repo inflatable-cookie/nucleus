@@ -5,6 +5,7 @@
 //! provider payloads, or ingest live events.
 
 mod callback_request;
+mod callback_response_admission;
 mod event_store_linkage;
 mod handshake;
 mod idempotency;
@@ -31,6 +32,12 @@ pub use callback_request::{
     CodexAppServerCallbackPromptRetentionPolicy, CodexAppServerCallbackRequest,
     CodexAppServerCallbackRequestId, CodexAppServerCallbackRequestKind,
     CodexAppServerCallbackRequestRejection, CodexAppServerProviderCallbackId,
+};
+pub use callback_response_admission::{
+    admit_codex_callback_response, CodexAppServerCallbackResponse,
+    CodexAppServerCallbackResponseAdmission, CodexAppServerCallbackResponseAdmissionBlocker,
+    CodexAppServerCallbackResponseAdmissionId, CodexAppServerCallbackResponseAdmissionInput,
+    CodexAppServerCallbackResponseAdmissionStatus,
 };
 pub use event_store_linkage::{
     link_codex_observation_to_event_store, CodexAppServerObservationEventLink,
