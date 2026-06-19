@@ -1,6 +1,6 @@
 # 242 Codex Stdio Frame Source Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../055-codex-process-and-transport-acceptance.md`
@@ -23,6 +23,15 @@ transport.
 - Decode outcome records can feed the existing 054 acceptance path.
 - Malformed frames do not retain raw payloads by default.
 - Recovery-required decode states stay visible.
+
+## Result
+
+`nucleus-server` now has Codex stdio frame source records under
+`codex_supervision/stdio_frames.rs`.
+
+The records describe runtime instance id, stream direction, sequence, decode
+status, payload-retention posture, and evidence refs without opening stdio,
+retaining raw frames, or parsing live bytes.
 
 ## Validation
 

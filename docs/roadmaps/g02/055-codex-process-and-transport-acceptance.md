@@ -27,7 +27,7 @@ readiness, and failure receipts.
 ## Goals
 
 - [x] Define Codex owned-runtime instance records.
-- [ ] Define stdio transport frame source and decode-failure records.
+- [x] Define stdio transport frame source and decode-failure records.
 - [ ] Gate process spawn intent through host authority, binary, auth, schema,
       transport, process-control, and payload-retention readiness.
 - [ ] Link startup, handshake, decode, and process-exit failures to sanitized
@@ -46,7 +46,7 @@ readiness, and failure receipts.
 ## Execution Plan
 
 - [x] Runtime instance batch: add Codex process/runtime instance records.
-- [ ] Transport batch: add stdio frame source and decode outcome records.
+- [x] Transport batch: add stdio frame source and decode outcome records.
 - [ ] Startup gate batch: compose readiness into spawn-intent admission records.
 - [ ] Receipt batch: map startup/decode/exit failures to runtime receipts.
 - [ ] Closeout batch: validate and select callback, cancellation, recovery, or
@@ -56,23 +56,23 @@ readiness, and failure receipts.
 
 Ready cards:
 
-- `batch-cards/242-codex-stdio-frame-source-records.md`
+- `batch-cards/243-codex-spawn-intent-admission.md`
 
 Planned cards:
 
-- `batch-cards/243-codex-spawn-intent-admission.md`
 - `batch-cards/244-codex-startup-and-decode-receipts.md`
 - `batch-cards/245-codex-process-transport-closeout.md`
 
 Completed cards:
 
 - `batch-cards/241-codex-runtime-instance-records.md`
+- `batch-cards/242-codex-stdio-frame-source-records.md`
 
 ## Acceptance Criteria
 
 - [x] Runtime instance records preserve host, adapter, process, session, and
       payload-retention authority without spawning by themselves.
-- [ ] Transport source records can describe decoded, malformed, unsupported,
+- [x] Transport source records can describe decoded, malformed, unsupported,
       and recovery-required frames.
 - [ ] Spawn intent is blocked unless host/process/auth/schema/transport gates
       are ready.

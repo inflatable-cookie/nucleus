@@ -11,6 +11,7 @@ mod live_ingestion;
 mod readiness;
 mod runtime_instance;
 mod session_binding;
+mod stdio_frames;
 
 pub use event_store_linkage::{
     link_codex_observation_to_event_store, CodexAppServerObservationEventLink,
@@ -48,6 +49,11 @@ pub use session_binding::{
     CodexAppServerBindingStatus, CodexAppServerIngestionIdentityQuality,
     CodexAppServerIngestionSourceId, CodexAppServerIngestionSourceRecord,
     CodexAppServerSessionBindingId, CodexAppServerSessionBindingRecord,
+};
+pub use stdio_frames::{
+    codex_stdio_frame_source_record, CodexAppServerStdioDecodeStatus,
+    CodexAppServerStdioFrameDirection, CodexAppServerStdioFrameSourceId,
+    CodexAppServerStdioFrameSourceRecord,
 };
 
 #[cfg(test)]

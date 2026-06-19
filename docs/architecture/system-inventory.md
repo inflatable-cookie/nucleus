@@ -204,6 +204,9 @@ Updated: 2026-06-16
   without adding UI panels. Codex owned-runtime instance records now describe
   host, adapter, process owner, binary, endpoint, payload retention, lifecycle
   state, and evidence refs without storing process handles or spawning Codex.
+  Codex stdio frame source records now describe direction, sequence, decode
+  status, payload-retention posture, and evidence refs without opening stdio
+  or retaining raw frames.
   Command handling still treats other state-shaped commands as accepted for
   later state mutation handling, while runtime session commands are rejected
   through scheduler admission or explicit deferred runtime-control errors. Local

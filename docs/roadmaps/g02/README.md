@@ -76,11 +76,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/242-codex-stdio-frame-source-records.md`
+- `batch-cards/243-codex-spawn-intent-admission.md`
 
 Planned cards:
 
-- `batch-cards/243-codex-spawn-intent-admission.md`
 - `batch-cards/244-codex-startup-and-decode-receipts.md`
 - `batch-cards/245-codex-process-transport-closeout.md`
 
@@ -327,6 +326,7 @@ Completed cards:
 - `batch-cards/239-codex-ingestion-diagnostics-query.md`
 - `batch-cards/240-codex-live-event-acceptance-closeout.md`
 - `batch-cards/241-codex-runtime-instance-records.md`
+- `batch-cards/242-codex-stdio-frame-source-records.md`
 
 ## Planned Runway Sequence
 

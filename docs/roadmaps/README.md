@@ -118,4 +118,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/242-codex-stdio-frame-source-records.md`.
+Execute `g02/batch-cards/243-codex-spawn-intent-admission.md`.
