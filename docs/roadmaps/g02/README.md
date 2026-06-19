@@ -63,9 +63,9 @@ and engine boundary are settled.
 - `045-god-file-health-gate-rebaseline.md` - completed
 - `046-management-projection-state-test-split.md` - completed
 - `047-scm-work-sessions-module-split.md` - completed
-- `048-diagnostics-read-model-test-split.md` - active
-- `049-engine-management-sync-test-split.md` - planned
-- `050-management-projection-apply-import-split.md` - planned
+- `048-diagnostics-read-model-test-split.md` - completed
+- `049-engine-management-sync-test-split.md` - completed
+- `050-management-projection-apply-import-split.md` - active
 - `051-change-request-prep-module-split.md` - planned
 - `052-health-reset-validation-and-next-runtime-lane.md` - planned
 
@@ -73,16 +73,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/214-diagnostics-read-model-test-fixture-extraction.md`
+- `batch-cards/220-management-projection-apply-import-module-split.md`
 
 Planned cards:
 
-- `batch-cards/215-diagnostics-read-model-domain-test-split.md`
-- `batch-cards/216-diagnostics-read-model-validation.md`
-- `batch-cards/217-engine-management-sync-test-fixture-extraction.md`
-- `batch-cards/218-engine-management-sync-test-domain-split.md`
-- `batch-cards/219-engine-management-sync-validation.md`
-- `batch-cards/220-management-projection-apply-import-module-split.md`
 - `batch-cards/221-management-projection-apply-import-test-split.md`
 - `batch-cards/222-management-projection-apply-import-validation.md`
 - `batch-cards/223-change-request-prep-type-split.md`
@@ -308,6 +302,12 @@ Completed cards:
 - `batch-cards/211-scm-work-session-policy-type-split.md`
 - `batch-cards/212-scm-work-session-recovery-type-split.md`
 - `batch-cards/213-scm-work-session-validation.md`
+- `batch-cards/214-diagnostics-read-model-test-fixture-extraction.md`
+- `batch-cards/215-diagnostics-read-model-domain-test-split.md`
+- `batch-cards/216-diagnostics-read-model-validation.md`
+- `batch-cards/217-engine-management-sync-test-fixture-extraction.md`
+- `batch-cards/218-engine-management-sync-test-domain-split.md`
+- `batch-cards/219-engine-management-sync-validation.md`
 
 ## Planned Runway Sequence
 
@@ -350,9 +350,9 @@ The next G02 suite is:
 35. god-file health gate rebaseline - completed
 36. management projection state test split - completed
 37. SCM work sessions module split - completed
-38. diagnostics read-model test split - active
-39. engine management sync test split - planned
-40. management projection apply/import split - planned
+38. diagnostics read-model test split - completed
+39. engine management sync test split - completed
+40. management projection apply/import split - active
 41. change-request prep module split - planned
 42. health reset validation and next runtime lane - planned
 
@@ -408,8 +408,12 @@ runtime work.
   errors from six to five.
 - `047` split SCM work-session types, dropping doctor god-file errors from
   five to four.
-- `048` splits diagnostics read-model tests without changing behavior.
-- `049`-`051` continue splitting the remaining error-sized files without
+- `048` split diagnostics read-model tests, dropping doctor god-file errors
+  from four to three.
+- `049` split engine management sync tests, dropping doctor god-file errors
+  from three to two.
+- `050` splits management projection apply/import without changing behavior.
+- `051` continues splitting the remaining error-sized file without
   changing behavior.
 - `052` validates doctor health and selects the next runtime lane.
 - Later milestones have full planned cards, but only the current card should

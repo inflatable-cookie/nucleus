@@ -115,4 +115,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/214-diagnostics-read-model-test-fixture-extraction.md`.
+Execute `g02/batch-cards/220-management-projection-apply-import-module-split.md`.

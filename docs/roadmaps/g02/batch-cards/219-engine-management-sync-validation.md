@@ -1,6 +1,6 @@
 # 219 Engine Management Sync Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../049-engine-management-sync-test-split.md`
@@ -30,3 +30,8 @@ Validate the engine management sync test split.
 ## Stop Conditions
 
 - Stop if management sync assertions changed.
+
+## Result
+
+`cargo test -p nucleus-engine management_sync` and `cargo check --workspace`
+pass. `effigy doctor` god-file errors dropped from three to two.

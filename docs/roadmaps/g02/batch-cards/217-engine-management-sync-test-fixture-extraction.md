@@ -1,6 +1,6 @@
 # 217 Engine Management Sync Test Fixture Extraction
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../049-engine-management-sync-test-split.md`
@@ -27,3 +27,7 @@ Extract shared fixtures from engine management sync tests.
 ## Stop Conditions
 
 - Stop if fixtures encode behavior that should move to production types.
+
+## Result
+
+Common management sync test helpers now live in the test index.

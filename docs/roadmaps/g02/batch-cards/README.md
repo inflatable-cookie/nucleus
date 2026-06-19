@@ -10,16 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `214-diagnostics-read-model-test-fixture-extraction.md`
+- `220-management-projection-apply-import-module-split.md`
 
 ## Planned Cards
 
-- `215-diagnostics-read-model-domain-test-split.md`
-- `216-diagnostics-read-model-validation.md`
-- `217-engine-management-sync-test-fixture-extraction.md`
-- `218-engine-management-sync-test-domain-split.md`
-- `219-engine-management-sync-validation.md`
-- `220-management-projection-apply-import-module-split.md`
 - `221-management-projection-apply-import-test-split.md`
 - `222-management-projection-apply-import-validation.md`
 - `223-change-request-prep-type-split.md`
@@ -245,3 +239,9 @@ Hold execution cards for `g02`.
 - `211-scm-work-session-policy-type-split.md`
 - `212-scm-work-session-recovery-type-split.md`
 - `213-scm-work-session-validation.md`
+- `214-diagnostics-read-model-test-fixture-extraction.md`
+- `215-diagnostics-read-model-domain-test-split.md`
+- `216-diagnostics-read-model-validation.md`
+- `217-engine-management-sync-test-fixture-extraction.md`
+- `218-engine-management-sync-test-domain-split.md`
+- `219-engine-management-sync-validation.md`

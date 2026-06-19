@@ -1,6 +1,6 @@
 # 050 Management Projection Apply Import Split
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-19
 
@@ -31,11 +31,10 @@ into focused implementation and test modules.
 
 Ready cards:
 
-- None.
+- `batch-cards/220-management-projection-apply-import-module-split.md`
 
 Planned cards:
 
-- `batch-cards/220-management-projection-apply-import-module-split.md`
 - `batch-cards/221-management-projection-apply-import-test-split.md`
 - `batch-cards/222-management-projection-apply-import-validation.md`
 

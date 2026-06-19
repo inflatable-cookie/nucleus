@@ -1,6 +1,6 @@
 # 214 Diagnostics Read Model Test Fixture Extraction
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../048-diagnostics-read-model-test-split.md`
@@ -27,3 +27,7 @@ Extract shared diagnostics read-model test fixtures.
 ## Stop Conditions
 
 - Stop if fixture extraction obscures DTO assertions.
+
+## Result
+
+Diagnostics test imports and module wiring moved into the test index.

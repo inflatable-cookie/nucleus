@@ -1,6 +1,6 @@
 # 048 Diagnostics Read Model Test Split
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -16,36 +16,42 @@ diagnostics test modules.
 
 ## Goals
 
-- [ ] Extract shared diagnostics fixtures.
-- [ ] Split steward, Effigy, sync, SCM, task, and control diagnostics tests.
-- [ ] Keep diagnostics DTO behavior unchanged.
+- [x] Extract shared diagnostics fixtures.
+- [x] Split steward, Effigy, sync, SCM, task, and control diagnostics tests.
+- [x] Keep diagnostics DTO behavior unchanged.
 
 ## Execution Plan
 
-- [ ] Fixture batch: move shared test builders.
-- [ ] Domain batch: split diagnostics tests by read-model domain.
-- [ ] Validation batch: run scoped server diagnostics tests.
+- [x] Fixture batch: move shared test builders.
+- [x] Domain batch: split diagnostics tests by read-model domain.
+- [x] Validation batch: run scoped server diagnostics tests.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/214-diagnostics-read-model-test-fixture-extraction.md`
+- None.
 
 Planned cards:
 
-- `batch-cards/215-diagnostics-read-model-domain-test-split.md`
-- `batch-cards/216-diagnostics-read-model-validation.md`
+- None.
 
 Completed cards:
 
-- None.
+- `batch-cards/214-diagnostics-read-model-test-fixture-extraction.md`
+- `batch-cards/215-diagnostics-read-model-domain-test-split.md`
+- `batch-cards/216-diagnostics-read-model-validation.md`
 
 ## Acceptance Criteria
 
-- [ ] The diagnostics tests are below the error threshold.
-- [ ] DTO assertions are preserved.
-- [ ] Scoped diagnostics tests pass.
+- [x] The diagnostics tests are below the error threshold.
+- [x] DTO assertions are preserved.
+- [x] Scoped diagnostics tests pass.
+
+## Result
+
+Diagnostics read-model tests are split by domain. Scoped diagnostics tests and
+workspace check pass.
 
 ## Gate
 

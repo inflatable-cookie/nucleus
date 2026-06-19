@@ -1,6 +1,6 @@
 # 218 Engine Management Sync Test Domain Split
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../049-engine-management-sync-test-split.md`
@@ -27,3 +27,8 @@ Split engine management sync tests by domain.
 ## Stop Conditions
 
 - Stop if the split requires production behavior changes.
+
+## Result
+
+Management sync tests are split by plan, repair, assistance, capture, Git
+capture, and apply behavior.

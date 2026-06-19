@@ -1,6 +1,6 @@
 # 216 Diagnostics Read Model Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../048-diagnostics-read-model-test-split.md`
@@ -30,3 +30,8 @@ Validate the diagnostics read-model test split.
 ## Stop Conditions
 
 - Stop if validation reveals DTO authority leakage.
+
+## Result
+
+`cargo test -p nucleus-server diagnostics_read_models` and `cargo check
+--workspace` pass. `effigy doctor` god-file errors dropped from four to three.

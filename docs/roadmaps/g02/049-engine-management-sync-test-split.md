@@ -1,6 +1,6 @@
 # 049 Engine Management Sync Test Split
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -17,15 +17,15 @@ management sync test modules.
 
 ## Goals
 
-- [ ] Extract management sync test fixtures.
-- [ ] Split validation, conflict, capture, and Git dry-run cases.
-- [ ] Keep engine tests green.
+- [x] Extract management sync test fixtures.
+- [x] Split validation, conflict, capture, and Git dry-run cases.
+- [x] Keep engine tests green.
 
 ## Execution Plan
 
-- [ ] Fixture batch: move shared builders.
-- [ ] Domain batch: split test cases by sync concern.
-- [ ] Validation batch: run scoped engine tests.
+- [x] Fixture batch: move shared builders.
+- [x] Domain batch: split test cases by sync concern.
+- [x] Validation batch: run scoped engine tests.
 
 ## Batch Cards
 
@@ -35,19 +35,24 @@ Ready cards:
 
 Planned cards:
 
+- None.
+
+Completed cards:
+
 - `batch-cards/217-engine-management-sync-test-fixture-extraction.md`
 - `batch-cards/218-engine-management-sync-test-domain-split.md`
 - `batch-cards/219-engine-management-sync-validation.md`
 
-Completed cards:
-
-- None.
-
 ## Acceptance Criteria
 
-- [ ] The management sync tests are below the error threshold.
-- [ ] Capture and Git dry-run assertions are preserved.
-- [ ] Scoped engine tests pass.
+- [x] The management sync tests are below the error threshold.
+- [x] Capture and Git dry-run assertions are preserved.
+- [x] Scoped engine tests pass.
+
+## Result
+
+Engine management sync tests are split into plan, repair, assistance, capture,
+Git capture, and apply modules. Scoped engine tests and workspace check pass.
 
 ## Gate
 

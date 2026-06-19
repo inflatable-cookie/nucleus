@@ -1,6 +1,6 @@
 # 215 Diagnostics Read Model Domain Test Split
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../048-diagnostics-read-model-test-split.md`
@@ -27,3 +27,8 @@ Split diagnostics read-model tests by domain.
 ## Stop Conditions
 
 - Stop if diagnostics read models need behavior redesign.
+
+## Result
+
+Diagnostics tests are split into steward, Effigy, sync, SCM, task-agent, and
+serialization modules.
