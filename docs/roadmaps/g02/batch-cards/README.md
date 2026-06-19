@@ -10,11 +10,14 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `240-codex-live-event-acceptance-closeout.md`
+- `241-codex-runtime-instance-records.md`
 
 ## Planned Cards
 
-- None.
+- `242-codex-stdio-frame-source-records.md`
+- `243-codex-spawn-intent-admission.md`
+- `244-codex-startup-and-decode-receipts.md`
+- `245-codex-process-transport-closeout.md`
 
 ## Completed Cards
 
@@ -257,3 +260,4 @@ Hold execution cards for `g02`.
 - `237-codex-observation-event-store-linkage.md`
 - `238-codex-task-runtime-observation-links.md`
 - `239-codex-ingestion-diagnostics-query.md`
+- `240-codex-live-event-acceptance-closeout.md`

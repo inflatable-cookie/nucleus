@@ -82,6 +82,7 @@ Current planning artifacts:
 - `roadmaps/g02/052-health-reset-validation-and-next-runtime-lane.md`
 - `roadmaps/g02/053-harness-runtime-rebaseline.md`
 - `roadmaps/g02/054-codex-live-event-acceptance.md`
+- `roadmaps/g02/055-codex-process-and-transport-acceptance.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -89,8 +90,8 @@ Current planning artifacts:
 
 ## Guardrail
 
-Do not widen provider command execution, remote transport, or UI sync controls
-until Codex live event acceptance proves durable session binding, idempotent
-observation records, event-store linkage, receipt linkage, and recovery
-visibility. The red god-file gate is clear, but warning-sized files remain
-pressure when touched.
+Do not widen provider callbacks, cancellation, resume execution, remote
+transport, or UI sync controls until Codex process and transport acceptance
+proves owned runtime identity, stdio frame source records, spawn-intent gates,
+and sanitized startup/decode receipts. The red god-file gate is clear, but
+warning-sized files remain pressure when touched.

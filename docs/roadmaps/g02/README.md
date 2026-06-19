@@ -69,17 +69,21 @@ and engine boundary are settled.
 - `051-change-request-prep-module-split.md` - completed
 - `052-health-reset-validation-and-next-runtime-lane.md` - completed
 - `053-harness-runtime-rebaseline.md` - completed
-- `054-codex-live-event-acceptance.md` - active
+- `054-codex-live-event-acceptance.md` - completed
+- `055-codex-process-and-transport-acceptance.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/240-codex-live-event-acceptance-closeout.md`
+- `batch-cards/241-codex-runtime-instance-records.md`
 
 Planned cards:
 
-- None.
+- `batch-cards/242-codex-stdio-frame-source-records.md`
+- `batch-cards/243-codex-spawn-intent-admission.md`
+- `batch-cards/244-codex-startup-and-decode-receipts.md`
+- `batch-cards/245-codex-process-transport-closeout.md`
 
 Completed cards:
 
@@ -322,6 +326,7 @@ Completed cards:
 - `batch-cards/237-codex-observation-event-store-linkage.md`
 - `batch-cards/238-codex-task-runtime-observation-links.md`
 - `batch-cards/239-codex-ingestion-diagnostics-query.md`
+- `batch-cards/240-codex-live-event-acceptance-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -370,7 +375,8 @@ The next G02 suite is:
 41. change-request prep module split - completed
 42. health reset validation and next runtime lane - completed
 43. harness runtime rebaseline - completed
-44. Codex live event acceptance - active
+44. Codex live event acceptance - completed
+45. Codex process and transport acceptance - active
 
 This keeps code health and task authority clarity ahead of deeper provider
 runtime work.
@@ -436,8 +442,10 @@ runtime work.
   the next lane.
 - `053` rechecked harness runtime contracts and the current Codex runtime code
   before opening more provider behavior.
-- `054` implements durable Codex live event acceptance before provider command
+- `054` implemented durable Codex live event acceptance before provider command
   execution widens.
+- `055` prepares Codex process and stdio transport acceptance while keeping
+  callbacks, cancellation, resume, and task mutation gated.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.
 

@@ -1,6 +1,6 @@
 # 240 Codex Live Event Acceptance Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../054-codex-live-event-acceptance.md`
@@ -21,6 +21,12 @@ Close the Codex live event acceptance lane and choose the next runtime gate.
 - Roadmap state has one clear next task.
 - The next gate is bounded and explicit.
 - Validation passes or blockers are recorded.
+
+## Result
+
+Roadmap `054` is complete. Roadmap `055` is the next active lane, focused on
+Codex process and transport acceptance before callback, cancellation, or
+resume behavior expands.
 
 ## Validation
 

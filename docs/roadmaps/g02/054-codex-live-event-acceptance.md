@@ -1,6 +1,6 @@
 # 054 Codex Live Event Acceptance
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -50,13 +50,13 @@ Nucleus-owned records without broadening provider command execution.
       and runtime receipt refs.
 - [x] Task linkage batch: expose task-work links without direct task mutation.
 - [x] Diagnostics batch: add read-only query/projection state.
-- [ ] Closeout batch: validate, update gap indexes, and select the next gate.
+- [x] Closeout batch: validate, update gap indexes, and select the next gate.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/240-codex-live-event-acceptance-closeout.md`
+- None.
 
 Planned cards:
 
@@ -69,6 +69,7 @@ Completed cards:
 - `batch-cards/237-codex-observation-event-store-linkage.md`
 - `batch-cards/238-codex-task-runtime-observation-links.md`
 - `batch-cards/239-codex-ingestion-diagnostics-query.md`
+- `batch-cards/240-codex-live-event-acceptance-closeout.md`
 
 ## Acceptance Criteria
 
@@ -78,8 +79,34 @@ Completed cards:
 - [x] Accepted observations produce event-store or receipt refs without
       retaining raw provider payloads by default.
 - [x] Task work-item linkage remains reference-only and engine-owned.
-- [ ] `cargo check --workspace` passes.
-- [ ] `effigy qa:docs` and `effigy qa:northstar` pass.
+- [x] `cargo check --workspace` passes.
+- [x] `effigy qa:docs` and `effigy qa:northstar` pass.
+
+## Result
+
+The first Codex live event acceptance lane is complete as record, projection,
+and diagnostics work.
+
+Implemented:
+
+- server-owned Codex session binding records
+- decoded-frame ingestion source records
+- duplicate-safe frame acceptance records
+- runtime-observation event-store linkage records
+- reference-only task work-item observation links
+- read-only Codex ingestion diagnostics DTOs
+
+Not implemented:
+
+- Codex process spawning
+- stdio transport
+- live JSON-RPC decoding
+- provider callback responses
+- provider-reaching cancellation
+- provider resume/recovery execution
+- automatic task state mutation
+
+Next gate: `055-codex-process-and-transport-acceptance.md`.
 
 ## Gate
 

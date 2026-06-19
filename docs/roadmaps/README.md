@@ -58,7 +58,8 @@ shape.
 - `g02/051-change-request-prep-module-split.md` - completed
 - `g02/052-health-reset-validation-and-next-runtime-lane.md` - completed
 - `g02/053-harness-runtime-rebaseline.md` - completed
-- `g02/054-codex-live-event-acceptance.md` - active
+- `g02/054-codex-live-event-acceptance.md` - completed
+- `g02/055-codex-process-and-transport-acceptance.md` - active
 
 ## Previous Generation
 
@@ -117,4 +118,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/240-codex-live-event-acceptance-closeout.md`.
+Execute `g02/batch-cards/241-codex-runtime-instance-records.md`.
