@@ -101,6 +101,7 @@ pub use codex_runtime_validation::{
 pub use codex_supervision::{
     accept_codex_ingestion_source, admit_codex_spawn_intent, assess_codex_app_server_handshake,
     assess_codex_app_server_supervision, codex_frame_key_from_source,
+    codex_callback_request,
     codex_ingestion_source_from_live_frame, codex_live_spawn_smoke_evidence,
     codex_live_spawn_smoke_request, codex_receipt_from_live_spawn_smoke_evidence,
     codex_receipt_from_spawn_intent, codex_receipt_from_stdio_frame,
@@ -120,6 +121,10 @@ pub use codex_supervision::{
     CodexAppServerLiveSpawnSmokeOutcome, CodexAppServerLiveSpawnSmokeRequest,
     CodexAppServerLiveSpawnSmokeRequestId, CodexAppServerLiveSpawnSmokeRequestRejection,
     CodexAppServerLiveSpawnSmokeRunnerInput, CodexAppServerLiveSpawnSmokeRunnerResult,
+    CodexAppServerCallbackPromptRef, CodexAppServerCallbackPromptRetentionPolicy,
+    CodexAppServerCallbackRequest, CodexAppServerCallbackRequestId,
+    CodexAppServerCallbackRequestKind, CodexAppServerCallbackRequestRejection,
+    CodexAppServerProviderCallbackId,
     CodexAppServerObservationEventLink, CodexAppServerObservationEventLinkStatus,
     CodexAppServerObservationKind, CodexAppServerPayloadRetentionPolicy,
     CodexAppServerRuntimeInstanceId, CodexAppServerRuntimeInstanceRecord,

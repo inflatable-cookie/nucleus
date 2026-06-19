@@ -4,6 +4,7 @@
 //! app-server process. They do not spawn Codex, open stdio, probe auth, read
 //! provider payloads, or ingest live events.
 
+mod callback_request;
 mod event_store_linkage;
 mod handshake;
 mod idempotency;
@@ -25,6 +26,12 @@ mod turn_start_subscription;
 mod turn_start_request;
 mod transport_receipts;
 
+pub use callback_request::{
+    codex_callback_request, CodexAppServerCallbackPromptRef,
+    CodexAppServerCallbackPromptRetentionPolicy, CodexAppServerCallbackRequest,
+    CodexAppServerCallbackRequestId, CodexAppServerCallbackRequestKind,
+    CodexAppServerCallbackRequestRejection, CodexAppServerProviderCallbackId,
+};
 pub use event_store_linkage::{
     link_codex_observation_to_event_store, CodexAppServerObservationEventLink,
     CodexAppServerObservationEventLinkStatus,

@@ -122,4 +122,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/261-codex-callback-request-records.md`.
+Execute `g02/batch-cards/262-codex-callback-response-admission.md`.

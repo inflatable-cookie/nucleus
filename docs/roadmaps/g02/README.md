@@ -80,11 +80,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/261-codex-callback-request-records.md`
+- `batch-cards/262-codex-callback-response-admission.md`
 
 Planned cards:
 
-- `batch-cards/262-codex-callback-response-admission.md`
 - `batch-cards/263-codex-callback-response-envelope.md`
 - `batch-cards/264-codex-callback-receipts-diagnostics.md`
 - `batch-cards/265-codex-callback-closeout.md`
@@ -351,6 +350,7 @@ Completed cards:
 - `batch-cards/258-codex-turn-start-send-receipts.md`
 - `batch-cards/259-codex-subscription-diagnostics.md`
 - `batch-cards/260-codex-send-subscription-closeout.md`
+- `batch-cards/261-codex-callback-request-records.md`
 
 ## Planned Runway Sequence
 

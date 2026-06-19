@@ -1,6 +1,6 @@
 # 261 Codex Callback Request Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../059-codex-callback-response-gate.md`
@@ -32,3 +32,11 @@ Add callback request records for Codex permission and user-input callbacks.
 ## Stop Conditions
 
 - Stop if callback identity cannot be stable before response.
+
+## Result
+
+- Added Codex callback request records for permission and user-input callbacks.
+- Preserved provider callback id, runtime, session, turn, item, task, and work
+  refs beside Nucleus-owned request identity.
+- Blocked raw prompt and raw provider payload retention by default.
+- Kept response send and task mutation out of scope.

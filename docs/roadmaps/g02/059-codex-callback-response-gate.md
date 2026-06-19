@@ -23,7 +23,7 @@ boundary for permission and user-input callbacks.
 
 ## Goals
 
-- [ ] Add callback request records for provider permission and user-input
+- [x] Add callback request records for provider permission and user-input
       callbacks.
 - [ ] Gate callback responses through authority, callback type, and retention
       policy.
@@ -40,7 +40,7 @@ boundary for permission and user-input callbacks.
 
 ## Execution Plan
 
-- [ ] Request batch: add callback request records.
+- [x] Request batch: add callback request records.
 - [ ] Admission batch: gate callback response policy.
 - [ ] Envelope batch: map accepted callback responses to provider envelopes.
 - [ ] Receipts/diagnostics batch: expose callback outcomes safely.
@@ -51,22 +51,21 @@ boundary for permission and user-input callbacks.
 
 Ready cards:
 
-- `batch-cards/261-codex-callback-request-records.md`
+- `batch-cards/262-codex-callback-response-admission.md`
 
 Planned cards:
 
-- `batch-cards/262-codex-callback-response-admission.md`
 - `batch-cards/263-codex-callback-response-envelope.md`
 - `batch-cards/264-codex-callback-receipts-diagnostics.md`
 - `batch-cards/265-codex-callback-closeout.md`
 
 Completed cards:
 
-- None.
+- `batch-cards/261-codex-callback-request-records.md`
 
 ## Acceptance Criteria
 
-- [ ] Callback requests preserve provider and Nucleus identity.
+- [x] Callback requests preserve provider and Nucleus identity.
 - [ ] Callback response admission blocks unsupported or unauthorized responses.
 - [ ] Response envelopes are sanitized and replay-safe.
 - [ ] Receipts and diagnostics exclude raw provider payloads.
