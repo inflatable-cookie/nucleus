@@ -19,6 +19,7 @@ mod stdio_frames;
 mod turn_start_admission;
 mod turn_start_envelope;
 mod turn_start_outcome;
+mod turn_start_send_command;
 mod turn_start_request;
 mod transport_receipts;
 
@@ -95,6 +96,11 @@ pub use turn_start_outcome::{
     codex_receipt_from_turn_start_outcome, codex_turn_start_outcome_from_admission,
     codex_turn_start_outcome_from_envelope, CodexAppServerTurnStartOutcomeId,
     CodexAppServerTurnStartOutcomeRecord, CodexAppServerTurnStartOutcomeStatus,
+};
+pub use turn_start_send_command::{
+    codex_turn_start_send_command, CodexAppServerTurnStartSendCommandId,
+    CodexAppServerTurnStartSendCommandRecord, CodexAppServerTurnStartSendCommandRejection,
+    CodexAppServerTurnStartWriteTarget,
 };
 pub use turn_start_request::{
     codex_turn_start_request, CodexAppServerTurnStartPromptRef,

@@ -121,4 +121,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/256-codex-provider-send-command-boundary.md`.
+Execute `g02/batch-cards/257-codex-stdio-write-subscription-state.md`.

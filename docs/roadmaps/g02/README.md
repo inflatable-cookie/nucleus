@@ -79,11 +79,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/256-codex-provider-send-command-boundary.md`
+- `batch-cards/257-codex-stdio-write-subscription-state.md`
 
 Planned cards:
 
-- `batch-cards/257-codex-stdio-write-subscription-state.md`
 - `batch-cards/258-codex-turn-start-send-receipts.md`
 - `batch-cards/259-codex-subscription-diagnostics.md`
 - `batch-cards/260-codex-send-subscription-closeout.md`
@@ -345,6 +344,7 @@ Completed cards:
 - `batch-cards/253-codex-turn-start-envelope-mapping.md`
 - `batch-cards/254-codex-turn-start-receipts-diagnostics.md`
 - `batch-cards/255-codex-turn-start-closeout.md`
+- `batch-cards/256-codex-provider-send-command-boundary.md`
 
 ## Planned Runway Sequence
 

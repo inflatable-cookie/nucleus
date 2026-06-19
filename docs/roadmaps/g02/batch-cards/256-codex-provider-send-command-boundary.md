@@ -1,6 +1,6 @@
 # 256 Codex Provider Send Command Boundary
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../058-codex-turn-start-send-and-subscription-gate.md`
@@ -21,6 +21,12 @@ Add provider-send command records for accepted Codex turn-start envelopes.
 - Provider-send command records cannot exist without an accepted envelope ref.
 - Records are replay-safe and idempotency-friendly.
 - Raw prompt/provider payload retention remains disabled by default.
+
+## Result
+
+Implemented `CodexAppServerTurnStartSendCommandRecord`, gated by accepted
+turn-start envelope records and explicit write target, with provider writes,
+callbacks, cancellation, and task mutation still disabled.
 
 ## Validation
 
