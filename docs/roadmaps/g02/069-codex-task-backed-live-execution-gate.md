@@ -1,6 +1,6 @@
 # 069 Codex Task-Backed Live Execution Gate
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -28,9 +28,9 @@ completion under separate authority.
 
 - [x] Define the policy gate for task-backed live Codex execution.
 - [x] Add task-work live executor admission records.
-- [ ] Link task work items to live executor receipts without task completion.
-- [ ] Expose read-only diagnostics for task-backed live execution attempts.
-- [ ] Keep callbacks, cancellation, resume, review acceptance, and SCM mutation
+- [x] Link task work items to live executor receipts without task completion.
+- [x] Expose read-only diagnostics for task-backed live execution attempts.
+- [x] Keep callbacks, cancellation, resume, review acceptance, and SCM mutation
       outside this lane.
 
 ## Non-Goals
@@ -48,33 +48,35 @@ completion under separate authority.
 - [x] Gate batch: define the policy gate and stop conditions for task-backed
       live execution.
 - [x] Admission batch: record task-work-to-live-executor admission identity.
-- [ ] Receipt batch: link task work items to live executor outcomes and
+- [x] Receipt batch: link task work items to live executor outcomes and
       runtime receipts.
-- [ ] Diagnostics batch: expose read-only task-backed live execution state.
-- [ ] Closeout batch: validate the lane and select the next runtime target.
+- [x] Diagnostics batch: expose read-only task-backed live execution state.
+- [x] Closeout batch: validate the lane and select the next runtime target.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/311-task-work-live-executor-receipt-linkage.md`
+None.
 
 Planned cards:
 
-- `batch-cards/312-task-backed-live-execution-diagnostics.md`
-- `batch-cards/313-task-backed-live-execution-validation-closeout.md`
+None.
 
 Completed cards:
 
 - `batch-cards/309-task-backed-live-execution-policy-gate.md`
 - `batch-cards/310-task-work-live-executor-admission-records.md`
+- `batch-cards/311-task-work-live-executor-receipt-linkage.md`
+- `batch-cards/312-task-backed-live-execution-diagnostics.md`
+- `batch-cards/313-task-backed-live-execution-validation-closeout.md`
 
 ## Acceptance Criteria
 
 - [x] Task-backed live execution has an explicit admission gate before any
       provider write.
-- [ ] Task work item refs link to live executor outcomes and runtime receipts.
-- [ ] Provider completion remains separate from task completion and operator
+- [x] Task work item refs link to live executor outcomes and runtime receipts.
+- [x] Provider completion remains separate from task completion and operator
       review acceptance.
-- [ ] Diagnostics remain read-only and sanitized.
-- [ ] Validation passes or blockers are recorded.
+- [x] Diagnostics remain read-only and sanitized.
+- [x] Validation passes or blockers are recorded.

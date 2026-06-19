@@ -93,7 +93,7 @@ Loop continuation must be evidence-driven. It must stop or escalate when:
 - user input is required
 - policy blocks the next action
 
-## Next Task Rule
+## Pathway Selection Rule
 
 The next task pointer must come from a pathway.
 
@@ -137,6 +137,11 @@ A pathway record should eventually include:
 
 Roadmaps are one pathway implementation. Project planning sessions, research
 runs, task queues, and loop state are other pathway sources.
+
+Open-ended exploration sessions are not required to produce a next task. They
+become pathway sources only after an output is promoted into an accepted
+planning artifact, research brief, goal, task seed, or explicit operator
+instruction.
 
 ## Proactive Steering Rule
 

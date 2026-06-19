@@ -53,7 +53,7 @@ First-pass provider defaults:
 | Harness | Initial transport posture | Reason |
 | --- | --- | --- |
 | Codex | structured app-server/runtime first | T3 wraps a typed Codex app-server runtime with turn, approval, read, and rollback support. |
-| Claude | SDK sidecar first; CLI/PTY fallback | Official Agent SDK exposes structured streaming, permissions, resume, and subprocess hosting. CLI remains required for fallback and terminal-native rendering. |
+| Claude | SDK sidecar plus CLI/PTY routes | Official Agent SDK exposes structured streaming, permissions, resume, and subprocess hosting. Current Claude Code docs also keep subscription-backed CLI/IDE use available. CLI is therefore a required route, not only a fallback. |
 | Cursor CLI | ACP stdio first | Cursor documents `agent acp`; T3 spawns it and local binary help confirms it. |
 | Cursor SDK | TypeScript SDK sidecar or cloud/programmatic route | SDK is distinct from local CLI/ACP harness control. |
 | OpenCode | server SDK first, ACP in scope | T3 uses `@opencode-ai/sdk/v2` against local or external OpenCode server; public ACP still needs comparison. |
@@ -82,6 +82,11 @@ Each adapter must define how it handles:
 - respond to approval request
 - respond to structured user-input request
 - recover after server restart
+
+Adapters must also report auth and billing posture where the provider exposes
+meaningful differences. For Claude this includes subscription OAuth, API key,
+bearer token, token helper, cloud provider credentials, usage credits, and
+unknown or externally managed modes.
 
 Unsupported lifecycle actions must be explicit capabilities, not runtime
 surprises.

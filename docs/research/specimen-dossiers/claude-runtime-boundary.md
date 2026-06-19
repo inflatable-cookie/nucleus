@@ -2,7 +2,7 @@
 
 Status: promoted-first-pass
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-06-19
 
 ## Purpose
 
@@ -22,6 +22,12 @@ Capture Claude Code CLI and Claude Agent SDK integration options for nucleus.
   `https://code.claude.com/docs/en/agent-sdk/sessions`
 - Claude Agent SDK hosting:
   `https://code.claude.com/docs/en/agent-sdk/hosting`
+- Claude Code Pro/Max subscription access:
+  `https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan`
+- Claude paid-plan usage credits:
+  `https://support.claude.com/en/articles/12429409-manage-usage-credits-for-paid-claude-plans`
+- Claude Code authentication:
+  `https://code.claude.com/docs/en/iam`
 - Local Claude Code binary: `claude --version` returned `2.1.173`
 - T3 Code local specimen:
   `external/t3code/apps/server/src/provider/Layers/ClaudeAdapter.ts`
@@ -32,8 +38,8 @@ Capture Claude Code CLI and Claude Agent SDK integration options for nucleus.
 
 ### SDK Sidecar
 
-Claude should start as SDK-sidecar-first if provider terms and deployment
-constraints allow it.
+Claude should keep SDK sidecar as a major integration route if provider terms,
+authentication mode, billing mode, and deployment constraints allow it.
 
 Reasons:
 
@@ -45,6 +51,13 @@ Reasons:
 - it can change model and permission mode while a streaming session is active
 - it supervises a `claude` subprocess, which fits the nucleus server-owned
   process model
+
+The current Agent SDK docs describe Python and TypeScript SDKs that expose
+Claude Code as a library, but also state that third-party products should use
+API key authentication unless Anthropic has approved another route. Nucleus
+must therefore treat SDK authentication and billing as explicit adapter
+capabilities rather than assume subscription-backed SDK use is always
+available.
 
 The Rust server should not embed TypeScript as core logic. The likely shape is
 a small sidecar process with a narrow protocol owned by nucleus.
@@ -65,7 +78,7 @@ Required sidecar record fields:
 
 ### Direct CLI
 
-Claude CLI remains a required fallback and test surface.
+Claude CLI remains a required integration route, not only a fallback.
 
 Useful CLI controls:
 
@@ -82,6 +95,25 @@ Useful CLI controls:
 
 Direct CLI is useful for one-shot automation, diagnostics, and environments
 where a sidecar is not allowed.
+
+Claude Code currently supports Pro and Max subscription authentication for
+terminal and IDE use. The authentication docs also define precedence across
+cloud provider credentials, bearer tokens, `ANTHROPIC_API_KEY`,
+`apiKeyHelper`, `CLAUDE_CODE_OAUTH_TOKEN`, and subscription OAuth credentials.
+Nucleus must record the active auth mode per adapter instance because
+subscription, API key, token, and usage-credit behavior affect cost, limits,
+remote deployment, and supportability.
+
+### ACP Or Equivalent
+
+Claude should remain open to ACP or an equivalent structured protocol if
+Anthropic exposes one with enough lifecycle, identity, permission, and resume
+coverage.
+
+No current decision should require Claude to be SDK-only or PTY-only. The
+adapter registry should be able to represent SDK sidecar, structured CLI,
+terminal bridge, and future structured protocol routes as separate configured
+instances or capabilities.
 
 ### PTY Bridge
 
@@ -193,12 +225,14 @@ separate capability.
 
 ## Nucleus Decision
 
-Start Claude as SDK-sidecar-first, with direct CLI and PTY fallbacks kept in
-the adapter contract.
+Support Claude through both SDK-sidecar and CLI-backed routes, with PTY kept as
+the native rendering fallback and ACP-or-equivalent kept as a future structured
+transport candidate.
 
-The sidecar route gives the best first-pass identity, permission, and lifecycle
-surface. The CLI route remains necessary for diagnostics, one-shot tasks,
-environments that reject sidecars, and native terminal rendering.
+The sidecar route gives a strong identity, permission, and lifecycle surface
+when it is allowed. The CLI route remains necessary for subscription-backed
+Claude Code use, diagnostics, one-shot tasks, environments that reject
+sidecars, and native terminal rendering.
 
 ## Risks
 
@@ -206,16 +240,23 @@ environments that reject sidecars, and native terminal rendering.
 - SDK package and Claude Code binary versions must be tracked per adapter
   instance.
 - Provider terms and authentication flows may constrain remote deployment.
+- SDK, CLI, subscription OAuth, API key, token, and usage-credit rules can
+  diverge. The adapter must expose the active mode instead of hiding it behind
+  a generic Claude label.
 - Local transcript state can be lost if the server runs in an ephemeral
   environment without explicit storage.
 - PTY fallback cannot safely pretend to have structured message identity.
 
 ## Contract Implications
 
-- Claude needs `transport=sdk-sidecar`, `transport=cli-structured`, and
-  `transport=cli-terminal-bridge` capability paths.
+- Claude needs `transport=sdk-sidecar`, `transport=cli-structured`,
+  `transport=cli-terminal-bridge`, and future `transport=structured-protocol`
+  capability paths where evidence supports them.
 - Adapter registry records must include sidecar process and Claude config
   paths.
+- Adapter registry records must expose auth and billing posture: subscription
+  OAuth, API key, bearer token, token helper, cloud provider credentials, usage
+  credits, or unknown.
 - Session lifecycle must separate resume, continue-most-recent, fork, and
   provider-native rollback.
 - Permission mode and approval callback support are per-instance capabilities.

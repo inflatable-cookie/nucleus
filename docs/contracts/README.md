@@ -29,6 +29,7 @@ Contracts define durable rules and interfaces.
 - `023-task-backed-agent-workflow-contract.md`
 - `024-harness-mediation-tool-projection-contract.md`
 - `025-goal-loop-next-task-contract.md`
+- `026-open-ended-planning-conversation-contract.md`
 - `contract-index.md`
 
 ## Promotion Rule

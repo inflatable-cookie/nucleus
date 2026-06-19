@@ -423,6 +423,9 @@ Work:
 
 - Scaffold and implement planning, research, memory, and Effigy integration
   crates.
+- Add open-ended exploration conversations for ideation, assumption probing,
+  question discovery, option mapping, and promotion into structured planning
+  only when the user accepts the output.
 - Add guided planning sessions.
 - Add deep research runs with source provenance and synthesis.
 - Add memory proposals, review, scope, sensitivity, and retention.

@@ -27,6 +27,12 @@ Collect evidence for the nucleus harness adapter model before implementation.
   `https://code.claude.com/docs/en/agent-sdk/typescript`
 - Claude Agent SDK hosting:
   `https://code.claude.com/docs/en/agent-sdk/hosting`
+- Claude Code Pro/Max subscription access:
+  `https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan`
+- Claude paid-plan usage credits:
+  `https://support.claude.com/en/articles/12429409-manage-usage-credits-for-paid-claude-plans`
+- Claude Code authentication:
+  `https://code.claude.com/docs/en/iam`
 - Codex CLI docs: `https://developers.openai.com/codex/cli`
 - Kimi Code source/docs: `https://github.com/MoonshotAI/kimi-code`
 - Kimi Code ACP reference:
@@ -70,8 +76,10 @@ Collect evidence for the nucleus harness adapter model before implementation.
   Nucleus should make this dual identity model mandatory.
 - Codex should be investigated as a structured app-server/runtime integration
   before falling back to PTY.
-- Claude should start SDK-sidecar-first when deployment constraints allow it.
-  Direct CLI and PTY remain explicit fallback paths.
+- Claude should keep multiple transport/auth routes: SDK sidecar where
+  product and billing rules allow it, direct CLI for Claude Code
+  subscription-backed terminal/IDE use and structured automation, and PTY as
+  native rendering fallback.
 - Cursor has a concrete ACP path through `agent acp`; treat Cursor CLI as
   ACP-first while separately evaluating the Cursor SDK and non-ACP headless CLI
   workflows.

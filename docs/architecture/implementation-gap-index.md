@@ -179,6 +179,48 @@ Current state:
   write attempt, and idempotency identity. The records block non-accepted
   policy, missing or mismatched identity, executor invocation, raw provider
   material requests, and task mutation requests.
+- `nucleus-server` has task-work live executor receipt linkage records that
+  connect work items to sanitized live executor outcomes and runtime receipt
+  ids as reference-only task work refs. Completed provider outcomes are
+  recorded as runtime progress without task completion or review acceptance;
+  failed, timed-out, and cleanup-required outcomes remain inspectable.
+- `nucleus-server` has read-only task-backed live execution diagnostics for
+  admitted, blocked, completed, failed, timed-out, and cleanup-required states.
+  The diagnostics include task work refs, live executor refs, receipt refs, and
+  evidence refs without exposing raw provider material or granting provider,
+  task, review, callback, cancellation, resume, or SCM authority.
+- `nucleus-server` has a Codex callback response execution policy gate that
+  requires callback request, admission, envelope, runtime, adapter, host,
+  operator, callback-kind, response-shape, and tool-capability evidence before
+  callback response execution admission. The gate blocks automatic callback
+  answering, task completion, review acceptance, cancellation, resume, SCM
+  mutation, raw callback material retention, raw provider payload retention, and
+  task mutation authority.
+- `nucleus-server` has callback-response-to-executor admission records that
+  preserve callback request, callback response, envelope, provider callback,
+  task, work item, provider instance, runtime session, write attempt, and
+  idempotency identity. The records block non-accepted policy, missing or
+  mismatched identity, executor invocation, raw callback material requests,
+  task mutation, and review acceptance.
+- `nucleus-server` has callback response execution receipt linkage records
+  that connect admitted callback response write attempts to sanitized live
+  executor outcomes and runtime receipt ids. Completed provider outcomes are
+  recorded as runtime progress without task completion or review acceptance;
+  failed, timed-out, blocked, and cleanup-required outcomes remain
+  inspectable.
+- `nucleus-server` has read-only callback response execution diagnostics for
+  admitted, blocked, completed, failed, timed-out, and cleanup-required states.
+  Diagnostics include callback refs, task/work refs, write attempt refs,
+  receipt refs, and evidence refs without exposing raw provider material or
+  granting provider, task, review, callback, cancellation, resume, or SCM
+  authority.
+- `nucleus-server` has a Codex provider interruption execution policy gate
+  that requires interruption request, admission, envelope, runtime, adapter,
+  host, operator, target, interruption-capability, and tool-capability evidence
+  before interruption execution admission. The gate blocks automatic
+  interruption, task completion, review acceptance, resume, callback answering,
+  SCM mutation, raw provider material retention, raw callback material
+  retention, recovery widening, and task mutation authority.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 
@@ -189,14 +231,14 @@ Missing:
 - real provider adapters
 - full Codex process spawning and stdio lifecycle execution after admission
 - live JSON-RPC/app-server decoding from a supervised process
-- turn-start command admission, policy, request envelope, and first response
-  callback response execution against the provider
+- turn-start, callback-response, and interruption execution against the
+  provider through a durable server-owned executor
 - durable server-owned execution of Codex live writes outside the one-off
   `nucleusd` smoke command
 - persistence for stdio frame source, decode outcome, and transport receipt
   records
 - persistence for accepted runtime-observation event-store records
-- cancellation that reaches the provider and records local/provider outcomes
+- interruption that reaches the provider and records local/provider outcomes
 - persistence for interruption/cancellation records
 - persistence for permission and user-input callback response records
 - persistence for recovery records after server restart, process exit, or
@@ -225,7 +267,7 @@ Likely crates:
 
 Next gate:
 
-- create task work live executor receipt linkage
+- define the Codex provider interruption execution policy gate
 - keep future live provider writes behind explicit operator confirmation until
   they are routed through server-owned executor policy
 - keep callback, cancellation, resume, and task mutation widening blocked until

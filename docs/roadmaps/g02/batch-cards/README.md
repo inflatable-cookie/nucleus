@@ -10,21 +10,31 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `311-task-work-live-executor-receipt-linkage.md`
+- `320-provider-interruption-executor-admission-records.md`
 
 ## Paused Cards
 
-- `312-task-backed-live-execution-diagnostics.md`
-- `313-task-backed-live-execution-validation-closeout.md`
+None.
 
 ## Planned Cards
 
-None.
+- `321-provider-interruption-execution-receipt-linkage.md`
+- `322-provider-interruption-execution-diagnostics.md`
+- `323-provider-interruption-execution-validation-closeout.md`
 
 ## Completed Cards
 
 - `309-task-backed-live-execution-policy-gate.md`
 - `310-task-work-live-executor-admission-records.md`
+- `311-task-work-live-executor-receipt-linkage.md`
+- `312-task-backed-live-execution-diagnostics.md`
+- `313-task-backed-live-execution-validation-closeout.md`
+- `314-callback-response-execution-policy-gate.md`
+- `315-callback-response-executor-admission-records.md`
+- `316-callback-response-execution-receipt-linkage.md`
+- `317-callback-response-execution-diagnostics.md`
+- `318-callback-response-execution-validation-closeout.md`
+- `319-provider-interruption-execution-policy-gate.md`
 - `001-event-store-record-contract-and-codec.md`
 - `002-event-store-repository-boundary.md`
 - `003-command-projection-replay-integrity.md`

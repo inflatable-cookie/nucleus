@@ -1,21 +1,21 @@
-# 313 Task-Backed Live Execution Validation Closeout
+# 318 Callback Response Execution Validation Closeout
 
 Status: completed
 Owner: Tom
 Updated: 2026-06-19
-Milestone: `../069-codex-task-backed-live-execution-gate.md`
+Milestone: `../070-codex-callback-response-execution-gate.md`
 
 ## Purpose
 
-Validate the task-backed live execution gate and select the next runtime target.
+Validate the callback response execution gate and select the next runtime
+target.
 
 ## Scope
 
 - Run the lane validation suite.
 - Update gap indexes and roadmap state.
-- Decide whether the next lane is provider callback execution,
-  cancellation/interruption execution, recovery execution, checkpoint/diff
-  linkage, or UI proof.
+- Decide whether the next lane is cancellation/interruption execution, recovery
+  execution, checkpoint/diff linkage, loop orchestration, or UI proof.
 
 ## Acceptance Criteria
 

@@ -351,13 +351,20 @@ OpenCode readiness research adds these rules:
 
 Claude readiness research adds these rules:
 
-- Claude starts SDK-sidecar-first when provider and deployment constraints
-  allow it.
+- Claude supports SDK-sidecar and CLI-backed routes; neither should erase the
+  other.
 - The sidecar is still process-backed: it supervises a Claude subprocess and
   local transcript state.
-- Direct CLI and PTY remain required fallback paths.
+- Direct CLI is required for subscription-backed Claude Code use, diagnostics,
+  one-shot tasks, and environments that reject sidecars.
+- PTY remains the native rendering fallback.
+- ACP or an equivalent structured protocol remains a future transport candidate
+  if Anthropic exposes enough lifecycle, identity, permission, and resume
+  coverage.
 - Claude permission modes and approval callbacks must stay visible as
   provider capabilities.
+- Claude authentication and billing posture must stay visible as configured
+  adapter capabilities.
 - Claude session recovery must separate conversation resume from filesystem
   checkpointing or rollback.
 - PTY fallback must not pretend to provide structured message identity.
@@ -477,6 +484,12 @@ Structured planning is server-owned project backbone state.
 New projects should be able to start through a guided flow for vision,
 ideation, architecture, constraints, research questions, roadmap shape, and
 task seeds.
+
+Open-ended exploration is a separate first-class mode. It is for broad project
+conversation before finite plans: probing assumptions, comparing possibilities,
+finding gaps, preserving unresolved questions, and deciding whether research,
+proof work, planning artifacts, goals, or task seeds should be promoted.
+Nucleus must not steer every exploratory conversation toward immediate coding.
 
 Planning artifacts are structured records, not only generated markdown.
 Northstar-shaped docs can remain an export or interoperability path, but the

@@ -4,6 +4,7 @@
 //! clients without granting command authority or copying raw provider output.
 
 mod codex_callback;
+mod codex_callback_response_execution;
 mod codex_ingestion;
 mod codex_interruption;
 mod codex_live_executor;
@@ -11,6 +12,7 @@ mod codex_live_spawn;
 mod codex_provider;
 mod codex_recovery;
 mod codex_subscription;
+mod codex_task_backed_live_execution;
 mod codex_transport_executor;
 mod codex_turn_start;
 mod effigy;
@@ -24,6 +26,11 @@ mod task_agent;
 
 pub use codex_callback::{
     codex_callback_diagnostics, CodexCallbackDiagnosticDto, CodexCallbackDiagnosticsDto,
+};
+pub use codex_callback_response_execution::{
+    codex_callback_response_execution_diagnostics,
+    CodexCallbackResponseExecutionAttemptDiagnosticDto,
+    CodexCallbackResponseExecutionDiagnosticsDto,
 };
 pub use codex_ingestion::{
     codex_ingestion_diagnostics, CodexIngestionDiagnosticsDto,
@@ -47,6 +54,10 @@ pub use codex_recovery::{
 pub use codex_subscription::{
     codex_subscription_diagnostics, CodexStdioWriteDiagnosticDto, CodexSubscriptionDiagnosticDto,
     CodexSubscriptionDiagnosticsDto,
+};
+pub use codex_task_backed_live_execution::{
+    codex_task_backed_live_execution_diagnostics, CodexTaskBackedLiveExecutionAttemptDiagnosticDto,
+    CodexTaskBackedLiveExecutionDiagnosticsDto,
 };
 pub use codex_transport_executor::{
     codex_transport_executor_diagnostics, CodexStdioFrameIngestionDiagnosticDto,

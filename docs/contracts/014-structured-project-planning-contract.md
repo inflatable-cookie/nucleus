@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-16
+Updated: 2026-06-19
 
 ## Purpose
 
@@ -56,6 +56,17 @@ Initial session kinds:
 - roadmap planning
 - task breakdown
 - decision review
+
+## Exploration Boundary
+
+Open-ended ideation is governed by
+`026-open-ended-planning-conversation-contract.md`.
+
+Structured planning may consume promoted exploration outputs, but it must not
+collapse every open conversation into a finite plan or task list. An exploration
+session can remain exploratory, preserve unresolved questions, and defer
+promotion until the user chooses to accept an artifact, research brief, goal, or
+task seed.
 
 ## Planning Artifacts
 

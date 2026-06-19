@@ -7,6 +7,9 @@
 mod callback_request;
 mod callback_response_admission;
 mod callback_response_envelope;
+mod callback_response_execution_policy;
+mod callback_response_execution_receipt_linkage;
+mod callback_response_executor_admission;
 mod callback_response_outcome;
 mod callback_response_reactor;
 mod event_store_linkage;
@@ -14,6 +17,7 @@ mod handshake;
 mod idempotency;
 mod interruption_admission;
 mod interruption_envelope;
+mod interruption_execution_policy;
 mod interruption_outcome;
 mod interruption_request;
 mod live_executor_outcome;
@@ -36,8 +40,9 @@ mod stdio_frame_ingestion_persistence;
 mod stdio_frames;
 mod task_backed_live_execution_policy;
 mod task_work_live_executor_admission;
+mod task_work_live_executor_receipt_linkage;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 mod transport_executor_authority;
 mod transport_receipts;
 mod turn_start_admission;
@@ -68,6 +73,30 @@ pub use callback_response_admission::{
 pub use callback_response_envelope::{
     codex_callback_response_envelope, CodexAppServerCallbackResponseEnvelopeId,
     CodexAppServerCallbackResponseEnvelopeRecord, CodexAppServerCallbackResponseEnvelopeRejection,
+};
+pub use callback_response_execution_policy::{
+    codex_callback_response_execution_policy, CodexAppServerCallbackResponseExecutionPolicyBlocker,
+    CodexAppServerCallbackResponseExecutionPolicyId,
+    CodexAppServerCallbackResponseExecutionPolicyInput,
+    CodexAppServerCallbackResponseExecutionPolicyRecord,
+    CodexAppServerCallbackResponseExecutionPolicyStatus,
+    CodexAppServerCallbackResponseExecutionToolPolicy,
+    CodexAppServerCallbackResponseExecutionToolProjectionMode,
+};
+pub use callback_response_execution_receipt_linkage::{
+    codex_callback_response_execution_receipt_link,
+    CodexAppServerCallbackResponseExecutionReceiptLink,
+    CodexAppServerCallbackResponseExecutionReceiptLinkBlocker,
+    CodexAppServerCallbackResponseExecutionReceiptLinkId,
+    CodexAppServerCallbackResponseExecutionReceiptLinkStatus,
+    CodexAppServerCallbackResponseExecutionRuntimeProgress,
+};
+pub use callback_response_executor_admission::{
+    admit_codex_callback_response_executor, CodexAppServerCallbackResponseExecutorAdmissionBlocker,
+    CodexAppServerCallbackResponseExecutorAdmissionId,
+    CodexAppServerCallbackResponseExecutorAdmissionInput,
+    CodexAppServerCallbackResponseExecutorAdmissionRecord,
+    CodexAppServerCallbackResponseExecutorAdmissionStatus,
 };
 pub use callback_response_outcome::{
     codex_callback_response_failed_outcome, codex_callback_response_outcome_from_admission,
@@ -102,6 +131,13 @@ pub use interruption_admission::{
 pub use interruption_envelope::{
     codex_interruption_envelope, CodexAppServerInterruptionEnvelopeId,
     CodexAppServerInterruptionEnvelopeRecord, CodexAppServerInterruptionEnvelopeRejection,
+};
+pub use interruption_execution_policy::{
+    codex_interruption_execution_policy, CodexAppServerInterruptionExecutionPolicyBlocker,
+    CodexAppServerInterruptionExecutionPolicyId, CodexAppServerInterruptionExecutionPolicyInput,
+    CodexAppServerInterruptionExecutionPolicyRecord,
+    CodexAppServerInterruptionExecutionPolicyStatus, CodexAppServerInterruptionExecutionToolPolicy,
+    CodexAppServerInterruptionExecutionToolProjectionMode,
 };
 pub use interruption_outcome::{
     codex_interruption_failed_outcome, codex_interruption_outcome_from_admission,
@@ -211,8 +247,7 @@ pub use stdio_frames::{
     CodexAppServerStdioFrameSourceRecord,
 };
 pub use task_backed_live_execution_policy::{
-    codex_task_backed_live_execution_policy,
-    CodexAppServerTaskBackedLiveExecutionPathwayEvidence,
+    codex_task_backed_live_execution_policy, CodexAppServerTaskBackedLiveExecutionPathwayEvidence,
     CodexAppServerTaskBackedLiveExecutionPolicyBlocker,
     CodexAppServerTaskBackedLiveExecutionPolicyId,
     CodexAppServerTaskBackedLiveExecutionPolicyInput,
@@ -222,12 +257,18 @@ pub use task_backed_live_execution_policy::{
     CodexAppServerTaskBackedLiveExecutionToolProjectionMode,
 };
 pub use task_work_live_executor_admission::{
-    admit_codex_task_work_live_executor,
-    CodexAppServerTaskWorkLiveExecutorAdmissionBlocker,
+    admit_codex_task_work_live_executor, CodexAppServerTaskWorkLiveExecutorAdmissionBlocker,
     CodexAppServerTaskWorkLiveExecutorAdmissionId,
     CodexAppServerTaskWorkLiveExecutorAdmissionInput,
     CodexAppServerTaskWorkLiveExecutorAdmissionRecord,
     CodexAppServerTaskWorkLiveExecutorAdmissionStatus,
+};
+pub use task_work_live_executor_receipt_linkage::{
+    codex_task_work_live_executor_receipt_link, CodexAppServerTaskWorkLiveExecutorReceiptLink,
+    CodexAppServerTaskWorkLiveExecutorReceiptLinkBlocker,
+    CodexAppServerTaskWorkLiveExecutorReceiptLinkId,
+    CodexAppServerTaskWorkLiveExecutorReceiptLinkStatus,
+    CodexAppServerTaskWorkLiveExecutorRuntimeProgress,
 };
 pub use transport_executor_authority::{
     codex_transport_executor_authority, CodexAppServerTransportExecutorAuthorityBlocker,

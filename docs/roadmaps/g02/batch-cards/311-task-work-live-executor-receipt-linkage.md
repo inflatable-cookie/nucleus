@@ -1,6 +1,6 @@
 # 311 Task Work Live Executor Receipt Linkage
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../069-codex-task-backed-live-execution-gate.md`
@@ -18,9 +18,9 @@ Link task work items to Codex live executor outcomes and runtime receipts.
 
 ## Acceptance Criteria
 
-- [ ] Receipt linkage survives projection without provider material.
-- [ ] Provider completion does not imply review acceptance.
-- [ ] Failed and timed-out outcomes stay inspectable.
+- [x] Receipt linkage survives projection without provider material.
+- [x] Provider completion does not imply review acceptance.
+- [x] Failed and timed-out outcomes stay inspectable.
 
 ## Validation
 

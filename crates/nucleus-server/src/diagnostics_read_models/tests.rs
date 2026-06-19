@@ -46,10 +46,12 @@ use nucleus_scm_forge::{
 };
 use nucleus_tasks::TaskId;
 
+mod codex_callback_response_execution;
 mod codex_ingestion;
 mod codex_live_executor;
 mod codex_live_spawn;
 mod codex_subscription;
+mod codex_task_backed_live_execution;
 mod codex_transport_executor;
 mod codex_turn_start;
 mod effigy;

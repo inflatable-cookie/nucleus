@@ -33,6 +33,7 @@ Updated: 2026-06-17
 | `023-task-backed-agent-workflow-contract.md` | draft | Task-owned agent work-item lifecycle, Codex binding, wait states, review, and implementation gaps. |
 | `024-harness-mediation-tool-projection-contract.md` | draft | Nucleus-owned tool projection and conversation steering across bridged harnesses. |
 | `025-goal-loop-next-task-contract.md` | draft | Goal, loop, pathway, and next-task selection rules. |
+| `026-open-ended-planning-conversation-contract.md` | draft | Open-ended ideation and exploration sessions before finite plans or tasks. |
 
 ## Needed Contracts
 
@@ -59,6 +60,8 @@ When it overlaps focused contracts, the focused contract owns the durable rule:
   and review sequencing.
 - `024` owns harness mediation, portal tools, tool projection, and steering.
 - `025` owns goals, loops, pathway records, and next-task selection.
+- `026` owns open-ended exploration conversations and promotion gates from
+  ideation into planning, research, memories, goals, and task seeds.
 - `011`, `008`, and `002` own SCM/forge, storage, and harness-adapter rules.
 
 Source refs:

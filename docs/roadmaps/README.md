@@ -73,7 +73,9 @@ shape.
 - `g02/066-task-backed-workflow-hardening.md` - completed
 - `g02/067-codex-direct-connection-smoke-gate.md` - completed
 - `g02/068-codex-live-executor-integration.md` - completed
-- `g02/069-codex-task-backed-live-execution-gate.md` - active
+- `g02/069-codex-task-backed-live-execution-gate.md` - completed
+- `g02/070-codex-callback-response-execution-gate.md` - completed
+- `g02/071-codex-provider-interruption-execution-gate.md` - active
 
 ## Previous Generation
 
@@ -132,4 +134,4 @@ shape.
 
 ## Next Task
 
-Create task work live executor receipt linkage.
+Add provider interruption executor admission records.

@@ -84,27 +84,39 @@ and engine boundary are settled.
 - `066-task-backed-workflow-hardening.md` - completed
 - `067-codex-direct-connection-smoke-gate.md` - completed
 - `068-codex-live-executor-integration.md` - completed
-- `069-codex-task-backed-live-execution-gate.md` - active
+- `069-codex-task-backed-live-execution-gate.md` - completed
+- `070-codex-callback-response-execution-gate.md` - completed
+- `071-codex-provider-interruption-execution-gate.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/311-task-work-live-executor-receipt-linkage.md`
+- `batch-cards/320-provider-interruption-executor-admission-records.md`
 
 Paused cards:
 
-- `batch-cards/312-task-backed-live-execution-diagnostics.md`
-- `batch-cards/313-task-backed-live-execution-validation-closeout.md`
+None.
 
 Planned cards:
 
-None.
+- `batch-cards/321-provider-interruption-execution-receipt-linkage.md`
+- `batch-cards/322-provider-interruption-execution-diagnostics.md`
+- `batch-cards/323-provider-interruption-execution-validation-closeout.md`
 
 Completed cards:
 
 - `batch-cards/309-task-backed-live-execution-policy-gate.md`
 - `batch-cards/310-task-work-live-executor-admission-records.md`
+- `batch-cards/311-task-work-live-executor-receipt-linkage.md`
+- `batch-cards/312-task-backed-live-execution-diagnostics.md`
+- `batch-cards/313-task-backed-live-execution-validation-closeout.md`
+- `batch-cards/314-callback-response-execution-policy-gate.md`
+- `batch-cards/315-callback-response-executor-admission-records.md`
+- `batch-cards/316-callback-response-execution-receipt-linkage.md`
+- `batch-cards/317-callback-response-execution-diagnostics.md`
+- `batch-cards/318-callback-response-execution-validation-closeout.md`
+- `batch-cards/319-provider-interruption-execution-policy-gate.md`
 - `batch-cards/001-event-store-record-contract-and-codec.md`
 - `batch-cards/002-event-store-repository-boundary.md`
 - `batch-cards/003-command-projection-replay-integrity.md`

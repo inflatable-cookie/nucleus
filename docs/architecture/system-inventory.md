@@ -112,7 +112,8 @@ Updated: 2026-06-16
   and projection boundaries. The local store crate leaves room for this domain,
   but no Rust memory domain crate or behavior exists yet.
 - `nucleus-planning`: planned, not scaffolded. Future structured planning
-  crate for planning sessions, accepted artifacts, task seeds, review state,
+  crate for open-ended exploration sessions, guided planning sessions,
+  accepted artifacts, task seeds, question backlogs, option maps, review state,
   and projection boundaries. The local store crate leaves room for this domain,
   but no Rust planning domain crate or behavior exists yet.
 - `nucleus-research`: planned, not scaffolded. Future deep research crate for
