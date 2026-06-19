@@ -1,6 +1,6 @@
 # 048 Diagnostics Read Model Test Split
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-19
 
@@ -30,11 +30,10 @@ diagnostics test modules.
 
 Ready cards:
 
-- None.
+- `batch-cards/214-diagnostics-read-model-test-fixture-extraction.md`
 
 Planned cards:
 
-- `batch-cards/214-diagnostics-read-model-test-fixture-extraction.md`
 - `batch-cards/215-diagnostics-read-model-domain-test-split.md`
 - `batch-cards/216-diagnostics-read-model-validation.md`
 

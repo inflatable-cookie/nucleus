@@ -1,6 +1,6 @@
 # 210 Management Projection State Test Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../046-management-projection-state-test-split.md`
@@ -29,3 +29,8 @@ Validate the management projection state test split.
 ## Stop Conditions
 
 - Stop if behavior changed or the split failed to reduce file pressure.
+
+## Result
+
+`cargo test -p nucleus-server management_projection_state` passes. `effigy
+doctor` god-file errors dropped from six to five.

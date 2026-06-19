@@ -10,18 +10,10 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `206-current-god-file-report-normalization.md`
+- `214-diagnostics-read-model-test-fixture-extraction.md`
 
 ## Planned Cards
 
-- `207-god-file-split-order-and-risk-map.md`
-- `208-management-projection-state-test-fixture-extraction.md`
-- `209-management-projection-state-test-apply-cases-split.md`
-- `210-management-projection-state-test-validation.md`
-- `211-scm-work-session-policy-type-split.md`
-- `212-scm-work-session-recovery-type-split.md`
-- `213-scm-work-session-validation.md`
-- `214-diagnostics-read-model-test-fixture-extraction.md`
 - `215-diagnostics-read-model-domain-test-split.md`
 - `216-diagnostics-read-model-validation.md`
 - `217-engine-management-sync-test-fixture-extraction.md`
@@ -245,3 +237,11 @@ Hold execution cards for `g02`.
 - `203-next-phase-readiness-decision.md`
 - `204-long-term-plan-rebaseline.md`
 - `205-g02-scm-runway-closeout.md`
+- `206-current-god-file-report-normalization.md`
+- `207-god-file-split-order-and-risk-map.md`
+- `208-management-projection-state-test-fixture-extraction.md`
+- `209-management-projection-state-test-apply-cases-split.md`
+- `210-management-projection-state-test-validation.md`
+- `211-scm-work-session-policy-type-split.md`
+- `212-scm-work-session-recovery-type-split.md`
+- `213-scm-work-session-validation.md`

@@ -60,10 +60,10 @@ and engine boundary are settled.
 - `042-change-request-preparation-boundary.md` - completed
 - `043-steward-scm-sync-automation-gate.md` - completed
 - `044-scm-workflow-closeout-and-next-phase-selection.md` - completed
-- `045-god-file-health-gate-rebaseline.md` - active
-- `046-management-projection-state-test-split.md` - planned
-- `047-scm-work-sessions-module-split.md` - planned
-- `048-diagnostics-read-model-test-split.md` - planned
+- `045-god-file-health-gate-rebaseline.md` - completed
+- `046-management-projection-state-test-split.md` - completed
+- `047-scm-work-sessions-module-split.md` - completed
+- `048-diagnostics-read-model-test-split.md` - active
 - `049-engine-management-sync-test-split.md` - planned
 - `050-management-projection-apply-import-split.md` - planned
 - `051-change-request-prep-module-split.md` - planned
@@ -73,18 +73,10 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/206-current-god-file-report-normalization.md`
+- `batch-cards/214-diagnostics-read-model-test-fixture-extraction.md`
 
 Planned cards:
 
-- `batch-cards/207-god-file-split-order-and-risk-map.md`
-- `batch-cards/208-management-projection-state-test-fixture-extraction.md`
-- `batch-cards/209-management-projection-state-test-apply-cases-split.md`
-- `batch-cards/210-management-projection-state-test-validation.md`
-- `batch-cards/211-scm-work-session-policy-type-split.md`
-- `batch-cards/212-scm-work-session-recovery-type-split.md`
-- `batch-cards/213-scm-work-session-validation.md`
-- `batch-cards/214-diagnostics-read-model-test-fixture-extraction.md`
 - `batch-cards/215-diagnostics-read-model-domain-test-split.md`
 - `batch-cards/216-diagnostics-read-model-validation.md`
 - `batch-cards/217-engine-management-sync-test-fixture-extraction.md`
@@ -308,6 +300,14 @@ Completed cards:
 - `batch-cards/203-next-phase-readiness-decision.md`
 - `batch-cards/204-long-term-plan-rebaseline.md`
 - `batch-cards/205-g02-scm-runway-closeout.md`
+- `batch-cards/206-current-god-file-report-normalization.md`
+- `batch-cards/207-god-file-split-order-and-risk-map.md`
+- `batch-cards/208-management-projection-state-test-fixture-extraction.md`
+- `batch-cards/209-management-projection-state-test-apply-cases-split.md`
+- `batch-cards/210-management-projection-state-test-validation.md`
+- `batch-cards/211-scm-work-session-policy-type-split.md`
+- `batch-cards/212-scm-work-session-recovery-type-split.md`
+- `batch-cards/213-scm-work-session-validation.md`
 
 ## Planned Runway Sequence
 
@@ -347,10 +347,10 @@ The next G02 suite is:
 32. change-request preparation boundary - completed
 33. steward SCM sync automation gate - completed
 34. SCM workflow closeout and next phase selection - completed
-35. god-file health gate rebaseline - active
-36. management projection state test split - planned
-37. SCM work sessions module split - planned
-38. diagnostics read-model test split - planned
+35. god-file health gate rebaseline - completed
+36. management projection state test split - completed
+37. SCM work sessions module split - completed
+38. diagnostics read-model test split - active
 39. engine management sync test split - planned
 40. management projection apply/import split - planned
 41. change-request prep module split - planned
@@ -402,10 +402,15 @@ runtime work.
   diagnostics without provider mutation authority.
 - `044` closed the SCM record/prep runway and selected the red god-file health
   gate as the next phase before wider runtime work.
-- `045` rebaselines the current `effigy doctor` god-file report and split
-  order.
-- `046`-`051` split the six current error-sized files without changing
-  behavior.
+- `045` completed the current `effigy doctor` god-file report and split order
+  rebaseline.
+- `046` split management projection state tests, dropping doctor god-file
+  errors from six to five.
+- `047` split SCM work-session types, dropping doctor god-file errors from
+  five to four.
+- `048` splits diagnostics read-model tests without changing behavior.
+- `049`-`051` continue splitting the remaining error-sized files without
+  changing behavior.
 - `052` validates doctor health and selects the next runtime lane.
 - Later milestones have full planned cards, but only the current card should
   be marked ready until predecessor validation passes.

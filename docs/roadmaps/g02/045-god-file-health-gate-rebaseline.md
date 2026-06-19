@@ -1,6 +1,6 @@
 # 045 God File Health Gate Rebaseline
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -18,34 +18,40 @@ order before touching code.
 
 ## Goals
 
-- [ ] Capture the current red files.
-- [ ] Pick a split order based on risk and dependency pressure.
-- [ ] Keep behavior unchanged during health repair.
+- [x] Capture the current red files.
+- [x] Pick a split order based on risk and dependency pressure.
+- [x] Keep behavior unchanged during health repair.
 
 ## Execution Plan
 
-- [ ] Report batch: normalize the current doctor evidence.
-- [ ] Risk batch: map split order and validation by crate.
+- [x] Report batch: normalize the current doctor evidence.
+- [x] Risk batch: map split order and validation by crate.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/206-current-god-file-report-normalization.md`
+- None.
 
 Planned cards:
 
-- `batch-cards/207-god-file-split-order-and-risk-map.md`
+- None.
 
 Completed cards:
 
-- None.
+- `batch-cards/206-current-god-file-report-normalization.md`
+- `batch-cards/207-god-file-split-order-and-risk-map.md`
 
 ## Acceptance Criteria
 
-- [ ] The six current error files are listed with intended split targets.
-- [ ] Validation commands are scoped by crate.
-- [ ] The next code split card is ready.
+- [x] The six current error files are listed with intended split targets.
+- [x] Validation commands are scoped by crate.
+- [x] The next code split card is ready.
+
+## Result
+
+The red god-file split order is documented. The first code split target was
+management projection state tests, followed by SCM work sessions.
 
 ## Gate
 

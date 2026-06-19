@@ -1,6 +1,6 @@
 # 213 SCM Work Session Validation
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../047-scm-work-sessions-module-split.md`
@@ -30,3 +30,8 @@ Validate the SCM work-session module split.
 ## Stop Conditions
 
 - Stop if the split requires behavior changes.
+
+## Result
+
+`cargo test -p nucleus-scm-forge work_session` and `cargo check --workspace`
+pass. `effigy doctor` god-file errors dropped from five to four.

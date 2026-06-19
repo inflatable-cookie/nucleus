@@ -1,6 +1,6 @@
 # 212 SCM Work Session Recovery Type Split
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../047-scm-work-sessions-module-split.md`
@@ -27,3 +27,8 @@ Split SCM work-session recovery records from session planning types.
 ## Stop Conditions
 
 - Stop if recovery semantics need redesign.
+
+## Result
+
+Execution prep moved into `work_sessions/execution_prep.rs`; recovery records
+moved into `work_sessions/recovery.rs`.

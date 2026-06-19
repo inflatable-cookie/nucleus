@@ -1,6 +1,6 @@
 # 209 Management Projection State Test Apply Cases Split
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../046-management-projection-state-test-split.md`
@@ -27,3 +27,8 @@ Split management projection state test cases by behavior.
 ## Stop Conditions
 
 - Stop if a test split exposes ambiguous production behavior.
+
+## Result
+
+Export, import staging, and apply/import cases are split into focused test
+modules.

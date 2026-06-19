@@ -1,6 +1,6 @@
 # 208 Management Projection State Test Fixture Extraction
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../046-management-projection-state-test-split.md`
@@ -28,3 +28,8 @@ Extract shared fixtures from `management_projection_state/tests.rs`.
 ## Stop Conditions
 
 - Stop if helper extraction changes fixture semantics.
+
+## Result
+
+Shared imports and module wiring now live in the test index; domain cases moved
+out of the original god-file.

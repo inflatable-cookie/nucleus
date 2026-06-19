@@ -1,6 +1,6 @@
 # 211 SCM Work Session Policy Type Split
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../047-scm-work-sessions-module-split.md`
@@ -29,3 +29,8 @@ Split SCM work-session policy and plan types into focused modules.
 ## Stop Conditions
 
 - Stop if public API churn spreads outside re-export wiring.
+
+## Result
+
+Session plan, mode, location, testability, and cleanup policy types moved into
+`work_sessions/session_plan.rs`.
