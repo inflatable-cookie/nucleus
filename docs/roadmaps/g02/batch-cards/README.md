@@ -10,11 +10,11 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `239-codex-ingestion-diagnostics-query.md`
+- `240-codex-live-event-acceptance-closeout.md`
 
 ## Planned Cards
 
-- `240-codex-live-event-acceptance-closeout.md`
+- None.
 
 ## Completed Cards
 
@@ -256,3 +256,4 @@ Hold execution cards for `g02`.
 - `236-codex-ingestion-idempotency.md`
 - `237-codex-observation-event-store-linkage.md`
 - `238-codex-task-runtime-observation-links.md`
+- `239-codex-ingestion-diagnostics-query.md`

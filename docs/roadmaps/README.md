@@ -117,4 +117,4 @@ shape.
 
 ## Next Task
 
-Execute `g02/batch-cards/239-codex-ingestion-diagnostics-query.md`.
+Execute `g02/batch-cards/240-codex-live-event-acceptance-closeout.md`.

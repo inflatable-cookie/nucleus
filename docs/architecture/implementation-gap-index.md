@@ -96,7 +96,7 @@ Current state:
   and recovery-required frame classification, runtime-observation event-store
   linkage records, task-work observation link records, wait-state routing,
   task-runtime admission, progress projection, receipt linkage, and recovery
-  gates.
+  gates, and read-only Codex ingestion diagnostics DTOs.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 

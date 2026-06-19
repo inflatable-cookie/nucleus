@@ -3,6 +3,7 @@
 //! These DTOs expose steward, Effigy, management sync, and SCM session state to
 //! clients without granting command authority or copying raw provider output.
 
+mod codex_ingestion;
 mod effigy;
 mod helpers;
 mod scm;
@@ -12,6 +13,10 @@ mod sync_capture;
 mod sync_review;
 mod task_agent;
 
+pub use codex_ingestion::{
+    codex_ingestion_diagnostics, CodexIngestionDiagnosticsDto,
+    CodexIngestionObservationDiagnosticDto,
+};
 pub use effigy::{effigy_diagnostics, EffigyDiagnosticsDto};
 pub use scm::{
     scm_session_diagnostics, ScmCommandAdmissionDiagnosticDto, ScmSessionDiagnosticsDto,

@@ -29,7 +29,7 @@ Nucleus-owned records without broadening provider command execution.
       refs.
 - [x] Link accepted observations to task work items and sanitized receipts
       without mutating task state directly.
-- [ ] Expose read-only diagnostics/query state for accepted, duplicated,
+- [x] Expose read-only diagnostics/query state for accepted, duplicated,
       unsupported, and recovery-required observations.
 
 ## Non-Goals
@@ -49,18 +49,18 @@ Nucleus-owned records without broadening provider command execution.
 - [x] Orchestration batch: map accepted observations to event-store envelopes
       and runtime receipt refs.
 - [x] Task linkage batch: expose task-work links without direct task mutation.
-- [ ] Diagnostics batch: add read-only query/projection state.
+- [x] Diagnostics batch: add read-only query/projection state.
 - [ ] Closeout batch: validate, update gap indexes, and select the next gate.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/239-codex-ingestion-diagnostics-query.md`
+- `batch-cards/240-codex-live-event-acceptance-closeout.md`
 
 Planned cards:
 
-- `batch-cards/240-codex-live-event-acceptance-closeout.md`
+- None.
 
 Completed cards:
 
@@ -68,6 +68,7 @@ Completed cards:
 - `batch-cards/236-codex-ingestion-idempotency.md`
 - `batch-cards/237-codex-observation-event-store-linkage.md`
 - `batch-cards/238-codex-task-runtime-observation-links.md`
+- `batch-cards/239-codex-ingestion-diagnostics-query.md`
 
 ## Acceptance Criteria
 

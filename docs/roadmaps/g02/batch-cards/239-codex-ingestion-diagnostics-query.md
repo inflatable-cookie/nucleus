@@ -1,6 +1,6 @@
 # 239 Codex Ingestion Diagnostics Query
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../054-codex-live-event-acceptance.md`
@@ -22,6 +22,15 @@ Expose read-only diagnostics for Codex event acceptance.
 - Diagnostics show next required action for blocked or recovery-required
   observations.
 - Serialization tests cover the new query shapes.
+
+## Result
+
+`nucleus-server` now exposes read-only Codex ingestion diagnostics DTOs under
+`diagnostics_read_models/codex_ingestion.rs`.
+
+The diagnostics show observation status, next action, event refs, receipt refs,
+evidence refs, and explicit no-mutation/no-provider-execution authority flags.
+No desktop panel was added.
 
 ## Validation
 

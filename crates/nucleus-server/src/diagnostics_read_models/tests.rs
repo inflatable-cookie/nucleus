@@ -46,6 +46,7 @@ use nucleus_scm_forge::{
 };
 use nucleus_tasks::TaskId;
 
+mod codex_ingestion;
 mod effigy;
 mod scm;
 mod serialization;
