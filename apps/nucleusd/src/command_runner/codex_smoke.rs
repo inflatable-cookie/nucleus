@@ -2,7 +2,7 @@ use crate::cli::CliCodexTurnStartRealWriteSmoke;
 
 mod fixtures;
 mod labels;
-mod live;
+pub(super) mod live;
 
 use fixtures::{authority, envelope, execution};
 use labels::{blocker_label, boundary_status_label};
@@ -73,7 +73,7 @@ pub(crate) fn print_codex_turn_start_real_write_smoke(
     Ok(())
 }
 
-fn build_codex_turn_start_real_write_smoke_boundary(
+pub(crate) fn build_codex_turn_start_real_write_smoke_boundary(
     confirm_real_write: bool,
 ) -> CodexAppServerTurnStartExecutorSmokeBoundaryRecord {
     let authority = authority();

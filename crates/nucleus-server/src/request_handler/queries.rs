@@ -35,8 +35,19 @@ use crate::state::ServerStateService;
 use crate::state::{ServerStateDomain, ServerStateDomainService};
 use crate::task_agent_work_unit_state::read_task_agent_work_unit_source_records;
 use crate::{
-    read_codex_live_executor_outcome_records, read_durable_provider_executor_command_records,
-    unsupported_local_host_runtime_discovery, EngineHostId,
+    completion_scm_capture_control_dto,
+    completion_scm_capture_diagnostics_from_persisted_admissions,
+    completion_scm_capture_preparation_control_dto,
+    completion_scm_capture_preparation_diagnostics_from_persisted_records,
+    completion_scm_control_dto, completion_scm_read_model, live_evidence_completion_control_dto,
+    live_evidence_completion_read_model, live_evidence_task_state_history_from_persisted_controls,
+    read_codex_live_executor_outcome_records, read_completion_scm_capture_admissions,
+    read_completion_scm_capture_preparations, read_durable_provider_executor_command_records,
+    read_live_evidence_task_completions, read_live_evidence_task_state_control_records,
+    read_scm_capture_dry_run_plans, scm_capture_dry_run_control_dto,
+    scm_capture_dry_run_diagnostics_from_persisted_records,
+    unsupported_local_host_runtime_discovery, CompletionScmReadModelInput, EngineHostId,
+    LiveEvidenceCompletionReadModelInput,
 };
 
 pub(crate) fn handle_query<B>(
@@ -102,6 +113,14 @@ where
             .map(|records| task_agent_diagnostics(&records))
             .map_err(storage_error)
     };
+    let live_evidence_completion =
+        || live_evidence_completion_diagnostics_from_state(handler.state());
+    let completion_scm_readiness =
+        || completion_scm_readiness_diagnostics_from_state(handler.state());
+    let completion_scm_capture = || completion_scm_capture_diagnostics_from_state(handler.state());
+    let completion_scm_capture_preparation =
+        || completion_scm_capture_preparation_diagnostics_from_state(handler.state());
+    let scm_capture_dry_run = || scm_capture_dry_run_diagnostics_from_state(handler.state());
 
     match query {
         DiagnosticsQuery::Steward => Ok(ServerQueryResult::Diagnostics(
@@ -124,6 +143,23 @@ where
                 handler.state(),
             )?),
         )),
+        DiagnosticsQuery::LiveEvidenceCompletion => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::LiveEvidenceCompletion(live_evidence_completion()?),
+        )),
+        DiagnosticsQuery::CompletionScmReadiness => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::CompletionScmReadiness(completion_scm_readiness()?),
+        )),
+        DiagnosticsQuery::CompletionScmCapture => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::CompletionScmCapture(completion_scm_capture()?),
+        )),
+        DiagnosticsQuery::CompletionScmCapturePreparation => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::CompletionScmCapturePreparation(
+                completion_scm_capture_preparation()?,
+            ),
+        )),
+        DiagnosticsQuery::ScmCaptureDryRun => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::ScmCaptureDryRun(scm_capture_dry_run()?),
+        )),
         DiagnosticsQuery::All => Ok(ServerQueryResult::Diagnostics(
             ServerDiagnosticsQueryResult::All(ServerDiagnosticsSnapshot {
                 steward: empty_steward_diagnostics(),
@@ -132,9 +168,76 @@ where
                 scm_session: empty_scm_session_diagnostics(),
                 task_agent: task_agent()?,
                 codex_provider: codex_provider_diagnostics_from_state(handler.state())?,
+                live_evidence_completion: live_evidence_completion()?,
+                completion_scm_readiness: completion_scm_readiness()?,
+                completion_scm_capture: completion_scm_capture()?,
+                completion_scm_capture_preparation: completion_scm_capture_preparation()?,
+                scm_capture_dry_run: scm_capture_dry_run()?,
             }),
         )),
     }
+}
+
+fn scm_capture_dry_run_diagnostics_from_state<B>(
+    state: &ServerStateService<B>,
+) -> Result<crate::ScmCaptureDryRunControlDto, ServerControlError>
+where
+    B: LocalStoreBackend,
+{
+    let records = read_scm_capture_dry_run_plans(state).map_err(storage_error)?;
+    Ok(scm_capture_dry_run_control_dto(
+        scm_capture_dry_run_diagnostics_from_persisted_records(records),
+    ))
+}
+
+fn completion_scm_capture_diagnostics_from_state<B>(
+    state: &ServerStateService<B>,
+) -> Result<crate::CompletionScmCaptureControlDto, ServerControlError>
+where
+    B: LocalStoreBackend,
+{
+    let records = read_completion_scm_capture_admissions(state).map_err(storage_error)?;
+    Ok(completion_scm_capture_control_dto(
+        completion_scm_capture_diagnostics_from_persisted_admissions(records),
+    ))
+}
+
+fn completion_scm_capture_preparation_diagnostics_from_state<B>(
+    state: &ServerStateService<B>,
+) -> Result<crate::CompletionScmCapturePreparationControlDto, ServerControlError>
+where
+    B: LocalStoreBackend,
+{
+    let records = read_completion_scm_capture_preparations(state).map_err(storage_error)?;
+    Ok(completion_scm_capture_preparation_control_dto(
+        completion_scm_capture_preparation_diagnostics_from_persisted_records(records),
+    ))
+}
+
+fn completion_scm_readiness_diagnostics_from_state<B>(
+    state: &ServerStateService<B>,
+) -> Result<crate::CompletionScmControlDto, ServerControlError>
+where
+    B: LocalStoreBackend,
+{
+    let records = read_live_evidence_task_state_control_records(state).map_err(storage_error)?;
+    let history = if records.is_empty() {
+        None
+    } else {
+        Some(live_evidence_task_state_history_from_persisted_controls(
+            records,
+        ))
+    };
+
+    Ok(completion_scm_control_dto(completion_scm_read_model(
+        CompletionScmReadModelInput {
+            history,
+            adapter_label: "unconfigured".to_owned(),
+            workflow_label: "unconfigured".to_owned(),
+            adapter_supports_change_requests: false,
+            adapter_available: false,
+        },
+    )))
 }
 
 fn empty_steward_diagnostics() -> crate::StewardDiagnosticsDto {
@@ -191,6 +294,18 @@ where
             &[],
             &[],
         ),
+    ))
+}
+
+fn live_evidence_completion_diagnostics_from_state<B>(
+    state: &ServerStateService<B>,
+) -> Result<crate::LiveEvidenceCompletionControlDto, ServerControlError>
+where
+    B: LocalStoreBackend,
+{
+    let completions = read_live_evidence_task_completions(state).map_err(storage_error)?;
+    Ok(live_evidence_completion_control_dto(
+        live_evidence_completion_read_model(LiveEvidenceCompletionReadModelInput { completions }),
     ))
 }
 

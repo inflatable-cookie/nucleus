@@ -1,6 +1,6 @@
 # 363 Wait Callback Recovery Validation Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../079-durable-wait-callback-interruption-recovery-persistence.md`
@@ -18,9 +18,9 @@ provider runtime hardening.
 
 ## Acceptance Criteria
 
-- [ ] Validation passes or blockers are recorded.
-- [ ] Callback, cancellation, resume, and replacement promotion remain gated.
-- [ ] `080` is activated only after persistence is stable.
+- [x] Validation passes or blockers are recorded.
+- [x] Callback, cancellation, resume, and replacement promotion remain gated.
+- [x] `080` is activated only after persistence is stable.
 
 ## Validation
 

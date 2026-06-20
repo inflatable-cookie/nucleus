@@ -1,6 +1,6 @@
 # 373 Provider Observability Validation Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../081-provider-observability-diagnostics.md`
@@ -18,9 +18,9 @@ workflow closeout.
 
 ## Acceptance Criteria
 
-- [ ] Validation passes or blockers are recorded.
-- [ ] Observability remains read-only and sanitized.
-- [ ] `082` is activated only after diagnostics are stable.
+- [x] Validation passes or blockers are recorded.
+- [x] Observability remains read-only and sanitized.
+- [x] `082` is activated only after diagnostics are stable.
 
 ## Validation
 

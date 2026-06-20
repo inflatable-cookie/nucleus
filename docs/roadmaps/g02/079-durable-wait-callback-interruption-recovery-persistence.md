@@ -1,6 +1,6 @@
 # 079 Durable Wait Callback Interruption Recovery Persistence
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 
@@ -24,8 +24,8 @@ answering callbacks, cancelling, resuming, or mutating tasks automatically.
 - [x] Persist callback request evidence.
 - [x] Link callback responses to durable dispatch/status records.
 - [x] Persist interruption outcomes.
-- [ ] Persist recovery outcomes and repair requirements.
-- [ ] Keep callback answering, cancellation, resume, and replacement-thread
+- [x] Persist recovery outcomes and repair requirements.
+- [x] Keep callback answering, cancellation, resume, and replacement-thread
       promotion operator-gated.
 
 ## Execution Plan
@@ -33,28 +33,30 @@ answering callbacks, cancelling, resuming, or mutating tasks automatically.
 - [x] Callback request batch.
 - [x] Callback response durable linkage batch.
 - [x] Interruption outcome persistence batch.
-- [ ] Recovery outcome persistence batch.
-- [ ] Closeout batch: validate and activate runtime hardening.
+- [x] Recovery outcome persistence batch.
+- [x] Closeout batch: validate and activate runtime hardening.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/362-recovery-outcome-persistence.md`
+None.
 
 Planned cards:
 
-- `batch-cards/363-wait-callback-recovery-validation-closeout.md`
+None.
 
 Completed cards:
 
 - `batch-cards/359-callback-request-persistence.md`
 - `batch-cards/360-callback-response-durable-linkage.md`
 - `batch-cards/361-interruption-outcome-persistence.md`
+- `batch-cards/362-recovery-outcome-persistence.md`
+- `batch-cards/363-wait-callback-recovery-validation-closeout.md`
 
 ## Acceptance Criteria
 
-- [ ] Wait/callback/recovery evidence survives restart.
-- [ ] Callback response and recovery decisions remain operator-gated.
-- [ ] Replacement-thread promotion remains blocked.
-- [ ] Validation passes or blockers are recorded.
+- [x] Wait/callback/recovery evidence survives restart.
+- [x] Callback response and recovery decisions remain operator-gated.
+- [x] Replacement-thread promotion remains blocked.
+- [x] Validation passes or blockers are recorded.

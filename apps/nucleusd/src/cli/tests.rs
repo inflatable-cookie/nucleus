@@ -62,6 +62,140 @@ fn cli_config_parses_command_runner_read_only_spawn_smoke() {
 }
 
 #[test]
+fn cli_config_parses_durable_runtime_smoke_confirmation() {
+    let config = CliConfig::parse(vec![
+        "command-runner".to_owned(),
+        "durable-runtime-smoke".to_owned(),
+        "--confirm-real-write".to_owned(),
+    ])
+    .expect("parse durable runtime smoke");
+
+    assert_eq!(
+        config.command_runner,
+        Some(CommandRunnerCommand::DurableRuntimeSmoke(
+            CliDurableRuntimeSmoke {
+                confirm_real_write: true,
+                execute_provider_write: false,
+            }
+        ))
+    );
+}
+
+#[test]
+fn cli_config_parses_durable_runtime_smoke_execution_flag() {
+    let config = CliConfig::parse(vec![
+        "command-runner".to_owned(),
+        "durable-runtime-smoke".to_owned(),
+        "--confirm-real-write".to_owned(),
+        "--execute-provider-write".to_owned(),
+    ])
+    .expect("parse durable runtime smoke");
+
+    assert_eq!(
+        config.command_runner,
+        Some(CommandRunnerCommand::DurableRuntimeSmoke(
+            CliDurableRuntimeSmoke {
+                confirm_real_write: true,
+                execute_provider_write: true,
+            }
+        ))
+    );
+}
+
+#[test]
+fn cli_config_parses_durable_live_provider_write_smoke_confirmation() {
+    let config = CliConfig::parse(vec![
+        "command-runner".to_owned(),
+        "durable-live-provider-write-smoke".to_owned(),
+        "--confirm-real-write".to_owned(),
+    ])
+    .expect("parse durable live provider-write smoke");
+
+    assert_eq!(
+        config.command_runner,
+        Some(CommandRunnerCommand::DurableLiveProviderWriteSmoke(
+            CliDurableLiveProviderWriteSmoke {
+                confirm_real_write: true,
+                confirm_real_effect: false,
+                execute_provider_write: false,
+            }
+        ))
+    );
+}
+
+#[test]
+fn cli_config_parses_durable_live_provider_write_smoke_effect_confirmation() {
+    let config = CliConfig::parse(vec![
+        "command-runner".to_owned(),
+        "durable-live-provider-write-smoke".to_owned(),
+        "--confirm-real-write".to_owned(),
+        "--confirm-real-effect".to_owned(),
+    ])
+    .expect("parse durable live provider-write smoke");
+
+    assert_eq!(
+        config.command_runner,
+        Some(CommandRunnerCommand::DurableLiveProviderWriteSmoke(
+            CliDurableLiveProviderWriteSmoke {
+                confirm_real_write: true,
+                confirm_real_effect: true,
+                execute_provider_write: false,
+            }
+        ))
+    );
+}
+
+#[test]
+fn cli_config_parses_durable_live_provider_write_smoke_execution_flag() {
+    let config = CliConfig::parse(vec![
+        "command-runner".to_owned(),
+        "durable-live-provider-write-smoke".to_owned(),
+        "--confirm-real-write".to_owned(),
+        "--confirm-real-effect".to_owned(),
+        "--execute-provider-write".to_owned(),
+    ])
+    .expect("parse durable live provider-write smoke execution");
+
+    assert_eq!(
+        config.command_runner,
+        Some(CommandRunnerCommand::DurableLiveProviderWriteSmoke(
+            CliDurableLiveProviderWriteSmoke {
+                confirm_real_write: true,
+                confirm_real_effect: true,
+                execute_provider_write: true,
+            }
+        ))
+    );
+}
+
+#[test]
+fn cli_config_rejects_unknown_durable_live_provider_write_smoke_flag() {
+    let error = CliConfig::parse(vec![
+        "command-runner".to_owned(),
+        "durable-live-provider-write-smoke".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect_err("unknown durable live provider-write smoke flag");
+
+    assert_eq!(
+        error,
+        "unsupported durable live provider-write smoke flag: --yes"
+    );
+}
+
+#[test]
+fn cli_config_rejects_unknown_durable_runtime_smoke_flag() {
+    let error = CliConfig::parse(vec![
+        "command-runner".to_owned(),
+        "durable-runtime-smoke".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect_err("unknown durable runtime smoke flag");
+
+    assert_eq!(error, "unsupported durable runtime smoke flag: --yes");
+}
+
+#[test]
 fn cli_config_parses_codex_turn_start_real_write_smoke_confirmation() {
     let config = CliConfig::parse(vec![
         "command-runner".to_owned(),

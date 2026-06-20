@@ -17,10 +17,11 @@ use nucleus_server::{
     ServerControlRequestKind, ServerControlResponseBody, ServerEventSequence,
 };
 
-use crate::cli::{CliReadOnlyCommand, CommandRunnerCommand};
+use crate::cli::{CliDurableRuntimeSmoke, CliReadOnlyCommand, CommandRunnerCommand};
 use crate::labels::{command_status_label, retention_label};
 
 mod codex_smoke;
+mod durable_live_provider_write_smoke;
 
 pub(crate) fn print_command_runner(
     handler: &mut LocalControlRequestHandler<SqliteBackend>,
@@ -32,11 +33,69 @@ pub(crate) fn print_command_runner(
         CommandRunnerCommand::ReadOnlySpawnSmoke => {
             print_read_only_spawn_smoke(handler, state_path)
         }
+        CommandRunnerCommand::DurableRuntimeSmoke(command) => print_durable_runtime_smoke(command),
+        CommandRunnerCommand::DurableLiveProviderWriteSmoke(command) => {
+            durable_live_provider_write_smoke::print_durable_live_provider_write_smoke(
+                handler, command,
+            )
+        }
         CommandRunnerCommand::CodexTurnStartRealWriteSmoke(command) => {
             codex_smoke::print_codex_turn_start_real_write_smoke(command)
         }
         CommandRunnerCommand::ReadOnly(command) => print_read_only_command(handler, command),
     }
+}
+
+fn print_durable_runtime_smoke(command: CliDurableRuntimeSmoke) -> Result<(), String> {
+    let replay = nucleus_server::task_backed_live_workflow_fixture();
+    let eligible = replay.scheduler_admitted
+        && replay.live_executor_admitted
+        && !replay.raw_provider_material_retained
+        && !replay.task_completion_permitted_by_runtime
+        && !replay.review_acceptance_permitted_by_runtime;
+    let real_execution_gate = match (command.confirm_real_write, command.execute_provider_write) {
+        (false, false) => "dry_run_only",
+        (false, true) => "blocked_missing_real_write_confirmation",
+        (true, false) => "confirmed_but_effect_flag_missing",
+        (true, true) => "blocked_separate_live_provider_smoke_required",
+    };
+
+    println!("durable_runtime_smoke=dry_run");
+    println!("status={}", if eligible { "eligible" } else { "blocked" });
+    println!("scheduler_admitted={}", replay.scheduler_admitted);
+    println!("live_executor_admitted={}", replay.live_executor_admitted);
+    println!("runtime_progress={}", replay.runtime_progress);
+    println!(
+        "task_work_units={}",
+        replay.task_diagnostics.work_units.len()
+    );
+    println!(
+        "live_execution_attempts={}",
+        replay.live_execution_diagnostics.attempts.len()
+    );
+    println!(
+        "task_completion_permitted_by_runtime={}",
+        replay.task_completion_permitted_by_runtime
+    );
+    println!(
+        "review_acceptance_permitted_by_runtime={}",
+        replay.review_acceptance_permitted_by_runtime
+    );
+    println!(
+        "review_accepted_by_explicit_command={}",
+        replay.review_accepted_by_explicit_command
+    );
+    println!(
+        "raw_provider_material_retained={}",
+        replay.raw_provider_material_retained
+    );
+    println!("confirm_real_write={}", command.confirm_real_write);
+    println!("execute_provider_write={}", command.execute_provider_write);
+    println!("real_execution_gate={real_execution_gate}");
+    println!("provider_write_executed=false");
+    println!("raw_output=not_retained");
+
+    Ok(())
 }
 
 fn print_command_runner_smoke(

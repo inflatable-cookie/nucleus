@@ -1,6 +1,6 @@
 # 365 Provider Retry Reconciliation Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../080-provider-runtime-hardening.md`
@@ -19,10 +19,10 @@ effects.
 
 ## Acceptance Criteria
 
-- [ ] Retry decisions are explicit records.
-- [ ] Unsafe retries are blocked.
-- [ ] Completed effects reconcile without re-execution.
-- [ ] Manual repair states are visible.
+- [x] Retry decisions are explicit records.
+- [x] Unsafe retries are blocked.
+- [x] Completed effects reconcile without re-execution.
+- [x] Manual repair states are visible.
 
 ## Validation
 

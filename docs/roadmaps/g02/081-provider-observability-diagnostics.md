@@ -1,6 +1,6 @@
 # 081 Provider Observability Diagnostics
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 
@@ -17,19 +17,19 @@ health evidence, and read-only diagnostics.
 
 ## Goals
 
-- [ ] Define sanitized provider trace span records.
-- [ ] Define support bundle manifests without raw payloads.
-- [ ] Expose observability diagnostics DTOs.
-- [ ] Connect provider health findings to Effigy/doctor evidence where useful.
-- [ ] Keep diagnostics read-only.
+- [x] Define sanitized provider trace span records.
+- [x] Define support bundle manifests without raw payloads.
+- [x] Expose observability diagnostics DTOs.
+- [x] Connect provider health findings to Effigy/doctor evidence where useful.
+- [x] Keep diagnostics read-only.
 
 ## Execution Plan
 
-- [ ] Trace batch.
-- [ ] Support bundle batch.
-- [ ] Diagnostics DTO batch.
-- [ ] Health integration batch.
-- [ ] Closeout batch.
+- [x] Trace batch.
+- [x] Support bundle batch.
+- [x] Diagnostics DTO batch.
+- [x] Health integration batch.
+- [x] Closeout batch.
 
 ## Batch Cards
 
@@ -39,19 +39,19 @@ None.
 
 Planned cards:
 
+None.
+
+Completed cards:
+
 - `batch-cards/369-provider-trace-span-records.md`
 - `batch-cards/370-provider-support-bundle-manifest.md`
 - `batch-cards/371-provider-observability-diagnostics-dto.md`
 - `batch-cards/372-provider-health-doctor-integration.md`
 - `batch-cards/373-provider-observability-validation-closeout.md`
 
-Completed cards:
-
-None.
-
 ## Acceptance Criteria
 
-- [ ] Provider runtime failures can be diagnosed from sanitized evidence.
-- [ ] Support bundles enumerate evidence refs, not raw material.
-- [ ] Diagnostics grant no provider or task authority.
-- [ ] Validation passes or blockers are recorded.
+- [x] Provider runtime failures can be diagnosed from sanitized evidence.
+- [x] Support bundles enumerate evidence refs, not raw material.
+- [x] Diagnostics grant no provider or task authority.
+- [x] Validation passes or blockers are recorded.

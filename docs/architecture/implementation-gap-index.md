@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-19
+Updated: 2026-06-20
 
 ## Purpose
 
@@ -238,6 +238,75 @@ Current state:
   ids as reference-only task work refs. Completed provider outcomes are
   recorded as runtime progress without task completion or review acceptance;
   failed, timed-out, and cleanup-required outcomes remain inspectable.
+- `nucleus-server` has explicit live-evidence review acceptance, task
+  completion, completion projections, task-state transition admission, and
+  task-state control records. Provider completion can now be reviewed,
+  accepted, and projected into task state only through explicit operator
+  records.
+- `nucleus-server` has provider-neutral completion-to-SCM readiness records.
+  Completed task-state history can produce promotion candidates, adapter
+  metadata can describe Git-like or Convergence-like workflows, diagnostics
+  report ready/unsupported/repair states, and authority regressions prove no
+  SCM capture, publish, review request, merge, forge, provider, callback, or
+  recovery effect executes.
+- `nucleus-server` exposes completion-to-SCM readiness through read-only
+  control diagnostics. The request handler reports missing task-state history
+  as repair-required when no persisted task-state controls exist.
+- `nucleus-server` persists live-evidence task-state control records as
+  sanitized artifact metadata. Persisted records rebuild task-state history
+  for completion SCM readiness diagnostics, duplicates are deterministic,
+  blocked controls remain repair evidence, and invalid records do not create
+  SCM readiness candidates.
+- `nucleus-server` has completion SCM capture-admission records and diagnostics.
+  Capture admission validates persisted readiness refs, blocks missing,
+  unsupported, repair-required, mismatched, and effect-requesting inputs, and
+  still executes no SCM, forge, provider, callback, interruption, recovery, or
+  raw-material effects.
+- `nucleus-server` persists completion SCM capture-admission records as
+  sanitized artifact metadata. Persisted records retain refs, statuses, and
+  blockers, read back in deterministic order, preserve blocked admissions as
+  evidence, and can rebuild capture-admission diagnostics without executing
+  external effects.
+- `nucleus-server` exposes persisted completion SCM capture-admission
+  diagnostics through read-only control diagnostics. The DTO and request
+  handler expose counts only and grant no SCM, forge, provider, callback,
+  interruption, recovery, or raw-material authority.
+- `nucleus-server` has completion SCM capture-preparation records. Accepted
+  persisted capture admissions produce provider-neutral preparation candidates,
+  adapter-specific execution details stay in descriptive labels, diagnostics
+  expose ready/unsupported/repair states, and authority proof still executes
+  no SCM, forge, provider, callback, interruption, recovery, or raw-material
+  effects.
+- `nucleus-server` persists completion SCM capture-preparation records as
+  sanitized artifact metadata. Persisted records retain refs, labels, plan
+  status, blockers, and evidence refs, read back in deterministic order,
+  preserve unsupported and repair-required plans as evidence, and rebuild
+  diagnostics without executing external effects.
+- `nucleus-server` exposes persisted completion SCM capture-preparation
+  diagnostics through read-only control diagnostics. The DTO and request
+  handler expose counts only and grant no SCM, forge, provider, callback,
+  interruption, recovery, or raw-material authority.
+- `nucleus-server` has SCM capture dry-run planning records. Persisted ready
+  preparation records produce dry-run candidates, adapter capabilities describe
+  Git-like and non-Git dry-run workflows, diagnostics summarize skipped,
+  unsupported, and repair-required states, and authority proof still executes
+  no SCM dry-run, capture, publish, forge, provider, callback, interruption,
+  recovery, or raw-material effects.
+- `nucleus-server` persists SCM capture dry-run planning records as sanitized
+  artifact metadata. Persisted records retain refs, labels, plan status,
+  blockers, and evidence refs, read back in deterministic order, preserve
+  unsupported and repair-required plans as evidence, and rebuild diagnostics
+  without executing external effects.
+- `nucleus-server` exposes persisted SCM capture dry-run planning diagnostics
+  through read-only control diagnostics. The DTO, envelope domain, and request
+  handler expose counts only and grant no SCM dry-run, capture, publish, forge,
+  provider, callback, interruption, recovery, or raw-material authority.
+- `nucleus-server` has SCM capture dry-run execution gate records. Persisted
+  ready dry-run plans can produce execution admissions, adapter capability
+  records keep dry-run execution separate from capture/publish, receipt records
+  retain sanitized refs and counts, and authority proof allows dry-run evidence
+  without granting capture, publish, forge, provider, callback, interruption,
+  recovery, or raw-output authority.
 - `nucleus-server` has read-only task-backed live execution diagnostics for
   admitted, blocked, completed, failed, timed-out, and cleanup-required states.
   The diagnostics include task work refs, live executor refs, receipt refs, and
@@ -352,9 +421,47 @@ Current state:
   read-only and cover preflight, request, executor handoff, outcome
   persistence, evidence refs, blocked reasons, and next actions without
   granting executor, provider-write, or task authority.
-- The next runtime target is durable dispatch invocation, then provider
-  session/stdio persistence, runtime observation event-store linkage, and
-  task-transition admission from live observations.
+- `nucleus-server` persists sanitized callback request references, callback
+  response linkage, interruption outcome linkage, and recovery outcome linkage
+  across the durable workflow. Replacement-thread recovery observations remain
+  repair-required evidence and are not promoted automatically.
+- `nucleus-server` persists provider idempotency ledger records, retry
+  reconciliation decisions, backpressure summaries, retention-policy decisions,
+  and repair-required runtime records. These records prevent duplicate writes,
+  unsafe automatic retries, raw material retention, and silent repair.
+- `nucleus-server` exposes provider trace spans, support-bundle manifests,
+  provider health summaries, and read-only observability diagnostics without
+  granting provider, task, review, callback, cancellation, resume, or SCM
+  authority.
+- `nucleus-server` has a deterministic task-backed live workflow fixture that
+  replays task work item admission, durable scheduler admission, live executor
+  admission, sanitized outcome linkage, runtime receipt linkage, timeline
+  projection, review-readiness separation, explicit review acceptance, and
+  diagnostics without provider I/O.
+- `nucleusd` exposes a stopped-by-default durable runtime smoke dry-run. It
+  reports replay eligibility, explicit real-write intent, blocker state, and
+  sanitized counts/refs while always reporting `provider_write_executed=false`.
+- `nucleus-server` has live workflow authority regressions proving provider
+  writes, callback answering, cancellation, resume, task mutation, review
+  acceptance, SCM mutation, raw payload retention, and raw stream retention fail
+  closed across policy, admission, receipt linkage, and retention surfaces.
+- `nucleus-server` has a durable Codex live-smoke boundary over durable
+  executor handoff records. The boundary distinguishes dry-run,
+  confirmation-only, and confirmation-plus-effect modes without invoking the
+  executor or writing to the provider.
+- `nucleus-server` has an execution-free durable Codex live-smoke dispatch
+  runner that assembles command, selection, dispatch admission, invocation
+  preflight, invocation request, handoff, and boundary records. Dry-run and
+  explicit real-write modes both reach the live executor boundary without
+  executing provider I/O.
+- `nucleus-server` persists durable Codex live-smoke evidence with sanitized
+  evidence refs and accepted live-executor outcome/receipt refs for first write
+  attempts. Duplicate write attempts no-op deterministically, and retention
+  policy failures block persistence without raw material retention.
+- `nucleus-server` compares persisted durable smoke evidence against the
+  task-backed live workflow replay fixture. Missing receipt, outcome, or
+  evidence refs become repair-required gaps, and authority widening is blocked
+  from promotion.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 
@@ -364,33 +471,23 @@ Missing:
 
 - real provider adapters
 - full Codex process spawning and stdio lifecycle execution after admission
-- live JSON-RPC/app-server decoding from a supervised process
+- live JSON-RPC/app-server decoding from a durable supervised process, beyond
+  the direct smoke and persisted record/replay surfaces
 - turn-start, callback-response, interruption, and recovery execution against
   the provider through a durable server-owned executor
-- durable server-owned execution of Codex live writes outside the one-off
-  `nucleusd` smoke command
-- persistence for stdio frame source, decode outcome, and transport receipt
-  records
-- persistence for accepted runtime-observation event-store records
+- durable server-owned execution of Codex live writes beyond the execution-free
+  durable smoke handoff/boundary path
 - interruption or recovery that reaches the provider and records
   local/provider outcomes
-- persistence for interruption/cancellation records
-- persistence for permission and user-input callback response records
-- persistence for recovery records after server restart, process exit, or
-  provider reconnect
 - provider instance configuration and hot reload
-- persistence for idempotency state across reconnect or restart
-- backpressure behavior for high-volume deltas
-- payload retention policy beyond metadata-only/evidence-ref records
-- task-backed state transition admission from runtime observations
-- broader task-agent transition admission after live provider observations
-  start entering the orchestration event store
+- backpressure behavior that actively applies flow control to high-volume
+  provider deltas
 - checkpoint/diff/worktree linkage for turns and task work units
 - concrete pairing/session/revocation protocol for remote provider hosts
 - ACP callback, elicitation, terminal, file, session-mode, and cancellation
   handling beyond the Codex-first path
-- observability contract for provider traces, process/resource metrics, and
-  support bundles
+- process/resource metrics beyond the first provider trace and support-bundle
+  manifests
 
 Likely crates:
 
@@ -549,21 +646,58 @@ Missing runtime:
 
 ## Suggested Next Implementation Gate
 
-The orchestration decision has been made, task-backed workflow proof is
-implemented through read-only progress paths, repo-backed management projection
-sync has explicit apply/review behavior, and Codex `turn/start`
-transport-executor handoff now has authority, envelope, persistence,
-first-response frame evidence, diagnostics, and a stopped-by-default real-write
-smoke boundary.
+The orchestration decision has been made, task-backed workflow proof now has a
+deterministic live-workflow replay fixture, and the durable provider runtime has
+idempotency, retry, retention, repair, backpressure, support-bundle, health, and
+authority regression coverage.
 
-The next checkpoint needs operator intent before implementation continues:
+Recent evidence:
 
-1. explicitly confirm a Codex `turn/start` real-write smoke lane, with the
-   operator accepting that Codex may receive a real provider write
-2. choose a different runtime lane that remains record-only or read-only
-3. return to product workflow hardening before running live provider writes
+- one explicit Codex live provider-write smoke executed through the durable
+  gate
+- live result persisted sanitized evidence, live executor outcome id, runtime
+  receipt id, and replay status
+- replay reconciled successfully
+- task completion and review acceptance stayed false
+- reconciled live provider-write evidence now projects to task work candidates,
+  persisted observations, review-readiness records, and read-only diagnostics
+- explicit operator review decisions now admit over review-readiness records,
+  persist accepted/rejected/needs-changes/abandoned decisions by reference, and
+  expose read-only review diagnostics
+- review acceptance is proven not to complete tasks; task completion remains a
+  separate explicit command lane
+- explicit operator task-completion commands now admit only over persisted
+  accepted review decisions, persist completion records by reference, and
+  expose read-only completion diagnostics
+- rejected, needs-changes, abandoned, duplicate, and blocked review decisions
+  cannot complete tasks, and completion still grants no provider, callback,
+  cancellation, resume, SCM, or raw-material authority
+- persisted explicit completions now project into deterministic task timeline
+  entries, task-work progress records, read-model diagnostics, and an explicit
+  SCM/provider authority-separation proof
+- completion projections now compose into a server read-model record,
+  sanitized control DTO, diagnostics routing-readiness record, and read-only
+  authority proof
+- completion projection diagnostics now route through the request-handler
+  diagnostics query vocabulary and `All` snapshot as sanitized DTOs from local
+  server state
+- validated completion read-model refs now admit explicit task-state
+  transition records and project deterministic task-history entries while
+  blocking repair-required, skipped, duplicate, missing, provider, callback,
+  interruption, recovery, SCM, and raw-material authority
+- live evidence task-state transition control records now compose transition
+  admission and task-history projection responses without granting provider,
+  callback, interruption, recovery, SCM, or raw-material authority
 
-Until that decision is made, keep checkout, worktree creation, commit, push,
-branch mutation, publish, promote, merge, provider cancellation, provider
-resume, callback response execution, task mutation, and real provider writes
-gated.
+Next implementation gate:
+
+1. create provider-neutral completion-to-SCM promotion candidates
+2. map candidates to SCM readiness records without Git-only assumptions
+3. expose change-request readiness diagnostics
+4. prove no SCM, forge, provider, callback, recovery, or raw-material effects
+   execute
+
+Until that lane proves durable execution, keep checkout, worktree creation,
+commit, push, branch mutation, publish, promote, merge, provider cancellation,
+provider resume, callback response execution, task mutation, and broad real
+provider writes gated.

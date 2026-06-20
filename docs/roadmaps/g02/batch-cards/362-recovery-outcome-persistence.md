@@ -1,6 +1,6 @@
 # 362 Recovery Outcome Persistence
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../079-durable-wait-callback-interruption-recovery-persistence.md`
@@ -18,10 +18,10 @@ Persist recovery outcome and repair-required evidence.
 
 ## Acceptance Criteria
 
-- [ ] Recovery outcomes survive reopen.
-- [ ] Replacement-thread observations are visible but not promoted.
-- [ ] Resume authority remains operator-gated.
-- [ ] Uncertain state becomes repair evidence, not success.
+- [x] Recovery outcomes survive reopen.
+- [x] Replacement-thread observations are visible but not promoted.
+- [x] Resume authority remains operator-gated.
+- [x] Uncertain state becomes repair evidence, not success.
 
 ## Validation
 

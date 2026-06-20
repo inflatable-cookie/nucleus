@@ -1,6 +1,6 @@
 # 371 Provider Observability Diagnostics DTO
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../081-provider-observability-diagnostics.md`
@@ -18,10 +18,10 @@ Expose provider observability through read-only diagnostics DTOs.
 
 ## Acceptance Criteria
 
-- [ ] Observability diagnostics expose useful failure context.
-- [ ] Diagnostics grant no provider/task authority.
-- [ ] Raw payloads and streams are not serialized.
-- [ ] DTO serialization tests cover the new surface.
+- [x] Observability diagnostics expose useful failure context.
+- [x] Diagnostics grant no provider/task authority.
+- [x] Raw payloads and streams are not serialized.
+- [x] DTO serialization tests cover the new surface.
 
 ## Validation
 

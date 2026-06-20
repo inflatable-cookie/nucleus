@@ -2,7 +2,7 @@
 
 Status: proposed
 Owner: Tom
-Updated: 2026-06-18
+Updated: 2026-06-20
 
 ## Purpose
 
@@ -25,8 +25,9 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-067 are
-complete, and milestone 068 is the active Codex live executor integration lane.
+G02 is the orchestration and engine-core generation. Milestones 001-082 are
+complete or closing, and the next lane is durable server-owned Codex live smoke
+execution.
 
 Completed workflow proof:
 
@@ -85,14 +86,15 @@ Current G02 continuation sequence:
 37. task-backed workflow hardening - complete
 38. Codex direct-connection smoke gate - complete
 39. Codex live executor integration - complete through durable dispatch records
-40. durable dispatch invocation gate - active
-41. Codex provider session and stdio persistence - planned
-42. runtime observation event-store linkage - planned
-43. task work transition admission from live observations - planned
-44. durable wait/callback/interruption/recovery persistence - planned
-45. provider runtime hardening - planned
-46. provider observability diagnostics - planned
-47. task-backed live workflow closeout and next lane selection - planned
+40. durable dispatch invocation gate - complete
+41. Codex provider session and stdio persistence - complete
+42. runtime observation event-store linkage - complete
+43. task work transition admission from live observations - complete
+44. durable wait/callback/interruption/recovery persistence - complete
+45. provider runtime hardening - complete
+46. provider observability diagnostics - complete
+47. task-backed live workflow closeout and next lane selection - complete
+48. durable Codex live smoke execution - selected next
 
 Current extended goal list:
 
@@ -112,6 +114,9 @@ Current extended goal list:
    diagnosed without raw payload exposure.
 8. Close the task-backed live workflow as a reusable proof, then choose the
    next product lane deliberately.
+9. Promote the direct Codex smoke into a durable server-owned live smoke lane
+   using existing dispatch, invocation, handoff, outcome persistence, and
+   replay evidence.
 
 Selected current workflow:
 
@@ -175,6 +180,13 @@ Reason:
 - the next lane must turn the smoke path into durable server-owned executor
   records, persisted receipts, and read-only diagnostics before task-backed
   provider execution widens
+- task-backed live workflow closeout now has a deterministic replay fixture, a
+  stopped-by-default `nucleusd` durable runtime smoke dry-run, and authority
+  regressions across provider, callback, cancellation, resume, task, review,
+  SCM, and raw-material boundaries
+- the next selected lane is durable Codex live smoke execution: prove one
+  explicit, operator-confirmed provider write through the durable server-owned
+  runtime path, then compare the resulting evidence against the replay fixture
 - checkout, worktree creation, push, publish, promote, forge review requests,
   merge, and steward automatic sync remain later gates
 

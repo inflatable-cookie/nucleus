@@ -67,6 +67,57 @@ fn command_runner_codex_turn_start_real_write_smoke_stays_dry_run() {
 }
 
 #[test]
+fn command_runner_durable_runtime_smoke_stays_dry_run() {
+    crate::run(vec![
+        "command-runner".to_owned(),
+        "durable-runtime-smoke".to_owned(),
+    ])
+    .expect("run durable runtime smoke dry-run");
+
+    crate::run(vec![
+        "command-runner".to_owned(),
+        "durable-runtime-smoke".to_owned(),
+        "--confirm-real-write".to_owned(),
+        "--execute-provider-write".to_owned(),
+    ])
+    .expect("run durable runtime smoke with explicit real-effect flags");
+}
+
+#[test]
+fn command_runner_durable_live_provider_write_smoke_reports_gate_without_write() {
+    crate::run(vec![
+        "command-runner".to_owned(),
+        "durable-live-provider-write-smoke".to_owned(),
+    ])
+    .expect("run durable live provider-write smoke dry-run");
+
+    crate::run(vec![
+        "command-runner".to_owned(),
+        "durable-live-provider-write-smoke".to_owned(),
+        "--confirm-real-write".to_owned(),
+    ])
+    .expect("run durable live provider-write smoke confirmation-only");
+
+    crate::run(vec![
+        "command-runner".to_owned(),
+        "durable-live-provider-write-smoke".to_owned(),
+        "--confirm-real-write".to_owned(),
+        "--confirm-real-effect".to_owned(),
+    ])
+    .expect("run durable live provider-write smoke invocation-ready");
+}
+
+#[test]
+fn command_runner_durable_live_provider_write_execute_command_blocks_without_gate() {
+    crate::run(vec![
+        "command-runner".to_owned(),
+        "durable-live-provider-write-smoke".to_owned(),
+        "--execute-provider-write".to_owned(),
+    ])
+    .expect("blocked durable live provider-write execution");
+}
+
+#[test]
 fn command_runner_read_only_command_persists_sanitized_evidence() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let state_path = temp_dir.path().join("nucleus.sqlite");

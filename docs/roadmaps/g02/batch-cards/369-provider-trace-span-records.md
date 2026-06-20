@@ -1,6 +1,6 @@
 # 369 Provider Trace Span Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../081-provider-observability-diagnostics.md`
@@ -18,10 +18,10 @@ Define sanitized trace span records for provider runtime operations.
 
 ## Acceptance Criteria
 
-- [ ] Trace spans can represent successful and failed provider effects.
-- [ ] Spans are linked to evidence refs.
-- [ ] Raw provider material is not retained.
-- [ ] Client authority remains false.
+- [x] Trace spans can represent successful and failed provider effects.
+- [x] Spans are linked to evidence refs.
+- [x] Raw provider material is not retained.
+- [x] Client authority remains false.
 
 ## Validation
 

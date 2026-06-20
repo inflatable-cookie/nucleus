@@ -53,6 +53,8 @@ impl CliConfig {
 pub(crate) enum CommandRunnerCommand {
     Smoke,
     ReadOnlySpawnSmoke,
+    DurableRuntimeSmoke(CliDurableRuntimeSmoke),
+    DurableLiveProviderWriteSmoke(CliDurableLiveProviderWriteSmoke),
     CodexTurnStartRealWriteSmoke(CliCodexTurnStartRealWriteSmoke),
     ReadOnly(CliReadOnlyCommand),
 }
@@ -64,6 +66,11 @@ impl CommandRunnerCommand {
     {
         match command.as_str() {
             "read-only" => CliReadOnlyCommand::parse(iter).map(Self::ReadOnly),
+            "durable-runtime-smoke" => {
+                CliDurableRuntimeSmoke::parse(iter).map(Self::DurableRuntimeSmoke)
+            }
+            "durable-live-provider-write-smoke" => CliDurableLiveProviderWriteSmoke::parse(iter)
+                .map(Self::DurableLiveProviderWriteSmoke),
             "codex-turn-start-real-write-smoke" => {
                 CliCodexTurnStartRealWriteSmoke::parse(iter).map(Self::CodexTurnStartRealWriteSmoke)
             }
@@ -77,6 +84,60 @@ impl CommandRunnerCommand {
             "read-only-spawn-smoke" => Ok(Self::ReadOnlySpawnSmoke),
             _ => Err(format!("unsupported command-runner command: {value}")),
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CliDurableRuntimeSmoke {
+    pub(crate) confirm_real_write: bool,
+    pub(crate) execute_provider_write: bool,
+}
+
+impl CliDurableRuntimeSmoke {
+    fn parse<I>(iter: &mut I) -> Result<Self, String>
+    where
+        I: Iterator<Item = String>,
+    {
+        let mut config = Self::default();
+        for arg in iter {
+            match arg.as_str() {
+                "--confirm-real-write" => config.confirm_real_write = true,
+                "--execute-provider-write" => config.execute_provider_write = true,
+                _ => {
+                    return Err(format!("unsupported durable runtime smoke flag: {arg}"));
+                }
+            }
+        }
+        Ok(config)
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CliDurableLiveProviderWriteSmoke {
+    pub(crate) confirm_real_write: bool,
+    pub(crate) confirm_real_effect: bool,
+    pub(crate) execute_provider_write: bool,
+}
+
+impl CliDurableLiveProviderWriteSmoke {
+    fn parse<I>(iter: &mut I) -> Result<Self, String>
+    where
+        I: Iterator<Item = String>,
+    {
+        let mut config = Self::default();
+        for arg in iter {
+            match arg.as_str() {
+                "--confirm-real-write" => config.confirm_real_write = true,
+                "--confirm-real-effect" => config.confirm_real_effect = true,
+                "--execute-provider-write" => config.execute_provider_write = true,
+                _ => {
+                    return Err(format!(
+                        "unsupported durable live provider-write smoke flag: {arg}"
+                    ));
+                }
+            }
+        }
+        Ok(config)
     }
 }
 
@@ -254,6 +315,8 @@ pub(crate) fn print_help() {
     println!("  nucleusd [--state <path>] query <projects|tasks|workspaces|command-evidence>");
     println!("  nucleusd command-runner smoke");
     println!("  nucleusd command-runner read-only-spawn-smoke");
+    println!("  nucleusd command-runner durable-runtime-smoke [--confirm-real-write] [--execute-provider-write]");
+    println!("  nucleusd command-runner durable-live-provider-write-smoke [--confirm-real-write] [--confirm-real-effect] [--execute-provider-write]");
     println!("  nucleusd command-runner codex-turn-start-real-write-smoke [--confirm-real-write] [--execute-provider-write]");
     println!("  nucleusd command-runner read-only [--cwd <dir>] [--timeout-ms <ms>] [--stdout-limit <bytes>] [--stderr-limit <bytes>] -- <executable> [args...]");
     println!();

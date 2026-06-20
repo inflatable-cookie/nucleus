@@ -1,6 +1,6 @@
 # 372 Provider Health Doctor Integration
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../081-provider-observability-diagnostics.md`
@@ -18,10 +18,10 @@ where appropriate.
 
 ## Acceptance Criteria
 
-- [ ] Provider health summaries can be generated from diagnostics records.
-- [ ] Summaries are reference-only and sanitized.
-- [ ] Effigy/doctor integration does not execute provider effects.
-- [ ] Existing doctor god-file blocker remains separate.
+- [x] Provider health summaries can be generated from diagnostics records.
+- [x] Summaries are reference-only and sanitized.
+- [x] Effigy/doctor integration does not execute provider effects.
+- [x] Existing doctor god-file blocker remains separate.
 
 ## Validation
 

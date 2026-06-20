@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-19
+Updated: 2026-06-20
 
 ## Purpose
 
@@ -10,7 +10,7 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `359-callback-request-persistence.md`
+- `499-scm-capture-dry-run-execution-persistence-records.md`
 
 ## Paused Cards
 
@@ -18,25 +18,10 @@ None.
 
 ## Planned Cards
 
-- `360-callback-response-durable-linkage.md`
-- `361-interruption-outcome-persistence.md`
-- `362-recovery-outcome-persistence.md`
-- `363-wait-callback-recovery-validation-closeout.md`
-- `364-provider-idempotency-ledger.md`
-- `365-provider-retry-reconciliation-records.md`
-- `366-provider-backpressure-summary-records.md`
-- `367-provider-retention-policy-enforcement.md`
-- `368-provider-runtime-repair-records.md`
-- `369-provider-trace-span-records.md`
-- `370-provider-support-bundle-manifest.md`
-- `371-provider-observability-diagnostics-dto.md`
-- `372-provider-health-doctor-integration.md`
-- `373-provider-observability-validation-closeout.md`
-- `374-task-backed-live-workflow-fixture.md`
-- `375-nucleusd-durable-runtime-smoke-dry-run.md`
-- `376-live-workflow-authority-regression-suite.md`
-- `377-live-workflow-gap-index-closeout.md`
-- `378-next-product-lane-selection.md`
+- `500-scm-capture-dry-run-execution-state-api.md`
+- `501-scm-capture-dry-run-execution-duplicate-blocked.md`
+- `502-scm-capture-dry-run-execution-diagnostics-source.md`
+- `503-scm-capture-dry-run-execution-persistence-closeout.md`
 
 ## Completed Cards
 
@@ -90,6 +75,146 @@ None.
 - `356-live-observation-task-timeline-projection.md`
 - `357-review-readiness-from-live-observations.md`
 - `358-task-transition-admission-validation-closeout.md`
+- `359-callback-request-persistence.md`
+- `360-callback-response-durable-linkage.md`
+- `361-interruption-outcome-persistence.md`
+- `362-recovery-outcome-persistence.md`
+- `363-wait-callback-recovery-validation-closeout.md`
+- `364-provider-idempotency-ledger.md`
+- `365-provider-retry-reconciliation-records.md`
+- `366-provider-backpressure-summary-records.md`
+- `367-provider-retention-policy-enforcement.md`
+- `368-provider-runtime-repair-records.md`
+- `369-provider-trace-span-records.md`
+- `370-provider-support-bundle-manifest.md`
+- `371-provider-observability-diagnostics-dto.md`
+- `372-provider-health-doctor-integration.md`
+- `373-provider-observability-validation-closeout.md`
+- `374-task-backed-live-workflow-fixture.md`
+- `375-nucleusd-durable-runtime-smoke-dry-run.md`
+- `376-live-workflow-authority-regression-suite.md`
+- `377-live-workflow-gap-index-closeout.md`
+- `378-next-product-lane-selection.md`
+- `379-durable-codex-live-smoke-boundary.md`
+- `380-durable-codex-live-smoke-dispatch-runner.md`
+- `381-durable-codex-live-smoke-evidence-persistence.md`
+- `382-durable-codex-live-smoke-replay-comparison.md`
+- `383-durable-codex-live-smoke-validation-closeout.md`
+- `384-durable-codex-live-provider-write-invocation-gate.md`
+- `385-nucleusd-durable-live-provider-write-smoke-command.md`
+- `386-durable-live-provider-write-evidence-capture.md`
+- `387-durable-live-provider-write-replay-reconciliation.md`
+- `388-durable-live-provider-write-validation-closeout.md`
+- `389-durable-live-provider-write-runner-bridge.md`
+- `390-nucleusd-durable-live-provider-write-execute-command.md`
+- `391-durable-live-provider-write-result-persistence.md`
+- `392-durable-live-provider-write-terminal-outcomes.md`
+- `393-durable-live-provider-write-execution-closeout.md`
+- `394-live-provider-evidence-work-candidates.md`
+- `395-live-provider-evidence-work-observations.md`
+- `396-live-provider-evidence-review-readiness.md`
+- `397-live-provider-evidence-diagnostics.md`
+- `398-live-provider-evidence-task-linkage-closeout.md`
+- `399-live-evidence-review-acceptance-admission.md`
+- `400-live-evidence-review-decision-persistence.md`
+- `401-live-evidence-review-diagnostics.md`
+- `402-live-evidence-task-completion-separation.md`
+- `403-live-evidence-review-acceptance-closeout.md`
+- `404-live-evidence-task-completion-admission.md`
+- `405-live-evidence-task-completion-persistence.md`
+- `406-live-evidence-task-completion-diagnostics.md`
+- `407-live-evidence-task-completion-authority-regressions.md`
+- `408-live-evidence-task-completion-closeout.md`
+- `409-live-evidence-completion-timeline-projection.md`
+- `410-live-evidence-completion-progress-projection.md`
+- `411-live-evidence-completion-read-model-diagnostics.md`
+- `412-live-evidence-completion-scm-provider-separation.md`
+- `413-live-evidence-completion-projection-closeout.md`
+- `414-live-evidence-completion-read-model-composition.md`
+- `415-live-evidence-completion-control-dto.md`
+- `416-live-evidence-completion-diagnostics-routing-readiness.md`
+- `417-live-evidence-completion-control-authority-regressions.md`
+- `418-live-evidence-completion-control-read-model-closeout.md`
+- `419-live-evidence-completion-query-vocabulary.md`
+- `420-live-evidence-completion-handler-composition.md`
+- `421-live-evidence-completion-missing-state-repair-routing.md`
+- `422-live-evidence-completion-handler-authority-regressions.md`
+- `423-live-evidence-completion-request-handler-closeout.md`
+- `424-live-evidence-task-state-transition-admission.md`
+- `425-live-evidence-task-state-history-projection.md`
+- `426-live-evidence-task-state-repair-duplicate-regressions.md`
+- `427-live-evidence-task-state-authority-regressions.md`
+- `428-live-evidence-task-state-transition-closeout.md`
+- `429-live-evidence-task-state-control-vocabulary.md`
+- `430-live-evidence-task-state-handler-admission.md`
+- `431-live-evidence-task-state-history-response.md`
+- `432-live-evidence-task-state-control-authority-regressions.md`
+- `433-live-evidence-task-state-control-closeout.md`
+- `434-completion-scm-promotion-candidates.md`
+- `435-completion-scm-provider-neutral-mapping.md`
+- `436-completion-change-request-readiness-diagnostics.md`
+- `437-completion-scm-authority-regressions.md`
+- `438-completion-scm-readiness-closeout.md`
+- `439-completion-scm-read-model-composition.md`
+- `440-completion-scm-control-dto.md`
+- `441-completion-scm-diagnostics-query-vocabulary.md`
+- `442-completion-scm-request-handler-routing.md`
+- `443-completion-scm-control-integration-closeout.md`
+- `444-live-evidence-task-state-control-persistence-records.md`
+- `445-live-evidence-task-state-control-state-api.md`
+- `446-live-evidence-task-state-duplicate-repair-regressions.md`
+- `447-completion-scm-persisted-history-source.md`
+- `448-task-state-history-persistence-closeout.md`
+- `449-completion-scm-capture-admission-request.md`
+- `450-completion-scm-readiness-ref-validation.md`
+- `451-completion-scm-capture-admission-diagnostics.md`
+- `452-completion-scm-capture-authority-regressions.md`
+- `453-completion-scm-capture-admission-closeout.md`
+- `454-completion-scm-capture-admission-persistence-records.md`
+- `455-completion-scm-capture-admission-state-api.md`
+- `456-completion-scm-capture-duplicate-blocked-regressions.md`
+- `457-completion-scm-capture-diagnostics-source.md`
+- `458-completion-scm-capture-persistence-closeout.md`
+- `459-completion-scm-capture-control-dto.md`
+- `460-completion-scm-capture-query-vocabulary.md`
+- `461-completion-scm-capture-request-handler-routing.md`
+- `462-completion-scm-capture-control-authority.md`
+- `463-completion-scm-capture-control-closeout.md`
+- `464-completion-scm-capture-preparation-candidates.md`
+- `465-completion-scm-capture-adapter-neutral-plan.md`
+- `466-completion-scm-capture-preparation-diagnostics.md`
+- `467-completion-scm-capture-preparation-authority.md`
+- `468-completion-scm-capture-preparation-closeout.md`
+- `469-completion-scm-capture-preparation-persistence-records.md`
+- `470-completion-scm-capture-preparation-state-api.md`
+- `471-completion-scm-capture-preparation-duplicate-repair.md`
+- `472-completion-scm-capture-preparation-diagnostics-source.md`
+- `473-completion-scm-capture-preparation-persistence-closeout.md`
+- `474-completion-scm-capture-preparation-control-dto.md`
+- `475-completion-scm-capture-preparation-query-vocabulary.md`
+- `476-completion-scm-capture-preparation-handler-routing.md`
+- `477-completion-scm-capture-preparation-control-authority.md`
+- `478-completion-scm-capture-preparation-control-closeout.md`
+- `479-scm-capture-dry-run-plan-candidates.md`
+- `480-scm-capture-dry-run-adapter-capabilities.md`
+- `481-scm-capture-dry-run-diagnostics.md`
+- `482-scm-capture-dry-run-authority.md`
+- `483-scm-capture-dry-run-planning-closeout.md`
+- `484-scm-capture-dry-run-persistence-records.md`
+- `485-scm-capture-dry-run-state-api.md`
+- `486-scm-capture-dry-run-duplicate-repair-regressions.md`
+- `487-scm-capture-dry-run-diagnostics-source.md`
+- `488-scm-capture-dry-run-persistence-closeout.md`
+- `489-scm-capture-dry-run-control-dto.md`
+- `490-scm-capture-dry-run-query-vocabulary.md`
+- `491-scm-capture-dry-run-request-handler-routing.md`
+- `492-scm-capture-dry-run-control-authority-regressions.md`
+- `493-scm-capture-dry-run-control-closeout.md`
+- `494-scm-capture-dry-run-execution-admission.md`
+- `495-scm-capture-dry-run-adapter-execution-capability.md`
+- `496-scm-capture-dry-run-receipt-records.md`
+- `497-scm-capture-dry-run-execution-authority.md`
+- `498-scm-capture-dry-run-execution-closeout.md`
 - `001-event-store-record-contract-and-codec.md`
 - `002-event-store-repository-boundary.md`
 - `003-command-projection-replay-integrity.md`

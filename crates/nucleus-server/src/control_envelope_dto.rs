@@ -312,6 +312,13 @@ fn diagnostics_domain_dto(query: &DiagnosticsQuery) -> String {
         DiagnosticsQuery::ScmSession => "scm_session".to_owned(),
         DiagnosticsQuery::TaskAgent => "task_agent".to_owned(),
         DiagnosticsQuery::CodexProvider => "codex_provider".to_owned(),
+        DiagnosticsQuery::LiveEvidenceCompletion => "live_evidence_completion".to_owned(),
+        DiagnosticsQuery::CompletionScmReadiness => "completion_scm_readiness".to_owned(),
+        DiagnosticsQuery::CompletionScmCapture => "completion_scm_capture".to_owned(),
+        DiagnosticsQuery::CompletionScmCapturePreparation => {
+            "completion_scm_capture_preparation".to_owned()
+        }
+        DiagnosticsQuery::ScmCaptureDryRun => "scm_capture_dry_run".to_owned(),
         DiagnosticsQuery::All => "all".to_owned(),
     }
 }
@@ -324,6 +331,13 @@ fn diagnostics_query_from_domain(domain: &str) -> Result<DiagnosticsQuery, Contr
         "scm_session" => Ok(DiagnosticsQuery::ScmSession),
         "task_agent" => Ok(DiagnosticsQuery::TaskAgent),
         "codex_provider" => Ok(DiagnosticsQuery::CodexProvider),
+        "live_evidence_completion" => Ok(DiagnosticsQuery::LiveEvidenceCompletion),
+        "completion_scm_readiness" => Ok(DiagnosticsQuery::CompletionScmReadiness),
+        "completion_scm_capture" => Ok(DiagnosticsQuery::CompletionScmCapture),
+        "completion_scm_capture_preparation" => {
+            Ok(DiagnosticsQuery::CompletionScmCapturePreparation)
+        }
+        "scm_capture_dry_run" => Ok(DiagnosticsQuery::ScmCaptureDryRun),
         "all" => Ok(DiagnosticsQuery::All),
         _ => Err(ControlApiCodecError::unsupported(
             "diagnostics query domain is not supported",

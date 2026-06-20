@@ -1,6 +1,6 @@
 # 366 Provider Backpressure Summary Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../080-provider-runtime-hardening.md`
@@ -18,10 +18,10 @@ Summarize high-volume provider streams without retaining raw stream material.
 
 ## Acceptance Criteria
 
-- [ ] High-volume stream pressure is visible.
-- [ ] Summaries remain bounded.
-- [ ] Raw streams are not retained by default.
-- [ ] Backpressure states feed diagnostics.
+- [x] High-volume stream pressure is visible.
+- [x] Summaries remain bounded.
+- [x] Raw streams are not retained by default.
+- [x] Backpressure states feed diagnostics.
 
 ## Validation
 

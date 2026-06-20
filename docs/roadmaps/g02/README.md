@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-19
+Updated: 2026-06-20
 
 ## Purpose
 
@@ -94,16 +94,41 @@ and engine boundary are settled.
 - `076-codex-provider-session-and-stdio-persistence.md` - completed
 - `077-codex-runtime-observation-event-store-linkage.md` - completed
 - `078-task-transition-admission-from-live-observations.md` - completed
-- `079-durable-wait-callback-interruption-recovery-persistence.md` - active
-- `080-provider-runtime-hardening.md` - planned
-- `081-provider-observability-diagnostics.md` - planned
-- `082-task-backed-live-workflow-closeout.md` - planned
+- `079-durable-wait-callback-interruption-recovery-persistence.md` - completed
+- `080-provider-runtime-hardening.md` - completed
+- `081-provider-observability-diagnostics.md` - completed
+- `082-task-backed-live-workflow-closeout.md` - completed
+- `083-durable-codex-live-smoke-execution.md` - completed
+- `084-durable-codex-live-provider-write-invocation.md` - completed
+- `085-durable-codex-live-provider-write-execution.md` - completed
+- `086-durable-live-evidence-task-work-linkage.md` - completed
+- `087-explicit-live-evidence-review-acceptance.md` - completed
+- `088-explicit-live-evidence-task-completion.md` - completed
+- `089-live-evidence-completion-projection.md` - completed
+- `090-live-evidence-completion-control-read-model.md` - completed
+- `091-live-evidence-completion-request-handler-diagnostics.md` - completed
+- `092-live-evidence-completion-task-state-transition.md` - completed
+- `093-live-evidence-task-state-control-integration.md` - completed
+- `094-completion-to-scm-change-request-readiness.md` - completed
+- `095-completion-scm-readiness-control-integration.md` - completed
+- `096-live-evidence-task-state-history-persistence.md` - completed
+- `097-completion-scm-capture-admission.md` - completed
+- `098-completion-scm-capture-admission-persistence.md` - completed
+- `099-completion-scm-capture-diagnostics-control-integration.md` - completed
+- `100-completion-scm-capture-preparation-records.md` - completed
+- `101-completion-scm-capture-preparation-persistence.md` - completed
+- `102-completion-scm-capture-preparation-control-integration.md` - completed
+- `103-scm-capture-driver-dry-run-planning.md` - completed
+- `104-scm-capture-dry-run-planning-persistence.md` - completed
+- `105-scm-capture-dry-run-control-integration.md` - completed
+- `106-scm-capture-dry-run-execution-gate.md` - completed
+- `107-scm-capture-dry-run-execution-persistence.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/359-callback-request-persistence.md`
+- `batch-cards/499-scm-capture-dry-run-execution-persistence-records.md`
 
 Paused cards:
 
@@ -111,25 +136,10 @@ None.
 
 Planned cards:
 
-- `batch-cards/360-callback-response-durable-linkage.md`
-- `batch-cards/361-interruption-outcome-persistence.md`
-- `batch-cards/362-recovery-outcome-persistence.md`
-- `batch-cards/363-wait-callback-recovery-validation-closeout.md`
-- `batch-cards/364-provider-idempotency-ledger.md`
-- `batch-cards/365-provider-retry-reconciliation-records.md`
-- `batch-cards/366-provider-backpressure-summary-records.md`
-- `batch-cards/367-provider-retention-policy-enforcement.md`
-- `batch-cards/368-provider-runtime-repair-records.md`
-- `batch-cards/369-provider-trace-span-records.md`
-- `batch-cards/370-provider-support-bundle-manifest.md`
-- `batch-cards/371-provider-observability-diagnostics-dto.md`
-- `batch-cards/372-provider-health-doctor-integration.md`
-- `batch-cards/373-provider-observability-validation-closeout.md`
-- `batch-cards/374-task-backed-live-workflow-fixture.md`
-- `batch-cards/375-nucleusd-durable-runtime-smoke-dry-run.md`
-- `batch-cards/376-live-workflow-authority-regression-suite.md`
-- `batch-cards/377-live-workflow-gap-index-closeout.md`
-- `batch-cards/378-next-product-lane-selection.md`
+- `batch-cards/500-scm-capture-dry-run-execution-state-api.md`
+- `batch-cards/501-scm-capture-dry-run-execution-duplicate-blocked.md`
+- `batch-cards/502-scm-capture-dry-run-execution-diagnostics-source.md`
+- `batch-cards/503-scm-capture-dry-run-execution-persistence-closeout.md`
 
 Completed cards:
 
@@ -183,6 +193,146 @@ Completed cards:
 - `batch-cards/356-live-observation-task-timeline-projection.md`
 - `batch-cards/357-review-readiness-from-live-observations.md`
 - `batch-cards/358-task-transition-admission-validation-closeout.md`
+- `batch-cards/359-callback-request-persistence.md`
+- `batch-cards/360-callback-response-durable-linkage.md`
+- `batch-cards/361-interruption-outcome-persistence.md`
+- `batch-cards/362-recovery-outcome-persistence.md`
+- `batch-cards/363-wait-callback-recovery-validation-closeout.md`
+- `batch-cards/364-provider-idempotency-ledger.md`
+- `batch-cards/365-provider-retry-reconciliation-records.md`
+- `batch-cards/366-provider-backpressure-summary-records.md`
+- `batch-cards/367-provider-retention-policy-enforcement.md`
+- `batch-cards/368-provider-runtime-repair-records.md`
+- `batch-cards/369-provider-trace-span-records.md`
+- `batch-cards/370-provider-support-bundle-manifest.md`
+- `batch-cards/371-provider-observability-diagnostics-dto.md`
+- `batch-cards/372-provider-health-doctor-integration.md`
+- `batch-cards/373-provider-observability-validation-closeout.md`
+- `batch-cards/374-task-backed-live-workflow-fixture.md`
+- `batch-cards/375-nucleusd-durable-runtime-smoke-dry-run.md`
+- `batch-cards/376-live-workflow-authority-regression-suite.md`
+- `batch-cards/377-live-workflow-gap-index-closeout.md`
+- `batch-cards/378-next-product-lane-selection.md`
+- `batch-cards/379-durable-codex-live-smoke-boundary.md`
+- `batch-cards/380-durable-codex-live-smoke-dispatch-runner.md`
+- `batch-cards/381-durable-codex-live-smoke-evidence-persistence.md`
+- `batch-cards/382-durable-codex-live-smoke-replay-comparison.md`
+- `batch-cards/383-durable-codex-live-smoke-validation-closeout.md`
+- `batch-cards/384-durable-codex-live-provider-write-invocation-gate.md`
+- `batch-cards/385-nucleusd-durable-live-provider-write-smoke-command.md`
+- `batch-cards/386-durable-live-provider-write-evidence-capture.md`
+- `batch-cards/387-durable-live-provider-write-replay-reconciliation.md`
+- `batch-cards/388-durable-live-provider-write-validation-closeout.md`
+- `batch-cards/389-durable-live-provider-write-runner-bridge.md`
+- `batch-cards/390-nucleusd-durable-live-provider-write-execute-command.md`
+- `batch-cards/391-durable-live-provider-write-result-persistence.md`
+- `batch-cards/392-durable-live-provider-write-terminal-outcomes.md`
+- `batch-cards/393-durable-live-provider-write-execution-closeout.md`
+- `batch-cards/394-live-provider-evidence-work-candidates.md`
+- `batch-cards/395-live-provider-evidence-work-observations.md`
+- `batch-cards/396-live-provider-evidence-review-readiness.md`
+- `batch-cards/397-live-provider-evidence-diagnostics.md`
+- `batch-cards/398-live-provider-evidence-task-linkage-closeout.md`
+- `batch-cards/399-live-evidence-review-acceptance-admission.md`
+- `batch-cards/400-live-evidence-review-decision-persistence.md`
+- `batch-cards/401-live-evidence-review-diagnostics.md`
+- `batch-cards/402-live-evidence-task-completion-separation.md`
+- `batch-cards/403-live-evidence-review-acceptance-closeout.md`
+- `batch-cards/404-live-evidence-task-completion-admission.md`
+- `batch-cards/405-live-evidence-task-completion-persistence.md`
+- `batch-cards/406-live-evidence-task-completion-diagnostics.md`
+- `batch-cards/407-live-evidence-task-completion-authority-regressions.md`
+- `batch-cards/408-live-evidence-task-completion-closeout.md`
+- `batch-cards/409-live-evidence-completion-timeline-projection.md`
+- `batch-cards/410-live-evidence-completion-progress-projection.md`
+- `batch-cards/411-live-evidence-completion-read-model-diagnostics.md`
+- `batch-cards/412-live-evidence-completion-scm-provider-separation.md`
+- `batch-cards/413-live-evidence-completion-projection-closeout.md`
+- `batch-cards/414-live-evidence-completion-read-model-composition.md`
+- `batch-cards/415-live-evidence-completion-control-dto.md`
+- `batch-cards/416-live-evidence-completion-diagnostics-routing-readiness.md`
+- `batch-cards/417-live-evidence-completion-control-authority-regressions.md`
+- `batch-cards/418-live-evidence-completion-control-read-model-closeout.md`
+- `batch-cards/419-live-evidence-completion-query-vocabulary.md`
+- `batch-cards/420-live-evidence-completion-handler-composition.md`
+- `batch-cards/421-live-evidence-completion-missing-state-repair-routing.md`
+- `batch-cards/422-live-evidence-completion-handler-authority-regressions.md`
+- `batch-cards/423-live-evidence-completion-request-handler-closeout.md`
+- `batch-cards/424-live-evidence-task-state-transition-admission.md`
+- `batch-cards/425-live-evidence-task-state-history-projection.md`
+- `batch-cards/426-live-evidence-task-state-repair-duplicate-regressions.md`
+- `batch-cards/427-live-evidence-task-state-authority-regressions.md`
+- `batch-cards/428-live-evidence-task-state-transition-closeout.md`
+- `batch-cards/429-live-evidence-task-state-control-vocabulary.md`
+- `batch-cards/430-live-evidence-task-state-handler-admission.md`
+- `batch-cards/431-live-evidence-task-state-history-response.md`
+- `batch-cards/432-live-evidence-task-state-control-authority-regressions.md`
+- `batch-cards/433-live-evidence-task-state-control-closeout.md`
+- `batch-cards/434-completion-scm-promotion-candidates.md`
+- `batch-cards/435-completion-scm-provider-neutral-mapping.md`
+- `batch-cards/436-completion-change-request-readiness-diagnostics.md`
+- `batch-cards/437-completion-scm-authority-regressions.md`
+- `batch-cards/438-completion-scm-readiness-closeout.md`
+- `batch-cards/439-completion-scm-read-model-composition.md`
+- `batch-cards/440-completion-scm-control-dto.md`
+- `batch-cards/441-completion-scm-diagnostics-query-vocabulary.md`
+- `batch-cards/442-completion-scm-request-handler-routing.md`
+- `batch-cards/443-completion-scm-control-integration-closeout.md`
+- `batch-cards/444-live-evidence-task-state-control-persistence-records.md`
+- `batch-cards/445-live-evidence-task-state-control-state-api.md`
+- `batch-cards/446-live-evidence-task-state-duplicate-repair-regressions.md`
+- `batch-cards/447-completion-scm-persisted-history-source.md`
+- `batch-cards/448-task-state-history-persistence-closeout.md`
+- `batch-cards/449-completion-scm-capture-admission-request.md`
+- `batch-cards/450-completion-scm-readiness-ref-validation.md`
+- `batch-cards/451-completion-scm-capture-admission-diagnostics.md`
+- `batch-cards/452-completion-scm-capture-authority-regressions.md`
+- `batch-cards/453-completion-scm-capture-admission-closeout.md`
+- `batch-cards/454-completion-scm-capture-admission-persistence-records.md`
+- `batch-cards/455-completion-scm-capture-admission-state-api.md`
+- `batch-cards/456-completion-scm-capture-duplicate-blocked-regressions.md`
+- `batch-cards/457-completion-scm-capture-diagnostics-source.md`
+- `batch-cards/458-completion-scm-capture-persistence-closeout.md`
+- `batch-cards/459-completion-scm-capture-control-dto.md`
+- `batch-cards/460-completion-scm-capture-query-vocabulary.md`
+- `batch-cards/461-completion-scm-capture-request-handler-routing.md`
+- `batch-cards/462-completion-scm-capture-control-authority.md`
+- `batch-cards/463-completion-scm-capture-control-closeout.md`
+- `batch-cards/464-completion-scm-capture-preparation-candidates.md`
+- `batch-cards/465-completion-scm-capture-adapter-neutral-plan.md`
+- `batch-cards/466-completion-scm-capture-preparation-diagnostics.md`
+- `batch-cards/467-completion-scm-capture-preparation-authority.md`
+- `batch-cards/468-completion-scm-capture-preparation-closeout.md`
+- `batch-cards/469-completion-scm-capture-preparation-persistence-records.md`
+- `batch-cards/470-completion-scm-capture-preparation-state-api.md`
+- `batch-cards/471-completion-scm-capture-preparation-duplicate-repair.md`
+- `batch-cards/472-completion-scm-capture-preparation-diagnostics-source.md`
+- `batch-cards/473-completion-scm-capture-preparation-persistence-closeout.md`
+- `batch-cards/474-completion-scm-capture-preparation-control-dto.md`
+- `batch-cards/475-completion-scm-capture-preparation-query-vocabulary.md`
+- `batch-cards/476-completion-scm-capture-preparation-handler-routing.md`
+- `batch-cards/477-completion-scm-capture-preparation-control-authority.md`
+- `batch-cards/478-completion-scm-capture-preparation-control-closeout.md`
+- `batch-cards/479-scm-capture-dry-run-plan-candidates.md`
+- `batch-cards/480-scm-capture-dry-run-adapter-capabilities.md`
+- `batch-cards/481-scm-capture-dry-run-diagnostics.md`
+- `batch-cards/482-scm-capture-dry-run-authority.md`
+- `batch-cards/483-scm-capture-dry-run-planning-closeout.md`
+- `batch-cards/484-scm-capture-dry-run-persistence-records.md`
+- `batch-cards/485-scm-capture-dry-run-state-api.md`
+- `batch-cards/486-scm-capture-dry-run-duplicate-repair-regressions.md`
+- `batch-cards/487-scm-capture-dry-run-diagnostics-source.md`
+- `batch-cards/488-scm-capture-dry-run-persistence-closeout.md`
+- `batch-cards/489-scm-capture-dry-run-control-dto.md`
+- `batch-cards/490-scm-capture-dry-run-query-vocabulary.md`
+- `batch-cards/491-scm-capture-dry-run-request-handler-routing.md`
+- `batch-cards/492-scm-capture-dry-run-control-authority-regressions.md`
+- `batch-cards/493-scm-capture-dry-run-control-closeout.md`
+- `batch-cards/494-scm-capture-dry-run-execution-admission.md`
+- `batch-cards/495-scm-capture-dry-run-adapter-execution-capability.md`
+- `batch-cards/496-scm-capture-dry-run-receipt-records.md`
+- `batch-cards/497-scm-capture-dry-run-execution-authority.md`
+- `batch-cards/498-scm-capture-dry-run-execution-closeout.md`
 - `batch-cards/001-event-store-record-contract-and-codec.md`
 - `batch-cards/002-event-store-repository-boundary.md`
 - `batch-cards/003-command-projection-replay-integrity.md`

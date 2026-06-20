@@ -1,6 +1,6 @@
 # 364 Provider Idempotency Ledger
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../080-provider-runtime-hardening.md`
@@ -17,10 +17,10 @@ Record provider idempotency decisions for durable runtime effects.
 
 ## Acceptance Criteria
 
-- [ ] Duplicate write attempts are detected.
-- [ ] Replayed commands do not cause duplicate provider writes.
-- [ ] Ledger records survive reopen.
-- [ ] Client mutation authority remains false.
+- [x] Duplicate write attempts are detected.
+- [x] Replayed commands do not cause duplicate provider writes.
+- [x] Ledger records survive reopen.
+- [x] Client mutation authority remains false.
 
 ## Validation
 

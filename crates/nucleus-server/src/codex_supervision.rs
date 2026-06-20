@@ -42,6 +42,7 @@ mod recovery_execution_receipt_linkage;
 mod recovery_executor_admission;
 mod recovery_need;
 mod recovery_outcome;
+mod recovery_outcome_persistence;
 mod runtime_instance;
 mod runtime_observation_event_identity;
 mod runtime_observation_event_store_persistence;
@@ -282,6 +283,10 @@ pub use recovery_outcome::{
     codex_recovery_outcome_from_admission, codex_recovery_outcome_from_envelope,
     codex_recovery_replacement_thread_outcome, CodexAppServerRecoveryOutcomeId,
     CodexAppServerRecoveryOutcomeRecord, CodexAppServerRecoveryOutcomeStatus,
+};
+pub use recovery_outcome_persistence::{
+    persist_codex_recovery_outcome_linkage, read_codex_recovery_outcome_linkage_records,
+    CodexAppServerRecoveryOutcomeLinkageInput, CodexAppServerRecoveryOutcomeLinkageRecord,
 };
 pub use runtime_instance::{
     codex_runtime_instance_from_supervision_request, CodexAppServerPayloadRetentionPolicy,

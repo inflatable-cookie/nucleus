@@ -321,6 +321,141 @@ fn request_envelope_dto_round_trips_codex_provider_diagnostics_query() {
 }
 
 #[test]
+fn live_evidence_completion_query_vocabulary_round_trips_diagnostics_domain() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:diagnostics:completion".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:dto:diagnostics:completion".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::LiveEvidenceCompletion),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let server_request = ServerControlRequest::try_from(decoded).expect("server request");
+
+    assert!(json.contains("\"domain\":\"live_evidence_completion\""));
+    assert!(matches!(
+        server_request.kind,
+        ServerControlRequestKind::Query(ServerQuery {
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::LiveEvidenceCompletion),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn completion_scm_query_vocabulary_round_trips_diagnostics_domain() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:completion-scm".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:dto:completion-scm".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::CompletionScmReadiness),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert!(json.contains("\"domain\":\"completion_scm_readiness\""));
+    assert!(matches!(
+        restored.kind,
+        ServerControlRequestKind::Query(ServerQuery {
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::CompletionScmReadiness),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn completion_scm_capture_query_vocabulary_round_trips_diagnostics_domain() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:completion-scm-capture".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:dto:completion-scm-capture".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::CompletionScmCapture),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert!(json.contains("\"domain\":\"completion_scm_capture\""));
+    assert!(matches!(
+        restored.kind,
+        ServerControlRequestKind::Query(ServerQuery {
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::CompletionScmCapture),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn completion_scm_capture_preparation_query_vocabulary_round_trips_diagnostics_domain() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:completion-scm-preparation".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:dto:completion-scm-preparation".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::CompletionScmCapturePreparation),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert!(json.contains("\"domain\":\"completion_scm_capture_preparation\""));
+    assert!(matches!(
+        restored.kind,
+        ServerControlRequestKind::Query(ServerQuery {
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::CompletionScmCapturePreparation),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn scm_capture_dry_run_query_vocabulary_round_trips_diagnostics_domain() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:scm-capture-dry-run".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:dto:scm-capture-dry-run".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::ScmCaptureDryRun),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert!(json.contains("\"domain\":\"scm_capture_dry_run\""));
+    assert!(matches!(
+        restored.kind,
+        ServerControlRequestKind::Query(ServerQuery {
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::ScmCaptureDryRun),
+            ..
+        })
+    ));
+}
+
+#[test]
 fn request_envelope_rejects_unknown_diagnostics_domain() {
     let dto = ControlRequestEnvelopeDto {
         protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),

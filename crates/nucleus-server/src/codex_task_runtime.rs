@@ -17,6 +17,7 @@ use crate::scheduler::{
 };
 
 mod live_observation_timeline_projection;
+mod live_workflow_fixture;
 mod observation_links;
 mod review_readiness;
 mod types;
@@ -26,6 +27,9 @@ mod work_item_transition_admission;
 pub use live_observation_timeline_projection::{
     rebuild_codex_live_observation_task_timeline, CodexLiveObservationTaskTimelineEntry,
     CodexLiveObservationTaskTimelineProjection,
+};
+pub use live_workflow_fixture::{
+    task_backed_live_workflow_fixture, TaskBackedLiveWorkflowFixture, TaskBackedLiveWorkflowReplay,
 };
 pub use observation_links::{
     link_codex_observation_to_task_runtime, CodexTaskRuntimeObservationLink,

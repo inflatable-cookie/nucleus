@@ -1,6 +1,6 @@
 # 377 Live Workflow Gap Index Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../082-task-backed-live-workflow-closeout.md`
@@ -17,10 +17,16 @@ Update architecture and implementation gap indexes from live workflow evidence.
 
 ## Acceptance Criteria
 
-- [ ] Gap indexes match implemented runtime surfaces.
-- [ ] Remaining gaps are concrete.
-- [ ] No stale next-task pointer is left behind.
-- [ ] Docs QA passes.
+- [x] Gap indexes match implemented runtime surfaces.
+- [x] Remaining gaps are concrete.
+- [x] No stale next-task pointer is left behind.
+- [x] Docs QA passes.
+
+## Result
+
+Updated `docs/architecture/implementation-gap-index.md` with durable workflow
+fixture, smoke dry-run, provider hardening, observability, and authority
+regression evidence.
 
 ## Validation
 

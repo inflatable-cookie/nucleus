@@ -1,6 +1,6 @@
 # 368 Provider Runtime Repair Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../080-provider-runtime-hardening.md`
@@ -18,10 +18,10 @@ Represent repair-required provider runtime states.
 
 ## Acceptance Criteria
 
-- [ ] Repair states are explicit and inspectable.
-- [ ] Repair records link to causal evidence.
-- [ ] Automatic recovery remains blocked.
-- [ ] Validation passes or blockers are recorded.
+- [x] Repair states are explicit and inspectable.
+- [x] Repair records link to causal evidence.
+- [x] Automatic recovery remains blocked.
+- [x] Validation passes or blockers are recorded.
 
 ## Validation
 

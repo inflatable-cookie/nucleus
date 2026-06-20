@@ -1,6 +1,6 @@
 # 370 Provider Support Bundle Manifest
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../081-provider-observability-diagnostics.md`
@@ -17,10 +17,10 @@ Define support bundle manifests for provider runtime evidence.
 
 ## Acceptance Criteria
 
-- [ ] Support bundle manifests list evidence refs.
-- [ ] Raw provider material is not included.
-- [ ] Missing evidence is represented as a repair need.
-- [ ] Manifests are client-safe.
+- [x] Support bundle manifests list evidence refs.
+- [x] Raw provider material is not included.
+- [x] Missing evidence is represented as a repair need.
+- [x] Manifests are client-safe.
 
 ## Validation
 

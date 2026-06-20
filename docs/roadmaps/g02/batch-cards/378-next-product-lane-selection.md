@@ -1,6 +1,6 @@
 # 378 Next Product Lane Selection
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../082-task-backed-live-workflow-closeout.md`
@@ -18,10 +18,16 @@ Select the next product lane after task-backed live workflow closeout.
 
 ## Acceptance Criteria
 
-- [ ] Next lane is selected from evidence.
-- [ ] Roadmap front doors have one clear next task.
-- [ ] Generation rollover is considered only if justified.
-- [ ] Validation passes or blockers are recorded.
+- [x] Next lane is selected from evidence.
+- [x] Roadmap front doors have one clear next task.
+- [x] Generation rollover is considered only if justified.
+- [x] Validation passes or blockers are recorded.
+
+## Result
+
+Selected `083 Durable Codex Live Smoke Execution` as the next lane. G02 remains
+appropriate because this continues the same orchestration/runtime proof rather
+than switching product gears.
 
 ## Validation
 

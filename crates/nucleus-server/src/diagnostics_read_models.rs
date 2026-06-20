@@ -22,6 +22,7 @@ mod durable_provider_executor_dispatch;
 mod durable_provider_executor_invocation;
 mod effigy;
 mod helpers;
+mod provider_observability;
 mod scm;
 mod steward;
 mod sync;
@@ -97,6 +98,11 @@ pub use durable_provider_executor_invocation::{
     DurableOutcomePersistenceDiagnosticDto, DurableProviderExecutorInvocationDiagnosticsDto,
 };
 pub use effigy::{effigy_diagnostics, EffigyDiagnosticsDto};
+pub use provider_observability::{
+    provider_observability_diagnostics, ProviderObservabilityDiagnosticsDto,
+    ProviderObservabilityHealthDto, ProviderObservabilitySupportBundleDto,
+    ProviderObservabilityTraceDto,
+};
 pub use scm::{
     scm_session_diagnostics, ScmCommandAdmissionDiagnosticDto, ScmSessionDiagnosticsDto,
     ScmSessionPlanDiagnosticDto, ScmWorkItemLinkDiagnosticDto,

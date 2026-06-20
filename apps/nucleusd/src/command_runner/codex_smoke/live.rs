@@ -15,21 +15,59 @@ use values::{string_field, turn_field_from_start_response};
 
 const SMOKE_PROMPT: &str = "Reply with exactly: nucleus codex direct smoke ok";
 
-pub(super) struct LiveCodexSmokeOutcome {
-    pub(super) provider_write_executed: bool,
-    pub(super) thread_id: Option<String>,
-    pub(super) turn_id: Option<String>,
-    pub(super) turn_status: Option<String>,
-    pub(super) notifications_seen: usize,
-    pub(super) server_requests_seen: usize,
+pub(crate) struct LiveCodexSmokeOutcome {
+    pub(crate) provider_write_executed: bool,
+    pub(crate) thread_id: Option<String>,
+    pub(crate) turn_id: Option<String>,
+    pub(crate) turn_status: Option<String>,
+    pub(crate) notifications_seen: usize,
+    pub(crate) server_requests_seen: usize,
     status: LiveCodexSmokeStatus,
 }
 
 impl LiveCodexSmokeOutcome {
-    pub(super) fn status_label(&self) -> &'static str {
+    pub(crate) fn status_label(&self) -> &'static str {
         match self.status {
             LiveCodexSmokeStatus::Executed => "executed",
             LiveCodexSmokeStatus::Blocked => "blocked",
+        }
+    }
+
+    pub(crate) fn completed_method_sequence(
+    ) -> Vec<nucleus_server::CodexAppServerLiveExecutorMethod> {
+        vec![
+            nucleus_server::CodexAppServerLiveExecutorMethod::Initialize,
+            nucleus_server::CodexAppServerLiveExecutorMethod::InitializedNotification,
+            nucleus_server::CodexAppServerLiveExecutorMethod::ThreadStart,
+            nucleus_server::CodexAppServerLiveExecutorMethod::TurnStart,
+            nucleus_server::CodexAppServerLiveExecutorMethod::TurnCompleted,
+            nucleus_server::CodexAppServerLiveExecutorMethod::Cleanup,
+        ]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn executed_for_test(label: &str) -> Self {
+        Self {
+            provider_write_executed: true,
+            thread_id: Some(format!("thread:{label}")),
+            turn_id: Some(format!("turn:{label}")),
+            turn_status: Some("completed".to_owned()),
+            notifications_seen: 3,
+            server_requests_seen: 1,
+            status: LiveCodexSmokeStatus::Executed,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn blocked_for_test() -> Self {
+        Self {
+            provider_write_executed: false,
+            thread_id: None,
+            turn_id: None,
+            turn_status: None,
+            notifications_seen: 0,
+            server_requests_seen: 0,
+            status: LiveCodexSmokeStatus::Blocked,
         }
     }
 }
@@ -40,7 +78,7 @@ enum LiveCodexSmokeStatus {
     Blocked,
 }
 
-pub(super) fn run_live_codex_turn_start_smoke(
+pub(crate) fn run_live_codex_turn_start_smoke(
     boundary: &CodexAppServerTurnStartExecutorSmokeBoundaryRecord,
 ) -> Result<LiveCodexSmokeOutcome, String> {
     if boundary.status

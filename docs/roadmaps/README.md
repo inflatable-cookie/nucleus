@@ -83,10 +83,35 @@ shape.
 - `g02/076-codex-provider-session-and-stdio-persistence.md` - completed
 - `g02/077-codex-runtime-observation-event-store-linkage.md` - completed
 - `g02/078-task-transition-admission-from-live-observations.md` - completed
-- `g02/079-durable-wait-callback-interruption-recovery-persistence.md` - active
-- `g02/080-provider-runtime-hardening.md` - planned
-- `g02/081-provider-observability-diagnostics.md` - planned
-- `g02/082-task-backed-live-workflow-closeout.md` - planned
+- `g02/079-durable-wait-callback-interruption-recovery-persistence.md` - completed
+- `g02/080-provider-runtime-hardening.md` - completed
+- `g02/081-provider-observability-diagnostics.md` - completed
+- `g02/082-task-backed-live-workflow-closeout.md` - completed
+- `g02/083-durable-codex-live-smoke-execution.md` - completed
+- `g02/084-durable-codex-live-provider-write-invocation.md` - completed
+- `g02/085-durable-codex-live-provider-write-execution.md` - completed
+- `g02/086-durable-live-evidence-task-work-linkage.md` - completed
+- `g02/087-explicit-live-evidence-review-acceptance.md` - completed
+- `g02/088-explicit-live-evidence-task-completion.md` - completed
+- `g02/089-live-evidence-completion-projection.md` - completed
+- `g02/090-live-evidence-completion-control-read-model.md` - completed
+- `g02/091-live-evidence-completion-request-handler-diagnostics.md` - completed
+- `g02/092-live-evidence-completion-task-state-transition.md` - completed
+- `g02/093-live-evidence-task-state-control-integration.md` - completed
+- `g02/094-completion-to-scm-change-request-readiness.md` - completed
+- `g02/095-completion-scm-readiness-control-integration.md` - completed
+- `g02/096-live-evidence-task-state-history-persistence.md` - completed
+- `g02/097-completion-scm-capture-admission.md` - completed
+- `g02/098-completion-scm-capture-admission-persistence.md` - completed
+- `g02/099-completion-scm-capture-diagnostics-control-integration.md` - completed
+- `g02/100-completion-scm-capture-preparation-records.md` - completed
+- `g02/101-completion-scm-capture-preparation-persistence.md` - completed
+- `g02/102-completion-scm-capture-preparation-control-integration.md` - completed
+- `g02/103-scm-capture-driver-dry-run-planning.md` - completed
+- `g02/104-scm-capture-dry-run-planning-persistence.md` - completed
+- `g02/105-scm-capture-dry-run-control-integration.md` - completed
+- `g02/106-scm-capture-dry-run-execution-gate.md` - completed
+- `g02/107-scm-capture-dry-run-execution-persistence.md` - active
 
 ## Previous Generation
 
@@ -145,4 +170,5 @@ shape.
 
 ## Next Task
 
-Persist recovery outcome evidence.
+Persist SCM capture dry-run execution receipts without capture, publish, forge,
+provider, callback, recovery, or raw-output authority.

@@ -129,6 +129,11 @@ pub enum DiagnosticsQuery {
     ScmSession,
     TaskAgent,
     CodexProvider,
+    LiveEvidenceCompletion,
+    CompletionScmReadiness,
+    CompletionScmCapture,
+    CompletionScmCapturePreparation,
+    ScmCaptureDryRun,
     All,
 }
 
@@ -216,6 +221,11 @@ pub enum ServerDiagnosticsQueryResult {
     ScmSession(ScmSessionDiagnosticsDto),
     TaskAgent(TaskAgentDiagnosticsDto),
     CodexProvider(CodexProviderDiagnosticsDto),
+    LiveEvidenceCompletion(crate::LiveEvidenceCompletionControlDto),
+    CompletionScmReadiness(crate::CompletionScmControlDto),
+    CompletionScmCapture(crate::CompletionScmCaptureControlDto),
+    CompletionScmCapturePreparation(crate::CompletionScmCapturePreparationControlDto),
+    ScmCaptureDryRun(crate::ScmCaptureDryRunControlDto),
     All(ServerDiagnosticsSnapshot),
 }
 
@@ -228,6 +238,11 @@ pub struct ServerDiagnosticsSnapshot {
     pub scm_session: ScmSessionDiagnosticsDto,
     pub task_agent: TaskAgentDiagnosticsDto,
     pub codex_provider: CodexProviderDiagnosticsDto,
+    pub live_evidence_completion: crate::LiveEvidenceCompletionControlDto,
+    pub completion_scm_readiness: crate::CompletionScmControlDto,
+    pub completion_scm_capture: crate::CompletionScmCaptureControlDto,
+    pub completion_scm_capture_preparation: crate::CompletionScmCapturePreparationControlDto,
+    pub scm_capture_dry_run: crate::ScmCaptureDryRunControlDto,
 }
 
 /// State records returned from the local state facade.

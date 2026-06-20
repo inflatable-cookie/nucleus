@@ -16,6 +16,11 @@ pub enum ControlDiagnosticsResultDto {
     ScmSession(ScmSessionDiagnosticsDto),
     TaskAgent(TaskAgentDiagnosticsDto),
     CodexProvider(CodexProviderDiagnosticsDto),
+    LiveEvidenceCompletion(crate::LiveEvidenceCompletionControlDto),
+    CompletionScmReadiness(crate::CompletionScmControlDto),
+    CompletionScmCapture(crate::CompletionScmCaptureControlDto),
+    CompletionScmCapturePreparation(crate::CompletionScmCapturePreparationControlDto),
+    ScmCaptureDryRun(crate::ScmCaptureDryRunControlDto),
     All(ControlDiagnosticsSnapshotDto),
 }
 
@@ -28,6 +33,11 @@ pub struct ControlDiagnosticsSnapshotDto {
     pub scm_session: ScmSessionDiagnosticsDto,
     pub task_agent: TaskAgentDiagnosticsDto,
     pub codex_provider: CodexProviderDiagnosticsDto,
+    pub live_evidence_completion: crate::LiveEvidenceCompletionControlDto,
+    pub completion_scm_readiness: crate::CompletionScmControlDto,
+    pub completion_scm_capture: crate::CompletionScmCaptureControlDto,
+    pub completion_scm_capture_preparation: crate::CompletionScmCapturePreparationControlDto,
+    pub scm_capture_dry_run: crate::ScmCaptureDryRunControlDto,
 }
 
 impl From<&ServerDiagnosticsQueryResult> for ControlDiagnosticsResultDto {
@@ -42,6 +52,21 @@ impl From<&ServerDiagnosticsQueryResult> for ControlDiagnosticsResultDto {
             ServerDiagnosticsQueryResult::TaskAgent(record) => Self::TaskAgent(record.clone()),
             ServerDiagnosticsQueryResult::CodexProvider(record) => {
                 Self::CodexProvider(record.clone())
+            }
+            ServerDiagnosticsQueryResult::LiveEvidenceCompletion(record) => {
+                Self::LiveEvidenceCompletion(record.clone())
+            }
+            ServerDiagnosticsQueryResult::CompletionScmReadiness(record) => {
+                Self::CompletionScmReadiness(record.clone())
+            }
+            ServerDiagnosticsQueryResult::CompletionScmCapture(record) => {
+                Self::CompletionScmCapture(record.clone())
+            }
+            ServerDiagnosticsQueryResult::CompletionScmCapturePreparation(record) => {
+                Self::CompletionScmCapturePreparation(record.clone())
+            }
+            ServerDiagnosticsQueryResult::ScmCaptureDryRun(record) => {
+                Self::ScmCaptureDryRun(record.clone())
             }
             ServerDiagnosticsQueryResult::All(snapshot) => {
                 Self::All(ControlDiagnosticsSnapshotDto::from(snapshot))
@@ -59,6 +84,11 @@ impl From<&ServerDiagnosticsSnapshot> for ControlDiagnosticsSnapshotDto {
             scm_session: snapshot.scm_session.clone(),
             task_agent: snapshot.task_agent.clone(),
             codex_provider: snapshot.codex_provider.clone(),
+            live_evidence_completion: snapshot.live_evidence_completion.clone(),
+            completion_scm_readiness: snapshot.completion_scm_readiness.clone(),
+            completion_scm_capture: snapshot.completion_scm_capture.clone(),
+            completion_scm_capture_preparation: snapshot.completion_scm_capture_preparation.clone(),
+            scm_capture_dry_run: snapshot.scm_capture_dry_run.clone(),
         }
     }
 }
