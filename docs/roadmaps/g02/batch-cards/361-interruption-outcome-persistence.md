@@ -1,6 +1,6 @@
 # 361 Interruption Outcome Persistence
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../079-durable-wait-callback-interruption-recovery-persistence.md`
@@ -18,10 +18,10 @@ Persist interruption outcome evidence from durable executor paths.
 
 ## Acceptance Criteria
 
-- [ ] Interruption outcomes survive reopen.
-- [ ] Failed and timeout states remain inspectable.
-- [ ] Task state is not silently rolled back.
-- [ ] Raw provider material is not retained.
+- [x] Interruption outcomes survive reopen.
+- [x] Failed and timeout states remain inspectable.
+- [x] Task state is not silently rolled back.
+- [x] Raw provider material is not retained.
 
 ## Validation
 

@@ -1,6 +1,6 @@
 # 360 Callback Response Durable Linkage
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../079-durable-wait-callback-interruption-recovery-persistence.md`
@@ -19,10 +19,10 @@ status records.
 
 ## Acceptance Criteria
 
-- [ ] Callback response linkage is reference-only.
-- [ ] Completed provider outcome updates runtime progress only.
-- [ ] Review acceptance and task completion remain blocked.
-- [ ] Raw callback material is not exposed.
+- [x] Callback response linkage is reference-only.
+- [x] Completed provider outcome updates runtime progress only.
+- [x] Review acceptance and task completion remain blocked.
+- [x] Raw callback material is not exposed.
 
 ## Validation
 

@@ -1,6 +1,6 @@
 # 359 Callback Request Persistence
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../079-durable-wait-callback-interruption-recovery-persistence.md`
@@ -18,10 +18,10 @@ Persist provider callback and wait-state request evidence.
 
 ## Acceptance Criteria
 
-- [ ] Callback request evidence survives reopen.
-- [ ] Missing provider/task identity blocks persistence.
-- [ ] Callback answering authority remains false.
-- [ ] Raw callback material is not retained.
+- [x] Callback request evidence survives reopen.
+- [x] Missing provider/task identity blocks persistence.
+- [x] Callback answering authority remains false.
+- [x] Raw callback material is not retained.
 
 ## Validation
 

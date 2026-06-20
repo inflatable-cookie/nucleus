@@ -21,18 +21,18 @@ answering callbacks, cancelling, resuming, or mutating tasks automatically.
 
 ## Goals
 
-- [ ] Persist callback request evidence.
-- [ ] Link callback responses to durable dispatch/status records.
-- [ ] Persist interruption outcomes.
+- [x] Persist callback request evidence.
+- [x] Link callback responses to durable dispatch/status records.
+- [x] Persist interruption outcomes.
 - [ ] Persist recovery outcomes and repair requirements.
 - [ ] Keep callback answering, cancellation, resume, and replacement-thread
       promotion operator-gated.
 
 ## Execution Plan
 
-- [ ] Callback request batch.
-- [ ] Callback response durable linkage batch.
-- [ ] Interruption outcome persistence batch.
+- [x] Callback request batch.
+- [x] Callback response durable linkage batch.
+- [x] Interruption outcome persistence batch.
 - [ ] Recovery outcome persistence batch.
 - [ ] Closeout batch: validate and activate runtime hardening.
 
@@ -40,18 +40,17 @@ answering callbacks, cancelling, resuming, or mutating tasks automatically.
 
 Ready cards:
 
-- `batch-cards/359-callback-request-persistence.md`
+- `batch-cards/362-recovery-outcome-persistence.md`
 
 Planned cards:
 
-- `batch-cards/360-callback-response-durable-linkage.md`
-- `batch-cards/361-interruption-outcome-persistence.md`
-- `batch-cards/362-recovery-outcome-persistence.md`
 - `batch-cards/363-wait-callback-recovery-validation-closeout.md`
 
 Completed cards:
 
-None.
+- `batch-cards/359-callback-request-persistence.md`
+- `batch-cards/360-callback-response-durable-linkage.md`
+- `batch-cards/361-interruption-outcome-persistence.md`
 
 ## Acceptance Criteria
 

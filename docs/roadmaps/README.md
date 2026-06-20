@@ -145,4 +145,4 @@ shape.
 
 ## Next Task
 
-Persist durable callback request records.
+Persist recovery outcome evidence.

@@ -5,7 +5,9 @@
 //! provider payloads, or ingest live events.
 
 mod callback_request;
+mod callback_request_persistence;
 mod callback_response_admission;
+mod callback_response_durable_linkage;
 mod callback_response_envelope;
 mod callback_response_execution_policy;
 mod callback_response_execution_receipt_linkage;
@@ -22,6 +24,7 @@ mod interruption_execution_policy;
 mod interruption_execution_receipt_linkage;
 mod interruption_executor_admission;
 mod interruption_outcome;
+mod interruption_outcome_persistence;
 mod interruption_request;
 mod live_executor_outcome;
 mod live_executor_outcome_persistence;
@@ -74,11 +77,22 @@ pub use callback_request::{
     CodexAppServerCallbackRequestId, CodexAppServerCallbackRequestKind,
     CodexAppServerCallbackRequestRejection, CodexAppServerProviderCallbackId,
 };
+pub use callback_request_persistence::{
+    persist_codex_callback_request, read_codex_callback_request_records,
+    CodexAppServerCallbackRequestPersistenceInput, CodexAppServerCallbackRequestPersistenceRecord,
+    CodexAppServerCallbackRequestPersistenceWaitState,
+};
 pub use callback_response_admission::{
     admit_codex_callback_response, CodexAppServerCallbackResponse,
     CodexAppServerCallbackResponseAdmission, CodexAppServerCallbackResponseAdmissionBlocker,
     CodexAppServerCallbackResponseAdmissionId, CodexAppServerCallbackResponseAdmissionInput,
     CodexAppServerCallbackResponseAdmissionStatus,
+};
+pub use callback_response_durable_linkage::{
+    persist_codex_callback_response_durable_linkage,
+    read_codex_callback_response_durable_linkage_records,
+    CodexAppServerCallbackResponseDurableLinkageInput,
+    CodexAppServerCallbackResponseDurableLinkageRecord,
 };
 pub use callback_response_envelope::{
     codex_callback_response_envelope, CodexAppServerCallbackResponseEnvelopeId,
@@ -172,6 +186,10 @@ pub use interruption_outcome::{
     codex_interruption_outcome_from_envelope, codex_receipt_from_interruption_outcome,
     CodexAppServerInterruptionOutcomeId, CodexAppServerInterruptionOutcomeRecord,
     CodexAppServerInterruptionOutcomeStatus,
+};
+pub use interruption_outcome_persistence::{
+    persist_codex_interruption_outcome_linkage, read_codex_interruption_outcome_linkage_records,
+    CodexAppServerInterruptionOutcomeLinkageInput, CodexAppServerInterruptionOutcomeLinkageRecord,
 };
 pub use interruption_request::{
     codex_interruption_request, CodexAppServerInterruptionReasonRef,
