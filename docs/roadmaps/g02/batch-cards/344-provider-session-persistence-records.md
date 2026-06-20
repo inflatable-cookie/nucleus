@@ -1,6 +1,6 @@
 # 344 Provider Session Persistence Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../076-codex-provider-session-and-stdio-persistence.md`
@@ -18,10 +18,10 @@ Persist sanitized provider session binding records.
 
 ## Acceptance Criteria
 
-- [ ] Session bindings survive local-store reopen.
-- [ ] Missing or mismatched identity blocks persistence.
-- [ ] Raw provider material is not stored.
-- [ ] No provider write or task mutation authority is granted.
+- [x] Session bindings survive local-store reopen.
+- [x] Missing or mismatched identity blocks persistence.
+- [x] Raw provider material is not stored.
+- [x] No provider write or task mutation authority is granted.
 
 ## Validation
 

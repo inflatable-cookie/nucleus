@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    DurableDispatchExecutorHandoffRecord, DurableDispatchInvocationPreflightRecord,
+    DurableDispatchInvocationRequestRecord, DurableDispatchOutcomePersistenceRecord,
     DurableProviderExecutorCommandRecord, DurableProviderExecutorCommandStatus,
     DurableProviderExecutorDispatchAdmissionRecord,
     DurableProviderExecutorDispatchOutcomeLinkageRecord,
@@ -11,6 +13,10 @@ use crate::{
 use super::durable_provider_executor_dispatch::{
     durable_provider_executor_dispatch_diagnostics, DurableProviderExecutorDispatchDiagnosticsDto,
 };
+use super::durable_provider_executor_invocation::{
+    durable_provider_executor_invocation_diagnostics,
+    DurableProviderExecutorInvocationDiagnosticsDto,
+};
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for durable provider executor command state.
@@ -19,6 +25,7 @@ pub struct DurableProviderExecutorDiagnosticsDto {
     pub commands: Vec<DurableProviderExecutorCommandDiagnosticDto>,
     pub statuses: Vec<DurableProviderExecutorStatusDiagnosticDto>,
     pub dispatch: DurableProviderExecutorDispatchDiagnosticsDto,
+    pub invocation: DurableProviderExecutorInvocationDiagnosticsDto,
     pub client_can_execute_provider_write: bool,
     pub client_can_mutate_tasks: bool,
     pub client_can_accept_review: bool,
@@ -83,6 +90,10 @@ pub fn durable_provider_executor_diagnostics(
     selections: &[DurableProviderExecutorDispatchSelectionRecord],
     admissions: &[DurableProviderExecutorDispatchAdmissionRecord],
     linkages: &[DurableProviderExecutorDispatchOutcomeLinkageRecord],
+    preflights: &[DurableDispatchInvocationPreflightRecord],
+    requests: &[DurableDispatchInvocationRequestRecord],
+    handoffs: &[DurableDispatchExecutorHandoffRecord],
+    persistences: &[DurableDispatchOutcomePersistenceRecord],
 ) -> DurableProviderExecutorDiagnosticsDto {
     let command_dtos = commands
         .iter()
@@ -93,12 +104,20 @@ pub fn durable_provider_executor_diagnostics(
         .map(DurableProviderExecutorStatusDiagnosticDto::from)
         .collect::<Vec<_>>();
     let dispatch = durable_provider_executor_dispatch_diagnostics(selections, admissions, linkages);
-    let count = command_dtos.len() + status_dtos.len() + dispatch.record_count;
+    let invocation = durable_provider_executor_invocation_diagnostics(
+        preflights,
+        requests,
+        handoffs,
+        persistences,
+    );
+    let count =
+        command_dtos.len() + status_dtos.len() + dispatch.record_count + invocation.record_count;
 
     DurableProviderExecutorDiagnosticsDto {
         commands: command_dtos,
         statuses: status_dtos,
         dispatch,
+        invocation,
         client_can_execute_provider_write: false,
         client_can_mutate_tasks: false,
         client_can_accept_review: false,

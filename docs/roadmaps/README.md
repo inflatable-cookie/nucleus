@@ -79,11 +79,11 @@ shape.
 - `g02/072-codex-provider-recovery-execution-gate.md` - completed
 - `g02/073-codex-provider-durable-executor-gate.md` - completed
 - `g02/074-codex-durable-executor-dispatch-gate.md` - completed
-- `g02/075-codex-durable-dispatch-invocation-gate.md` - active
-- `g02/076-codex-provider-session-and-stdio-persistence.md` - planned
-- `g02/077-codex-runtime-observation-event-store-linkage.md` - planned
-- `g02/078-task-transition-admission-from-live-observations.md` - planned
-- `g02/079-durable-wait-callback-interruption-recovery-persistence.md` - planned
+- `g02/075-codex-durable-dispatch-invocation-gate.md` - completed
+- `g02/076-codex-provider-session-and-stdio-persistence.md` - completed
+- `g02/077-codex-runtime-observation-event-store-linkage.md` - completed
+- `g02/078-task-transition-admission-from-live-observations.md` - completed
+- `g02/079-durable-wait-callback-interruption-recovery-persistence.md` - active
 - `g02/080-provider-runtime-hardening.md` - planned
 - `g02/081-provider-observability-diagnostics.md` - planned
 - `g02/082-task-backed-live-workflow-closeout.md` - planned
@@ -145,4 +145,4 @@ shape.
 
 ## Next Task
 
-Define durable dispatch executor handoff records.
+Persist durable callback request records.

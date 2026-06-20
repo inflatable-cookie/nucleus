@@ -1,6 +1,6 @@
 # 349 Runtime Observation Event Identity
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../077-codex-runtime-observation-event-store-linkage.md`
@@ -18,10 +18,10 @@ Define stable event identity for accepted provider runtime observations.
 
 ## Acceptance Criteria
 
-- [ ] Observation event ids are deterministic.
-- [ ] Unsupported observations keep visible identity.
-- [ ] Mismatched session identity blocks acceptance.
-- [ ] Records are replay-safe.
+- [x] Observation event ids are deterministic.
+- [x] Unsupported observations keep visible identity.
+- [x] Mismatched session identity blocks acceptance.
+- [x] Records are replay-safe.
 
 ## Validation
 

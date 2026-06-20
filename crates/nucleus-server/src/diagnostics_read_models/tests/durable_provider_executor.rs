@@ -34,12 +34,23 @@ fn durable_provider_executor_diagnostics_are_read_only_and_sanitized() {
         scm_mutation_requested: false,
     });
 
-    let diagnostics = durable_provider_executor_diagnostics(&[command], &[status], &[], &[], &[]);
+    let diagnostics = durable_provider_executor_diagnostics(
+        &[command],
+        &[status],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+    );
 
     assert_eq!(diagnostics.source_status, "records");
     assert_eq!(diagnostics.commands.len(), 1);
     assert_eq!(diagnostics.statuses.len(), 1);
     assert_eq!(diagnostics.dispatch.record_count, 0);
+    assert_eq!(diagnostics.invocation.record_count, 0);
     assert!(!diagnostics.client_can_execute_provider_write);
     assert!(!diagnostics.client_can_mutate_tasks);
     assert!(!diagnostics.client_can_accept_review);
@@ -156,8 +167,17 @@ fn durable_executor_dispatch_diagnostics_expose_read_only_progress() {
         },
     );
 
-    let diagnostics =
-        durable_provider_executor_diagnostics(&[], &[], &[selection], &[admission], &[linkage]);
+    let diagnostics = durable_provider_executor_diagnostics(
+        &[],
+        &[],
+        &[selection],
+        &[admission],
+        &[linkage],
+        &[],
+        &[],
+        &[],
+        &[],
+    );
 
     assert_eq!(diagnostics.dispatch.record_count, 3);
     assert_eq!(diagnostics.dispatch.selections[0].status, "selected");

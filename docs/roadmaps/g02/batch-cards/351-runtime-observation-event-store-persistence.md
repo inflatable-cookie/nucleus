@@ -1,6 +1,6 @@
 # 351 Runtime Observation Event Store Persistence
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../077-codex-runtime-observation-event-store-linkage.md`
@@ -17,10 +17,10 @@ Persist accepted runtime observations as orchestration event-store records.
 
 ## Acceptance Criteria
 
-- [ ] Accepted observations are persisted as events.
-- [ ] Rejected observations are represented as diagnostics/repair evidence.
-- [ ] Event persistence is idempotent.
-- [ ] Replay never re-runs provider effects.
+- [x] Accepted observations are persisted as events.
+- [x] Rejected observations are represented as diagnostics/repair evidence.
+- [x] Event persistence is idempotent.
+- [x] Replay never re-runs provider effects.
 
 ## Validation
 

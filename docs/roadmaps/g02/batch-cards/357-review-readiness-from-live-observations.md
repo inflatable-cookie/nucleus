@@ -1,6 +1,6 @@
 # 357 Review Readiness From Live Observations
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../078-task-transition-admission-from-live-observations.md`
@@ -19,10 +19,10 @@ review.
 
 ## Acceptance Criteria
 
-- [ ] Completed runtime can become awaiting-review readiness.
-- [ ] Missing review evidence blocks readiness.
-- [ ] Review acceptance remains operator-command gated.
-- [ ] Task completion remains separate.
+- [x] Completed runtime can become awaiting-review readiness.
+- [x] Missing review evidence blocks readiness.
+- [x] Review acceptance remains operator-command gated.
+- [x] Task completion remains separate.
 
 ## Validation
 

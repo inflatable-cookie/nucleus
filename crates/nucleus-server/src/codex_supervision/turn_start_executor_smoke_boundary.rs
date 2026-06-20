@@ -397,7 +397,7 @@ mod tests {
             },
         );
         input.envelope.write_attempt_id = "write-attempt:other".to_owned();
-        input.diagnostics = codex_transport_executor_diagnostics(&[], &[], &[], &[]);
+        input.diagnostics = codex_transport_executor_diagnostics(&[], &[], &[], &[], &[], &[], &[]);
         input.raw_payload_policy_confirmed = false;
         input.raw_stream_policy_confirmed = false;
         input.task_mutation_requested = true;
@@ -426,9 +426,12 @@ mod tests {
         let envelope = envelope();
         let execution = execution();
         let diagnostics = codex_transport_executor_diagnostics(
+            &[],
             &[authority.clone()],
             &[envelope.clone()],
             &[execution.clone()],
+            &[],
+            &[],
             &[],
         );
 

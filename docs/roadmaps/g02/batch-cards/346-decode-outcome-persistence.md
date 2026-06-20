@@ -1,6 +1,6 @@
 # 346 Decode Outcome Persistence
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../076-codex-provider-session-and-stdio-persistence.md`
@@ -18,10 +18,10 @@ Persist sanitized decode outcomes for observed Codex stdio frames.
 
 ## Acceptance Criteria
 
-- [ ] Supported and unsupported decode outcomes persist.
-- [ ] Parse failures remain inspectable.
-- [ ] Raw payload retention is blocked.
-- [ ] Decode records can be replayed into diagnostics.
+- [x] Supported and unsupported decode outcomes persist.
+- [x] Parse failures remain inspectable.
+- [x] Raw payload retention is blocked.
+- [x] Decode records can be replayed into diagnostics.
 
 ## Validation
 

@@ -1,6 +1,6 @@
 # 075 Codex Durable Dispatch Invocation Gate
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 
@@ -27,11 +27,11 @@ between an accepted durable dispatch admission and an actual executor call.
       admissions.
 - [x] Define invocation request records that preserve dispatch, provider,
       runtime, write-attempt, and idempotency identity.
-- [ ] Bridge invocation requests to the existing Codex live executor boundary
+- [x] Bridge invocation requests to the existing Codex live executor boundary
       without bypassing operator confirmation.
-- [ ] Persist or link invocation outcomes through existing sanitized outcome,
+- [x] Persist or link invocation outcomes through existing sanitized outcome,
       receipt, and durable status records.
-- [ ] Keep unattended background execution, task mutation, review acceptance,
+- [x] Keep unattended background execution, task mutation, review acceptance,
       callback answering, interruption, recovery promotion, SCM mutation, and
       raw provider material retention blocked.
 
@@ -51,35 +51,36 @@ between an accepted durable dispatch admission and an actual executor call.
 - [x] Preflight batch: prove accepted dispatch admissions are invocable without
       granting authority.
 - [x] Request batch: define deterministic invocation request records.
-- [ ] Handoff batch: bridge accepted requests to the Codex live executor
+- [x] Handoff batch: bridge accepted requests to the Codex live executor
       boundary.
-- [ ] Outcome batch: connect invocation outcomes to durable dispatch linkage and
+- [x] Outcome batch: connect invocation outcomes to durable dispatch linkage and
       status records.
-- [ ] Diagnostics/closeout batch: expose invocation progress read models,
+- [x] Diagnostics/closeout batch: expose invocation progress read models,
       validate, and pick the next runtime step.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/341-durable-dispatch-executor-handoff.md`
+None.
 
 Planned cards:
 
-- `batch-cards/342-durable-dispatch-outcome-persistence.md`
-- `batch-cards/343-durable-dispatch-invocation-diagnostics-closeout.md`
+None.
 
 Completed cards:
 
 - `batch-cards/339-durable-dispatch-invocation-preflight.md`
 - `batch-cards/340-durable-dispatch-invocation-request-records.md`
+- `batch-cards/341-durable-dispatch-executor-handoff.md`
+- `batch-cards/342-durable-dispatch-outcome-persistence.md`
 
 ## Acceptance Criteria
 
 - [x] Accepted durable dispatch admissions can pass invocation preflight.
 - [x] Invocation request records are deterministic and idempotent.
-- [ ] Executor handoff remains explicitly operator-gated.
-- [ ] Invocation outcomes link to sanitized live executor outcomes and durable
+- [x] Executor handoff remains explicitly operator-gated.
+- [x] Invocation outcomes link to sanitized live executor outcomes and durable
       status records.
-- [ ] Diagnostics are read-only and authority-free.
-- [ ] Validation passes or blockers are recorded.
+- [x] Diagnostics are read-only and authority-free.
+- [x] Validation passes or blockers are recorded.

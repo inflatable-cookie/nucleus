@@ -159,6 +159,60 @@ Current state:
   method-sequence, evidence, and cleanup identity while rejecting raw payload,
   raw stream, task mutation, callback response, cancellation, and resume
   authority.
+- `nucleus-server` persists sanitized provider session binding records in the
+  agent-sessions state domain. Bindings preserve provider instance, provider
+  service, runtime session, provider session/thread refs, lifecycle, repair,
+  and evidence refs while rejecting raw provider material, secret material,
+  live handles, provider writes, and task mutation authority.
+- `nucleus-server` persists Codex stdio frame ingestion evidence with explicit
+  session refs, decode receipt refs, sequence, direction, bounded size/count
+  metadata, and evidence refs. Duplicate frame source ids are rejected, and the
+  persisted records keep raw stdio streams and raw provider payloads out of
+  durable state.
+- `nucleus-server` persists summarized Codex stdio decode outcomes for
+  supported, unsupported, malformed, and recovery-required frames. Decode
+  records keep method/status/shape/evidence refs inspectable without retaining
+  raw JSON-RPC payloads or granting provider I/O/task mutation authority.
+- `nucleus-server` exposes provider session bindings, stdio frame ingestion,
+  decode outcomes, and runtime receipts through the read-only Codex transport
+  diagnostics surface. The read model reports repair-required states and
+  persisted evidence refs while keeping client authority false.
+- `nucleus-server` derives deterministic runtime observation event identity
+  records from provider instance, provider session binding, accepted frame
+  acceptance records, decode outcomes, method, sequence, and observation kind.
+  Unsupported observations keep visible identity, mismatched session/frame
+  identity blocks promotion, and the records remain replay-safe.
+- `nucleus-server` persists runtime observation ingestion cursor snapshots per
+  observation stream. Cursors advance accepted observations, treat duplicates
+  as deterministic no-ops, block stale sequences, flag sequence gaps as
+  repair-required evidence, and never invoke provider I/O or mutate task state.
+- `nucleus-server` persists accepted runtime observations as orchestration
+  event-store records and stores sanitized event-persistence outcomes for
+  accepted, duplicate, repair-only, and blocked observations. Rejected
+  observations remain inspectable as repair evidence, and persistence never
+  re-runs provider effects.
+- `nucleus-server` rebuilds read-only runtime observation replay projections
+  from event-store records and event-persistence outcomes. The projection
+  deterministically reports session progress refs, wait-state refs, terminal
+  refs, unsupported observation refs, repair needs, and evidence refs without
+  provider I/O or task mutation authority.
+- `nucleus-server` derives advisory task work-item runtime transition
+  candidates from live observation persistence outcomes. Candidates represent
+  running, waiting, completed, failed, cancelled, and recovery-required states,
+  block missing work-item identity, and never mutate task state or copy raw
+  provider material.
+- `nucleus-server` admits live-observation work-item runtime transitions
+  through a runtime-only gate. Valid transitions are admitted, invalid
+  transitions fail closed, provider completion does not complete tasks, and
+  review acceptance plus SCM mutation remain separate blocked authorities.
+- `nucleus-server` projects admitted live-observation runtime transitions into
+  replay-only task timeline entries by reference. Timeline projection is
+  deterministic, skips blocked admissions, keeps raw provider material out, and
+  grants no mutation authority.
+- `nucleus-server` derives review-readiness records from completed
+  live-observation runtime admissions only when validation, checkpoint, diff,
+  receipt, or no-change evidence exists. Review acceptance and task completion
+  remain separately blocked authorities.
 - `nucleus-server` persists Codex live executor outcomes, runtime receipts, and
   completion observation events through local-store-backed state. Duplicate
   write attempt ids are rejected deterministically, records survive reopen, and
@@ -286,6 +340,18 @@ Current state:
   executor invocation, provider writes, task mutation, review acceptance,
   callback answering, interruption, recovery, replacement-thread promotion,
   SCM mutation, and raw material retention blocked.
+- `nucleus-server` has durable dispatch executor handoff and outcome
+  persistence reconciliation records. These records bridge accepted invocation
+  requests to the live executor boundary, link sanitized live executor
+  persistence back to durable status linkage, reject duplicate write-attempts,
+  and keep raw payloads, raw streams, task mutation, review acceptance,
+  callback answering, interruption, recovery, replacement-thread promotion,
+  and SCM mutation blocked.
+- `nucleus-server` exposes durable dispatch invocation diagnostics through the
+  durable provider executor diagnostics surface. Invocation diagnostics are
+  read-only and cover preflight, request, executor handoff, outcome
+  persistence, evidence refs, blocked reasons, and next actions without
+  granting executor, provider-write, or task authority.
 - The next runtime target is durable dispatch invocation, then provider
   session/stdio persistence, runtime observation event-store linkage, and
   task-transition admission from live observations.

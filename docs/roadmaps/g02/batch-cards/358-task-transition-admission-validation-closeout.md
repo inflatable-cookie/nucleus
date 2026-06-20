@@ -1,6 +1,6 @@
 # 358 Task Transition Admission Validation Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../078-task-transition-admission-from-live-observations.md`
@@ -18,9 +18,9 @@ wait/callback/recovery persistence.
 
 ## Acceptance Criteria
 
-- [ ] Validation passes or blockers are recorded.
-- [ ] Task completion/review acceptance remain blocked.
-- [ ] `079` is activated only after transition rules are stable.
+- [x] Validation passes or blockers are recorded.
+- [x] Task completion/review acceptance remain blocked.
+- [x] `079` is activated only after transition rules are stable.
 
 ## Validation
 

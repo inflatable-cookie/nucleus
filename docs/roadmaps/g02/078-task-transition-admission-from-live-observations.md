@@ -1,6 +1,6 @@
 # 078 Task Transition Admission From Live Observations
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 
@@ -18,19 +18,19 @@ letting provider status mutate task state directly.
 
 ## Goals
 
-- [ ] Derive work-item transition candidates from live observations.
-- [ ] Gate runtime transitions through engine admission records.
-- [ ] Project task timeline entries from accepted transitions.
-- [ ] Gate review readiness separately from runtime completion.
-- [ ] Keep task completion and review acceptance blocked.
+- [x] Derive work-item transition candidates from live observations.
+- [x] Gate runtime transitions through engine admission records.
+- [x] Project task timeline entries from accepted transitions.
+- [x] Gate review readiness separately from runtime completion.
+- [x] Keep task completion and review acceptance blocked.
 
 ## Execution Plan
 
-- [ ] Candidate batch: map observations to work-item transition candidates.
-- [ ] Admission batch: validate runtime transitions.
-- [ ] Timeline batch: project accepted live-observation transitions.
-- [ ] Review batch: derive review readiness, not acceptance.
-- [ ] Closeout batch: validate and activate wait/callback persistence.
+- [x] Candidate batch: map observations to work-item transition candidates.
+- [x] Admission batch: validate runtime transitions.
+- [x] Timeline batch: project accepted live-observation transitions.
+- [x] Review batch: derive review readiness, not acceptance.
+- [x] Closeout batch: validate and activate wait/callback persistence.
 
 ## Batch Cards
 
@@ -40,19 +40,19 @@ None.
 
 Planned cards:
 
+None.
+
+Completed cards:
+
 - `batch-cards/354-live-observation-work-item-candidates.md`
 - `batch-cards/355-work-item-runtime-transition-admission.md`
 - `batch-cards/356-live-observation-task-timeline-projection.md`
 - `batch-cards/357-review-readiness-from-live-observations.md`
 - `batch-cards/358-task-transition-admission-validation-closeout.md`
 
-Completed cards:
-
-None.
-
 ## Acceptance Criteria
 
-- [ ] Provider completion can only create completed runtime state.
-- [ ] Review readiness requires explicit evidence.
-- [ ] Task completion remains a separate admitted command.
-- [ ] Validation passes or blockers are recorded.
+- [x] Provider completion can only create completed runtime state.
+- [x] Review readiness requires explicit evidence.
+- [x] Task completion remains a separate admitted command.
+- [x] Validation passes or blockers are recorded.

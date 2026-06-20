@@ -16,18 +16,41 @@ use crate::scheduler::{
     RuntimeSchedulerRequestRefs,
 };
 
+mod live_observation_timeline_projection;
 mod observation_links;
+mod review_readiness;
 mod types;
+mod work_item_candidates;
+mod work_item_transition_admission;
 
+pub use live_observation_timeline_projection::{
+    rebuild_codex_live_observation_task_timeline, CodexLiveObservationTaskTimelineEntry,
+    CodexLiveObservationTaskTimelineProjection,
+};
 pub use observation_links::{
     link_codex_observation_to_task_runtime, CodexTaskRuntimeObservationLink,
     CodexTaskRuntimeObservationLinkStatus,
+};
+pub use review_readiness::{
+    codex_review_readiness_from_live_observation, CodexReviewReadinessFromLiveObservationBlocker,
+    CodexReviewReadinessFromLiveObservationInput, CodexReviewReadinessFromLiveObservationRecord,
+    CodexReviewReadinessFromLiveObservationStatus,
 };
 pub use types::{
     CodexTaskRuntimeAdmission, CodexTaskRuntimeErrorClass, CodexTaskRuntimeErrorClassification,
     CodexTaskRuntimeProgressEvent, CodexTaskRuntimeProgressKind, CodexTaskRuntimeProviderRefs,
     CodexTaskRuntimeReceiptLink, CodexTaskRuntimeRecoveryGate, CodexTaskRuntimeRecoveryState,
     CodexTaskRuntimeRequestId, CodexTaskRuntimeRequestRecord, CodexTaskRuntimeWaitLink,
+};
+pub use work_item_candidates::{
+    codex_live_observation_work_item_candidate, CodexLiveObservationWorkItemCandidate,
+    CodexLiveObservationWorkItemCandidateBlocker, CodexLiveObservationWorkItemCandidateInput,
+    CodexLiveObservationWorkItemCandidateState, CodexLiveObservationWorkItemCandidateStatus,
+};
+pub use work_item_transition_admission::{
+    admit_codex_work_item_runtime_transition, CodexWorkItemRuntimeTransitionAdmissionBlocker,
+    CodexWorkItemRuntimeTransitionAdmissionInput, CodexWorkItemRuntimeTransitionAdmissionRecord,
+    CodexWorkItemRuntimeTransitionAdmissionStatus,
 };
 
 /// Admit a task-scoped Codex request into the inert scheduler.

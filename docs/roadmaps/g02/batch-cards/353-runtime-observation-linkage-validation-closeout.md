@@ -1,6 +1,6 @@
 # 353 Runtime Observation Linkage Validation Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../077-codex-runtime-observation-event-store-linkage.md`
@@ -18,9 +18,9 @@ admission.
 
 ## Acceptance Criteria
 
-- [ ] Validation passes or blockers are recorded.
-- [ ] `078` is activated only if observation replay is deterministic.
-- [ ] Provider replay does not perform side effects.
+- [x] Validation passes or blockers are recorded.
+- [x] `078` is activated only if observation replay is deterministic.
+- [x] Provider replay does not perform side effects.
 
 ## Validation
 

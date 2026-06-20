@@ -1,6 +1,6 @@
 # 352 Runtime Observation Replay Projection
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../077-codex-runtime-observation-event-store-linkage.md`
@@ -18,10 +18,10 @@ Rebuild runtime observation projections from persisted event-store records.
 
 ## Acceptance Criteria
 
-- [ ] Projection rebuild is deterministic.
-- [ ] Terminal and wait states survive replay.
-- [ ] Unsupported observations remain visible.
-- [ ] Projection grants no provider or task authority.
+- [x] Projection rebuild is deterministic.
+- [x] Terminal and wait states survive replay.
+- [x] Unsupported observations remain visible.
+- [x] Projection grants no provider or task authority.
 
 ## Validation
 

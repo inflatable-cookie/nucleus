@@ -1,6 +1,6 @@
 # 342 Durable Dispatch Outcome Persistence
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../075-codex-durable-dispatch-invocation-gate.md`
@@ -21,10 +21,10 @@ receipt, and durable status records.
 
 ## Acceptance Criteria
 
-- [ ] Invocation outcome persistence writes only sanitized records.
-- [ ] Duplicate write-attempt ids are rejected deterministically.
-- [ ] Durable status records reflect linked invocation outcomes.
-- [ ] Outcome persistence does not mutate task state.
+- [x] Invocation outcome persistence writes only sanitized records.
+- [x] Duplicate write-attempt ids are rejected deterministically.
+- [x] Durable status records reflect linked invocation outcomes.
+- [x] Outcome persistence does not mutate task state.
 
 ## Validation
 

@@ -1,6 +1,6 @@
 # 354 Live Observation Work Item Candidates
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../078-task-transition-admission-from-live-observations.md`
@@ -17,11 +17,11 @@ Derive task work-item transition candidates from accepted live observations.
 
 ## Acceptance Criteria
 
-- [ ] Running, waiting, completed, failed, cancelled, and recovery-required
+- [x] Running, waiting, completed, failed, cancelled, and recovery-required
       candidates can be represented.
-- [ ] Missing work-item identity blocks candidate creation.
-- [ ] Candidates do not mutate task state.
-- [ ] Raw provider material is not copied.
+- [x] Missing work-item identity blocks candidate creation.
+- [x] Candidates do not mutate task state.
+- [x] Raw provider material is not copied.
 
 ## Validation
 

@@ -1,6 +1,6 @@
 # 350 Idempotent Observation Ingestion Cursor
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../077-codex-runtime-observation-event-store-linkage.md`
@@ -17,10 +17,10 @@ Track ingestion cursors so duplicate or out-of-order observations fail closed.
 
 ## Acceptance Criteria
 
-- [ ] Duplicate observations are deterministic no-ops or blocked records.
-- [ ] Sequence gaps produce repair-required evidence.
-- [ ] Cursor persistence survives reopen.
-- [ ] Cursor handling does not invoke provider I/O.
+- [x] Duplicate observations are deterministic no-ops or blocked records.
+- [x] Sequence gaps produce repair-required evidence.
+- [x] Cursor persistence survives reopen.
+- [x] Cursor handling does not invoke provider I/O.
 
 ## Validation
 

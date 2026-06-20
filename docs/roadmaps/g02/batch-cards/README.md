@@ -10,7 +10,7 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `341-durable-dispatch-executor-handoff.md`
+- `359-callback-request-persistence.md`
 
 ## Paused Cards
 
@@ -18,24 +18,6 @@ None.
 
 ## Planned Cards
 
-- `342-durable-dispatch-outcome-persistence.md`
-- `343-durable-dispatch-invocation-diagnostics-closeout.md`
-- `344-provider-session-persistence-records.md`
-- `345-stdio-frame-source-persistence.md`
-- `346-decode-outcome-persistence.md`
-- `347-transport-receipt-read-model.md`
-- `348-provider-session-stdio-validation-closeout.md`
-- `349-runtime-observation-event-identity.md`
-- `350-idempotent-observation-ingestion-cursor.md`
-- `351-runtime-observation-event-store-persistence.md`
-- `352-runtime-observation-replay-projection.md`
-- `353-runtime-observation-linkage-validation-closeout.md`
-- `354-live-observation-work-item-candidates.md`
-- `355-work-item-runtime-transition-admission.md`
-- `356-live-observation-task-timeline-projection.md`
-- `357-review-readiness-from-live-observations.md`
-- `358-task-transition-admission-validation-closeout.md`
-- `359-callback-request-persistence.md`
 - `360-callback-response-durable-linkage.md`
 - `361-interruption-outcome-persistence.md`
 - `362-recovery-outcome-persistence.md`
@@ -90,6 +72,24 @@ None.
 - `338-durable-executor-dispatch-validation-closeout.md`
 - `339-durable-dispatch-invocation-preflight.md`
 - `340-durable-dispatch-invocation-request-records.md`
+- `341-durable-dispatch-executor-handoff.md`
+- `342-durable-dispatch-outcome-persistence.md`
+- `343-durable-dispatch-invocation-diagnostics-closeout.md`
+- `344-provider-session-persistence-records.md`
+- `345-stdio-frame-source-persistence.md`
+- `346-decode-outcome-persistence.md`
+- `347-transport-receipt-read-model.md`
+- `348-provider-session-stdio-validation-closeout.md`
+- `349-runtime-observation-event-identity.md`
+- `350-idempotent-observation-ingestion-cursor.md`
+- `351-runtime-observation-event-store-persistence.md`
+- `352-runtime-observation-replay-projection.md`
+- `353-runtime-observation-linkage-validation-closeout.md`
+- `354-live-observation-work-item-candidates.md`
+- `355-work-item-runtime-transition-admission.md`
+- `356-live-observation-task-timeline-projection.md`
+- `357-review-readiness-from-live-observations.md`
+- `358-task-transition-admission-validation-closeout.md`
 - `001-event-store-record-contract-and-codec.md`
 - `002-event-store-repository-boundary.md`
 - `003-command-projection-replay-integrity.md`

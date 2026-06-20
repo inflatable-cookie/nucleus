@@ -1,6 +1,6 @@
 # 343 Durable Dispatch Invocation Diagnostics Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../075-codex-durable-dispatch-invocation-gate.md`
@@ -19,11 +19,11 @@ validate the lane, and choose the next runtime step.
 
 ## Acceptance Criteria
 
-- [ ] Diagnostics expose invocation readiness and blocked reasons.
-- [ ] Diagnostics expose handoff/outcome/status refs.
-- [ ] Diagnostics do not expose raw provider material.
-- [ ] Validation passes or blockers are recorded.
-- [ ] Roadmap state has one clear next task.
+- [x] Diagnostics expose invocation readiness and blocked reasons.
+- [x] Diagnostics expose handoff/outcome/status refs.
+- [x] Diagnostics do not expose raw provider material.
+- [x] Validation passes or blockers are recorded.
+- [x] Roadmap state has one clear next task.
 
 ## Validation
 

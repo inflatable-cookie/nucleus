@@ -1,6 +1,6 @@
 # 348 Provider Session Stdio Validation Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../076-codex-provider-session-and-stdio-persistence.md`
@@ -18,9 +18,9 @@ event-store linkage.
 
 ## Acceptance Criteria
 
-- [ ] Validation passes or blockers are recorded.
-- [ ] `077` is activated only if persistence surfaces are stable.
-- [ ] No raw provider material is persisted or exposed.
+- [x] Validation passes or blockers are recorded.
+- [x] `077` is activated only if persistence surfaces are stable.
+- [x] No raw provider material is persisted or exposed.
 
 ## Validation
 

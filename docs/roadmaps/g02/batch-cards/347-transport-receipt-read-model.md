@@ -1,6 +1,6 @@
 # 347 Transport Receipt Read Model
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../076-codex-provider-session-and-stdio-persistence.md`
@@ -19,10 +19,10 @@ read models.
 
 ## Acceptance Criteria
 
-- [ ] Transport receipts expose persisted evidence refs.
-- [ ] Diagnostics are sanitized and read-only.
-- [ ] Repair-required states remain visible.
-- [ ] No raw provider material is exposed.
+- [x] Transport receipts expose persisted evidence refs.
+- [x] Diagnostics are sanitized and read-only.
+- [x] Repair-required states remain visible.
+- [x] No raw provider material is exposed.
 
 ## Validation
 

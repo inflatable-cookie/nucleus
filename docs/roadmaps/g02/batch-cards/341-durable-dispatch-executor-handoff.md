@@ -1,6 +1,6 @@
 # 341 Durable Dispatch Executor Handoff
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../075-codex-durable-dispatch-invocation-gate.md`
@@ -19,11 +19,11 @@ boundary.
 
 ## Acceptance Criteria
 
-- [ ] Accepted invocation request can be translated into a live executor
+- [x] Accepted invocation request can be translated into a live executor
       handoff record.
-- [ ] Unsupported methods are blocked before executor handoff.
-- [ ] Handoff records preserve write-attempt and idempotency identity.
-- [ ] Handoff does not retain raw provider material.
+- [x] Unsupported methods are blocked before executor handoff.
+- [x] Handoff records preserve write-attempt and idempotency identity.
+- [x] Handoff does not retain raw provider material.
 
 ## Validation
 

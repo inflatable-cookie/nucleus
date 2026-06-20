@@ -1,6 +1,6 @@
 # 079 Durable Wait Callback Interruption Recovery Persistence
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-06-20
 
@@ -40,11 +40,10 @@ answering callbacks, cancelling, resuming, or mutating tasks automatically.
 
 Ready cards:
 
-None.
+- `batch-cards/359-callback-request-persistence.md`
 
 Planned cards:
 
-- `batch-cards/359-callback-request-persistence.md`
 - `batch-cards/360-callback-response-durable-linkage.md`
 - `batch-cards/361-interruption-outcome-persistence.md`
 - `batch-cards/362-recovery-outcome-persistence.md`

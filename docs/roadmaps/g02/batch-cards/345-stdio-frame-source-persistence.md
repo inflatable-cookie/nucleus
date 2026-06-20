@@ -1,6 +1,6 @@
 # 345 Stdio Frame Source Persistence
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../076-codex-provider-session-and-stdio-persistence.md`
@@ -18,10 +18,10 @@ Persist bounded stdio frame source metadata for Codex runtime sessions.
 
 ## Acceptance Criteria
 
-- [ ] Frame metadata survives reopen.
-- [ ] Duplicate frame ids are rejected or reconciled deterministically.
-- [ ] Raw payloads are not retained.
-- [ ] Persistence does not execute provider I/O.
+- [x] Frame metadata survives reopen.
+- [x] Duplicate frame ids are rejected or reconciled deterministically.
+- [x] Raw payloads are not retained.
+- [x] Persistence does not execute provider I/O.
 
 ## Validation
 

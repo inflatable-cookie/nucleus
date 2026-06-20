@@ -39,9 +39,13 @@ pub struct CodexAppServerStdioFrameIngestionPersistenceRecord {
     pub ingestion_id: String,
     pub frame_source_id: String,
     pub runtime_instance_id: String,
+    pub session_refs: Vec<String>,
     pub sequence: u64,
     pub direction: CodexAppServerStdioFrameDirection,
     pub decode_status: CodexAppServerStdioDecodeStatus,
+    pub decode_receipt_ref: String,
+    pub frame_size_bytes: Option<u64>,
+    pub payload_line_count: Option<u32>,
     pub receipt_id: EngineRuntimeReceiptRecordId,
     pub observation_event_id: Option<OrchestrationEventId>,
     pub evidence_refs: Vec<String>,
@@ -102,9 +106,13 @@ fn persistence_record_from_parts(
         ingestion_id: ingestion_id(frame),
         frame_source_id: frame.frame_source_id.0.clone(),
         runtime_instance_id: frame.runtime_instance_id.clone(),
+        session_refs: vec![frame.runtime_instance_id.clone()],
         sequence: frame.sequence,
         direction: frame.direction.clone(),
         decode_status: frame.decode_status.clone(),
+        decode_receipt_ref: receipt_id.0.clone(),
+        frame_size_bytes: None,
+        payload_line_count: None,
         receipt_id: receipt_id.clone(),
         observation_event_id: event.as_ref().map(|event| event.event_id.clone()),
         evidence_refs: vec![frame.evidence_ref.clone()],
@@ -227,9 +235,13 @@ struct FrameIngestionRecordDto {
     ingestion_id: String,
     frame_source_id: String,
     runtime_instance_id: String,
+    session_refs: Vec<String>,
     sequence: u64,
     direction: String,
     decode_status: FrameDecodeStatusDto,
+    decode_receipt_ref: String,
+    frame_size_bytes: Option<u64>,
+    payload_line_count: Option<u32>,
     receipt_id: String,
     observation_event_id: Option<String>,
     evidence_refs: Vec<String>,
@@ -262,9 +274,13 @@ impl FrameIngestionRecordDto {
             ingestion_id: record.ingestion_id.clone(),
             frame_source_id: record.frame_source_id.clone(),
             runtime_instance_id: record.runtime_instance_id.clone(),
+            session_refs: record.session_refs.clone(),
             sequence: record.sequence,
             direction: direction_to_str(&record.direction).to_owned(),
             decode_status: FrameDecodeStatusDto::from_decode_status(&record.decode_status),
+            decode_receipt_ref: record.decode_receipt_ref.clone(),
+            frame_size_bytes: record.frame_size_bytes,
+            payload_line_count: record.payload_line_count,
             receipt_id: record.receipt_id.0.clone(),
             observation_event_id: record
                 .observation_event_id
@@ -282,9 +298,13 @@ impl FrameIngestionRecordDto {
             ingestion_id: self.ingestion_id,
             frame_source_id: self.frame_source_id,
             runtime_instance_id: self.runtime_instance_id,
+            session_refs: self.session_refs,
             sequence: self.sequence,
             direction: direction_from_str(&self.direction)?,
             decode_status: self.decode_status.into_decode_status(),
+            decode_receipt_ref: self.decode_receipt_ref,
+            frame_size_bytes: self.frame_size_bytes,
+            payload_line_count: self.payload_line_count,
             receipt_id: EngineRuntimeReceiptRecordId(self.receipt_id),
             observation_event_id: self.observation_event_id.map(OrchestrationEventId),
             evidence_refs: self.evidence_refs,
@@ -361,7 +381,7 @@ mod tests {
     use nucleus_orchestration::{decode_orchestration_event_store_record, OrchestrationEventKind};
 
     #[test]
-    fn decoded_frame_ingestion_survives_restart_without_raw_streams() {
+    fn stdio_frame_source_persistence_survives_restart_without_raw_streams() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let db = temp_dir.path().join("nucleus.sqlite");
         let state = ServerStateService::new(SqliteBackend::new(db.clone()));
@@ -383,6 +403,13 @@ mod tests {
         assert_eq!(restored, vec![persisted.clone()]);
         assert_eq!(receipts.len(), 1);
         assert_eq!(receipts[0].status, EngineRuntimeReceiptStatus::Accepted);
+        assert_eq!(
+            persisted.session_refs,
+            vec![persisted.runtime_instance_id.clone()]
+        );
+        assert_eq!(persisted.decode_receipt_ref, persisted.receipt_id.0);
+        assert_eq!(persisted.frame_size_bytes, None);
+        assert_eq!(persisted.payload_line_count, None);
         assert_eq!(events.len(), 1);
         let event =
             decode_orchestration_event_store_record(&events[0].payload.bytes).expect("event");
@@ -416,7 +443,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_frame_source_is_rejected_but_original_remains_inspectable() {
+    fn stdio_frame_source_persistence_rejects_duplicate_frame_source() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let state =
             ServerStateService::new(SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")));
@@ -447,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_frame_persists_receipt_without_observation_event() {
+    fn stdio_frame_source_persistence_keeps_decode_receipt_without_observation_event() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let state =
             ServerStateService::new(SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")));

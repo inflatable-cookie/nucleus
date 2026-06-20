@@ -19,6 +19,7 @@ mod codex_transport_executor;
 mod codex_turn_start;
 mod durable_provider_executor;
 mod durable_provider_executor_dispatch;
+mod durable_provider_executor_invocation;
 mod effigy;
 mod helpers;
 mod scm;
@@ -89,6 +90,11 @@ pub use durable_provider_executor_dispatch::{
     DurableProviderExecutorDispatchDiagnosticsDto,
     DurableProviderExecutorDispatchOutcomeLinkageDiagnosticDto,
     DurableProviderExecutorDispatchSelectionDiagnosticDto,
+};
+pub use durable_provider_executor_invocation::{
+    durable_provider_executor_invocation_diagnostics, DurableExecutorHandoffDiagnosticDto,
+    DurableInvocationPreflightDiagnosticDto, DurableInvocationRequestDiagnosticDto,
+    DurableOutcomePersistenceDiagnosticDto, DurableProviderExecutorInvocationDiagnosticsDto,
 };
 pub use effigy::{effigy_diagnostics, EffigyDiagnosticsDto};
 pub use scm::{

@@ -1,6 +1,6 @@
 # 355 Work Item Runtime Transition Admission
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../078-task-transition-admission-from-live-observations.md`
@@ -17,10 +17,10 @@ Gate task work-item runtime transitions derived from live observations.
 
 ## Acceptance Criteria
 
-- [ ] Valid runtime transitions are admitted.
-- [ ] Invalid transitions fail closed.
-- [ ] Provider completion does not imply task completion.
-- [ ] Review acceptance remains separate.
+- [x] Valid runtime transitions are admitted.
+- [x] Invalid transitions fail closed.
+- [x] Provider completion does not imply task completion.
+- [x] Review acceptance remains separate.
 
 ## Validation
 

@@ -12,6 +12,7 @@ mod callback_response_execution_receipt_linkage;
 mod callback_response_executor_admission;
 mod callback_response_outcome;
 mod callback_response_reactor;
+mod decode_outcome_persistence;
 mod event_store_linkage;
 mod handshake;
 mod idempotency;
@@ -39,6 +40,10 @@ mod recovery_executor_admission;
 mod recovery_need;
 mod recovery_outcome;
 mod runtime_instance;
+mod runtime_observation_event_identity;
+mod runtime_observation_event_store_persistence;
+mod runtime_observation_ingestion_cursor;
+mod runtime_observation_replay_projection;
 mod session_binding;
 mod spawn_intent;
 mod stdio_frame_ingestion_persistence;
@@ -112,6 +117,10 @@ pub use callback_response_outcome::{
 pub use callback_response_reactor::{
     codex_callback_response_reactor_dry_run, CodexAppServerCallbackResponseReactorDryRunInput,
     CodexAppServerCallbackResponseReactorDryRunRecord,
+};
+pub use decode_outcome_persistence::{
+    persist_codex_decode_outcome, read_codex_decode_outcome_records,
+    CodexAppServerDecodeOutcomePersistenceInput, CodexAppServerDecodeOutcomePersistenceRecord,
 };
 pub use event_store_linkage::{
     link_codex_observation_to_event_store, CodexAppServerObservationEventLink,
@@ -260,6 +269,26 @@ pub use runtime_instance::{
     codex_runtime_instance_from_supervision_request, CodexAppServerPayloadRetentionPolicy,
     CodexAppServerRuntimeInstanceId, CodexAppServerRuntimeInstanceRecord,
     CodexAppServerRuntimeInstanceState,
+};
+pub use runtime_observation_event_identity::{
+    codex_runtime_observation_event_identity, CodexRuntimeObservationEventIdentityBlocker,
+    CodexRuntimeObservationEventIdentityInput, CodexRuntimeObservationEventIdentityRecord,
+    CodexRuntimeObservationEventIdentityStatus,
+};
+pub use runtime_observation_event_store_persistence::{
+    persist_codex_runtime_observation_event_store,
+    read_codex_runtime_observation_event_store_records,
+    CodexRuntimeObservationEventStorePersistenceInput,
+    CodexRuntimeObservationEventStorePersistenceRecord,
+    CodexRuntimeObservationEventStorePersistenceStatus,
+};
+pub use runtime_observation_ingestion_cursor::{
+    apply_codex_runtime_observation_ingestion_cursor,
+    read_codex_runtime_observation_ingestion_cursors, CodexRuntimeObservationIngestionCursorInput,
+    CodexRuntimeObservationIngestionCursorRecord, CodexRuntimeObservationIngestionCursorStatus,
+};
+pub use runtime_observation_replay_projection::{
+    rebuild_codex_runtime_observation_replay_projection, CodexRuntimeObservationReplayProjection,
 };
 pub use session_binding::{
     codex_ingestion_source_from_live_frame, codex_replacement_thread_recovery_binding,

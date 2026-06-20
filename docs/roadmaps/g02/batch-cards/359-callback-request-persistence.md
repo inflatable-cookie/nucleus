@@ -1,6 +1,6 @@
 # 359 Callback Request Persistence
 
-Status: planned
+Status: ready
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../079-durable-wait-callback-interruption-recovery-persistence.md`

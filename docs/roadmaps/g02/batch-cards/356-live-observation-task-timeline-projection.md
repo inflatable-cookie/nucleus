@@ -1,6 +1,6 @@
 # 356 Live Observation Task Timeline Projection
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../078-task-transition-admission-from-live-observations.md`
@@ -18,10 +18,10 @@ Project accepted live-observation transitions into task timeline entries.
 
 ## Acceptance Criteria
 
-- [ ] Accepted transitions produce deterministic timeline entries.
-- [ ] Timeline entries do not contain raw provider material.
-- [ ] Replay rebuilds the same timeline.
-- [ ] Timeline projection grants no mutation authority.
+- [x] Accepted transitions produce deterministic timeline entries.
+- [x] Timeline entries do not contain raw provider material.
+- [x] Replay rebuilds the same timeline.
+- [x] Timeline projection grants no mutation authority.
 
 ## Validation
 

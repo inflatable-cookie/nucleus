@@ -90,11 +90,11 @@ and engine boundary are settled.
 - `072-codex-provider-recovery-execution-gate.md` - completed
 - `073-codex-provider-durable-executor-gate.md` - completed
 - `074-codex-durable-executor-dispatch-gate.md` - completed
-- `075-codex-durable-dispatch-invocation-gate.md` - active
-- `076-codex-provider-session-and-stdio-persistence.md` - planned
-- `077-codex-runtime-observation-event-store-linkage.md` - planned
-- `078-task-transition-admission-from-live-observations.md` - planned
-- `079-durable-wait-callback-interruption-recovery-persistence.md` - planned
+- `075-codex-durable-dispatch-invocation-gate.md` - completed
+- `076-codex-provider-session-and-stdio-persistence.md` - completed
+- `077-codex-runtime-observation-event-store-linkage.md` - completed
+- `078-task-transition-admission-from-live-observations.md` - completed
+- `079-durable-wait-callback-interruption-recovery-persistence.md` - active
 - `080-provider-runtime-hardening.md` - planned
 - `081-provider-observability-diagnostics.md` - planned
 - `082-task-backed-live-workflow-closeout.md` - planned
@@ -103,7 +103,7 @@ and engine boundary are settled.
 
 Ready cards:
 
-- `batch-cards/341-durable-dispatch-executor-handoff.md`
+- `batch-cards/359-callback-request-persistence.md`
 
 Paused cards:
 
@@ -111,24 +111,6 @@ None.
 
 Planned cards:
 
-- `batch-cards/342-durable-dispatch-outcome-persistence.md`
-- `batch-cards/343-durable-dispatch-invocation-diagnostics-closeout.md`
-- `batch-cards/344-provider-session-persistence-records.md`
-- `batch-cards/345-stdio-frame-source-persistence.md`
-- `batch-cards/346-decode-outcome-persistence.md`
-- `batch-cards/347-transport-receipt-read-model.md`
-- `batch-cards/348-provider-session-stdio-validation-closeout.md`
-- `batch-cards/349-runtime-observation-event-identity.md`
-- `batch-cards/350-idempotent-observation-ingestion-cursor.md`
-- `batch-cards/351-runtime-observation-event-store-persistence.md`
-- `batch-cards/352-runtime-observation-replay-projection.md`
-- `batch-cards/353-runtime-observation-linkage-validation-closeout.md`
-- `batch-cards/354-live-observation-work-item-candidates.md`
-- `batch-cards/355-work-item-runtime-transition-admission.md`
-- `batch-cards/356-live-observation-task-timeline-projection.md`
-- `batch-cards/357-review-readiness-from-live-observations.md`
-- `batch-cards/358-task-transition-admission-validation-closeout.md`
-- `batch-cards/359-callback-request-persistence.md`
 - `batch-cards/360-callback-response-durable-linkage.md`
 - `batch-cards/361-interruption-outcome-persistence.md`
 - `batch-cards/362-recovery-outcome-persistence.md`
@@ -183,6 +165,24 @@ Completed cards:
 - `batch-cards/338-durable-executor-dispatch-validation-closeout.md`
 - `batch-cards/339-durable-dispatch-invocation-preflight.md`
 - `batch-cards/340-durable-dispatch-invocation-request-records.md`
+- `batch-cards/341-durable-dispatch-executor-handoff.md`
+- `batch-cards/342-durable-dispatch-outcome-persistence.md`
+- `batch-cards/343-durable-dispatch-invocation-diagnostics-closeout.md`
+- `batch-cards/344-provider-session-persistence-records.md`
+- `batch-cards/345-stdio-frame-source-persistence.md`
+- `batch-cards/346-decode-outcome-persistence.md`
+- `batch-cards/347-transport-receipt-read-model.md`
+- `batch-cards/348-provider-session-stdio-validation-closeout.md`
+- `batch-cards/349-runtime-observation-event-identity.md`
+- `batch-cards/350-idempotent-observation-ingestion-cursor.md`
+- `batch-cards/351-runtime-observation-event-store-persistence.md`
+- `batch-cards/352-runtime-observation-replay-projection.md`
+- `batch-cards/353-runtime-observation-linkage-validation-closeout.md`
+- `batch-cards/354-live-observation-work-item-candidates.md`
+- `batch-cards/355-work-item-runtime-transition-admission.md`
+- `batch-cards/356-live-observation-task-timeline-projection.md`
+- `batch-cards/357-review-readiness-from-live-observations.md`
+- `batch-cards/358-task-transition-admission-validation-closeout.md`
 - `batch-cards/001-event-store-record-contract-and-codec.md`
 - `batch-cards/002-event-store-repository-boundary.md`
 - `batch-cards/003-command-projection-replay-integrity.md`

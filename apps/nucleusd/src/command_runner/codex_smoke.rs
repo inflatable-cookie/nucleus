@@ -80,9 +80,12 @@ fn build_codex_turn_start_real_write_smoke_boundary(
     let envelope = envelope();
     let execution = execution();
     let diagnostics = codex_transport_executor_diagnostics(
+        &[],
         &[authority.clone()],
         &[envelope.clone()],
         &[execution.clone()],
+        &[],
+        &[],
         &[],
     );
     let smoke_intent = if confirm_real_write {

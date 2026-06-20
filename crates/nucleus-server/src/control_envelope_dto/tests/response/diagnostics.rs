@@ -128,14 +128,14 @@ fn empty_codex_provider_diagnostics() -> crate::CodexProviderDiagnosticsDto {
         codex_task_backed_live_execution_diagnostics(&[], &[]),
         codex_turn_start_diagnostics(&[]),
         codex_subscription_diagnostics(&[], &[]),
-        codex_transport_executor_diagnostics(&[], &[], &[], &[]),
+        codex_transport_executor_diagnostics(&[], &[], &[], &[], &[], &[], &[]),
         codex_callback_diagnostics(&[]),
         codex_callback_response_execution_diagnostics(&[], &[]),
         codex_interruption_diagnostics(&[]),
         codex_interruption_execution_diagnostics(&[], &[]),
         codex_recovery_diagnostics(&[]),
         codex_recovery_execution_diagnostics(&[], &[]),
-        durable_provider_executor_diagnostics(&[], &[], &[], &[], &[]),
+        durable_provider_executor_diagnostics(&[], &[], &[], &[], &[], &[], &[], &[], &[]),
     )
 }
 
