@@ -18,22 +18,25 @@ implementation lane can be chosen deliberately.
 Current state:
 
 - `effigy doctor` currently fails on `scan.god-files`
-- the current doctor report has six god-file errors and warning-sized files
-  remain across active server surfaces
-- `crates/nucleus-server/src/lib.rs` has been restored to a compact crate
-  front door
-- shared Codex supervision test fixtures now reduce repeated callback,
-  interruption, and recovery setup
-- warning-sized Codex supervision files still show pressure across callback,
-  interruption, turn-start, smoke, and session surfaces
-- `scan.god-files` still reports warning-sized files across server DTOs,
-  request handlers, desktop Tauri code, desktop CSS, local store, SCM, native
-  harness, and engine test surfaces
+- the current doctor report has 152 findings: 124 warnings and 28 errors
+- `crates/nucleus-server/src/lib.rs` remains a compact crate front door
+- the first health rebaseline split request-handler diagnostics tests,
+  control-envelope diagnostics response tests, diagnostics query routing, and
+  SCM review/preparation test modules
+- the 124 health rebaseline removed the active-lane error-sized request-handler,
+  control DTO, and SCM review/preparation pressure
+- remaining error-sized files are broader durable dispatch, Codex supervision,
+  provider persistence, and DTO front-door debt
+- recent SCM capture, review, decision, and change-request preparation work is
+  productively scoped but has expanded too many broad server surfaces
 
 Needed:
 
-- treat warning files as pressure when those areas are touched
-- avoid adding more broad DTO or CSS surfaces until ownership is clearer
+- allow roadmap 123 to resume while keeping remaining god-file debt visible
+- treat warning and error files as pressure when those areas are touched
+- prefer bounded mechanical test-module splits only when they improve ownership
+- avoid turning broad historical doctor debt into an open-ended blocker for the
+  SCM adapter-plan lane
 
 ### Server Crate Accretion
 
@@ -718,14 +721,54 @@ Recent evidence:
   against a local temp repo, parses porcelain status and diff-stat output into
   sanitized count records, and proves mutating Git verbs, external effects, and
   raw-output persistence remain blocked.
+- Read-only Git runner output now composes into sanitized evidence capture,
+  existing Git dry-run execution persistence, and control diagnostics while
+  keeping raw stdout/stderr/diff/path material transient and out of persisted
+  records.
+- SCM capture workflow projection now composes completion-capture refs,
+  dry-run plan refs, Git execution persistence refs, diagnostics refs, and
+  evidence refs into replay-only stage-state and diagnostics records with
+  missing, completed, blocked, and repair-required states.
+- SCM capture workflow diagnostics now route through the read-only control API,
+  response DTOs, request-handler diagnostics, and `All` snapshots from current
+  state while keeping mutation, external effect, and raw-output authority false.
+- SCM capture operator review readiness now admits completed replay workflows,
+  preserves missing, blocked, and repair-required blockers, summarizes review
+  candidates, and keeps change-request, SCM, forge, provider, callback,
+  interruption, recovery, and raw-output authority false.
+- SCM capture review readiness now routes through sanitized control DTOs,
+  diagnostics query vocabulary, aggregate snapshots, and request-handler
+  diagnostics derived from persisted replay evidence while still creating no
+  operator decisions and granting no SCM, forge, provider, callback,
+  interruption, recovery, or raw-output authority.
+- SCM capture operator review decisions now persist accepted, rejected,
+  needs-changes, and abandoned decisions by readiness/workflow refs, block
+  duplicate ids and invalid accepted decisions over blocked readiness,
+  summarize decision outcomes, and keep change-request, SCM, forge, provider,
+  callback, interruption, recovery, and raw-output authority false.
+- SCM capture review-decision diagnostics now route through sanitized control
+  DTOs, diagnostics query vocabulary, aggregate snapshots, and request-handler
+  reads from persisted explicit decision records while still creating no
+  change-request preparation and granting no SCM, forge, provider, callback,
+  interruption, recovery, or raw-output authority.
+- Adapter-neutral change-request preparation admission now admits only persisted
+  accepted SCM capture review decisions, blocks rejected, needs-changes,
+  abandoned, duplicate, and blocked decisions, keeps Git-only terminology out
+  of the admission record, and grants no branch/snapshot, commit/publish,
+  push/remote-publish, forge, provider, callback, interruption, recovery, or
+  raw-output authority.
+- Adapter-neutral change-request preparation admissions now persist by stable
+  id, route through sanitized control DTOs, diagnostics query vocabulary,
+  aggregate snapshots, and request-handler diagnostics, and still grant no
+  branch/snapshot, commit/publish, push/remote-publish, forge, provider,
+  callback, interruption, recovery, or raw-output authority.
 
 Next implementation gate:
 
-1. create provider-neutral completion-to-SCM promotion candidates
-2. map candidates to SCM readiness records without Git-only assumptions
-3. expose change-request readiness diagnostics
-4. prove no SCM, forge, provider, callback, recovery, or raw-material effects
-   execute
+1. select adapter-specific change-request plan records from persisted
+   adapter-neutral preparation admissions
+2. keep SCM/forge execution authority absent
+3. continue reducing god-file pressure opportunistically when touched
 
 Until that lane proves durable execution, keep checkout, worktree creation,
 commit, push, branch mutation, publish, promote, merge, provider cancellation,

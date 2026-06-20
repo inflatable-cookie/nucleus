@@ -23,6 +23,10 @@ pub enum ControlDiagnosticsResultDto {
     ScmCaptureDryRun(crate::ScmCaptureDryRunControlDto),
     ScmCaptureDryRunExecution(crate::ScmCaptureDryRunExecutionControlDto),
     GitDryRunExecution(crate::GitDryRunExecutionControlDto),
+    ScmCaptureWorkflow(crate::ScmCaptureWorkflowControlDto),
+    ScmCaptureReview(crate::ScmCaptureReviewControlDto),
+    ScmCaptureReviewDecision(crate::ScmCaptureReviewDecisionControlDto),
+    ScmChangeRequestPreparation(crate::ScmChangeRequestPrepControlDto),
     All(ControlDiagnosticsSnapshotDto),
 }
 
@@ -42,6 +46,10 @@ pub struct ControlDiagnosticsSnapshotDto {
     pub scm_capture_dry_run: crate::ScmCaptureDryRunControlDto,
     pub scm_capture_dry_run_execution: crate::ScmCaptureDryRunExecutionControlDto,
     pub git_dry_run_execution: crate::GitDryRunExecutionControlDto,
+    pub scm_capture_workflow: crate::ScmCaptureWorkflowControlDto,
+    pub scm_capture_review: crate::ScmCaptureReviewControlDto,
+    pub scm_capture_review_decision: crate::ScmCaptureReviewDecisionControlDto,
+    pub scm_change_request_preparation: crate::ScmChangeRequestPrepControlDto,
 }
 
 impl From<&ServerDiagnosticsQueryResult> for ControlDiagnosticsResultDto {
@@ -78,6 +86,18 @@ impl From<&ServerDiagnosticsQueryResult> for ControlDiagnosticsResultDto {
             ServerDiagnosticsQueryResult::GitDryRunExecution(record) => {
                 Self::GitDryRunExecution(record.clone())
             }
+            ServerDiagnosticsQueryResult::ScmCaptureWorkflow(record) => {
+                Self::ScmCaptureWorkflow(record.clone())
+            }
+            ServerDiagnosticsQueryResult::ScmCaptureReview(record) => {
+                Self::ScmCaptureReview(record.clone())
+            }
+            ServerDiagnosticsQueryResult::ScmCaptureReviewDecision(record) => {
+                Self::ScmCaptureReviewDecision(record.clone())
+            }
+            ServerDiagnosticsQueryResult::ScmChangeRequestPreparation(record) => {
+                Self::ScmChangeRequestPreparation(record.clone())
+            }
             ServerDiagnosticsQueryResult::All(snapshot) => {
                 Self::All(ControlDiagnosticsSnapshotDto::from(snapshot))
             }
@@ -101,6 +121,10 @@ impl From<&ServerDiagnosticsSnapshot> for ControlDiagnosticsSnapshotDto {
             scm_capture_dry_run: snapshot.scm_capture_dry_run.clone(),
             scm_capture_dry_run_execution: snapshot.scm_capture_dry_run_execution.clone(),
             git_dry_run_execution: snapshot.git_dry_run_execution.clone(),
+            scm_capture_workflow: snapshot.scm_capture_workflow.clone(),
+            scm_capture_review: snapshot.scm_capture_review.clone(),
+            scm_capture_review_decision: snapshot.scm_capture_review_decision.clone(),
+            scm_change_request_preparation: snapshot.scm_change_request_preparation.clone(),
         }
     }
 }

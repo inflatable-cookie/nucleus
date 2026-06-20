@@ -16,6 +16,9 @@ use crate::diagnostics_read_models::{
 use crate::ids::ServerControlRequestId;
 use nucleus_native_harness::NativeEffigyProjectIntegration;
 
+mod completion;
+mod scm;
+
 #[test]
 fn response_envelope_dto_serializes_all_diagnostics_without_authority() {
     let response = ServerControlResponse {
@@ -65,6 +68,29 @@ fn response_envelope_dto_serializes_all_diagnostics_without_authority() {
             && snapshot.git_dry_run_execution.execution_count == 0
             && !snapshot.git_dry_run_execution.commit_executed
             && !snapshot.git_dry_run_execution.raw_output_retained
+            && snapshot.scm_capture_workflow.workflow_count == 0
+            && snapshot.scm_capture_workflow.replay_only
+            && !snapshot.scm_capture_workflow.scm_mutation_authority_granted
+            && !snapshot.scm_capture_workflow.raw_output_retained
+            && snapshot.scm_capture_review.readiness_count == 0
+            && !snapshot.scm_capture_review.operator_decision_created
+            && !snapshot.scm_capture_review.scm_mutation_authority_granted
+            && !snapshot.scm_capture_review.raw_output_retained
+            && snapshot.scm_capture_review_decision.decision_count == 0
+            && !snapshot
+                .scm_capture_review_decision
+                .change_request_authority_granted
+            && !snapshot
+                .scm_capture_review_decision
+                .scm_mutation_authority_granted
+            && !snapshot.scm_capture_review_decision.raw_output_retained
+            && snapshot.scm_change_request_preparation.admission_count == 0
+            && snapshot.scm_change_request_preparation.adapter_neutral
+            && !snapshot
+                .scm_change_request_preparation
+                .branch_or_snapshot_authority_granted
+            && !snapshot.scm_change_request_preparation.forge_authority_granted
+            && !snapshot.scm_change_request_preparation.raw_output_retained
     ));
     assert!(json.contains("\"type\":\"diagnostics\""));
     assert!(json.contains("\"domain\":\"all\""));
@@ -95,203 +121,6 @@ fn response_envelope_dto_serializes_codex_provider_diagnostics_domain() {
             && !record.recovery.client_can_resume_provider
     ));
     assert!(json.contains("\"domain\":\"codex_provider\""));
-    assert_diagnostics_json_is_sanitized(&json);
-}
-
-#[test]
-fn response_envelope_dto_serializes_live_evidence_completion_diagnostics_domain() {
-    let response = ServerControlResponse {
-        request_id: ServerControlRequestId("request:dto:diagnostics:completion".to_owned()),
-        status: ServerControlResponseStatus::Complete,
-        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
-            ServerDiagnosticsQueryResult::LiveEvidenceCompletion(empty_completion_diagnostics()),
-        )),
-    };
-
-    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
-    let json = serde_json::to_string(&dto).expect("json");
-
-    assert!(matches!(
-        dto.body,
-        ControlResponseBodyDto::Diagnostics {
-            result: ControlDiagnosticsResultDto::LiveEvidenceCompletion(record),
-        } if record.timeline_entry_count == 0
-            && !record.client_mutation_authority
-            && !record.provider_authority_granted
-            && !record.scm_authority_granted
-    ));
-    assert!(json.contains("\"domain\":\"live_evidence_completion\""));
-    assert_diagnostics_json_is_sanitized(&json);
-}
-
-#[test]
-fn response_envelope_dto_serializes_completion_scm_readiness_diagnostics_domain() {
-    let response = ServerControlResponse {
-        request_id: ServerControlRequestId("request:dto:diagnostics:completion-scm".to_owned()),
-        status: ServerControlResponseStatus::Complete,
-        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
-            ServerDiagnosticsQueryResult::CompletionScmReadiness(empty_completion_scm_diagnostics()),
-        )),
-    };
-
-    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
-    let json = serde_json::to_string(&dto).expect("json");
-
-    assert!(matches!(
-        dto.body,
-        ControlResponseBodyDto::Diagnostics {
-            result: ControlDiagnosticsResultDto::CompletionScmReadiness(record),
-        } if record.candidate_count == 0
-            && record.repair_required
-            && !record.scm_authority_granted
-            && !record.forge_authority_granted
-            && !record.provider_authority_granted
-    ));
-    assert!(json.contains("\"domain\":\"completion_scm_readiness\""));
-    assert_diagnostics_json_is_sanitized(&json);
-}
-
-#[test]
-fn response_envelope_dto_serializes_completion_scm_capture_diagnostics_domain() {
-    let response = ServerControlResponse {
-        request_id: ServerControlRequestId("request:dto:diagnostics:completion-capture".to_owned()),
-        status: ServerControlResponseStatus::Complete,
-        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
-            ServerDiagnosticsQueryResult::CompletionScmCapture(empty_completion_scm_capture()),
-        )),
-    };
-
-    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
-    let json = serde_json::to_string(&dto).expect("json");
-
-    assert!(matches!(
-        dto.body,
-        ControlResponseBodyDto::Diagnostics {
-            result: ControlDiagnosticsResultDto::CompletionScmCapture(record),
-        } if record.admission_count == 0
-            && !record.scm_capture_executed
-            && !record.forge_change_request_created
-            && !record.raw_material_exposed
-    ));
-    assert!(json.contains("\"domain\":\"completion_scm_capture\""));
-    assert_diagnostics_json_is_sanitized(&json);
-}
-
-#[test]
-fn response_envelope_dto_serializes_completion_scm_capture_preparation_diagnostics_domain() {
-    let response = ServerControlResponse {
-        request_id: ServerControlRequestId(
-            "request:dto:diagnostics:completion-preparation".to_owned(),
-        ),
-        status: ServerControlResponseStatus::Complete,
-        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
-            ServerDiagnosticsQueryResult::CompletionScmCapturePreparation(
-                empty_completion_scm_capture_preparation(),
-            ),
-        )),
-    };
-
-    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
-    let json = serde_json::to_string(&dto).expect("json");
-
-    assert!(matches!(
-        dto.body,
-        ControlResponseBodyDto::Diagnostics {
-            result: ControlDiagnosticsResultDto::CompletionScmCapturePreparation(record),
-        } if record.plan_count == 0
-            && !record.scm_capture_authority_granted
-            && !record.forge_authority_granted
-            && !record.raw_material_exposed
-    ));
-    assert!(json.contains("\"domain\":\"completion_scm_capture_preparation\""));
-    assert_diagnostics_json_is_sanitized(&json);
-}
-
-#[test]
-fn response_envelope_dto_serializes_scm_capture_dry_run_diagnostics_domain() {
-    let response = ServerControlResponse {
-        request_id: ServerControlRequestId(
-            "request:dto:diagnostics:scm-capture-dry-run".to_owned(),
-        ),
-        status: ServerControlResponseStatus::Complete,
-        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
-            ServerDiagnosticsQueryResult::ScmCaptureDryRun(empty_scm_capture_dry_run()),
-        )),
-    };
-
-    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
-    let json = serde_json::to_string(&dto).expect("json");
-
-    assert!(matches!(
-        dto.body,
-        ControlResponseBodyDto::Diagnostics {
-            result: ControlDiagnosticsResultDto::ScmCaptureDryRun(record),
-        } if record.plan_count == 0
-            && !record.scm_dry_run_authority_granted
-            && !record.scm_capture_authority_granted
-            && !record.forge_authority_granted
-            && !record.raw_material_exposed
-    ));
-    assert!(json.contains("\"domain\":\"scm_capture_dry_run\""));
-    assert_diagnostics_json_is_sanitized(&json);
-}
-
-#[test]
-fn response_envelope_dto_serializes_scm_capture_dry_run_execution_diagnostics_domain() {
-    let response = ServerControlResponse {
-        request_id: ServerControlRequestId(
-            "request:dto:diagnostics:scm-capture-dry-run-execution".to_owned(),
-        ),
-        status: ServerControlResponseStatus::Complete,
-        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
-            ServerDiagnosticsQueryResult::ScmCaptureDryRunExecution(
-                empty_scm_capture_dry_run_execution(),
-            ),
-        )),
-    };
-
-    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
-    let json = serde_json::to_string(&dto).expect("json");
-
-    assert!(matches!(
-        dto.body,
-        ControlResponseBodyDto::Diagnostics {
-            result: ControlDiagnosticsResultDto::ScmCaptureDryRunExecution(record),
-        } if record.receipt_count == 0
-            && !record.scm_capture_executed
-            && !record.forge_authority_granted
-            && !record.raw_material_exposed
-    ));
-    assert!(json.contains("\"domain\":\"scm_capture_dry_run_execution\""));
-    assert_diagnostics_json_is_sanitized(&json);
-}
-
-#[test]
-fn response_envelope_dto_serializes_git_dry_run_execution_diagnostics_domain() {
-    let response = ServerControlResponse {
-        request_id: ServerControlRequestId(
-            "request:dto:diagnostics:git-dry-run-execution".to_owned(),
-        ),
-        status: ServerControlResponseStatus::Complete,
-        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
-            ServerDiagnosticsQueryResult::GitDryRunExecution(empty_git_dry_run_execution()),
-        )),
-    };
-
-    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
-    let json = serde_json::to_string(&dto).expect("json");
-
-    assert!(matches!(
-        dto.body,
-        ControlResponseBodyDto::Diagnostics {
-            result: ControlDiagnosticsResultDto::GitDryRunExecution(record),
-        } if record.execution_count == 0
-            && !record.commit_executed
-            && !record.forge_effect_executed
-            && !record.provider_write_executed
-            && !record.raw_output_retained
-    ));
-    assert!(json.contains("\"domain\":\"git_dry_run_execution\""));
     assert_diagnostics_json_is_sanitized(&json);
 }
 
@@ -341,6 +170,10 @@ fn empty_diagnostics_snapshot() -> ServerDiagnosticsSnapshot {
         scm_capture_dry_run: empty_scm_capture_dry_run(),
         scm_capture_dry_run_execution: empty_scm_capture_dry_run_execution(),
         git_dry_run_execution: empty_git_dry_run_execution(),
+        scm_capture_workflow: empty_scm_capture_workflow(),
+        scm_capture_review: empty_scm_capture_review(),
+        scm_capture_review_decision: empty_scm_capture_review_decision(),
+        scm_change_request_preparation: empty_scm_change_request_prep(),
     }
 }
 
@@ -411,6 +244,26 @@ fn empty_git_dry_run_execution() -> crate::GitDryRunExecutionControlDto {
     crate::git_dry_run_execution_control_dto(
         crate::git_dry_run_execution_diagnostics_from_persisted_records(Vec::new()),
     )
+}
+
+fn empty_scm_capture_workflow() -> crate::ScmCaptureWorkflowControlDto {
+    crate::scm_capture_workflow_control_dto(crate::scm_capture_workflow_diagnostics(Vec::new()))
+}
+
+fn empty_scm_capture_review() -> crate::ScmCaptureReviewControlDto {
+    crate::scm_capture_review_control_dto(crate::scm_capture_review_diagnostics(Vec::new()))
+}
+
+fn empty_scm_capture_review_decision() -> crate::ScmCaptureReviewDecisionControlDto {
+    crate::scm_capture_review_decision_control_dto(crate::scm_capture_review_decision_diagnostics(
+        Vec::new(),
+    ))
+}
+
+fn empty_scm_change_request_prep() -> crate::ScmChangeRequestPrepControlDto {
+    crate::scm_change_request_prep_control_dto(crate::scm_change_request_prep_diagnostics(
+        Vec::new(),
+    ))
 }
 
 fn assert_diagnostics_json_is_sanitized(json: &str) {

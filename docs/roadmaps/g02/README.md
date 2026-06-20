@@ -14,6 +14,45 @@ orchestration-first: do not pick provider runtime, UI panel, remote transport,
 or SCM implementation work until the central command/event/projection model
 and engine boundary are settled.
 
+## Generation Runway
+
+Current generation goal:
+
+- build the server-owned command/event/projection core far enough to prove
+  task-backed agent work, durable harness evidence, management projection sync,
+  and SCM/change-request preparation without handing authority to clients or
+  provider harnesses
+
+Completed runway bands:
+
+- orchestration boundary, event persistence, task timelines, runtime receipts,
+  and diagnostics foundations
+- management projection sync, repo-backed management state, and SCM capture
+  preparation
+- Codex bridged runtime proof through direct smoke execution, durable
+  sanitized evidence, explicit review, and explicit task completion
+- SCM capture workflow composition, operator review readiness, review decision
+  persistence, and adapter-neutral change-request preparation
+
+Current checkpoint:
+
+- architecture direction remains valid: task evidence flows to explicit review,
+  explicit decision, and adapter-neutral change-request preparation
+- product risk is now module accretion, not missing product direction
+- `effigy doctor` is red on god-file pressure with 152 findings, including 28
+  errors
+- adapter-specific change-request planning has resumed after the health reset
+  reduced active-lane pressure; remaining doctor errors are broader health debt
+
+Next runway:
+
+- complete the 124 health/runway rebaseline
+- resume 123 adapter-specific change-request plan selection after the health
+  gate, still without SCM or forge effects
+- choose the first executable SCM/forge mutation gate only after adapter plans
+  are durable, inspectable, and explicitly operator-gated
+- pause again before broad UI, remote-control, or multi-provider expansion
+
 ## Milestones
 
 - `001-orchestration-and-engine-boundary.md` - completed
@@ -129,13 +168,23 @@ and engine boundary are settled.
 - `111-git-dry-run-command-execution-persistence.md` - completed
 - `112-git-dry-run-execution-control-integration.md` - completed
 - `113-git-read-only-runner-proof.md` - completed
-- `114-git-read-only-runner-evidence-composition.md` - active
+- `114-git-read-only-runner-evidence-composition.md` - completed
+- `115-scm-capture-workflow-composition.md` - completed
+- `116-scm-capture-workflow-control-integration.md` - completed
+- `117-scm-capture-operator-review-readiness.md` - completed
+- `118-scm-capture-review-control-integration.md` - completed
+- `119-scm-capture-review-decision-persistence.md` - completed
+- `120-scm-capture-review-decision-control-integration.md` - completed
+- `121-scm-capture-change-request-preparation-admission.md` - completed
+- `122-scm-capture-change-request-preparation-control.md` - completed
+- `123-scm-change-request-adapter-plan-selection.md` - active
+- `124-health-and-runway-rebaseline.md` - completed
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/534-git-runner-output-to-evidence-capture.md`
+- `batch-cards/583-scm-change-request-adapter-plan-closeout.md`
 
 Paused cards:
 
@@ -143,13 +192,14 @@ None.
 
 Planned cards:
 
-- `batch-cards/535-git-runner-evidence-persistence-composition.md`
-- `batch-cards/536-git-runner-control-diagnostics-refresh.md`
-- `batch-cards/537-git-runner-integrated-authority.md`
-- `batch-cards/538-git-runner-evidence-composition-closeout.md`
+None.
 
 Completed cards:
 
+- `batch-cards/579-scm-change-request-adapter-plan-records.md`
+- `batch-cards/580-scm-change-request-git-like-plan.md`
+- `batch-cards/581-scm-change-request-convergence-like-plan.md`
+- `batch-cards/582-scm-change-request-adapter-plan-diagnostics.md`
 - `batch-cards/309-task-backed-live-execution-policy-gate.md`
 - `batch-cards/310-task-work-live-executor-admission-records.md`
 - `batch-cards/311-task-work-live-executor-receipt-linkage.md`
@@ -375,6 +425,51 @@ Completed cards:
 - `batch-cards/531-git-diff-stat-summary-parser.md`
 - `batch-cards/532-git-read-only-runner-authority.md`
 - `batch-cards/533-git-read-only-runner-closeout.md`
+- `batch-cards/534-git-runner-output-to-evidence-capture.md`
+- `batch-cards/535-git-runner-evidence-persistence-composition.md`
+- `batch-cards/536-git-runner-control-diagnostics-refresh.md`
+- `batch-cards/537-git-runner-integrated-authority.md`
+- `batch-cards/538-git-runner-evidence-composition-closeout.md`
+- `batch-cards/539-scm-capture-workflow-projection-records.md`
+- `batch-cards/540-scm-capture-workflow-stage-state.md`
+- `batch-cards/541-scm-capture-workflow-diagnostics.md`
+- `batch-cards/542-scm-capture-workflow-authority.md`
+- `batch-cards/543-scm-capture-workflow-closeout.md`
+- `batch-cards/544-scm-capture-workflow-control-dto.md`
+- `batch-cards/545-scm-capture-workflow-query-vocabulary.md`
+- `batch-cards/546-scm-capture-workflow-handler-routing.md`
+- `batch-cards/547-scm-capture-workflow-control-authority.md`
+- `batch-cards/548-scm-capture-workflow-control-closeout.md`
+- `batch-cards/549-scm-capture-review-readiness-records.md`
+- `batch-cards/550-scm-capture-review-blockers.md`
+- `batch-cards/551-scm-capture-review-diagnostics.md`
+- `batch-cards/552-scm-capture-review-authority.md`
+- `batch-cards/553-scm-capture-review-closeout.md`
+- `batch-cards/554-scm-capture-review-control-dto.md`
+- `batch-cards/555-scm-capture-review-query-vocabulary.md`
+- `batch-cards/556-scm-capture-review-handler-routing.md`
+- `batch-cards/557-scm-capture-review-control-authority.md`
+- `batch-cards/558-scm-capture-review-control-closeout.md`
+- `batch-cards/559-scm-capture-review-decision-records.md`
+- `batch-cards/560-scm-capture-review-decision-persistence.md`
+- `batch-cards/561-scm-capture-review-decision-duplicate-blocked.md`
+- `batch-cards/562-scm-capture-review-decision-diagnostics.md`
+- `batch-cards/563-scm-capture-review-decision-authority-closeout.md`
+- `batch-cards/564-scm-capture-review-decision-control-dto.md`
+- `batch-cards/565-scm-capture-review-decision-query-vocabulary.md`
+- `batch-cards/566-scm-capture-review-decision-handler-routing.md`
+- `batch-cards/567-scm-capture-review-decision-control-authority.md`
+- `batch-cards/568-scm-capture-review-decision-control-closeout.md`
+- `batch-cards/569-scm-change-request-prep-admission-records.md`
+- `batch-cards/570-scm-change-request-prep-decision-blockers.md`
+- `batch-cards/571-scm-change-request-prep-adapter-neutrality.md`
+- `batch-cards/572-scm-change-request-prep-diagnostics.md`
+- `batch-cards/573-scm-change-request-prep-authority-closeout.md`
+- `batch-cards/574-scm-change-request-prep-persistence.md`
+- `batch-cards/575-scm-change-request-prep-control-dto.md`
+- `batch-cards/576-scm-change-request-prep-query-vocabulary.md`
+- `batch-cards/577-scm-change-request-prep-handler-routing.md`
+- `batch-cards/578-scm-change-request-prep-control-closeout.md`
 - `batch-cards/001-event-store-record-contract-and-codec.md`
 - `batch-cards/002-event-store-repository-boundary.md`
 - `batch-cards/003-command-projection-replay-integrity.md`

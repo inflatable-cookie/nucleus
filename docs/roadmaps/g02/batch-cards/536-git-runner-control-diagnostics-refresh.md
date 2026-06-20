@@ -1,6 +1,6 @@
 # 536 Git Runner Control Diagnostics Refresh
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../114-git-read-only-runner-evidence-composition.md`
@@ -17,10 +17,10 @@ Prove control diagnostics reflect composed persisted Git runner evidence.
 
 ## Acceptance Criteria
 
-- [ ] Control diagnostics read composed persisted records.
-- [ ] Counts match composed evidence.
-- [ ] Missing state still returns empty diagnostics.
-- [ ] Control remains read-only.
+- [x] Control diagnostics read composed persisted records.
+- [x] Counts match composed evidence.
+- [x] Missing state still returns empty diagnostics.
+- [x] Control remains read-only.
 
 ## Validation
 

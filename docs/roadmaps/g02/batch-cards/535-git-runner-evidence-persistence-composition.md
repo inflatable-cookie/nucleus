@@ -1,6 +1,6 @@
 # 535 Git Runner Evidence Persistence Composition
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../114-git-read-only-runner-evidence-composition.md`
@@ -17,10 +17,10 @@ Persist composed Git dry-run execution records from sanitized runner evidence.
 
 ## Acceptance Criteria
 
-- [ ] Composed records persist through existing persistence path.
-- [ ] Duplicates are blocked.
-- [ ] Evidence refs survive reopen.
-- [ ] Raw output and mutation authority remain blocked.
+- [x] Composed records persist through existing persistence path.
+- [x] Duplicates are blocked.
+- [x] Evidence refs survive reopen.
+- [x] Raw output and mutation authority remain blocked.
 
 ## Validation
 

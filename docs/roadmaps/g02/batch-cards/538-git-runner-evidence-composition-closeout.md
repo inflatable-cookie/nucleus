@@ -1,6 +1,6 @@
 # 538 Git Runner Evidence Composition Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../114-git-read-only-runner-evidence-composition.md`
@@ -18,10 +18,10 @@ Validate Git runner evidence composition and select the next lane.
 
 ## Acceptance Criteria
 
-- [ ] Validation passes or blockers are recorded.
-- [ ] Gap index reflects runner evidence composition.
-- [ ] Next lane is selected from evidence.
-- [ ] External effects remain gated.
+- [x] Validation passes or blockers are recorded.
+- [x] Gap index reflects runner evidence composition.
+- [x] Next lane is selected from evidence.
+- [x] External effects remain gated.
 
 ## Validation
 

@@ -136,6 +136,10 @@ pub enum DiagnosticsQuery {
     ScmCaptureDryRun,
     ScmCaptureDryRunExecution,
     GitDryRunExecution,
+    ScmCaptureWorkflow,
+    ScmCaptureReview,
+    ScmCaptureReviewDecision,
+    ScmChangeRequestPreparation,
     All,
 }
 
@@ -230,6 +234,10 @@ pub enum ServerDiagnosticsQueryResult {
     ScmCaptureDryRun(crate::ScmCaptureDryRunControlDto),
     ScmCaptureDryRunExecution(crate::ScmCaptureDryRunExecutionControlDto),
     GitDryRunExecution(crate::GitDryRunExecutionControlDto),
+    ScmCaptureWorkflow(crate::ScmCaptureWorkflowControlDto),
+    ScmCaptureReview(crate::ScmCaptureReviewControlDto),
+    ScmCaptureReviewDecision(crate::ScmCaptureReviewDecisionControlDto),
+    ScmChangeRequestPreparation(crate::ScmChangeRequestPrepControlDto),
     All(ServerDiagnosticsSnapshot),
 }
 
@@ -249,6 +257,10 @@ pub struct ServerDiagnosticsSnapshot {
     pub scm_capture_dry_run: crate::ScmCaptureDryRunControlDto,
     pub scm_capture_dry_run_execution: crate::ScmCaptureDryRunExecutionControlDto,
     pub git_dry_run_execution: crate::GitDryRunExecutionControlDto,
+    pub scm_capture_workflow: crate::ScmCaptureWorkflowControlDto,
+    pub scm_capture_review: crate::ScmCaptureReviewControlDto,
+    pub scm_capture_review_decision: crate::ScmCaptureReviewDecisionControlDto,
+    pub scm_change_request_preparation: crate::ScmChangeRequestPrepControlDto,
 }
 
 /// State records returned from the local state facade.

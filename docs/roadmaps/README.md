@@ -118,7 +118,17 @@ shape.
 - `g02/111-git-dry-run-command-execution-persistence.md` - completed
 - `g02/112-git-dry-run-execution-control-integration.md` - completed
 - `g02/113-git-read-only-runner-proof.md` - completed
-- `g02/114-git-read-only-runner-evidence-composition.md` - active
+- `g02/114-git-read-only-runner-evidence-composition.md` - completed
+- `g02/115-scm-capture-workflow-composition.md` - completed
+- `g02/116-scm-capture-workflow-control-integration.md` - completed
+- `g02/117-scm-capture-operator-review-readiness.md` - completed
+- `g02/118-scm-capture-review-control-integration.md` - completed
+- `g02/119-scm-capture-review-decision-persistence.md` - completed
+- `g02/120-scm-capture-review-decision-control-integration.md` - completed
+- `g02/121-scm-capture-change-request-preparation-admission.md` - completed
+- `g02/122-scm-capture-change-request-preparation-control.md` - completed
+- `g02/123-scm-change-request-adapter-plan-selection.md` - active
+- `g02/124-health-and-runway-rebaseline.md` - completed
 
 ## Previous Generation
 
@@ -177,5 +187,5 @@ shape.
 
 ## Next Task
 
-Compose read-only Git runner output into sanitized evidence capture and
-persistence records without raw-output retention or mutation authority.
+Close out SCM change-request adapter plan selection and choose the first
+executable adapter lane from evidence.

@@ -321,6 +321,12 @@ fn diagnostics_domain_dto(query: &DiagnosticsQuery) -> String {
         DiagnosticsQuery::ScmCaptureDryRun => "scm_capture_dry_run".to_owned(),
         DiagnosticsQuery::ScmCaptureDryRunExecution => "scm_capture_dry_run_execution".to_owned(),
         DiagnosticsQuery::GitDryRunExecution => "git_dry_run_execution".to_owned(),
+        DiagnosticsQuery::ScmCaptureWorkflow => "scm_capture_workflow".to_owned(),
+        DiagnosticsQuery::ScmCaptureReview => "scm_capture_review".to_owned(),
+        DiagnosticsQuery::ScmCaptureReviewDecision => "scm_capture_review_decision".to_owned(),
+        DiagnosticsQuery::ScmChangeRequestPreparation => {
+            "scm_change_request_preparation".to_owned()
+        }
         DiagnosticsQuery::All => "all".to_owned(),
     }
 }
@@ -342,6 +348,10 @@ fn diagnostics_query_from_domain(domain: &str) -> Result<DiagnosticsQuery, Contr
         "scm_capture_dry_run" => Ok(DiagnosticsQuery::ScmCaptureDryRun),
         "scm_capture_dry_run_execution" => Ok(DiagnosticsQuery::ScmCaptureDryRunExecution),
         "git_dry_run_execution" => Ok(DiagnosticsQuery::GitDryRunExecution),
+        "scm_capture_workflow" => Ok(DiagnosticsQuery::ScmCaptureWorkflow),
+        "scm_capture_review" => Ok(DiagnosticsQuery::ScmCaptureReview),
+        "scm_capture_review_decision" => Ok(DiagnosticsQuery::ScmCaptureReviewDecision),
+        "scm_change_request_preparation" => Ok(DiagnosticsQuery::ScmChangeRequestPreparation),
         "all" => Ok(DiagnosticsQuery::All),
         _ => Err(ControlApiCodecError::unsupported(
             "diagnostics query domain is not supported",

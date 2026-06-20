@@ -1,6 +1,6 @@
 # 534 Git Runner Output To Evidence Capture
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../114-git-read-only-runner-evidence-composition.md`
@@ -18,10 +18,10 @@ Map transient read-only Git runner output to sanitized evidence capture records.
 
 ## Acceptance Criteria
 
-- [ ] Status runner output maps to sanitized capture counts.
-- [ ] Diff-stat runner output maps to sanitized capture counts.
-- [ ] Raw output is not retained in capture records.
-- [ ] Malformed outputs become repair-required evidence.
+- [x] Status runner output maps to sanitized capture counts.
+- [x] Diff-stat runner output maps to sanitized capture counts.
+- [x] Raw output is not retained in capture records.
+- [x] Malformed outputs become repair-required evidence.
 
 ## Validation
 

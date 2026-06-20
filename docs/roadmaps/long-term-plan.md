@@ -25,9 +25,16 @@ created inside an approved phase when the phase is ready for execution.
 
 ## Current G02 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-082 are
-complete or closing, and the next lane is durable server-owned Codex live smoke
-execution.
+G02 is the orchestration and engine-core generation. Milestones 001-122 are
+complete. The current checkpoint is a health/runway rebaseline after the SCM
+capture, operator review, review decision, and adapter-neutral change-request
+preparation tranche.
+
+Roadmap 123 remains the next SCM product direction, but it is paused until the
+124 health lane reduces current god-file pressure in request-handler, control
+DTO, and SCM review/preparation surfaces. The health pass reduced doctor error
+findings from 37 to 28 and resumed roadmap 123; remaining doctor errors are
+broader health debt, not a blocker for adapter-plan records.
 
 Completed workflow proof:
 
@@ -94,7 +101,17 @@ Current G02 continuation sequence:
 45. provider runtime hardening - complete
 46. provider observability diagnostics - complete
 47. task-backed live workflow closeout and next lane selection - complete
-48. durable Codex live smoke execution - selected next
+48. durable Codex live smoke execution - complete
+49. SCM capture workflow composition - complete
+50. SCM capture workflow control integration - complete
+51. SCM capture operator review readiness - complete
+52. SCM capture review control integration - complete
+53. SCM capture review decision persistence - complete
+54. SCM capture review decision control integration - complete
+55. SCM capture change-request preparation admission - complete
+56. SCM capture change-request preparation control - complete
+57. SCM change-request adapter plan selection - active
+58. health and runway rebaseline - complete
 
 Current extended goal list:
 

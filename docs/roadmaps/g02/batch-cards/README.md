@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-20
+Updated: 2026-06-21
 
 ## Purpose
 
@@ -10,7 +10,7 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `534-git-runner-output-to-evidence-capture.md`
+- `583-scm-change-request-adapter-plan-closeout.md`
 
 ## Paused Cards
 
@@ -18,13 +18,26 @@ None.
 
 ## Planned Cards
 
-- `535-git-runner-evidence-persistence-composition.md`
-- `536-git-runner-control-diagnostics-refresh.md`
-- `537-git-runner-integrated-authority.md`
-- `538-git-runner-evidence-composition-closeout.md`
+None.
 
 ## Completed Cards
 
+- `579-scm-change-request-adapter-plan-records.md`
+- `580-scm-change-request-git-like-plan.md`
+- `581-scm-change-request-convergence-like-plan.md`
+- `582-scm-change-request-adapter-plan-diagnostics.md`
+- `584-request-handler-diagnostics-test-split.md`
+- `585-control-envelope-diagnostics-test-split.md`
+- `586-request-handler-query-module-split.md`
+- `587-scm-review-prep-module-split.md`
+- `588-health-rebaseline-closeout.md`
+- `589-request-handler-scm-diagnostics-test-split.md`
+- `590-control-envelope-request-test-split.md`
+- `591-durable-dispatch-god-file-target-selection.md`
+- `592-health-rebaseline-second-closeout.md`
+- `593-durable-dispatch-outcome-linkage-test-split.md`
+- `594-durable-dispatch-outcome-persistence-test-split.md`
+- `595-git-dry-run-execution-persistence-test-split.md`
 - `309-task-backed-live-execution-policy-gate.md`
 - `310-task-work-live-executor-admission-records.md`
 - `311-task-work-live-executor-receipt-linkage.md`
@@ -250,6 +263,51 @@ None.
 - `531-git-diff-stat-summary-parser.md`
 - `532-git-read-only-runner-authority.md`
 - `533-git-read-only-runner-closeout.md`
+- `534-git-runner-output-to-evidence-capture.md`
+- `535-git-runner-evidence-persistence-composition.md`
+- `536-git-runner-control-diagnostics-refresh.md`
+- `537-git-runner-integrated-authority.md`
+- `538-git-runner-evidence-composition-closeout.md`
+- `539-scm-capture-workflow-projection-records.md`
+- `540-scm-capture-workflow-stage-state.md`
+- `541-scm-capture-workflow-diagnostics.md`
+- `542-scm-capture-workflow-authority.md`
+- `543-scm-capture-workflow-closeout.md`
+- `544-scm-capture-workflow-control-dto.md`
+- `545-scm-capture-workflow-query-vocabulary.md`
+- `546-scm-capture-workflow-handler-routing.md`
+- `547-scm-capture-workflow-control-authority.md`
+- `548-scm-capture-workflow-control-closeout.md`
+- `549-scm-capture-review-readiness-records.md`
+- `550-scm-capture-review-blockers.md`
+- `551-scm-capture-review-diagnostics.md`
+- `552-scm-capture-review-authority.md`
+- `553-scm-capture-review-closeout.md`
+- `554-scm-capture-review-control-dto.md`
+- `555-scm-capture-review-query-vocabulary.md`
+- `556-scm-capture-review-handler-routing.md`
+- `557-scm-capture-review-control-authority.md`
+- `558-scm-capture-review-control-closeout.md`
+- `559-scm-capture-review-decision-records.md`
+- `560-scm-capture-review-decision-persistence.md`
+- `561-scm-capture-review-decision-duplicate-blocked.md`
+- `562-scm-capture-review-decision-diagnostics.md`
+- `563-scm-capture-review-decision-authority-closeout.md`
+- `564-scm-capture-review-decision-control-dto.md`
+- `565-scm-capture-review-decision-query-vocabulary.md`
+- `566-scm-capture-review-decision-handler-routing.md`
+- `567-scm-capture-review-decision-control-authority.md`
+- `568-scm-capture-review-decision-control-closeout.md`
+- `569-scm-change-request-prep-admission-records.md`
+- `570-scm-change-request-prep-decision-blockers.md`
+- `571-scm-change-request-prep-adapter-neutrality.md`
+- `572-scm-change-request-prep-diagnostics.md`
+- `573-scm-change-request-prep-authority-closeout.md`
+- `574-scm-change-request-prep-persistence.md`
+- `575-scm-change-request-prep-control-dto.md`
+- `576-scm-change-request-prep-query-vocabulary.md`
+- `577-scm-change-request-prep-handler-routing.md`
+- `578-scm-change-request-prep-control-closeout.md`
 - `001-event-store-record-contract-and-codec.md`
 - `002-event-store-repository-boundary.md`
 - `003-command-projection-replay-integrity.md`

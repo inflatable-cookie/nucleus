@@ -1,6 +1,6 @@
 # 537 Git Runner Integrated Authority
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../114-git-read-only-runner-evidence-composition.md`
@@ -18,10 +18,10 @@ retains no mutation or raw-output authority.
 
 ## Acceptance Criteria
 
-- [ ] Raw output is not persisted.
-- [ ] Checkout, branch, commit, push, PR, and merge remain blocked.
-- [ ] Provider, callback, interruption, and recovery effects remain blocked.
-- [ ] Control diagnostics remain read-only.
+- [x] Raw output is not persisted.
+- [x] Checkout, branch, commit, push, PR, and merge remain blocked.
+- [x] Provider, callback, interruption, and recovery effects remain blocked.
+- [x] Control diagnostics remain read-only.
 
 ## Validation
 

@@ -27,6 +27,8 @@ Current planning artifacts:
 - `logs/2026-06-18-stocktake.md`
 - `logs/2026-06-19-scm-runway-closeout.md`
 - `logs/2026-06-19-codex-live-smoke-evidence.md`
+- `logs/2026-06-20-stocktake.md`
+- `logs/2026-06-20-health-rebaseline.md`
 - `roadmaps/long-term-plan.md`
 - `roadmaps/reassessment-decision-queue.md`
 - `roadmaps/g02/001-orchestration-and-engine-boundary.md`
@@ -98,6 +100,8 @@ Current planning artifacts:
 - `roadmaps/g02/067-codex-direct-connection-smoke-gate.md`
 - `roadmaps/g02/068-codex-live-executor-integration.md`
 - `roadmaps/g02/069-codex-task-backed-live-execution-gate.md`
+- `roadmaps/g02/123-scm-change-request-adapter-plan-selection.md`
+- `roadmaps/g02/124-health-and-runway-rebaseline.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -105,21 +109,22 @@ Current planning artifacts:
 
 ## Guardrail
 
-Do not widen provider-reaching cancellation, resume execution, task mutation,
-remote transport, or UI sync controls until the Codex session recovery gate
-proves provider diagnostics routing, provider-service ownership, provider
-instance registry shape, and provider runtime orchestration linkage without
-provider execution, raw payload retention, or task mutation. The god-file
-doctor gate is a recorded health blocker and warning-sized files remain
-pressure when touched.
+Do not continue adapter-specific SCM plan implementation until the 124
+health/runway rebaseline reduces the current request-handler, control DTO, and
+SCM module pressure or records a deliberate deferral. The health pass reduced
+doctor error findings from 37 to 28 and resumed roadmap 123; remaining
+god-file errors are broader follow-on health debt.
 
-Codex `turn/start` transport-executor handoff is complete through authority
-records, sanitized execution envelopes, persistence, first-response frame
-evidence, diagnostics, and a stopped-by-default real-write smoke boundary.
+Codex live execution, task-backed evidence review, explicit task completion,
+SCM capture, operator review readiness, review decisions, and adapter-neutral
+change-request preparation are now proven as server-owned, sanitized,
+operator-gated record/control surfaces.
 
 The first approved direct Codex `turn/start` smoke completed through local
-Codex app-server with sanitized output only. Task-state mutation remains
-blocked behind the task-backed live execution gate.
+Codex app-server with sanitized output only. Further provider writes, SCM/forge
+mutation, callback execution, interruption execution, recovery execution, UI
+expansion, and remote-control expansion remain gated behind explicit roadmap
+lanes.
 
 Harness mediation and next-task selection are now explicit contract surfaces.
 Tool integrations should prefer low-cardinality portal tools, such as one
@@ -127,6 +132,3 @@ Effigy tool family with typed actions, over large flat tool lists. Next-task
 pointers must come from roadmaps, task queues, goals, planning artifacts,
 recovery paths, validation repair paths, or operator instructions; they must
 not be invented for ceremony.
-blocked. The current lane moves durable dispatch records toward an explicitly
-operator-gated server-owned invocation path, then provider session/frame
-persistence and task-transition admission from live observations.
