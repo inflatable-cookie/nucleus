@@ -10,7 +10,7 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `499-scm-capture-dry-run-execution-persistence-records.md`
+- `534-git-runner-output-to-evidence-capture.md`
 
 ## Paused Cards
 
@@ -18,10 +18,10 @@ None.
 
 ## Planned Cards
 
-- `500-scm-capture-dry-run-execution-state-api.md`
-- `501-scm-capture-dry-run-execution-duplicate-blocked.md`
-- `502-scm-capture-dry-run-execution-diagnostics-source.md`
-- `503-scm-capture-dry-run-execution-persistence-closeout.md`
+- `535-git-runner-evidence-persistence-composition.md`
+- `536-git-runner-control-diagnostics-refresh.md`
+- `537-git-runner-integrated-authority.md`
+- `538-git-runner-evidence-composition-closeout.md`
 
 ## Completed Cards
 
@@ -215,6 +215,41 @@ None.
 - `496-scm-capture-dry-run-receipt-records.md`
 - `497-scm-capture-dry-run-execution-authority.md`
 - `498-scm-capture-dry-run-execution-closeout.md`
+- `499-scm-capture-dry-run-execution-persistence-records.md`
+- `500-scm-capture-dry-run-execution-state-api.md`
+- `501-scm-capture-dry-run-execution-duplicate-blocked.md`
+- `502-scm-capture-dry-run-execution-diagnostics-source.md`
+- `503-scm-capture-dry-run-execution-persistence-closeout.md`
+- `504-scm-capture-dry-run-execution-control-dto.md`
+- `505-scm-capture-dry-run-execution-query-vocabulary.md`
+- `506-scm-capture-dry-run-execution-handler-routing.md`
+- `507-scm-capture-dry-run-execution-control-authority.md`
+- `508-scm-capture-dry-run-execution-control-closeout.md`
+- `509-git-dry-run-command-descriptors.md`
+- `510-git-dry-run-adapter-admission.md`
+- `511-git-dry-run-sanitized-outcomes.md`
+- `512-git-dry-run-authority-regressions.md`
+- `513-git-dry-run-adapter-proof-closeout.md`
+- `514-git-dry-run-command-request-records.md`
+- `515-git-dry-run-runner-boundary.md`
+- `516-git-dry-run-evidence-capture.md`
+- `517-git-dry-run-execution-authority-regressions.md`
+- `518-git-dry-run-command-execution-closeout.md`
+- `519-git-dry-run-execution-persistence-records.md`
+- `520-git-dry-run-execution-state-api.md`
+- `521-git-dry-run-execution-duplicate-blocked.md`
+- `522-git-dry-run-execution-diagnostics-source.md`
+- `523-git-dry-run-execution-persistence-closeout.md`
+- `524-git-dry-run-execution-control-dto.md`
+- `525-git-dry-run-execution-query-vocabulary.md`
+- `526-git-dry-run-execution-handler-routing.md`
+- `527-git-dry-run-execution-control-authority.md`
+- `528-git-dry-run-execution-control-closeout.md`
+- `529-git-read-only-runner-adapter.md`
+- `530-git-status-summary-parser.md`
+- `531-git-diff-stat-summary-parser.md`
+- `532-git-read-only-runner-authority.md`
+- `533-git-read-only-runner-closeout.md`
 - `001-event-store-record-contract-and-codec.md`
 - `002-event-store-repository-boundary.md`
 - `003-command-projection-replay-integrity.md`

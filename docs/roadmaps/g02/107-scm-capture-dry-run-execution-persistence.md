@@ -1,6 +1,6 @@
 # 107 SCM Capture Dry Run Execution Persistence
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 
@@ -20,42 +20,43 @@ without rerunning SCM effects.
 
 ## Goals
 
-- [ ] Persist sanitized dry-run execution receipts.
-- [ ] Read persisted dry-run execution receipts in deterministic order.
-- [ ] Preserve terminal and blocked outcomes as evidence.
-- [ ] Rebuild dry-run execution diagnostics from persisted receipts.
-- [ ] Keep capture, publish, forge, provider, callback, interruption, recovery,
+- [x] Persist sanitized dry-run execution receipts.
+- [x] Read persisted dry-run execution receipts in deterministic order.
+- [x] Preserve terminal and blocked outcomes as evidence.
+- [x] Rebuild dry-run execution diagnostics from persisted receipts.
+- [x] Keep capture, publish, forge, provider, callback, interruption, recovery,
   and raw-output authority blocked.
 
 ## Execution Plan
 
-- [ ] Dry-run execution persistence record batch.
-- [ ] State API and ordering batch.
-- [ ] Duplicate and blocked-outcome regression batch.
-- [ ] Diagnostics-source batch.
-- [ ] Validation and next-lane selection batch.
+- [x] Dry-run execution persistence record batch.
+- [x] State API and ordering batch.
+- [x] Duplicate and blocked-outcome regression batch.
+- [x] Diagnostics-source batch.
+- [x] Validation and next-lane selection batch.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/499-scm-capture-dry-run-execution-persistence-records.md`
+None.
 
 Planned cards:
 
+None.
+
+Completed cards:
+
+- `batch-cards/499-scm-capture-dry-run-execution-persistence-records.md`
 - `batch-cards/500-scm-capture-dry-run-execution-state-api.md`
 - `batch-cards/501-scm-capture-dry-run-execution-duplicate-blocked.md`
 - `batch-cards/502-scm-capture-dry-run-execution-diagnostics-source.md`
 - `batch-cards/503-scm-capture-dry-run-execution-persistence-closeout.md`
 
-Completed cards:
-
-None.
-
 ## Acceptance Criteria
 
-- [ ] Dry-run execution receipts persist as sanitized artifact metadata.
-- [ ] Duplicate writes are deterministic no-ops.
-- [ ] Blocked, failed, timed-out, and repair-required outcomes remain visible.
-- [ ] Diagnostics rebuild from persisted receipts.
-- [ ] No raw SCM output is retained in durable records.
+- [x] Dry-run execution receipts persist as sanitized artifact metadata.
+- [x] Duplicate writes are deterministic no-ops.
+- [x] Blocked, failed, timed-out, and repair-required outcomes remain visible.
+- [x] Diagnostics rebuild from persisted receipts.
+- [x] No raw SCM output is retained in durable records.

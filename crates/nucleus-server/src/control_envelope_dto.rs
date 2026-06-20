@@ -319,6 +319,8 @@ fn diagnostics_domain_dto(query: &DiagnosticsQuery) -> String {
             "completion_scm_capture_preparation".to_owned()
         }
         DiagnosticsQuery::ScmCaptureDryRun => "scm_capture_dry_run".to_owned(),
+        DiagnosticsQuery::ScmCaptureDryRunExecution => "scm_capture_dry_run_execution".to_owned(),
+        DiagnosticsQuery::GitDryRunExecution => "git_dry_run_execution".to_owned(),
         DiagnosticsQuery::All => "all".to_owned(),
     }
 }
@@ -338,6 +340,8 @@ fn diagnostics_query_from_domain(domain: &str) -> Result<DiagnosticsQuery, Contr
             Ok(DiagnosticsQuery::CompletionScmCapturePreparation)
         }
         "scm_capture_dry_run" => Ok(DiagnosticsQuery::ScmCaptureDryRun),
+        "scm_capture_dry_run_execution" => Ok(DiagnosticsQuery::ScmCaptureDryRunExecution),
+        "git_dry_run_execution" => Ok(DiagnosticsQuery::GitDryRunExecution),
         "all" => Ok(DiagnosticsQuery::All),
         _ => Err(ControlApiCodecError::unsupported(
             "diagnostics query domain is not supported",

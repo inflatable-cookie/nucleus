@@ -122,13 +122,20 @@ and engine boundary are settled.
 - `104-scm-capture-dry-run-planning-persistence.md` - completed
 - `105-scm-capture-dry-run-control-integration.md` - completed
 - `106-scm-capture-dry-run-execution-gate.md` - completed
-- `107-scm-capture-dry-run-execution-persistence.md` - active
+- `107-scm-capture-dry-run-execution-persistence.md` - completed
+- `108-scm-capture-dry-run-execution-control.md` - completed
+- `109-git-scm-capture-dry-run-adapter-proof.md` - completed
+- `110-git-dry-run-command-execution-boundary.md` - completed
+- `111-git-dry-run-command-execution-persistence.md` - completed
+- `112-git-dry-run-execution-control-integration.md` - completed
+- `113-git-read-only-runner-proof.md` - completed
+- `114-git-read-only-runner-evidence-composition.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/499-scm-capture-dry-run-execution-persistence-records.md`
+- `batch-cards/534-git-runner-output-to-evidence-capture.md`
 
 Paused cards:
 
@@ -136,10 +143,10 @@ None.
 
 Planned cards:
 
-- `batch-cards/500-scm-capture-dry-run-execution-state-api.md`
-- `batch-cards/501-scm-capture-dry-run-execution-duplicate-blocked.md`
-- `batch-cards/502-scm-capture-dry-run-execution-diagnostics-source.md`
-- `batch-cards/503-scm-capture-dry-run-execution-persistence-closeout.md`
+- `batch-cards/535-git-runner-evidence-persistence-composition.md`
+- `batch-cards/536-git-runner-control-diagnostics-refresh.md`
+- `batch-cards/537-git-runner-integrated-authority.md`
+- `batch-cards/538-git-runner-evidence-composition-closeout.md`
 
 Completed cards:
 
@@ -333,6 +340,41 @@ Completed cards:
 - `batch-cards/496-scm-capture-dry-run-receipt-records.md`
 - `batch-cards/497-scm-capture-dry-run-execution-authority.md`
 - `batch-cards/498-scm-capture-dry-run-execution-closeout.md`
+- `batch-cards/499-scm-capture-dry-run-execution-persistence-records.md`
+- `batch-cards/500-scm-capture-dry-run-execution-state-api.md`
+- `batch-cards/501-scm-capture-dry-run-execution-duplicate-blocked.md`
+- `batch-cards/502-scm-capture-dry-run-execution-diagnostics-source.md`
+- `batch-cards/503-scm-capture-dry-run-execution-persistence-closeout.md`
+- `batch-cards/504-scm-capture-dry-run-execution-control-dto.md`
+- `batch-cards/505-scm-capture-dry-run-execution-query-vocabulary.md`
+- `batch-cards/506-scm-capture-dry-run-execution-handler-routing.md`
+- `batch-cards/507-scm-capture-dry-run-execution-control-authority.md`
+- `batch-cards/508-scm-capture-dry-run-execution-control-closeout.md`
+- `batch-cards/509-git-dry-run-command-descriptors.md`
+- `batch-cards/510-git-dry-run-adapter-admission.md`
+- `batch-cards/511-git-dry-run-sanitized-outcomes.md`
+- `batch-cards/512-git-dry-run-authority-regressions.md`
+- `batch-cards/513-git-dry-run-adapter-proof-closeout.md`
+- `batch-cards/514-git-dry-run-command-request-records.md`
+- `batch-cards/515-git-dry-run-runner-boundary.md`
+- `batch-cards/516-git-dry-run-evidence-capture.md`
+- `batch-cards/517-git-dry-run-execution-authority-regressions.md`
+- `batch-cards/518-git-dry-run-command-execution-closeout.md`
+- `batch-cards/519-git-dry-run-execution-persistence-records.md`
+- `batch-cards/520-git-dry-run-execution-state-api.md`
+- `batch-cards/521-git-dry-run-execution-duplicate-blocked.md`
+- `batch-cards/522-git-dry-run-execution-diagnostics-source.md`
+- `batch-cards/523-git-dry-run-execution-persistence-closeout.md`
+- `batch-cards/524-git-dry-run-execution-control-dto.md`
+- `batch-cards/525-git-dry-run-execution-query-vocabulary.md`
+- `batch-cards/526-git-dry-run-execution-handler-routing.md`
+- `batch-cards/527-git-dry-run-execution-control-authority.md`
+- `batch-cards/528-git-dry-run-execution-control-closeout.md`
+- `batch-cards/529-git-read-only-runner-adapter.md`
+- `batch-cards/530-git-status-summary-parser.md`
+- `batch-cards/531-git-diff-stat-summary-parser.md`
+- `batch-cards/532-git-read-only-runner-authority.md`
+- `batch-cards/533-git-read-only-runner-closeout.md`
 - `batch-cards/001-event-store-record-contract-and-codec.md`
 - `batch-cards/002-event-store-repository-boundary.md`
 - `batch-cards/003-command-projection-replay-integrity.md`

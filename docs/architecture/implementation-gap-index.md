@@ -307,6 +307,15 @@ Current state:
   retain sanitized refs and counts, and authority proof allows dry-run evidence
   without granting capture, publish, forge, provider, callback, interruption,
   recovery, or raw-output authority.
+- `nucleus-server` persists SCM capture dry-run execution receipt records as
+  sanitized artifact metadata. Persisted records retain receipt identity,
+  terminal outcomes, counts, labels, and evidence refs, read back in
+  deterministic order, preserve duplicate and blocked states, and rebuild
+  diagnostics without rerunning SCM effects.
+- `nucleus-server` exposes persisted SCM capture dry-run execution diagnostics
+  through read-only control diagnostics. The DTO, envelope domain, and request
+  handler expose counts only and grant no capture, publish, forge, provider,
+  callback, interruption, recovery, or raw-output authority.
 - `nucleus-server` has read-only task-backed live execution diagnostics for
   admitted, blocked, completed, failed, timed-out, and cleanup-required states.
   The diagnostics include task work refs, live executor refs, receipt refs, and
@@ -688,6 +697,27 @@ Recent evidence:
 - live evidence task-state transition control records now compose transition
   admission and task-history projection responses without granting provider,
   callback, interruption, recovery, SCM, or raw-material authority
+- Git dry-run adapter proof records now define non-mutating status and
+  diff-stat descriptors, map ready provider-neutral dry-run execution
+  capabilities to Git descriptors, retain sanitized outcome refs and counts
+  only, and block raw output, commit, branch, push, forge, provider, callback,
+  interruption, and recovery authority.
+- Git dry-run command execution-boundary records now model descriptor-backed
+  command requests, runner-boundary handoffs, sanitized evidence capture, and
+  authority regressions without invoking shell execution in core tests or
+  retaining raw stdout, stderr, or diff material.
+- Git dry-run command execution persistence now stores sanitized request,
+  handoff, capture, summary-count, exit-status, and evidence-ref records in
+  local state, reads them in stable order, blocks duplicate execution ids, and
+  derives read-only diagnostics without raw Git output or mutation authority.
+- Git dry-run execution diagnostics now route through the control API,
+  response DTOs, request-handler diagnostics, and `All` snapshots from
+  persisted state while keeping checkout, branch, commit, push, forge,
+  provider, callback, interruption, recovery, and raw-output authority false.
+- The first read-only Git runner proof now executes admitted status commands
+  against a local temp repo, parses porcelain status and diff-stat output into
+  sanitized count records, and proves mutating Git verbs, external effects, and
+  raw-output persistence remain blocked.
 
 Next implementation gate:
 

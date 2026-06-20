@@ -1,6 +1,6 @@
 # 499 SCM Capture Dry Run Execution Persistence Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../107-scm-capture-dry-run-execution-persistence.md`
@@ -17,10 +17,10 @@ Persist sanitized SCM capture dry-run execution receipt records.
 
 ## Acceptance Criteria
 
-- [ ] Dry-run execution receipts produce persistence records.
-- [ ] Persisted records contain refs and counts only.
-- [ ] Raw output requests are blocked.
-- [ ] No capture, publish, or forge authority is granted.
+- [x] Dry-run execution receipts produce persistence records.
+- [x] Persisted records contain refs and counts only.
+- [x] Raw output requests are blocked.
+- [x] No capture, publish, or forge authority is granted.
 
 ## Validation
 

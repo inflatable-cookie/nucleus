@@ -1,6 +1,6 @@
 # 500 SCM Capture Dry Run Execution State API
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../107-scm-capture-dry-run-execution-persistence.md`
@@ -17,10 +17,10 @@ Read persisted SCM capture dry-run execution records in deterministic order.
 
 ## Acceptance Criteria
 
-- [ ] Persisted execution receipts round trip.
-- [ ] Reads sort deterministically.
-- [ ] Non-execution records are ignored.
-- [ ] No SCM effect executes while reading.
+- [x] Persisted execution receipts round trip.
+- [x] Reads sort deterministically.
+- [x] Non-execution records are ignored.
+- [x] No SCM effect executes while reading.
 
 ## Validation
 

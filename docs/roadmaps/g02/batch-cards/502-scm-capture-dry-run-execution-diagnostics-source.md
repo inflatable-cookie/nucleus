@@ -1,6 +1,6 @@
 # 502 SCM Capture Dry Run Execution Diagnostics Source
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../107-scm-capture-dry-run-execution-persistence.md`
@@ -19,10 +19,10 @@ records.
 
 ## Acceptance Criteria
 
-- [ ] Diagnostics rebuild from persisted execution records.
-- [ ] Terminal and blocked states remain visible.
-- [ ] No raw output appears.
-- [ ] Capture, publish, and forge authority remain blocked.
+- [x] Diagnostics rebuild from persisted execution records.
+- [x] Terminal and blocked states remain visible.
+- [x] No raw output appears.
+- [x] Capture, publish, and forge authority remain blocked.
 
 ## Validation
 

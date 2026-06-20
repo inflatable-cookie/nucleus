@@ -111,7 +111,14 @@ shape.
 - `g02/104-scm-capture-dry-run-planning-persistence.md` - completed
 - `g02/105-scm-capture-dry-run-control-integration.md` - completed
 - `g02/106-scm-capture-dry-run-execution-gate.md` - completed
-- `g02/107-scm-capture-dry-run-execution-persistence.md` - active
+- `g02/107-scm-capture-dry-run-execution-persistence.md` - completed
+- `g02/108-scm-capture-dry-run-execution-control.md` - completed
+- `g02/109-git-scm-capture-dry-run-adapter-proof.md` - completed
+- `g02/110-git-dry-run-command-execution-boundary.md` - completed
+- `g02/111-git-dry-run-command-execution-persistence.md` - completed
+- `g02/112-git-dry-run-execution-control-integration.md` - completed
+- `g02/113-git-read-only-runner-proof.md` - completed
+- `g02/114-git-read-only-runner-evidence-composition.md` - active
 
 ## Previous Generation
 
@@ -170,5 +177,5 @@ shape.
 
 ## Next Task
 
-Persist SCM capture dry-run execution receipts without capture, publish, forge,
-provider, callback, recovery, or raw-output authority.
+Compose read-only Git runner output into sanitized evidence capture and
+persistence records without raw-output retention or mutation authority.

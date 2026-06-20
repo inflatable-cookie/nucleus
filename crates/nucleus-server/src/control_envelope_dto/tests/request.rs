@@ -456,6 +456,60 @@ fn scm_capture_dry_run_query_vocabulary_round_trips_diagnostics_domain() {
 }
 
 #[test]
+fn scm_capture_dry_run_execution_query_vocabulary_round_trips_diagnostics_domain() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:scm-capture-dry-run-execution".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:dto:scm-capture-dry-run-execution".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::ScmCaptureDryRunExecution),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert!(json.contains("\"domain\":\"scm_capture_dry_run_execution\""));
+    assert!(matches!(
+        restored.kind,
+        ServerControlRequestKind::Query(ServerQuery {
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::ScmCaptureDryRunExecution),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn git_dry_run_execution_query_vocabulary_round_trips_diagnostics_domain() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:git-dry-run-execution".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:dto:git-dry-run-execution".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::GitDryRunExecution),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert!(json.contains("\"domain\":\"git_dry_run_execution\""));
+    assert!(matches!(
+        restored.kind,
+        ServerControlRequestKind::Query(ServerQuery {
+            kind: ServerQueryKind::Diagnostics(DiagnosticsQuery::GitDryRunExecution),
+            ..
+        })
+    ));
+}
+
+#[test]
 fn request_envelope_rejects_unknown_diagnostics_domain() {
     let dto = ControlRequestEnvelopeDto {
         protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),

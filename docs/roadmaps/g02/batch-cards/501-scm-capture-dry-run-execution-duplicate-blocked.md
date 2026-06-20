@@ -1,6 +1,6 @@
 # 501 SCM Capture Dry Run Execution Duplicate Blocked
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../107-scm-capture-dry-run-execution-persistence.md`
@@ -18,10 +18,10 @@ explicit.
 
 ## Acceptance Criteria
 
-- [ ] Duplicate writes do not overwrite records.
-- [ ] Terminal non-success outcomes persist as evidence.
-- [ ] Raw output inputs do not persist as successful records.
-- [ ] Capture, publish, and forge authority remain blocked.
+- [x] Duplicate writes do not overwrite records.
+- [x] Terminal non-success outcomes persist as evidence.
+- [x] Raw output inputs do not persist as successful records.
+- [x] Capture, publish, and forge authority remain blocked.
 
 ## Validation
 

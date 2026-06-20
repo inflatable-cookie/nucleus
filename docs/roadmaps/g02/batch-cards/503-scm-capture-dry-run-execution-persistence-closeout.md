@@ -1,6 +1,6 @@
 # 503 SCM Capture Dry Run Execution Persistence Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-20
 Milestone: `../107-scm-capture-dry-run-execution-persistence.md`
@@ -19,10 +19,10 @@ or adapter-specific driver lane.
 
 ## Acceptance Criteria
 
-- [ ] Validation passes or blockers are recorded.
-- [ ] Gap index reflects persisted dry-run execution state.
-- [ ] Next lane is selected from evidence.
-- [ ] External effects remain gated.
+- [x] Validation passes or blockers are recorded.
+- [x] Gap index reflects persisted dry-run execution state.
+- [x] Next lane is selected from evidence.
+- [x] External effects remain gated.
 
 ## Validation
 

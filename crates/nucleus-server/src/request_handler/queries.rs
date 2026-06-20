@@ -39,13 +39,17 @@ use crate::{
     completion_scm_capture_diagnostics_from_persisted_admissions,
     completion_scm_capture_preparation_control_dto,
     completion_scm_capture_preparation_diagnostics_from_persisted_records,
-    completion_scm_control_dto, completion_scm_read_model, live_evidence_completion_control_dto,
+    completion_scm_control_dto, completion_scm_read_model, git_dry_run_execution_control_dto,
+    git_dry_run_execution_diagnostics_from_persisted_records, live_evidence_completion_control_dto,
     live_evidence_completion_read_model, live_evidence_task_state_history_from_persisted_controls,
     read_codex_live_executor_outcome_records, read_completion_scm_capture_admissions,
     read_completion_scm_capture_preparations, read_durable_provider_executor_command_records,
-    read_live_evidence_task_completions, read_live_evidence_task_state_control_records,
+    read_git_dry_run_executions, read_live_evidence_task_completions,
+    read_live_evidence_task_state_control_records, read_scm_capture_dry_run_execution_receipts,
     read_scm_capture_dry_run_plans, scm_capture_dry_run_control_dto,
     scm_capture_dry_run_diagnostics_from_persisted_records,
+    scm_capture_dry_run_execution_control_dto,
+    scm_capture_dry_run_execution_diagnostics_from_persisted_records,
     unsupported_local_host_runtime_discovery, CompletionScmReadModelInput, EngineHostId,
     LiveEvidenceCompletionReadModelInput,
 };
@@ -121,6 +125,9 @@ where
     let completion_scm_capture_preparation =
         || completion_scm_capture_preparation_diagnostics_from_state(handler.state());
     let scm_capture_dry_run = || scm_capture_dry_run_diagnostics_from_state(handler.state());
+    let scm_capture_dry_run_execution =
+        || scm_capture_dry_run_execution_diagnostics_from_state(handler.state());
+    let git_dry_run_execution = || git_dry_run_execution_diagnostics_from_state(handler.state());
 
     match query {
         DiagnosticsQuery::Steward => Ok(ServerQueryResult::Diagnostics(
@@ -160,6 +167,14 @@ where
         DiagnosticsQuery::ScmCaptureDryRun => Ok(ServerQueryResult::Diagnostics(
             ServerDiagnosticsQueryResult::ScmCaptureDryRun(scm_capture_dry_run()?),
         )),
+        DiagnosticsQuery::ScmCaptureDryRunExecution => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::ScmCaptureDryRunExecution(
+                scm_capture_dry_run_execution()?
+            ),
+        )),
+        DiagnosticsQuery::GitDryRunExecution => Ok(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::GitDryRunExecution(git_dry_run_execution()?),
+        )),
         DiagnosticsQuery::All => Ok(ServerQueryResult::Diagnostics(
             ServerDiagnosticsQueryResult::All(ServerDiagnosticsSnapshot {
                 steward: empty_steward_diagnostics(),
@@ -173,9 +188,35 @@ where
                 completion_scm_capture: completion_scm_capture()?,
                 completion_scm_capture_preparation: completion_scm_capture_preparation()?,
                 scm_capture_dry_run: scm_capture_dry_run()?,
+                scm_capture_dry_run_execution: scm_capture_dry_run_execution()?,
+                git_dry_run_execution: git_dry_run_execution()?,
             }),
         )),
     }
+}
+
+fn git_dry_run_execution_diagnostics_from_state<B>(
+    state: &ServerStateService<B>,
+) -> Result<crate::GitDryRunExecutionControlDto, ServerControlError>
+where
+    B: LocalStoreBackend,
+{
+    let records = read_git_dry_run_executions(state).map_err(storage_error)?;
+    Ok(git_dry_run_execution_control_dto(
+        git_dry_run_execution_diagnostics_from_persisted_records(records),
+    ))
+}
+
+fn scm_capture_dry_run_execution_diagnostics_from_state<B>(
+    state: &ServerStateService<B>,
+) -> Result<crate::ScmCaptureDryRunExecutionControlDto, ServerControlError>
+where
+    B: LocalStoreBackend,
+{
+    let records = read_scm_capture_dry_run_execution_receipts(state).map_err(storage_error)?;
+    Ok(scm_capture_dry_run_execution_control_dto(
+        scm_capture_dry_run_execution_diagnostics_from_persisted_records(records),
+    ))
 }
 
 fn scm_capture_dry_run_diagnostics_from_state<B>(

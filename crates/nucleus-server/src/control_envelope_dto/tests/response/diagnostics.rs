@@ -59,6 +59,12 @@ fn response_envelope_dto_serializes_all_diagnostics_without_authority() {
             && snapshot.scm_capture_dry_run.plan_count == 0
             && !snapshot.scm_capture_dry_run.scm_dry_run_authority_granted
             && !snapshot.scm_capture_dry_run.scm_capture_authority_granted
+            && snapshot.scm_capture_dry_run_execution.receipt_count == 0
+            && !snapshot.scm_capture_dry_run_execution.scm_capture_executed
+            && !snapshot.scm_capture_dry_run_execution.raw_material_exposed
+            && snapshot.git_dry_run_execution.execution_count == 0
+            && !snapshot.git_dry_run_execution.commit_executed
+            && !snapshot.git_dry_run_execution.raw_output_retained
     ));
     assert!(json.contains("\"type\":\"diagnostics\""));
     assert!(json.contains("\"domain\":\"all\""));
@@ -231,6 +237,65 @@ fn response_envelope_dto_serializes_scm_capture_dry_run_diagnostics_domain() {
 }
 
 #[test]
+fn response_envelope_dto_serializes_scm_capture_dry_run_execution_diagnostics_domain() {
+    let response = ServerControlResponse {
+        request_id: ServerControlRequestId(
+            "request:dto:diagnostics:scm-capture-dry-run-execution".to_owned(),
+        ),
+        status: ServerControlResponseStatus::Complete,
+        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::ScmCaptureDryRunExecution(
+                empty_scm_capture_dry_run_execution(),
+            ),
+        )),
+    };
+
+    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
+    let json = serde_json::to_string(&dto).expect("json");
+
+    assert!(matches!(
+        dto.body,
+        ControlResponseBodyDto::Diagnostics {
+            result: ControlDiagnosticsResultDto::ScmCaptureDryRunExecution(record),
+        } if record.receipt_count == 0
+            && !record.scm_capture_executed
+            && !record.forge_authority_granted
+            && !record.raw_material_exposed
+    ));
+    assert!(json.contains("\"domain\":\"scm_capture_dry_run_execution\""));
+    assert_diagnostics_json_is_sanitized(&json);
+}
+
+#[test]
+fn response_envelope_dto_serializes_git_dry_run_execution_diagnostics_domain() {
+    let response = ServerControlResponse {
+        request_id: ServerControlRequestId(
+            "request:dto:diagnostics:git-dry-run-execution".to_owned(),
+        ),
+        status: ServerControlResponseStatus::Complete,
+        body: ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(
+            ServerDiagnosticsQueryResult::GitDryRunExecution(empty_git_dry_run_execution()),
+        )),
+    };
+
+    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
+    let json = serde_json::to_string(&dto).expect("json");
+
+    assert!(matches!(
+        dto.body,
+        ControlResponseBodyDto::Diagnostics {
+            result: ControlDiagnosticsResultDto::GitDryRunExecution(record),
+        } if record.execution_count == 0
+            && !record.commit_executed
+            && !record.forge_effect_executed
+            && !record.provider_write_executed
+            && !record.raw_output_retained
+    ));
+    assert!(json.contains("\"domain\":\"git_dry_run_execution\""));
+    assert_diagnostics_json_is_sanitized(&json);
+}
+
+#[test]
 fn response_envelope_dto_serializes_single_diagnostics_domain() {
     let response = ServerControlResponse {
         request_id: ServerControlRequestId("request:dto:diagnostics:steward".to_owned()),
@@ -274,6 +339,8 @@ fn empty_diagnostics_snapshot() -> ServerDiagnosticsSnapshot {
         completion_scm_capture: empty_completion_scm_capture(),
         completion_scm_capture_preparation: empty_completion_scm_capture_preparation(),
         scm_capture_dry_run: empty_scm_capture_dry_run(),
+        scm_capture_dry_run_execution: empty_scm_capture_dry_run_execution(),
+        git_dry_run_execution: empty_git_dry_run_execution(),
     }
 }
 
@@ -331,6 +398,18 @@ fn empty_completion_scm_capture_preparation() -> crate::CompletionScmCapturePrep
 fn empty_scm_capture_dry_run() -> crate::ScmCaptureDryRunControlDto {
     crate::scm_capture_dry_run_control_dto(
         crate::scm_capture_dry_run_diagnostics_from_persisted_records(Vec::new()),
+    )
+}
+
+fn empty_scm_capture_dry_run_execution() -> crate::ScmCaptureDryRunExecutionControlDto {
+    crate::scm_capture_dry_run_execution_control_dto(
+        crate::scm_capture_dry_run_execution_diagnostics_from_persisted_records(Vec::new()),
+    )
+}
+
+fn empty_git_dry_run_execution() -> crate::GitDryRunExecutionControlDto {
+    crate::git_dry_run_execution_control_dto(
+        crate::git_dry_run_execution_diagnostics_from_persisted_records(Vec::new()),
     )
 }
 

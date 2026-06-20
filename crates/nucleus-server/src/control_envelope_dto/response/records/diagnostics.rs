@@ -21,6 +21,8 @@ pub enum ControlDiagnosticsResultDto {
     CompletionScmCapture(crate::CompletionScmCaptureControlDto),
     CompletionScmCapturePreparation(crate::CompletionScmCapturePreparationControlDto),
     ScmCaptureDryRun(crate::ScmCaptureDryRunControlDto),
+    ScmCaptureDryRunExecution(crate::ScmCaptureDryRunExecutionControlDto),
+    GitDryRunExecution(crate::GitDryRunExecutionControlDto),
     All(ControlDiagnosticsSnapshotDto),
 }
 
@@ -38,6 +40,8 @@ pub struct ControlDiagnosticsSnapshotDto {
     pub completion_scm_capture: crate::CompletionScmCaptureControlDto,
     pub completion_scm_capture_preparation: crate::CompletionScmCapturePreparationControlDto,
     pub scm_capture_dry_run: crate::ScmCaptureDryRunControlDto,
+    pub scm_capture_dry_run_execution: crate::ScmCaptureDryRunExecutionControlDto,
+    pub git_dry_run_execution: crate::GitDryRunExecutionControlDto,
 }
 
 impl From<&ServerDiagnosticsQueryResult> for ControlDiagnosticsResultDto {
@@ -68,6 +72,12 @@ impl From<&ServerDiagnosticsQueryResult> for ControlDiagnosticsResultDto {
             ServerDiagnosticsQueryResult::ScmCaptureDryRun(record) => {
                 Self::ScmCaptureDryRun(record.clone())
             }
+            ServerDiagnosticsQueryResult::ScmCaptureDryRunExecution(record) => {
+                Self::ScmCaptureDryRunExecution(record.clone())
+            }
+            ServerDiagnosticsQueryResult::GitDryRunExecution(record) => {
+                Self::GitDryRunExecution(record.clone())
+            }
             ServerDiagnosticsQueryResult::All(snapshot) => {
                 Self::All(ControlDiagnosticsSnapshotDto::from(snapshot))
             }
@@ -89,6 +99,8 @@ impl From<&ServerDiagnosticsSnapshot> for ControlDiagnosticsSnapshotDto {
             completion_scm_capture: snapshot.completion_scm_capture.clone(),
             completion_scm_capture_preparation: snapshot.completion_scm_capture_preparation.clone(),
             scm_capture_dry_run: snapshot.scm_capture_dry_run.clone(),
+            scm_capture_dry_run_execution: snapshot.scm_capture_dry_run_execution.clone(),
+            git_dry_run_execution: snapshot.git_dry_run_execution.clone(),
         }
     }
 }
