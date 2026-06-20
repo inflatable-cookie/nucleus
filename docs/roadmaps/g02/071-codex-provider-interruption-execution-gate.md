@@ -1,6 +1,6 @@
 # 071 Codex Provider Interruption Execution Gate
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 
@@ -26,10 +26,10 @@ server-owned way to stop work without granting clients direct provider control.
 ## Goals
 
 - [x] Define the provider interruption execution policy gate.
-- [ ] Add provider interruption executor admission records.
-- [ ] Link interruption execution attempts to runtime receipts.
-- [ ] Expose read-only interruption execution diagnostics.
-- [ ] Keep task completion, review acceptance, resume, callback answering, SCM
+- [x] Add provider interruption executor admission records.
+- [x] Link interruption execution attempts to runtime receipts.
+- [x] Expose read-only interruption execution diagnostics.
+- [x] Keep task completion, review acceptance, resume, callback answering, SCM
       mutation, and raw provider material retention outside this lane.
 
 ## Non-Goals
@@ -44,31 +44,33 @@ server-owned way to stop work without granting clients direct provider control.
 ## Execution Plan
 
 - [x] Policy batch: define interruption execution gate and stop conditions.
-- [ ] Admission batch: record interruption-to-executor identity.
-- [ ] Receipt batch: link interruption execution attempts to runtime receipts.
-- [ ] Diagnostics batch: expose read-only interruption execution state.
-- [ ] Closeout batch: validate the lane and select the next runtime target.
+- [x] Admission batch: record interruption-to-executor identity.
+- [x] Receipt batch: link interruption execution attempts to runtime receipts.
+- [x] Diagnostics batch: expose read-only interruption execution state.
+- [x] Closeout batch: validate the lane and select the next runtime target.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/320-provider-interruption-executor-admission-records.md`
+None.
 
 Planned cards:
 
-- `batch-cards/321-provider-interruption-execution-receipt-linkage.md`
-- `batch-cards/322-provider-interruption-execution-diagnostics.md`
-- `batch-cards/323-provider-interruption-execution-validation-closeout.md`
+None.
 
 Completed cards:
 
 - `batch-cards/319-provider-interruption-execution-policy-gate.md`
+- `batch-cards/320-provider-interruption-executor-admission-records.md`
+- `batch-cards/321-provider-interruption-execution-receipt-linkage.md`
+- `batch-cards/322-provider-interruption-execution-diagnostics.md`
+- `batch-cards/323-provider-interruption-execution-validation-closeout.md`
 
 ## Acceptance Criteria
 
 - [x] Interruption execution has an explicit gate before provider write.
 - [x] Operator/task policy evidence is required before execution admission.
-- [ ] Interruption attempts produce sanitized runtime receipts.
-- [ ] Diagnostics remain read-only and sanitized.
-- [ ] Validation passes or blockers are recorded.
+- [x] Interruption attempts produce sanitized runtime receipts.
+- [x] Diagnostics remain read-only and sanitized.
+- [x] Validation passes or blockers are recorded.

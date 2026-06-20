@@ -18,6 +18,8 @@ mod idempotency;
 mod interruption_admission;
 mod interruption_envelope;
 mod interruption_execution_policy;
+mod interruption_execution_receipt_linkage;
+mod interruption_executor_admission;
 mod interruption_outcome;
 mod interruption_request;
 mod live_executor_outcome;
@@ -31,6 +33,9 @@ mod live_spawn_smoke_runner;
 mod readiness;
 mod recovery_admission;
 mod recovery_envelope;
+mod recovery_execution_policy;
+mod recovery_execution_receipt_linkage;
+mod recovery_executor_admission;
 mod recovery_need;
 mod recovery_outcome;
 mod runtime_instance;
@@ -139,6 +144,20 @@ pub use interruption_execution_policy::{
     CodexAppServerInterruptionExecutionPolicyStatus, CodexAppServerInterruptionExecutionToolPolicy,
     CodexAppServerInterruptionExecutionToolProjectionMode,
 };
+pub use interruption_execution_receipt_linkage::{
+    codex_interruption_execution_receipt_link, CodexAppServerInterruptionExecutionReceiptLink,
+    CodexAppServerInterruptionExecutionReceiptLinkBlocker,
+    CodexAppServerInterruptionExecutionReceiptLinkId,
+    CodexAppServerInterruptionExecutionReceiptLinkStatus,
+    CodexAppServerInterruptionExecutionRuntimeProgress,
+};
+pub use interruption_executor_admission::{
+    admit_codex_interruption_executor, CodexAppServerInterruptionExecutorAdmissionBlocker,
+    CodexAppServerInterruptionExecutorAdmissionId,
+    CodexAppServerInterruptionExecutorAdmissionInput,
+    CodexAppServerInterruptionExecutorAdmissionRecord,
+    CodexAppServerInterruptionExecutorAdmissionStatus,
+};
 pub use interruption_outcome::{
     codex_interruption_failed_outcome, codex_interruption_outcome_from_admission,
     codex_interruption_outcome_from_envelope, codex_receipt_from_interruption_outcome,
@@ -208,6 +227,23 @@ pub use recovery_admission::{
 pub use recovery_envelope::{
     codex_recovery_envelope, CodexAppServerRecoveryEnvelopeId,
     CodexAppServerRecoveryEnvelopeRecord, CodexAppServerRecoveryEnvelopeRejection,
+};
+pub use recovery_execution_policy::{
+    codex_recovery_execution_policy, CodexAppServerRecoveryExecutionPolicyBlocker,
+    CodexAppServerRecoveryExecutionPolicyId, CodexAppServerRecoveryExecutionPolicyInput,
+    CodexAppServerRecoveryExecutionPolicyRecord, CodexAppServerRecoveryExecutionPolicyStatus,
+    CodexAppServerRecoveryExecutionToolPolicy, CodexAppServerRecoveryExecutionToolProjectionMode,
+};
+pub use recovery_execution_receipt_linkage::{
+    codex_recovery_execution_receipt_link, CodexAppServerRecoveryExecutionReceiptLink,
+    CodexAppServerRecoveryExecutionReceiptLinkBlocker,
+    CodexAppServerRecoveryExecutionReceiptLinkId, CodexAppServerRecoveryExecutionReceiptLinkStatus,
+    CodexAppServerRecoveryExecutionRuntimeProgress,
+};
+pub use recovery_executor_admission::{
+    admit_codex_recovery_executor, CodexAppServerRecoveryExecutorAdmissionBlocker,
+    CodexAppServerRecoveryExecutorAdmissionId, CodexAppServerRecoveryExecutorAdmissionInput,
+    CodexAppServerRecoveryExecutorAdmissionRecord, CodexAppServerRecoveryExecutorAdmissionStatus,
 };
 pub use recovery_need::{
     codex_recovery_need_record, CodexAppServerRecoveryNeedId, CodexAppServerRecoveryNeedRecord,

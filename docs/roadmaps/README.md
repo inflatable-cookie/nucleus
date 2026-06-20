@@ -75,7 +75,18 @@ shape.
 - `g02/068-codex-live-executor-integration.md` - completed
 - `g02/069-codex-task-backed-live-execution-gate.md` - completed
 - `g02/070-codex-callback-response-execution-gate.md` - completed
-- `g02/071-codex-provider-interruption-execution-gate.md` - active
+- `g02/071-codex-provider-interruption-execution-gate.md` - completed
+- `g02/072-codex-provider-recovery-execution-gate.md` - completed
+- `g02/073-codex-provider-durable-executor-gate.md` - completed
+- `g02/074-codex-durable-executor-dispatch-gate.md` - completed
+- `g02/075-codex-durable-dispatch-invocation-gate.md` - active
+- `g02/076-codex-provider-session-and-stdio-persistence.md` - planned
+- `g02/077-codex-runtime-observation-event-store-linkage.md` - planned
+- `g02/078-task-transition-admission-from-live-observations.md` - planned
+- `g02/079-durable-wait-callback-interruption-recovery-persistence.md` - planned
+- `g02/080-provider-runtime-hardening.md` - planned
+- `g02/081-provider-observability-diagnostics.md` - planned
+- `g02/082-task-backed-live-workflow-closeout.md` - planned
 
 ## Previous Generation
 
@@ -134,4 +145,4 @@ shape.
 
 ## Next Task
 
-Add provider interruption executor admission records.
+Define durable dispatch executor handoff records.

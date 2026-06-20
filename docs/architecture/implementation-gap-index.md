@@ -221,6 +221,74 @@ Current state:
   interruption, task completion, review acceptance, resume, callback answering,
   SCM mutation, raw provider material retention, raw callback material
   retention, recovery widening, and task mutation authority.
+- `nucleus-server` has interruption-to-executor admission records that preserve
+  interruption request, envelope, provider target, task, work item, provider
+  instance, runtime session, write attempt, and idempotency identity. The
+  records block non-accepted policy, missing or mismatched identity, executor
+  invocation, raw provider or callback material requests, task mutation, review
+  acceptance, resume, callback answering, and SCM mutation.
+- `nucleus-server` has interruption execution receipt linkage records that
+  connect admitted interruption write attempts to sanitized live executor
+  outcomes and runtime receipt ids. Completed provider outcomes are recorded as
+  runtime progress without task completion, review acceptance, resume,
+  callback answering, or SCM mutation; failed, timed-out, blocked, and
+  cleanup-required outcomes remain inspectable.
+- `nucleus-server` has read-only interruption execution diagnostics for
+  admitted, blocked, completed, failed, timed-out, and cleanup-required states.
+  Diagnostics include interruption refs, task/work refs, write attempt refs,
+  receipt refs, and evidence refs without exposing raw provider material or
+  granting provider, task, review, callback, resume, or SCM authority.
+- `nucleus-server` has a Codex provider recovery execution policy gate that
+  requires recovery need, admission, envelope, runtime, adapter, host,
+  operator, recovery-target, provider-identity, resume-capability, and
+  tool-capability evidence before recovery execution admission. The gate
+  blocks automatic resume, replacement-thread promotion, task completion,
+  review acceptance, interruption, callback answering, SCM mutation, raw
+  provider material retention, raw callback material retention, and task
+  mutation authority.
+- `nucleus-server` has recovery-to-executor admission records that preserve
+  recovery need, envelope, provider thread, task, work item, provider
+  instance, runtime session, write attempt, and idempotency identity. The
+  records block non-accepted policy, missing or mismatched identity, executor
+  invocation, raw provider or callback material requests, task mutation, review
+  acceptance, replacement-thread promotion, interruption, callback answering,
+  and SCM mutation.
+- `nucleus-server` has recovery execution receipt linkage records that connect
+  admitted recovery write attempts to sanitized live executor outcomes and
+  runtime receipt ids. Completed provider outcomes are recorded as runtime
+  progress without task completion, review acceptance, replacement-thread
+  promotion, interruption, callback answering, or SCM mutation; replacement
+  thread observations are inspectable but blocked from promotion.
+- `nucleus-server` has read-only recovery execution diagnostics for admitted,
+  blocked, completed, failed, timed-out, cleanup-required, and
+  replacement-thread-observed states. Diagnostics include recovery refs,
+  task/work refs, write attempt refs, receipt refs, and evidence refs without
+  exposing raw provider material or granting provider, task, review, callback,
+  interruption, replacement-thread promotion, or SCM authority.
+- The next runtime target is a durable server-owned provider executor command
+  gate so accepted execution requests can be persisted and replayed before
+  broader provider write automation is attempted.
+- `nucleus-server` has durable provider executor command records, sanitized
+  local persistence, status/readback records, and read-only diagnostics. These
+  records preserve lane admission, write-attempt, idempotency, task/work, and
+  evidence identity without executing provider writes or granting client,
+  provider, task, review, callback, interruption, recovery, replacement-thread
+  promotion, or SCM authority.
+- `nucleus-server` has durable executor dispatch selection, admission,
+  outcome-linkage, and read-only dispatch diagnostics records. These records
+  select queued commands, require explicit operator confirmation before
+  dispatch admission, and link dispatch attempts to sanitized live executor
+  outcomes and durable status records without enabling unattended provider
+  writes.
+- `nucleus-server` has durable dispatch invocation preflight and invocation
+  request records. These records preserve dispatch, provider, runtime,
+  write-attempt, idempotency, task/work, and evidence identity while keeping
+  executor invocation, provider writes, task mutation, review acceptance,
+  callback answering, interruption, recovery, replacement-thread promotion,
+  SCM mutation, and raw material retention blocked.
+- The next runtime target is durable dispatch invocation, then provider
+  session/stdio persistence, runtime observation event-store linkage, and
+  task-transition admission from live observations.
 - `nucleus-engine` can project Codex fixture receipts into sanitized
   harness-provider runtime receipt records.
 
@@ -231,14 +299,15 @@ Missing:
 - real provider adapters
 - full Codex process spawning and stdio lifecycle execution after admission
 - live JSON-RPC/app-server decoding from a supervised process
-- turn-start, callback-response, and interruption execution against the
-  provider through a durable server-owned executor
+- turn-start, callback-response, interruption, and recovery execution against
+  the provider through a durable server-owned executor
 - durable server-owned execution of Codex live writes outside the one-off
   `nucleusd` smoke command
 - persistence for stdio frame source, decode outcome, and transport receipt
   records
 - persistence for accepted runtime-observation event-store records
-- interruption that reaches the provider and records local/provider outcomes
+- interruption or recovery that reaches the provider and records
+  local/provider outcomes
 - persistence for interruption/cancellation records
 - persistence for permission and user-input callback response records
 - persistence for recovery records after server restart, process exit, or
@@ -267,7 +336,8 @@ Likely crates:
 
 Next gate:
 
-- define the Codex provider interruption execution policy gate
+- define durable dispatch invocation preflight, then advance through request,
+  handoff, outcome persistence, and diagnostics before widening runtime state
 - keep future live provider writes behind explicit operator confirmation until
   they are routed through server-owned executor policy
 - keep callback, cancellation, resume, and task mutation widening blocked until

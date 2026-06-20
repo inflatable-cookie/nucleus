@@ -1,6 +1,6 @@
 # 321 Provider Interruption Execution Receipt Linkage
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../071-codex-provider-interruption-execution-gate.md`
@@ -20,9 +20,9 @@ Link Codex interruption execution attempts to runtime receipts.
 
 ## Acceptance Criteria
 
-- [ ] Receipt linkage survives projection without provider material.
-- [ ] Provider interruption completion does not imply review acceptance.
-- [ ] Failed and timed-out outcomes stay inspectable.
+- [x] Receipt linkage survives projection without provider material.
+- [x] Provider interruption completion does not imply review acceptance.
+- [x] Failed and timed-out outcomes stay inspectable.
 
 ## Validation
 

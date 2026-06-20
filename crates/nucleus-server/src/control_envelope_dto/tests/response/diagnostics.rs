@@ -5,10 +5,12 @@ use crate::control_api::{
 use crate::control_envelope_dto::*;
 use crate::diagnostics_read_models::{
     codex_callback_diagnostics, codex_callback_response_execution_diagnostics,
-    codex_ingestion_diagnostics, codex_interruption_diagnostics, codex_live_executor_diagnostics,
+    codex_ingestion_diagnostics, codex_interruption_diagnostics,
+    codex_interruption_execution_diagnostics, codex_live_executor_diagnostics,
     codex_live_spawn_smoke_diagnostics, codex_provider_diagnostics, codex_recovery_diagnostics,
-    codex_subscription_diagnostics, codex_task_backed_live_execution_diagnostics,
-    codex_transport_executor_diagnostics, codex_turn_start_diagnostics, effigy_diagnostics,
+    codex_recovery_execution_diagnostics, codex_subscription_diagnostics,
+    codex_task_backed_live_execution_diagnostics, codex_transport_executor_diagnostics,
+    codex_turn_start_diagnostics, durable_provider_executor_diagnostics, effigy_diagnostics,
     scm_session_diagnostics, steward_diagnostics, sync_diagnostics, task_agent_diagnostics,
 };
 use crate::ids::ServerControlRequestId;
@@ -130,7 +132,10 @@ fn empty_codex_provider_diagnostics() -> crate::CodexProviderDiagnosticsDto {
         codex_callback_diagnostics(&[]),
         codex_callback_response_execution_diagnostics(&[], &[]),
         codex_interruption_diagnostics(&[]),
+        codex_interruption_execution_diagnostics(&[], &[]),
         codex_recovery_diagnostics(&[]),
+        codex_recovery_execution_diagnostics(&[], &[]),
+        durable_provider_executor_diagnostics(&[], &[], &[], &[], &[]),
     )
 }
 

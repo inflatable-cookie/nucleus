@@ -84,7 +84,34 @@ Current G02 continuation sequence:
 36. Codex `turn/start` transport-executor handoff - complete
 37. task-backed workflow hardening - complete
 38. Codex direct-connection smoke gate - complete
-39. Codex live executor integration - active
+39. Codex live executor integration - complete through durable dispatch records
+40. durable dispatch invocation gate - active
+41. Codex provider session and stdio persistence - planned
+42. runtime observation event-store linkage - planned
+43. task work transition admission from live observations - planned
+44. durable wait/callback/interruption/recovery persistence - planned
+45. provider runtime hardening - planned
+46. provider observability diagnostics - planned
+47. task-backed live workflow closeout and next lane selection - planned
+
+Current extended goal list:
+
+1. Finish the durable dispatch invocation path without adding unattended
+   provider execution.
+2. Persist provider session, stdio frame, decode, and transport evidence so
+   live runtime state survives restart and can be replayed.
+3. Promote accepted provider observations into the orchestration event store
+   with deterministic identity and idempotent ingestion.
+4. Admit task work-item runtime transitions from live observations without
+   letting provider completion imply task completion or review acceptance.
+5. Persist callback, interruption, and recovery evidence around the durable
+   executor instead of treating these as ephemeral provider facts.
+6. Harden runtime retry, idempotency, backpressure, retention, and repair
+   paths before broadening automation.
+7. Add read-only observability and support evidence so failures can be
+   diagnosed without raw payload exposure.
+8. Close the task-backed live workflow as a reusable proof, then choose the
+   next product lane deliberately.
 
 Selected current workflow:
 
@@ -510,4 +537,4 @@ Resolved decisions:
   runtime/review transition validation.
 - The first explicitly confirmed Codex `turn/start` real-write smoke completed
   through `turn/completed` with sanitized evidence only.
-- The current runtime lane is task-backed Codex live execution admission.
+- The current runtime lane is durable Codex dispatch invocation.

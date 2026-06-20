@@ -1,6 +1,6 @@
 # 323 Provider Interruption Execution Validation Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../071-codex-provider-interruption-execution-gate.md`
@@ -19,9 +19,9 @@ target.
 
 ## Acceptance Criteria
 
-- [ ] Validation passes or blockers are recorded.
-- [ ] Roadmap state has one clear next task.
-- [ ] No raw provider material is persisted or exposed.
+- [x] Validation passes or blockers are recorded.
+- [x] Roadmap state has one clear next task.
+- [x] No raw provider material is persisted or exposed.
 
 ## Validation
 

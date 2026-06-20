@@ -1,6 +1,6 @@
 # 320 Provider Interruption Executor Admission Records
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../071-codex-provider-interruption-execution-gate.md`
@@ -18,9 +18,9 @@ Record interruption-to-executor admission after policy acceptance.
 
 ## Acceptance Criteria
 
-- [ ] Accepted records preserve interruption execution identity.
-- [ ] Admission does not execute provider writes.
-- [ ] Raw provider material, task mutation, review acceptance, resume, and SCM
+- [x] Accepted records preserve interruption execution identity.
+- [x] Admission does not execute provider writes.
+- [x] Raw provider material, task mutation, review acceptance, resume, and SCM
       authority remain blocked.
 
 ## Validation

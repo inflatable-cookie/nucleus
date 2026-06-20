@@ -127,5 +127,6 @@ Effigy tool family with typed actions, over large flat tool lists. Next-task
 pointers must come from roadmaps, task queues, goals, planning artifacts,
 recovery paths, validation repair paths, or operator instructions; they must
 not be invented for ceremony.
-blocked. The current lane promotes the successful smoke into durable
-server-owned executor records, persistence, and read-only diagnostics.
+blocked. The current lane moves durable dispatch records toward an explicitly
+operator-gated server-owned invocation path, then provider session/frame
+persistence and task-transition admission from live observations.

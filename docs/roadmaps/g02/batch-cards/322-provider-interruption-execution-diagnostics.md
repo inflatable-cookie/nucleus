@@ -1,6 +1,6 @@
 # 322 Provider Interruption Execution Diagnostics
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-19
 Milestone: `../071-codex-provider-interruption-execution-gate.md`
@@ -20,9 +20,9 @@ diagnostics.
 
 ## Acceptance Criteria
 
-- [ ] Diagnostics show interruption execution linkage.
-- [ ] Diagnostics do not expose raw provider content.
-- [ ] Diagnostics do not grant provider, task, review, callback, resume, or SCM
+- [x] Diagnostics show interruption execution linkage.
+- [x] Diagnostics do not expose raw provider content.
+- [x] Diagnostics do not grant provider, task, review, callback, resume, or SCM
       authority.
 
 ## Validation

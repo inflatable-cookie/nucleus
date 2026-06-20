@@ -20,10 +20,12 @@ use crate::control_api::{
 };
 use crate::diagnostics_read_models::{
     codex_callback_diagnostics, codex_callback_response_execution_diagnostics,
-    codex_ingestion_diagnostics, codex_interruption_diagnostics, codex_live_executor_diagnostics,
+    codex_ingestion_diagnostics, codex_interruption_diagnostics,
+    codex_interruption_execution_diagnostics, codex_live_executor_diagnostics,
     codex_live_spawn_smoke_diagnostics, codex_provider_diagnostics, codex_recovery_diagnostics,
-    codex_subscription_diagnostics, codex_task_backed_live_execution_diagnostics,
-    codex_transport_executor_diagnostics, codex_turn_start_diagnostics, effigy_diagnostics,
+    codex_recovery_execution_diagnostics, codex_subscription_diagnostics,
+    codex_task_backed_live_execution_diagnostics, codex_transport_executor_diagnostics,
+    codex_turn_start_diagnostics, durable_provider_executor_diagnostics, effigy_diagnostics,
     scm_session_diagnostics, steward_diagnostics, sync_diagnostics, task_agent_diagnostics,
 };
 use crate::ids::ServerControlRequestId;
@@ -33,8 +35,8 @@ use crate::state::ServerStateService;
 use crate::state::{ServerStateDomain, ServerStateDomainService};
 use crate::task_agent_work_unit_state::read_task_agent_work_unit_source_records;
 use crate::{
-    read_codex_live_executor_outcome_records, unsupported_local_host_runtime_discovery,
-    EngineHostId,
+    read_codex_live_executor_outcome_records, read_durable_provider_executor_command_records,
+    unsupported_local_host_runtime_discovery, EngineHostId,
 };
 
 pub(crate) fn handle_query<B>(
@@ -161,6 +163,8 @@ where
 {
     let live_executor_records =
         read_codex_live_executor_outcome_records(state).map_err(storage_error)?;
+    let durable_executor_commands =
+        read_durable_provider_executor_command_records(state).map_err(storage_error)?;
 
     Ok(codex_provider_diagnostics(
         codex_ingestion_diagnostics(&[]),
@@ -173,7 +177,10 @@ where
         codex_callback_diagnostics(&[]),
         codex_callback_response_execution_diagnostics(&[], &[]),
         codex_interruption_diagnostics(&[]),
+        codex_interruption_execution_diagnostics(&[], &[]),
         codex_recovery_diagnostics(&[]),
+        codex_recovery_execution_diagnostics(&[], &[]),
+        durable_provider_executor_diagnostics(&durable_executor_commands, &[], &[], &[], &[]),
     ))
 }
 

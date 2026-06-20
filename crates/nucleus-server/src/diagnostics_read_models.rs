@@ -7,14 +7,18 @@ mod codex_callback;
 mod codex_callback_response_execution;
 mod codex_ingestion;
 mod codex_interruption;
+mod codex_interruption_execution;
 mod codex_live_executor;
 mod codex_live_spawn;
 mod codex_provider;
 mod codex_recovery;
+mod codex_recovery_execution;
 mod codex_subscription;
 mod codex_task_backed_live_execution;
 mod codex_transport_executor;
 mod codex_turn_start;
+mod durable_provider_executor;
+mod durable_provider_executor_dispatch;
 mod effigy;
 mod helpers;
 mod scm;
@@ -39,6 +43,10 @@ pub use codex_ingestion::{
 pub use codex_interruption::{
     codex_interruption_diagnostics, CodexInterruptionDiagnosticDto, CodexInterruptionDiagnosticsDto,
 };
+pub use codex_interruption_execution::{
+    codex_interruption_execution_diagnostics, CodexInterruptionExecutionAttemptDiagnosticDto,
+    CodexInterruptionExecutionDiagnosticsDto,
+};
 pub use codex_live_executor::{
     codex_live_executor_diagnostics, CodexLiveExecutorAttemptDiagnosticDto,
     CodexLiveExecutorDiagnosticsDto,
@@ -50,6 +58,10 @@ pub use codex_live_spawn::{
 pub use codex_provider::{codex_provider_diagnostics, CodexProviderDiagnosticsDto};
 pub use codex_recovery::{
     codex_recovery_diagnostics, CodexRecoveryDiagnosticDto, CodexRecoveryDiagnosticsDto,
+};
+pub use codex_recovery_execution::{
+    codex_recovery_execution_diagnostics, CodexRecoveryExecutionAttemptDiagnosticDto,
+    CodexRecoveryExecutionDiagnosticsDto,
 };
 pub use codex_subscription::{
     codex_subscription_diagnostics, CodexStdioWriteDiagnosticDto, CodexSubscriptionDiagnosticDto,
@@ -66,6 +78,17 @@ pub use codex_transport_executor::{
 };
 pub use codex_turn_start::{
     codex_turn_start_diagnostics, CodexTurnStartDiagnosticDto, CodexTurnStartDiagnosticsDto,
+};
+pub use durable_provider_executor::{
+    durable_provider_executor_diagnostics, DurableProviderExecutorCommandDiagnosticDto,
+    DurableProviderExecutorDiagnosticsDto, DurableProviderExecutorStatusDiagnosticDto,
+};
+pub use durable_provider_executor_dispatch::{
+    durable_provider_executor_dispatch_diagnostics,
+    DurableProviderExecutorDispatchAdmissionDiagnosticDto,
+    DurableProviderExecutorDispatchDiagnosticsDto,
+    DurableProviderExecutorDispatchOutcomeLinkageDiagnosticDto,
+    DurableProviderExecutorDispatchSelectionDiagnosticDto,
 };
 pub use effigy::{effigy_diagnostics, EffigyDiagnosticsDto};
 pub use scm::{

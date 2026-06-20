@@ -2,10 +2,12 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     CodexCallbackDiagnosticsDto, CodexCallbackResponseExecutionDiagnosticsDto,
-    CodexIngestionDiagnosticsDto, CodexInterruptionDiagnosticsDto, CodexLiveExecutorDiagnosticsDto,
+    CodexIngestionDiagnosticsDto, CodexInterruptionDiagnosticsDto,
+    CodexInterruptionExecutionDiagnosticsDto, CodexLiveExecutorDiagnosticsDto,
     CodexLiveSpawnSmokeDiagnosticsDto, CodexRecoveryDiagnosticsDto,
-    CodexSubscriptionDiagnosticsDto, CodexTaskBackedLiveExecutionDiagnosticsDto,
-    CodexTransportExecutorDiagnosticsDto, CodexTurnStartDiagnosticsDto,
+    CodexRecoveryExecutionDiagnosticsDto, CodexSubscriptionDiagnosticsDto,
+    CodexTaskBackedLiveExecutionDiagnosticsDto, CodexTransportExecutorDiagnosticsDto,
+    CodexTurnStartDiagnosticsDto, DurableProviderExecutorDiagnosticsDto,
 };
 
 /// Client-safe combined diagnostics for Codex provider runtime surfaces.
@@ -21,7 +23,10 @@ pub struct CodexProviderDiagnosticsDto {
     pub callback: CodexCallbackDiagnosticsDto,
     pub callback_response_execution: CodexCallbackResponseExecutionDiagnosticsDto,
     pub interruption: CodexInterruptionDiagnosticsDto,
+    pub interruption_execution: CodexInterruptionExecutionDiagnosticsDto,
     pub recovery: CodexRecoveryDiagnosticsDto,
+    pub recovery_execution: CodexRecoveryExecutionDiagnosticsDto,
+    pub durable_provider_executor: DurableProviderExecutorDiagnosticsDto,
     pub client_can_control_provider: bool,
     pub client_can_mutate_tasks: bool,
     pub source_status: String,
@@ -40,7 +45,10 @@ pub fn codex_provider_diagnostics(
     callback: CodexCallbackDiagnosticsDto,
     callback_response_execution: CodexCallbackResponseExecutionDiagnosticsDto,
     interruption: CodexInterruptionDiagnosticsDto,
+    interruption_execution: CodexInterruptionExecutionDiagnosticsDto,
     recovery: CodexRecoveryDiagnosticsDto,
+    recovery_execution: CodexRecoveryExecutionDiagnosticsDto,
+    durable_provider_executor: DurableProviderExecutorDiagnosticsDto,
 ) -> CodexProviderDiagnosticsDto {
     let source_status = if [
         &ingestion.source_status,
@@ -53,7 +61,10 @@ pub fn codex_provider_diagnostics(
         &callback.source_status,
         &callback_response_execution.source_status,
         &interruption.source_status,
+        &interruption_execution.source_status,
         &recovery.source_status,
+        &recovery_execution.source_status,
+        &durable_provider_executor.source_status,
     ]
     .iter()
     .all(|status| *status == "empty")
@@ -75,7 +86,10 @@ pub fn codex_provider_diagnostics(
         callback,
         callback_response_execution,
         interruption,
+        interruption_execution,
         recovery,
+        recovery_execution,
+        durable_provider_executor,
         client_can_control_provider: false,
         client_can_mutate_tasks: false,
         source_summary: Some("Codex provider diagnostics are read-only and sanitized".to_owned()),

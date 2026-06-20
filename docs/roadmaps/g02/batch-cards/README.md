@@ -10,7 +10,7 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `320-provider-interruption-executor-admission-records.md`
+- `341-durable-dispatch-executor-handoff.md`
 
 ## Paused Cards
 
@@ -18,9 +18,43 @@ None.
 
 ## Planned Cards
 
-- `321-provider-interruption-execution-receipt-linkage.md`
-- `322-provider-interruption-execution-diagnostics.md`
-- `323-provider-interruption-execution-validation-closeout.md`
+- `342-durable-dispatch-outcome-persistence.md`
+- `343-durable-dispatch-invocation-diagnostics-closeout.md`
+- `344-provider-session-persistence-records.md`
+- `345-stdio-frame-source-persistence.md`
+- `346-decode-outcome-persistence.md`
+- `347-transport-receipt-read-model.md`
+- `348-provider-session-stdio-validation-closeout.md`
+- `349-runtime-observation-event-identity.md`
+- `350-idempotent-observation-ingestion-cursor.md`
+- `351-runtime-observation-event-store-persistence.md`
+- `352-runtime-observation-replay-projection.md`
+- `353-runtime-observation-linkage-validation-closeout.md`
+- `354-live-observation-work-item-candidates.md`
+- `355-work-item-runtime-transition-admission.md`
+- `356-live-observation-task-timeline-projection.md`
+- `357-review-readiness-from-live-observations.md`
+- `358-task-transition-admission-validation-closeout.md`
+- `359-callback-request-persistence.md`
+- `360-callback-response-durable-linkage.md`
+- `361-interruption-outcome-persistence.md`
+- `362-recovery-outcome-persistence.md`
+- `363-wait-callback-recovery-validation-closeout.md`
+- `364-provider-idempotency-ledger.md`
+- `365-provider-retry-reconciliation-records.md`
+- `366-provider-backpressure-summary-records.md`
+- `367-provider-retention-policy-enforcement.md`
+- `368-provider-runtime-repair-records.md`
+- `369-provider-trace-span-records.md`
+- `370-provider-support-bundle-manifest.md`
+- `371-provider-observability-diagnostics-dto.md`
+- `372-provider-health-doctor-integration.md`
+- `373-provider-observability-validation-closeout.md`
+- `374-task-backed-live-workflow-fixture.md`
+- `375-nucleusd-durable-runtime-smoke-dry-run.md`
+- `376-live-workflow-authority-regression-suite.md`
+- `377-live-workflow-gap-index-closeout.md`
+- `378-next-product-lane-selection.md`
 
 ## Completed Cards
 
@@ -35,6 +69,27 @@ None.
 - `317-callback-response-execution-diagnostics.md`
 - `318-callback-response-execution-validation-closeout.md`
 - `319-provider-interruption-execution-policy-gate.md`
+- `320-provider-interruption-executor-admission-records.md`
+- `321-provider-interruption-execution-receipt-linkage.md`
+- `322-provider-interruption-execution-diagnostics.md`
+- `323-provider-interruption-execution-validation-closeout.md`
+- `324-provider-recovery-execution-policy-gate.md`
+- `325-provider-recovery-executor-admission-records.md`
+- `326-provider-recovery-execution-receipt-linkage.md`
+- `327-provider-recovery-execution-diagnostics.md`
+- `328-provider-recovery-execution-validation-closeout.md`
+- `329-durable-provider-executor-command-records.md`
+- `330-durable-provider-executor-command-persistence.md`
+- `331-durable-provider-executor-status-records.md`
+- `332-durable-provider-executor-diagnostics.md`
+- `333-durable-provider-executor-validation-closeout.md`
+- `334-durable-executor-dispatch-selection-records.md`
+- `335-durable-executor-dispatch-admission.md`
+- `336-durable-executor-dispatch-outcome-linkage.md`
+- `337-durable-executor-dispatch-diagnostics.md`
+- `338-durable-executor-dispatch-validation-closeout.md`
+- `339-durable-dispatch-invocation-preflight.md`
+- `340-durable-dispatch-invocation-request-records.md`
 - `001-event-store-record-contract-and-codec.md`
 - `002-event-store-repository-boundary.md`
 - `003-command-projection-replay-integrity.md`

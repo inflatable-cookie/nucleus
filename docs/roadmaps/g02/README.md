@@ -86,13 +86,24 @@ and engine boundary are settled.
 - `068-codex-live-executor-integration.md` - completed
 - `069-codex-task-backed-live-execution-gate.md` - completed
 - `070-codex-callback-response-execution-gate.md` - completed
-- `071-codex-provider-interruption-execution-gate.md` - active
+- `071-codex-provider-interruption-execution-gate.md` - completed
+- `072-codex-provider-recovery-execution-gate.md` - completed
+- `073-codex-provider-durable-executor-gate.md` - completed
+- `074-codex-durable-executor-dispatch-gate.md` - completed
+- `075-codex-durable-dispatch-invocation-gate.md` - active
+- `076-codex-provider-session-and-stdio-persistence.md` - planned
+- `077-codex-runtime-observation-event-store-linkage.md` - planned
+- `078-task-transition-admission-from-live-observations.md` - planned
+- `079-durable-wait-callback-interruption-recovery-persistence.md` - planned
+- `080-provider-runtime-hardening.md` - planned
+- `081-provider-observability-diagnostics.md` - planned
+- `082-task-backed-live-workflow-closeout.md` - planned
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/320-provider-interruption-executor-admission-records.md`
+- `batch-cards/341-durable-dispatch-executor-handoff.md`
 
 Paused cards:
 
@@ -100,9 +111,43 @@ None.
 
 Planned cards:
 
-- `batch-cards/321-provider-interruption-execution-receipt-linkage.md`
-- `batch-cards/322-provider-interruption-execution-diagnostics.md`
-- `batch-cards/323-provider-interruption-execution-validation-closeout.md`
+- `batch-cards/342-durable-dispatch-outcome-persistence.md`
+- `batch-cards/343-durable-dispatch-invocation-diagnostics-closeout.md`
+- `batch-cards/344-provider-session-persistence-records.md`
+- `batch-cards/345-stdio-frame-source-persistence.md`
+- `batch-cards/346-decode-outcome-persistence.md`
+- `batch-cards/347-transport-receipt-read-model.md`
+- `batch-cards/348-provider-session-stdio-validation-closeout.md`
+- `batch-cards/349-runtime-observation-event-identity.md`
+- `batch-cards/350-idempotent-observation-ingestion-cursor.md`
+- `batch-cards/351-runtime-observation-event-store-persistence.md`
+- `batch-cards/352-runtime-observation-replay-projection.md`
+- `batch-cards/353-runtime-observation-linkage-validation-closeout.md`
+- `batch-cards/354-live-observation-work-item-candidates.md`
+- `batch-cards/355-work-item-runtime-transition-admission.md`
+- `batch-cards/356-live-observation-task-timeline-projection.md`
+- `batch-cards/357-review-readiness-from-live-observations.md`
+- `batch-cards/358-task-transition-admission-validation-closeout.md`
+- `batch-cards/359-callback-request-persistence.md`
+- `batch-cards/360-callback-response-durable-linkage.md`
+- `batch-cards/361-interruption-outcome-persistence.md`
+- `batch-cards/362-recovery-outcome-persistence.md`
+- `batch-cards/363-wait-callback-recovery-validation-closeout.md`
+- `batch-cards/364-provider-idempotency-ledger.md`
+- `batch-cards/365-provider-retry-reconciliation-records.md`
+- `batch-cards/366-provider-backpressure-summary-records.md`
+- `batch-cards/367-provider-retention-policy-enforcement.md`
+- `batch-cards/368-provider-runtime-repair-records.md`
+- `batch-cards/369-provider-trace-span-records.md`
+- `batch-cards/370-provider-support-bundle-manifest.md`
+- `batch-cards/371-provider-observability-diagnostics-dto.md`
+- `batch-cards/372-provider-health-doctor-integration.md`
+- `batch-cards/373-provider-observability-validation-closeout.md`
+- `batch-cards/374-task-backed-live-workflow-fixture.md`
+- `batch-cards/375-nucleusd-durable-runtime-smoke-dry-run.md`
+- `batch-cards/376-live-workflow-authority-regression-suite.md`
+- `batch-cards/377-live-workflow-gap-index-closeout.md`
+- `batch-cards/378-next-product-lane-selection.md`
 
 Completed cards:
 
@@ -117,6 +162,27 @@ Completed cards:
 - `batch-cards/317-callback-response-execution-diagnostics.md`
 - `batch-cards/318-callback-response-execution-validation-closeout.md`
 - `batch-cards/319-provider-interruption-execution-policy-gate.md`
+- `batch-cards/320-provider-interruption-executor-admission-records.md`
+- `batch-cards/321-provider-interruption-execution-receipt-linkage.md`
+- `batch-cards/322-provider-interruption-execution-diagnostics.md`
+- `batch-cards/323-provider-interruption-execution-validation-closeout.md`
+- `batch-cards/324-provider-recovery-execution-policy-gate.md`
+- `batch-cards/325-provider-recovery-executor-admission-records.md`
+- `batch-cards/326-provider-recovery-execution-receipt-linkage.md`
+- `batch-cards/327-provider-recovery-execution-diagnostics.md`
+- `batch-cards/328-provider-recovery-execution-validation-closeout.md`
+- `batch-cards/329-durable-provider-executor-command-records.md`
+- `batch-cards/330-durable-provider-executor-command-persistence.md`
+- `batch-cards/331-durable-provider-executor-status-records.md`
+- `batch-cards/332-durable-provider-executor-diagnostics.md`
+- `batch-cards/333-durable-provider-executor-validation-closeout.md`
+- `batch-cards/334-durable-executor-dispatch-selection-records.md`
+- `batch-cards/335-durable-executor-dispatch-admission.md`
+- `batch-cards/336-durable-executor-dispatch-outcome-linkage.md`
+- `batch-cards/337-durable-executor-dispatch-diagnostics.md`
+- `batch-cards/338-durable-executor-dispatch-validation-closeout.md`
+- `batch-cards/339-durable-dispatch-invocation-preflight.md`
+- `batch-cards/340-durable-dispatch-invocation-request-records.md`
 - `batch-cards/001-event-store-record-contract-and-codec.md`
 - `batch-cards/002-event-store-repository-boundary.md`
 - `batch-cards/003-command-projection-replay-integrity.md`
