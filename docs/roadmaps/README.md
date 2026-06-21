@@ -150,7 +150,10 @@ shape.
 - `g03/019-convergence-stopped-runner-command-adapter.md` - completed
 - `g03/020-convergence-backend-surface-research.md` - completed
 - `g03/021-convergence-runner-replay-boundary.md` - completed
-- `g03/022-convergence-local-snap-admission.md` - active
+- `g03/022-convergence-local-snap-admission.md` - completed
+- `g03/023-convergence-local-snap-command-boundary.md` - completed
+- `g03/024-convergence-local-snap-request-persistence.md` - completed
+- `g03/025-convergence-local-snap-runner-proof.md` - active
 
 ## Previous Generation
 
@@ -209,5 +212,5 @@ shape.
 
 ## Next Task
 
-Define stopped local snap admission records from Convergence runner replay
-records and authority inputs.
+Create stopped local snap runner proof records from persisted local snap
+requests.

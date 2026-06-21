@@ -1,6 +1,6 @@
 # 079 Convergence Local Snap Admission Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../022-convergence-local-snap-admission.md`
@@ -12,11 +12,11 @@ records and authority inputs.
 
 ## Acceptance Criteria
 
-- [ ] Ready replay records can produce local snap admission records.
-- [ ] Missing authority, duplicate ids, blocked replay, and unsupported replay
+- [x] Ready replay records can produce local snap admission records.
+- [x] Missing authority, duplicate ids, blocked replay, and unsupported replay
   remain blocked or no-op.
-- [ ] Remote effect authority stays false.
-- [ ] No backend effect is added.
+- [x] Remote effect authority stays false.
+- [x] No backend effect is added.
 
 ## Validation
 

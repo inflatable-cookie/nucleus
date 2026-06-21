@@ -888,12 +888,31 @@ Recent evidence:
   publication, lane sync, bundle, approval, promotion, release, resolution
   publication, provider write, task mutation, callback, interruption,
   recovery, or raw-material authority.
+- Convergence local snap admission records and diagnostics now derive from
+  replay records and authority inputs. They admit local snap creation only when
+  source authority, execution authority, and workspace readiness are present,
+  while command execution, actual `converge snap`, object upload, publication,
+  lane sync, bundle, approval, promotion, release, resolution publication,
+  provider write, task mutation, callback, interruption, recovery, and
+  raw-material retention remain false.
+- Convergence local snap command descriptors and stopped request records now
+  derive only from admitted local snap records, preserve replay, admission,
+  task, repo, source-authority, execution-authority, and idempotency refs, and
+  still build no executable argv, spawn no command, create no snap, upload no
+  objects, publish nothing, mutate no tasks, and retain no raw output.
+- Convergence local snap request persistence and read-only control DTOs now
+  preserve stopped request, descriptor, admission, replay, task, repo,
+  source-authority, execution-authority, and idempotency refs. Duplicate
+  idempotency keys become deterministic no-op records, blocked requests stay
+  inspectable, and command spawn, actual `converge snap`, object upload,
+  publication, lane sync, provider writes, task mutation, and raw-material
+  retention remain false.
 
 Next implementation gate:
 
-1. add stopped local snap admission from replay records and authority inputs
-2. keep remote Convergence effects blocked and separately admitted
-3. continue admitting each backend effect family one at a time
+1. add stopped local snap runner proof records from persisted requests
+2. add sanitized local snap runner evidence without command output
+3. keep command execution and remote Convergence effects blocked
 4. continue reducing god-file pressure opportunistically when touched
 
 Until that lane proves durable authority and preflight, keep checkout,

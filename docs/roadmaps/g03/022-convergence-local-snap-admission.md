@@ -1,6 +1,6 @@
 # 022 Convergence Local Snap Admission
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 
@@ -18,40 +18,41 @@ creation without object upload, publication, lane sync, promotion, or release.
 
 ## Goals
 
-- [ ] Admit local snap creation only when source and execution authority are
+- [x] Admit local snap creation only when source and execution authority are
   ready.
-- [ ] Keep remote Convergence effects blocked.
-- [ ] Preserve replay refs and task/repo identity.
-- [ ] Add diagnostics for ready, blocked, duplicate, and unsupported snap
+- [x] Keep remote Convergence effects blocked.
+- [x] Preserve replay refs and task/repo identity.
+- [x] Add diagnostics for ready, blocked, duplicate, and unsupported snap
   admissions.
 
 ## Execution Plan
 
-- [ ] Local snap admission batch.
-- [ ] Local snap diagnostics batch.
-- [ ] Closeout batch.
+- [x] Local snap admission batch.
+- [x] Local snap diagnostics batch.
+- [x] Closeout batch.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/079-convergence-local-snap-admission-records.md`
+None.
 
 Planned cards:
 
-- `batch-cards/080-convergence-local-snap-admission-diagnostics.md`
-- `batch-cards/081-convergence-local-snap-admission-closeout.md`
+None.
 
 Completed cards:
 
-None.
+- `batch-cards/079-convergence-local-snap-admission-records.md`
+- `batch-cards/080-convergence-local-snap-admission-diagnostics.md`
+- `batch-cards/081-convergence-local-snap-admission-closeout.md`
 
 ## Acceptance Criteria
 
-- [ ] Local snap admission derives from replay records and authority inputs.
-- [ ] Remote effects remain blocked and separate.
-- [ ] Duplicate admission ids are deterministic no-ops.
-- [ ] No actual `converge snap`, object upload, publication, lane sync,
+- [x] Local snap admission derives from replay records and authority inputs.
+- [x] Remote effects remain blocked and separate.
+- [x] Duplicate admission ids are deterministic no-ops.
+- [x] No actual `converge snap`, object upload, publication, lane sync,
   bundle, approval, promotion, release, resolution publication, provider write,
   task mutation, callback, interruption, recovery, or raw-output effect is
   added.
