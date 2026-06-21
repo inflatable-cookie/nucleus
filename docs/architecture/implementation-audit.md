@@ -35,15 +35,12 @@ missing, and what should block more feature work.
 
 Current report:
 
-- 152 total findings
+- 149 total findings
 - 129 warnings
-- 23 errors
+- 20 errors
 
 The highest current error files are:
 
-- `crates/nucleus-server/src/codex_supervision/runtime_observation_event_store_persistence.rs`
-- `crates/nucleus-server/src/provider_completion_scm_capture_preparation_persistence.rs`
-- `crates/nucleus-server/src/provider_scm_capture_dry_run_persistence.rs`
 - `crates/nucleus-server/src/codex_supervision/turn_start_executor_smoke_boundary.rs`
 - `crates/nucleus-server/src/codex_supervision/turn_start_stdio_execution_envelope.rs`
 - `crates/nucleus-server/src/lib.rs`
@@ -77,6 +74,24 @@ Recent health delta:
 - The durable dispatch invocation preflight split removed one doctor error
   without changing preflight behavior, provider-write authority, or task/SCM
   mutation authority.
+- `codex_supervision/runtime_observation_event_store_persistence.rs` dropped
+  to an 80-line front door with focused codec, record-builder, store, test,
+  and type modules.
+- The runtime observation event-store persistence split removed one doctor
+  error without changing event-store persistence, provider I/O, replay, or task
+  mutation authority.
+- `provider_completion_scm_capture_preparation_persistence.rs` dropped to a
+  118-line front door with focused diagnostics, helper, record-builder, store,
+  test, and type modules.
+- The completion SCM capture preparation persistence split removed one doctor
+  error without changing persistence behavior, SCM/provider authority, or task
+  mutation authority.
+- `provider_scm_capture_dry_run_persistence.rs` dropped to an 18-line front
+  door with focused diagnostics, helper, record-builder, store, test, and type
+  modules.
+- The SCM capture dry-run persistence split removed one doctor error without
+  changing persistence behavior, SCM/provider authority, process authority, or
+  task mutation authority.
 
 The detailed report is `.effigy/reports/doctor/scan-god-files.md`.
 

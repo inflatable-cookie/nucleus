@@ -1,13 +1,13 @@
-# 141 Runtime Observation Event Store Persistence Validation Closeout
+# 144 Completion SCM Capture Preparation Persistence Validation Closeout
 
 Status: completed
 Owner: Tom
 Updated: 2026-06-21
-Milestone: `../042-runtime-observation-event-store-persistence-split.md`
+Milestone: `../043-completion-scm-capture-preparation-persistence-split.md`
 
 ## Purpose
 
-Validate the runtime observation event-store persistence split and refresh
+Validate the completion SCM capture preparation persistence split and refresh
 health evidence.
 
 ## Acceptance Criteria
@@ -21,7 +21,7 @@ health evidence.
 
 ## Validation
 
-- `cargo test -p nucleus-server runtime_observation_event_store_persistence -- --nocapture`
+- `cargo test -p nucleus-server completion_scm_capture_preparation_persistence -- --nocapture`
 - `CARGO_INCREMENTAL=0 cargo check -p nucleus-server`
 - `effigy doctor`
 - `effigy qa:docs`

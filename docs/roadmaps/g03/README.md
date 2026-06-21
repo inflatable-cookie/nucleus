@@ -61,6 +61,9 @@ Current runway bands:
 - Codex callback request persistence split as health-only work
 - durable dispatch invocation preflight split as health-only work
 - runtime observation event-store persistence split as health-only work
+- completion SCM capture preparation persistence split as health-only work
+- SCM capture dry-run persistence split as health-only work
+- turn-start executor smoke boundary split as health-only work
 
 Current checkpoint:
 
@@ -70,15 +73,15 @@ Current checkpoint:
 - adapter-neutral chain and Convergence-like publication records are folded
   into g03 as milestones 010-034
 - doctor remains red on known god-file pressure
-- next ready card is runtime observation event-store persistence type split
+- next ready card is turn-start executor smoke boundary type split
 - Convergence receipt control is complete, Convergence backend effects are
   deferred, and the next active lane is not Convergence-specific
 - control envelope request/query/protocol split is complete and removed one
   doctor error
 - durable live provider smoke command-runner split is complete and removed one
   doctor error without enabling provider writes
-- next active lane is health-only runtime observation event-store persistence
-  splitting, not a provider write or task mutation lane
+- next active lane is health-only turn-start executor smoke boundary splitting,
+  not an SCM mutation or provider write lane
 
 ## Convergence Exit Criteria
 
@@ -155,13 +158,16 @@ Reason:
 - `039-durable-executor-dispatch-selection-split.md` - completed
 - `040-codex-callback-request-persistence-split.md` - completed
 - `041-durable-dispatch-invocation-preflight-split.md` - completed
-- `042-runtime-observation-event-store-persistence-split.md` - active
+- `042-runtime-observation-event-store-persistence-split.md` - completed
+- `043-completion-scm-capture-preparation-persistence-split.md` - completed
+- `044-scm-capture-dry-run-persistence-split.md` - completed
+- `045-turn-start-executor-smoke-boundary-split.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/139-runtime-observation-event-store-persistence-type-split.md`
+- `batch-cards/148-turn-start-executor-smoke-boundary-type-split.md`
 
 Paused cards:
 
@@ -169,8 +175,8 @@ None.
 
 Planned cards:
 
-- `batch-cards/140-runtime-observation-event-store-persistence-helper-test-split.md`
-- `batch-cards/141-runtime-observation-event-store-persistence-validation-closeout.md`
+- `batch-cards/149-turn-start-executor-smoke-boundary-helper-test-split.md`
+- `batch-cards/150-turn-start-executor-smoke-boundary-validation-closeout.md`
 
 Completed cards:
 
@@ -312,6 +318,15 @@ Completed cards:
 - `batch-cards/136-durable-dispatch-invocation-preflight-type-split.md`
 - `batch-cards/137-durable-dispatch-invocation-preflight-helper-test-split.md`
 - `batch-cards/138-durable-dispatch-invocation-preflight-validation-closeout.md`
+- `batch-cards/139-runtime-observation-event-store-persistence-type-split.md`
+- `batch-cards/140-runtime-observation-event-store-persistence-helper-test-split.md`
+- `batch-cards/141-runtime-observation-event-store-persistence-validation-closeout.md`
+- `batch-cards/142-completion-scm-capture-preparation-persistence-type-split.md`
+- `batch-cards/143-completion-scm-capture-preparation-persistence-helper-test-split.md`
+- `batch-cards/144-completion-scm-capture-preparation-persistence-validation-closeout.md`
+- `batch-cards/145-scm-capture-dry-run-persistence-type-split.md`
+- `batch-cards/146-scm-capture-dry-run-persistence-helper-test-split.md`
+- `batch-cards/147-scm-capture-dry-run-persistence-validation-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -350,4 +365,7 @@ Completed cards:
 32. Durable executor dispatch selection split - completed
 33. Codex callback request persistence split - completed
 34. Durable dispatch invocation preflight split - completed
-35. Runtime observation event-store persistence split - active
+35. Runtime observation event-store persistence split - completed
+36. Completion SCM capture preparation persistence split - completed
+37. SCM capture dry-run persistence split - completed
+38. Turn-start executor smoke boundary split - active

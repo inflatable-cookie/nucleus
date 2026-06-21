@@ -18,7 +18,7 @@ implementation lane can be chosen deliberately.
 Current state:
 
 - `effigy doctor` currently fails on `scan.god-files`
-- the current doctor report has 152 findings: 129 warnings and 23 errors
+- the current doctor report has 149 findings: 129 warnings and 20 errors
 - `crates/nucleus-server/src/lib.rs` remains a compact crate front door
 - the first health rebaseline split request-handler diagnostics tests,
   control-envelope diagnostics response tests, diagnostics query routing, and
@@ -47,6 +47,16 @@ Current state:
 - `provider_durable_dispatch_invocation_preflight.rs` has been split from an
   error-sized preflight file into a 76-line front door plus focused blocker,
   helper, test, and type modules
+- `codex_supervision/runtime_observation_event_store_persistence.rs` has been
+  split from an error-sized runtime persistence file into an 80-line front door
+  plus focused codec, record-builder, store, test, and type modules
+- `provider_completion_scm_capture_preparation_persistence.rs` has been split
+  from an error-sized SCM preparation persistence file into a 118-line front
+  door plus focused diagnostics, helper, record-builder, store, test, and type
+  modules
+- `provider_scm_capture_dry_run_persistence.rs` has been split from an
+  error-sized SCM dry-run persistence file into an 18-line front door plus
+  focused diagnostics, helper, record-builder, store, test, and type modules
 - recent SCM capture, review, decision, and change-request preparation work is
   productively scoped but has expanded too many broad server surfaces
 
@@ -113,6 +123,15 @@ Needed:
   doctor pressure without granting callback response or provider I/O authority
 - treat the durable dispatch invocation preflight split as the same pattern:
   it reduced doctor pressure without granting provider-write or task mutation
+  authority
+- treat the runtime observation event-store persistence split as the same
+  pattern: it reduced doctor pressure without changing event-store semantics
+  or granting provider I/O/task mutation authority
+- treat the completion SCM capture preparation persistence split as the same
+  pattern: it reduced doctor pressure without granting SCM/provider/task
+  mutation authority
+- treat the SCM capture dry-run persistence split as the same pattern: it
+  reduced doctor pressure without granting SCM/provider/process/task mutation
   authority
 
 ### Proof UI Growth

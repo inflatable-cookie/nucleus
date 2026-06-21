@@ -170,7 +170,10 @@ shape.
 - `g03/039-durable-executor-dispatch-selection-split.md` - completed
 - `g03/040-codex-callback-request-persistence-split.md` - completed
 - `g03/041-durable-dispatch-invocation-preflight-split.md` - completed
-- `g03/042-runtime-observation-event-store-persistence-split.md` - active
+- `g03/042-runtime-observation-event-store-persistence-split.md` - completed
+- `g03/043-completion-scm-capture-preparation-persistence-split.md` - completed
+- `g03/044-scm-capture-dry-run-persistence-split.md` - completed
+- `g03/045-turn-start-executor-smoke-boundary-split.md` - active
 
 ## Previous Generation
 
@@ -229,4 +232,4 @@ shape.
 
 ## Next Task
 
-Split runtime observation event-store persistence support code without behavior changes.
+Split turn-start executor smoke boundary support code without behavior changes.

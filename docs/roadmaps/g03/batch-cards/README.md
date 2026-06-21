@@ -10,7 +10,7 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `139-runtime-observation-event-store-persistence-type-split.md`
+- `148-turn-start-executor-smoke-boundary-type-split.md`
 
 ## Paused Cards
 
@@ -18,8 +18,8 @@ None.
 
 ## Planned Cards
 
-- `140-runtime-observation-event-store-persistence-helper-test-split.md`
-- `141-runtime-observation-event-store-persistence-validation-closeout.md`
+- `149-turn-start-executor-smoke-boundary-helper-test-split.md`
+- `150-turn-start-executor-smoke-boundary-validation-closeout.md`
 
 ## Completed Cards
 
@@ -161,3 +161,12 @@ None.
 - `136-durable-dispatch-invocation-preflight-type-split.md`
 - `137-durable-dispatch-invocation-preflight-helper-test-split.md`
 - `138-durable-dispatch-invocation-preflight-validation-closeout.md`
+- `139-runtime-observation-event-store-persistence-type-split.md`
+- `140-runtime-observation-event-store-persistence-helper-test-split.md`
+- `141-runtime-observation-event-store-persistence-validation-closeout.md`
+- `142-completion-scm-capture-preparation-persistence-type-split.md`
+- `143-completion-scm-capture-preparation-persistence-helper-test-split.md`
+- `144-completion-scm-capture-preparation-persistence-validation-closeout.md`
+- `145-scm-capture-dry-run-persistence-type-split.md`
+- `146-scm-capture-dry-run-persistence-helper-test-split.md`
+- `147-scm-capture-dry-run-persistence-validation-closeout.md`

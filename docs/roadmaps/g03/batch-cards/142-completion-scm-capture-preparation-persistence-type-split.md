@@ -1,14 +1,14 @@
-# 139 Runtime Observation Event Store Persistence Type Split
+# 142 Completion SCM Capture Preparation Persistence Type Split
 
 Status: completed
 Owner: Tom
 Updated: 2026-06-21
-Milestone: `../042-runtime-observation-event-store-persistence-split.md`
+Milestone: `../043-completion-scm-capture-preparation-persistence-split.md`
 
 ## Purpose
 
-Move runtime observation event-store persistence type/support code out of the
-front door.
+Move completion SCM capture preparation persistence type/support code out of
+the front door.
 
 ## Acceptance Criteria
 
@@ -19,6 +19,6 @@ front door.
 
 ## Validation
 
-- `cargo test -p nucleus-server runtime_observation_event_store_persistence -- --nocapture`
+- `cargo test -p nucleus-server completion_scm_capture_preparation_persistence -- --nocapture`
 - `CARGO_INCREMENTAL=0 cargo check -p nucleus-server`
 - `git diff --check`
