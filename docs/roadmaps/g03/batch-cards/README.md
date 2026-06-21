@@ -10,12 +10,12 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `100-convergence-local-snap-execution-preflight-records.md`
+- `109-convergence-local-snap-spawn-receipt-records.md`
 
 ## Paused Cards
 
-- `101-convergence-local-snap-execution-preflight-diagnostics.md`
-- `102-convergence-local-snap-execution-preflight-closeout.md`
+- `110-convergence-local-snap-spawn-receipt-diagnostics.md`
+- `111-convergence-local-snap-spawn-receipt-closeout.md`
 
 ## Planned Cards
 
@@ -122,3 +122,12 @@ None.
 - `097-convergence-local-snap-runner-replay-records.md`
 - `098-convergence-local-snap-runner-replay-diagnostics.md`
 - `099-convergence-local-snap-runner-replay-closeout.md`
+- `100-convergence-local-snap-execution-preflight-records.md`
+- `101-convergence-local-snap-execution-preflight-diagnostics.md`
+- `102-convergence-local-snap-execution-preflight-closeout.md`
+- `103-convergence-local-snap-spawn-request-records.md`
+- `104-convergence-local-snap-spawn-request-diagnostics.md`
+- `105-convergence-local-snap-spawn-request-closeout.md`
+- `106-convergence-local-snap-spawn-handoff-records.md`
+- `107-convergence-local-snap-spawn-handoff-diagnostics.md`
+- `108-convergence-local-snap-spawn-handoff-closeout.md`

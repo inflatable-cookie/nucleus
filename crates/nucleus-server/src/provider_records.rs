@@ -17,6 +17,10 @@ pub mod convergence_local_snap_admission;
 pub mod convergence_local_snap_admission_diagnostics;
 #[path = "provider_convergence_local_snap_command_descriptors.rs"]
 pub mod convergence_local_snap_command_descriptors;
+#[path = "provider_convergence_local_snap_execution_preflight.rs"]
+pub mod convergence_local_snap_execution_preflight;
+#[path = "provider_convergence_local_snap_execution_preflight_diagnostics.rs"]
+pub mod convergence_local_snap_execution_preflight_diagnostics;
 #[path = "provider_convergence_local_snap_request_control_dto.rs"]
 pub mod convergence_local_snap_request_control_dto;
 #[path = "provider_convergence_local_snap_request_persistence.rs"]
@@ -33,6 +37,14 @@ pub mod convergence_local_snap_runner_proof;
 pub mod convergence_local_snap_runner_replay_diagnostics;
 #[path = "provider_convergence_local_snap_runner_replay_records.rs"]
 pub mod convergence_local_snap_runner_replay_records;
+#[path = "provider_convergence_local_snap_spawn_handoff.rs"]
+pub mod convergence_local_snap_spawn_handoff;
+#[path = "provider_convergence_local_snap_spawn_handoff_diagnostics.rs"]
+pub mod convergence_local_snap_spawn_handoff_diagnostics;
+#[path = "provider_convergence_local_snap_spawn_request.rs"]
+pub mod convergence_local_snap_spawn_request;
+#[path = "provider_convergence_local_snap_spawn_request_diagnostics.rs"]
+pub mod convergence_local_snap_spawn_request_diagnostics;
 #[path = "provider_convergence_local_snap_stopped_requests.rs"]
 pub mod convergence_local_snap_stopped_requests;
 #[path = "provider_convergence_local_snap_stopped_runner_command_adapter.rs"]
@@ -77,6 +89,8 @@ pub use adapter_neutral_change_request_chain_persistence::*;
 pub use convergence_local_snap_admission::*;
 pub use convergence_local_snap_admission_diagnostics::*;
 pub use convergence_local_snap_command_descriptors::*;
+pub use convergence_local_snap_execution_preflight::*;
+pub use convergence_local_snap_execution_preflight_diagnostics::*;
 pub use convergence_local_snap_request_control_dto::*;
 pub use convergence_local_snap_request_persistence::*;
 pub use convergence_local_snap_runner_evidence::*;
@@ -85,6 +99,10 @@ pub use convergence_local_snap_runner_evidence_persistence::*;
 pub use convergence_local_snap_runner_proof::*;
 pub use convergence_local_snap_runner_replay_diagnostics::*;
 pub use convergence_local_snap_runner_replay_records::*;
+pub use convergence_local_snap_spawn_handoff::*;
+pub use convergence_local_snap_spawn_handoff_diagnostics::*;
+pub use convergence_local_snap_spawn_request::*;
+pub use convergence_local_snap_spawn_request_diagnostics::*;
 pub use convergence_local_snap_stopped_requests::*;
 pub use convergence_local_snap_stopped_runner_command_adapter::*;
 pub use convergence_local_snap_stopped_runner_command_diagnostics::*;

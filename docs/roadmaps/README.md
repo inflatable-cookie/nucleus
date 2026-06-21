@@ -157,7 +157,10 @@ shape.
 - `g03/026-convergence-local-snap-runner-evidence-persistence.md` - completed
 - `g03/027-convergence-local-snap-stopped-runner-command-adapter.md` - completed
 - `g03/028-convergence-local-snap-runner-replay-boundary.md` - completed
-- `g03/029-convergence-local-snap-execution-preflight.md` - active
+- `g03/029-convergence-local-snap-execution-preflight.md` - completed
+- `g03/030-convergence-local-snap-spawn-request-boundary.md` - completed
+- `g03/031-convergence-local-snap-spawn-handoff-boundary.md` - completed
+- `g03/032-convergence-local-snap-spawn-receipt-boundary.md` - active
 
 ## Previous Generation
 
@@ -216,5 +219,5 @@ shape.
 
 ## Next Task
 
-Build stopped local snap execution preflight records from replayed local snap
-runner replay decisions.
+Build sanitized stopped spawn receipt records from ready local snap spawn
+handoffs.

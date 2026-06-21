@@ -1,6 +1,6 @@
 # 100 Convergence Local Snap Execution Preflight Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../029-convergence-local-snap-execution-preflight.md`
@@ -12,10 +12,10 @@ runner replay decisions.
 
 ## Acceptance Criteria
 
-- [ ] Replayed runner replay records can produce ready preflight records.
-- [ ] Operator, executable, workspace, and authority gaps block preflight.
-- [ ] Duplicate and unsupported replay records are not ready.
-- [ ] No process or backend effect is added.
+- [x] Replayed runner replay records can produce ready preflight records.
+- [x] Operator, executable, workspace, and authority gaps block preflight.
+- [x] Duplicate and unsupported replay records are not ready.
+- [x] No process or backend effect is added.
 
 ## Validation
 

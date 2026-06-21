@@ -1,13 +1,13 @@
-# 101 Convergence Local Snap Execution Preflight Diagnostics
+# 104 Convergence Local Snap Spawn Request Diagnostics
 
 Status: completed
 Owner: Tom
 Updated: 2026-06-21
-Milestone: `../029-convergence-local-snap-execution-preflight.md`
+Milestone: `../030-convergence-local-snap-spawn-request-boundary.md`
 
 ## Purpose
 
-Expose read-only diagnostics for local snap execution preflight records.
+Expose read-only diagnostics for stopped local snap spawn-request records.
 
 ## Acceptance Criteria
 
@@ -19,6 +19,6 @@ Expose read-only diagnostics for local snap execution preflight records.
 
 ## Validation
 
-- `cargo test -p nucleus-server convergence_local_snap_execution_preflight_diagnostics -- --nocapture`
+- `cargo test -p nucleus-server convergence_local_snap_spawn_request_diagnostics -- --nocapture`
 - `CARGO_INCREMENTAL=0 cargo check -p nucleus-server`
 - `git diff --check`

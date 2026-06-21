@@ -1,6 +1,6 @@
 # 029 Convergence Local Snap Execution Preflight
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 
@@ -18,43 +18,44 @@ without spawning the process.
 
 ## Goals
 
-- [ ] Admit local snap execution only from replayed local snap runner replay
+- [x] Admit local snap execution only from replayed local snap runner replay
   records.
-- [ ] Require explicit operator confirmation, executable readiness, workspace
+- [x] Require explicit operator confirmation, executable readiness, workspace
   readiness, and authority refs.
-- [ ] Report blocked, duplicate, unsupported, and ready preflight states.
-- [ ] Keep process spawn, actual `converge snap`, object upload, publication,
+- [x] Report blocked, duplicate, unsupported, and ready preflight states.
+- [x] Keep process spawn, actual `converge snap`, object upload, publication,
   lane sync, and provider writes false.
 
 ## Execution Plan
 
-- [ ] Execution preflight records batch.
-- [ ] Execution preflight diagnostics batch.
-- [ ] Closeout batch.
+- [x] Execution preflight records batch.
+- [x] Execution preflight diagnostics batch.
+- [x] Closeout batch.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/100-convergence-local-snap-execution-preflight-records.md`
+None.
 
 Planned cards:
 
-- `batch-cards/101-convergence-local-snap-execution-preflight-diagnostics.md`
-- `batch-cards/102-convergence-local-snap-execution-preflight-closeout.md`
+None.
 
 Completed cards:
 
-None.
+- `batch-cards/100-convergence-local-snap-execution-preflight-records.md`
+- `batch-cards/101-convergence-local-snap-execution-preflight-diagnostics.md`
+- `batch-cards/102-convergence-local-snap-execution-preflight-closeout.md`
 
 ## Acceptance Criteria
 
-- [ ] Replayed local snap runner replay records can produce ready preflight
+- [x] Replayed local snap runner replay records can produce ready preflight
   records.
-- [ ] Missing operator confirmation, executable readiness, workspace readiness,
+- [x] Missing operator confirmation, executable readiness, workspace readiness,
   or authority refs blocks preflight.
-- [ ] Duplicate and unsupported replay records remain inspectable but cannot
+- [x] Duplicate and unsupported replay records remain inspectable but cannot
   become ready preflight.
-- [ ] No command spawn, actual `converge snap`, object upload, publication,
+- [x] No command spawn, actual `converge snap`, object upload, publication,
   lane sync, provider write, task mutation, callback, interruption, recovery,
   or raw output effect is added.

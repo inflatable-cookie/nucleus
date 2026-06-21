@@ -48,6 +48,9 @@ Current runway bands:
 - stopped local snap command adapter before any runner execution
 - persisted local snap runner replay before real command execution
 - local snap execution preflight before process spawn
+- stopped local snap spawn requests before real process spawn
+- stopped local snap spawn handoff before process runner invocation
+- sanitized local snap spawn receipts before raw process output
 
 Current checkpoint:
 
@@ -55,9 +58,9 @@ Current checkpoint:
   convergence-like plans, and adapter-plan diagnostics
 - Git execution proof is represented through pull-request execution admission
 - adapter-neutral chain and Convergence-like publication records are folded
-  into g03 as milestones 010-029
+  into g03 as milestones 010-032
 - doctor remains red on known god-file pressure
-- next ready card is Convergence local snap execution preflight records
+- next ready card is Convergence local snap spawn receipt records
 
 ## Milestones
 
@@ -89,18 +92,21 @@ Current checkpoint:
 - `026-convergence-local-snap-runner-evidence-persistence.md` - completed
 - `027-convergence-local-snap-stopped-runner-command-adapter.md` - completed
 - `028-convergence-local-snap-runner-replay-boundary.md` - completed
-- `029-convergence-local-snap-execution-preflight.md` - active
+- `029-convergence-local-snap-execution-preflight.md` - completed
+- `030-convergence-local-snap-spawn-request-boundary.md` - completed
+- `031-convergence-local-snap-spawn-handoff-boundary.md` - completed
+- `032-convergence-local-snap-spawn-receipt-boundary.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/100-convergence-local-snap-execution-preflight-records.md`
+- `batch-cards/109-convergence-local-snap-spawn-receipt-records.md`
 
 Paused cards:
 
-- `batch-cards/101-convergence-local-snap-execution-preflight-diagnostics.md`
-- `batch-cards/102-convergence-local-snap-execution-preflight-closeout.md`
+- `batch-cards/110-convergence-local-snap-spawn-receipt-diagnostics.md`
+- `batch-cards/111-convergence-local-snap-spawn-receipt-closeout.md`
 
 Planned cards:
 
@@ -207,6 +213,15 @@ Completed cards:
 - `batch-cards/097-convergence-local-snap-runner-replay-records.md`
 - `batch-cards/098-convergence-local-snap-runner-replay-diagnostics.md`
 - `batch-cards/099-convergence-local-snap-runner-replay-closeout.md`
+- `batch-cards/100-convergence-local-snap-execution-preflight-records.md`
+- `batch-cards/101-convergence-local-snap-execution-preflight-diagnostics.md`
+- `batch-cards/102-convergence-local-snap-execution-preflight-closeout.md`
+- `batch-cards/103-convergence-local-snap-spawn-request-records.md`
+- `batch-cards/104-convergence-local-snap-spawn-request-diagnostics.md`
+- `batch-cards/105-convergence-local-snap-spawn-request-closeout.md`
+- `batch-cards/106-convergence-local-snap-spawn-handoff-records.md`
+- `batch-cards/107-convergence-local-snap-spawn-handoff-diagnostics.md`
+- `batch-cards/108-convergence-local-snap-spawn-handoff-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -232,4 +247,7 @@ Completed cards:
 19. Convergence local snap runner evidence persistence - completed
 20. Convergence local snap stopped runner command adapter - completed
 21. Convergence local snap runner replay boundary - completed
-22. Convergence local snap execution preflight - active
+22. Convergence local snap execution preflight - completed
+23. Convergence local snap spawn request boundary - completed
+24. Convergence local snap spawn handoff boundary - completed
+25. Convergence local snap spawn receipt boundary - active

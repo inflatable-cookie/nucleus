@@ -933,11 +933,30 @@ Recent evidence:
   duplicate, blocked, and unsupported states, and still permit no command
   spawn, local snap creation, object upload, publication, lane sync, provider
   writes, task mutation, or raw-material retention.
+- Convergence local snap execution preflight records and diagnostics now admit
+  only replayed local snap runner replay records when operator confirmation,
+  executable readiness, workspace readiness, and authority refs are present.
+  Duplicate, blocked, unsupported, missing-authority, missing-prerequisite, raw
+  material, and command-effect states remain inspectable, and process spawn,
+  actual `converge snap`, object upload, publication, lane sync, provider
+  writes, task mutation, and raw-material retention stay false.
+- Convergence local snap spawn-request records and diagnostics now derive only
+  from ready local snap execution preflight records. Blocked, duplicate, and
+  unsupported preflight states remain inspectable, duplicate spawn request ids
+  are deterministic no-ops, and process spawn, actual `converge snap`, object
+  upload, publication, lane sync, provider writes, task mutation, and
+  raw-material retention stay false.
+- Convergence local snap spawn handoff records and diagnostics now derive only
+  from ready stopped spawn requests. Blocked, duplicate, and unsupported spawn
+  requests remain inspectable, duplicate handoff ids are deterministic no-ops,
+  and process runner invocation, command spawn, actual `converge snap`, object
+  upload, publication, lane sync, provider writes, task mutation, and
+  raw-material retention stay false.
 
 Next implementation gate:
 
-1. define local snap execution preflight from replayed runner replay records
-2. keep preflight non-mutating and separate from actual `converge snap`
+1. define sanitized stopped local snap spawn receipt records from ready handoffs
+2. keep receipts non-mutating and free of raw process output
 3. keep command execution and remote Convergence effects blocked
 4. continue reducing god-file pressure opportunistically when touched
 
