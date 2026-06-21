@@ -38,6 +38,9 @@ Current runway bands:
 - read-only diagnostics and control DTOs for every effect gate
 - stopped runner command-adapter boundary before any real Convergence backend
   integration
+- Convergence backend surface research before any real runner effect
+- storage-backed Convergence stopped runner replay before real backend effects
+- local Convergence snap admission before remote publication effects
 
 Current checkpoint:
 
@@ -45,9 +48,9 @@ Current checkpoint:
   convergence-like plans, and adapter-plan diagnostics
 - Git execution proof is represented through pull-request execution admission
 - adapter-neutral chain and Convergence-like publication records are folded
-  into g03 as milestones 010-019
+  into g03 as milestones 010-022
 - doctor remains red on known god-file pressure
-- next ready card is the stopped Convergence runner command-adapter proof
+- next ready card is Convergence local snap admission records
 
 ## Milestones
 
@@ -69,22 +72,25 @@ Current checkpoint:
 - `016-g03-health-validation-rebaseline.md` - completed
 - `017-server-provider-front-door-consolidation.md` - completed
 - `018-convergence-runner-evidence-persistence.md` - completed
-- `019-convergence-stopped-runner-command-adapter.md` - active
+- `019-convergence-stopped-runner-command-adapter.md` - completed
+- `020-convergence-backend-surface-research.md` - completed
+- `021-convergence-runner-replay-boundary.md` - completed
+- `022-convergence-local-snap-admission.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/070-convergence-stopped-runner-command-adapter.md`
+- `batch-cards/079-convergence-local-snap-admission-records.md`
 
 Paused cards:
 
-None.
+- `batch-cards/080-convergence-local-snap-admission-diagnostics.md`
+- `batch-cards/081-convergence-local-snap-admission-closeout.md`
 
 Planned cards:
 
-- `batch-cards/071-convergence-stopped-runner-command-diagnostics.md`
-- `batch-cards/072-convergence-stopped-runner-command-closeout.md`
+None.
 
 Completed cards:
 
@@ -157,6 +163,15 @@ Completed cards:
 - `batch-cards/067-convergence-runner-evidence-persistence.md`
 - `batch-cards/068-convergence-runner-evidence-control-dto.md`
 - `batch-cards/069-convergence-runner-evidence-persistence-closeout.md`
+- `batch-cards/070-convergence-stopped-runner-command-adapter.md`
+- `batch-cards/071-convergence-stopped-runner-command-diagnostics.md`
+- `batch-cards/072-convergence-stopped-runner-command-closeout.md`
+- `batch-cards/073-convergence-backend-surface-research.md`
+- `batch-cards/074-convergence-runner-backend-contract.md`
+- `batch-cards/075-convergence-backend-research-closeout.md`
+- `batch-cards/076-convergence-runner-replay-records.md`
+- `batch-cards/077-convergence-runner-replay-diagnostics.md`
+- `batch-cards/078-convergence-runner-replay-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -172,4 +187,7 @@ Completed cards:
 10. Adapter-neutral chain projection and persistence - completed
 11. Convergence publication admission through runner evidence persistence -
     completed
-12. Stopped Convergence runner command-adapter proof - active
+12. Stopped Convergence runner command-adapter proof - completed
+13. Convergence backend surface research - completed
+14. Convergence runner replay boundary - completed
+15. Convergence local snap admission - active

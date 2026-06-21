@@ -33,6 +33,14 @@ pub mod convergence_publication_runner_evidence_persistence;
 pub mod convergence_publication_runner_proof;
 #[path = "provider_convergence_publication_stopped_requests.rs"]
 pub mod convergence_publication_stopped_requests;
+#[path = "provider_convergence_runner_replay_diagnostics.rs"]
+pub mod convergence_runner_replay_diagnostics;
+#[path = "provider_convergence_runner_replay_records.rs"]
+pub mod convergence_runner_replay_records;
+#[path = "provider_convergence_stopped_runner_command_adapter.rs"]
+pub mod convergence_stopped_runner_command_adapter;
+#[path = "provider_convergence_stopped_runner_command_diagnostics.rs"]
+pub mod convergence_stopped_runner_command_diagnostics;
 
 pub use adapter_neutral_change_request_chain::*;
 pub use adapter_neutral_change_request_chain_control_dto::*;
@@ -49,3 +57,7 @@ pub use convergence_publication_runner_evidence_control_dto::*;
 pub use convergence_publication_runner_evidence_persistence::*;
 pub use convergence_publication_runner_proof::*;
 pub use convergence_publication_stopped_requests::*;
+pub use convergence_runner_replay_diagnostics::*;
+pub use convergence_runner_replay_records::*;
+pub use convergence_stopped_runner_command_adapter::*;
+pub use convergence_stopped_runner_command_diagnostics::*;

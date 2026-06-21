@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-17
+Updated: 2026-06-21
 
 ## Purpose
 
@@ -19,6 +19,16 @@ Reference paths:
 - `../convergence/README.md`
 - `../convergence/docs/architecture/01-concepts-and-object-model.md`
 - `../convergence/docs/architecture/02-repo-gates-lanes-scopes.md`
+- `../convergence/src/cli_commands/commands.rs`
+- `../convergence/src/cli_exec/delivery/publish_sync/publish.rs`
+- `../convergence/src/remote/transfer/publish/mod.rs`
+- `../convergence/src/remote/types/publication_flow.rs`
+- `../convergence/src/bin/converge_server/routes/repo_core.rs`
+- `../convergence/src/bin/converge_server/routes/release_promotion.rs`
+- `../convergence/src/bin/converge_server/handlers_publications/publications/create.rs`
+- `../convergence/src/bin/converge_server/handlers_publications/publications/validate.rs`
+- `../convergence/src/bin/converge_server/handlers_release/promotion_endpoints/create.rs`
+- `../convergence/src/bin/converge_server/access.rs`
 
 Observed Convergence terms:
 
@@ -115,3 +125,45 @@ Use these neutral capability terms for core SCM driver surfaces:
 Git adapters may map those to commits, branches, pushes, worktrees, and pull
 requests. Convergence adapters may map them to snaps, scopes, publications,
 gates, bundles, promotions, and releases.
+
+## Backend Surface Refresh 2026-06-21
+
+Observed command surfaces:
+
+- `converge snap` creates a local `SnapRecord` from the workspace manifest and
+  stores it locally as the head snap.
+- `converge publish` selects a snap, scope, and gate, then uses the remote
+  client to upload missing objects and create a publication.
+- `converge sync` updates unpublished lane heads and is separate from
+  publication.
+- `converge bundle`, `promote`, `release`, `approve`, `pins`, and `resolve`
+  are separate collaboration and authority steps.
+
+Observed remote/server surfaces:
+
+- repo routes expose lanes, lane heads, gate graph, scopes, publications,
+  bundles, pins, approvals, releases, promotions, and promotion state.
+- publication creation checks publisher permission, known scope, known gate,
+  duplicate snap/scope/gate publication, metadata-only gate policy, and snap
+  object availability.
+- promotion checks publisher permission, bundle promotability, gate
+  relationship, superposition policy, approval count, and downstream gate
+  validity.
+- release and promotion are distinct from publication; publication is intake,
+  promotion moves bundle authority, and release creates a consumption pointer.
+
+Nucleus runner implications:
+
+- A Convergence runner cannot be modeled as `commit then push then PR`.
+- Local capture, object upload, publication creation, lane-head sync, bundle
+  creation, approval, promotion, release, and resolution publication are
+  separate effect authorities.
+- Metadata-only publication is an explicit mode gated by server policy.
+- Remote identity/token readiness and publisher permission are mandatory
+  preflight inputs before any real publish, promotion, approval, or release
+  effect.
+- Runner records must preserve snap id, root manifest, scope, gate, lane,
+  publication id, bundle id, promotion id, release channel, publisher/user id,
+  metadata-only mode, and resolution refs where applicable.
+- Convergence conflict handling uses superpositions and resolution records;
+  Nucleus must not collapse these into Git conflict or merge terminology.

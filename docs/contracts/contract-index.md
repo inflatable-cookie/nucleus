@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-17
+Updated: 2026-06-21
 
 ## Active Contracts
 
@@ -18,7 +18,7 @@ Updated: 2026-06-17
 | `008-storage-state-persistence-contract.md` | draft-promoted-first-pass | Persistence domains, record identity, revisions, and journal vocabulary. |
 | `009-adapter-registry-contract.md` | draft-promoted-first-pass | Configured harness adapter registry with first Rust types. |
 | `010-agent-session-lifecycle-contract.md` | draft-promoted-first-pass | Server-owned agent session and turn lifecycle with first Rust types. |
-| `011-scm-forge-sync-contract.md` | draft | Git, SCM, forge, and project-management sync boundary. |
+| `011-scm-forge-sync-contract.md` | draft-promoted-convergence-backend | Git, SCM, forge, and project-management sync boundary. |
 | `012-native-harness-runtime-contract.md` | draft | Nucleus-owned harness runtime and steward persona boundary. |
 | `013-shared-memory-contract.md` | draft | Server-owned shared memory records for project, task, session, and repo context. |
 | `014-structured-project-planning-contract.md` | draft | Server-owned guided planning sessions, artifacts, and task seeds. |

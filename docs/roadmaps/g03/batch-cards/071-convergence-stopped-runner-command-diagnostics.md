@@ -1,6 +1,6 @@
 # 071 Convergence Stopped Runner Command Diagnostics
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../019-convergence-stopped-runner-command-adapter.md`
@@ -12,10 +12,10 @@ records.
 
 ## Acceptance Criteria
 
-- [ ] Diagnostics count runnable, blocked, duplicate, and unsupported records.
-- [ ] Diagnostics expose no raw provider payloads.
-- [ ] Diagnostics carry no mutation authority.
-- [ ] No execution effect is added.
+- [x] Diagnostics count runnable, blocked, duplicate, and unsupported records.
+- [x] Diagnostics expose no raw provider payloads.
+- [x] Diagnostics carry no mutation authority.
+- [x] No execution effect is added.
 
 ## Validation
 

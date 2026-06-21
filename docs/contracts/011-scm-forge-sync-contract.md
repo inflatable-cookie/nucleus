@@ -1634,6 +1634,104 @@ classification. They are value-shaped only. They do not implement a scheduler,
 transition validator, persistence, replay, provider calls, command execution,
 or server event fan-out.
 
+## Convergence Runner Backend Boundary
+
+Convergence-style SCM adapters must not inherit Git workflow semantics.
+
+The adapter may expose these backend effect families separately:
+
+- local snap creation
+- object availability scan
+- object upload
+- publication creation
+- lane-head sync
+- bundle creation
+- bundle approval
+- bundle promotion
+- release creation or update
+- resolution publication
+
+These effect families are not aliases for commit, push, pull request, merge,
+or tag. Git adapters may use those terms in Git-specific records. Core Nucleus
+records should use provider-neutral vocabulary unless the field is explicitly
+provider-specific.
+
+Minimum Convergence runner inputs before any real backend effect:
+
+- project id and repo id
+- SCM adapter instance id
+- authority host id
+- workspace root or source authority ref
+- requested effect family
+- snap id or local capture request, depending on effect family
+- root manifest ref where known
+- scope id where publication, bundle, promotion, release, or lane state needs
+  one
+- gate id for publication and bundle operations
+- lane id for lane-head sync
+- publication ids for bundle or resolution-linked operations
+- bundle id for approval, promotion, and release operations
+- downstream gate id for promotion
+- release channel for release operations
+- publisher/user identity ref
+- remote repo id and remote endpoint ref
+- credential ref
+- idempotency key
+- operator approval ref for mutating effects
+- recovery policy ref
+- sanitized evidence refs from preflight
+
+Minimum backend capabilities to report:
+
+- supports local snap creation
+- supports object upload
+- supports metadata-only publication
+- supports publication creation
+- supports lane-head sync
+- supports bundle creation
+- supports approval
+- supports promotion
+- supports release
+- supports resolution publication
+- supports dry-run or preflight-only mode
+- supports cancellation
+- supports retry after transient remote failure
+- supports resumable upload or publish recovery
+
+Authority and preflight gates:
+
+- source authority is required for local snap creation.
+- credential authority is required before object upload or remote mutation.
+- SCM/forge authority is required before publication, lane sync, bundle,
+  approval, promotion, release, or resolution publication.
+- operator approval is required before mutating remote authority state.
+- publication preflight must verify publisher permission, known scope, known
+  gate, duplicate snap/scope/gate status, metadata-only gate policy, and snap
+  object availability.
+- promotion preflight must verify publisher permission, bundle promotability,
+  downstream gate relationship, superposition policy, approval count, and
+  downstream gate validity.
+- release preflight must verify release channel policy and bundle/gate
+  eligibility before a release pointer can move.
+- resolution publication preflight must preserve resolution provenance and
+  must not collapse superpositions into Git conflict terminology.
+
+Stopped-by-default rule:
+
+- Nucleus may create descriptors, stopped requests, persistence records,
+  runner proofs, sanitized evidence, diagnostics, and control DTOs without
+  backend effects.
+- A real Convergence runner needs a separate admission record for each effect
+  family above.
+- One admitted effect family must not imply authority for another. Publishing a
+  snap does not authorize promotion. Promotion does not authorize release.
+  Lane-head sync does not authorize publication.
+- Raw provider/server responses, local file paths, credentials, and unresolved
+  object payloads must not enter durable event replay by default.
+- Replay records must preserve provider refs such as snap id, root manifest,
+  scope, gate, lane, publication id, bundle id, promotion id, release channel,
+  publisher/user id, metadata-only mode, and resolution refs.
+
 ## Research Gaps
 
 - Management branch versus main-branch sync.
@@ -1641,6 +1739,7 @@ or server event fan-out.
 - Webhook versus polling refresh.
 - Direct merge versus review-request default policy.
 - Convergence-style publication and gate workflow fixture design.
+- Convergence real-runner storage-backed replay shape.
 - First SCM diff/commit control command set and provider-neutral UI wording.
 - AI commit-message proposal evidence and approval policy.
 - AI conflict-resolution proposal lifecycle and audit policy.

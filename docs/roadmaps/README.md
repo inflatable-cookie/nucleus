@@ -147,7 +147,10 @@ shape.
 - `g03/016-g03-health-validation-rebaseline.md` - completed
 - `g03/017-server-provider-front-door-consolidation.md` - completed
 - `g03/018-convergence-runner-evidence-persistence.md` - completed
-- `g03/019-convergence-stopped-runner-command-adapter.md` - active
+- `g03/019-convergence-stopped-runner-command-adapter.md` - completed
+- `g03/020-convergence-backend-surface-research.md` - completed
+- `g03/021-convergence-runner-replay-boundary.md` - completed
+- `g03/022-convergence-local-snap-admission.md` - active
 
 ## Previous Generation
 
@@ -206,5 +209,5 @@ shape.
 
 ## Next Task
 
-Define stopped command-adapter records from persisted Convergence runner
-evidence.
+Define stopped local snap admission records from Convergence runner replay
+records and authority inputs.

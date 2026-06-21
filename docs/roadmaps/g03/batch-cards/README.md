@@ -10,16 +10,16 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `070-convergence-stopped-runner-command-adapter.md`
+- `079-convergence-local-snap-admission-records.md`
 
 ## Paused Cards
 
-None.
+- `080-convergence-local-snap-admission-diagnostics.md`
+- `081-convergence-local-snap-admission-closeout.md`
 
 ## Planned Cards
 
-- `071-convergence-stopped-runner-command-diagnostics.md`
-- `072-convergence-stopped-runner-command-closeout.md`
+None.
 
 ## Completed Cards
 
@@ -92,3 +92,12 @@ None.
 - `067-convergence-runner-evidence-persistence.md`
 - `068-convergence-runner-evidence-control-dto.md`
 - `069-convergence-runner-evidence-persistence-closeout.md`
+- `070-convergence-stopped-runner-command-adapter.md`
+- `071-convergence-stopped-runner-command-diagnostics.md`
+- `072-convergence-stopped-runner-command-closeout.md`
+- `073-convergence-backend-surface-research.md`
+- `074-convergence-runner-backend-contract.md`
+- `075-convergence-backend-research-closeout.md`
+- `076-convergence-runner-replay-records.md`
+- `077-convergence-runner-replay-diagnostics.md`
+- `078-convergence-runner-replay-closeout.md`

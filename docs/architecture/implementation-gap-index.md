@@ -859,14 +859,41 @@ Recent evidence:
   permit no runner invocation, provider handoff, snapshot creation, publish,
   publication review, provider writes, task mutation, or raw-material
   retention.
+- Convergence stopped runner command-adapter records and diagnostics now derive
+  from persisted runner evidence, preserve idempotency and provider-stage refs,
+  count runnable, blocked, duplicate, and unsupported states, and still permit
+  no runner invocation, provider handoff, snapshot creation, publish,
+  publication review, provider writes, task mutation, or raw-material
+  retention.
+- Convergence backend surface research now identifies `snap`, object upload,
+  `publish`, lane-head sync, bundle creation, approval, promotion, release,
+  and resolution publication as separate backend effects. Publication checks
+  publisher permission, scope, gate, duplicate snap/scope/gate records,
+  metadata-only gate policy, and object availability; promotion checks
+  promotability, downstream gate relationship, superposition policy, approval
+  count, and publisher permission.
+- The SCM/forge contract now names the Convergence runner backend boundary:
+  minimum inputs, reported backend capabilities, authority/preflight gates,
+  and stopped-by-default rules for snap creation, object upload, publication,
+  lane-head sync, bundle, approval, promotion, release, and resolution
+  publication effects.
+- G03 selected storage-backed stopped runner replay as the next Convergence
+  lane before real backend integration. This should preserve adapter decisions
+  and provider refs by replay id before any object upload, publication, lane
+  sync, bundle, approval, promotion, release, or resolution-publication effect
+  is admitted.
+- Convergence runner replay records and diagnostics now persist stopped
+  adapter decisions with duplicate-safe replay ids, optional sanitized
+  provider refs, effect-family counts, and no backend, object upload,
+  publication, lane sync, bundle, approval, promotion, release, resolution
+  publication, provider write, task mutation, callback, interruption,
+  recovery, or raw-material authority.
 
 Next implementation gate:
 
-1. define a stopped Convergence runner command-adapter boundary over persisted
-   evidence
-2. keep the adapter proof non-mutating and separate from any real Convergence
-   backend integration
-3. choose storage-backed replay or backend research before a real runner
+1. add stopped local snap admission from replay records and authority inputs
+2. keep remote Convergence effects blocked and separately admitted
+3. continue admitting each backend effect family one at a time
 4. continue reducing god-file pressure opportunistically when touched
 
 Until that lane proves durable authority and preflight, keep checkout,

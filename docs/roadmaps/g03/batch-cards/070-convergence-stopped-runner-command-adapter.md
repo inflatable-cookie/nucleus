@@ -1,6 +1,6 @@
 # 070 Convergence Stopped Runner Command Adapter
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../019-convergence-stopped-runner-command-adapter.md`
@@ -12,10 +12,10 @@ evidence.
 
 ## Acceptance Criteria
 
-- [ ] Reviewable persisted evidence can produce stopped adapter records.
-- [ ] Blocked and duplicate evidence persistence is skipped.
-- [ ] Idempotency and provider-stage refs are preserved.
-- [ ] No execution effect is added.
+- [x] Reviewable persisted evidence can produce stopped adapter records.
+- [x] Blocked and duplicate evidence persistence is skipped.
+- [x] Idempotency and provider-stage refs are preserved.
+- [x] No execution effect is added.
 
 ## Validation
 
