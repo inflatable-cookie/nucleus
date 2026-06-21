@@ -1,6 +1,6 @@
 # 583 SCM Change Request Adapter Plan Closeout
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../123-scm-change-request-adapter-plan-selection.md`
@@ -17,15 +17,15 @@ Validate adapter plan selection and choose the first executable adapter lane.
 
 ## Acceptance Criteria
 
-- [ ] Validation passes or blockers are recorded.
-- [ ] Gap index reflects adapter plan selection.
-- [ ] Next executable lane is selected from evidence.
-- [ ] External effects remain gated.
+- [x] Validation passes or blockers are recorded.
+- [x] Gap index reflects adapter plan selection.
+- [x] Next executable lane is selected from evidence.
+- [x] External effects remain gated.
 
 ## Validation
 
-- `cargo check --workspace`
-- `cargo test --workspace`
-- `effigy qa:docs`
-- `effigy qa:northstar`
-- `git diff --check`
+- [x] `cargo check --workspace`
+- [x] `cargo test --workspace`
+- [x] `effigy qa:docs`
+- [x] `effigy qa:northstar`
+- [x] `git diff --check`

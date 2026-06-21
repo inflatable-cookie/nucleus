@@ -127,8 +127,27 @@ shape.
 - `g02/120-scm-capture-review-decision-control-integration.md` - completed
 - `g02/121-scm-capture-change-request-preparation-admission.md` - completed
 - `g02/122-scm-capture-change-request-preparation-control.md` - completed
-- `g02/123-scm-change-request-adapter-plan-selection.md` - active
+- `g02/123-scm-change-request-adapter-plan-selection.md` - completed
 - `g02/124-health-and-runway-rebaseline.md` - completed
+- `g03/001-git-change-request-execution-gate.md` - completed
+- `g03/002-git-change-request-dry-run-runner.md` - completed
+- `g03/003-git-branch-worktree-admission.md` - completed
+- `g03/004-git-branch-worktree-execution-handoff.md` - completed
+- `g03/005-git-commit-admission.md` - completed
+- `g03/006-git-push-admission.md` - completed
+- `g03/007-forge-pull-request-descriptor-dry-run.md` - completed
+- `g03/008-forge-pull-request-execution-admission.md` - completed
+- `g03/009-git-change-request-execution-closeout.md` - completed
+- `g03/010-adapter-neutral-change-request-chain-projection.md` - completed
+- `g03/011-adapter-neutral-chain-persistence-control.md` - completed
+- `g03/012-convergence-publication-admission.md` - completed
+- `g03/013-convergence-publication-command-boundary.md` - completed
+- `g03/014-convergence-publication-request-persistence.md` - completed
+- `g03/015-convergence-publication-runner-proof.md` - completed
+- `g03/016-g03-health-validation-rebaseline.md` - completed
+- `g03/017-server-provider-front-door-consolidation.md` - completed
+- `g03/018-convergence-runner-evidence-persistence.md` - completed
+- `g03/019-convergence-stopped-runner-command-adapter.md` - active
 
 ## Previous Generation
 
@@ -187,5 +206,5 @@ shape.
 
 ## Next Task
 
-Close out SCM change-request adapter plan selection and choose the first
-executable adapter lane from evidence.
+Define stopped command-adapter records from persisted Convergence runner
+evidence.

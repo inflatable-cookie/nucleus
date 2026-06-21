@@ -1,6 +1,6 @@
 # 123 SCM Change Request Adapter Plan Selection
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 
@@ -31,7 +31,7 @@ health debt tracked in the implementation gap index.
 - [x] Preserve provider-neutral preparation refs.
 - [x] Keep commit/snapshot/publish terminology adapter-scoped.
 - [x] Keep all execution authority absent.
-- [ ] Choose the first executable adapter lane from evidence.
+- [x] Choose the first executable adapter lane from evidence.
 
 ## Execution Plan
 
@@ -39,13 +39,13 @@ health debt tracked in the implementation gap index.
 - [x] Git-like plan mapping batch.
 - [x] Convergence-like plan mapping batch.
 - [x] Adapter plan diagnostics batch.
-- [ ] Authority and closeout batch.
+- [x] Authority and closeout batch.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/583-scm-change-request-adapter-plan-closeout.md`
+None.
 
 Planned cards:
 
@@ -57,6 +57,7 @@ Completed cards:
 - `batch-cards/580-scm-change-request-git-like-plan.md`
 - `batch-cards/581-scm-change-request-convergence-like-plan.md`
 - `batch-cards/582-scm-change-request-adapter-plan-diagnostics.md`
+- `batch-cards/583-scm-change-request-adapter-plan-closeout.md`
 
 ## Acceptance Criteria
 
@@ -68,3 +69,18 @@ Completed cards:
 - [x] Unsupported adapter labels produce visible blockers.
 - [x] No SCM, forge, provider, callback, interruption, recovery, or raw-output
   authority is granted.
+
+## Closeout
+
+Git is the first executable adapter lane. Evidence:
+
+- Git-like change-request plans now carry branch, commit, push, and pull-request
+  terms without granting effects.
+- Convergence-like plans remain separate and use snapshot/publish terms.
+- Unsupported adapters stay visible as blocked/unsupported records.
+- Diagnostics summarize plan kinds and blockers without SCM, forge, provider,
+  callback, interruption, recovery, or raw-output authority.
+
+The next generation may admit Git effects one authority at a time, starting
+with explicit Git change-request execution authority records. Convergence-like
+execution stays planned but not first.

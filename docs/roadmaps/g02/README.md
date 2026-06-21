@@ -1,8 +1,8 @@
 # g02 Orchestration And Engine Core
 
-Status: active
+Status: completed
 Owner: Tom
-Updated: 2026-06-20
+Updated: 2026-06-21
 
 ## Purpose
 
@@ -41,17 +41,14 @@ Current checkpoint:
 - product risk is now module accretion, not missing product direction
 - `effigy doctor` is red on god-file pressure with 152 findings, including 28
   errors
-- adapter-specific change-request planning has resumed after the health reset
-  reduced active-lane pressure; remaining doctor errors are broader health debt
+- adapter-specific change-request planning is complete; remaining doctor
+  errors are broader health debt
 
 Next runway:
 
-- complete the 124 health/runway rebaseline
-- resume 123 adapter-specific change-request plan selection after the health
-  gate, still without SCM or forge effects
-- choose the first executable SCM/forge mutation gate only after adapter plans
-  are durable, inspectable, and explicitly operator-gated
-- pause again before broad UI, remote-control, or multi-provider expansion
+- roll to g03 for effect-gated Git change-request execution
+- keep broad UI, remote-control, multi-provider, and convergence execution
+  expansion behind later lanes
 
 ## Milestones
 
@@ -177,14 +174,14 @@ Next runway:
 - `120-scm-capture-review-decision-control-integration.md` - completed
 - `121-scm-capture-change-request-preparation-admission.md` - completed
 - `122-scm-capture-change-request-preparation-control.md` - completed
-- `123-scm-change-request-adapter-plan-selection.md` - active
+- `123-scm-change-request-adapter-plan-selection.md` - completed
 - `124-health-and-runway-rebaseline.md` - completed
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/583-scm-change-request-adapter-plan-closeout.md`
+None.
 
 Paused cards:
 
@@ -200,6 +197,7 @@ Completed cards:
 - `batch-cards/580-scm-change-request-git-like-plan.md`
 - `batch-cards/581-scm-change-request-convergence-like-plan.md`
 - `batch-cards/582-scm-change-request-adapter-plan-diagnostics.md`
+- `batch-cards/583-scm-change-request-adapter-plan-closeout.md`
 - `batch-cards/309-task-backed-live-execution-policy-gate.md`
 - `batch-cards/310-task-work-live-executor-admission-records.md`
 - `batch-cards/311-task-work-live-executor-receipt-linkage.md`

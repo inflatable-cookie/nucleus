@@ -1,6 +1,6 @@
 # g02 Batch Cards
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 
@@ -10,7 +10,7 @@ Hold execution cards for `g02`.
 
 ## Ready Cards
 
-- `583-scm-change-request-adapter-plan-closeout.md`
+None.
 
 ## Paused Cards
 
@@ -26,6 +26,7 @@ None.
 - `580-scm-change-request-git-like-plan.md`
 - `581-scm-change-request-convergence-like-plan.md`
 - `582-scm-change-request-adapter-plan-diagnostics.md`
+- `583-scm-change-request-adapter-plan-closeout.md`
 - `584-request-handler-diagnostics-test-split.md`
 - `585-control-envelope-diagnostics-test-split.md`
 - `586-request-handler-query-module-split.md`

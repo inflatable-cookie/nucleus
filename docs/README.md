@@ -18,7 +18,7 @@ The repo uses:
 
 ## Current Lane
 
-`g02` orchestration and engine core.
+`g03` adapter-neutral change-request chain projection and persistence.
 
 Current planning artifacts:
 
@@ -102,6 +102,7 @@ Current planning artifacts:
 - `roadmaps/g02/069-codex-task-backed-live-execution-gate.md`
 - `roadmaps/g02/123-scm-change-request-adapter-plan-selection.md`
 - `roadmaps/g02/124-health-and-runway-rebaseline.md`
+- `roadmaps/g03/001-git-change-request-execution-gate.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -109,16 +110,18 @@ Current planning artifacts:
 
 ## Guardrail
 
-Do not continue adapter-specific SCM plan implementation until the 124
-health/runway rebaseline reduces the current request-handler, control DTO, and
-SCM module pressure or records a deliberate deferral. The health pass reduced
-doctor error findings from 37 to 28 and resumed roadmap 123; remaining
-god-file errors are broader follow-on health debt.
+G02 closed after adapter-specific SCM change-request plan selection. G03
+proved the Git change-request execution chain as stopped-by-default server
+records. G03 promotes that represented chain into adapter-neutral projection
+and persistence surfaces before any Convergence-like publication admission or
+real mutating lane.
 
 Codex live execution, task-backed evidence review, explicit task completion,
-SCM capture, operator review readiness, review decisions, and adapter-neutral
-change-request preparation are now proven as server-owned, sanitized,
-operator-gated record/control surfaces.
+SCM capture, operator review readiness, review decisions, adapter-neutral
+change-request preparation, adapter-specific change-request planning, Git
+change-request execution gates, and adapter-neutral change-request chain
+projection are now proven as server-owned, sanitized, operator-gated
+record/control surfaces.
 
 The first approved direct Codex `turn/start` smoke completed through local
 Codex app-server with sanitized output only. Further provider writes, SCM/forge

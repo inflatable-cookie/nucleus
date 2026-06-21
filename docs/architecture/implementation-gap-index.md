@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-20
+Updated: 2026-06-21
 
 ## Purpose
 
@@ -762,15 +762,114 @@ Recent evidence:
   aggregate snapshots, and request-handler diagnostics, and still grant no
   branch/snapshot, commit/publish, push/remote-publish, forge, provider,
   callback, interruption, recovery, or raw-output authority.
+- Adapter-specific change-request plan records now select Git-like,
+  convergence-like, and unsupported adapter paths from persisted
+  adapter-neutral preparation records. Git-like records scope branch, commit,
+  push, and pull-request terminology to Git plans; convergence-like records
+  scope snapshot and publish terminology separately; diagnostics summarize
+  plan kinds and blockers without granting SCM, forge, provider, callback,
+  interruption, recovery, or raw-output authority.
+- Git change-request execution authority, command descriptors, stopped
+  request records, preflight records, dry-run handoff records, sanitized
+  dry-run outcomes, dry-run evidence, dry-run diagnostics, branch/worktree
+  admission records, branch/worktree command descriptors, branch/worktree
+  preflight records, and branch/worktree diagnostics now exist as
+  stopped-by-default server records. Branch/worktree modes are explicit,
+  reviewable dry-run evidence is required, and diagnostics grant no checkout,
+  branch creation, worktree creation, commit, push, pull-request, forge,
+  provider, callback, interruption, recovery, or raw-output authority.
+- Git branch/worktree execution handoff records, sanitized outcome records,
+  reviewable evidence records, and read-only diagnostics now carry the
+  branch/worktree setup chain forward without running Git. They preserve
+  preflight, descriptor, admission, dry-run evidence, dry-run outcome,
+  dry-run handoff, request, authority, plan, task, repo, operator, and
+  worktree mode identity; evidence explicitly does not grant commit, push, or
+  pull-request readiness.
+- Git commit admission records, commit command descriptors, commit preflight
+  records, and read-only diagnostics now admit commit intent from reviewable
+  branch/worktree evidence with explicit commit-message provenance. They do
+  not create commits, build executable argv, create shell handoff, push, create
+  pull requests, call forge/provider surfaces, mutate tasks, or retain raw
+  output.
+- Git push admission records, push command descriptors, push preflight records,
+  and read-only diagnostics now admit push intent from ready commit preflight
+  state with explicit remote target provenance. They do not execute pushes,
+  create pull requests, call forge/provider surfaces, mutate tasks, or retain
+  raw output.
+- Forge pull-request descriptor records, dry-run evidence records, and
+  read-only diagnostics now represent PR intent from ready push preflight
+  state with explicit forge provider, base branch, head branch, title source,
+  and body source. They do not create pull requests, execute forge/provider
+  writes, mutate tasks, or retain raw output.
+- Forge pull-request execution admission, preflight, and diagnostics now
+  represent stopped-by-default PR creation authority from reviewable PR dry-run
+  evidence with explicit operator approval, credential readiness, and remote
+  branch visibility blockers. They do not create pull requests, execute
+  forge/provider writes, mutate tasks, or retain raw output.
+- Adapter-neutral change-request chain projection and diagnostics now summarize
+  Git-like, Convergence-like, and unsupported provider stages without making
+  commit, push, pull-request, snapshot, publish, or publication-review terms
+  universal. The neutral projection uses isolated work area, local revision,
+  remote share, and review request stages while preserving provider-specific
+  refs, blockers, and no-effect authority flags.
+- Adapter-neutral change-request chain persistence and read-only control DTOs
+  now preserve stage/provider refs, duplicate projection outcomes, blocked
+  projections, unsupported stages, and sanitized diagnostics without granting
+  SCM execution, forge execution, provider writes, task mutation, callback,
+  interruption, recovery, or raw-material retention authority.
+- Convergence-like publication admission, preflight, and diagnostics now admit
+  only persisted adapter-neutral chains with Convergence snapshot, publish, and
+  publication-review provider refs. Git-like chains, duplicate persistence,
+  blocked persistence, missing operator confirmation, destination gaps, and
+  review-readiness gaps remain blocked while snapshot creation, publish,
+  provider writes, task mutation, callback, interruption, recovery, and
+  raw-output effects stay false.
+- Convergence-like publication command descriptors and stopped request records
+  now derive from ready publication preflight, preserve snapshot, publish, and
+  publication-review provider-stage refs, carry stable idempotency keys, and
+  still build no executable argv, create no provider handoff, create no
+  snapshot, publish nothing, mutate no tasks, and retain no raw output.
+- Convergence-like publication request persistence and read-only DTOs now
+  preserve stopped request, descriptor, preflight, admission, projection, task,
+  repo, idempotency, and provider-stage refs. Duplicate idempotency keys become
+  deterministic no-op records, blocked requests stay inspectable, and
+  provider handoff, snapshot creation, publish, publication review, provider
+  writes, task mutation, and raw-material retention remain false.
+- Convergence-like publication runner proof and sanitized runner evidence now
+  derive only from persisted request records. Duplicate and blocked request
+  persistence cannot run, idempotency refs remain visible, evidence contains
+  bounded counts/status only, and runner invocation, provider handoff, snapshot
+  creation, publish, publication review, provider writes, task mutation, and
+  raw-output retention remain false.
+- G03 health rebaseline passed focused adapter-neutral tests, focused
+  Convergence publication tests, `CARGO_INCREMENTAL=0 cargo check -p
+  nucleus-server`, docs QA, Northstar QA, whitespace checks, and the anchored
+  `Next Task` placement check. The G03 tranche added 13 adapter-neutral and
+  Convergence server modules plus matching `lib.rs` exports; `effigy doctor`
+  remains governed by the known god-file scan failure/slow path rather than a
+  new Convergence behavior failure.
+- The G03 provider record modules are now grouped behind
+  `provider_records.rs`. Root `lib.rs` keeps one module entry and one re-export
+  for the grouped G03 provider surface instead of 13 module declarations and
+  13 re-export lines, while the focused source files and module-local tests
+  remain separate.
+- Convergence publication runner evidence persistence and read-only DTOs now
+  persist sanitized evidence with duplicate-safe ids, keep blocked evidence
+  inspectable, expose persisted/duplicate/blocked/reviewable counts, and still
+  permit no runner invocation, provider handoff, snapshot creation, publish,
+  publication review, provider writes, task mutation, or raw-material
+  retention.
 
 Next implementation gate:
 
-1. select adapter-specific change-request plan records from persisted
-   adapter-neutral preparation admissions
-2. keep SCM/forge execution authority absent
-3. continue reducing god-file pressure opportunistically when touched
+1. define a stopped Convergence runner command-adapter boundary over persisted
+   evidence
+2. keep the adapter proof non-mutating and separate from any real Convergence
+   backend integration
+3. choose storage-backed replay or backend research before a real runner
+4. continue reducing god-file pressure opportunistically when touched
 
-Until that lane proves durable execution, keep checkout, worktree creation,
-commit, push, branch mutation, publish, promote, merge, provider cancellation,
-provider resume, callback response execution, task mutation, and broad real
-provider writes gated.
+Until that lane proves durable authority and preflight, keep checkout,
+worktree creation, commit, push, branch mutation, pull-request creation,
+publish, promote, merge, provider cancellation, provider resume, callback
+response execution, task mutation, and broad real provider writes gated.

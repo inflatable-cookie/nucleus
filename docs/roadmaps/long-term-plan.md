@@ -2,7 +2,7 @@
 
 Status: proposed
 Owner: Tom
-Updated: 2026-06-20
+Updated: 2026-06-21
 
 ## Purpose
 
@@ -23,18 +23,17 @@ created inside an approved phase when the phase is ready for execution.
   depends on them.
 - Keep T3 Code as a specimen, not a template to clone blindly.
 
-## Current G02 Runway
+## Current G03 Runway
 
-G02 is the orchestration and engine-core generation. Milestones 001-122 are
-complete. The current checkpoint is a health/runway rebaseline after the SCM
-capture, operator review, review decision, and adapter-neutral change-request
-preparation tranche.
+G02 is closed. It proved the orchestration and engine-core path through
+task-backed runtime evidence, explicit review, task completion, SCM capture,
+operator review, review decisions, adapter-neutral change-request preparation,
+and adapter-specific change-request planning.
 
-Roadmap 123 remains the next SCM product direction, but it is paused until the
-124 health lane reduces current god-file pressure in request-handler, control
-DTO, and SCM review/preparation surfaces. The health pass reduced doctor error
-findings from 37 to 28 and resumed roadmap 123; remaining doctor errors are
-broader health debt, not a blocker for adapter-plan records.
+G03 is the effect-gated SCM execution generation. It starts with Git because
+G02 selected Git as the first executable adapter lane from evidence. The first
+g03 milestone admits intent and authority only; it still does not create
+branches, commits, pushes, pull requests, forge requests, or provider writes.
 
 Completed workflow proof:
 
@@ -110,8 +109,9 @@ Current G02 continuation sequence:
 54. SCM capture review decision control integration - complete
 55. SCM capture change-request preparation admission - complete
 56. SCM capture change-request preparation control - complete
-57. SCM change-request adapter plan selection - active
+57. SCM change-request adapter plan selection - complete
 58. health and runway rebaseline - complete
+59. g03 Git change-request execution gate - active
 
 Current extended goal list:
 

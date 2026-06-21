@@ -11,3 +11,4 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-06-19-codex-live-smoke-evidence.md`
 - `2026-06-20-stocktake.md`
 - `2026-06-20-health-rebaseline.md`
+- `2026-06-21-g02-closeout-and-g03-rollover.md`
