@@ -1,6 +1,6 @@
 # 088 Convergence Local Snap Runner Proof Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../025-convergence-local-snap-runner-proof.md`
@@ -12,10 +12,10 @@ requests.
 
 ## Acceptance Criteria
 
-- [ ] Persisted requests produce ready proof records.
-- [ ] Duplicate and blocked persistence are blocked.
-- [ ] Proof records preserve request and authority refs.
-- [ ] No command or backend effect is added.
+- [x] Persisted requests produce ready proof records.
+- [x] Duplicate and blocked persistence are blocked.
+- [x] Proof records preserve request and authority refs.
+- [x] No command or backend effect is added.
 
 ## Validation
 

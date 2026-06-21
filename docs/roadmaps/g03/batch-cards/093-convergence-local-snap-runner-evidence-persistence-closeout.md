@@ -1,18 +1,19 @@
-# 090 Convergence Local Snap Runner Proof Closeout
+# 093 Convergence Local Snap Runner Evidence Persistence Closeout
 
 Status: completed
 Owner: Tom
 Updated: 2026-06-21
-Milestone: `../025-convergence-local-snap-runner-proof.md`
+Milestone: `../026-convergence-local-snap-runner-evidence-persistence.md`
 
 ## Purpose
 
-Validate local snap runner proof/evidence and select the next Convergence lane.
+Validate local snap runner evidence persistence/control and select the next
+Convergence lane.
 
 ## Acceptance Criteria
 
 - [x] Validation passes or blockers are recorded.
-- [x] Gap index reflects local snap runner proof state.
+- [x] Gap index reflects local snap runner evidence persistence state.
 - [x] Next lane is selected from evidence.
 - [x] No Convergence backend effect is enabled.
 

@@ -907,11 +907,37 @@ Recent evidence:
   inspectable, and command spawn, actual `converge snap`, object upload,
   publication, lane sync, provider writes, task mutation, and raw-material
   retention remain false.
+- Convergence local snap runner proof and sanitized evidence now derive from
+  persisted local snap requests. Duplicate and blocked persistence cannot run,
+  evidence contains only ids, counts, status, and sanitized refs, and command
+  spawn, actual `converge snap`, object upload, publication, lane sync,
+  provider writes, task mutation, callback, interruption, recovery, and
+  raw-output retention remain false.
+- Convergence local snap runner evidence persistence and read-only control
+  DTOs now persist sanitized evidence with duplicate-safe ids, keep blocked
+  evidence inspectable, expose persisted/duplicate/blocked/reviewable counts,
+  and still permit no command spawn, local snap creation, object upload,
+  publication, lane sync, provider writes, task mutation, or raw-material
+  retention.
+- Convergence local snap stopped runner command-adapter records and diagnostics
+  now derive from persisted local snap runner evidence, preserve idempotency,
+  request, admission, replay, task, repo, source-authority, and
+  execution-authority refs, count runnable, blocked, duplicate, and unsupported
+  states, and still permit no command spawn, actual `converge snap`, object
+  upload, publication, lane sync, provider writes, task mutation, or
+  raw-material retention.
+- Convergence local snap runner replay records and diagnostics now persist
+  stopped local snap adapter decisions with duplicate-safe replay ids, preserve
+  persisted evidence, request, admission, source replay, task, repo,
+  source-authority, execution-authority, and idempotency refs, count replayed,
+  duplicate, blocked, and unsupported states, and still permit no command
+  spawn, local snap creation, object upload, publication, lane sync, provider
+  writes, task mutation, or raw-material retention.
 
 Next implementation gate:
 
-1. add stopped local snap runner proof records from persisted requests
-2. add sanitized local snap runner evidence without command output
+1. define local snap execution preflight from replayed runner replay records
+2. keep preflight non-mutating and separate from actual `converge snap`
 3. keep command execution and remote Convergence effects blocked
 4. continue reducing god-file pressure opportunistically when touched
 

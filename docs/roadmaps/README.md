@@ -153,7 +153,11 @@ shape.
 - `g03/022-convergence-local-snap-admission.md` - completed
 - `g03/023-convergence-local-snap-command-boundary.md` - completed
 - `g03/024-convergence-local-snap-request-persistence.md` - completed
-- `g03/025-convergence-local-snap-runner-proof.md` - active
+- `g03/025-convergence-local-snap-runner-proof.md` - completed
+- `g03/026-convergence-local-snap-runner-evidence-persistence.md` - completed
+- `g03/027-convergence-local-snap-stopped-runner-command-adapter.md` - completed
+- `g03/028-convergence-local-snap-runner-replay-boundary.md` - completed
+- `g03/029-convergence-local-snap-execution-preflight.md` - active
 
 ## Previous Generation
 
@@ -212,5 +216,5 @@ shape.
 
 ## Next Task
 
-Create stopped local snap runner proof records from persisted local snap
-requests.
+Build stopped local snap execution preflight records from replayed local snap
+runner replay decisions.

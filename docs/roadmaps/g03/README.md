@@ -44,6 +44,10 @@ Current runway bands:
 - stopped local Convergence snap command requests before process execution
 - persisted local snap stopped requests before runner execution
 - stopped local snap runner proof and sanitized evidence before real execution
+- persisted local snap runner evidence before a stopped command adapter
+- stopped local snap command adapter before any runner execution
+- persisted local snap runner replay before real command execution
+- local snap execution preflight before process spawn
 
 Current checkpoint:
 
@@ -51,9 +55,9 @@ Current checkpoint:
   convergence-like plans, and adapter-plan diagnostics
 - Git execution proof is represented through pull-request execution admission
 - adapter-neutral chain and Convergence-like publication records are folded
-  into g03 as milestones 010-025
+  into g03 as milestones 010-029
 - doctor remains red on known god-file pressure
-- next ready card is Convergence local snap runner proof records
+- next ready card is Convergence local snap execution preflight records
 
 ## Milestones
 
@@ -81,18 +85,22 @@ Current checkpoint:
 - `022-convergence-local-snap-admission.md` - completed
 - `023-convergence-local-snap-command-boundary.md` - completed
 - `024-convergence-local-snap-request-persistence.md` - completed
-- `025-convergence-local-snap-runner-proof.md` - active
+- `025-convergence-local-snap-runner-proof.md` - completed
+- `026-convergence-local-snap-runner-evidence-persistence.md` - completed
+- `027-convergence-local-snap-stopped-runner-command-adapter.md` - completed
+- `028-convergence-local-snap-runner-replay-boundary.md` - completed
+- `029-convergence-local-snap-execution-preflight.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/088-convergence-local-snap-runner-proof-records.md`
+- `batch-cards/100-convergence-local-snap-execution-preflight-records.md`
 
 Paused cards:
 
-- `batch-cards/089-convergence-local-snap-runner-evidence.md`
-- `batch-cards/090-convergence-local-snap-runner-proof-closeout.md`
+- `batch-cards/101-convergence-local-snap-execution-preflight-diagnostics.md`
+- `batch-cards/102-convergence-local-snap-execution-preflight-closeout.md`
 
 Planned cards:
 
@@ -187,6 +195,18 @@ Completed cards:
 - `batch-cards/085-convergence-local-snap-request-persistence.md`
 - `batch-cards/086-convergence-local-snap-request-control-dto.md`
 - `batch-cards/087-convergence-local-snap-request-persistence-closeout.md`
+- `batch-cards/088-convergence-local-snap-runner-proof-records.md`
+- `batch-cards/089-convergence-local-snap-runner-evidence.md`
+- `batch-cards/090-convergence-local-snap-runner-proof-closeout.md`
+- `batch-cards/091-convergence-local-snap-runner-evidence-persistence.md`
+- `batch-cards/092-convergence-local-snap-runner-evidence-control-dto.md`
+- `batch-cards/093-convergence-local-snap-runner-evidence-persistence-closeout.md`
+- `batch-cards/094-convergence-local-snap-stopped-runner-command-adapter.md`
+- `batch-cards/095-convergence-local-snap-stopped-runner-command-diagnostics.md`
+- `batch-cards/096-convergence-local-snap-stopped-runner-command-closeout.md`
+- `batch-cards/097-convergence-local-snap-runner-replay-records.md`
+- `batch-cards/098-convergence-local-snap-runner-replay-diagnostics.md`
+- `batch-cards/099-convergence-local-snap-runner-replay-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -208,4 +228,8 @@ Completed cards:
 15. Convergence local snap admission - completed
 16. Convergence local snap command boundary - completed
 17. Convergence local snap request persistence - completed
-18. Convergence local snap runner proof - active
+18. Convergence local snap runner proof - completed
+19. Convergence local snap runner evidence persistence - completed
+20. Convergence local snap stopped runner command adapter - completed
+21. Convergence local snap runner replay boundary - completed
+22. Convergence local snap execution preflight - active

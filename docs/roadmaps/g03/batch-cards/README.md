@@ -10,12 +10,12 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `088-convergence-local-snap-runner-proof-records.md`
+- `100-convergence-local-snap-execution-preflight-records.md`
 
 ## Paused Cards
 
-- `089-convergence-local-snap-runner-evidence.md`
-- `090-convergence-local-snap-runner-proof-closeout.md`
+- `101-convergence-local-snap-execution-preflight-diagnostics.md`
+- `102-convergence-local-snap-execution-preflight-closeout.md`
 
 ## Planned Cards
 
@@ -110,3 +110,15 @@ None.
 - `085-convergence-local-snap-request-persistence.md`
 - `086-convergence-local-snap-request-control-dto.md`
 - `087-convergence-local-snap-request-persistence-closeout.md`
+- `088-convergence-local-snap-runner-proof-records.md`
+- `089-convergence-local-snap-runner-evidence.md`
+- `090-convergence-local-snap-runner-proof-closeout.md`
+- `091-convergence-local-snap-runner-evidence-persistence.md`
+- `092-convergence-local-snap-runner-evidence-control-dto.md`
+- `093-convergence-local-snap-runner-evidence-persistence-closeout.md`
+- `094-convergence-local-snap-stopped-runner-command-adapter.md`
+- `095-convergence-local-snap-stopped-runner-command-diagnostics.md`
+- `096-convergence-local-snap-stopped-runner-command-closeout.md`
+- `097-convergence-local-snap-runner-replay-records.md`
+- `098-convergence-local-snap-runner-replay-diagnostics.md`
+- `099-convergence-local-snap-runner-replay-closeout.md`
