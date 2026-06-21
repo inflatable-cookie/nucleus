@@ -10,7 +10,7 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `148-turn-start-executor-smoke-boundary-type-split.md`
+- `161-god-file-warning-pressure-triage.md`
 
 ## Paused Cards
 
@@ -18,8 +18,7 @@ None.
 
 ## Planned Cards
 
-- `149-turn-start-executor-smoke-boundary-helper-test-split.md`
-- `150-turn-start-executor-smoke-boundary-validation-closeout.md`
+- `162-next-implementation-lane-selection.md`
 
 ## Completed Cards
 
@@ -170,3 +169,16 @@ None.
 - `145-scm-capture-dry-run-persistence-type-split.md`
 - `146-scm-capture-dry-run-persistence-helper-test-split.md`
 - `147-scm-capture-dry-run-persistence-validation-closeout.md`
+- `148-turn-start-executor-smoke-boundary-type-split.md`
+- `149-turn-start-executor-smoke-boundary-helper-test-split.md`
+- `150-turn-start-executor-smoke-boundary-validation-closeout.md`
+- `151-turn-start-stdio-execution-envelope-type-split.md`
+- `152-turn-start-stdio-execution-envelope-helper-test-split.md`
+- `153-turn-start-stdio-execution-envelope-validation-closeout.md`
+- `154-stdio-frame-ingestion-persistence-type-split.md`
+- `155-stdio-frame-ingestion-persistence-helper-test-split.md`
+- `156-stdio-frame-ingestion-persistence-validation-closeout.md`
+- `157-durable-executor-dispatch-admission-type-split.md`
+- `158-durable-executor-dispatch-admission-helper-test-split.md`
+- `159-durable-executor-dispatch-admission-validation-closeout.md`
+- `160-doctor-green-health-evidence-closeout.md`

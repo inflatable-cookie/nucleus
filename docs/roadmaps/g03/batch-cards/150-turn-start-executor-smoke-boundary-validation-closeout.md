@@ -1,6 +1,6 @@
 # 150 Turn Start Executor Smoke Boundary Validation Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../045-turn-start-executor-smoke-boundary-split.md`
@@ -12,11 +12,11 @@ evidence.
 
 ## Acceptance Criteria
 
-- [ ] Focused tests pass.
-- [ ] `cargo check -p nucleus-server` passes.
-- [ ] Doctor status is refreshed or remaining blockers are recorded.
-- [ ] Roadmap front doors select the next bounded lane.
-- [ ] No provider write, callback response, process spawn, SCM mutation, remote
+- [x] Focused tests pass.
+- [x] `cargo check -p nucleus-server` passes.
+- [x] Doctor status is refreshed or remaining blockers are recorded.
+- [x] Roadmap front doors select the next bounded lane.
+- [x] No provider write, callback response, process spawn, SCM mutation, remote
   transport, UI, or task behavior is added.
 
 ## Validation

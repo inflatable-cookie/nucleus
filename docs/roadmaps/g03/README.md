@@ -64,6 +64,10 @@ Current runway bands:
 - completion SCM capture preparation persistence split as health-only work
 - SCM capture dry-run persistence split as health-only work
 - turn-start executor smoke boundary split as health-only work
+- turn-start stdio execution envelope split as health-only work
+- stdio frame ingestion persistence split as health-only work
+- durable executor dispatch admission split as health-only work
+- doctor-green health closeout before selecting the next implementation lane
 
 Current checkpoint:
 
@@ -72,16 +76,16 @@ Current checkpoint:
 - Git execution proof is represented through pull-request execution admission
 - adapter-neutral chain and Convergence-like publication records are folded
   into g03 as milestones 010-034
-- doctor remains red on known god-file pressure
-- next ready card is turn-start executor smoke boundary type split
+- doctor exits cleanly with god-file findings reduced to warnings only
+- next ready card is god-file warning pressure triage
 - Convergence receipt control is complete, Convergence backend effects are
   deferred, and the next active lane is not Convergence-specific
 - control envelope request/query/protocol split is complete and removed one
   doctor error
 - durable live provider smoke command-runner split is complete and removed one
   doctor error without enabling provider writes
-- next active lane is health-only turn-start executor smoke boundary splitting,
-  not an SCM mutation or provider write lane
+- next active lane is health closeout and implementation lane selection, not an
+  SCM mutation or provider write lane
 
 ## Convergence Exit Criteria
 
@@ -161,13 +165,17 @@ Reason:
 - `042-runtime-observation-event-store-persistence-split.md` - completed
 - `043-completion-scm-capture-preparation-persistence-split.md` - completed
 - `044-scm-capture-dry-run-persistence-split.md` - completed
-- `045-turn-start-executor-smoke-boundary-split.md` - active
+- `045-turn-start-executor-smoke-boundary-split.md` - completed
+- `046-turn-start-stdio-execution-envelope-split.md` - completed
+- `047-stdio-frame-ingestion-persistence-split.md` - completed
+- `048-durable-executor-dispatch-admission-split.md` - completed
+- `049-doctor-green-health-closeout-and-next-lane-selection.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/148-turn-start-executor-smoke-boundary-type-split.md`
+- `batch-cards/161-god-file-warning-pressure-triage.md`
 
 Paused cards:
 
@@ -175,8 +183,7 @@ None.
 
 Planned cards:
 
-- `batch-cards/149-turn-start-executor-smoke-boundary-helper-test-split.md`
-- `batch-cards/150-turn-start-executor-smoke-boundary-validation-closeout.md`
+- `batch-cards/162-next-implementation-lane-selection.md`
 
 Completed cards:
 
@@ -327,6 +334,19 @@ Completed cards:
 - `batch-cards/145-scm-capture-dry-run-persistence-type-split.md`
 - `batch-cards/146-scm-capture-dry-run-persistence-helper-test-split.md`
 - `batch-cards/147-scm-capture-dry-run-persistence-validation-closeout.md`
+- `batch-cards/148-turn-start-executor-smoke-boundary-type-split.md`
+- `batch-cards/149-turn-start-executor-smoke-boundary-helper-test-split.md`
+- `batch-cards/150-turn-start-executor-smoke-boundary-validation-closeout.md`
+- `batch-cards/151-turn-start-stdio-execution-envelope-type-split.md`
+- `batch-cards/152-turn-start-stdio-execution-envelope-helper-test-split.md`
+- `batch-cards/153-turn-start-stdio-execution-envelope-validation-closeout.md`
+- `batch-cards/154-stdio-frame-ingestion-persistence-type-split.md`
+- `batch-cards/155-stdio-frame-ingestion-persistence-helper-test-split.md`
+- `batch-cards/156-stdio-frame-ingestion-persistence-validation-closeout.md`
+- `batch-cards/157-durable-executor-dispatch-admission-type-split.md`
+- `batch-cards/158-durable-executor-dispatch-admission-helper-test-split.md`
+- `batch-cards/159-durable-executor-dispatch-admission-validation-closeout.md`
+- `batch-cards/160-doctor-green-health-evidence-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -368,4 +388,8 @@ Completed cards:
 35. Runtime observation event-store persistence split - completed
 36. Completion SCM capture preparation persistence split - completed
 37. SCM capture dry-run persistence split - completed
-38. Turn-start executor smoke boundary split - active
+38. Turn-start executor smoke boundary split - completed
+39. Turn-start stdio execution envelope split - completed
+40. Stdio frame ingestion persistence split - completed
+41. Durable executor dispatch admission split - completed
+42. Doctor-green health closeout and next lane selection - active

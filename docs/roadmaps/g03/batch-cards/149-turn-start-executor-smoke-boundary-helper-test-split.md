@@ -1,6 +1,6 @@
 # 149 Turn Start Executor Smoke Boundary Helper Test Split
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../045-turn-start-executor-smoke-boundary-split.md`
@@ -12,9 +12,9 @@ if needed after the type/support split.
 
 ## Acceptance Criteria
 
-- [ ] Helper/test code is split only where it reduces real pressure.
-- [ ] Smoke boundary behavior remains unchanged.
-- [ ] No provider write, callback response, process spawn, SCM mutation, remote
+- [x] Helper/test code is split only where it reduces real pressure.
+- [x] Smoke boundary behavior remains unchanged.
+- [x] No provider write, callback response, process spawn, SCM mutation, remote
   transport, UI, or task behavior is added.
 
 ## Validation

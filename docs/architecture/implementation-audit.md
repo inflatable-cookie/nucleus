@@ -31,19 +31,16 @@ missing, and what should block more feature work.
 
 ### God Files
 
-`effigy doctor` currently fails on `scan.god-files`.
+`effigy doctor` now exits successfully. `scan.god-files` still reports warning
+pressure, but no hard errors.
 
 Current report:
 
-- 149 total findings
-- 129 warnings
-- 20 errors
+- 137 total findings
+- 137 warnings
+- 0 errors
 
-The highest current error files are:
-
-- `crates/nucleus-server/src/codex_supervision/turn_start_executor_smoke_boundary.rs`
-- `crates/nucleus-server/src/codex_supervision/turn_start_stdio_execution_envelope.rs`
-- `crates/nucleus-server/src/lib.rs`
+There are no current doctor error files.
 
 Recent health delta:
 
@@ -92,10 +89,43 @@ Recent health delta:
 - The SCM capture dry-run persistence split removed one doctor error without
   changing persistence behavior, SCM/provider authority, process authority, or
   task mutation authority.
+- `codex_supervision/turn_start_executor_smoke_boundary.rs` dropped to a
+  22-line front door with focused decision, diagnostics, test, and type
+  modules.
+- The turn-start executor smoke boundary split removed one doctor error
+  without changing smoke boundary behavior, provider-write authority, callback
+  authority, process authority, or task mutation authority.
+- `codex_supervision/turn_start_stdio_execution_envelope.rs` dropped to a
+  21-line front door with focused decision, test, and type modules.
+- The turn-start stdio execution envelope split removed one doctor error
+  without changing envelope behavior, provider-write authority, callback
+  authority, process authority, or task mutation authority. The moved test
+  module remains warning-sized.
+- `codex_supervision/stdio_frame_ingestion_persistence.rs` dropped to a
+  23-line front door with focused codec, event-builder, record-builder, store,
+  test, and type modules.
+- The stdio frame ingestion persistence split removed one doctor error without
+  changing persistence behavior, raw stream policy, provider-write authority,
+  process authority, or task mutation authority.
+- The follow-on hard-gate batch split durable executor dispatch admission,
+  provider command reactor, completion SCM capture admission persistence, and
+  durable Codex live smoke persistence into focused modules.
+- Remaining inline test modules for durable executor commands/status,
+  dispatch invocation, Codex transport authority, runtime observation cursor,
+  live workflow fixtures, live smoke boundaries, and live evidence task-state
+  persistence were externalized where that removed hard doctor pressure without
+  changing behavior.
+- `nucleus-server/src/lib.rs` and `codex_supervision.rs` moved broad re-exports
+  into `exports.rs` modules so the crate/module front doors are readable
+  indexes again.
+- `codex_supervision/recovery_execution_policy.rs` moved validation logic into
+  a focused validation module.
+- The current doctor result is green for errors: 137 warnings, 0 errors.
 
 The detailed report is `.effigy/reports/doctor/scan-god-files.md`.
 
-This should be treated as structural debt, not style cleanup.
+Remaining warnings should be treated as touch-when-needed structural pressure,
+not as an unbounded cleanup queue.
 
 ### Server Crate Accretion
 

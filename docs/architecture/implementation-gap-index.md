@@ -17,8 +17,8 @@ implementation lane can be chosen deliberately.
 
 Current state:
 
-- `effigy doctor` currently fails on `scan.god-files`
-- the current doctor report has 149 findings: 129 warnings and 20 errors
+- `effigy doctor` currently exits successfully
+- the current doctor report has 137 findings: 137 warnings and 0 errors
 - `crates/nucleus-server/src/lib.rs` remains a compact crate front door
 - the first health rebaseline split request-handler diagnostics tests,
   control-envelope diagnostics response tests, diagnostics query routing, and
@@ -57,14 +57,34 @@ Current state:
 - `provider_scm_capture_dry_run_persistence.rs` has been split from an
   error-sized SCM dry-run persistence file into an 18-line front door plus
   focused diagnostics, helper, record-builder, store, test, and type modules
+- `codex_supervision/turn_start_executor_smoke_boundary.rs` has been split
+  from an error-sized smoke boundary file into a 22-line front door plus
+  focused decision, diagnostics, test, and type modules
+- `codex_supervision/turn_start_stdio_execution_envelope.rs` has been split
+  from an error-sized envelope file into a 21-line front door plus focused
+  decision, test, and type modules
+- `codex_supervision/stdio_frame_ingestion_persistence.rs` has been split from
+  an error-sized persistence file into a 23-line front door plus focused
+  codec, event-builder, record-builder, store, test, and type modules
+- `provider_durable_executor_dispatch_admission.rs`,
+  `provider_command_reactor.rs`,
+  `provider_completion_scm_capture_admission_persistence.rs`, and
+  `provider_durable_codex_live_smoke_persistence.rs` have been split into
+  focused front doors and support modules
+- broad inline server test modules that were keeping files above the hard
+  doctor threshold have been externalized into sibling `tests.rs` modules
+- `nucleus-server/src/lib.rs` and `codex_supervision.rs` have focused export
+  modules instead of broad re-export blocks in the front door
+- `codex_supervision/recovery_execution_policy.rs` has a focused validation
+  module
 - recent SCM capture, review, decision, and change-request preparation work is
   productively scoped but has expanded too many broad server surfaces
 
 Needed:
 
-- make the next lane a bounded health/boundary rebaseline before more
-  provider, SCM, Convergence, or UI behavior grows the broad files
-- treat warning and error files as pressure when those areas are touched
+- close the doctor-green health batch and select the next implementation lane
+  from product value rather than continuing cleanup momentum
+- treat warning files as pressure when those areas are touched
 - prefer bounded mechanical test-module splits only when they improve ownership
 - avoid turning broad historical doctor debt into unbounded cleanup
 
@@ -133,6 +153,19 @@ Needed:
 - treat the SCM capture dry-run persistence split as the same pattern: it
   reduced doctor pressure without granting SCM/provider/process/task mutation
   authority
+- treat the turn-start executor smoke boundary split as the same pattern: it
+  reduced doctor pressure without granting provider-write/callback/process/task
+  mutation authority
+- treat the turn-start stdio execution envelope split as the same pattern: it
+  reduced doctor pressure without granting provider-write/callback/process/task
+  mutation authority
+- treat the stdio frame ingestion persistence split as the same pattern: it
+  reduced doctor pressure without granting provider-write/process/task mutation
+  authority or raw stream retention
+- treat the final hard-gate batch as the same pattern: it reduced doctor errors
+  to zero by splitting support modules, externalizing tests, and moving broad
+  exports/validators without granting new provider, process, SCM, UI, callback,
+  recovery, interruption, or task mutation authority
 
 ### Proof UI Growth
 

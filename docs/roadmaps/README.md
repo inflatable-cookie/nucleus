@@ -173,7 +173,11 @@ shape.
 - `g03/042-runtime-observation-event-store-persistence-split.md` - completed
 - `g03/043-completion-scm-capture-preparation-persistence-split.md` - completed
 - `g03/044-scm-capture-dry-run-persistence-split.md` - completed
-- `g03/045-turn-start-executor-smoke-boundary-split.md` - active
+- `g03/045-turn-start-executor-smoke-boundary-split.md` - completed
+- `g03/046-turn-start-stdio-execution-envelope-split.md` - completed
+- `g03/047-stdio-frame-ingestion-persistence-split.md` - completed
+- `g03/048-durable-executor-dispatch-admission-split.md` - completed
+- `g03/049-doctor-green-health-closeout-and-next-lane-selection.md` - active
 
 ## Previous Generation
 
@@ -232,4 +236,5 @@ shape.
 
 ## Next Task
 
-Split turn-start executor smoke boundary support code without behavior changes.
+Triage remaining god-file warning pressure so the next implementation lane does
+not drift back into cleanup momentum.

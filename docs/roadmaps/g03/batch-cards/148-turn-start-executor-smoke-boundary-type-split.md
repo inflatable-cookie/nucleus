@@ -1,6 +1,6 @@
 # 148 Turn Start Executor Smoke Boundary Type Split
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../045-turn-start-executor-smoke-boundary-split.md`
@@ -12,9 +12,9 @@ door.
 
 ## Acceptance Criteria
 
-- [ ] Type/support code moves only where it reduces real front-door pressure.
-- [ ] Public type names and smoke boundary behavior remain unchanged.
-- [ ] No provider write, callback response, process spawn, SCM mutation, remote
+- [x] Type/support code moves only where it reduces real front-door pressure.
+- [x] Public type names and smoke boundary behavior remain unchanged.
+- [x] No provider write, callback response, process spawn, SCM mutation, remote
   transport, UI, or task behavior is added.
 
 ## Validation
