@@ -41,6 +41,12 @@ pub mod convergence_local_snap_runner_replay_records;
 pub mod convergence_local_snap_spawn_handoff;
 #[path = "provider_convergence_local_snap_spawn_handoff_diagnostics.rs"]
 pub mod convergence_local_snap_spawn_handoff_diagnostics;
+#[path = "provider_convergence_local_snap_spawn_receipt.rs"]
+pub mod convergence_local_snap_spawn_receipt;
+#[path = "provider_convergence_local_snap_spawn_receipt_control_dto.rs"]
+pub mod convergence_local_snap_spawn_receipt_control_dto;
+#[path = "provider_convergence_local_snap_spawn_receipt_diagnostics.rs"]
+pub mod convergence_local_snap_spawn_receipt_diagnostics;
 #[path = "provider_convergence_local_snap_spawn_request.rs"]
 pub mod convergence_local_snap_spawn_request;
 #[path = "provider_convergence_local_snap_spawn_request_diagnostics.rs"]
@@ -101,6 +107,9 @@ pub use convergence_local_snap_runner_replay_diagnostics::*;
 pub use convergence_local_snap_runner_replay_records::*;
 pub use convergence_local_snap_spawn_handoff::*;
 pub use convergence_local_snap_spawn_handoff_diagnostics::*;
+pub use convergence_local_snap_spawn_receipt::*;
+pub use convergence_local_snap_spawn_receipt_control_dto::*;
+pub use convergence_local_snap_spawn_receipt_diagnostics::*;
 pub use convergence_local_snap_spawn_request::*;
 pub use convergence_local_snap_spawn_request_diagnostics::*;
 pub use convergence_local_snap_stopped_requests::*;

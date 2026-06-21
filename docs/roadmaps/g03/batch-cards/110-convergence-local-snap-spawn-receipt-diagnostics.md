@@ -1,6 +1,6 @@
 # 110 Convergence Local Snap Spawn Receipt Diagnostics
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../032-convergence-local-snap-spawn-receipt-boundary.md`
@@ -11,12 +11,12 @@ Expose read-only diagnostics for stopped local snap spawn receipt records.
 
 ## Acceptance Criteria
 
-- [ ] Diagnostics count accepted, blocked, duplicate, unsupported, failed, and
+- [x] Diagnostics count accepted, blocked, duplicate, unsupported, failed, and
   cleanup-required states.
-- [ ] Diagnostics expose no raw command output.
-- [ ] Diagnostics carry no process, backend, provider, or task mutation
+- [x] Diagnostics expose no raw command output.
+- [x] Diagnostics carry no process, backend, provider, or task mutation
   authority.
-- [ ] No command or backend effect is added.
+- [x] No command or backend effect is added.
 
 ## Validation
 

@@ -18,25 +18,45 @@ implementation lane can be chosen deliberately.
 Current state:
 
 - `effigy doctor` currently fails on `scan.god-files`
-- the current doctor report has 152 findings: 124 warnings and 28 errors
+- the current doctor report has 152 findings: 129 warnings and 23 errors
 - `crates/nucleus-server/src/lib.rs` remains a compact crate front door
 - the first health rebaseline split request-handler diagnostics tests,
   control-envelope diagnostics response tests, diagnostics query routing, and
   SCM review/preparation test modules
-- the 124 health rebaseline removed the active-lane error-sized request-handler,
-  control DTO, and SCM review/preparation pressure
-- remaining error-sized files are broader durable dispatch, Codex supervision,
-  provider persistence, and DTO front-door debt
+- later provider/runtime, live-smoke, SCM capture, Codex supervision,
+  Convergence, and DTO work reintroduced broad error-sized files
+- current error-sized files include durable live provider smoke, durable
+  dispatch, Codex callback/runtime persistence, provider persistence,
+  diagnostics front doors, `nucleus-server/src/lib.rs`, and related effect-gate
+  modules
+- `control_envelope_dto.rs` has been split from 449 lines into a 39-line front
+  door plus focused request, query, and protocol modules
+- `apps/nucleusd/src/command_runner/durable_live_provider_write_smoke.rs` has
+  been split from a 541-line error-sized command-runner file into a 385-line
+  warning-sized front door plus focused dispatch, evidence, labels, and
+  test-support modules
+- `provider_scm_capture_dry_run_execution_persistence.rs` has been split from
+  an error-sized persistence file into a 103-line front door plus focused
+  diagnostics, helpers, tests, and type modules
+- `provider_durable_executor_dispatch_selection.rs` has been split from an
+  error-sized dispatch-selection file into a 79-line front door plus focused
+  blocker, helper, test, and type modules
+- `codex_supervision/callback_request_persistence.rs` has been split from an
+  error-sized callback request persistence file into a 74-line front door plus
+  focused codec, record-builder, test, type, and validation modules
+- `provider_durable_dispatch_invocation_preflight.rs` has been split from an
+  error-sized preflight file into a 76-line front door plus focused blocker,
+  helper, test, and type modules
 - recent SCM capture, review, decision, and change-request preparation work is
   productively scoped but has expanded too many broad server surfaces
 
 Needed:
 
-- allow roadmap 123 to resume while keeping remaining god-file debt visible
+- make the next lane a bounded health/boundary rebaseline before more
+  provider, SCM, Convergence, or UI behavior grows the broad files
 - treat warning and error files as pressure when those areas are touched
 - prefer bounded mechanical test-module splits only when they improve ownership
-- avoid turning broad historical doctor debt into an open-ended blocker for the
-  SCM adapter-plan lane
+- avoid turning broad historical doctor debt into unbounded cleanup
 
 ### Server Crate Accretion
 
@@ -52,8 +72,48 @@ Risk:
 
 Needed:
 
-- introduce both `nucleus-engine` and `nucleus-orchestration`
-- move domain logic out of host/server wrappers before provider runtime work
+- keep `nucleus-engine` and `nucleus-orchestration` as the durable engine
+  boundary
+- move domain logic out of host/server wrappers before more provider runtime
+  work
+
+### Post-Convergence Boundary Audit
+
+Current state:
+
+- `crates/nucleus-server/src/lib.rs` is error-sized at 417 lines, mostly due
+  to crate-root module declarations and broad re-exports.
+- `crates/nucleus-server/src/codex_supervision.rs` is error-sized at 440
+  lines, mostly due to a broad supervision front door and many re-exports.
+- `crates/nucleus-server/src/control_envelope_dto.rs` was error-sized at 449
+  lines; it is now split into a focused front door and request/query/protocol
+  modules below warning threshold.
+- `crates/nucleus-server/src/provider_records.rs` is still small enough at 132
+  lines, but it shows the useful direction: group related provider record
+  surfaces behind focused front doors instead of widening `lib.rs`.
+
+Decision:
+
+- do not continue Convergence work
+- do not start another provider effect lane
+- split `control_envelope_dto.rs` first because it is an error-sized server
+  boundary file with existing submodule structure and low behavior risk
+
+Needed:
+
+- keep the control envelope split as the preferred pattern for server-boundary
+  god-file repairs
+- select the next split from current doctor evidence without adding behavior
+- treat the durable smoke split as a successful health-only split: it reduced
+  error count without enabling provider writes
+- treat the SCM persistence and durable dispatch-selection splits as the same
+  pattern: behavior-preserving modularization backed by focused tests and
+  `cargo check -p nucleus-server`
+- treat the callback request persistence split as the same pattern: it reduced
+  doctor pressure without granting callback response or provider I/O authority
+- treat the durable dispatch invocation preflight split as the same pattern:
+  it reduced doctor pressure without granting provider-write or task mutation
+  authority
 
 ### Proof UI Growth
 
@@ -83,9 +143,9 @@ Missing:
 - event identity and sequencing
 - runtime reactors
 
-Likely crate:
+Likely crate boundary:
 
-- new `nucleus-orchestration`, composed by `nucleus-engine`
+- `nucleus-orchestration`, composed by `nucleus-engine`
 
 ### Harness Runtime
 
@@ -952,13 +1012,25 @@ Recent evidence:
   and process runner invocation, command spawn, actual `converge snap`, object
   upload, publication, lane sync, provider writes, task mutation, and
   raw-material retention stay false.
+- Convergence local snap spawn receipt records and diagnostics now derive only
+  from ready stopped spawn handoffs. Blocked, duplicate, and unsupported
+  handoffs remain inspectable, duplicate receipt ids are deterministic no-ops,
+  failed and cleanup-required states are represented for read-only diagnostics,
+  and process runner invocation, command spawn, actual `converge snap`, raw
+  stdout/stderr, object upload, publication, lane sync, provider writes, task
+  mutation, and raw-output retention stay false.
+- Convergence local snap spawn receipt control DTOs now expose sanitized
+  receipt records through read-only ids, refs, status counts, blocker counts,
+  and explicit no-authority flags. They preserve receipt, handoff, spawn
+  request, preflight, replay, adapter, evidence, task, repo, authority, and
+  idempotency refs without raw stdout/stderr, process material, command spawn,
+  provider writes, task mutation, or raw-output retention.
 
 Next implementation gate:
 
-1. define sanitized stopped local snap spawn receipt records from ready handoffs
-2. keep receipts non-mutating and free of raw process output
-3. keep command execution and remote Convergence effects blocked
-4. continue reducing god-file pressure opportunistically when touched
+1. split `provider_scm_capture_dry_run_execution_persistence.rs` without
+   behavior changes
+2. continue reducing god-file pressure opportunistically when touched
 
 Until that lane proves durable authority and preflight, keep checkout,
 worktree creation, commit, push, branch mutation, pull-request creation,

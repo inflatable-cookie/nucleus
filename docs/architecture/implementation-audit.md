@@ -31,37 +31,54 @@ missing, and what should block more feature work.
 
 ### God Files
 
-`effigy doctor` no longer has god-file error findings.
+`effigy doctor` currently fails on `scan.god-files`.
 
-The former error findings were split:
+Current report:
 
-- `crates/nucleus-server/src/management_projection_state/tests.rs`
-- `crates/nucleus-scm-forge/src/work_sessions.rs`
-- `crates/nucleus-server/src/diagnostics_read_models/tests.rs`
-- `crates/nucleus-engine/src/management_sync/tests.rs`
-- `crates/nucleus-server/src/management_projection_state/apply_import.rs`
-- `crates/nucleus-engine/src/change_request_prep.rs`
+- 152 total findings
+- 129 warnings
+- 23 errors
 
-`effigy doctor` still reports 38 warning findings. The largest warning files
-are:
+The highest current error files are:
 
-- `crates/nucleus-server/src/request_handler/queries.rs`
-- `crates/nucleus-server/src/codex_task_runtime/tests.rs`
-- `crates/nucleus-tasks/src/storage_codec.rs`
-- `apps/desktop/src/styles.css`
-- `apps/desktop/src-tauri/src/lib.rs`
-- `crates/nucleus-server/src/control_envelope_dto.rs`
-- `crates/nucleus-local-store/src/sqlite.rs`
-- `crates/nucleus-native-harness/src/effigy/tests.rs`
-- `crates/nucleus-agent-adapters/src/codex.rs`
-- `crates/nucleus-server/src/codex_wait_state.rs`
-- `crates/nucleus-server/src/tauri_ipc_command.rs`
-- `crates/nucleus-server/src/control_serialization_readiness.rs`
-- `crates/nucleus-server/src/control_envelope_dto/commands.rs`
-- `crates/nucleus-server/src/secret_store.rs`
-- `crates/nucleus-scm-forge/src/git_inspection.rs`
-- `crates/nucleus-scm-forge/src/session_commands.rs`
-- more warning findings are listed in `.effigy/reports/doctor/scan-god-files.md`
+- `crates/nucleus-server/src/codex_supervision/runtime_observation_event_store_persistence.rs`
+- `crates/nucleus-server/src/provider_completion_scm_capture_preparation_persistence.rs`
+- `crates/nucleus-server/src/provider_scm_capture_dry_run_persistence.rs`
+- `crates/nucleus-server/src/codex_supervision/turn_start_executor_smoke_boundary.rs`
+- `crates/nucleus-server/src/codex_supervision/turn_start_stdio_execution_envelope.rs`
+- `crates/nucleus-server/src/lib.rs`
+
+Recent health delta:
+
+- `control_envelope_dto.rs` dropped from an error-sized 449-line file to a
+  39-line front door with focused `request`, `query`, and `protocol` modules.
+- The control-envelope split removed one doctor error without changing the
+  wire protocol or behavior.
+- `apps/nucleusd/src/command_runner/durable_live_provider_write_smoke.rs`
+  dropped from a 541-line error-sized file to a 385-line warning-sized front
+  door with focused dispatch, evidence, labels, and test-support modules.
+- The durable smoke split removed one doctor error without changing command
+  behavior or enabling provider writes.
+- `provider_scm_capture_dry_run_execution_persistence.rs` dropped to a
+  103-line front door with focused diagnostics, helpers, tests, and type
+  modules.
+- `provider_durable_executor_dispatch_selection.rs` dropped to a 79-line front
+  door with focused blocker, helper, test, and type modules.
+- These two splits removed two more doctor errors without changing persistence,
+  dispatch selection, SCM behavior, or provider write authority.
+- `codex_supervision/callback_request_persistence.rs` dropped to a 74-line
+  front door with focused codec, record-builder, test, type, and validation
+  modules.
+- The callback request persistence split removed one doctor error without
+  changing callback request persistence, callback response authority, provider
+  I/O, or task mutation authority.
+- `provider_durable_dispatch_invocation_preflight.rs` dropped to a 76-line
+  front door with focused blocker, helper, test, and type modules.
+- The durable dispatch invocation preflight split removed one doctor error
+  without changing preflight behavior, provider-write authority, or task/SCM
+  mutation authority.
+
+The detailed report is `.effigy/reports/doctor/scan-god-files.md`.
 
 This should be treated as structural debt, not style cleanup.
 
@@ -79,8 +96,8 @@ Risk:
 
 Likely correction:
 
-- introduce an engine/orchestration crate or split server internals before
-  provider runtime work begins
+- keep the existing engine/orchestration boundary active and split broad
+  server internals before more provider/runtime work widens the host crate
 
 ### Record State Before Orchestration
 

@@ -1,6 +1,6 @@
 # 109 Convergence Local Snap Spawn Receipt Records
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../032-convergence-local-snap-spawn-receipt-boundary.md`
@@ -12,11 +12,11 @@ handoffs.
 
 ## Acceptance Criteria
 
-- [ ] Ready handoffs produce stopped receipt records.
-- [ ] Blocked, duplicate, and unsupported handoffs are not accepted.
-- [ ] Receipt records preserve handoff, spawn request, preflight, replay,
+- [x] Ready handoffs produce stopped receipt records.
+- [x] Blocked, duplicate, and unsupported handoffs are not accepted.
+- [x] Receipt records preserve handoff, spawn request, preflight, replay,
   evidence, request, task, repo, authority, and idempotency refs.
-- [ ] No process runner, raw output, or backend effect is added.
+- [x] No process runner, raw output, or backend effect is added.
 
 ## Validation
 

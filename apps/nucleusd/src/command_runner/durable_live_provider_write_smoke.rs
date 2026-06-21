@@ -1,19 +1,36 @@
 use crate::cli::CliDurableLiveProviderWriteSmoke;
 
-use super::codex_smoke::{self, live, live::LiveCodexSmokeOutcome};
+use super::codex_smoke::{self, live};
 
 use nucleus_local_store::SqliteBackend;
 use nucleus_server::{
     durable_codex_live_provider_write_invocation_gate, durable_codex_live_smoke_dispatch_run,
     durable_live_provider_write_replay, persist_durable_live_provider_write_evidence,
     CodexAppServerLiveExecutorCleanupStatus, CodexAppServerLiveExecutorOutcomeStatus,
-    DurableCodexLiveProviderWriteEvidenceInput, DurableCodexLiveProviderWriteInvocationGateBlocker,
     DurableCodexLiveProviderWriteInvocationGateInput,
     DurableCodexLiveProviderWriteInvocationGateRecord,
-    DurableCodexLiveProviderWriteInvocationGateStatus, DurableCodexLiveSmokeBoundaryStatus,
-    DurableCodexLiveSmokeDispatchRunInput, DurableCodexLiveSmokeDispatchRunRecord,
-    DurableCodexLiveSmokeIntent, LocalControlRequestHandler,
+    DurableCodexLiveProviderWriteInvocationGateStatus, DurableCodexLiveSmokeDispatchRunRecord,
+    LocalControlRequestHandler,
 };
+
+mod dispatch;
+mod evidence;
+mod labels;
+#[cfg(test)]
+mod test_support;
+
+#[cfg(test)]
+use super::codex_smoke::live::LiveCodexSmokeOutcome;
+use dispatch::dispatch_input;
+use evidence::{
+    durable_live_provider_write_evidence_input_from_outcome,
+    durable_live_provider_write_terminal_evidence_input,
+};
+use labels::{boundary_status_label, gate_blocker_label, gate_status_label};
+#[cfg(test)]
+use nucleus_server::DurableCodexLiveSmokeBoundaryStatus;
+#[cfg(test)]
+use test_support::test_gate_and_run;
 
 pub(crate) fn print_durable_live_provider_write_smoke(
     handler: &mut LocalControlRequestHandler<SqliteBackend>,
@@ -151,241 +168,6 @@ fn execute_durable_live_provider_write_smoke(
     println!("review_acceptance_promoted=false");
 
     Ok(())
-}
-
-pub(super) fn durable_live_provider_write_evidence_input_from_outcome(
-    run: DurableCodexLiveSmokeDispatchRunRecord,
-    gate: DurableCodexLiveProviderWriteInvocationGateRecord,
-    outcome: LiveCodexSmokeOutcome,
-) -> DurableCodexLiveProviderWriteEvidenceInput {
-    DurableCodexLiveProviderWriteEvidenceInput {
-        run,
-        gate,
-        existing_write_attempt_ids: Vec::new(),
-        thread_id: outcome.thread_id,
-        turn_id: outcome.turn_id,
-        final_turn_status: outcome.turn_status,
-        status: if outcome.provider_write_executed {
-            CodexAppServerLiveExecutorOutcomeStatus::Completed
-        } else {
-            CodexAppServerLiveExecutorOutcomeStatus::Blocked(
-                "durable live provider-write gate blocked".to_owned(),
-            )
-        },
-        method_sequence: if outcome.provider_write_executed {
-            LiveCodexSmokeOutcome::completed_method_sequence()
-        } else {
-            Vec::new()
-        },
-        notification_count: outcome.notifications_seen,
-        server_request_count: outcome.server_requests_seen,
-        cleanup_status: if outcome.provider_write_executed {
-            CodexAppServerLiveExecutorCleanupStatus::Completed
-        } else {
-            CodexAppServerLiveExecutorCleanupStatus::NotRequired
-        },
-        evidence_refs: vec!["evidence:nucleusd-durable-live-provider-write-outcome".to_owned()],
-        artifact_refs: vec!["artifact:nucleusd-durable-live-provider-write-summary".to_owned()],
-        raw_provider_material_present: false,
-        raw_stream_present: false,
-        secret_material_present: false,
-        credential_material_present: false,
-        unbounded_local_path_present: false,
-    }
-}
-
-pub(super) fn durable_live_provider_write_terminal_evidence_input(
-    run: DurableCodexLiveSmokeDispatchRunRecord,
-    gate: DurableCodexLiveProviderWriteInvocationGateRecord,
-    status: CodexAppServerLiveExecutorOutcomeStatus,
-    cleanup_status: CodexAppServerLiveExecutorCleanupStatus,
-) -> DurableCodexLiveProviderWriteEvidenceInput {
-    DurableCodexLiveProviderWriteEvidenceInput {
-        run,
-        gate,
-        existing_write_attempt_ids: Vec::new(),
-        thread_id: None,
-        turn_id: None,
-        final_turn_status: None,
-        status,
-        method_sequence: vec![nucleus_server::CodexAppServerLiveExecutorMethod::Initialize],
-        notification_count: 0,
-        server_request_count: 0,
-        cleanup_status,
-        evidence_refs: vec![
-            "evidence:nucleusd-durable-live-provider-write-terminal-outcome".to_owned(),
-        ],
-        artifact_refs: vec![
-            "artifact:nucleusd-durable-live-provider-write-terminal-summary".to_owned(),
-        ],
-        raw_provider_material_present: false,
-        raw_stream_present: false,
-        secret_material_present: false,
-        credential_material_present: false,
-        unbounded_local_path_present: false,
-    }
-}
-
-fn dispatch_input(
-    command: &CliDurableLiveProviderWriteSmoke,
-) -> DurableCodexLiveSmokeDispatchRunInput {
-    DurableCodexLiveSmokeDispatchRunInput {
-        intent: dispatch_intent(command),
-        run_id: "nucleusd-durable-live-provider-write".to_owned(),
-        provider_instance_id: "codex:nucleusd-durable-live-provider-write".to_owned(),
-        runtime_session_ref: "runtime-session:nucleusd-durable-live-provider-write".to_owned(),
-        task_id: "task:nucleusd-durable-live-provider-write".to_owned(),
-        work_item_id: "work:nucleusd-durable-live-provider-write".to_owned(),
-        operator_confirmation_ref: "operator:nucleusd-cli".to_owned(),
-        evidence_refs: vec!["evidence:nucleusd-durable-live-provider-write-command".to_owned()],
-    }
-}
-
-fn dispatch_intent(command: &CliDurableLiveProviderWriteSmoke) -> DurableCodexLiveSmokeIntent {
-    match (command.confirm_real_write, command.confirm_real_effect) {
-        (false, _) => DurableCodexLiveSmokeIntent::DryRunOnly,
-        (true, false) => DurableCodexLiveSmokeIntent::ConfirmedRealWrite {
-            confirmation_ref: "evidence:nucleusd-confirm-real-write".to_owned(),
-        },
-        (true, true) => DurableCodexLiveSmokeIntent::ConfirmedRealWriteWithEffect {
-            confirmation_ref: "evidence:nucleusd-confirm-real-write".to_owned(),
-            effect_ref: "evidence:nucleusd-confirm-real-effect".to_owned(),
-        },
-    }
-}
-
-#[cfg(test)]
-fn test_gate_and_run(
-    label: &str,
-) -> (
-    DurableCodexLiveSmokeDispatchRunRecord,
-    DurableCodexLiveProviderWriteInvocationGateRecord,
-) {
-    let run = durable_codex_live_smoke_dispatch_run(DurableCodexLiveSmokeDispatchRunInput {
-        intent: DurableCodexLiveSmokeIntent::ConfirmedRealWriteWithEffect {
-            confirmation_ref: format!("evidence:{label}:confirm"),
-            effect_ref: format!("evidence:{label}:effect"),
-        },
-        run_id: label.to_owned(),
-        provider_instance_id: format!("codex:{label}"),
-        runtime_session_ref: format!("runtime-session:{label}"),
-        task_id: format!("task:{label}"),
-        work_item_id: format!("work:{label}"),
-        operator_confirmation_ref: format!("operator-confirmation:{label}"),
-        evidence_refs: vec![format!("evidence:{label}:command")],
-    });
-    let gate = durable_codex_live_provider_write_invocation_gate(
-        DurableCodexLiveProviderWriteInvocationGateInput {
-            boundary: run.boundary.clone(),
-            invocation_evidence_refs: vec![format!("evidence:{label}:gate")],
-            executor_invocation_requested: false,
-            provider_write_requested: false,
-            raw_provider_material_requested: false,
-            raw_stream_requested: false,
-            task_mutation_requested: false,
-            review_acceptance_requested: false,
-            callback_answer_requested: false,
-            cancellation_requested: false,
-            resume_requested: false,
-            scm_mutation_requested: false,
-        },
-    );
-
-    (run, gate)
-}
-
-fn boundary_status_label(status: &DurableCodexLiveSmokeBoundaryStatus) -> &'static str {
-    match status {
-        DurableCodexLiveSmokeBoundaryStatus::DryRunEligible => "dry_run_eligible",
-        DurableCodexLiveSmokeBoundaryStatus::EligibleForExplicitLiveProviderWrite => {
-            "eligible_for_explicit_live_provider_write"
-        }
-        DurableCodexLiveSmokeBoundaryStatus::Blocked => "blocked",
-    }
-}
-
-fn gate_status_label(status: &DurableCodexLiveProviderWriteInvocationGateStatus) -> &'static str {
-    match status {
-        DurableCodexLiveProviderWriteInvocationGateStatus::ReadyForExplicitInvocation => {
-            "ready_for_explicit_invocation"
-        }
-        DurableCodexLiveProviderWriteInvocationGateStatus::Blocked => "blocked",
-    }
-}
-
-fn gate_blocker_label(
-    blocker: &DurableCodexLiveProviderWriteInvocationGateBlocker,
-) -> &'static str {
-    match blocker {
-        DurableCodexLiveProviderWriteInvocationGateBlocker::BoundaryNotEligibleForLiveProviderWrite => {
-            "boundary_not_eligible_for_live_provider_write"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::MissingInvocationEvidence => {
-            "missing_invocation_evidence"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::MissingConfirmationRef => {
-            "missing_confirmation_ref"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::MissingEffectRef => "missing_effect_ref",
-        DurableCodexLiveProviderWriteInvocationGateBlocker::BoundaryAlreadyExecutedProviderWrite => {
-            "boundary_already_executed_provider_write"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::BoundaryAlreadyInvokedExecutor => {
-            "boundary_already_invoked_executor"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::BoundaryRetainedRawProviderMaterial => {
-            "boundary_retained_raw_provider_material"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::BoundaryRetainedRawStream => {
-            "boundary_retained_raw_stream"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::BoundaryPermitsTaskMutation => {
-            "boundary_permits_task_mutation"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::BoundaryPermitsReviewAcceptance => {
-            "boundary_permits_review_acceptance"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::BoundaryPermitsCallbackAnswer => {
-            "boundary_permits_callback_answer"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::BoundaryPermitsCancellation => {
-            "boundary_permits_cancellation"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::BoundaryPermitsResume => {
-            "boundary_permits_resume"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::BoundaryPermitsScmMutation => {
-            "boundary_permits_scm_mutation"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::ExecutorInvocationRequestedAtGate => {
-            "executor_invocation_requested_at_gate"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::ProviderWriteRequestedAtGate => {
-            "provider_write_requested_at_gate"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::RawProviderMaterialRequested => {
-            "raw_provider_material_requested"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::RawStreamRequested => {
-            "raw_stream_requested"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::TaskMutationRequested => {
-            "task_mutation_requested"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::ReviewAcceptanceRequested => {
-            "review_acceptance_requested"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::CallbackAnswerRequested => {
-            "callback_answer_requested"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::CancellationRequested => {
-            "cancellation_requested"
-        }
-        DurableCodexLiveProviderWriteInvocationGateBlocker::ResumeRequested => "resume_requested",
-        DurableCodexLiveProviderWriteInvocationGateBlocker::ScmMutationRequested => {
-            "scm_mutation_requested"
-        }
-    }
 }
 
 #[cfg(test)]

@@ -10,16 +10,16 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `109-convergence-local-snap-spawn-receipt-records.md`
+- `139-runtime-observation-event-store-persistence-type-split.md`
 
 ## Paused Cards
 
-- `110-convergence-local-snap-spawn-receipt-diagnostics.md`
-- `111-convergence-local-snap-spawn-receipt-closeout.md`
+None.
 
 ## Planned Cards
 
-None.
+- `140-runtime-observation-event-store-persistence-helper-test-split.md`
+- `141-runtime-observation-event-store-persistence-validation-closeout.md`
 
 ## Completed Cards
 
@@ -131,3 +131,33 @@ None.
 - `106-convergence-local-snap-spawn-handoff-records.md`
 - `107-convergence-local-snap-spawn-handoff-diagnostics.md`
 - `108-convergence-local-snap-spawn-handoff-closeout.md`
+- `109-convergence-local-snap-spawn-receipt-records.md`
+- `110-convergence-local-snap-spawn-receipt-diagnostics.md`
+- `111-convergence-local-snap-spawn-receipt-closeout.md`
+- `112-convergence-local-snap-spawn-receipt-control-dto.md`
+- `113-convergence-local-snap-spawn-receipt-control-diagnostics.md`
+- `114-convergence-local-snap-spawn-receipt-control-closeout.md`
+- `115-convergence-deferred-effects-summary.md`
+- `116-convergence-exit-control-closeout.md`
+- `117-next-non-convergence-lane-selection.md`
+- `118-post-convergence-health-evidence-refresh.md`
+- `119-server-provider-boundary-pressure-audit.md`
+- `120-next-engine-boundary-migration-selection.md`
+- `121-control-envelope-request-query-module-split.md`
+- `122-control-envelope-protocol-helper-split.md`
+- `123-control-envelope-boundary-validation-closeout.md`
+- `124-durable-live-provider-smoke-model-split.md`
+- `125-durable-live-provider-smoke-helpers-split.md`
+- `126-durable-live-provider-smoke-validation-closeout.md`
+- `127-scm-capture-dry-run-execution-persistence-record-split.md`
+- `128-scm-capture-dry-run-execution-persistence-helper-split.md`
+- `129-scm-capture-dry-run-execution-persistence-validation-closeout.md`
+- `130-durable-executor-dispatch-selection-type-split.md`
+- `131-durable-executor-dispatch-selection-blocker-test-split.md`
+- `132-durable-executor-dispatch-selection-validation-closeout.md`
+- `133-codex-callback-request-persistence-type-split.md`
+- `134-codex-callback-request-persistence-helper-test-split.md`
+- `135-codex-callback-request-persistence-validation-closeout.md`
+- `136-durable-dispatch-invocation-preflight-type-split.md`
+- `137-durable-dispatch-invocation-preflight-helper-test-split.md`
+- `138-durable-dispatch-invocation-preflight-validation-closeout.md`

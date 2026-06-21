@@ -1,6 +1,6 @@
 # 111 Convergence Local Snap Spawn Receipt Closeout
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../032-convergence-local-snap-spawn-receipt-boundary.md`
@@ -12,10 +12,10 @@ Convergence lane.
 
 ## Acceptance Criteria
 
-- [ ] Validation passes or blockers are recorded.
-- [ ] Gap index reflects stopped local snap spawn receipt state.
-- [ ] Next lane is selected from evidence.
-- [ ] No Convergence backend effect is enabled.
+- [x] Validation passes or blockers are recorded.
+- [x] Gap index reflects stopped local snap spawn receipt state.
+- [x] Next lane is selected from evidence.
+- [x] No Convergence backend effect is enabled.
 
 ## Validation
 

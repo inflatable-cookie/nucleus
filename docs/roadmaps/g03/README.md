@@ -51,6 +51,16 @@ Current runway bands:
 - stopped local snap spawn requests before real process spawn
 - stopped local snap spawn handoff before process runner invocation
 - sanitized local snap spawn receipts before raw process output
+- read-only local snap spawn receipt control before any process runner surface
+- Convergence exit summary before selecting a non-Convergence lane
+- post-Convergence health and boundary rebaseline before another effect lane
+- control envelope request/query split before another provider effect lane
+- durable live provider smoke command-runner split as health-only work
+- SCM capture dry-run execution persistence split as health-only work
+- durable executor dispatch selection split as health-only work
+- Codex callback request persistence split as health-only work
+- durable dispatch invocation preflight split as health-only work
+- runtime observation event-store persistence split as health-only work
 
 Current checkpoint:
 
@@ -58,9 +68,49 @@ Current checkpoint:
   convergence-like plans, and adapter-plan diagnostics
 - Git execution proof is represented through pull-request execution admission
 - adapter-neutral chain and Convergence-like publication records are folded
-  into g03 as milestones 010-032
+  into g03 as milestones 010-034
 - doctor remains red on known god-file pressure
-- next ready card is Convergence local snap spawn receipt records
+- next ready card is runtime observation event-store persistence type split
+- Convergence receipt control is complete, Convergence backend effects are
+  deferred, and the next active lane is not Convergence-specific
+- control envelope request/query/protocol split is complete and removed one
+  doctor error
+- durable live provider smoke command-runner split is complete and removed one
+  doctor error without enabling provider writes
+- next active lane is health-only runtime observation event-store persistence
+  splitting, not a provider write or task mutation lane
+
+## Convergence Exit Criteria
+
+Minimum remaining Convergence work:
+
+- record which Convergence effects remain intentionally deferred
+- preserve the current adapter boundary as a stopped proof, not a real runner
+- select a non-Convergence next lane from implementation evidence
+
+Explicitly deferred until Convergence itself is stable enough to integrate:
+
+- actual `converge snap` process execution
+- raw stdout/stderr retention
+- object upload
+- publication creation
+- lane-head sync
+- bundle creation, approval, promotion, release, or resolution publication
+- Convergence-specific recovery, cancellation, or retry execution
+
+After the exit summary, do not add another Convergence milestone unless the
+operator explicitly reopens Convergence work.
+
+Selected non-Convergence next lane:
+
+- post-Convergence health and boundary rebaseline
+
+Reason:
+
+- the Convergence proof now has enough stopped surfaces for current planning
+- additional Convergence work would depend on an unfinished upstream system
+- the server/provider front door and god-file pressure should be checked before
+  another provider, SCM, or UI lane grows the codebase
 
 ## Milestones
 
@@ -95,22 +145,32 @@ Current checkpoint:
 - `029-convergence-local-snap-execution-preflight.md` - completed
 - `030-convergence-local-snap-spawn-request-boundary.md` - completed
 - `031-convergence-local-snap-spawn-handoff-boundary.md` - completed
-- `032-convergence-local-snap-spawn-receipt-boundary.md` - active
+- `032-convergence-local-snap-spawn-receipt-boundary.md` - completed
+- `033-convergence-local-snap-spawn-receipt-control.md` - completed
+- `034-convergence-exit-and-next-lane-selection.md` - completed
+- `035-post-convergence-health-and-boundary-rebaseline.md` - completed
+- `036-control-envelope-request-boundary-split.md` - completed
+- `037-durable-live-provider-smoke-command-runner-split.md` - completed
+- `038-scm-capture-dry-run-execution-persistence-split.md` - completed
+- `039-durable-executor-dispatch-selection-split.md` - completed
+- `040-codex-callback-request-persistence-split.md` - completed
+- `041-durable-dispatch-invocation-preflight-split.md` - completed
+- `042-runtime-observation-event-store-persistence-split.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/109-convergence-local-snap-spawn-receipt-records.md`
+- `batch-cards/139-runtime-observation-event-store-persistence-type-split.md`
 
 Paused cards:
 
-- `batch-cards/110-convergence-local-snap-spawn-receipt-diagnostics.md`
-- `batch-cards/111-convergence-local-snap-spawn-receipt-closeout.md`
+None.
 
 Planned cards:
 
-None.
+- `batch-cards/140-runtime-observation-event-store-persistence-helper-test-split.md`
+- `batch-cards/141-runtime-observation-event-store-persistence-validation-closeout.md`
 
 Completed cards:
 
@@ -222,6 +282,36 @@ Completed cards:
 - `batch-cards/106-convergence-local-snap-spawn-handoff-records.md`
 - `batch-cards/107-convergence-local-snap-spawn-handoff-diagnostics.md`
 - `batch-cards/108-convergence-local-snap-spawn-handoff-closeout.md`
+- `batch-cards/109-convergence-local-snap-spawn-receipt-records.md`
+- `batch-cards/110-convergence-local-snap-spawn-receipt-diagnostics.md`
+- `batch-cards/111-convergence-local-snap-spawn-receipt-closeout.md`
+- `batch-cards/112-convergence-local-snap-spawn-receipt-control-dto.md`
+- `batch-cards/113-convergence-local-snap-spawn-receipt-control-diagnostics.md`
+- `batch-cards/114-convergence-local-snap-spawn-receipt-control-closeout.md`
+- `batch-cards/115-convergence-deferred-effects-summary.md`
+- `batch-cards/116-convergence-exit-control-closeout.md`
+- `batch-cards/117-next-non-convergence-lane-selection.md`
+- `batch-cards/118-post-convergence-health-evidence-refresh.md`
+- `batch-cards/119-server-provider-boundary-pressure-audit.md`
+- `batch-cards/120-next-engine-boundary-migration-selection.md`
+- `batch-cards/121-control-envelope-request-query-module-split.md`
+- `batch-cards/122-control-envelope-protocol-helper-split.md`
+- `batch-cards/123-control-envelope-boundary-validation-closeout.md`
+- `batch-cards/124-durable-live-provider-smoke-model-split.md`
+- `batch-cards/125-durable-live-provider-smoke-helpers-split.md`
+- `batch-cards/126-durable-live-provider-smoke-validation-closeout.md`
+- `batch-cards/127-scm-capture-dry-run-execution-persistence-record-split.md`
+- `batch-cards/128-scm-capture-dry-run-execution-persistence-helper-split.md`
+- `batch-cards/129-scm-capture-dry-run-execution-persistence-validation-closeout.md`
+- `batch-cards/130-durable-executor-dispatch-selection-type-split.md`
+- `batch-cards/131-durable-executor-dispatch-selection-blocker-test-split.md`
+- `batch-cards/132-durable-executor-dispatch-selection-validation-closeout.md`
+- `batch-cards/133-codex-callback-request-persistence-type-split.md`
+- `batch-cards/134-codex-callback-request-persistence-helper-test-split.md`
+- `batch-cards/135-codex-callback-request-persistence-validation-closeout.md`
+- `batch-cards/136-durable-dispatch-invocation-preflight-type-split.md`
+- `batch-cards/137-durable-dispatch-invocation-preflight-helper-test-split.md`
+- `batch-cards/138-durable-dispatch-invocation-preflight-validation-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -250,4 +340,14 @@ Completed cards:
 22. Convergence local snap execution preflight - completed
 23. Convergence local snap spawn request boundary - completed
 24. Convergence local snap spawn handoff boundary - completed
-25. Convergence local snap spawn receipt boundary - active
+25. Convergence local snap spawn receipt boundary - completed
+26. Convergence local snap spawn receipt control - completed
+27. Convergence exit and next non-Convergence lane selection - completed
+28. Post-Convergence health and boundary rebaseline - completed
+29. Control envelope request boundary split - completed
+30. Durable live provider smoke command-runner split - completed
+31. SCM capture dry-run execution persistence split - completed
+32. Durable executor dispatch selection split - completed
+33. Codex callback request persistence split - completed
+34. Durable dispatch invocation preflight split - completed
+35. Runtime observation event-store persistence split - active

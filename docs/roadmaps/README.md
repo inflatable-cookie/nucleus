@@ -160,7 +160,17 @@ shape.
 - `g03/029-convergence-local-snap-execution-preflight.md` - completed
 - `g03/030-convergence-local-snap-spawn-request-boundary.md` - completed
 - `g03/031-convergence-local-snap-spawn-handoff-boundary.md` - completed
-- `g03/032-convergence-local-snap-spawn-receipt-boundary.md` - active
+- `g03/032-convergence-local-snap-spawn-receipt-boundary.md` - completed
+- `g03/033-convergence-local-snap-spawn-receipt-control.md` - completed
+- `g03/034-convergence-exit-and-next-lane-selection.md` - completed
+- `g03/035-post-convergence-health-and-boundary-rebaseline.md` - completed
+- `g03/036-control-envelope-request-boundary-split.md` - completed
+- `g03/037-durable-live-provider-smoke-command-runner-split.md` - completed
+- `g03/038-scm-capture-dry-run-execution-persistence-split.md` - completed
+- `g03/039-durable-executor-dispatch-selection-split.md` - completed
+- `g03/040-codex-callback-request-persistence-split.md` - completed
+- `g03/041-durable-dispatch-invocation-preflight-split.md` - completed
+- `g03/042-runtime-observation-event-store-persistence-split.md` - active
 
 ## Previous Generation
 
@@ -219,5 +229,4 @@ shape.
 
 ## Next Task
 
-Build sanitized stopped spawn receipt records from ready local snap spawn
-handoffs.
+Split runtime observation event-store persistence support code without behavior changes.
