@@ -214,6 +214,16 @@ Current checkpoint:
   now reads the existing provider read-intent projection beside the overview;
   the next lane closes the provider-readiness product proof and selects the
   next provider lane deliberately.
+- Provider Readiness product closeout is complete. The next provider lane is
+  stopped status/check refresh because it supports task-completion evidence and
+  PR review readiness without granting credential resolution, live provider
+  refresh, provider effects, or raw payload retention.
+- Stopped status/check refresh type/control is complete. The next slice persists
+  sanitized status/check refresh records before projection or desktop seed
+  integration.
+- Stopped status/check refresh persistence is complete. The next slice folds the
+  family into provider read-intent projection/query/DTOs and desktop seed proof
+  without live provider behavior.
 
 ## Convergence Exit Criteria
 
@@ -333,16 +343,17 @@ Reason:
 - `082-provider-readiness-overview-desktop-proof-surface.md` - completed
 - `083-provider-readiness-overview-seeded-evidence-proof.md` - completed
 - `084-provider-readiness-overview-drilldown-read-model.md` - completed
-- `085-provider-readiness-product-closeout-and-next-lane-selection.md` - active
+- `085-provider-readiness-product-closeout-and-next-lane-selection.md` - completed
+- `086-stopped-provider-status-check-refresh.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/319-provider-readiness-proof-closeout-summary.md`
-- `batch-cards/320-provider-boundary-gap-refresh.md`
-- `batch-cards/321-next-provider-lane-selection.md`
-- `batch-cards/322-provider-readiness-closeout-validation.md`
+- `batch-cards/333-provider-read-intent-status-check-projection.md`
+- `batch-cards/334-provider-read-intent-status-check-query-dto.md`
+- `batch-cards/335-provider-readiness-status-check-seed-proof.md`
+- `batch-cards/336-provider-status-check-refresh-lane-closeout.md`
 
 Paused cards:
 
@@ -354,6 +365,20 @@ None.
 
 Completed cards:
 
+- `batch-cards/332-provider-status-check-refresh-persistence-validation-closeout.md`
+- `batch-cards/331-provider-status-check-refresh-persistence-blocker-tests.md`
+- `batch-cards/330-provider-status-check-refresh-persistence-diagnostics-control.md`
+- `batch-cards/329-provider-status-check-refresh-persistence-store.md`
+- `batch-cards/328-provider-status-check-refresh-persistence-type-surface.md`
+- `batch-cards/327-provider-status-check-refresh-validation-closeout.md`
+- `batch-cards/326-provider-status-check-refresh-blocker-tests.md`
+- `batch-cards/325-provider-status-check-refresh-control-dto.md`
+- `batch-cards/324-provider-status-check-refresh-record-builder.md`
+- `batch-cards/323-provider-status-check-refresh-type-surface.md`
+- `batch-cards/322-provider-readiness-closeout-validation.md`
+- `batch-cards/321-next-provider-lane-selection.md`
+- `batch-cards/320-provider-boundary-gap-refresh.md`
+- `batch-cards/319-provider-readiness-proof-closeout-summary.md`
 - `batch-cards/318-provider-readiness-drilldown-validation-closeout.md`
 - `batch-cards/317-provider-readiness-drilldown-rendering-proof.md`
 - `batch-cards/316-provider-readiness-drilldown-request-path.md`
@@ -756,4 +781,5 @@ Completed cards:
 74. Provider Readiness Overview desktop proof surface - completed
 75. Provider Readiness Overview seeded evidence proof - completed
 76. Provider Readiness Overview drilldown read model - completed
-77. Provider Readiness product closeout and next-lane selection - active
+77. Provider Readiness product closeout and next-lane selection - completed
+78. Stopped provider status/check refresh - active

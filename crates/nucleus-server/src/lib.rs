@@ -104,6 +104,8 @@ pub mod provider_forge_readiness_overview;
 pub mod provider_forge_readiness_overview_query;
 pub mod provider_forge_repository_metadata_refresh;
 pub mod provider_forge_repository_metadata_refresh_persistence;
+pub mod provider_forge_status_check_refresh;
+pub mod provider_forge_status_check_refresh_persistence;
 pub mod provider_git_branch_worktree_admission_records;
 pub mod provider_git_branch_worktree_command_descriptors;
 pub mod provider_git_branch_worktree_diagnostics;

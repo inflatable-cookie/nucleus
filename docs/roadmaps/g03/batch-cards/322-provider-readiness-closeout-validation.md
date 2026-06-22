@@ -1,6 +1,6 @@
 # 322 Provider Readiness Closeout Validation
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-22
 Milestone: `../085-provider-readiness-product-closeout-and-next-lane-selection.md`
@@ -11,10 +11,10 @@ Validate the closeout and next-lane selection docs.
 
 ## Acceptance Criteria
 
-- [ ] Docs QA passes.
-- [ ] Northstar QA passes.
-- [ ] Doctor remains error-free.
-- [ ] Single `## Next Task` pointer remains in `docs/roadmaps/README.md`.
+- [x] Docs QA passes.
+- [x] Northstar QA passes.
+- [x] Doctor remains error-free.
+- [x] Single `## Next Task` pointer remains in `docs/roadmaps/README.md`.
 
 ## Validation
 

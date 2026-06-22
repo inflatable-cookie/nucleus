@@ -1350,12 +1350,21 @@ Recent evidence:
   task mutation, or raw provider payload retention.
 - Provider Readiness Overview drilldown is complete over the existing provider
   read-intent projection without adding live provider behavior.
+- Provider Readiness product closeout selected stopped status/check refresh as
+  the next provider lane. Credential resolution, provider refresh, provider
+  effects, UI polish, and warning-file cleanup remain deferred.
+- Stopped status/check refresh type/control is implemented as a read-intent
+  family with sanitized blockers and no-effect flags. Persistence and
+  projection integration remain.
+- Stopped status/check refresh persistence is implemented with sanitized
+  records, duplicate/no-op behavior, diagnostics, and read-only control DTOs.
+  Projection/query/DTO integration and desktop seed proof remain.
 
 Next implementation gate:
 
-1. close out the Provider Readiness product proof and select the next provider
-   lane before adding live refresh, more read-family fan-out, or provider
-   effects
+1. fold persisted status/check refresh records into provider read-intent
+   projection/query/DTOs and desktop seed proof before adding live refresh,
+   credential resolution, provider effects, or raw payload retention
 2. continue reducing god-file pressure opportunistically when touched
 
 Until that lane proves durable authority and preflight, keep checkout,

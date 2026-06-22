@@ -1,6 +1,6 @@
 # 320 Provider Boundary Gap Refresh
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-22
 Milestone: `../085-provider-readiness-product-closeout-and-next-lane-selection.md`
@@ -12,7 +12,7 @@ proof completes.
 
 ## Acceptance Criteria
 
-- [ ] Completed readiness gaps are removed or marked complete.
-- [ ] Remaining provider gaps are grouped by read fan-out, credentials,
+- [x] Completed readiness gaps are removed or marked complete.
+- [x] Remaining provider gaps are grouped by read fan-out, credentials,
   provider effects, and UI/product work.
-- [ ] Warning-sized file pressure remains touch-when-needed.
+- [x] Warning-sized file pressure remains touch-when-needed.

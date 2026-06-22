@@ -213,7 +213,8 @@ shape.
 - `g03/082-provider-readiness-overview-desktop-proof-surface.md` - completed
 - `g03/083-provider-readiness-overview-seeded-evidence-proof.md` - completed
 - `g03/084-provider-readiness-overview-drilldown-read-model.md` - completed
-- `g03/085-provider-readiness-product-closeout-and-next-lane-selection.md` - active
+- `g03/085-provider-readiness-product-closeout-and-next-lane-selection.md` - completed
+- `g03/086-stopped-provider-status-check-refresh.md` - active
 
 ## Previous Generation
 
@@ -272,6 +273,7 @@ shape.
 
 ## Next Task
 
-Implement `g03/085` Provider Readiness product closeout and next-lane
-selection from ready cards 319-322 before adding provider refresh, credential
-resolution, provider effects, raw payload retention, or broad UI redesign.
+Implement `g03/086` provider read-intent status/check projection and seed proof
+from ready cards 333-336 before adding live provider refresh, credential
+resolution, provider effects, status/check writes, raw payload retention, or
+broad UI redesign.

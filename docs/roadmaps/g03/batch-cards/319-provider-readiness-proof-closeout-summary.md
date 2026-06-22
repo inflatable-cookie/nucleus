@@ -1,6 +1,6 @@
 # 319 Provider Readiness Proof Closeout Summary
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-06-22
 Milestone: `../085-provider-readiness-product-closeout-and-next-lane-selection.md`
@@ -12,7 +12,7 @@ still intentionally excludes.
 
 ## Acceptance Criteria
 
-- [ ] The summary includes overview, seed evidence, and drilldown proof.
-- [ ] Exclusions include provider refresh, credentials, provider effects, raw
+- [x] The summary includes overview, seed evidence, and drilldown proof.
+- [x] Exclusions include provider refresh, credentials, provider effects, raw
   payload retention, and durable UI design commitments.
-- [ ] The summary points to the governing contract and roadmap refs.
+- [x] The summary points to the governing contract and roadmap refs.

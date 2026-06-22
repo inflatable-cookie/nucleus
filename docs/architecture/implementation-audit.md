@@ -451,6 +451,14 @@ Provider read-intent status:
   effects, task mutation, or raw provider payload retention
 - Provider Readiness Overview drilldown is implemented over the existing
   provider read-intent projection without adding new server provider effects
+- Provider Readiness product closeout selected stopped status/check refresh as
+  the next provider read-family lane
+- Stopped status/check refresh type/control is implemented with ready, repair,
+  blocked, and sanitized control DTO tests. Persistence and projection
+  integration remain next.
+- Stopped status/check refresh persistence is implemented with sanitized local
+  store records, duplicate/no-op behavior, diagnostics, and read-only control
+  DTOs. Projection/query/DTO integration and seed proof remain next.
 
 ## Recommended Remediation Order
 
@@ -463,8 +471,8 @@ Provider read-intent status:
 7. Rebaseline harness runtime before adding provider behavior.
 8. Implement Codex live event acceptance through orchestration-owned event,
    receipt, session, and work-item refs.
-9. Close out the Provider Readiness product proof and select the next provider
-   lane before provider refresh or effects.
+9. Implement stopped status/check refresh before provider refresh, credential
+   resolution, or effects.
 10. Implement later features only through the new core model.
 
 ## Code Audit Questions

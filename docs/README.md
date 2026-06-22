@@ -19,9 +19,10 @@ The repo uses:
 ## Current Lane
 
 `g03` effect-gated SCM and forge execution. Current pointer: implement
-`g03/085` Provider Readiness product closeout and next-lane selection from
-ready cards 319-322 before adding provider refresh, credential resolution,
-provider effects, raw payload retention, or broad UI redesign.
+`g03/086` provider read-intent status/check projection and seed proof from
+ready cards 333-336 before adding live provider refresh, credential
+resolution, provider effects, status/check writes, raw payload retention, or
+broad UI redesign.
 
 Current planning artifacts:
 
@@ -127,6 +128,7 @@ Current planning artifacts:
 - `roadmaps/g03/083-provider-readiness-overview-seeded-evidence-proof.md`
 - `roadmaps/g03/084-provider-readiness-overview-drilldown-read-model.md`
 - `roadmaps/g03/085-provider-readiness-product-closeout-and-next-lane-selection.md`
+- `roadmaps/g03/086-stopped-provider-status-check-refresh.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`

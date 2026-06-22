@@ -10,10 +10,10 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `319-provider-readiness-proof-closeout-summary.md`
-- `320-provider-boundary-gap-refresh.md`
-- `321-next-provider-lane-selection.md`
-- `322-provider-readiness-closeout-validation.md`
+- `333-provider-read-intent-status-check-projection.md`
+- `334-provider-read-intent-status-check-query-dto.md`
+- `335-provider-readiness-status-check-seed-proof.md`
+- `336-provider-status-check-refresh-lane-closeout.md`
 
 ## Paused Cards
 
@@ -25,6 +25,20 @@ None.
 
 ## Completed Cards
 
+- `332-provider-status-check-refresh-persistence-validation-closeout.md`
+- `331-provider-status-check-refresh-persistence-blocker-tests.md`
+- `330-provider-status-check-refresh-persistence-diagnostics-control.md`
+- `329-provider-status-check-refresh-persistence-store.md`
+- `328-provider-status-check-refresh-persistence-type-surface.md`
+- `327-provider-status-check-refresh-validation-closeout.md`
+- `326-provider-status-check-refresh-blocker-tests.md`
+- `325-provider-status-check-refresh-control-dto.md`
+- `324-provider-status-check-refresh-record-builder.md`
+- `323-provider-status-check-refresh-type-surface.md`
+- `322-provider-readiness-closeout-validation.md`
+- `321-next-provider-lane-selection.md`
+- `320-provider-boundary-gap-refresh.md`
+- `319-provider-readiness-proof-closeout-summary.md`
 - `318-provider-readiness-drilldown-validation-closeout.md`
 - `317-provider-readiness-drilldown-rendering-proof.md`
 - `316-provider-readiness-drilldown-request-path.md`
