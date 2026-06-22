@@ -810,6 +810,27 @@ Current runner proof state:
   credential material, provider payloads, real credential resolution, provider
   network calls, callbacks, interruption, recovery execution, task mutation,
   and raw provider payload retention.
+- `nucleus-server` has stopped provider pull-request/merge-request refresh
+  persistence/control records in
+  `provider_forge_pull_request_refresh_persistence`. They persist sanitized
+  refresh records, duplicate no-ops, blocked persistence records, diagnostics,
+  and read-only control counts while blocking credential material, provider
+  payloads, real credential resolution, provider network calls, callbacks,
+  interruption, recovery execution, task mutation, and raw provider payload
+  retention.
+- Credential-status, repository-metadata, and PR/MR refresh prove the stopped
+  provider read-intent pattern. Further issue, comment, review workflow, and
+  status/check read-family fan-out is intentionally paused until a reusable
+  projection/control surface exists.
+- `nucleus-server` has generic provider read-intent projection/control records
+  in `provider_forge_read_intent_projection`. They aggregate persisted
+  credential-status, repository-metadata, and PR/MR refresh records into one
+  read-only projection with family counts, status counts, blocker counts,
+  evidence counts, and no-effect flags.
+- `nucleus-server` has provider read-intent query composition in
+  `provider_forge_read_intent_query`. It reads persisted credential-status,
+  repository-metadata, and PR/MR refresh records from local store and composes
+  the generic read-intent projection as a read-only query result/control DTO.
 
 ### Management Projection Runtime
 
@@ -1269,11 +1290,22 @@ Recent evidence:
 - Stopped provider pull-request/merge-request refresh/control records now model
   PR/MR read intent without resolving credential material or calling provider
   networks.
+- Stopped provider pull-request/merge-request refresh persistence/control
+  records now persist sanitized PR/MR refresh records without resolving
+  credential material or calling provider networks.
+- Provider-forge read-pattern consolidation is complete. Do not continue by
+  stamping out issue, comment, review workflow, or status/check refresh modules
+  unless the operator explicitly chooses that fan-out.
+- Generic provider read-intent projection/control is complete. The next step is
+  to compose it from local store reads instead of passing records manually.
+- Provider read-intent query composition is complete. The next step is exposing
+  the query through the server/control boundary without enabling provider
+  writes.
 
 Next implementation gate:
 
-1. persist stopped provider pull-request/merge-request refresh records before
-   any live credential resolution or provider network call
+1. expose provider read-intent query results through the server/control
+   boundary without enabling provider writes
 2. continue reducing god-file pressure opportunistically when touched
 
 Until that lane proves durable authority and preflight, keep checkout,

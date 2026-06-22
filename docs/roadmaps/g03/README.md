@@ -161,6 +161,23 @@ Current checkpoint:
   material, provider payloads, real credential resolution, provider network
   calls, callbacks, interruption, recovery execution, task mutation, and raw
   provider payload retention.
+- Stopped provider pull-request/merge-request refresh persistence/control
+  records are complete. The server now persists sanitized PR/MR refresh
+  records, duplicate no-ops, blocked persistence records, diagnostics, and
+  read-only control counts without resolving credential material or calling
+  provider networks.
+- Provider-forge read-pattern consolidation is complete. Credential-status,
+  repository-metadata, and PR/MR refresh now prove the stopped read-intent
+  pattern; issue, comment, review workflow, and status/check refresh fan-out is
+  paused until the reusable projection/control shape is promoted.
+- Generic provider read-intent projection/control is complete. The server now
+  projects persisted credential-status, repository-metadata, and PR/MR refresh
+  records into one read-only aggregate surface with family counts, status
+  counts, blocker counts, evidence counts, and no-effect flags.
+- Provider read-intent query composition is complete. The server now composes
+  the generic projection from local-store persisted credential-status,
+  repository-metadata, and PR/MR refresh records through a read-only query
+  result and control DTO.
 
 ## Convergence Exit Criteria
 
@@ -262,6 +279,10 @@ Reason:
 - `064-stopped-provider-repository-metadata-refresh-control.md` - completed
 - `065-stopped-provider-repository-metadata-refresh-persistence.md` - completed
 - `066-stopped-provider-pull-request-refresh-control.md` - completed
+- `067-stopped-provider-pull-request-refresh-persistence.md` - completed
+- `068-provider-forge-read-pattern-consolidation.md` - completed
+- `069-provider-read-intent-projection-control.md` - completed
+- `070-provider-read-intent-query-composition.md` - completed
 
 ## Batch Cards
 
@@ -527,6 +548,23 @@ Completed cards:
 - `batch-cards/246-provider-pull-request-refresh-control-dto.md`
 - `batch-cards/247-provider-pull-request-refresh-blocker-tests.md`
 - `batch-cards/248-provider-pull-request-refresh-validation-closeout.md`
+- `batch-cards/249-provider-pull-request-refresh-persistence-type-surface.md`
+- `batch-cards/250-provider-pull-request-refresh-persistence-store.md`
+- `batch-cards/251-provider-pull-request-refresh-persistence-diagnostics-control.md`
+- `batch-cards/252-provider-pull-request-refresh-persistence-blocker-tests.md`
+- `batch-cards/253-provider-pull-request-refresh-persistence-validation-closeout.md`
+- `batch-cards/254-provider-forge-read-pattern-summary.md`
+- `batch-cards/255-provider-forge-read-family-fanout-pause.md`
+- `batch-cards/256-provider-forge-next-integration-lane-selection.md`
+- `batch-cards/257-provider-read-intent-projection-type-surface.md`
+- `batch-cards/258-provider-read-intent-projection-entry-builders.md`
+- `batch-cards/259-provider-read-intent-projection-control-dto.md`
+- `batch-cards/260-provider-read-intent-projection-tests.md`
+- `batch-cards/261-provider-read-intent-projection-validation-closeout.md`
+- `batch-cards/262-provider-read-intent-query-type-surface.md`
+- `batch-cards/263-provider-read-intent-query-store-composition.md`
+- `batch-cards/264-provider-read-intent-query-tests.md`
+- `batch-cards/265-provider-read-intent-query-validation-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -592,3 +630,8 @@ Completed cards:
     completed
 58. Stopped provider pull-request/merge-request refresh/control records -
     completed
+59. Stopped provider pull-request/merge-request refresh persistence/control
+    records - completed
+60. Provider-forge read-pattern consolidation - completed
+61. Generic provider read-intent projection/control - completed
+62. Provider read-intent query composition - completed

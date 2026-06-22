@@ -262,6 +262,34 @@ control counts. It does not resolve credential material, call provider
 networks, execute provider effects, run callbacks/interruption/recovery, mutate
 tasks, or retain raw provider payloads.
 
+Stopped provider pull-request/merge-request refresh persistence/control records
+now exist in `provider_forge_pull_request_refresh_persistence`. The module
+persists sanitized refresh records, duplicate no-ops, blocked persistence
+records, diagnostics, and read-only control counts through local artifact
+metadata. It still blocks credential material, provider payloads, real
+credential resolution, provider network calls, callbacks, interruption,
+recovery execution, task mutation, and raw provider payload retention.
+
+Credential-status, repository-metadata, and PR/MR refresh now prove the stopped
+provider read-intent pattern. Further read-family fan-out should pause until a
+generic projection/control surface can make those records useful without
+copying the same module structure for every provider object family.
+
+Generic provider read-intent projection/control records now exist in
+`provider_forge_read_intent_projection`. The module projects persisted
+credential-status, repository-metadata, and PR/MR refresh records into one
+read-only aggregate surface with family counts, status counts, blocker counts,
+evidence counts, and no-effect flags. It does not read credential material,
+call provider networks, execute provider effects, mutate tasks, or retain raw
+provider payloads.
+
+Provider read-intent query composition now exists in
+`provider_forge_read_intent_query`. The module reads the three persisted
+stopped read families from local store, composes the generic projection, and
+returns a read-only query result plus control DTO. It does not resolve
+credential material, call provider networks, execute provider effects, mutate
+tasks, or retain raw provider payloads.
+
 ### Server Crate Accretion
 
 `nucleus-server` currently contains host API, engine-like domain services,

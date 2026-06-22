@@ -195,6 +195,10 @@ shape.
 - `g03/064-stopped-provider-repository-metadata-refresh-control.md` - completed
 - `g03/065-stopped-provider-repository-metadata-refresh-persistence.md` - completed
 - `g03/066-stopped-provider-pull-request-refresh-control.md` - completed
+- `g03/067-stopped-provider-pull-request-refresh-persistence.md` - completed
+- `g03/068-provider-forge-read-pattern-consolidation.md` - completed
+- `g03/069-provider-read-intent-projection-control.md` - completed
+- `g03/070-provider-read-intent-query-composition.md` - completed
 
 ## Previous Generation
 
@@ -253,5 +257,5 @@ shape.
 
 ## Next Task
 
-Persist stopped provider pull-request/merge-request refresh records before any
-live credential resolution or provider network call.
+Expose provider read-intent query results through the server/control boundary
+without enabling provider writes.

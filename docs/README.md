@@ -18,9 +18,9 @@ The repo uses:
 
 ## Current Lane
 
-`g03` effect-gated SCM and forge execution. Current pointer: stopped provider
-pull-request/merge-request refresh persistence/control from refresh records,
-with no credential material resolution or provider network calls.
+`g03` effect-gated SCM and forge execution. Current pointer: expose provider
+read-intent query results through the server/control boundary without enabling
+provider writes.
 
 Current planning artifacts:
 
@@ -107,6 +107,10 @@ Current planning artifacts:
 - `roadmaps/g03/001-git-change-request-execution-gate.md`
 - `roadmaps/g03/065-stopped-provider-repository-metadata-refresh-persistence.md`
 - `roadmaps/g03/066-stopped-provider-pull-request-refresh-control.md`
+- `roadmaps/g03/067-stopped-provider-pull-request-refresh-persistence.md`
+- `roadmaps/g03/068-provider-forge-read-pattern-consolidation.md`
+- `roadmaps/g03/069-provider-read-intent-projection-control.md`
+- `roadmaps/g03/070-provider-read-intent-query-composition.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -127,8 +131,12 @@ change-request execution gates, and adapter-neutral change-request chain
 projection are now proven as server-owned, sanitized, operator-gated
 record/control surfaces. Provider credential-status and repository metadata
 refresh surfaces are represented and persisted as stopped read-intent records;
-pull-request/merge-request refresh is represented as a stopped read-intent
-record.
+pull-request/merge-request refresh is represented and persisted as a stopped
+read-intent record. Further provider read-family fan-out is paused until the
+reusable read-intent pattern is promoted into an integration surface. A generic
+read-intent projection/control surface now aggregates the proven persisted read
+families, and a read-only query composes that projection from local-store
+records.
 
 The first approved direct Codex `turn/start` smoke completed through local
 Codex app-server with sanitized output only. Further provider writes, SCM/forge
