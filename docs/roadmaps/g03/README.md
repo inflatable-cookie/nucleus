@@ -68,6 +68,10 @@ Current runway bands:
 - stdio frame ingestion persistence split as health-only work
 - durable executor dispatch admission split as health-only work
 - doctor-green health closeout before selecting the next implementation lane
+- explicit Git branch/worktree runner proof from existing stopped handoff
+  records
+- Git/forge runner health and boundary rebaseline before provider auth or
+  forge network execution
 
 Current checkpoint:
 
@@ -77,15 +81,86 @@ Current checkpoint:
 - adapter-neutral chain and Convergence-like publication records are folded
   into g03 as milestones 010-034
 - doctor exits cleanly with god-file findings reduced to warnings only
-- next ready card is god-file warning pressure triage
 - Convergence receipt control is complete, Convergence backend effects are
   deferred, and the next active lane is not Convergence-specific
 - control envelope request/query/protocol split is complete and removed one
   doctor error
 - durable live provider smoke command-runner split is complete and removed one
   doctor error without enabling provider writes
-- next active lane is health closeout and implementation lane selection, not an
-  SCM mutation or provider write lane
+- Git branch/worktree runner proof is complete through authority refresh,
+  command adapter, sanitized outcome persistence, diagnostics, and read-only
+  control DTOs.
+- Git commit runner proof is complete through authority records, command
+  adapter, sanitized outcome persistence, diagnostics, and read-only control
+  DTOs.
+- Git push runner proof is complete through authority records, command adapter,
+  sanitized outcome persistence, diagnostics, and read-only control DTOs.
+- stopped forge pull-request runner proof is complete through authority records,
+  sanitized provider-request adapter, outcome persistence, diagnostics, and
+  read-only control DTOs.
+- Git/forge runner health and boundary rebaseline is complete; focused runner
+  tests pass, doctor remains 137 warnings and 0 errors, and real provider-auth
+  or network execution behavior remains contract-gated.
+- Provider-auth and forge execution contract lane is complete. Contract `027`
+  now owns credential refs, network-write admission, provider response
+  evidence, idempotency, retry/recovery, and operator-review boundaries before
+  any real provider writes.
+- Stopped provider-auth and forge admission records are complete. The server
+  now models credential refs, network authority refs, operator approval refs,
+  idempotency keys, retry/recovery policy refs, and sanitization policy refs
+  without resolving credentials or calling provider networks.
+- Stopped forge network execution preflight/control records are complete. The
+  server now models provider context refs, target provider refs,
+  credential-use evidence refs, preflight evidence refs, and planned
+  provider-response evidence refs without resolving credentials or calling
+  provider networks.
+- Stopped forge network execution request/receipt records are complete. The
+  server now records stopped execution request ids, runtime receipt refs, retry
+  lineage, and recovery classification refs from preflight state without
+  resolving credentials or calling provider networks.
+- Stopped forge network execution outcome persistence/control records are
+  complete. The server now persists sanitized stopped outcomes, duplicate
+  no-ops, blocked/repair-required outcome status, diagnostics, and read-only
+  control counts from request/receipt records without resolving credentials,
+  calling provider networks, or retaining raw provider payloads.
+- Forge network stopped-runner health and boundary rebaseline is complete.
+  Focused forge network and stopped PR runner tests pass, no direct
+  network/process/provider execution tokens were found in the audited modules,
+  and warning-sized file pressure remains documented as warning-only.
+- Stopped provider credential-status refresh/control records are complete. The
+  server now classifies credential refs into ready, repair, unknown, and
+  unsupported buckets, reports sanitized control counts, and blocks credential
+  material, provider payloads, real credential resolution, provider network
+  calls, callbacks, interruption, recovery execution, task mutation, and raw
+  provider payload retention.
+- Stopped provider credential-status refresh persistence/control records are
+  complete. The server now persists sanitized refresh records, duplicate
+  no-ops, blocked persistence records, diagnostics, and read-only control
+  counts without resolving credential material or calling provider networks.
+- Provider-auth stopped-boundary health rebaseline is complete. Focused
+  credential-status, forge network, and stopped PR runner tests pass, no direct
+  network/process/provider execution tokens were found in the audited modules,
+  and warning-sized file pressure remains documented as warning-only.
+- Stopped provider repository metadata refresh/control records are complete.
+  The server now records planned repository metadata refresh state from
+  provider context refs, requires provider instance, forge provider, remote
+  repo, credential-status evidence, repository-metadata evidence, and
+  sanitization refs, and blocks credential material, provider payloads, real
+  credential resolution, provider network calls, callbacks, interruption,
+  recovery execution, task mutation, and raw provider payload retention.
+- Stopped provider repository metadata refresh persistence/control records are
+  complete. The server now persists sanitized repository metadata refresh
+  records, duplicate no-ops, blocked persistence records, diagnostics, and
+  read-only control counts without resolving credential material or calling
+  provider networks.
+- Stopped provider pull-request/merge-request refresh/control records are
+  complete. The server now records planned pull-request or merge-request
+  refresh state from provider context refs, requires refresh scope,
+  credential-status evidence, repository-metadata evidence,
+  pull-request-refresh evidence, and sanitization refs, and blocks credential
+  material, provider payloads, real credential resolution, provider network
+  calls, callbacks, interruption, recovery execution, task mutation, and raw
+  provider payload retention.
 
 ## Convergence Exit Criteria
 
@@ -169,13 +244,30 @@ Reason:
 - `046-turn-start-stdio-execution-envelope-split.md` - completed
 - `047-stdio-frame-ingestion-persistence-split.md` - completed
 - `048-durable-executor-dispatch-admission-split.md` - completed
-- `049-doctor-green-health-closeout-and-next-lane-selection.md` - active
+- `049-doctor-green-health-closeout-and-next-lane-selection.md` - completed
+- `050-git-branch-worktree-runner-proof.md` - completed
+- `051-git-commit-runner-proof.md` - completed
+- `052-git-push-runner-proof.md` - completed
+- `053-forge-pull-request-runner-proof.md` - completed
+- `054-git-forge-runner-health-boundary-rebaseline.md` - completed
+- `055-provider-auth-forge-execution-contract-lane.md` - completed
+- `056-stopped-provider-auth-forge-admission-records.md` - completed
+- `057-stopped-forge-network-preflight-control.md` - completed
+- `058-stopped-forge-network-request-receipt.md` - completed
+- `059-stopped-forge-network-outcome-persistence-control.md` - completed
+- `060-forge-network-stopped-runner-health-boundary-rebaseline.md` - completed
+- `061-stopped-provider-credential-status-refresh-control.md` - completed
+- `062-stopped-provider-credential-status-refresh-persistence.md` - completed
+- `063-provider-auth-stopped-boundary-health-rebaseline.md` - completed
+- `064-stopped-provider-repository-metadata-refresh-control.md` - completed
+- `065-stopped-provider-repository-metadata-refresh-persistence.md` - completed
+- `066-stopped-provider-pull-request-refresh-control.md` - completed
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/161-god-file-warning-pressure-triage.md`
+None.
 
 Paused cards:
 
@@ -183,7 +275,7 @@ None.
 
 Planned cards:
 
-- `batch-cards/162-next-implementation-lane-selection.md`
+None.
 
 Completed cards:
 
@@ -347,6 +439,94 @@ Completed cards:
 - `batch-cards/158-durable-executor-dispatch-admission-helper-test-split.md`
 - `batch-cards/159-durable-executor-dispatch-admission-validation-closeout.md`
 - `batch-cards/160-doctor-green-health-evidence-closeout.md`
+- `batch-cards/161-god-file-warning-pressure-triage.md`
+- `batch-cards/162-next-implementation-lane-selection.md`
+- `batch-cards/163-git-branch-worktree-runner-authority-refresh.md`
+- `batch-cards/164-git-branch-worktree-runner-command-adapter.md`
+- `batch-cards/165-git-branch-worktree-runner-outcome-persistence.md`
+- `batch-cards/166-git-branch-worktree-runner-diagnostics-control.md`
+- `batch-cards/167-git-branch-worktree-runner-validation-closeout.md`
+- `batch-cards/168-git-commit-runner-authority-records.md`
+- `batch-cards/169-git-commit-runner-command-adapter.md`
+- `batch-cards/170-git-commit-runner-outcome-persistence.md`
+- `batch-cards/171-git-commit-runner-diagnostics-control.md`
+- `batch-cards/172-git-commit-runner-validation-closeout.md`
+- `batch-cards/173-git-push-runner-authority-records.md`
+- `batch-cards/174-git-push-runner-command-adapter.md`
+- `batch-cards/175-git-push-runner-outcome-persistence.md`
+- `batch-cards/176-git-push-runner-diagnostics-control.md`
+- `batch-cards/177-git-push-runner-validation-closeout.md`
+- `batch-cards/178-forge-pull-request-runner-authority-records.md`
+- `batch-cards/179-forge-pull-request-runner-request-adapter.md`
+- `batch-cards/180-forge-pull-request-runner-outcome-persistence.md`
+- `batch-cards/181-forge-pull-request-runner-diagnostics-control.md`
+- `batch-cards/182-forge-pull-request-runner-validation-closeout.md`
+- `batch-cards/183-git-forge-runner-health-evidence-refresh.md`
+- `batch-cards/184-runner-boundary-authority-audit.md`
+- `batch-cards/185-runner-warning-pressure-triage.md`
+- `batch-cards/186-next-provider-auth-lane-selection.md`
+- `batch-cards/187-git-forge-runner-rebaseline-validation-closeout.md`
+- `batch-cards/188-provider-auth-contract-surface.md`
+- `batch-cards/189-forge-network-admission-boundary.md`
+- `batch-cards/190-provider-evidence-idempotency-recovery-rules.md`
+- `batch-cards/191-provider-auth-contract-index-closeout.md`
+- `batch-cards/192-next-stopped-provider-admission-selection.md`
+- `batch-cards/193-provider-auth-contract-validation-closeout.md`
+- `batch-cards/194-provider-auth-admission-type-surface.md`
+- `batch-cards/195-forge-network-admission-record-builder.md`
+- `batch-cards/196-forge-network-admission-blocker-tests.md`
+- `batch-cards/197-forge-network-admission-export-wiring.md`
+- `batch-cards/198-forge-network-admission-validation-closeout.md`
+- `batch-cards/199-forge-network-preflight-type-surface.md`
+- `batch-cards/200-forge-network-preflight-record-builder.md`
+- `batch-cards/201-forge-network-preflight-control-dto.md`
+- `batch-cards/202-forge-network-preflight-blocker-tests.md`
+- `batch-cards/203-forge-network-preflight-validation-closeout.md`
+- `batch-cards/204-forge-network-request-receipt-type-surface.md`
+- `batch-cards/205-forge-network-request-receipt-builder.md`
+- `batch-cards/206-forge-network-request-receipt-control-dto.md`
+- `batch-cards/207-forge-network-request-receipt-blocker-tests.md`
+- `batch-cards/208-forge-network-request-receipt-validation-closeout.md`
+- `batch-cards/209-forge-network-outcome-persistence-type-surface.md`
+- `batch-cards/210-forge-network-outcome-persistence-store.md`
+- `batch-cards/211-forge-network-outcome-diagnostics-control.md`
+- `batch-cards/212-forge-network-outcome-blocker-tests.md`
+- `batch-cards/213-forge-network-outcome-validation-closeout.md`
+- `batch-cards/214-forge-network-health-evidence-refresh.md`
+- `batch-cards/215-forge-network-boundary-authority-audit.md`
+- `batch-cards/216-forge-network-warning-pressure-triage.md`
+- `batch-cards/217-next-provider-credential-status-lane-selection.md`
+- `batch-cards/218-forge-network-rebaseline-validation-closeout.md`
+- `batch-cards/219-provider-credential-status-refresh-type-surface.md`
+- `batch-cards/220-provider-credential-status-refresh-record-builder.md`
+- `batch-cards/221-provider-credential-status-refresh-control-dto.md`
+- `batch-cards/222-provider-credential-status-refresh-blocker-tests.md`
+- `batch-cards/223-provider-credential-status-refresh-validation-closeout.md`
+- `batch-cards/224-provider-credential-status-refresh-persistence-type-surface.md`
+- `batch-cards/225-provider-credential-status-refresh-persistence-store.md`
+- `batch-cards/226-provider-credential-status-refresh-persistence-diagnostics-control.md`
+- `batch-cards/227-provider-credential-status-refresh-persistence-blocker-tests.md`
+- `batch-cards/228-provider-credential-status-refresh-persistence-validation-closeout.md`
+- `batch-cards/229-provider-auth-credential-status-evidence-refresh.md`
+- `batch-cards/230-provider-auth-forge-network-evidence-refresh.md`
+- `batch-cards/231-provider-auth-boundary-authority-audit.md`
+- `batch-cards/232-provider-auth-warning-pressure-triage.md`
+- `batch-cards/233-next-provider-repository-metadata-lane-selection.md`
+- `batch-cards/234-provider-repository-metadata-refresh-type-surface.md`
+- `batch-cards/235-provider-repository-metadata-refresh-record-builder.md`
+- `batch-cards/236-provider-repository-metadata-refresh-control-dto.md`
+- `batch-cards/237-provider-repository-metadata-refresh-blocker-tests.md`
+- `batch-cards/238-provider-repository-metadata-refresh-validation-closeout.md`
+- `batch-cards/239-provider-repository-metadata-refresh-persistence-type-surface.md`
+- `batch-cards/240-provider-repository-metadata-refresh-persistence-store.md`
+- `batch-cards/241-provider-repository-metadata-refresh-persistence-diagnostics-control.md`
+- `batch-cards/242-provider-repository-metadata-refresh-persistence-blocker-tests.md`
+- `batch-cards/243-provider-repository-metadata-refresh-persistence-validation-closeout.md`
+- `batch-cards/244-provider-pull-request-refresh-type-surface.md`
+- `batch-cards/245-provider-pull-request-refresh-record-builder.md`
+- `batch-cards/246-provider-pull-request-refresh-control-dto.md`
+- `batch-cards/247-provider-pull-request-refresh-blocker-tests.md`
+- `batch-cards/248-provider-pull-request-refresh-validation-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -392,4 +572,23 @@ Completed cards:
 39. Turn-start stdio execution envelope split - completed
 40. Stdio frame ingestion persistence split - completed
 41. Durable executor dispatch admission split - completed
-42. Doctor-green health closeout and next lane selection - active
+42. Doctor-green health closeout and next lane selection - completed
+43. Git branch/worktree runner proof - completed
+44. Git commit runner proof - completed
+45. Git push runner proof - completed
+46. Stopped forge pull-request runner proof - completed
+47. Provider-auth and forge execution contract lane - completed
+48. Stopped provider-auth and forge admission records - completed
+49. Stopped forge network preflight/control records - completed
+50. Stopped forge network request/receipt records - completed
+51. Stopped forge network outcome persistence/control records - completed
+52. Forge network stopped-runner health and boundary rebaseline - completed
+53. Stopped provider credential-status refresh/control records - completed
+54. Stopped provider credential-status refresh persistence/control records -
+    completed
+55. Provider-auth stopped-boundary health rebaseline - completed
+56. Stopped provider repository metadata refresh/control records - completed
+57. Stopped provider repository metadata refresh persistence/control records -
+    completed
+58. Stopped provider pull-request/merge-request refresh/control records -
+    completed

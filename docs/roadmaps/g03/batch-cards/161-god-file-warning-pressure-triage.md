@@ -1,6 +1,6 @@
 # 161 God-File Warning Pressure Triage
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-21
 Milestone: `../049-doctor-green-health-closeout-and-next-lane-selection.md`
@@ -12,9 +12,9 @@ an unbounded cleanup queue.
 
 ## Acceptance Criteria
 
-- [ ] Warning pressure is summarized by ownership area.
-- [ ] No broad warning-only split lane is opened without product value.
-- [ ] Future implementation lanes inherit the rule to split warning files when
+- [x] Warning pressure is summarized by ownership area.
+- [x] No broad warning-only split lane is opened without product value.
+- [x] Future implementation lanes inherit the rule to split warning files when
   they are touched.
 
 ## Validation

@@ -127,6 +127,141 @@ The detailed report is `.effigy/reports/doctor/scan-god-files.md`.
 Remaining warnings should be treated as touch-when-needed structural pressure,
 not as an unbounded cleanup queue.
 
+Current warning distribution:
+
+- 48 server Codex supervision warnings
+- 40 server provider-surface warnings
+- 12 server request/control/diagnostics warnings
+- 18 other server/runtime warnings
+- 6 app/client/CLI warnings
+- 13 engine, local-store, agent, native-harness, SCM, and task warnings
+
+The next implementation lane should split warning-sized files only when it
+touches them. Warning-only cleanup is not the active product path.
+
+Git branch/worktree runner state now reaches sanitized outcome persistence and
+read-only control DTOs. This is the first branch/worktree setup proof that
+spans authority, command argv planning, durable sanitized outcomes, diagnostics,
+and client-safe counts without enabling commit, push, PR, forge, provider,
+callback, recovery, task mutation, UI transport, or raw-output authority.
+
+Git commit runner state now reaches the same shape: explicit authority,
+non-shell argv planning, durable sanitized outcomes, diagnostics, and
+client-safe counts. Commit message material is referenced by sanitized ref only;
+raw message text is not persisted. Push, PR, forge, provider, callback,
+recovery, task mutation, UI transport, and raw-output authority remain blocked.
+
+Git push runner state now reaches the same shape. Remote target material is
+kept to sanitized remote and branch refs, command planning uses non-shell
+`git push <remote> HEAD:<branch>` argv, and PR/forge/provider/callback/recovery
+task mutation, UI transport, and raw-output authority remain blocked.
+
+Stopped forge pull-request runner state now reaches the same shape with one
+important constraint: the adapter prepares sanitized provider-request metadata
+only. It does not create pull requests, call forge APIs, run provider writes,
+store raw title/body text, or retain raw provider payloads.
+
+The Git/forge runner rebaseline confirms the four stopped runner proofs remain
+warning-neutral, pass focused tests, and do not grant shell passthrough, forge
+or provider writes, callbacks, interruption, recovery, task mutation, or raw
+output retention. Provider auth and forge execution should move next through a
+contract lane, not direct implementation.
+
+Provider auth and forge execution now have a focused contract surface in
+`027-provider-auth-forge-execution-contract.md`. The next implementation lane
+should prove stopped admission and preflight records for credential refs,
+network-authority refs, mutating-effect approval refs, idempotency keys,
+recovery policy refs, and sanitized provider-response evidence refs. It should
+not resolve real credentials or call forge networks.
+
+Stopped provider-auth and forge network-execution admission records now exist
+in `provider_forge_network_execution_admission`. The module admits stopped
+preflight only from prepared PR request records plus credential refs, network
+authority refs, operator approval refs, idempotency keys, retry/recovery policy
+refs, and sanitization policy refs. Deferred mutating effect families and real
+credential resolution, provider network calls, callbacks, interruption,
+recovery execution, task mutation, and raw provider payload retention are
+blocked.
+
+Stopped forge network execution preflight/control records now exist in
+`provider_forge_network_execution_preflight`. The module turns ready admissions
+into stopped execution-request preflights when provider context refs, target
+provider refs, credential-use evidence refs, preflight evidence refs, planned
+provider-response evidence refs, and policy refs are present. The control DTO
+exposes counts only. Credential resolution, provider network calls, forge
+effects, callbacks, interruption, recovery execution, task mutation, and raw
+provider payload retention remain blocked.
+
+Stopped forge network execution request/receipt records now exist in
+`provider_forge_network_execution_request_receipt`. The module records stopped
+execution request ids, runtime receipt refs, retry lineage, and recovery
+classification refs from ready preflight state. It preserves idempotency and
+planned provider-response evidence refs while blocking credential resolution,
+provider network calls, forge effects, callbacks, interruption, recovery
+execution, task mutation, and raw provider payload retention.
+
+Stopped forge network execution outcome persistence/control records now exist
+in `provider_forge_network_execution_outcome_persistence`. The module persists
+sanitized outcome refs, duplicate no-ops, blocked and repair-required states,
+diagnostics, and read-only control counts from request/receipt records. It
+still blocks credential resolution, provider network calls, forge/provider
+effects, callbacks, interruption, recovery execution, task mutation, and raw
+provider payload retention.
+
+The forge network stopped-runner rebaseline confirms the admission, preflight,
+request/receipt, outcome persistence, and stopped PR runner request-preparation
+proofs remain stopped by default. Focused tests pass, direct
+network/process/provider execution tokens were not found in the audited
+modules, and warning-sized file pressure remains warning-only.
+
+Stopped provider credential-status refresh/control records now exist in
+`provider_forge_credential_status_refresh`. The module consumes credential
+refs, classifies current status into ready, repair, unknown, and unsupported
+buckets, requires provider context, status evidence, and sanitization refs, and
+exposes read-only control counts. It does not resolve credential material, call
+provider networks, execute provider effects, run callbacks/interruption/recovery,
+mutate tasks, or retain raw provider payloads.
+
+Stopped provider credential-status refresh persistence/control records now
+exist in `provider_forge_credential_status_refresh_persistence`. The module
+persists sanitized refresh records, duplicate no-ops, blocked persistence
+records, diagnostics, and read-only control counts through local artifact
+metadata. It still blocks credential material, provider payloads, real
+credential resolution, provider network calls, callbacks, interruption,
+recovery execution, task mutation, and raw provider payload retention.
+
+The provider-auth stopped-boundary rebaseline confirms credential-status
+refresh/control, credential-status persistence/control, forge network
+execution, and stopped PR request preparation remain stopped by default.
+Focused tests pass, direct network/process/provider execution tokens were not
+found in the audited modules, and warning-sized file pressure remains
+warning-only.
+
+Stopped provider repository metadata refresh/control records now exist in
+`provider_forge_repository_metadata_refresh`. The module consumes provider
+context refs, requires provider instance, forge provider, remote repo,
+credential-status evidence, repository-metadata evidence, and sanitization
+refs, and exposes read-only control counts. It does not resolve credential
+material, call provider networks, execute provider effects, run
+callbacks/interruption/recovery, mutate tasks, or retain raw provider payloads.
+
+Stopped provider repository metadata refresh persistence/control records now
+exist in `provider_forge_repository_metadata_refresh_persistence`. The module
+persists sanitized refresh records, duplicate no-ops, blocked persistence
+records, diagnostics, and read-only control counts through local artifact
+metadata. It still blocks credential material, provider payloads, real
+credential resolution, provider network calls, callbacks, interruption,
+recovery execution, task mutation, and raw provider payload retention.
+
+Stopped provider pull-request/merge-request refresh/control records now exist
+in `provider_forge_pull_request_refresh`. The module consumes provider context
+refs, requires provider instance, forge provider, remote repo, refresh scope,
+credential-status evidence, repository-metadata evidence,
+pull-request-refresh evidence, and sanitization refs, and exposes read-only
+control counts. It does not resolve credential material, call provider
+networks, execute provider effects, run callbacks/interruption/recovery, mutate
+tasks, or retain raw provider payloads.
+
 ### Server Crate Accretion
 
 `nucleus-server` currently contains host API, engine-like domain services,

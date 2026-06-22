@@ -18,7 +18,9 @@ The repo uses:
 
 ## Current Lane
 
-`g03` adapter-neutral change-request chain projection and persistence.
+`g03` effect-gated SCM and forge execution. Current pointer: stopped provider
+pull-request/merge-request refresh persistence/control from refresh records,
+with no credential material resolution or provider network calls.
 
 Current planning artifacts:
 
@@ -103,6 +105,8 @@ Current planning artifacts:
 - `roadmaps/g02/123-scm-change-request-adapter-plan-selection.md`
 - `roadmaps/g02/124-health-and-runway-rebaseline.md`
 - `roadmaps/g03/001-git-change-request-execution-gate.md`
+- `roadmaps/g03/065-stopped-provider-repository-metadata-refresh-persistence.md`
+- `roadmaps/g03/066-stopped-provider-pull-request-refresh-control.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -121,7 +125,10 @@ SCM capture, operator review readiness, review decisions, adapter-neutral
 change-request preparation, adapter-specific change-request planning, Git
 change-request execution gates, and adapter-neutral change-request chain
 projection are now proven as server-owned, sanitized, operator-gated
-record/control surfaces.
+record/control surfaces. Provider credential-status and repository metadata
+refresh surfaces are represented and persisted as stopped read-intent records;
+pull-request/merge-request refresh is represented as a stopped read-intent
+record.
 
 The first approved direct Codex `turn/start` smoke completed through local
 Codex app-server with sanitized output only. Further provider writes, SCM/forge

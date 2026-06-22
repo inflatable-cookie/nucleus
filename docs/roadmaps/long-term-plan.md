@@ -356,10 +356,10 @@ Current roadmap coverage:
 
 Current result:
 
-- the red god-file gate is a recorded health blocker, separate from this
-  runtime lane
-- 38 warning-sized files remain as pressure when touched
+- the red god-file gate is clear
+- 137 warning-sized files remain as pressure when touched
 - behavior was preserved through mechanical module/test splits
+- warning-only cleanup is not the active product path
 
 ## Phase 4: Harness Runtime Foundation
 

@@ -177,7 +177,24 @@ shape.
 - `g03/046-turn-start-stdio-execution-envelope-split.md` - completed
 - `g03/047-stdio-frame-ingestion-persistence-split.md` - completed
 - `g03/048-durable-executor-dispatch-admission-split.md` - completed
-- `g03/049-doctor-green-health-closeout-and-next-lane-selection.md` - active
+- `g03/049-doctor-green-health-closeout-and-next-lane-selection.md` - completed
+- `g03/050-git-branch-worktree-runner-proof.md` - completed
+- `g03/051-git-commit-runner-proof.md` - completed
+- `g03/052-git-push-runner-proof.md` - completed
+- `g03/053-forge-pull-request-runner-proof.md` - completed
+- `g03/054-git-forge-runner-health-boundary-rebaseline.md` - completed
+- `g03/055-provider-auth-forge-execution-contract-lane.md` - completed
+- `g03/056-stopped-provider-auth-forge-admission-records.md` - completed
+- `g03/057-stopped-forge-network-preflight-control.md` - completed
+- `g03/058-stopped-forge-network-request-receipt.md` - completed
+- `g03/059-stopped-forge-network-outcome-persistence-control.md` - completed
+- `g03/060-forge-network-stopped-runner-health-boundary-rebaseline.md` - completed
+- `g03/061-stopped-provider-credential-status-refresh-control.md` - completed
+- `g03/062-stopped-provider-credential-status-refresh-persistence.md` - completed
+- `g03/063-provider-auth-stopped-boundary-health-rebaseline.md` - completed
+- `g03/064-stopped-provider-repository-metadata-refresh-control.md` - completed
+- `g03/065-stopped-provider-repository-metadata-refresh-persistence.md` - completed
+- `g03/066-stopped-provider-pull-request-refresh-control.md` - completed
 
 ## Previous Generation
 
@@ -236,5 +253,5 @@ shape.
 
 ## Next Task
 
-Triage remaining god-file warning pressure so the next implementation lane does
-not drift back into cleanup momentum.
+Persist stopped provider pull-request/merge-request refresh records before any
+live credential resolution or provider network call.

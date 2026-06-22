@@ -34,6 +34,7 @@ Updated: 2026-06-21
 | `024-harness-mediation-tool-projection-contract.md` | draft | Nucleus-owned tool projection and conversation steering across bridged harnesses. |
 | `025-goal-loop-next-task-contract.md` | draft | Goal, loop, pathway, and next-task selection rules. |
 | `026-open-ended-planning-conversation-contract.md` | draft | Open-ended ideation and exploration sessions before finite plans or tasks. |
+| `027-provider-auth-forge-execution-contract.md` | draft | Provider credential authority, network-write admission, idempotency, recovery, and sanitized forge execution evidence. |
 
 ## Needed Contracts
 
@@ -62,6 +63,8 @@ When it overlaps focused contracts, the focused contract owns the durable rule:
 - `025` owns goals, loops, pathway records, and next-task selection.
 - `026` owns open-ended exploration conversations and promotion gates from
   ideation into planning, research, memories, goals, and task seeds.
+- `027` owns provider-auth and forge network execution authority before any
+  real forge provider writes.
 - `011`, `008`, and `002` own SCM/forge, storage, and harness-adapter rules.
 
 Source refs:

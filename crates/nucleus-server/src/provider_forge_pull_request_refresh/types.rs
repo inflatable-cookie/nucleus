@@ -1,0 +1,127 @@
+use serde::{Deserialize, Serialize};
+
+use crate::{ForgeNetworkExecutionOperationFamily, ForgePullRequestProvider};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForgePullRequestRefreshInput {
+    pub provider_context_refs: Vec<String>,
+    pub provider_instance_ref: Option<String>,
+    pub forge_provider: Option<ForgePullRequestProvider>,
+    pub remote_repo_ref: Option<String>,
+    pub refresh_scope: Option<ForgePullRequestRefreshScope>,
+    pub credential_status_evidence_ref: Option<String>,
+    pub repository_metadata_evidence_ref: Option<String>,
+    pub pull_request_refresh_evidence_ref: Option<String>,
+    pub sanitization_policy_ref: Option<String>,
+    pub credential_material_present: bool,
+    pub provider_payload_present: bool,
+    pub raw_provider_payload_retention_requested: bool,
+    pub real_credential_resolution_requested: bool,
+    pub provider_network_call_requested: bool,
+    pub callback_execution_requested: bool,
+    pub interruption_execution_requested: bool,
+    pub recovery_execution_requested: bool,
+    pub task_mutation_requested: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ForgePullRequestRefreshSet {
+    pub refresh_set_id: String,
+    pub records: Vec<ForgePullRequestRefreshRecord>,
+    pub skipped_provider_context_refs: Vec<String>,
+    pub stopped_refresh_recorded: bool,
+    pub credential_resolution_performed: bool,
+    pub provider_network_call_performed: bool,
+    pub provider_effect_executed: bool,
+    pub callback_effect_executed: bool,
+    pub interruption_effect_executed: bool,
+    pub recovery_effect_executed: bool,
+    pub task_mutation_executed: bool,
+    pub raw_provider_payload_retained: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ForgePullRequestRefreshRecord {
+    pub refresh_id: String,
+    pub provider_context_ref: String,
+    pub provider_instance_ref: Option<String>,
+    pub forge_provider: Option<ForgePullRequestProvider>,
+    pub remote_repo_ref: Option<String>,
+    pub refresh_scope: Option<ForgePullRequestRefreshScope>,
+    pub operation_family: ForgeNetworkExecutionOperationFamily,
+    pub credential_status_evidence_ref: Option<String>,
+    pub repository_metadata_evidence_ref: Option<String>,
+    pub pull_request_refresh_evidence_ref: Option<String>,
+    pub sanitization_policy_ref: Option<String>,
+    pub status: ForgePullRequestRefreshStatus,
+    pub blockers: Vec<ForgePullRequestRefreshBlocker>,
+    pub stopped_refresh_recorded: bool,
+    pub credential_resolution_performed: bool,
+    pub provider_network_call_performed: bool,
+    pub provider_effect_executed: bool,
+    pub callback_effect_executed: bool,
+    pub interruption_effect_executed: bool,
+    pub recovery_effect_executed: bool,
+    pub task_mutation_executed: bool,
+    pub raw_provider_payload_retained: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ForgePullRequestRefreshControlDto {
+    pub dto_id: String,
+    pub refresh_set_id: String,
+    pub refresh_count: usize,
+    pub ready_count: usize,
+    pub repair_required_count: usize,
+    pub blocked_count: usize,
+    pub blocker_count: usize,
+    pub skipped_provider_context_count: usize,
+    pub stopped_refresh_recorded: bool,
+    pub credential_resolution_performed: bool,
+    pub provider_network_call_performed: bool,
+    pub provider_effect_executed: bool,
+    pub callback_effect_executed: bool,
+    pub interruption_effect_executed: bool,
+    pub recovery_effect_executed: bool,
+    pub task_mutation_executed: bool,
+    pub raw_provider_payload_retained: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForgePullRequestRefreshScope {
+    AllOpen,
+    ChangeRequestRef(String),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForgePullRequestRefreshStatus {
+    ReadyForStoppedRefresh,
+    RepairRequired,
+    Blocked,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForgePullRequestRefreshBlocker {
+    EmptyProviderContextRef,
+    MissingProviderInstanceRef,
+    MissingForgeProvider,
+    MissingRemoteRepoRef,
+    MissingRefreshScope,
+    EmptyChangeRequestRef,
+    MissingCredentialStatusEvidenceRef,
+    MissingRepositoryMetadataEvidenceRef,
+    MissingPullRequestRefreshEvidenceRef,
+    MissingSanitizationPolicyRef,
+    CredentialMaterialPresent,
+    ProviderPayloadPresent,
+    RawProviderPayloadRetentionRequested,
+    RealCredentialResolutionRequested,
+    ProviderNetworkCallRequested,
+    CallbackExecutionRequested,
+    InterruptionExecutionRequested,
+    RecoveryExecutionRequested,
+    TaskMutationRequested,
+}

@@ -24,11 +24,8 @@ Current state:
   control-envelope diagnostics response tests, diagnostics query routing, and
   SCM review/preparation test modules
 - later provider/runtime, live-smoke, SCM capture, Codex supervision,
-  Convergence, and DTO work reintroduced broad error-sized files
-- current error-sized files include durable live provider smoke, durable
-  dispatch, Codex callback/runtime persistence, provider persistence,
-  diagnostics front doors, `nucleus-server/src/lib.rs`, and related effect-gate
-  modules
+  Convergence, and DTO work reintroduced broad files before the health reset
+- no current god-file finding is error-sized
 - `control_envelope_dto.rs` has been split from 449 lines into a 39-line front
   door plus focused request, query, and protocol modules
 - `apps/nucleusd/src/command_runner/durable_live_provider_write_smoke.rs` has
@@ -82,11 +79,44 @@ Current state:
 
 Needed:
 
-- close the doctor-green health batch and select the next implementation lane
-  from product value rather than continuing cleanup momentum
+- close the doctor-green health batch and continue with product-value work
+  rather than cleanup momentum
 - treat warning files as pressure when those areas are touched
 - prefer bounded mechanical test-module splits only when they improve ownership
 - avoid turning broad historical doctor debt into unbounded cleanup
+
+Warning pressure triage:
+
+- server Codex supervision: 48 warnings. Treat as touch-when-needed pressure
+  during Codex runtime work; do not open a standalone warning-split lane.
+- server provider surfaces: 40 warnings. Split when adding provider behavior,
+  persistence, diagnostics, or effect runners in those modules.
+- server request/control/diagnostics surfaces: 12 warnings across request
+  handlers, control DTOs, and diagnostics read models. Split only when adding
+  query/control behavior.
+- server other/runtime surfaces: 18 warnings across runtime readiness,
+  process supervision, task runtime, local discovery, and authority helpers.
+  Keep an eye on host-boundary accretion when touched.
+- app/client/CLI surfaces: 6 warnings across desktop and `nucleusd`. Do not
+  expand proof UI without splitting touched helpers/styles.
+- engine/local-store/agent/native-harness/SCM/tasks: 13 warnings. Treat as
+  domain-local pressure, not a repo-wide blocker.
+
+Policy:
+
+- warnings do not block the next implementation lane
+- any file that is warning-sized before a lane touches it should be split as
+  part of that lane when the lane would materially grow it
+- no warning-only cleanup tranche should be opened unless doctor errors return
+  or ownership becomes ambiguous
+- Git branch/worktree runner proof now has authority records, command adapter,
+  sanitized outcome persistence, diagnostics, and read-only control DTOs
+  without granting commit, push, PR, forge, provider, callback, recovery, task,
+  UI, remote transport, or raw-output authority
+- Git commit runner proof now has authority records, command adapter,
+  sanitized outcome persistence, diagnostics, and read-only control DTOs
+  without granting push, PR, forge, provider, callback, recovery, task, UI,
+  remote transport, or raw-output authority
 
 ### Server Crate Accretion
 
@@ -646,6 +676,141 @@ Likely crate:
 
 - `nucleus-scm-forge`
 
+Next gate:
+
+- implement stopped forge network outcome persistence/control from request and
+  receipt records
+- model sanitized stopped outcomes, runtime receipt refs, planned provider
+  response evidence refs, retry lineage, recovery classification, and read-only
+  control counts without resolving credentials or calling provider networks
+- keep forge provider writes, callback execution, interruption, recovery, task
+  mutation, and raw output retention blocked until stopped outcome persistence
+  and control surfaces are proven
+
+Current runner proof state:
+
+- `nucleus-server` has Git branch/worktree runner authority records that admit
+  future runner invocation only from admitted handoff records, explicit
+  operator effect intent, and policy-approved branch/worktree target refs.
+- The authority records keep shell execution false and continue to block raw
+  output retention, commit, push, pull-request, forge, provider, callback,
+  interruption, recovery, and task mutation authority.
+- `nucleus-server` has a Git branch/worktree runner command adapter that builds
+  structured argv for primary-tree branch checkout and isolated-worktree
+  creation from ready runner-authority records. It does not spawn Git, use
+  shell passthrough, persist raw output, or widen commit/push/PR/forge/provider
+  authority.
+- `nucleus-server` has Git commit runner authority records, command adapter,
+  sanitized outcome persistence, diagnostics, and read-only control DTOs. The
+  adapter builds `git commit --file <message-ref>` argv from ready authority
+  records and stores only sanitized message refs, not raw commit message text.
+- Push, PR, forge, provider, callback, interruption, recovery, task mutation,
+  UI/remote transport, and raw-output authority remain blocked after commit
+  runner proof.
+- `nucleus-server` has Git push runner authority records, command adapter,
+  sanitized outcome persistence, diagnostics, and read-only control DTOs. The
+  adapter builds `git push <remote> HEAD:<branch>` argv from ready authority
+  records and stores only sanitized remote and branch refs.
+- PR, forge provider writes, callback, interruption, recovery, task mutation,
+  UI/remote transport, and raw-output authority remain blocked after push
+  runner proof.
+- `nucleus-server` has stopped forge pull-request runner authority records,
+  sanitized provider-request adapter records, outcome persistence, diagnostics,
+  and read-only control DTOs. The adapter prepares provider request metadata
+  only and stores sanitized provider, branch, and text-source refs.
+- Pull-request creation, forge/provider writes, callback, interruption,
+  recovery, task mutation, UI/remote transport, and raw-output authority remain
+  blocked after stopped PR runner proof.
+- The Git/forge runner rebaseline confirms branch/worktree, commit, push, and
+  stopped PR request-preparation proofs share the same stopped-by-default
+  authority, adapter/request adapter, sanitized outcome persistence, and
+  read-only control DTO shape. Focused runner tests pass, new runner files stay
+  below warning thresholds, and `effigy doctor` remains at 137 warnings and 0
+  errors.
+- Contract `027-provider-auth-forge-execution-contract.md` now owns
+  provider-auth and forge network execution authority. It requires separate
+  credential authority, network authority, SCM/forge authority, operator
+  approval, idempotency, retry/recovery, and sanitized provider-response
+  evidence before real provider writes.
+- `nucleus-server` has stopped provider-auth and forge network-execution
+  admission records in `provider_forge_network_execution_admission`. They
+  carry credential refs, network-authority refs, operator approval refs,
+  idempotency keys, retry/recovery policy refs, and sanitization policy refs,
+  while blocking real credential resolution, provider network calls, callbacks,
+  interruption, recovery execution, task mutation, raw provider payload
+  retention, and deferred mutating effect families.
+- `nucleus-server` has stopped forge network execution preflight/control
+  records in `provider_forge_network_execution_preflight`. They carry provider
+  context refs, target provider refs, credential-use evidence refs, preflight
+  evidence refs, planned provider-response evidence refs, policy refs, and
+  read-only control counts while blocking credential resolution, provider
+  network calls, callbacks, interruption, recovery execution, task mutation,
+  and raw provider payload retention.
+- `nucleus-server` has stopped forge network execution request/receipt records
+  in `provider_forge_network_execution_request_receipt`. They carry stopped
+  execution request ids, runtime receipt refs, retry lineage, recovery
+  classification refs, idempotency refs, credential-use evidence refs, and
+  planned provider-response evidence refs while blocking credential resolution,
+  provider network calls, callbacks, interruption, recovery execution, task
+  mutation, and raw provider payload retention.
+- `nucleus-server` has stopped forge network execution outcome
+  persistence/control records in
+  `provider_forge_network_execution_outcome_persistence`. They persist
+  sanitized outcome refs, duplicate no-ops, blocked and repair-required states,
+  diagnostics, and read-only control counts from request/receipt records while
+  blocking credential resolution, provider network calls, callbacks,
+  interruption, recovery execution, task mutation, and raw provider payload
+  retention.
+- The forge network stopped-runner rebaseline confirms focused forge network
+  execution tests and stopped PR runner tests pass, direct
+  network/process/provider execution tokens were not found in the audited
+  modules, and warning-sized file pressure remains warning-only.
+- `nucleus-server` has stopped provider credential-status refresh/control
+  records in `provider_forge_credential_status_refresh`. They consume
+  credential refs, classify current status into ready, repair, unknown, and
+  unsupported buckets, require provider context, status evidence, and
+  sanitization refs, and expose sanitized control counts while blocking
+  credential material, provider payloads, real credential resolution, provider
+  network calls, callbacks, interruption, recovery execution, task mutation,
+  and raw provider payload retention.
+- `nucleus-server` has stopped provider credential-status refresh
+  persistence/control records in
+  `provider_forge_credential_status_refresh_persistence`. They persist
+  sanitized refresh records, duplicate no-ops, blocked persistence records,
+  diagnostics, and read-only control counts while blocking credential
+  material, provider payloads, real credential resolution, provider network
+  calls, callbacks, interruption, recovery execution, task mutation, and raw
+  provider payload retention.
+- The provider-auth stopped-boundary rebaseline confirms focused
+  credential-status, forge network, and stopped PR runner tests pass, direct
+  network/process/provider execution tokens were not found in the audited
+  modules, and warning-sized file pressure remains warning-only.
+- `nucleus-server` has stopped provider repository metadata refresh/control
+  records in `provider_forge_repository_metadata_refresh`. They consume
+  provider context refs, require provider instance, forge provider, remote
+  repo, credential-status evidence, repository-metadata evidence, and
+  sanitization refs, and expose sanitized control counts while blocking
+  credential material, provider payloads, real credential resolution, provider
+  network calls, callbacks, interruption, recovery execution, task mutation,
+  and raw provider payload retention.
+- `nucleus-server` has stopped provider repository metadata refresh
+  persistence/control records in
+  `provider_forge_repository_metadata_refresh_persistence`. They persist
+  sanitized refresh records, duplicate no-ops, blocked persistence records,
+  diagnostics, and read-only control counts while blocking credential
+  material, provider payloads, real credential resolution, provider network
+  calls, callbacks, interruption, recovery execution, task mutation, and raw
+  provider payload retention.
+- `nucleus-server` has stopped provider pull-request/merge-request
+  refresh/control records in `provider_forge_pull_request_refresh`. They
+  consume provider context refs, require provider instance, forge provider,
+  remote repo, refresh scope, credential-status evidence,
+  repository-metadata evidence, pull-request-refresh evidence, and
+  sanitization refs, and expose sanitized control counts while blocking
+  credential material, provider payloads, real credential resolution, provider
+  network calls, callbacks, interruption, recovery execution, task mutation,
+  and raw provider payload retention.
+
 ### Management Projection Runtime
 
 Current state:
@@ -1077,11 +1242,38 @@ Recent evidence:
   request, preflight, replay, adapter, evidence, task, repo, authority, and
   idempotency refs without raw stdout/stderr, process material, command spawn,
   provider writes, task mutation, or raw-output retention.
+- Forge network execution outcome persistence/control records now derive from
+  stopped request/receipt records, persist sanitized outcome refs, duplicate
+  no-ops, blocked and repair-required states, diagnostics, and read-only
+  control counts, and still permit no credential resolution, provider network
+  call, forge/provider effect, callback, interruption, recovery execution, task
+  mutation, or raw provider payload retention.
+- Forge network stopped-runner health and boundary rebaseline is complete. The
+  audited modules still expose no direct network/process/provider execution
+  tokens, and the next provider-auth lane should stay stopped by default.
+- Stopped provider credential-status refresh/control records now classify
+  credential refs without resolving credential material or calling provider
+  networks.
+- Stopped provider credential-status refresh persistence/control records now
+  persist sanitized refresh records without resolving credential material or
+  calling provider networks.
+- Provider-auth stopped-boundary health rebaseline is complete. The audited
+  modules still expose no direct network/process/provider execution tokens, and
+  the next provider-auth lane should stay stopped by default.
+- Stopped provider repository metadata refresh/control records now model
+  repository metadata read intent without resolving credential material or
+  calling provider networks.
+- Stopped provider repository metadata refresh persistence/control records now
+  persist sanitized repository metadata refresh records without resolving
+  credential material or calling provider networks.
+- Stopped provider pull-request/merge-request refresh/control records now model
+  PR/MR read intent without resolving credential material or calling provider
+  networks.
 
 Next implementation gate:
 
-1. split `provider_scm_capture_dry_run_execution_persistence.rs` without
-   behavior changes
+1. persist stopped provider pull-request/merge-request refresh records before
+   any live credential resolution or provider network call
 2. continue reducing god-file pressure opportunistically when touched
 
 Until that lane proves durable authority and preflight, keep checkout,

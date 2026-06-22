@@ -1,0 +1,66 @@
+use crate::{ForgeRepositoryMetadataRefreshRecord, ForgeRepositoryMetadataRefreshStatus};
+
+use super::store::REFRESH_PREFIX;
+use super::types::{
+    ForgeRepositoryMetadataRefreshPersistenceBlocker,
+    ForgeRepositoryMetadataRefreshPersistenceInput,
+    ForgeRepositoryMetadataRefreshPersistenceRecord,
+    ForgeRepositoryMetadataRefreshPersistenceStatus,
+};
+
+pub(super) fn persistence_record(
+    input: &ForgeRepositoryMetadataRefreshPersistenceInput,
+    refresh: ForgeRepositoryMetadataRefreshRecord,
+    persisted_refresh_id: String,
+    duplicate_refresh_detected: bool,
+    persistence_blockers: Vec<ForgeRepositoryMetadataRefreshPersistenceBlocker>,
+) -> ForgeRepositoryMetadataRefreshPersistenceRecord {
+    let persistence_status = if duplicate_refresh_detected {
+        ForgeRepositoryMetadataRefreshPersistenceStatus::DuplicateNoop
+    } else if persistence_blockers.is_empty() {
+        ForgeRepositoryMetadataRefreshPersistenceStatus::Persisted
+    } else {
+        ForgeRepositoryMetadataRefreshPersistenceStatus::Blocked
+    };
+    let stopped_refresh_recorded = refresh.status
+        == ForgeRepositoryMetadataRefreshStatus::ReadyForStoppedRefresh
+        && !duplicate_refresh_detected;
+
+    ForgeRepositoryMetadataRefreshPersistenceRecord {
+        persisted_refresh_id,
+        refresh_id: refresh.refresh_id,
+        provider_context_ref: refresh.provider_context_ref,
+        provider_instance_ref: refresh.provider_instance_ref,
+        forge_provider: refresh.forge_provider,
+        remote_repo_ref: refresh.remote_repo_ref,
+        operation_family: refresh.operation_family,
+        credential_status_evidence_ref: refresh.credential_status_evidence_ref,
+        repository_metadata_evidence_ref: refresh.repository_metadata_evidence_ref,
+        sanitization_policy_ref: refresh.sanitization_policy_ref,
+        refresh_status: refresh.status,
+        refresh_blockers: refresh.blockers,
+        persistence_status,
+        persistence_blockers,
+        duplicate_refresh_detected,
+        evidence_refs: unique_sorted(input.evidence_refs.clone()),
+        stopped_refresh_recorded,
+        credential_resolution_performed: false,
+        provider_network_call_performed: false,
+        provider_effect_executed: false,
+        callback_effect_executed: false,
+        interruption_effect_executed: false,
+        recovery_effect_executed: false,
+        task_mutation_executed: false,
+        raw_provider_payload_retained: false,
+    }
+}
+
+pub(super) fn persisted_refresh_id(refresh_id: &str) -> String {
+    format!("{REFRESH_PREFIX}{refresh_id}")
+}
+
+fn unique_sorted(mut refs: Vec<String>) -> Vec<String> {
+    refs.sort();
+    refs.dedup();
+    refs
+}

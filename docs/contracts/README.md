@@ -30,6 +30,7 @@ Contracts define durable rules and interfaces.
 - `024-harness-mediation-tool-projection-contract.md`
 - `025-goal-loop-next-task-contract.md`
 - `026-open-ended-planning-conversation-contract.md`
+- `027-provider-auth-forge-execution-contract.md`
 - `contract-index.md`
 
 ## Promotion Rule
