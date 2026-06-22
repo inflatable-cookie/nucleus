@@ -2,13 +2,15 @@ use std::path::PathBuf;
 
 use nucleus_local_store::{LocalStoreRecord, SqliteBackend};
 use nucleus_server::{
-    ClientId, ControlCommandEvidenceRecordDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
-    LocalControlRequestHandler, ServerControlRequest, ServerControlRequestKind,
+    ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler, ProviderReadIntentQuery,
+    ProviderReadinessOverviewQuery, ServerControlRequest, ServerControlRequestKind,
     ServerControlResponseBody, ServerControlResponseStatus, ServerQuery, ServerQueryId,
     ServerQueryKind, ServerStateDomain, StateRecordQuery, StateRecordQueryScope,
 };
 
 use crate::cli::QueryDomain;
+
+mod typed_response;
 
 pub(crate) fn print_status(
     handler: &mut LocalControlRequestHandler<SqliteBackend>,
@@ -31,7 +33,6 @@ pub(crate) fn print_query(
     handler: &mut LocalControlRequestHandler<SqliteBackend>,
     query: QueryDomain,
 ) -> Result<(), String> {
-    let domain = query.state_domain();
     let label = query.label();
     let response = handler.handle(ServerControlRequest {
         id: nucleus_server::ServerControlRequestId(format!("request:nucleusd:query:{label}")),
@@ -39,14 +40,19 @@ pub(crate) fn print_query(
         kind: ServerControlRequestKind::Query(ServerQuery {
             id: ServerQueryId(format!("query:nucleusd:{label}")),
             client_id: ClientId("client:nucleusd".to_owned()),
-            kind: query_kind(domain),
+            kind: query_kind(query),
         }),
     });
 
-    if query == QueryDomain::CommandEvidence {
+    if matches!(
+        query,
+        QueryDomain::CommandEvidence
+            | QueryDomain::ProviderReadIntent
+            | QueryDomain::ProviderReadinessOverview
+    ) {
         let dto = ControlResponseEnvelopeDto::try_from(&response)
             .map_err(|error| format!("{label} query response encoding failed: {}", error.reason))?;
-        return print_command_evidence_response(label, dto);
+        return typed_response::print_typed_dto_response(label, dto);
     }
 
     match response.body {
@@ -78,7 +84,7 @@ fn list_count(
         kind: ServerControlRequestKind::Query(ServerQuery {
             id: ServerQueryId(format!("query:nucleusd:{label}")),
             client_id: ClientId("client:nucleusd".to_owned()),
-            kind: query_kind(domain),
+            kind: state_query_kind(domain),
         }),
     });
 
@@ -107,71 +113,19 @@ fn print_record_set(label: &str, records: Vec<LocalStoreRecord>) -> Result<(), S
     Ok(())
 }
 
-fn print_command_evidence_response(
-    label: &str,
-    dto: ControlResponseEnvelopeDto,
-) -> Result<(), String> {
-    if dto.status != nucleus_server::ControlResponseStatusDto::Complete {
-        return Err(format!("{label} query returned status {:?}", dto.status));
-    }
-
-    match dto.body {
-        ControlResponseBodyDto::CommandEvidenceRecords { records } => {
-            for line in command_evidence_response_lines(label, records) {
-                println!("{line}");
-            }
-            Ok(())
+fn query_kind(query: QueryDomain) -> ServerQueryKind {
+    match query {
+        QueryDomain::ProviderReadIntent => {
+            ServerQueryKind::ProviderReadIntent(ProviderReadIntentQuery::Projection)
         }
-        ControlResponseBodyDto::Error { kind, reason } => {
-            Err(format!("{label} query failed: {kind}: {reason}"))
+        QueryDomain::ProviderReadinessOverview => {
+            ServerQueryKind::ProviderReadinessOverview(ProviderReadinessOverviewQuery::Overview)
         }
-        body => Err(format!(
-            "{label} query returned unexpected DTO response: {body:?}"
-        )),
+        _ => state_query_kind(query.state_domain().expect("state query domain")),
     }
 }
 
-fn command_evidence_response_lines(
-    label: &str,
-    records: Vec<ControlCommandEvidenceRecordDto>,
-) -> Vec<String> {
-    let mut lines = vec![
-        format!("domain={label}"),
-        format!("records={}", records.len()),
-    ];
-    for record in records {
-        lines.extend(command_evidence_record_lines(record));
-    }
-    lines
-}
-
-fn command_evidence_record_lines(record: ControlCommandEvidenceRecordDto) -> Vec<String> {
-    let mut lines = vec![
-        format!("record evidence_id={}", record.evidence_id),
-        format!("  request_id={}", record.command_request_id),
-        format!("  status={}", record.status),
-        format!("  retention={}", record.retention),
-    ];
-    match record.exit_status {
-        Some(status) => lines.push(format!("  exit_status={status}")),
-        None => lines.push("  exit_status=none".to_owned()),
-    }
-    lines.push(format!(
-        "  stdout_artifact_ref={}",
-        record.stdout_artifact_ref.as_deref().unwrap_or("none")
-    ));
-    lines.push(format!(
-        "  stderr_artifact_ref={}",
-        record.stderr_artifact_ref.as_deref().unwrap_or("none")
-    ));
-    lines.push("  raw_output=not_retained".to_owned());
-    if let Some(summary) = record.summary {
-        lines.push(format!("  summary={summary}"));
-    }
-    lines
-}
-
-fn query_kind(domain: ServerStateDomain) -> ServerQueryKind {
+fn state_query_kind(domain: ServerStateDomain) -> ServerQueryKind {
     match domain {
         ServerStateDomain::Projects => ServerQueryKind::Project(state_query(domain)),
         ServerStateDomain::Tasks => ServerQueryKind::Task(state_query(domain)),
@@ -192,7 +146,11 @@ fn state_query(domain: ServerStateDomain) -> StateRecordQuery {
 #[cfg(test)]
 mod tests {
     use nucleus_local_store::SqliteBackend;
-    use nucleus_server::LocalControlRequestHandler;
+    use nucleus_server::{
+        ControlCommandEvidenceRecordDto, ControlProviderReadIntentProjectionDto,
+        ControlProviderReadIntentQueryResultDto, ControlProviderReadIntentSourceCountsDto,
+        ControlProviderReadinessOverviewDto, LocalControlRequestHandler,
+    };
 
     use super::*;
 
@@ -216,7 +174,7 @@ mod tests {
 
     #[test]
     fn command_evidence_response_lines_do_not_include_raw_output() {
-        let lines = command_evidence_response_lines(
+        let lines = typed_response::command_evidence_response_lines(
             "command-evidence",
             vec![ControlCommandEvidenceRecordDto {
                 evidence_id: "command:evidence:test".to_owned(),
@@ -236,5 +194,111 @@ mod tests {
         assert!(!rendered.contains("raw_stdout"));
         assert!(!rendered.contains("raw_stderr"));
         assert!(!rendered.contains("recognizable-raw-output"));
+    }
+
+    #[test]
+    fn provider_read_intent_response_lines_do_not_include_provider_effects() {
+        let lines = typed_response::provider_read_intent_response_lines(
+            "provider-read-intent",
+            ControlProviderReadIntentQueryResultDto {
+                query_id: "forge-read-intent-query".to_owned(),
+                projection: ControlProviderReadIntentProjectionDto {
+                    projection_id: "forge-read-intent-projection".to_owned(),
+                    total_count: 0,
+                    credential_status_count: 0,
+                    repository_metadata_count: 0,
+                    pull_request_count: 0,
+                    ready_count: 0,
+                    duplicate_noop_count: 0,
+                    blocked_count: 0,
+                    repair_required_count: 0,
+                    blocker_count: 0,
+                    evidence_ref_count: 0,
+                    entries: Vec::new(),
+                    credential_resolution_performed: false,
+                    provider_network_call_performed: false,
+                    provider_effect_executed: false,
+                    callback_effect_executed: false,
+                    interruption_effect_executed: false,
+                    recovery_effect_executed: false,
+                    task_mutation_executed: false,
+                    raw_provider_payload_retained: false,
+                },
+                source_counts: ControlProviderReadIntentSourceCountsDto {
+                    credential_status_records: 0,
+                    repository_metadata_records: 0,
+                    pull_request_records: 0,
+                },
+                credential_resolution_performed: false,
+                provider_network_call_performed: false,
+                provider_effect_executed: false,
+                callback_effect_executed: false,
+                interruption_effect_executed: false,
+                recovery_effect_executed: false,
+                task_mutation_executed: false,
+                raw_provider_payload_retained: false,
+            },
+        );
+        let rendered = lines.join("\n");
+
+        assert!(rendered.contains("domain=provider-read-intent"));
+        assert!(rendered.contains("records=0"));
+        assert!(rendered.contains("provider_network_call_performed=false"));
+        assert!(rendered.contains("raw_provider_payload_retained=false"));
+        assert!(!rendered.contains("access_token"));
+        assert!(!rendered.contains("authorization"));
+        assert!(!rendered.contains("raw_response_body"));
+    }
+
+    #[test]
+    fn provider_readiness_overview_response_lines_do_not_include_provider_effects() {
+        let lines = typed_response::provider_readiness_overview_response_lines(
+            "provider-readiness-overview",
+            ControlProviderReadinessOverviewDto {
+                overview_id: "forge-readiness-overview".to_owned(),
+                projection_id: "forge-read-intent-projection".to_owned(),
+                project_ref: None,
+                repo_ref: None,
+                authority_host_ref: Some("host:local".to_owned()),
+                provider_instance_refs: Vec::new(),
+                remote_repo_refs: Vec::new(),
+                forge_providers: Vec::new(),
+                status: "unknown".to_owned(),
+                supported_read_families: vec![
+                    "credential_status".to_owned(),
+                    "repository_metadata".to_owned(),
+                    "pull_request".to_owned(),
+                ],
+                represented_read_families: Vec::new(),
+                represented_mutating_families: Vec::new(),
+                total_read_intent_count: 0,
+                missing_evidence_family_count: 3,
+                ready_count: 0,
+                blocked_count: 0,
+                repair_required_count: 0,
+                duplicate_noop_count: 0,
+                blocker_count: 3,
+                evidence_ref_count: 0,
+                credential_resolution_performed: false,
+                provider_network_call_performed: false,
+                provider_effect_executed: false,
+                callback_effect_executed: false,
+                interruption_effect_executed: false,
+                recovery_effect_executed: false,
+                task_mutation_executed: false,
+                raw_provider_payload_retained: false,
+            },
+        );
+        let rendered = lines.join("\n");
+
+        assert!(rendered.contains("domain=provider-readiness-overview"));
+        assert!(rendered.contains("status=unknown"));
+        assert!(rendered.contains("records=0"));
+        assert!(rendered.contains("missing_evidence_families=3"));
+        assert!(rendered.contains("provider_network_call_performed=false"));
+        assert!(rendered.contains("raw_provider_payload_retained=false"));
+        assert!(!rendered.contains("access_token"));
+        assert!(!rendered.contains("authorization"));
+        assert!(!rendered.contains("raw_response_body"));
     }
 }

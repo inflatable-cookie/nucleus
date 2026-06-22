@@ -18,9 +18,10 @@ The repo uses:
 
 ## Current Lane
 
-`g03` effect-gated SCM and forge execution. Current pointer: expose provider
-read-intent query results through the server/control boundary without enabling
-provider writes.
+`g03` effect-gated SCM and forge execution. Current pointer: implement
+`g03/085` Provider Readiness product closeout and next-lane selection from
+ready cards 319-322 before adding provider refresh, credential resolution,
+provider effects, raw payload retention, or broad UI redesign.
 
 Current planning artifacts:
 
@@ -111,6 +112,21 @@ Current planning artifacts:
 - `roadmaps/g03/068-provider-forge-read-pattern-consolidation.md`
 - `roadmaps/g03/069-provider-read-intent-projection-control.md`
 - `roadmaps/g03/070-provider-read-intent-query-composition.md`
+- `roadmaps/g03/071-provider-read-intent-control-boundary.md`
+- `roadmaps/g03/072-provider-read-intent-boundary-rebaseline.md`
+- `roadmaps/g03/073-provider-read-intent-serialized-control-envelope.md`
+- `roadmaps/g03/074-provider-read-intent-nucleusd-query.md`
+- `roadmaps/g03/075-provider-read-intent-tauri-ipc-consumption.md`
+- `roadmaps/g03/076-provider-read-intent-product-consumption-decision.md`
+- `roadmaps/g03/077-provider-readiness-overview-projection.md`
+- `roadmaps/g03/078-provider-readiness-overview-query-control.md`
+- `roadmaps/g03/079-provider-readiness-overview-nucleusd-query.md`
+- `roadmaps/g03/080-provider-readiness-overview-tauri-ipc-consumption.md`
+- `roadmaps/g03/081-provider-readiness-overview-product-consumption-decision.md`
+- `roadmaps/g03/082-provider-readiness-overview-desktop-proof-surface.md`
+- `roadmaps/g03/083-provider-readiness-overview-seeded-evidence-proof.md`
+- `roadmaps/g03/084-provider-readiness-overview-drilldown-read-model.md`
+- `roadmaps/g03/085-provider-readiness-product-closeout-and-next-lane-selection.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -136,7 +152,29 @@ read-intent record. Further provider read-family fan-out is paused until the
 reusable read-intent pattern is promoted into an integration surface. A generic
 read-intent projection/control surface now aggregates the proven persisted read
 families, and a read-only query composes that projection from local-store
-records.
+records. The in-process control handler can now request that projection. The
+provider read-intent boundary rebaseline permits a first serialized DTO lane,
+but only for read-only aggregate/source counts and sanitized refs. The
+control-envelope codec now supports that query/result shape without adding
+provider effects. `nucleusd query provider-read-intent` and
+`effigy server:query:provider-read-intent` now expose the read-only projection
+from the root task surface. The Tauri IPC command adapter can also consume the
+same serialized query without creating visible UI or provider effects.
+Provider read-intent product consumption is now selected as a server-owned
+Provider Readiness Overview projection before any visible UI, live provider
+reads, or additional read-family fan-out.
+The pure overview projection is implemented; read-only query/control
+integration is complete; `nucleusd query provider-readiness-overview` and
+`effigy server:query:provider-readiness-overview` now expose the overview from
+the root task surface. The Tauri IPC command adapter can now consume the same
+overview through serialized DTOs. The next lane selects the product consumption
+path before visible UI. Product consumption is now selected as a read-only
+desktop proof surface. The proof surface may render the serialized DTO and
+read-only drilldowns only; provider refresh, credential resolution, provider
+effects, task mutation, and raw payload display remain blocked. The proof
+surface implementation is complete and validated. The next lane seeds local
+stopped provider evidence so the overview can prove represented readiness data
+without live provider reads.
 
 The first approved direct Codex `turn/start` smoke completed through local
 Codex app-server with sanitized output only. Further provider writes, SCM/forge

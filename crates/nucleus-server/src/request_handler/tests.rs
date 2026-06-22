@@ -26,11 +26,12 @@ use crate::commands::{
     TaskTransitionCommand,
 };
 use crate::control_api::{
-    AdapterSessionQuery, DiagnosticsQuery, ProjectAuthorityMapQuery, RuntimeMetadataQuery,
-    ServerCommandReceipt, ServerCommandReceiptStatus, ServerControlError, ServerControlRequest,
-    ServerControlRequestKind, ServerControlResponseBody, ServerControlResponseStatus,
-    ServerDiagnosticsQueryResult, ServerQuery, ServerQueryKind, ServerQueryResult,
-    ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope, TaskTimelineQuery,
+    AdapterSessionQuery, DiagnosticsQuery, ProjectAuthorityMapQuery, ProviderReadIntentQuery,
+    ProviderReadinessOverviewQuery, RuntimeMetadataQuery, ServerCommandReceipt,
+    ServerCommandReceiptStatus, ServerControlError, ServerControlRequest, ServerControlRequestKind,
+    ServerControlResponseBody, ServerControlResponseStatus, ServerDiagnosticsQueryResult,
+    ServerQuery, ServerQueryKind, ServerQueryResult, ServerStateRecordSet, StateRecordQuery,
+    StateRecordQueryScope, TaskTimelineQuery,
 };
 use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
@@ -53,6 +54,8 @@ mod checkpoint_diff;
 mod diagnostics_queries;
 mod host_authority;
 mod project_queries;
+mod provider_read_intent;
+mod provider_readiness_overview;
 mod read_only_commands;
 mod runtime_auth;
 mod steward_commands;

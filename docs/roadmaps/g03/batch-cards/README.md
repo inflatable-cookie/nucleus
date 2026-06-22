@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-21
+Updated: 2026-06-22
 
 ## Purpose
 
@@ -10,7 +10,10 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-None.
+- `319-provider-readiness-proof-closeout-summary.md`
+- `320-provider-boundary-gap-refresh.md`
+- `321-next-provider-lane-selection.md`
+- `322-provider-readiness-closeout-validation.md`
 
 ## Paused Cards
 
@@ -22,6 +25,28 @@ None.
 
 ## Completed Cards
 
+- `318-provider-readiness-drilldown-validation-closeout.md`
+- `317-provider-readiness-drilldown-rendering-proof.md`
+- `316-provider-readiness-drilldown-request-path.md`
+- `315-provider-readiness-drilldown-surface-audit.md`
+- `314-provider-readiness-overview-seeded-validation-closeout.md`
+- `313-provider-readiness-overview-desktop-nonempty-proof.md`
+- `312-provider-readiness-overview-desktop-seed-path.md`
+- `311-provider-readiness-overview-desktop-seed-audit.md`
+- `310-provider-readiness-overview-desktop-validation-closeout.md`
+- `307-provider-readiness-overview-desktop-surface-audit.md`
+- `308-provider-readiness-overview-desktop-request-path.md`
+- `309-provider-readiness-overview-desktop-rendering.md`
+- `304-provider-readiness-overview-product-consumption-options.md`
+- `305-provider-readiness-overview-surface-contract-delta.md`
+- `306-provider-readiness-overview-next-lane-closeout.md`
+- `301-provider-readiness-overview-tauri-ipc-surface-selection.md`
+- `302-provider-readiness-overview-tauri-ipc-envelope-proof.md`
+- `303-provider-readiness-overview-tauri-ipc-validation-closeout.md`
+- `297-provider-readiness-overview-nucleusd-query-vocabulary.md`
+- `298-provider-readiness-overview-nucleusd-renderer.md`
+- `299-provider-readiness-overview-effigy-selector.md`
+- `300-provider-readiness-overview-nucleusd-validation-closeout.md`
 - `001-git-change-request-execution-authority-records.md`
 - `002-git-change-request-command-descriptors.md`
 - `003-git-change-request-command-request-records.md`
@@ -287,3 +312,34 @@ None.
 - `263-provider-read-intent-query-store-composition.md`
 - `264-provider-read-intent-query-tests.md`
 - `265-provider-read-intent-query-validation-closeout.md`
+- `266-provider-read-intent-control-query-vocabulary.md`
+- `267-provider-read-intent-control-handler-route.md`
+- `268-provider-read-intent-control-boundary-tests.md`
+- `269-provider-read-intent-control-boundary-validation-closeout.md`
+- `270-provider-read-intent-contract-delta.md`
+- `271-provider-read-intent-envelope-boundary-audit.md`
+- `272-provider-read-intent-next-lane-selection.md`
+- `273-provider-read-intent-rebaseline-validation-closeout.md`
+- `274-provider-read-intent-query-dto-vocabulary.md`
+- `275-provider-read-intent-response-dto-module.md`
+- `276-provider-read-intent-envelope-tests.md`
+- `277-provider-read-intent-serialized-envelope-validation-closeout.md`
+- `278-provider-read-intent-nucleusd-query-vocabulary.md`
+- `279-provider-read-intent-nucleusd-renderer.md`
+- `280-provider-read-intent-effigy-selector.md`
+- `281-provider-read-intent-nucleusd-validation-closeout.md`
+- `282-provider-read-intent-tauri-ipc-surface-selection.md`
+- `283-provider-read-intent-tauri-ipc-envelope-proof.md`
+- `284-provider-read-intent-tauri-ipc-validation-closeout.md`
+- `285-provider-read-intent-consumption-options.md`
+- `286-provider-readiness-overview-contract-delta.md`
+- `287-provider-readiness-overview-runway-selection.md`
+- `288-provider-consumption-decision-validation-closeout.md`
+- `289-provider-readiness-overview-type-surface.md`
+- `290-provider-readiness-overview-composer.md`
+- `291-provider-readiness-overview-tests.md`
+- `292-provider-readiness-overview-validation-closeout.md`
+- `293-provider-readiness-overview-query-vocabulary.md`
+- `294-provider-readiness-overview-handler-route.md`
+- `295-provider-readiness-overview-response-dto.md`
+- `296-provider-readiness-overview-query-control-validation-closeout.md`

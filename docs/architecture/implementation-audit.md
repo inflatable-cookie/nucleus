@@ -36,8 +36,8 @@ pressure, but no hard errors.
 
 Current report:
 
-- 137 total findings
-- 137 warnings
+- 139 total findings
+- 139 warnings
 - 0 errors
 
 There are no current doctor error files.
@@ -120,7 +120,7 @@ Recent health delta:
   indexes again.
 - `codex_supervision/recovery_execution_policy.rs` moved validation logic into
   a focused validation module.
-- The current doctor result is green for errors: 137 warnings, 0 errors.
+- The current doctor result is green for errors: 139 warnings, 0 errors.
 
 The detailed report is `.effigy/reports/doctor/scan-god-files.md`.
 
@@ -173,6 +173,23 @@ should prove stopped admission and preflight records for credential refs,
 network-authority refs, mutating-effect approval refs, idempotency keys,
 recovery policy refs, and sanitized provider-response evidence refs. It should
 not resolve real credentials or call forge networks.
+
+Provider Readiness Overview now has a pure projection, read-only query/control
+integration, serialized control-envelope DTOs, and `nucleusd`/Effigy
+inspection. The output reports status, family counts, blockers, evidence
+counts, and no-effect flags while omitting credential material and raw provider
+payloads. The fixture-backed Tauri IPC command adapter can consume the same
+serialized overview DTO without visible UI or provider effects. The next
+implementation lane is a read-only desktop proof surface that renders the DTO
+without granting provider refresh, credential resolution, provider effects,
+task mutation, or raw payload display. That proof surface is now implemented
+and validated. Local stopped seed evidence now proves represented
+credential-status, repository-metadata, and pull-request read families in the
+desktop overview without provider effects. The next gap is a read-only
+drilldown from the overview into the existing read-intent projection. That
+drilldown is now implemented in the desktop proof shell: it loads overview and
+projection data together, renders source counts and read-intent entries, and
+continues to expose no provider controls.
 
 Stopped provider-auth and forge network-execution admission records now exist
 in `provider_forge_network_execution_admission`. The module admits stopped
@@ -409,6 +426,32 @@ Not implemented:
 The next implementation lane should therefore start with live event acceptance
 and persistence. It should not yet start broad provider execution or UI growth.
 
+Provider read-intent status:
+
+- provider credential-status, repository metadata, and PR/MR refresh intents
+  are represented and persisted as stopped records
+- generic read-intent projection and local-store query composition are
+  implemented
+- in-process control handler access is implemented
+- provider read-intent serialized control-envelope support is implemented as a
+  read-only projection request/result shape with explicit no-effect flags
+- provider read-intent is inspectable through `nucleusd query
+  provider-read-intent` and `effigy server:query:provider-read-intent`
+- provider read-intent is consumable through the Tauri IPC command adapter
+  without visible UI or provider effects
+- provider read-intent product consumption is selected as a server-owned
+  Provider Readiness Overview projection before visible UI, live provider
+  reads, or more read-family fan-out
+- Provider Readiness Overview projection is implemented as a pure server
+  projection over existing read-intent evidence
+- Provider Readiness Overview query/control integration is implemented as a
+  read-only server query and serialized response DTO
+- Provider Readiness Overview desktop proof and local stopped seed evidence are
+  implemented without provider refresh, credential resolution, provider
+  effects, task mutation, or raw provider payload retention
+- Provider Readiness Overview drilldown is implemented over the existing
+  provider read-intent projection without adding new server provider effects
+
 ## Recommended Remediation Order
 
 1. Stop proof-panel growth.
@@ -420,7 +463,9 @@ and persistence. It should not yet start broad provider execution or UI growth.
 7. Rebaseline harness runtime before adding provider behavior.
 8. Implement Codex live event acceptance through orchestration-owned event,
    receipt, session, and work-item refs.
-9. Implement later features only through the new core model.
+9. Close out the Provider Readiness product proof and select the next provider
+   lane before provider refresh or effects.
+10. Implement later features only through the new core model.
 
 ## Code Audit Questions
 

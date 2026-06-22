@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::control_api::{ServerQuery, ServerQueryKind, StateRecordQuery, StateRecordQueryScope};
+use crate::control_api::{
+    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ServerQuery, ServerQueryKind,
+    StateRecordQuery, StateRecordQueryScope,
+};
 use crate::ids::ServerQueryId;
 use crate::state::ServerStateDomain;
 use nucleus_core::PersistenceRecordId;
@@ -30,6 +33,14 @@ pub enum ControlQueryDto {
         query_id: String,
         domain: String,
     },
+    ProviderReadIntent {
+        query_id: String,
+        action: String,
+    },
+    ProviderReadinessOverview {
+        query_id: String,
+        action: String,
+    },
 }
 
 impl TryFrom<&ServerQuery> for ControlQueryDto {
@@ -47,6 +58,18 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
             ServerQueryKind::Diagnostics(diagnostics_query) => Ok(Self::Diagnostics {
                 query_id: query.id.0.clone(),
                 domain: diagnostics_domain_dto(diagnostics_query),
+            }),
+            ServerQueryKind::ProviderReadIntent(ProviderReadIntentQuery::Projection) => {
+                Ok(Self::ProviderReadIntent {
+                    query_id: query.id.0.clone(),
+                    action: "projection".to_owned(),
+                })
+            }
+            ServerQueryKind::ProviderReadinessOverview(
+                ProviderReadinessOverviewQuery::Overview,
+            ) => Ok(Self::ProviderReadinessOverview {
+                query_id: query.id.0.clone(),
+                action: "overview".to_owned(),
             }),
             _ => Err(ControlApiCodecError::unsupported(
                 "query shape is not supported by the first control envelope",
@@ -87,6 +110,12 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             ControlQueryDto::Diagnostics { domain, .. } => Ok(ServerQueryKind::Diagnostics(
                 diagnostics_query_from_domain(&domain)?,
             )),
+            ControlQueryDto::ProviderReadIntent { action, .. } => {
+                provider_read_intent_query_from_action(&action)
+            }
+            ControlQueryDto::ProviderReadinessOverview { action, .. } => {
+                provider_readiness_overview_query_from_action(&action)
+            }
         }
     }
 }
@@ -96,8 +125,36 @@ impl ControlQueryDto {
         match self {
             Self::State { query_id, .. }
             | Self::RuntimeMetadata { query_id, .. }
-            | Self::Diagnostics { query_id, .. } => query_id.clone(),
+            | Self::Diagnostics { query_id, .. }
+            | Self::ProviderReadIntent { query_id, .. }
+            | Self::ProviderReadinessOverview { query_id, .. } => query_id.clone(),
         }
+    }
+}
+
+fn provider_read_intent_query_from_action(
+    action: &str,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "projection" => Ok(ServerQueryKind::ProviderReadIntent(
+            ProviderReadIntentQuery::Projection,
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported provider read-intent query action: {action}"
+        ))),
+    }
+}
+
+fn provider_readiness_overview_query_from_action(
+    action: &str,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "overview" => Ok(ServerQueryKind::ProviderReadinessOverview(
+            ProviderReadinessOverviewQuery::Overview,
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported provider readiness overview query action: {action}"
+        ))),
     }
 }
 

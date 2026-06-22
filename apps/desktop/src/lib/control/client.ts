@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   buildCommandHistoryQuery,
   buildDiagnosticsQuery,
+  buildProviderReadIntentQuery,
+  buildProviderReadinessOverviewQuery,
   buildRuntimeReadinessQuery,
   buildTaskWorkProgressQuery,
   type ControlRequestEnvelopeDto,
@@ -10,10 +12,14 @@ import {
 import {
   commandHistoryFromResponse,
   diagnosticsFromResponse,
+  providerReadIntentFromResponse,
+  providerReadinessOverviewFromResponse,
   runtimeReadinessFromResponse,
   taskWorkProgressFromResponse,
   type CommandHistoryQueryResult,
   type DiagnosticsQueryResult,
+  type ProviderReadinessOverviewQueryResult,
+  type ProviderReadIntentQueryResult,
   type RuntimeReadinessQueryResult,
   type TaskWorkProgressQueryResult,
 } from "./responses";
@@ -45,4 +51,14 @@ export async function queryDiagnostics(
 ): Promise<DiagnosticsQueryResult> {
   const response = await submitControlEnvelope(buildDiagnosticsQuery(domain));
   return diagnosticsFromResponse(response);
+}
+
+export async function queryProviderReadinessOverview(): Promise<ProviderReadinessOverviewQueryResult> {
+  const response = await submitControlEnvelope(buildProviderReadinessOverviewQuery());
+  return providerReadinessOverviewFromResponse(response);
+}
+
+export async function queryProviderReadIntent(): Promise<ProviderReadIntentQueryResult> {
+  const response = await submitControlEnvelope(buildProviderReadIntentQuery());
+  return providerReadIntentFromResponse(response);
 }

@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-21
+Updated: 2026-06-22
 
 ## Purpose
 
@@ -99,7 +99,7 @@ Current checkpoint:
   sanitized provider-request adapter, outcome persistence, diagnostics, and
   read-only control DTOs.
 - Git/forge runner health and boundary rebaseline is complete; focused runner
-  tests pass, doctor remains 137 warnings and 0 errors, and real provider-auth
+  tests pass, doctor remains warning-only and error-free, and real provider-auth
   or network execution behavior remains contract-gated.
 - Provider-auth and forge execution contract lane is complete. Contract `027`
   now owns credential refs, network-write admission, provider response
@@ -178,6 +178,42 @@ Current checkpoint:
   the generic projection from local-store persisted credential-status,
   repository-metadata, and PR/MR refresh records through a read-only query
   result and control DTO.
+- Provider read-intent control boundary is complete. The in-process server
+  control handler can request the projection, while the serializable envelope
+  still rejects it until a provider read-intent wire DTO contract is designed.
+- Provider read-intent boundary rebaseline is complete. The next lane may add
+  serialized control-envelope support, but only as a read-only aggregate/source
+  count DTO with sanitized refs and no provider effects.
+- Provider read-intent serialized control-envelope support is complete. Request
+  DTOs can round-trip projection queries and response DTOs expose counts,
+  source counts, sanitized entry refs, and explicit no-effect flags.
+- Provider read-intent `nucleusd` query support is complete. The root Effigy
+  task surface can inspect the read-only projection without provider effects.
+- Provider read-intent Tauri IPC consumption is complete. The desktop command
+  adapter can submit the serialized query and receive a sanitized read-only
+  projection without provider effects.
+- Provider read-intent product consumption decision is complete. The next
+  product surface is a server-owned Provider Readiness Overview projection,
+  not visible UI, live provider reads, or more read-family fan-out.
+- Provider Readiness Overview projection is complete as a pure server
+  projection over existing read-intent evidence. The next lane is read-only
+  query/control integration, not visible UI.
+- Provider Readiness Overview query/control integration is complete. The next
+  lane is a `nucleusd`/Effigy inspection surface before any visible UI.
+- Provider Readiness Overview `nucleusd`/Effigy inspection is complete. The
+  next lane is Tauri IPC consumption of the same read-only overview, not a
+  visible UI panel or provider effect.
+- Provider Readiness Overview Tauri IPC consumption is complete. The next lane
+  selects the product consumption path before any visible UI or provider
+  effect.
+- Provider Readiness Overview desktop proof surface and seeded evidence proof
+  are complete. The desktop proof shell now consumes represented provider
+  readiness data from local stopped evidence; the next lane is a read-only
+  drilldown over the existing read-intent projection, not provider refresh.
+- Provider Readiness Overview drilldown is complete. The desktop proof shell
+  now reads the existing provider read-intent projection beside the overview;
+  the next lane closes the provider-readiness product proof and selects the
+  next provider lane deliberately.
 
 ## Convergence Exit Criteria
 
@@ -283,12 +319,30 @@ Reason:
 - `068-provider-forge-read-pattern-consolidation.md` - completed
 - `069-provider-read-intent-projection-control.md` - completed
 - `070-provider-read-intent-query-composition.md` - completed
+- `071-provider-read-intent-control-boundary.md` - completed
+- `072-provider-read-intent-boundary-rebaseline.md` - completed
+- `073-provider-read-intent-serialized-control-envelope.md` - completed
+- `074-provider-read-intent-nucleusd-query.md` - completed
+- `075-provider-read-intent-tauri-ipc-consumption.md` - completed
+- `076-provider-read-intent-product-consumption-decision.md` - completed
+- `077-provider-readiness-overview-projection.md` - completed
+- `078-provider-readiness-overview-query-control.md` - completed
+- `079-provider-readiness-overview-nucleusd-query.md` - completed
+- `080-provider-readiness-overview-tauri-ipc-consumption.md` - completed
+- `081-provider-readiness-overview-product-consumption-decision.md` - completed
+- `082-provider-readiness-overview-desktop-proof-surface.md` - completed
+- `083-provider-readiness-overview-seeded-evidence-proof.md` - completed
+- `084-provider-readiness-overview-drilldown-read-model.md` - completed
+- `085-provider-readiness-product-closeout-and-next-lane-selection.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-None.
+- `batch-cards/319-provider-readiness-proof-closeout-summary.md`
+- `batch-cards/320-provider-boundary-gap-refresh.md`
+- `batch-cards/321-next-provider-lane-selection.md`
+- `batch-cards/322-provider-readiness-closeout-validation.md`
 
 Paused cards:
 
@@ -300,6 +354,28 @@ None.
 
 Completed cards:
 
+- `batch-cards/318-provider-readiness-drilldown-validation-closeout.md`
+- `batch-cards/317-provider-readiness-drilldown-rendering-proof.md`
+- `batch-cards/316-provider-readiness-drilldown-request-path.md`
+- `batch-cards/315-provider-readiness-drilldown-surface-audit.md`
+- `batch-cards/314-provider-readiness-overview-seeded-validation-closeout.md`
+- `batch-cards/313-provider-readiness-overview-desktop-nonempty-proof.md`
+- `batch-cards/312-provider-readiness-overview-desktop-seed-path.md`
+- `batch-cards/311-provider-readiness-overview-desktop-seed-audit.md`
+- `batch-cards/310-provider-readiness-overview-desktop-validation-closeout.md`
+- `batch-cards/307-provider-readiness-overview-desktop-surface-audit.md`
+- `batch-cards/308-provider-readiness-overview-desktop-request-path.md`
+- `batch-cards/309-provider-readiness-overview-desktop-rendering.md`
+- `batch-cards/304-provider-readiness-overview-product-consumption-options.md`
+- `batch-cards/305-provider-readiness-overview-surface-contract-delta.md`
+- `batch-cards/306-provider-readiness-overview-next-lane-closeout.md`
+- `batch-cards/301-provider-readiness-overview-tauri-ipc-surface-selection.md`
+- `batch-cards/302-provider-readiness-overview-tauri-ipc-envelope-proof.md`
+- `batch-cards/303-provider-readiness-overview-tauri-ipc-validation-closeout.md`
+- `batch-cards/297-provider-readiness-overview-nucleusd-query-vocabulary.md`
+- `batch-cards/298-provider-readiness-overview-nucleusd-renderer.md`
+- `batch-cards/299-provider-readiness-overview-effigy-selector.md`
+- `batch-cards/300-provider-readiness-overview-nucleusd-validation-closeout.md`
 - `batch-cards/001-git-change-request-execution-authority-records.md`
 - `batch-cards/002-git-change-request-command-descriptors.md`
 - `batch-cards/003-git-change-request-command-request-records.md`
@@ -565,6 +641,37 @@ Completed cards:
 - `batch-cards/263-provider-read-intent-query-store-composition.md`
 - `batch-cards/264-provider-read-intent-query-tests.md`
 - `batch-cards/265-provider-read-intent-query-validation-closeout.md`
+- `batch-cards/266-provider-read-intent-control-query-vocabulary.md`
+- `batch-cards/267-provider-read-intent-control-handler-route.md`
+- `batch-cards/268-provider-read-intent-control-boundary-tests.md`
+- `batch-cards/269-provider-read-intent-control-boundary-validation-closeout.md`
+- `batch-cards/270-provider-read-intent-contract-delta.md`
+- `batch-cards/271-provider-read-intent-envelope-boundary-audit.md`
+- `batch-cards/272-provider-read-intent-next-lane-selection.md`
+- `batch-cards/273-provider-read-intent-rebaseline-validation-closeout.md`
+- `batch-cards/274-provider-read-intent-query-dto-vocabulary.md`
+- `batch-cards/275-provider-read-intent-response-dto-module.md`
+- `batch-cards/276-provider-read-intent-envelope-tests.md`
+- `batch-cards/277-provider-read-intent-serialized-envelope-validation-closeout.md`
+- `batch-cards/278-provider-read-intent-nucleusd-query-vocabulary.md`
+- `batch-cards/279-provider-read-intent-nucleusd-renderer.md`
+- `batch-cards/280-provider-read-intent-effigy-selector.md`
+- `batch-cards/281-provider-read-intent-nucleusd-validation-closeout.md`
+- `batch-cards/282-provider-read-intent-tauri-ipc-surface-selection.md`
+- `batch-cards/283-provider-read-intent-tauri-ipc-envelope-proof.md`
+- `batch-cards/284-provider-read-intent-tauri-ipc-validation-closeout.md`
+- `batch-cards/285-provider-read-intent-consumption-options.md`
+- `batch-cards/286-provider-readiness-overview-contract-delta.md`
+- `batch-cards/287-provider-readiness-overview-runway-selection.md`
+- `batch-cards/288-provider-consumption-decision-validation-closeout.md`
+- `batch-cards/289-provider-readiness-overview-type-surface.md`
+- `batch-cards/290-provider-readiness-overview-composer.md`
+- `batch-cards/291-provider-readiness-overview-tests.md`
+- `batch-cards/292-provider-readiness-overview-validation-closeout.md`
+- `batch-cards/293-provider-readiness-overview-query-vocabulary.md`
+- `batch-cards/294-provider-readiness-overview-handler-route.md`
+- `batch-cards/295-provider-readiness-overview-response-dto.md`
+- `batch-cards/296-provider-readiness-overview-query-control-validation-closeout.md`
 
 ## Planned Runway Sequence
 
@@ -635,3 +742,18 @@ Completed cards:
 60. Provider-forge read-pattern consolidation - completed
 61. Generic provider read-intent projection/control - completed
 62. Provider read-intent query composition - completed
+63. Provider read-intent control boundary - completed
+64. Provider read-intent boundary rebaseline - completed
+65. Provider read-intent serialized control envelope - completed
+66. Provider read-intent `nucleusd` query - completed
+67. Provider read-intent Tauri IPC consumption - completed
+68. Provider read-intent product consumption decision - completed
+69. Provider Readiness Overview projection - completed
+70. Provider Readiness Overview query/control integration - completed
+71. Provider Readiness Overview `nucleusd` query - completed
+72. Provider Readiness Overview Tauri IPC consumption - completed
+73. Provider Readiness Overview product consumption decision - completed
+74. Provider Readiness Overview desktop proof surface - completed
+75. Provider Readiness Overview seeded evidence proof - completed
+76. Provider Readiness Overview drilldown read model - completed
+77. Provider Readiness product closeout and next-lane selection - active

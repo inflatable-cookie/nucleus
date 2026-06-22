@@ -40,6 +40,25 @@ fn cli_config_parses_command_evidence_query_domain() {
 }
 
 #[test]
+fn cli_config_parses_provider_read_intent_query_domain() {
+    let config = CliConfig::parse(vec!["query".to_owned(), "provider-read-intent".to_owned()])
+        .expect("parse provider read-intent query");
+
+    assert_eq!(config.query, Some(QueryDomain::ProviderReadIntent));
+}
+
+#[test]
+fn cli_config_parses_provider_readiness_overview_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "provider-readiness-overview".to_owned(),
+    ])
+    .expect("parse provider readiness overview query");
+
+    assert_eq!(config.query, Some(QueryDomain::ProviderReadinessOverview));
+}
+
+#[test]
 fn cli_config_parses_command_runner_smoke() {
     let config = CliConfig::parse(vec!["command-runner".to_owned(), "smoke".to_owned()])
         .expect("parse command-runner smoke");

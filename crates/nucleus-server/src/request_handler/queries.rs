@@ -62,6 +62,8 @@ use crate::{
 };
 
 mod diagnostics;
+mod provider_read_intent;
+mod provider_readiness_overview;
 
 pub(crate) fn handle_query<B>(
     handler: &LocalControlRequestHandler<B>,
@@ -109,6 +111,12 @@ where
         ServerQueryKind::ModelRoute(query) => model_route_query(handler, query),
         ServerQueryKind::RuntimeMetadata(query) => runtime_metadata_query(handler, query),
         ServerQueryKind::Diagnostics(query) => diagnostics::diagnostics_query(handler, query),
+        ServerQueryKind::ProviderReadIntent(query) => {
+            provider_read_intent::provider_read_intent_query(handler, query)
+        }
+        ServerQueryKind::ProviderReadinessOverview(query) => {
+            provider_readiness_overview::provider_readiness_overview_query(handler, query)
+        }
         ServerQueryKind::TaskTimeline(query) => task_timeline_query(handler, query),
         ServerQueryKind::ProjectAuthorityMap(query) => project_authority_map_query(query),
     }

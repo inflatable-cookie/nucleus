@@ -18,7 +18,7 @@ implementation lane can be chosen deliberately.
 Current state:
 
 - `effigy doctor` currently exits successfully
-- the current doctor report has 137 findings: 137 warnings and 0 errors
+- the current doctor report has 139 findings: 139 warnings and 0 errors
 - `crates/nucleus-server/src/lib.rs` remains a compact crate front door
 - the first health rebaseline split request-handler diagnostics tests,
   control-envelope diagnostics response tests, diagnostics query routing, and
@@ -97,10 +97,30 @@ Warning pressure triage:
 - server other/runtime surfaces: 18 warnings across runtime readiness,
   process supervision, task runtime, local discovery, and authority helpers.
   Keep an eye on host-boundary accretion when touched.
-- app/client/CLI surfaces: 6 warnings across desktop and `nucleusd`. Do not
+- app/client/CLI surfaces: 7 warnings across desktop and `nucleusd`. Do not
   expand proof UI without splitting touched helpers/styles.
 - engine/local-store/agent/native-harness/SCM/tasks: 13 warnings. Treat as
   domain-local pressure, not a repo-wide blocker.
+
+Provider Readiness Overview product surface gap:
+
+- server projection is complete
+- read-only query/control integration is complete
+- serialized control-envelope DTO support is complete
+- `nucleusd` and Effigy root inspection are complete
+- Tauri IPC command-adapter consumption is complete
+- product consumption is selected as a read-only desktop proof surface
+- desktop proof surface implementation and validation are complete
+- local stopped provider-readiness seed evidence is complete
+- desktop read-intent drilldown over the overview is complete
+
+Needed:
+
+- close out the provider-readiness product proof and select the next provider
+  implementation lane deliberately
+- keep any next visible/provider surface typed, sanitized, and effect-free
+- avoid provider refresh, credential resolution, provider effects, task
+  mutation, raw payload display, or durable UI design commitments
 
 Policy:
 
@@ -725,7 +745,7 @@ Current runner proof state:
   stopped PR request-preparation proofs share the same stopped-by-default
   authority, adapter/request adapter, sanitized outcome persistence, and
   read-only control DTO shape. Focused runner tests pass, new runner files stay
-  below warning thresholds, and `effigy doctor` remains at 137 warnings and 0
+  below warning thresholds, and `effigy doctor` remains at 139 warnings and 0
   errors.
 - Contract `027-provider-auth-forge-execution-contract.md` now owns
   provider-auth and forge network execution authority. It requires separate
@@ -1301,11 +1321,41 @@ Recent evidence:
 - Provider read-intent query composition is complete. The next step is exposing
   the query through the server/control boundary without enabling provider
   writes.
+- Provider read-intent control boundary is complete for in-process handler
+  access. The serializable envelope still rejects provider read-intent results
+  until a wire DTO contract is designed.
+- Provider read-intent boundary rebaseline is complete. The next lane may add
+  a serialized control-envelope DTO, but only for a read-only aggregate
+  projection query/result with sanitized refs and no provider effects.
+- Provider read-intent serialized control-envelope support is complete. The
+  codec now round-trips projection requests and serializes aggregate/source
+  counts, sanitized entry refs, and no-effect flags.
+- Provider read-intent `nucleusd` query support is complete. The root Effigy
+  task surface can now inspect the read-only projection through
+  `server:query:provider-read-intent`.
+- Provider read-intent Tauri IPC consumption is complete. The desktop command
+  adapter can submit the serialized query and receive a sanitized read-only
+  projection without provider effects.
+- Provider read-intent product consumption is selected as a server-owned
+  Provider Readiness Overview projection. The next lane should compose existing
+  read-intent evidence into readiness status, blocker counts, evidence counts,
+  and no-effect flags before visible UI, live provider reads, or more
+  read-family fan-out.
+- Provider Readiness Overview projection is complete as a pure server
+  projection over existing read-intent evidence.
+- Provider Readiness Overview query/control integration is complete as a
+  read-only server query and serialized response DTO.
+- Provider Readiness Overview desktop proof and local stopped seed evidence are
+  complete without provider refresh, credential resolution, provider effects,
+  task mutation, or raw provider payload retention.
+- Provider Readiness Overview drilldown is complete over the existing provider
+  read-intent projection without adding live provider behavior.
 
 Next implementation gate:
 
-1. expose provider read-intent query results through the server/control
-   boundary without enabling provider writes
+1. close out the Provider Readiness product proof and select the next provider
+   lane before adding live refresh, more read-family fan-out, or provider
+   effects
 2. continue reducing god-file pressure opportunistically when touched
 
 Until that lane proves durable authority and preflight, keep checkout,

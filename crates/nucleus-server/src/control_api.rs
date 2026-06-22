@@ -64,6 +64,8 @@ pub enum ServerQueryKind {
     ModelRoute(ModelRouteQuery),
     RuntimeMetadata(RuntimeMetadataQuery),
     Diagnostics(DiagnosticsQuery),
+    ProviderReadIntent(ProviderReadIntentQuery),
+    ProviderReadinessOverview(ProviderReadinessOverviewQuery),
     TaskTimeline(TaskTimelineQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
@@ -143,6 +145,18 @@ pub enum DiagnosticsQuery {
     All,
 }
 
+/// Provider read-intent query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderReadIntentQuery {
+    Projection,
+}
+
+/// Provider readiness overview query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderReadinessOverviewQuery {
+    Overview,
+}
+
 /// Task timeline query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskTimelineQuery {
@@ -212,6 +226,8 @@ pub enum ServerQueryResult {
     DiffSummaryRecords(Vec<EngineDiffSummaryRecord>),
     TaskWorkProgress(Vec<TaskAgentWorkUnitDiagnosticDto>),
     Diagnostics(ServerDiagnosticsQueryResult),
+    ProviderReadIntent(crate::ForgeReadIntentQueryResult),
+    ProviderReadinessOverview(crate::ForgeReadinessOverview),
     TaskTimeline(EngineTaskTimelineProjection),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     Empty,

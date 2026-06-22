@@ -11,6 +11,8 @@ use super::helpers::{
     command_execution_status_dto, command_receipt_status_dto, control_error_dto, retention_dto,
     state_record_set_dto,
 };
+use super::provider_read_intent::ControlProviderReadIntentQueryResultDto;
+use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
     ControlDiffSummaryRecordDto, ControlProjectAuthorityMapDto,
@@ -70,6 +72,12 @@ pub enum ControlResponseBodyDto {
     },
     ProjectAuthorityMap {
         record: ControlProjectAuthorityMapDto,
+    },
+    ProviderReadIntent {
+        result: ControlProviderReadIntentQueryResultDto,
+    },
+    ProviderReadinessOverview {
+        overview: ControlProviderReadinessOverviewDto,
     },
     CommandReceipt {
         command_id: String,
@@ -178,6 +186,16 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                     record: ControlProjectAuthorityMapDto::from(record),
                 })
             }
+            ServerControlResponseBody::Query(ServerQueryResult::ProviderReadIntent(result)) => {
+                Ok(Self::ProviderReadIntent {
+                    result: ControlProviderReadIntentQueryResultDto::from(result),
+                })
+            }
+            ServerControlResponseBody::Query(ServerQueryResult::ProviderReadinessOverview(
+                overview,
+            )) => Ok(Self::ProviderReadinessOverview {
+                overview: ControlProviderReadinessOverviewDto::from(overview),
+            }),
             ServerControlResponseBody::Command(receipt) => Ok(Self::CommandReceipt {
                 command_id: receipt.command_id.0.clone(),
                 status: command_receipt_status_dto(&receipt.status),

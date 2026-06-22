@@ -293,6 +293,145 @@ Receipts must include:
 
 Receipt replay must not re-run network calls.
 
+## Read-Intent Control Boundary
+
+Provider read-intent surfaces are read-only evidence projections.
+
+Current represented read families:
+
+- credential-status refresh
+- repository metadata refresh
+- pull-request or merge-request refresh
+
+The generic provider read-intent projection may aggregate persisted stopped
+records across these families. It may expose:
+
+- stable intent ids
+- family
+- status
+- provider, repo, and credential refs where sanitized
+- blocker counts
+- evidence-ref counts
+- source record counts
+- explicit no-effect flags
+
+It must not expose:
+
+- credential material
+- raw provider payloads
+- raw request or response bodies
+- raw headers
+- raw PR title/body text unless referenced as approved artifacts
+- provider-native auth files
+- live provider handles
+
+Provider read-intent queries may be available through the in-process server
+control API before they are available through a serialized control envelope.
+Serialized envelope support requires a deliberate DTO contract. The DTO must
+not be inferred automatically from internal Rust structs.
+
+The first serialized provider read-intent DTO should be read-only and
+client-safe:
+
+- one explicit query action for the aggregate projection
+- aggregate counts and source counts
+- optional sanitized entry summaries by reference
+- explicit no-effect flags
+- unsupported codec errors for shapes outside the planned DTO
+
+Adding serialized read-intent DTOs does not grant credential resolution,
+provider network calls, provider effects, callbacks, interruption, recovery,
+task mutation, raw-material retention, or additional read-family fan-out.
+
+## Provider Readiness Overview
+
+The first product consumption surface for provider read-intent should be a
+server-owned Provider Readiness Overview projection.
+
+Purpose:
+
+- answer whether a project/repo/provider appears ready for forge-backed work
+- show what is missing before provider reads or writes can run
+- give desktop, CLI, and future web/mobile clients one client-safe surface
+- avoid designing visible UI before the server projection is useful
+
+Allowed inputs:
+
+- provider read-intent projection entries
+- provider context refs
+- credential-status evidence refs
+- repository metadata evidence refs
+- pull-request or merge-request refresh evidence refs
+- sanitized blocker/status counts
+
+Allowed output:
+
+- overview id
+- project, repo, provider, and authority host refs where sanitized
+- readiness status: ready, blocked, needs repair, unknown, unsupported
+- supported read families by name
+- represented mutating families by name
+- blocker counts grouped by authority domain
+- missing evidence family counts
+- sanitized repair hint refs
+- explicit no-effect flags
+
+The overview must not expose credential material, raw provider payloads, raw
+request or response bodies, raw headers, provider-native auth files, live
+provider handles, or provider object content that has not been approved as an
+artifact.
+
+The overview is not a provider refresh. It must be composed from already
+persisted local evidence unless a separate refresh lane grants provider read
+authority. It must not silently fan out into issue, comment, review workflow,
+or status/check refresh families.
+
+Visible UI may consume the overview later, but the first implementation should
+prove the server projection and control boundary before adding panels.
+
+## Provider Readiness Overview Client Surface Rule
+
+Clients may render Provider Readiness Overview only as a read-only view over
+the serialized overview DTO.
+
+Allowed visible fields:
+
+- overview id and projection id
+- readiness status
+- sanitized project, repo, provider, remote repo, and authority-host refs
+- supported and represented read-family names
+- represented mutating-family names as capability context only
+- total read-intent count
+- ready, blocked, repair-required, duplicate-noop, blocker, evidence, and
+  missing-evidence-family counts
+- explicit no-effect flags
+
+Allowed read-only drilldowns:
+
+- provider read-intent projection
+- persisted credential-status evidence summaries
+- persisted repository metadata evidence summaries
+- persisted pull-request or merge-request refresh evidence summaries
+- root CLI or Effigy inspection commands that already expose the same
+  sanitized data
+
+Blocked from the visible overview surface:
+
+- live provider refresh
+- credential resolution
+- provider network calls
+- provider write preparation or execution
+- callback, interruption, or recovery execution
+- task mutation
+- raw provider payload display
+- raw request or response body display
+- raw headers or authorization material
+- provider-native auth files or live provider handles
+
+The first visible surface should prove that a client can consume and render the
+overview without gaining authority. It must not add another read family,
+perform live refresh, or start provider-effect admission.
+
 ## Callback And Webhook Split
 
 Outbound provider execution and inbound provider callbacks are separate lanes.

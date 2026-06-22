@@ -4,6 +4,8 @@ import {
   CONTROL_PROTOCOL_VERSION,
   type ControlCommandEvidenceRecordDto,
   type ControlDiagnosticsResultDto,
+  type ControlProviderReadIntentQueryResultDto,
+  type ControlProviderReadinessOverviewDto,
   type ControlProjectRecordDto,
   type ControlRuntimeReadinessDiagnosticDto,
   type ControlStateDomain,
@@ -11,6 +13,8 @@ import {
   type ControlTaskRecordDto,
   type ControlTaskTransitionAction,
   type DiagnosticsDomain,
+  type ProviderReadIntentAction,
+  type ProviderReadinessOverviewAction,
   type RuntimeMetadataAction,
 } from "./types";
 
@@ -30,6 +34,16 @@ export type ControlQueryDto =
       kind: "diagnostics";
       query_id: string;
       domain: DiagnosticsDomain;
+    }
+  | {
+      kind: "provider_read_intent";
+      query_id: string;
+      action: ProviderReadIntentAction;
+    }
+  | {
+      kind: "provider_readiness_overview";
+      query_id: string;
+      action: ProviderReadinessOverviewAction;
     };
 
 export type ControlCommandDto = {
@@ -90,6 +104,14 @@ export type ControlResponseEnvelopeDto = {
     | {
         type: "diagnostics";
         result: ControlDiagnosticsResultDto;
+      }
+    | {
+        type: "provider_read_intent";
+        result: ControlProviderReadIntentQueryResultDto;
+      }
+    | {
+        type: "provider_readiness_overview";
+        overview: ControlProviderReadinessOverviewDto;
       }
     | { type: "state_records"; domain: string; records: unknown[] }
     | { type: "command_receipt"; command_id: string; status: string }
@@ -173,6 +195,22 @@ export function buildDiagnosticsQuery(domain: DiagnosticsDomain = "all"): Contro
     kind: "diagnostics",
     query_id: "",
     domain,
+  });
+}
+
+export function buildProviderReadinessOverviewQuery(): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "provider_readiness_overview",
+    query_id: "",
+    action: "overview",
+  });
+}
+
+export function buildProviderReadIntentQuery(): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "provider_read_intent",
+    query_id: "",
+    action: "projection",
   });
 }
 

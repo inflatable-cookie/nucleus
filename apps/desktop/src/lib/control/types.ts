@@ -14,6 +14,8 @@ export type DiagnosticsDomain =
   | "scm_session"
   | "task_agent"
   | "all";
+export type ProviderReadinessOverviewAction = "overview";
+export type ProviderReadIntentAction = "projection";
 export type ControlStateDomain = "projects" | "tasks" | "workspaces";
 export type ControlTaskTransitionAction = "start" | "block" | "complete" | "archive";
 
@@ -63,6 +65,104 @@ export type ControlRuntimeReadinessDiagnosticDto = {
   evidence_refs: string[];
   repair_hints: string[];
   summary: string | null;
+};
+
+export type ControlProviderReadinessOverviewDto = {
+  overview_id: string;
+  projection_id: string;
+  project_ref: string | null;
+  repo_ref: string | null;
+  authority_host_ref: string | null;
+  provider_instance_refs: string[];
+  remote_repo_refs: string[];
+  forge_providers: string[];
+  status: string;
+  supported_read_families: string[];
+  represented_read_families: string[];
+  represented_mutating_families: string[];
+  total_read_intent_count: number;
+  missing_evidence_family_count: number;
+  ready_count: number;
+  blocked_count: number;
+  repair_required_count: number;
+  duplicate_noop_count: number;
+  blocker_count: number;
+  evidence_ref_count: number;
+  credential_resolution_performed: boolean;
+  provider_network_call_performed: boolean;
+  provider_effect_executed: boolean;
+  callback_effect_executed: boolean;
+  interruption_effect_executed: boolean;
+  recovery_effect_executed: boolean;
+  task_mutation_executed: boolean;
+  raw_provider_payload_retained: boolean;
+};
+
+export type ControlProviderReadIntentEntryDto = {
+  intent_id: string;
+  source_persisted_refresh_id: string;
+  family: string;
+  status: string;
+  provider_context_ref: string | null;
+  provider_instance_ref: string | null;
+  forge_provider: string | null;
+  remote_repo_ref: string | null;
+  operation_family: string;
+  blocker_count: number;
+  evidence_ref_count: number;
+  duplicate_refresh_detected: boolean;
+  stopped_refresh_recorded: boolean;
+  credential_resolution_performed: boolean;
+  provider_network_call_performed: boolean;
+  provider_effect_executed: boolean;
+  callback_effect_executed: boolean;
+  interruption_effect_executed: boolean;
+  recovery_effect_executed: boolean;
+  task_mutation_executed: boolean;
+  raw_provider_payload_retained: boolean;
+};
+
+export type ControlProviderReadIntentProjectionDto = {
+  projection_id: string;
+  total_count: number;
+  credential_status_count: number;
+  repository_metadata_count: number;
+  pull_request_count: number;
+  ready_count: number;
+  duplicate_noop_count: number;
+  blocked_count: number;
+  repair_required_count: number;
+  blocker_count: number;
+  evidence_ref_count: number;
+  entries: ControlProviderReadIntentEntryDto[];
+  credential_resolution_performed: boolean;
+  provider_network_call_performed: boolean;
+  provider_effect_executed: boolean;
+  callback_effect_executed: boolean;
+  interruption_effect_executed: boolean;
+  recovery_effect_executed: boolean;
+  task_mutation_executed: boolean;
+  raw_provider_payload_retained: boolean;
+};
+
+export type ControlProviderReadIntentSourceCountsDto = {
+  credential_status_records: number;
+  repository_metadata_records: number;
+  pull_request_records: number;
+};
+
+export type ControlProviderReadIntentQueryResultDto = {
+  query_id: string;
+  projection: ControlProviderReadIntentProjectionDto;
+  source_counts: ControlProviderReadIntentSourceCountsDto;
+  credential_resolution_performed: boolean;
+  provider_network_call_performed: boolean;
+  provider_effect_executed: boolean;
+  callback_effect_executed: boolean;
+  interruption_effect_executed: boolean;
+  recovery_effect_executed: boolean;
+  task_mutation_executed: boolean;
+  raw_provider_payload_retained: boolean;
 };
 
 export type StewardProposalDiagnosticDto = {

@@ -199,6 +199,21 @@ shape.
 - `g03/068-provider-forge-read-pattern-consolidation.md` - completed
 - `g03/069-provider-read-intent-projection-control.md` - completed
 - `g03/070-provider-read-intent-query-composition.md` - completed
+- `g03/071-provider-read-intent-control-boundary.md` - completed
+- `g03/072-provider-read-intent-boundary-rebaseline.md` - completed
+- `g03/073-provider-read-intent-serialized-control-envelope.md` - completed
+- `g03/074-provider-read-intent-nucleusd-query.md` - completed
+- `g03/075-provider-read-intent-tauri-ipc-consumption.md` - completed
+- `g03/076-provider-read-intent-product-consumption-decision.md` - completed
+- `g03/077-provider-readiness-overview-projection.md` - completed
+- `g03/078-provider-readiness-overview-query-control.md` - completed
+- `g03/079-provider-readiness-overview-nucleusd-query.md` - completed
+- `g03/080-provider-readiness-overview-tauri-ipc-consumption.md` - completed
+- `g03/081-provider-readiness-overview-product-consumption-decision.md` - completed
+- `g03/082-provider-readiness-overview-desktop-proof-surface.md` - completed
+- `g03/083-provider-readiness-overview-seeded-evidence-proof.md` - completed
+- `g03/084-provider-readiness-overview-drilldown-read-model.md` - completed
+- `g03/085-provider-readiness-product-closeout-and-next-lane-selection.md` - active
 
 ## Previous Generation
 
@@ -257,5 +272,6 @@ shape.
 
 ## Next Task
 
-Expose provider read-intent query results through the server/control boundary
-without enabling provider writes.
+Implement `g03/085` Provider Readiness product closeout and next-lane
+selection from ready cards 319-322 before adding provider refresh, credential
+resolution, provider effects, raw payload retention, or broad UI redesign.

@@ -1,6 +1,8 @@
 import type {
   ControlCommandEvidenceRecordDto,
   ControlDiagnosticsResultDto,
+  ControlProviderReadIntentQueryResultDto,
+  ControlProviderReadinessOverviewDto,
   ControlProjectRecordDto,
   ControlRuntimeReadinessDiagnosticDto,
   TaskAgentWorkUnitDiagnosticDto,
@@ -80,6 +82,50 @@ export type DiagnosticsQueryResult =
   | {
       state: "records";
       result: ControlDiagnosticsResultDto;
+    }
+  | {
+      state: "empty";
+    }
+  | {
+      state: "unsupported";
+      reason: string;
+    }
+  | {
+      state: "error";
+      kind: string;
+      reason: string;
+    }
+  | {
+      state: "unexpected";
+      reason: string;
+    };
+
+export type ProviderReadinessOverviewQueryResult =
+  | {
+      state: "record";
+      overview: ControlProviderReadinessOverviewDto;
+    }
+  | {
+      state: "empty";
+    }
+  | {
+      state: "unsupported";
+      reason: string;
+    }
+  | {
+      state: "error";
+      kind: string;
+      reason: string;
+    }
+  | {
+      state: "unexpected";
+      reason: string;
+    };
+
+export type ProviderReadIntentQueryResult =
+  | {
+      state: "record";
+      result: ControlProviderReadIntentQueryResultDto;
     }
   | {
       state: "empty";
@@ -226,6 +272,66 @@ export function diagnosticsFromResponse(response: ControlResponseEnvelopeDto): D
       return {
         state: "unexpected",
         reason: `unexpected diagnostics response: ${response.body.type}`,
+      };
+  }
+}
+
+export function providerReadinessOverviewFromResponse(
+  response: ControlResponseEnvelopeDto,
+): ProviderReadinessOverviewQueryResult {
+  switch (response.body.type) {
+    case "provider_readiness_overview":
+      return {
+        state: "record",
+        overview: response.body.overview,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return {
+        state: "unsupported",
+        reason: response.body.reason,
+      };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected provider readiness overview response: ${response.body.type}`,
+      };
+  }
+}
+
+export function providerReadIntentFromResponse(
+  response: ControlResponseEnvelopeDto,
+): ProviderReadIntentQueryResult {
+  switch (response.body.type) {
+    case "provider_read_intent":
+      return {
+        state: "record",
+        result: response.body.result,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return {
+        state: "unsupported",
+        reason: response.body.reason,
+      };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected provider read-intent response: ${response.body.type}`,
       };
   }
 }

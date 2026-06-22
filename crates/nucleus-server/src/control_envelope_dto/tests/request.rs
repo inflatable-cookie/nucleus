@@ -1,6 +1,7 @@
 use crate::control_api::{
-    DiagnosticsQuery, ServerControlRequest, ServerControlRequestKind, ServerQuery, ServerQueryKind,
-    StateRecordQuery, StateRecordQueryScope,
+    DiagnosticsQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
+    ServerControlRequest, ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
+    StateRecordQueryScope,
 };
 use crate::control_envelope_dto::*;
 use crate::control_serialization_readiness::ControlApiCodecFailure;
@@ -14,5 +15,7 @@ use nucleus_tasks::{
 
 mod commands;
 mod diagnostics;
+mod provider_read_intent;
+mod provider_readiness_overview;
 mod runtime;
 mod state;

@@ -3,6 +3,7 @@
   import CommandDiagnosticsPanel from "./lib/CommandDiagnosticsPanel.svelte";
   import ControlDiagnosticsPanel from "./lib/ControlDiagnosticsPanel.svelte";
   import DiagnosticsProofPanel from "./lib/DiagnosticsProofPanel.svelte";
+  import ProviderReadinessOverviewPanel from "./lib/ProviderReadinessOverviewPanel.svelte";
   import ProjectSwitcherPanel from "./lib/ProjectSwitcherPanel.svelte";
   import RuntimeReadinessPanel from "./lib/RuntimeReadinessPanel.svelte";
   import TaskDetailPanel from "./lib/TaskDetailPanel.svelte";
@@ -51,6 +52,7 @@
       />
       <RuntimeReadinessPanel />
       <TaskWorkProgressPanel />
+      <ProviderReadinessOverviewPanel />
       <CommandDiagnosticsPanel />
       <DiagnosticsProofPanel />
       <ControlDiagnosticsPanel />
