@@ -59,6 +59,31 @@ fn cli_config_parses_provider_readiness_overview_query_domain() {
 }
 
 #[test]
+fn cli_config_parses_provider_live_read_executor_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "provider-live-read-executor".to_owned(),
+    ])
+    .expect("parse provider live-read executor query");
+
+    assert_eq!(config.query, Some(QueryDomain::ProviderLiveReadExecutor));
+}
+
+#[test]
+fn cli_config_parses_provider_live_read_smoke_evidence_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "provider-live-read-smoke-evidence".to_owned(),
+    ])
+    .expect("parse provider live-read smoke evidence query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::ProviderLiveReadSmokeEvidence)
+    );
+}
+
+#[test]
 fn cli_config_parses_command_runner_smoke() {
     let config = CliConfig::parse(vec!["command-runner".to_owned(), "smoke".to_owned()])
         .expect("parse command-runner smoke");

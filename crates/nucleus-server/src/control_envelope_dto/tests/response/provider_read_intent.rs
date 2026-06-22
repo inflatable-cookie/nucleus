@@ -56,6 +56,7 @@ fn read_intent_result() -> ForgeReadIntentQueryResult {
         credential_status_count: 0,
         repository_metadata_count: 0,
         pull_request_count: 1,
+        status_check_count: 0,
         ready_count: 1,
         duplicate_noop_count: 0,
         blocked_count: 0,
@@ -98,6 +99,7 @@ fn read_intent_result() -> ForgeReadIntentQueryResult {
         credential_status_records: 1,
         repository_metadata_records: 1,
         pull_request_records: 1,
+        status_check_records: 1,
     };
 
     ForgeReadIntentQueryResult {
@@ -113,6 +115,7 @@ fn read_intent_result() -> ForgeReadIntentQueryResult {
                 credential_status_count: 0,
                 repository_metadata_count: 0,
                 pull_request_count: 1,
+                status_check_count: 0,
                 ready_count: 1,
                 duplicate_noop_count: 0,
                 blocked_count: 0,

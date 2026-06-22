@@ -36,8 +36,8 @@ pressure, but no hard errors.
 
 Current report:
 
-- 139 total findings
-- 139 warnings
+- 147 total findings
+- 147 warnings
 - 0 errors
 
 There are no current doctor error files.
@@ -120,7 +120,7 @@ Recent health delta:
   indexes again.
 - `codex_supervision/recovery_execution_policy.rs` moved validation logic into
   a focused validation module.
-- The current doctor result is green for errors: 139 warnings, 0 errors.
+- The current doctor result is green for errors: 147 warnings, 0 errors.
 
 The detailed report is `.effigy/reports/doctor/scan-god-files.md`.
 
@@ -175,21 +175,18 @@ recovery policy refs, and sanitized provider-response evidence refs. It should
 not resolve real credentials or call forge networks.
 
 Provider Readiness Overview now has a pure projection, read-only query/control
-integration, serialized control-envelope DTOs, and `nucleusd`/Effigy
-inspection. The output reports status, family counts, blockers, evidence
-counts, and no-effect flags while omitting credential material and raw provider
-payloads. The fixture-backed Tauri IPC command adapter can consume the same
-serialized overview DTO without visible UI or provider effects. The next
-implementation lane is a read-only desktop proof surface that renders the DTO
-without granting provider refresh, credential resolution, provider effects,
-task mutation, or raw payload display. That proof surface is now implemented
-and validated. Local stopped seed evidence now proves represented
-credential-status, repository-metadata, and pull-request read families in the
-desktop overview without provider effects. The next gap is a read-only
-drilldown from the overview into the existing read-intent projection. That
-drilldown is now implemented in the desktop proof shell: it loads overview and
-projection data together, renders source counts and read-intent entries, and
-continues to expose no provider controls.
+integration, serialized control-envelope DTOs, `nucleusd`/Effigy inspection,
+Tauri IPC consumption, desktop proof rendering, local stopped seed evidence,
+and read-intent drilldown. The output reports status, family counts, blockers,
+evidence counts, source counts, read-intent entries, and no-effect flags while
+omitting credential material and raw provider payloads. Represented read
+families are credential status, repository metadata, PR/MR, and status/check.
+The fixture-backed provider live-read admission gate is complete through
+admission, preflight, sanitized request/receipt planning, local-store
+persistence, diagnostics, and control DTOs. The next implementation lane should
+define the live-read execution contract and adapter boundary through
+fixture-only clients, stopped executor handoffs, and sanitized response/error
+diagnostics before any real provider network call.
 
 Stopped provider-auth and forge network-execution admission records now exist
 in `provider_forge_network_execution_admission`. The module admits stopped
@@ -454,11 +451,85 @@ Provider read-intent status:
 - Provider Readiness product closeout selected stopped status/check refresh as
   the next provider read-family lane
 - Stopped status/check refresh type/control is implemented with ready, repair,
-  blocked, and sanitized control DTO tests. Persistence and projection
-  integration remain next.
+  blocked, and sanitized control DTO tests.
 - Stopped status/check refresh persistence is implemented with sanitized local
   store records, duplicate/no-op behavior, diagnostics, and read-only control
-  DTOs. Projection/query/DTO integration and seed proof remain next.
+  DTOs.
+- Persisted status/check refresh records now participate in the generic
+  provider read-intent projection/query/DTO surfaces and desktop seeded
+  Provider Readiness Overview proof without live provider refresh, credential
+  resolution, provider effects, task mutation, or raw provider payload
+  retention.
+- Provider-readiness coverage reassessment selected a fixture-backed
+  provider live-read admission gate as the next lane. Issue/comment/review
+  stopped refresh, credential repair, product UI hardening, and real live-read
+  execution remain deferred.
+- `provider_live_read_admission` now models fixture-backed provider live-read
+  admission records for read-only operation families. It records provider
+  context, target refs, credential-status evidence, network-authority refs,
+  payload policy refs, sanitization refs, blocker state, sanitized evidence
+  refs, and no-effect flags without resolving credential material, calling
+  provider networks, executing provider writes, mutating tasks, running
+  callbacks/interruption/recovery, or retaining raw provider payloads.
+- The same module now derives fixture preflight records from ready admissions
+  and sanitized request/receipt planning records from ready preflights.
+  Preflight and planning preserve endpoint, idempotency, request, planned
+  receipt, and evidence refs while representing repair, blocked, and duplicate
+  states without network I/O or raw provider material.
+- The module now persists sanitized live-read planning records in local-store
+  artifact metadata, reads them back deterministically, represents duplicate
+  no-ops, and exposes persistence diagnostics/control DTO counts. Persistence
+  records keep credential resolution, provider network calls, provider writes,
+  task mutation, callback/interruption/recovery execution, and raw provider
+  payload retention false.
+- Live-read execution boundary records now exist as stopped fixture surfaces.
+  They model provider capability records, credential-lease metadata refs,
+  network-read authority refs, fixture-client refs, stopped handoff records,
+  sanitized fixture response/error records, retry/rate-limit/cancellation refs,
+  and diagnostics without credential material resolution, provider I/O,
+  provider writes, task mutation, callback/interruption/recovery execution, or
+  raw payload retention.
+- Live-read smoke approval records now exist as stopped approval surfaces. They
+  model concrete read-only smoke targets, credential/network authority
+  checklists, payload/sanitization/retention refs, operator approval refs, and
+  stopped smoke requests. Missing approval keeps requests approval-required;
+  even approved requests are stopped pending an explicit future execution
+  command.
+- The first approved live-read smoke completed manually through `gh` against
+  `octocat/Hello-World` as a repository metadata refresh. Sanitized
+  evidence recorded repo name, visibility, default branch, viewer permission,
+  and update timestamps only. This proved local read access through the
+  operator's credential context; it did not prove a Nucleus-owned provider
+  executor.
+- Post-smoke closeout selected a server-owned read-only live-read executor as
+  the next implementation lane. It should wrap field-limited `gh repo view`
+  behind Nucleus-owned request records, command descriptors, sanitized evidence
+  records, runtime receipts, and diagnostics.
+- The server-owned live-read executor is implemented for repository metadata
+  refresh as pure records and parsers: approved smoke-derived executor
+  requests, a fixed field-limited `gh repo view` command descriptor, sanitized
+  repository metadata output, read-performed receipts, and diagnostics.
+  Credential material, raw provider payloads, provider writes, task mutation,
+  callback/interruption/recovery execution, and automatic UI-triggered
+  provider execution remain absent.
+- The provider live-read executor control surface is implemented as read-only
+  query vocabulary, serialized diagnostics DTOs, request-handler routing,
+  `nucleusd` rendering, and an Effigy selector. The query does not run `gh` or
+  perform provider network reads.
+- The provider live-read command-runner handoff is implemented as pure records:
+  ready descriptor-to-command handoff, sanitized command result mapping into
+  repository metadata output and receipts, and diagnostics for ready, blocked,
+  parse-error, mapped, and read-performed states. It still does not run `gh`
+  automatically or retain raw stdout/stderr.
+- The approved command-runner smoke completed once against `octocat/Hello-World`
+  with the fixed `gh repo view` field set. Observed evidence was limited to
+  selected repository metadata fields. Provider writes, task mutation,
+  callbacks, interruption/recovery execution, credential material storage, raw
+  stdout/stderr retention, headers, and raw response bodies remained blocked.
+- Approved smoke evidence promotion and read-only inspection are now
+  represented. The server can report promoted evidence diagnostics through
+  control DTOs, `nucleusd query provider-live-read-smoke-evidence`, and Effigy
+  without re-running `gh` or adding provider write/effect authority.
 
 ## Recommended Remediation Order
 
@@ -471,9 +542,11 @@ Provider read-intent status:
 7. Rebaseline harness runtime before adding provider behavior.
 8. Implement Codex live event acceptance through orchestration-owned event,
    receipt, session, and work-item refs.
-9. Implement stopped status/check refresh before provider refresh, credential
-   resolution, or effects.
-10. Implement later features only through the new core model.
+9. Review the provider live-read evidence boundary before choosing persistence,
+   second-family read fan-out, or a broader stocktake.
+10. Defer issue/comment/review fan-out, credential repair, and UI hardening
+   until the executor proves repeatable sanitized reads.
+11. Implement later features only through the new core model.
 
 ## Code Audit Questions
 

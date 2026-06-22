@@ -37,18 +37,20 @@ fn desktop_state_routes_provider_readiness_overview_query_to_typed_dto() {
             if overview.overview_id == "forge-readiness-overview"
                 && overview.projection_id == "forge-read-intent-projection"
                 && overview.status == "ready"
-                && overview.total_read_intent_count == 3
-                && overview.ready_count == 3
+                && overview.total_read_intent_count == 4
+                && overview.ready_count == 4
                 && overview.missing_evidence_family_count == 0
                 && overview.supported_read_families == vec![
                     "credential_status".to_owned(),
                     "repository_metadata".to_owned(),
                     "pull_request".to_owned(),
+                    "status_check".to_owned(),
                 ]
                 && overview.represented_read_families == vec![
                     "credential_status".to_owned(),
                     "repository_metadata".to_owned(),
                     "pull_request".to_owned(),
+                    "status_check".to_owned(),
                 ]
                 && !overview.credential_resolution_performed
                 && !overview.provider_network_call_performed
@@ -89,14 +91,16 @@ fn desktop_state_routes_provider_readiness_drilldown_query_to_typed_dto() {
         response.body,
         nucleus_server::ControlResponseBodyDto::ProviderReadIntent { result }
             if result.projection.projection_id == "forge-read-intent-projection"
-                && result.projection.total_count == 3
+                && result.projection.total_count == 4
                 && result.projection.credential_status_count == 1
                 && result.projection.repository_metadata_count == 1
                 && result.projection.pull_request_count == 1
-                && result.projection.ready_count == 3
+                && result.projection.status_check_count == 1
+                && result.projection.ready_count == 4
                 && result.source_counts.credential_status_records == 1
                 && result.source_counts.repository_metadata_records == 1
                 && result.source_counts.pull_request_records == 1
+                && result.source_counts.status_check_records == 1
                 && !result.provider_network_call_performed
                 && !result.provider_effect_executed
                 && !result.raw_provider_payload_retained

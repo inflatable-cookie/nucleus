@@ -9,8 +9,9 @@ use nucleus_core::RevisionId;
 use nucleus_local_store::{RevisionExpectation, SqliteBackend};
 use nucleus_server::{
     forge_credential_status_refresh, forge_pull_request_refresh, forge_repository_metadata_refresh,
-    persist_forge_credential_status_refreshes, persist_forge_pull_request_refreshes,
-    persist_forge_repository_metadata_refreshes, seed_local_project, seed_local_task,
+    forge_status_check_refresh, persist_forge_credential_status_refreshes,
+    persist_forge_pull_request_refreshes, persist_forge_repository_metadata_refreshes,
+    persist_forge_status_check_refreshes, seed_local_project, seed_local_task,
     write_command_evidence, ControlApiCodecError, ControlRequestEnvelopeDto,
     ControlResponseEnvelopeDto, ForgeCredentialStatusRefreshInput,
     ForgeCredentialStatusRefreshPersistenceInput, ForgeNetworkCredentialKind,
@@ -19,7 +20,9 @@ use nucleus_server::{
     ForgePullRequestProvider, ForgePullRequestRefreshInput,
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
-    LocalControlRequestHandler, LocalProjectSeed, LocalTaskSeed, TauriIpcControlCommandAdapter,
+    ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
+    ForgeStatusCheckRefreshScope, LocalControlRequestHandler, LocalProjectSeed, LocalTaskSeed,
+    TauriIpcControlCommandAdapter,
 };
 
 struct DesktopState {
@@ -195,6 +198,50 @@ fn seed_local_provider_readiness_evidence(
         ForgePullRequestRefreshPersistenceInput {
             refresh_set: pull_request_refresh_set,
             evidence_refs: vec!["evidence:nucleus-local:pull-request-refresh".to_owned()],
+            existing_persisted_refresh_ids: Vec::new(),
+            credential_material_present: false,
+            provider_payload_present: false,
+            raw_provider_payload_retention_requested: false,
+            real_credential_resolution_requested: false,
+            provider_network_call_requested: false,
+            callback_execution_requested: false,
+            interruption_execution_requested: false,
+            recovery_execution_requested: false,
+            task_mutation_requested: false,
+        },
+    )?;
+
+    let status_check_refresh_set = forge_status_check_refresh(ForgeStatusCheckRefreshInput {
+        provider_context_refs: vec!["provider-context:nucleus-local:github".to_owned()],
+        provider_instance_ref: Some("provider-instance:nucleus-local:github".to_owned()),
+        forge_provider: Some(ForgePullRequestProvider::GitHub),
+        remote_repo_ref: Some("remote-repo:nucleus-local:github".to_owned()),
+        refresh_scope: Some(ForgeStatusCheckRefreshScope::ChangeRequestRef(
+            "change-request:nucleus-local:github:bootstrap".to_owned(),
+        )),
+        credential_status_evidence_ref: Some("evidence:nucleus-local:credential-status".to_owned()),
+        repository_metadata_evidence_ref: Some(
+            "evidence:nucleus-local:repository-metadata".to_owned(),
+        ),
+        status_check_refresh_evidence_ref: Some(
+            "evidence:nucleus-local:status-check-refresh".to_owned(),
+        ),
+        sanitization_policy_ref: Some("sanitize:nucleus-local:provider-readiness".to_owned()),
+        credential_material_present: false,
+        provider_payload_present: false,
+        raw_provider_payload_retention_requested: false,
+        real_credential_resolution_requested: false,
+        provider_network_call_requested: false,
+        callback_execution_requested: false,
+        interruption_execution_requested: false,
+        recovery_execution_requested: false,
+        task_mutation_requested: false,
+    });
+    persist_forge_status_check_refreshes(
+        state,
+        ForgeStatusCheckRefreshPersistenceInput {
+            refresh_set: status_check_refresh_set,
+            evidence_refs: vec!["evidence:nucleus-local:status-check-refresh".to_owned()],
             existing_persisted_refresh_ids: Vec::new(),
             credential_material_present: false,
             provider_payload_present: false,

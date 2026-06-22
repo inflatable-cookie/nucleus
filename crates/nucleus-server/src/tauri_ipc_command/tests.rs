@@ -329,7 +329,7 @@ fn control_command_adapter_routes_provider_readiness_overview_without_provider_e
                 && overview.projection_id == "forge-read-intent-projection"
                 && overview.status == "unknown"
                 && overview.total_read_intent_count == 0
-                && overview.missing_evidence_family_count == 3
+                && overview.missing_evidence_family_count == 4
                 && !overview.credential_resolution_performed
                 && !overview.provider_network_call_performed
                 && !overview.provider_effect_executed

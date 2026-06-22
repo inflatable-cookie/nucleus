@@ -8,6 +8,8 @@ pub(crate) enum QueryDomain {
     CommandEvidence,
     ProviderReadIntent,
     ProviderReadinessOverview,
+    ProviderLiveReadExecutor,
+    ProviderLiveReadSmokeEvidence,
 }
 
 impl QueryDomain {
@@ -19,6 +21,8 @@ impl QueryDomain {
             "command-evidence" => Ok(Self::CommandEvidence),
             "provider-read-intent" => Ok(Self::ProviderReadIntent),
             "provider-readiness-overview" => Ok(Self::ProviderReadinessOverview),
+            "provider-live-read-executor" => Ok(Self::ProviderLiveReadExecutor),
+            "provider-live-read-smoke-evidence" => Ok(Self::ProviderLiveReadSmokeEvidence),
             _ => Err(format!("unsupported query domain: {value}")),
         }
     }
@@ -31,6 +35,8 @@ impl QueryDomain {
             Self::CommandEvidence => "command-evidence",
             Self::ProviderReadIntent => "provider-read-intent",
             Self::ProviderReadinessOverview => "provider-readiness-overview",
+            Self::ProviderLiveReadExecutor => "provider-live-read-executor",
+            Self::ProviderLiveReadSmokeEvidence => "provider-live-read-smoke-evidence",
         }
     }
 
@@ -40,7 +46,10 @@ impl QueryDomain {
             Self::Tasks => Some(ServerStateDomain::Tasks),
             Self::Workspaces => Some(ServerStateDomain::Workspaces),
             Self::CommandEvidence => Some(ServerStateDomain::CommandEvidence),
-            Self::ProviderReadIntent | Self::ProviderReadinessOverview => None,
+            Self::ProviderReadIntent
+            | Self::ProviderReadinessOverview
+            | Self::ProviderLiveReadExecutor
+            | Self::ProviderLiveReadSmokeEvidence => None,
         }
     }
 }

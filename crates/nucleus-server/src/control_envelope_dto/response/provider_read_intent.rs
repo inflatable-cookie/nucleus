@@ -50,6 +50,7 @@ pub struct ControlProviderReadIntentProjectionDto {
     pub credential_status_count: usize,
     pub repository_metadata_count: usize,
     pub pull_request_count: usize,
+    pub status_check_count: usize,
     pub ready_count: usize,
     pub duplicate_noop_count: usize,
     pub blocked_count: usize,
@@ -75,6 +76,7 @@ impl From<&ForgeReadIntentProjectionSet> for ControlProviderReadIntentProjection
             credential_status_count: projection.credential_status_count,
             repository_metadata_count: projection.repository_metadata_count,
             pull_request_count: projection.pull_request_count,
+            status_check_count: projection.status_check_count,
             ready_count: projection.ready_count,
             duplicate_noop_count: projection.duplicate_noop_count,
             blocked_count: projection.blocked_count,
@@ -158,6 +160,7 @@ pub struct ControlProviderReadIntentSourceCountsDto {
     pub credential_status_records: usize,
     pub repository_metadata_records: usize,
     pub pull_request_records: usize,
+    pub status_check_records: usize,
 }
 
 impl From<&ForgeReadIntentQuerySourceCounts> for ControlProviderReadIntentSourceCountsDto {
@@ -166,6 +169,7 @@ impl From<&ForgeReadIntentQuerySourceCounts> for ControlProviderReadIntentSource
             credential_status_records: counts.credential_status_records,
             repository_metadata_records: counts.repository_metadata_records,
             pull_request_records: counts.pull_request_records,
+            status_check_records: counts.status_check_records,
         }
     }
 }
@@ -175,6 +179,7 @@ fn projection_family(family: &ForgeReadIntentProjectionFamily) -> &'static str {
         ForgeReadIntentProjectionFamily::CredentialStatus => "credential_status",
         ForgeReadIntentProjectionFamily::RepositoryMetadata => "repository_metadata",
         ForgeReadIntentProjectionFamily::PullRequest => "pull_request",
+        ForgeReadIntentProjectionFamily::StatusCheck => "status_check",
     }
 }
 

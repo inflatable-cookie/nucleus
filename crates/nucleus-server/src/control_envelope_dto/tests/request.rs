@@ -1,6 +1,7 @@
 use crate::control_api::{
-    DiagnosticsQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
-    ServerControlRequest, ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
+    DiagnosticsQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
+    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ServerControlRequest,
+    ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
     StateRecordQueryScope,
 };
 use crate::control_envelope_dto::*;
@@ -15,6 +16,8 @@ use nucleus_tasks::{
 
 mod commands;
 mod diagnostics;
+mod provider_live_read_executor;
+mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
 mod provider_readiness_overview;
 mod runtime;

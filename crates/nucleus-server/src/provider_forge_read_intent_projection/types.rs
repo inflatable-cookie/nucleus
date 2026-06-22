@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ForgeCredentialStatusRefreshPersistenceRecord, ForgeNetworkExecutionOperationFamily,
     ForgePullRequestProvider, ForgePullRequestRefreshPersistenceRecord,
-    ForgeRepositoryMetadataRefreshPersistenceRecord,
+    ForgeRepositoryMetadataRefreshPersistenceRecord, ForgeStatusCheckRefreshPersistenceRecord,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -11,6 +11,7 @@ pub struct ForgeReadIntentProjectionInput {
     pub credential_status_records: Vec<ForgeCredentialStatusRefreshPersistenceRecord>,
     pub repository_metadata_records: Vec<ForgeRepositoryMetadataRefreshPersistenceRecord>,
     pub pull_request_records: Vec<ForgePullRequestRefreshPersistenceRecord>,
+    pub status_check_records: Vec<ForgeStatusCheckRefreshPersistenceRecord>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -20,6 +21,7 @@ pub struct ForgeReadIntentProjectionSet {
     pub credential_status_count: usize,
     pub repository_metadata_count: usize,
     pub pull_request_count: usize,
+    pub status_check_count: usize,
     pub ready_count: usize,
     pub duplicate_noop_count: usize,
     pub blocked_count: usize,
@@ -70,6 +72,7 @@ pub struct ForgeReadIntentProjectionControlDto {
     pub credential_status_count: usize,
     pub repository_metadata_count: usize,
     pub pull_request_count: usize,
+    pub status_check_count: usize,
     pub ready_count: usize,
     pub duplicate_noop_count: usize,
     pub blocked_count: usize,
@@ -92,6 +95,7 @@ pub enum ForgeReadIntentProjectionFamily {
     CredentialStatus,
     RepositoryMetadata,
     PullRequest,
+    StatusCheck,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

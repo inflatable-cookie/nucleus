@@ -343,6 +343,61 @@ Adding serialized read-intent DTOs does not grant credential resolution,
 provider network calls, provider effects, callbacks, interruption, recovery,
 task mutation, raw-material retention, or additional read-family fan-out.
 
+## Provider Live Read Execution Delta
+
+Live provider reads require a separate stopped execution boundary after
+fixture-backed admission and persistence.
+
+Allowed before live access:
+
+- credential lease metadata refs
+- network-read authority refs
+- fixture client refs
+- provider read capability records
+- stopped executor handoff records
+- sanitized fixture response records
+- sanitized fixture error records
+- rate-limit, retry, cancellation, and response evidence refs
+- diagnostics and read-only control DTOs
+
+Credential lease metadata may name the lease ref, provider family, scope, and
+expiry class where safe. It must not contain credential material.
+
+Provider read capability records should expose differences instead of hiding
+them. They may state supported operation families, conditional request support,
+rate-limit metadata support, cancellation support, provider-specific limit
+refs, and whether a credential lease is required.
+
+Stopped live-read handoffs must be built from persisted live-read planning
+records. They must carry sanitized request refs, capability refs,
+credential-lease refs, network-read authority refs, fixture-client refs,
+sanitization refs, and evidence refs.
+
+Fixture responses may record:
+
+- sanitized response summary refs
+- sanitized response evidence refs
+- provider status class refs
+- provider error class refs
+- retry hint refs
+- rate-limit refs
+- cancellation refs
+
+Blocked until a later explicit approval gate:
+
+- real credential material resolution
+- real provider network calls
+- raw request or response body retention
+- raw headers or authorization material
+- provider writes
+- task mutation
+- callback, interruption, or recovery execution
+
+Adding the stopped live-read execution boundary does not authorize a smoke
+against GitHub, GitLab, Cursor, or any other provider. A live smoke needs a
+separate operator-approved lane naming provider, repo, credential lease,
+network authority, payload policy, retention policy, and expected evidence.
+
 ## Provider Readiness Overview
 
 The first product consumption surface for provider read-intent should be a
@@ -504,6 +559,31 @@ Blocked:
 
 Real provider network writes require a later explicit lane after stopped
 admission, preflight, receipts, idempotency, and recovery surfaces are proven.
+
+## Live Read Executor Rule
+
+The first live provider read is narrower than provider execution generally.
+
+Allowed for repository metadata refresh:
+
+- approved smoke-derived executor request records
+- fixed read-only command descriptors such as field-limited `gh repo view`
+- sanitized selected-field output records
+- runtime receipts that state whether a provider network read occurred
+- diagnostics and read-only control DTOs
+
+Still blocked:
+
+- credential material persistence
+- raw provider stdout, stderr, headers, or response-body retention
+- provider writes
+- task mutation
+- callback/webhook execution
+- interruption/recovery execution
+- automatic UI-triggered provider execution
+
+The control surface may inspect executor diagnostics. It must not become an
+implicit grant to perform broader provider reads or writes.
 
 ## Test Obligations
 

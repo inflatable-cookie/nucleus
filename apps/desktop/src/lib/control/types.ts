@@ -128,6 +128,7 @@ export type ControlProviderReadIntentProjectionDto = {
   credential_status_count: number;
   repository_metadata_count: number;
   pull_request_count: number;
+  status_check_count: number;
   ready_count: number;
   duplicate_noop_count: number;
   blocked_count: number;
@@ -149,6 +150,7 @@ export type ControlProviderReadIntentSourceCountsDto = {
   credential_status_records: number;
   repository_metadata_records: number;
   pull_request_records: number;
+  status_check_records: number;
 };
 
 export type ControlProviderReadIntentQueryResultDto = {

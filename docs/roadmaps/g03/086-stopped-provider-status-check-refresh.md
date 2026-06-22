@@ -1,6 +1,6 @@
 # 086 Stopped Provider Status Check Refresh
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-22
 
@@ -24,8 +24,8 @@ provider write, or live refresh behavior exists.
 
 - [x] Model status/check refresh as a stopped provider read-intent family.
 - [x] Persist sanitized status/check refresh records.
-- [ ] Fold status/check evidence into the generic read-intent projection.
-- [ ] Keep the readiness overview and drilldown read-only and effect-free.
+- [x] Fold status/check evidence into the generic read-intent projection.
+- [x] Keep the readiness overview and drilldown read-only and effect-free.
 - [x] Avoid credential resolution, provider network calls, provider writes,
   callbacks, interruption/recovery execution, task mutation, raw provider
   payload retention, and durable UI design commitments.
@@ -35,20 +35,17 @@ provider write, or live refresh behavior exists.
 - [x] Add stopped status/check refresh type surface and blockers.
 - [x] Add persistence and read-only diagnostics/control for status/check
   refresh records.
-- [ ] Extend provider read-intent projection/query/DTOs to include
+- [x] Extend provider read-intent projection/query/DTOs to include
   status/check refresh.
-- [ ] Update local desktop seed evidence only after server projection support
+- [x] Update local desktop seed evidence only after server projection support
   exists.
-- [ ] Validate and close out the stopped status/check lane.
+- [x] Validate and close out the stopped status/check lane.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/333-provider-read-intent-status-check-projection.md`
-- `batch-cards/334-provider-read-intent-status-check-query-dto.md`
-- `batch-cards/335-provider-readiness-status-check-seed-proof.md`
-- `batch-cards/336-provider-status-check-refresh-lane-closeout.md`
+None.
 
 Planned cards:
 
@@ -61,6 +58,10 @@ Completed cards:
 - `batch-cards/330-provider-status-check-refresh-persistence-diagnostics-control.md`
 - `batch-cards/331-provider-status-check-refresh-persistence-blocker-tests.md`
 - `batch-cards/332-provider-status-check-refresh-persistence-validation-closeout.md`
+- `batch-cards/333-provider-read-intent-status-check-projection.md`
+- `batch-cards/334-provider-read-intent-status-check-query-dto.md`
+- `batch-cards/335-provider-readiness-status-check-seed-proof.md`
+- `batch-cards/336-provider-status-check-refresh-lane-closeout.md`
 - `batch-cards/323-provider-status-check-refresh-type-surface.md`
 - `batch-cards/324-provider-status-check-refresh-record-builder.md`
 - `batch-cards/325-provider-status-check-refresh-control-dto.md`
@@ -76,8 +77,8 @@ Completed cards:
 - [x] Type/control DTO work only exposes sanitized refs and counts.
 - [x] Tests prove the new family without requiring live provider access.
 - [x] Persistence and persistence diagnostics/control are complete.
-- [ ] Projection, DTO integration, and desktop seed proof remain.
-- [ ] Doctor remains error-free.
+- [x] Projection, DTO integration, and desktop seed proof are complete.
+- [x] Targeted validation passes; doctor remains warning-only/error-free.
 
 ## Current Slice
 
@@ -91,8 +92,9 @@ Completed:
 
 Next:
 
-- fold persisted status/check refresh records into the provider read-intent
-  projection, query/DTO surfaces, and desktop seed proof.
+- follow `g03/088` provider live-read admission gate before any real provider
+  network call, credential resolution, provider effect, status/check write, or
+  raw payload retention.
 
 ## Stop Conditions
 

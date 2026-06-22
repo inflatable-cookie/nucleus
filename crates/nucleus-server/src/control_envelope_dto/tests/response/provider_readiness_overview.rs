@@ -27,6 +27,7 @@ fn response_envelope_dto_serializes_provider_readiness_overview_without_effect_a
                     "credential_status".to_owned(),
                     "repository_metadata".to_owned(),
                     "pull_request".to_owned(),
+                    "status_check".to_owned(),
                 ]
                 && overview.represented_mutating_families == vec![
                     "pull_request_create".to_owned()
@@ -68,11 +69,13 @@ fn readiness_overview() -> ForgeReadinessOverview {
             ForgeReadIntentProjectionFamily::CredentialStatus,
             ForgeReadIntentProjectionFamily::RepositoryMetadata,
             ForgeReadIntentProjectionFamily::PullRequest,
+            ForgeReadIntentProjectionFamily::StatusCheck,
         ],
         represented_read_families: vec![
             ForgeReadIntentProjectionFamily::CredentialStatus,
             ForgeReadIntentProjectionFamily::RepositoryMetadata,
             ForgeReadIntentProjectionFamily::PullRequest,
+            ForgeReadIntentProjectionFamily::StatusCheck,
         ],
         represented_mutating_families: vec![
             ForgeNetworkExecutionOperationFamily::PullRequestCreate,

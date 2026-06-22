@@ -11,7 +11,8 @@ pub use types::{
 use crate::{
     forge_read_intent_projection, forge_read_intent_projection_control_dto,
     read_forge_credential_status_refreshes, read_forge_pull_request_refreshes,
-    read_forge_repository_metadata_refreshes, ForgeReadIntentProjectionInput, ServerStateService,
+    read_forge_repository_metadata_refreshes, read_forge_status_check_refreshes,
+    ForgeReadIntentProjectionInput, ServerStateService,
 };
 
 pub fn query_forge_read_intent_projection<B>(
@@ -23,15 +24,18 @@ where
     let credential_status_records = read_forge_credential_status_refreshes(state)?;
     let repository_metadata_records = read_forge_repository_metadata_refreshes(state)?;
     let pull_request_records = read_forge_pull_request_refreshes(state)?;
+    let status_check_records = read_forge_status_check_refreshes(state)?;
     let source_counts = ForgeReadIntentQuerySourceCounts {
         credential_status_records: credential_status_records.len(),
         repository_metadata_records: repository_metadata_records.len(),
         pull_request_records: pull_request_records.len(),
+        status_check_records: status_check_records.len(),
     };
     let projection = forge_read_intent_projection(ForgeReadIntentProjectionInput {
         credential_status_records,
         repository_metadata_records,
         pull_request_records,
+        status_check_records,
     });
     let control = forge_read_intent_projection_control_dto(&projection);
 

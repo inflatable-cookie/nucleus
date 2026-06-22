@@ -8,6 +8,8 @@ use crate::{
     ForgePullRequestRefreshScope, ForgePullRequestRefreshStatus,
     ForgeRepositoryMetadataRefreshPersistenceRecord,
     ForgeRepositoryMetadataRefreshPersistenceStatus, ForgeRepositoryMetadataRefreshStatus,
+    ForgeStatusCheckRefreshPersistenceRecord, ForgeStatusCheckRefreshPersistenceStatus,
+    ForgeStatusCheckRefreshScope, ForgeStatusCheckRefreshStatus,
 };
 
 pub fn credential(
@@ -106,6 +108,47 @@ pub fn pull_request(
         persistence_blockers: Vec::new(),
         duplicate_refresh_detected,
         evidence_refs: vec!["evidence:pull-request-refresh".to_owned()],
+        stopped_refresh_recorded: true,
+        credential_resolution_performed: false,
+        provider_network_call_performed: false,
+        provider_effect_executed: false,
+        callback_effect_executed: false,
+        interruption_effect_executed: false,
+        recovery_effect_executed: false,
+        task_mutation_executed: false,
+        raw_provider_payload_retained: false,
+    }
+}
+
+pub fn status_check(
+    id: &str,
+    persistence_status: ForgeStatusCheckRefreshPersistenceStatus,
+) -> ForgeStatusCheckRefreshPersistenceRecord {
+    let duplicate_refresh_detected = matches!(
+        persistence_status,
+        ForgeStatusCheckRefreshPersistenceStatus::DuplicateNoop
+    );
+    ForgeStatusCheckRefreshPersistenceRecord {
+        persisted_refresh_id: format!("persisted:status-check:{id}"),
+        refresh_id: format!("refresh:status-check:{id}"),
+        provider_context_ref: format!("provider-context:{id}"),
+        provider_instance_ref: Some("provider-instance:github:main".to_owned()),
+        forge_provider: Some(ForgePullRequestProvider::GitHub),
+        remote_repo_ref: Some("remote-repo:owner/name".to_owned()),
+        refresh_scope: Some(ForgeStatusCheckRefreshScope::ChangeRequestRef(
+            "change-request:1".to_owned(),
+        )),
+        operation_family: ForgeNetworkExecutionOperationFamily::StatusCheckRefresh,
+        credential_status_evidence_ref: Some("evidence:credential-status".to_owned()),
+        repository_metadata_evidence_ref: Some("evidence:repo-metadata".to_owned()),
+        status_check_refresh_evidence_ref: Some("evidence:status-check-refresh".to_owned()),
+        sanitization_policy_ref: Some("sanitize:status-check-refresh".to_owned()),
+        refresh_status: ForgeStatusCheckRefreshStatus::ReadyForStoppedRefresh,
+        refresh_blockers: Vec::new(),
+        persistence_status,
+        persistence_blockers: Vec::new(),
+        duplicate_refresh_detected,
+        evidence_refs: vec!["evidence:status-check-refresh".to_owned()],
         stopped_refresh_recorded: true,
         credential_resolution_performed: false,
         provider_network_call_performed: false,

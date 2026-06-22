@@ -1,5 +1,6 @@
 use nucleus_server::{
-    ControlCommandEvidenceRecordDto, ControlProviderReadIntentEntryDto,
+    ControlCommandEvidenceRecordDto, ControlProviderLiveReadExecutorDiagnosticsDto,
+    ControlProviderLiveReadSmokeEvidenceDiagnosticsDto, ControlProviderReadIntentEntryDto,
     ControlProviderReadIntentQueryResultDto, ControlProviderReadinessOverviewDto,
     ControlResponseBodyDto, ControlResponseEnvelopeDto,
 };
@@ -25,6 +26,20 @@ pub(super) fn print_typed_dto_response(
             print_lines(provider_readiness_overview_response_lines(label, overview));
             Ok(())
         }
+        ControlResponseBodyDto::ProviderLiveReadExecutorDiagnostics { diagnostics } => {
+            print_lines(provider_live_read_executor_response_lines(
+                label,
+                diagnostics,
+            ));
+            Ok(())
+        }
+        ControlResponseBodyDto::ProviderLiveReadSmokeEvidenceDiagnostics { diagnostics } => {
+            print_lines(provider_live_read_smoke_evidence_response_lines(
+                label,
+                diagnostics,
+            ));
+            Ok(())
+        }
         ControlResponseBodyDto::Error { kind, reason } => {
             Err(format!("{label} query failed: {kind}: {reason}"))
         }
@@ -32,6 +47,90 @@ pub(super) fn print_typed_dto_response(
             "{label} query returned unexpected DTO response: {body:?}"
         )),
     }
+}
+
+pub(super) fn provider_live_read_smoke_evidence_response_lines(
+    label: &str,
+    diagnostics: ControlProviderLiveReadSmokeEvidenceDiagnosticsDto,
+) -> Vec<String> {
+    vec![
+        format!("domain={label}"),
+        format!("diagnostics_id={}", diagnostics.diagnostics_id),
+        format!("records={}", diagnostics.evidence_count),
+        format!(
+            "counts promoted={} repair_required={} blocked={} duplicate={} provider_network_reads={} blockers={}",
+            diagnostics.promoted_count,
+            diagnostics.repair_required_count,
+            diagnostics.blocked_count,
+            diagnostics.duplicate_count,
+            diagnostics.provider_network_read_performed_count,
+            diagnostics.blocker_count
+        ),
+        format!(
+            "provider_write_executed={}",
+            diagnostics.provider_write_executed
+        ),
+        format!(
+            "callback_effect_executed={}",
+            diagnostics.callback_effect_executed
+        ),
+        format!(
+            "interruption_effect_executed={}",
+            diagnostics.interruption_effect_executed
+        ),
+        format!(
+            "recovery_effect_executed={}",
+            diagnostics.recovery_effect_executed
+        ),
+        format!("task_mutation_executed={}", diagnostics.task_mutation_executed),
+        format!(
+            "raw_provider_payload_retained={}",
+            diagnostics.raw_provider_payload_retained
+        ),
+    ]
+}
+
+pub(super) fn provider_live_read_executor_response_lines(
+    label: &str,
+    diagnostics: ControlProviderLiveReadExecutorDiagnosticsDto,
+) -> Vec<String> {
+    vec![
+        format!("domain={label}"),
+        format!("diagnostics_id={}", diagnostics.diagnostics_id),
+        format!("records={}", diagnostics.request_count),
+        format!(
+            "counts ready={} blocked={} descriptors_ready={} sanitized_outputs={} parse_errors={} receipts={} provider_network_reads={} blockers={}",
+            diagnostics.ready_request_count,
+            diagnostics.blocked_request_count,
+            diagnostics.descriptor_ready_count,
+            diagnostics.sanitized_output_count,
+            diagnostics.parse_error_count,
+            diagnostics.receipt_count,
+            diagnostics.provider_network_read_performed_count,
+            diagnostics.blocker_count
+        ),
+        format!(
+            "provider_write_executed={}",
+            diagnostics.provider_write_executed
+        ),
+        format!(
+            "callback_effect_executed={}",
+            diagnostics.callback_effect_executed
+        ),
+        format!(
+            "interruption_effect_executed={}",
+            diagnostics.interruption_effect_executed
+        ),
+        format!(
+            "recovery_effect_executed={}",
+            diagnostics.recovery_effect_executed
+        ),
+        format!("task_mutation_executed={}", diagnostics.task_mutation_executed),
+        format!(
+            "raw_provider_payload_retained={}",
+            diagnostics.raw_provider_payload_retained
+        ),
+    ]
 }
 
 fn print_lines(lines: Vec<String>) {

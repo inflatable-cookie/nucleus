@@ -214,7 +214,19 @@ shape.
 - `g03/083-provider-readiness-overview-seeded-evidence-proof.md` - completed
 - `g03/084-provider-readiness-overview-drilldown-read-model.md` - completed
 - `g03/085-provider-readiness-product-closeout-and-next-lane-selection.md` - completed
-- `g03/086-stopped-provider-status-check-refresh.md` - active
+- `g03/086-stopped-provider-status-check-refresh.md` - completed
+- `g03/087-provider-readiness-coverage-and-next-provider-gate.md` - completed
+- `g03/088-provider-live-read-admission-gate.md` - completed
+- `g03/089-provider-live-read-execution-contract-and-adapter-boundary.md` - completed
+- `g03/090-provider-live-read-smoke-approval-gate.md` - completed
+- `g03/091-provider-live-read-smoke-operator-approval-checkpoint.md` - completed
+- `g03/092-provider-live-read-smoke-closeout-and-executor-selection.md` - completed
+- `g03/093-provider-live-read-server-owned-executor.md` - completed
+- `g03/094-provider-live-read-executor-control-surface.md` - completed
+- `g03/095-provider-live-read-executor-command-runner-handoff.md` - completed
+- `g03/096-provider-live-read-command-runner-smoke-approval.md` - completed
+- `g03/097-provider-live-read-approved-smoke-evidence-promotion.md` - completed
+- `g03/098-provider-live-read-approved-smoke-evidence-control-surface.md` - completed
 
 ## Previous Generation
 
@@ -273,7 +285,10 @@ shape.
 
 ## Next Task
 
-Implement `g03/086` provider read-intent status/check projection and seed proof
-from ready cards 333-336 before adding live provider refresh, credential
-resolution, provider effects, status/check writes, raw payload retention, or
-broad UI redesign.
+Review the provider live-read evidence boundary after `g03/098` and choose the
+next `g03` lane: either persist promoted smoke evidence, add a second
+read-only provider family, or pause provider work for a broader stocktake. Do
+not add automatic provider execution, provider writes, task mutation,
+callbacks, interruption/recovery execution, raw payload retention, credential
+material storage, or UI-triggered provider reads without an explicit roadmap
+and approval gate.

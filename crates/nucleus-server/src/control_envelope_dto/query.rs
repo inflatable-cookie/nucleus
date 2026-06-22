@@ -3,8 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::control_api::{
-    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ServerQuery, ServerQueryKind,
-    StateRecordQuery, StateRecordQueryScope,
+    ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery,
+    ProviderReadinessOverviewQuery, ServerQuery, ServerQueryKind, StateRecordQuery,
+    StateRecordQueryScope,
 };
 use crate::ids::ServerQueryId;
 use crate::state::ServerStateDomain;
@@ -41,6 +42,14 @@ pub enum ControlQueryDto {
         query_id: String,
         action: String,
     },
+    ProviderLiveReadExecutor {
+        query_id: String,
+        action: String,
+    },
+    ProviderLiveReadSmokeEvidence {
+        query_id: String,
+        action: String,
+    },
 }
 
 impl TryFrom<&ServerQuery> for ControlQueryDto {
@@ -70,6 +79,18 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
             ) => Ok(Self::ProviderReadinessOverview {
                 query_id: query.id.0.clone(),
                 action: "overview".to_owned(),
+            }),
+            ServerQueryKind::ProviderLiveReadExecutor(
+                ProviderLiveReadExecutorQuery::Diagnostics,
+            ) => Ok(Self::ProviderLiveReadExecutor {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+            }),
+            ServerQueryKind::ProviderLiveReadSmokeEvidence(
+                ProviderLiveReadSmokeEvidenceQuery::Diagnostics,
+            ) => Ok(Self::ProviderLiveReadSmokeEvidence {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
             }),
             _ => Err(ControlApiCodecError::unsupported(
                 "query shape is not supported by the first control envelope",
@@ -116,6 +137,12 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             ControlQueryDto::ProviderReadinessOverview { action, .. } => {
                 provider_readiness_overview_query_from_action(&action)
             }
+            ControlQueryDto::ProviderLiveReadExecutor { action, .. } => {
+                provider_live_read_executor_query_from_action(&action)
+            }
+            ControlQueryDto::ProviderLiveReadSmokeEvidence { action, .. } => {
+                provider_live_read_smoke_evidence_query_from_action(&action)
+            }
         }
     }
 }
@@ -127,7 +154,9 @@ impl ControlQueryDto {
             | Self::RuntimeMetadata { query_id, .. }
             | Self::Diagnostics { query_id, .. }
             | Self::ProviderReadIntent { query_id, .. }
-            | Self::ProviderReadinessOverview { query_id, .. } => query_id.clone(),
+            | Self::ProviderReadinessOverview { query_id, .. }
+            | Self::ProviderLiveReadExecutor { query_id, .. }
+            | Self::ProviderLiveReadSmokeEvidence { query_id, .. } => query_id.clone(),
         }
     }
 }
@@ -154,6 +183,32 @@ fn provider_readiness_overview_query_from_action(
         )),
         _ => Err(ControlApiCodecError::unsupported(format!(
             "unsupported provider readiness overview query action: {action}"
+        ))),
+    }
+}
+
+fn provider_live_read_executor_query_from_action(
+    action: &str,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "diagnostics" => Ok(ServerQueryKind::ProviderLiveReadExecutor(
+            ProviderLiveReadExecutorQuery::Diagnostics,
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported provider live-read executor query action: {action}"
+        ))),
+    }
+}
+
+fn provider_live_read_smoke_evidence_query_from_action(
+    action: &str,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "diagnostics" => Ok(ServerQueryKind::ProviderLiveReadSmokeEvidence(
+            ProviderLiveReadSmokeEvidenceQuery::Diagnostics,
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported provider live-read smoke evidence query action: {action}"
         ))),
     }
 }

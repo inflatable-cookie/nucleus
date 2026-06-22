@@ -109,6 +109,7 @@ fn read_family(family: &ForgeReadIntentProjectionFamily) -> &'static str {
         ForgeReadIntentProjectionFamily::CredentialStatus => "credential_status",
         ForgeReadIntentProjectionFamily::RepositoryMetadata => "repository_metadata",
         ForgeReadIntentProjectionFamily::PullRequest => "pull_request",
+        ForgeReadIntentProjectionFamily::StatusCheck => "status_check",
     }
 }
 

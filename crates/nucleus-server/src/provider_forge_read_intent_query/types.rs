@@ -23,6 +23,7 @@ pub struct ForgeReadIntentQuerySourceCounts {
     pub credential_status_records: usize,
     pub repository_metadata_records: usize,
     pub pull_request_records: usize,
+    pub status_check_records: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

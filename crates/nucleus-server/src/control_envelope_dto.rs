@@ -23,11 +23,12 @@ pub use response::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
     ControlDiagnosticsSnapshotDto, ControlDiffSummaryRecordDto, ControlProjectAuthorityDomainDto,
     ControlProjectAuthorityIssueDto, ControlProjectAuthorityMapDto,
-    ControlProviderReadIntentEntryDto, ControlProviderReadIntentProjectionDto,
-    ControlProviderReadIntentQueryResultDto, ControlProviderReadIntentSourceCountsDto,
-    ControlProviderReadinessOverviewDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
-    ControlResponseStatusDto, ControlRuntimeReadinessBlockerDto,
-    ControlRuntimeReadinessDiagnosticDto,
+    ControlProviderLiveReadExecutorDiagnosticsDto,
+    ControlProviderLiveReadSmokeEvidenceDiagnosticsDto, ControlProviderReadIntentEntryDto,
+    ControlProviderReadIntentProjectionDto, ControlProviderReadIntentQueryResultDto,
+    ControlProviderReadIntentSourceCountsDto, ControlProviderReadinessOverviewDto,
+    ControlResponseBodyDto, ControlResponseEnvelopeDto, ControlResponseStatusDto,
+    ControlRuntimeReadinessBlockerDto, ControlRuntimeReadinessDiagnosticDto,
 };
 pub use tasks::ControlTaskRecordDto;
 

@@ -18,11 +18,8 @@ The repo uses:
 
 ## Current Lane
 
-`g03` effect-gated SCM and forge execution. Current pointer: implement
-`g03/086` provider read-intent status/check projection and seed proof from
-ready cards 333-336 before adding live provider refresh, credential
-resolution, provider effects, status/check writes, raw payload retention, or
-broad UI redesign.
+`g03` effect-gated SCM and forge execution. Current pointer: review the
+provider live-read evidence boundary after `g03/098` and choose the next lane.
 
 Current planning artifacts:
 
@@ -129,6 +126,16 @@ Current planning artifacts:
 - `roadmaps/g03/084-provider-readiness-overview-drilldown-read-model.md`
 - `roadmaps/g03/085-provider-readiness-product-closeout-and-next-lane-selection.md`
 - `roadmaps/g03/086-stopped-provider-status-check-refresh.md`
+- `roadmaps/g03/087-provider-readiness-coverage-and-next-provider-gate.md`
+- `roadmaps/g03/088-provider-live-read-admission-gate.md`
+- `roadmaps/g03/089-provider-live-read-execution-contract-and-adapter-boundary.md`
+- `roadmaps/g03/090-provider-live-read-smoke-approval-gate.md`
+- `roadmaps/g03/091-provider-live-read-smoke-operator-approval-checkpoint.md`
+- `roadmaps/g03/092-provider-live-read-smoke-closeout-and-executor-selection.md`
+- `roadmaps/g03/093-provider-live-read-server-owned-executor.md`
+- `roadmaps/g03/094-provider-live-read-executor-control-surface.md`
+- `roadmaps/g03/095-provider-live-read-executor-command-runner-handoff.md`
+- `roadmaps/g03/096-provider-live-read-command-runner-smoke-approval.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -164,19 +171,26 @@ from the root task surface. The Tauri IPC command adapter can also consume the
 same serialized query without creating visible UI or provider effects.
 Provider read-intent product consumption is now selected as a server-owned
 Provider Readiness Overview projection before any visible UI, live provider
-reads, or additional read-family fan-out.
-The pure overview projection is implemented; read-only query/control
-integration is complete; `nucleusd query provider-readiness-overview` and
-`effigy server:query:provider-readiness-overview` now expose the overview from
-the root task surface. The Tauri IPC command adapter can now consume the same
-overview through serialized DTOs. The next lane selects the product consumption
-path before visible UI. Product consumption is now selected as a read-only
-desktop proof surface. The proof surface may render the serialized DTO and
-read-only drilldowns only; provider refresh, credential resolution, provider
-effects, task mutation, and raw payload display remain blocked. The proof
-surface implementation is complete and validated. The next lane seeds local
-stopped provider evidence so the overview can prove represented readiness data
-without live provider reads.
+reads, or additional read-family fan-out. The pure overview projection,
+read-only query/control integration, `nucleusd`/Effigy inspection, Tauri IPC
+consumption, desktop proof surface, seeded evidence proof, drilldown read
+model, and status/check read-family integration are complete. Provider
+readiness now represents credential status, repository metadata, PR/MR, and
+status/check evidence without live provider reads. The fixture-backed provider
+live-read admission gate is complete through admission, preflight, sanitized
+request/receipt planning, persistence, diagnostics, and control DTOs. The
+live-read execution contract and adapter boundary is complete through contract
+deltas, fixture-only client boundaries, stopped executor handoffs, and fixture
+response diagnostics. The stopped live-read smoke approval gate is complete
+through smoke target, credential/network authority checklist, and stopped smoke
+request records. The first approved live-read smoke completed manually through
+`gh` against `octocat/Hello-World` as a repository metadata refresh. The
+server-owned read-only executor, command-runner handoff, command smoke
+approval, promoted smoke evidence records, and read-only query/DTO/`nucleusd`/
+Effigy inspection are now represented without automatic provider execution.
+Provider writes, task mutation, callback/interruption/recovery execution,
+automatic UI-triggered provider execution, credential material storage, and raw
+payload retention remain blocked.
 
 The first approved direct Codex `turn/start` smoke completed through local
 Codex app-server with sanitized output only. Further provider writes, SCM/forge

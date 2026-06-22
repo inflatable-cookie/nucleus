@@ -10,7 +10,9 @@ pub use types::{
     ForgeReadIntentProjectionStatus,
 };
 
-use entry_builder::{credential_entry, pull_request_entry, repository_metadata_entry};
+use entry_builder::{
+    credential_entry, pull_request_entry, repository_metadata_entry, status_check_entry,
+};
 
 pub fn forge_read_intent_projection(
     input: ForgeReadIntentProjectionInput,
@@ -34,6 +36,12 @@ pub fn forge_read_intent_projection(
             .into_iter()
             .map(pull_request_entry),
     );
+    entries.extend(
+        input
+            .status_check_records
+            .into_iter()
+            .map(status_check_entry),
+    );
     entries.sort_by(|left, right| left.intent_id.cmp(&right.intent_id));
 
     ForgeReadIntentProjectionSet {
@@ -48,6 +56,7 @@ pub fn forge_read_intent_projection(
             ForgeReadIntentProjectionFamily::RepositoryMetadata,
         ),
         pull_request_count: family_count(&entries, ForgeReadIntentProjectionFamily::PullRequest),
+        status_check_count: family_count(&entries, ForgeReadIntentProjectionFamily::StatusCheck),
         ready_count: status_count(&entries, ForgeReadIntentProjectionStatus::Ready),
         duplicate_noop_count: status_count(
             &entries,
@@ -82,6 +91,7 @@ pub fn forge_read_intent_projection_control_dto(
         credential_status_count: set.credential_status_count,
         repository_metadata_count: set.repository_metadata_count,
         pull_request_count: set.pull_request_count,
+        status_check_count: set.status_check_count,
         ready_count: set.ready_count,
         duplicate_noop_count: set.duplicate_noop_count,
         blocked_count: set.blocked_count,

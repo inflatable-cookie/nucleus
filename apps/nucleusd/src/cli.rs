@@ -61,7 +61,7 @@ pub(crate) fn print_help() {
     println!();
     println!("Usage:");
     println!("  nucleusd [--state <path>] [--bootstrap] [--status]");
-    println!("  nucleusd [--state <path>] query <projects|tasks|workspaces|command-evidence|provider-read-intent|provider-readiness-overview>");
+    println!("  nucleusd [--state <path>] query <projects|tasks|workspaces|command-evidence|provider-read-intent|provider-readiness-overview|provider-live-read-executor|provider-live-read-smoke-evidence>");
     println!("  nucleusd command-runner smoke");
     println!("  nucleusd command-runner read-only-spawn-smoke");
     println!("  nucleusd command-runner durable-runtime-smoke [--confirm-real-write] [--execute-provider-write]");

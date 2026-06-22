@@ -60,6 +60,7 @@
           ["credential_status", sourceCounts.credential_status_records],
           ["repository_metadata", sourceCounts.repository_metadata_records],
           ["pull_request", sourceCounts.pull_request_records],
+          ["status_check", sourceCounts.status_check_records],
         ]
       : [],
   );

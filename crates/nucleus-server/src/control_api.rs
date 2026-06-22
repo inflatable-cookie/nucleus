@@ -66,6 +66,8 @@ pub enum ServerQueryKind {
     Diagnostics(DiagnosticsQuery),
     ProviderReadIntent(ProviderReadIntentQuery),
     ProviderReadinessOverview(ProviderReadinessOverviewQuery),
+    ProviderLiveReadExecutor(ProviderLiveReadExecutorQuery),
+    ProviderLiveReadSmokeEvidence(ProviderLiveReadSmokeEvidenceQuery),
     TaskTimeline(TaskTimelineQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
@@ -157,6 +159,18 @@ pub enum ProviderReadinessOverviewQuery {
     Overview,
 }
 
+/// Provider live-read executor query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderLiveReadExecutorQuery {
+    Diagnostics,
+}
+
+/// Provider live-read smoke evidence query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderLiveReadSmokeEvidenceQuery {
+    Diagnostics,
+}
+
 /// Task timeline query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskTimelineQuery {
@@ -228,10 +242,16 @@ pub enum ServerQueryResult {
     Diagnostics(ServerDiagnosticsQueryResult),
     ProviderReadIntent(crate::ForgeReadIntentQueryResult),
     ProviderReadinessOverview(crate::ForgeReadinessOverview),
+    ProviderLiveReadExecutorDiagnostics(crate::ProviderLiveReadServerExecutorDiagnostics),
+    ProviderLiveReadSmokeEvidenceDiagnostics(
+        crate::ProviderLiveReadApprovedSmokeEvidenceDiagnostics,
+    ),
     TaskTimeline(EngineTaskTimelineProjection),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     Empty,
-    Unsupported { reason: String },
+    Unsupported {
+        reason: String,
+    },
 }
 
 /// Diagnostics query result shape.

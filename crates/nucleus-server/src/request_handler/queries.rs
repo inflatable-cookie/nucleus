@@ -1,22 +1,19 @@
 use nucleus_core::PersistenceRecordId;
 use nucleus_engine::{
     EngineReadModelError, EngineReadModelService, EngineReadRecordSet, EngineReadScope,
-    EngineStateDomain, EngineStateRecordReader, EngineTaskTimelineProjection,
+    EngineStateDomain, EngineStateRecordReader,
 };
 use nucleus_local_store::LocalStoreRecord;
 use nucleus_local_store::{LocalStoreBackend, LocalStoreError};
-use nucleus_orchestration::{OrchestrationEventRecord, OrchestrationEventStoreRepository};
 
-use super::event_store::ServerOrchestrationEventStore;
 use super::handler::LocalControlRequestHandler;
 use crate::checkpoint_diff_state::{read_checkpoint_records, read_diff_summary_records};
-use crate::client_protocol::ProjectAuthorityMapPublicationRecord;
 use crate::control_api::{
-    AdapterSessionQuery, DiagnosticsQuery, ModelRouteQuery, ProjectAuthorityMapQuery,
-    RuntimeMetadataQuery, ServerControlError, ServerControlResponse, ServerControlResponseBody,
+    AdapterSessionQuery, DiagnosticsQuery, ModelRouteQuery, RuntimeMetadataQuery,
+    ServerControlError, ServerControlResponse, ServerControlResponseBody,
     ServerControlResponseStatus, ServerDiagnosticsQueryResult, ServerDiagnosticsSnapshot,
     ServerQuery, ServerQueryKind, ServerQueryResult, ServerStateRecordSet, StateRecordQuery,
-    StateRecordQueryScope, TaskTimelineQuery,
+    StateRecordQueryScope,
 };
 use crate::diagnostics_read_models::{
     codex_callback_diagnostics, codex_callback_response_execution_diagnostics,
@@ -61,9 +58,13 @@ use crate::{
     ScmCaptureWorkflowProjectionInput,
 };
 
+mod authority_map;
 mod diagnostics;
+mod provider_live_read_executor;
+mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
 mod provider_readiness_overview;
+mod task_timeline;
 
 pub(crate) fn handle_query<B>(
     handler: &LocalControlRequestHandler<B>,
@@ -117,8 +118,18 @@ where
         ServerQueryKind::ProviderReadinessOverview(query) => {
             provider_readiness_overview::provider_readiness_overview_query(handler, query)
         }
-        ServerQueryKind::TaskTimeline(query) => task_timeline_query(handler, query),
-        ServerQueryKind::ProjectAuthorityMap(query) => project_authority_map_query(query),
+        ServerQueryKind::ProviderLiveReadExecutor(query) => {
+            provider_live_read_executor::provider_live_read_executor_query(handler, query)
+        }
+        ServerQueryKind::ProviderLiveReadSmokeEvidence(query) => {
+            provider_live_read_smoke_evidence::provider_live_read_smoke_evidence_query(
+                handler, query,
+            )
+        }
+        ServerQueryKind::TaskTimeline(query) => task_timeline::task_timeline_query(handler, query),
+        ServerQueryKind::ProjectAuthorityMap(query) => {
+            authority_map::project_authority_map_query(query)
+        }
     }
 }
 
@@ -252,35 +263,6 @@ where
             })
         }
     }
-}
-
-fn task_timeline_query<B>(
-    handler: &LocalControlRequestHandler<B>,
-    query: TaskTimelineQuery,
-) -> Result<ServerQueryResult, ServerControlError>
-where
-    B: LocalStoreBackend + Clone,
-{
-    let events = ServerOrchestrationEventStore::new(handler.state())
-        .list_events()
-        .map_err(storage_error)?
-        .into_iter()
-        .map(|event_store_record| event_store_record.into_payload())
-        .collect::<Vec<OrchestrationEventRecord>>();
-    let projection = EngineTaskTimelineProjection::rebuild(query.task_id, &events);
-
-    Ok(ServerQueryResult::TaskTimeline(projection))
-}
-
-fn project_authority_map_query(
-    query: ProjectAuthorityMapQuery,
-) -> Result<ServerQueryResult, ServerControlError> {
-    Ok(ServerQueryResult::ProjectAuthorityMap(
-        ProjectAuthorityMapPublicationRecord::deferred(
-            query.project_id,
-            "authority-map persistence is not implemented",
-        ),
-    ))
 }
 
 fn read_state_records<B>(

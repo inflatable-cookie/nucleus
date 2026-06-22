@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use nucleus_local_store::{LocalStoreRecord, SqliteBackend};
 use nucleus_server::{
-    ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler, ProviderReadIntentQuery,
+    ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler,
+    ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery,
     ProviderReadinessOverviewQuery, ServerControlRequest, ServerControlRequestKind,
     ServerControlResponseBody, ServerControlResponseStatus, ServerQuery, ServerQueryId,
     ServerQueryKind, ServerStateDomain, StateRecordQuery, StateRecordQueryScope,
@@ -49,6 +50,8 @@ pub(crate) fn print_query(
         QueryDomain::CommandEvidence
             | QueryDomain::ProviderReadIntent
             | QueryDomain::ProviderReadinessOverview
+            | QueryDomain::ProviderLiveReadExecutor
+            | QueryDomain::ProviderLiveReadSmokeEvidence
     ) {
         let dto = ControlResponseEnvelopeDto::try_from(&response)
             .map_err(|error| format!("{label} query response encoding failed: {}", error.reason))?;
@@ -121,6 +124,14 @@ fn query_kind(query: QueryDomain) -> ServerQueryKind {
         QueryDomain::ProviderReadinessOverview => {
             ServerQueryKind::ProviderReadinessOverview(ProviderReadinessOverviewQuery::Overview)
         }
+        QueryDomain::ProviderLiveReadExecutor => {
+            ServerQueryKind::ProviderLiveReadExecutor(ProviderLiveReadExecutorQuery::Diagnostics)
+        }
+        QueryDomain::ProviderLiveReadSmokeEvidence => {
+            ServerQueryKind::ProviderLiveReadSmokeEvidence(
+                ProviderLiveReadSmokeEvidenceQuery::Diagnostics,
+            )
+        }
         _ => state_query_kind(query.state_domain().expect("state query domain")),
     }
 }
@@ -147,7 +158,8 @@ fn state_query(domain: ServerStateDomain) -> StateRecordQuery {
 mod tests {
     use nucleus_local_store::SqliteBackend;
     use nucleus_server::{
-        ControlCommandEvidenceRecordDto, ControlProviderReadIntentProjectionDto,
+        ControlCommandEvidenceRecordDto, ControlProviderLiveReadExecutorDiagnosticsDto,
+        ControlProviderLiveReadSmokeEvidenceDiagnosticsDto, ControlProviderReadIntentProjectionDto,
         ControlProviderReadIntentQueryResultDto, ControlProviderReadIntentSourceCountsDto,
         ControlProviderReadinessOverviewDto, LocalControlRequestHandler,
     };
@@ -208,6 +220,7 @@ mod tests {
                     credential_status_count: 0,
                     repository_metadata_count: 0,
                     pull_request_count: 0,
+                    status_check_count: 0,
                     ready_count: 0,
                     duplicate_noop_count: 0,
                     blocked_count: 0,
@@ -228,6 +241,7 @@ mod tests {
                     credential_status_records: 0,
                     repository_metadata_records: 0,
                     pull_request_records: 0,
+                    status_check_records: 0,
                 },
                 credential_resolution_performed: false,
                 provider_network_call_performed: false,
@@ -296,6 +310,75 @@ mod tests {
         assert!(rendered.contains("records=0"));
         assert!(rendered.contains("missing_evidence_families=3"));
         assert!(rendered.contains("provider_network_call_performed=false"));
+        assert!(rendered.contains("raw_provider_payload_retained=false"));
+        assert!(!rendered.contains("access_token"));
+        assert!(!rendered.contains("authorization"));
+        assert!(!rendered.contains("raw_response_body"));
+    }
+
+    #[test]
+    fn provider_live_read_executor_response_lines_do_not_include_provider_effects() {
+        let lines = typed_response::provider_live_read_executor_response_lines(
+            "provider-live-read-executor",
+            ControlProviderLiveReadExecutorDiagnosticsDto {
+                diagnostics_id: "provider-live-read-server-executor-diagnostics".to_owned(),
+                request_count: 0,
+                ready_request_count: 0,
+                blocked_request_count: 0,
+                descriptor_ready_count: 0,
+                sanitized_output_count: 0,
+                parse_error_count: 0,
+                receipt_count: 0,
+                provider_network_read_performed_count: 0,
+                blocker_count: 0,
+                provider_write_executed: false,
+                callback_effect_executed: false,
+                interruption_effect_executed: false,
+                recovery_effect_executed: false,
+                task_mutation_executed: false,
+                raw_provider_payload_retained: false,
+            },
+        );
+        let rendered = lines.join("\n");
+
+        assert!(rendered.contains("domain=provider-live-read-executor"));
+        assert!(rendered.contains("records=0"));
+        assert!(rendered.contains("provider_network_reads=0"));
+        assert!(rendered.contains("provider_write_executed=false"));
+        assert!(rendered.contains("raw_provider_payload_retained=false"));
+        assert!(!rendered.contains("access_token"));
+        assert!(!rendered.contains("authorization"));
+        assert!(!rendered.contains("raw_response_body"));
+    }
+
+    #[test]
+    fn provider_live_read_smoke_evidence_response_lines_do_not_include_provider_effects() {
+        let lines = typed_response::provider_live_read_smoke_evidence_response_lines(
+            "provider-live-read-smoke-evidence",
+            ControlProviderLiveReadSmokeEvidenceDiagnosticsDto {
+                diagnostics_id: "provider-live-read-approved-smoke-evidence-diagnostics".to_owned(),
+                evidence_count: 1,
+                promoted_count: 1,
+                repair_required_count: 0,
+                blocked_count: 0,
+                duplicate_count: 0,
+                provider_network_read_performed_count: 1,
+                blocker_count: 0,
+                provider_write_executed: false,
+                callback_effect_executed: false,
+                interruption_effect_executed: false,
+                recovery_effect_executed: false,
+                task_mutation_executed: false,
+                raw_provider_payload_retained: false,
+            },
+        );
+        let rendered = lines.join("\n");
+
+        assert!(rendered.contains("domain=provider-live-read-smoke-evidence"));
+        assert!(rendered.contains("records=1"));
+        assert!(rendered.contains("promoted=1"));
+        assert!(rendered.contains("provider_network_reads=1"));
+        assert!(rendered.contains("provider_write_executed=false"));
         assert!(rendered.contains("raw_provider_payload_retained=false"));
         assert!(!rendered.contains("access_token"));
         assert!(!rendered.contains("authorization"));

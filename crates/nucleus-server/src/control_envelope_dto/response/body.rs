@@ -11,6 +11,8 @@ use super::helpers::{
     command_execution_status_dto, command_receipt_status_dto, control_error_dto, retention_dto,
     state_record_set_dto,
 };
+use super::provider_live_read_executor::ControlProviderLiveReadExecutorDiagnosticsDto;
+use super::provider_live_read_smoke_evidence::ControlProviderLiveReadSmokeEvidenceDiagnosticsDto;
 use super::provider_read_intent::ControlProviderReadIntentQueryResultDto;
 use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
@@ -78,6 +80,12 @@ pub enum ControlResponseBodyDto {
     },
     ProviderReadinessOverview {
         overview: ControlProviderReadinessOverviewDto,
+    },
+    ProviderLiveReadExecutorDiagnostics {
+        diagnostics: ControlProviderLiveReadExecutorDiagnosticsDto,
+    },
+    ProviderLiveReadSmokeEvidenceDiagnostics {
+        diagnostics: ControlProviderLiveReadSmokeEvidenceDiagnosticsDto,
     },
     CommandReceipt {
         command_id: String,
@@ -195,6 +203,16 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 overview,
             )) => Ok(Self::ProviderReadinessOverview {
                 overview: ControlProviderReadinessOverviewDto::from(overview),
+            }),
+            ServerControlResponseBody::Query(
+                ServerQueryResult::ProviderLiveReadExecutorDiagnostics(diagnostics),
+            ) => Ok(Self::ProviderLiveReadExecutorDiagnostics {
+                diagnostics: ControlProviderLiveReadExecutorDiagnosticsDto::from(diagnostics),
+            }),
+            ServerControlResponseBody::Query(
+                ServerQueryResult::ProviderLiveReadSmokeEvidenceDiagnostics(diagnostics),
+            ) => Ok(Self::ProviderLiveReadSmokeEvidenceDiagnostics {
+                diagnostics: ControlProviderLiveReadSmokeEvidenceDiagnosticsDto::from(diagnostics),
             }),
             ServerControlResponseBody::Command(receipt) => Ok(Self::CommandReceipt {
                 command_id: receipt.command_id.0.clone(),

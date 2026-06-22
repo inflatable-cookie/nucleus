@@ -7,10 +7,11 @@ use super::types::{
     ForgeReadinessOverview, ForgeReadinessOverviewInput, ForgeReadinessOverviewStatus,
 };
 
-const SUPPORTED_READ_FAMILIES: [ForgeReadIntentProjectionFamily; 3] = [
+const SUPPORTED_READ_FAMILIES: [ForgeReadIntentProjectionFamily; 4] = [
     ForgeReadIntentProjectionFamily::CredentialStatus,
     ForgeReadIntentProjectionFamily::RepositoryMetadata,
     ForgeReadIntentProjectionFamily::PullRequest,
+    ForgeReadIntentProjectionFamily::StatusCheck,
 ];
 
 pub fn forge_readiness_overview(input: ForgeReadinessOverviewInput) -> ForgeReadinessOverview {

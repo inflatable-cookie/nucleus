@@ -224,6 +224,66 @@ Current checkpoint:
 - Stopped status/check refresh persistence is complete. The next slice folds the
   family into provider read-intent projection/query/DTOs and desktop seed proof
   without live provider behavior.
+- Stopped status/check refresh projection/query/DTO integration and desktop
+  seed proof are complete. Provider-readiness coverage now represents
+  credential status, repository metadata, PR/MR, and status/check families.
+- Provider-readiness coverage reassessment selected a fixture-backed live-read
+  admission gate as the next lane. Issue/comment/review stopped refresh,
+  credential repair, product UI hardening, and real provider reads remain
+  deferred until this gate exists.
+- Provider live-read admission gate is complete. Admission, preflight,
+  sanitized request/receipt planning, persistence, diagnostics, and control
+  DTOs are represented through fixture-backed records only. The next lane is
+  live-read execution contract and adapter-boundary planning; real provider
+  network calls, credential material resolution, provider writes, task
+  mutation, callback/interruption/recovery execution, and raw payload retention
+  remain blocked.
+- Provider live-read execution contract and adapter boundary is complete.
+  Credential lease metadata, provider capability records, stopped executor
+  handoff records, fixture response/error records, and diagnostics are
+  represented without credential material or provider I/O. The next lane is a
+  stopped live-read smoke approval gate; real provider network calls still
+  require explicit operator approval.
+- Provider live-read smoke approval gate is complete. Smoke target,
+  authority-checklist, and stopped smoke request records exist, but no live
+  provider execution is authorized. The generation is paused at an operator
+  approval checkpoint before the first real provider read smoke.
+- The first approved live-read smoke completed manually through `gh` against
+  `octocat/Hello-World` as a repository metadata refresh. It proved local
+  provider read access with sanitized selected fields only, not a Nucleus-owned
+  provider executor.
+- Provider live-read smoke closeout selected a server-owned read-only executor
+  as the next lane. The executor should wrap the same field-limited `gh repo
+  view` path behind Nucleus-owned request, receipt, sanitization, and
+  diagnostics records.
+- Provider live-read server-owned executor is complete. It wraps the approved
+  repository metadata read shape behind approved smoke-derived executor
+  requests, a field-limited `gh repo view` descriptor, sanitized repository
+  metadata records, receipts, and diagnostics without provider writes, task
+  mutation, callback/interruption/recovery execution, credential material
+  storage, or raw provider payload retention.
+- The next lane is read-only executor control/query integration so the server
+  can inspect executor diagnostics before any broader provider read fan-out or
+  product UI hardening.
+- Provider live-read executor control surface is complete. Server query
+  vocabulary, serialized diagnostics DTOs, request-handler routing,
+  `nucleusd query provider-live-read-executor`, and
+  `effigy server:query:provider-live-read-executor` now inspect no-effect
+  executor diagnostics without running a provider command.
+- The next lane is a read-only command-runner handoff from ready descriptors to
+  sanitized output/receipt mapping. It must remain explicit and operator-gated.
+- Provider live-read command-runner handoff is complete. Ready handoff records
+  can be built from field-limited descriptors, sanitized command output can map
+  into repository metadata output and receipt records, and diagnostics cover
+  ready, blocked, parse-error, mapped, and read-performed states without raw
+  payload retention.
+- Provider live-read command-runner smoke approval is complete. The approved
+  read-only `gh repo view octocat/Hello-World` smoke succeeded with selected
+  repository metadata fields only. No provider write, task mutation, callback,
+  interruption/recovery execution, credential material storage, or raw payload
+  retention occurred.
+- The next lane is approved-smoke evidence promotion into server-owned
+  executor records, not broader provider read fan-out or UI-triggered execution.
 
 ## Convergence Exit Criteria
 
@@ -344,16 +404,25 @@ Reason:
 - `083-provider-readiness-overview-seeded-evidence-proof.md` - completed
 - `084-provider-readiness-overview-drilldown-read-model.md` - completed
 - `085-provider-readiness-product-closeout-and-next-lane-selection.md` - completed
-- `086-stopped-provider-status-check-refresh.md` - active
+- `086-stopped-provider-status-check-refresh.md` - completed
+- `087-provider-readiness-coverage-and-next-provider-gate.md` - completed
+- `088-provider-live-read-admission-gate.md` - completed
+- `089-provider-live-read-execution-contract-and-adapter-boundary.md` - completed
+- `090-provider-live-read-smoke-approval-gate.md` - completed
+- `091-provider-live-read-smoke-operator-approval-checkpoint.md` - completed
+- `092-provider-live-read-smoke-closeout-and-executor-selection.md` - completed
+- `093-provider-live-read-server-owned-executor.md` - active
+- `092-provider-live-read-smoke-closeout-and-executor-selection.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/333-provider-read-intent-status-check-projection.md`
-- `batch-cards/334-provider-read-intent-status-check-query-dto.md`
-- `batch-cards/335-provider-readiness-status-check-seed-proof.md`
-- `batch-cards/336-provider-status-check-refresh-lane-closeout.md`
+- `batch-cards/368-provider-live-read-executor-request-records.md`
+- `batch-cards/369-provider-live-read-gh-command-descriptor.md`
+- `batch-cards/370-provider-live-read-sanitized-output-records.md`
+- `batch-cards/371-provider-live-read-executor-receipts-diagnostics.md`
+- `batch-cards/372-provider-live-read-executor-validation-closeout.md`
 
 Paused cards:
 
@@ -365,6 +434,41 @@ None.
 
 Completed cards:
 
+- `batch-cards/367-provider-live-read-smoke-closeout-validation.md`
+- `batch-cards/366-provider-live-read-executor-gap-selection.md`
+- `batch-cards/365-provider-live-read-smoke-evidence-promotion.md`
+- `batch-cards/364-provider-live-read-smoke-approval-validation.md`
+- `batch-cards/363-provider-live-read-stopped-smoke-request.md`
+- `batch-cards/362-provider-live-read-smoke-authority-checklist.md`
+- `batch-cards/361-provider-live-read-smoke-target-selection.md`
+- `batch-cards/360-provider-live-read-execution-lane-validation.md`
+- `batch-cards/359-provider-live-read-execution-boundary-rebaseline.md`
+- `batch-cards/358-provider-live-read-fixture-response-diagnostics.md`
+- `batch-cards/357-provider-live-read-stopped-executor-handoff.md`
+- `batch-cards/356-provider-live-read-fixture-client-boundary.md`
+- `batch-cards/355-provider-live-read-execution-contract-delta.md`
+- `batch-cards/354-provider-live-read-gate-validation-closeout.md`
+- `batch-cards/353-provider-live-read-boundary-rebaseline.md`
+- `batch-cards/352-provider-live-read-control-diagnostics.md`
+- `batch-cards/351-provider-live-read-persistence-diagnostics.md`
+- `batch-cards/350-provider-live-read-request-receipt-planning.md`
+- `batch-cards/349-provider-live-read-preflight-tests.md`
+- `batch-cards/348-provider-live-read-preflight-blockers.md`
+- `batch-cards/347-provider-live-read-preflight-type-surface.md`
+- `batch-cards/346-provider-live-read-admission-tests.md`
+- `batch-cards/345-provider-live-read-admission-control-dto.md`
+- `batch-cards/344-provider-live-read-admission-blockers.md`
+- `batch-cards/343-provider-live-read-admission-type-surface.md`
+- `batch-cards/342-provider-readiness-gate-validation-closeout.md`
+- `batch-cards/341-provider-next-roadmap-runway.md`
+- `batch-cards/340-provider-live-read-gate-scope.md`
+- `batch-cards/339-provider-next-lane-options.md`
+- `batch-cards/338-provider-readiness-gap-index-refresh.md`
+- `batch-cards/337-provider-readiness-coverage-audit.md`
+- `batch-cards/336-provider-status-check-refresh-lane-closeout.md`
+- `batch-cards/335-provider-readiness-status-check-seed-proof.md`
+- `batch-cards/334-provider-read-intent-status-check-query-dto.md`
+- `batch-cards/333-provider-read-intent-status-check-projection.md`
 - `batch-cards/332-provider-status-check-refresh-persistence-validation-closeout.md`
 - `batch-cards/331-provider-status-check-refresh-persistence-blocker-tests.md`
 - `batch-cards/330-provider-status-check-refresh-persistence-diagnostics-control.md`
@@ -782,4 +886,28 @@ Completed cards:
 75. Provider Readiness Overview seeded evidence proof - completed
 76. Provider Readiness Overview drilldown read model - completed
 77. Provider Readiness product closeout and next-lane selection - completed
-78. Stopped provider status/check refresh - active
+78. Stopped provider status/check refresh - completed
+79. Provider readiness coverage and next provider gate - completed
+80. Provider live-read admission gate - completed
+81. Provider live-read execution contract and adapter boundary - completed
+82. Provider live-read smoke approval gate - completed
+83. Provider live-read smoke operator approval checkpoint - completed
+84. Provider live-read smoke closeout and executor selection - completed
+85. Provider live-read server-owned executor - completed
+86. Provider live-read executor control surface - completed
+87. Provider live-read executor command-runner handoff - completed
+88. Provider live-read command-runner smoke approval - completed
+89. Provider live-read approved smoke evidence promotion - completed
+90. Provider live-read approved smoke evidence control surface - completed
+
+Current stop:
+
+- approved live provider read smoke completed for `gh repo view
+  octocat/Hello-World --json
+  nameWithOwner,defaultBranchRef,isPrivate,visibility,url,viewerPermission,pushedAt,updatedAt`
+- promoted selected-field smoke evidence records now link command smoke
+  request, handoff, sanitized output, and receipt ids
+- read-only query/control, `nucleusd`, and Effigy inspection now expose
+  promoted evidence diagnostics without running provider commands
+- provider writes, task mutation, callbacks, interruption/recovery execution,
+  raw payload retention, and credential material storage remain blocked

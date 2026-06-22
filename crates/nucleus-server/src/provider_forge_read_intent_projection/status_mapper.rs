@@ -2,7 +2,8 @@ use crate::{
     ForgeCredentialStatusRefreshPersistenceRecord, ForgeCredentialStatusRefreshPersistenceStatus,
     ForgePullRequestRefreshPersistenceRecord, ForgePullRequestRefreshPersistenceStatus,
     ForgeRepositoryMetadataRefreshPersistenceRecord,
-    ForgeRepositoryMetadataRefreshPersistenceStatus,
+    ForgeRepositoryMetadataRefreshPersistenceStatus, ForgeStatusCheckRefreshPersistenceRecord,
+    ForgeStatusCheckRefreshPersistenceStatus,
 };
 
 use super::types::ForgeReadIntentProjectionStatus;
@@ -50,6 +51,22 @@ pub(super) fn pull_request_status(
             ForgeReadIntentProjectionStatus::DuplicateNoop
         }
         ForgePullRequestRefreshPersistenceStatus::Blocked => {
+            ForgeReadIntentProjectionStatus::Blocked
+        }
+    }
+}
+
+pub(super) fn status_check_status(
+    record: &ForgeStatusCheckRefreshPersistenceRecord,
+) -> ForgeReadIntentProjectionStatus {
+    match record.persistence_status {
+        ForgeStatusCheckRefreshPersistenceStatus::Persisted => {
+            status_for_refresh_blockers(record.refresh_blockers.is_empty())
+        }
+        ForgeStatusCheckRefreshPersistenceStatus::DuplicateNoop => {
+            ForgeReadIntentProjectionStatus::DuplicateNoop
+        }
+        ForgeStatusCheckRefreshPersistenceStatus::Blocked => {
             ForgeReadIntentProjectionStatus::Blocked
         }
     }

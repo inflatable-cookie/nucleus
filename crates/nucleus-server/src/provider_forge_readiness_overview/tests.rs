@@ -4,6 +4,7 @@ use crate::{
     ForgeNetworkExecutionOperationFamily, ForgePullRequestRefreshPersistenceStatus,
     ForgeReadIntentProjectionFamily, ForgeReadIntentProjectionInput,
     ForgeRepositoryMetadataRefreshBlocker, ForgeRepositoryMetadataRefreshPersistenceStatus,
+    ForgeStatusCheckRefreshPersistenceStatus,
 };
 
 mod support {
@@ -18,12 +19,13 @@ fn readiness_overview_reports_unknown_for_empty_evidence() {
         credential_status_records: Vec::new(),
         repository_metadata_records: Vec::new(),
         pull_request_records: Vec::new(),
+        status_check_records: Vec::new(),
     }));
 
     assert_eq!(overview.status, ForgeReadinessOverviewStatus::Unknown);
     assert_eq!(overview.total_read_intent_count, 0);
-    assert_eq!(overview.missing_evidence_family_count, 3);
-    assert_eq!(overview.blocker_count, 3);
+    assert_eq!(overview.missing_evidence_family_count, 4);
+    assert_eq!(overview.blocker_count, 4);
     assert!(!overview.provider_network_call_performed);
     assert!(!overview.credential_resolution_performed);
 }
@@ -43,19 +45,24 @@ fn readiness_overview_reports_ready_when_all_read_families_are_represented() {
             "pr",
             ForgePullRequestRefreshPersistenceStatus::Persisted,
         )],
+        status_check_records: vec![status_check(
+            "check",
+            ForgeStatusCheckRefreshPersistenceStatus::Persisted,
+        )],
     }));
 
     assert_eq!(overview.status, ForgeReadinessOverviewStatus::Ready);
-    assert_eq!(overview.total_read_intent_count, 3);
+    assert_eq!(overview.total_read_intent_count, 4);
     assert_eq!(overview.missing_evidence_family_count, 0);
     assert_eq!(overview.blocker_count, 0);
-    assert_eq!(overview.evidence_ref_count, 3);
+    assert_eq!(overview.evidence_ref_count, 4);
     assert_eq!(
         overview.represented_read_families,
         vec![
             ForgeReadIntentProjectionFamily::CredentialStatus,
             ForgeReadIntentProjectionFamily::RepositoryMetadata,
             ForgeReadIntentProjectionFamily::PullRequest,
+            ForgeReadIntentProjectionFamily::StatusCheck,
         ]
     );
     assert_eq!(
@@ -77,11 +84,12 @@ fn readiness_overview_reports_blocked_for_missing_read_family_evidence() {
         )],
         repository_metadata_records: Vec::new(),
         pull_request_records: Vec::new(),
+        status_check_records: Vec::new(),
     }));
 
     assert_eq!(overview.status, ForgeReadinessOverviewStatus::Blocked);
-    assert_eq!(overview.missing_evidence_family_count, 2);
-    assert_eq!(overview.blocker_count, 2);
+    assert_eq!(overview.missing_evidence_family_count, 3);
+    assert_eq!(overview.blocker_count, 3);
     assert_eq!(
         overview.represented_read_families,
         vec![ForgeReadIntentProjectionFamily::CredentialStatus]
@@ -108,6 +116,10 @@ fn readiness_overview_reports_repair_for_repair_required_evidence() {
             "pr",
             ForgePullRequestRefreshPersistenceStatus::Persisted,
         )],
+        status_check_records: vec![status_check(
+            "check",
+            ForgeStatusCheckRefreshPersistenceStatus::Persisted,
+        )],
     }));
 
     assert_eq!(overview.status, ForgeReadinessOverviewStatus::NeedsRepair);
@@ -129,6 +141,10 @@ fn readiness_overview_serializes_without_forbidden_provider_material() {
         pull_request_records: vec![pull_request(
             "pr",
             ForgePullRequestRefreshPersistenceStatus::Persisted,
+        )],
+        status_check_records: vec![status_check(
+            "check",
+            ForgeStatusCheckRefreshPersistenceStatus::Persisted,
         )],
     }));
     let json = serde_json::to_string(&overview).expect("overview json");
@@ -155,6 +171,10 @@ fn readiness_overview_keeps_mutating_families_represented_not_executed() {
         pull_request_records: vec![pull_request(
             "pr",
             ForgePullRequestRefreshPersistenceStatus::Persisted,
+        )],
+        status_check_records: vec![status_check(
+            "check",
+            ForgeStatusCheckRefreshPersistenceStatus::Persisted,
         )],
     });
     projection.entries[0].operation_family =

@@ -18,7 +18,7 @@ implementation lane can be chosen deliberately.
 Current state:
 
 - `effigy doctor` currently exits successfully
-- the current doctor report has 139 findings: 139 warnings and 0 errors
+- the current doctor report has 147 findings: 147 warnings and 0 errors
 - `crates/nucleus-server/src/lib.rs` remains a compact crate front door
 - the first health rebaseline split request-handler diagnostics tests,
   control-envelope diagnostics response tests, diagnostics query routing, and
@@ -113,14 +113,22 @@ Provider Readiness Overview product surface gap:
 - desktop proof surface implementation and validation are complete
 - local stopped provider-readiness seed evidence is complete
 - desktop read-intent drilldown over the overview is complete
+- status/check refresh now participates in read-intent projection/query/DTOs
+  and desktop seed proof
+- represented read families are credential status, repository metadata, PR/MR,
+  and status/check
 
 Needed:
 
-- close out the provider-readiness product proof and select the next provider
-  implementation lane deliberately
-- keep any next visible/provider surface typed, sanitized, and effect-free
-- avoid provider refresh, credential resolution, provider effects, task
-  mutation, raw payload display, or durable UI design commitments
+- implement a fixture-backed provider live-read admission gate before any real
+  provider network call
+- keep issue/comment/review stopped refresh, credential repair, product UI
+  hardening, and real live-read execution deferred until that gate exists
+- keep any next provider surface typed, sanitized, fixture-testable, and
+  effect-free
+- avoid credential material resolution, provider writes, task mutation, raw
+  payload display, callback/interruption/recovery execution, or durable UI
+  design commitments
 
 Policy:
 
@@ -745,7 +753,7 @@ Current runner proof state:
   stopped PR request-preparation proofs share the same stopped-by-default
   authority, adapter/request adapter, sanitized outcome persistence, and
   read-only control DTO shape. Focused runner tests pass, new runner files stay
-  below warning thresholds, and `effigy doctor` remains at 139 warnings and 0
+  below warning thresholds, and `effigy doctor` remains warning-only with 0
   errors.
 - Contract `027-provider-auth-forge-execution-contract.md` now owns
   provider-auth and forge network execution authority. It requires separate
@@ -1316,14 +1324,12 @@ Recent evidence:
 - Provider-forge read-pattern consolidation is complete. Do not continue by
   stamping out issue, comment, review workflow, or status/check refresh modules
   unless the operator explicitly chooses that fan-out.
-- Generic provider read-intent projection/control is complete. The next step is
-  to compose it from local store reads instead of passing records manually.
-- Provider read-intent query composition is complete. The next step is exposing
-  the query through the server/control boundary without enabling provider
-  writes.
-- Provider read-intent control boundary is complete for in-process handler
-  access. The serializable envelope still rejects provider read-intent results
-  until a wire DTO contract is designed.
+- Generic provider read-intent projection/control is complete for credential
+  status, repository metadata, PR/MR, and status/check families.
+- Provider read-intent query composition is complete from local-store persisted
+  source records.
+- Provider read-intent control boundary is complete for in-process and
+  serialized envelope access.
 - Provider read-intent boundary rebaseline is complete. The next lane may add
   a serialized control-envelope DTO, but only for a read-only aggregate
   projection query/result with sanitized refs and no provider effects.
@@ -1354,18 +1360,63 @@ Recent evidence:
   the next provider lane. Credential resolution, provider refresh, provider
   effects, UI polish, and warning-file cleanup remain deferred.
 - Stopped status/check refresh type/control is implemented as a read-intent
-  family with sanitized blockers and no-effect flags. Persistence and
-  projection integration remain.
+  family with sanitized blockers and no-effect flags.
 - Stopped status/check refresh persistence is implemented with sanitized
   records, duplicate/no-op behavior, diagnostics, and read-only control DTOs.
-  Projection/query/DTO integration and desktop seed proof remain.
+  Persisted status/check records are now folded into the generic read-intent
+  projection/query/DTO surfaces and the desktop seed proof without provider
+  effects.
+- Provider-readiness coverage reassessment is complete. More stopped read
+  fan-out is deferred until the live-read admission gate proves credential,
+  network, payload, receipt, and diagnostics boundaries.
+- Provider live-read admission records are implemented as fixture-backed,
+  read-only admission state with blockers and sanitized control counts. The
+  live-read gate now includes fixture preflight records, sanitized
+  request/receipt planning, duplicate no-op behavior, local-store persistence,
+  persistence diagnostics, and read-only control DTOs. The remaining provider
+  execution contract and adapter-boundary gap is now closed through
+  credential-lease metadata refs, provider capability records, stopped
+  handoffs, fixture response/error records, retry/rate-limit/cancellation refs,
+  and diagnostics without provider I/O.
+- Provider live-read smoke approval records are implemented as stopped
+  approval surfaces. They select a read-only candidate, require credential
+  lease metadata, network-read authority, payload/sanitization/retention refs,
+  and operator approval, and produce stopped smoke requests without provider
+  I/O.
+- A manual approved live-read smoke succeeded through `gh` against
+  `octocat/Hello-World` for repository metadata refresh. This proves
+  local provider read access and sanitized evidence capture, not a
+  Nucleus-owned provider executor.
+- Smoke closeout selected a server-owned read-only live-read executor as the
+  next provider lane.
+- The server-owned read-only live-read executor is now represented for
+  repository metadata refresh through approved smoke-derived executor request
+  records, a field-limited `gh repo view` descriptor, sanitized selected-field
+  output records, read-performed receipts, and diagnostics. It still does not
+  persist raw provider payloads, store credential material, execute provider
+  writes, mutate tasks, run callbacks, or run interruption/recovery effects.
+- The executor diagnostics are now inspectable through read-only query/control
+  surfaces, serialized DTOs, `nucleusd query provider-live-read-executor`, and
+  `effigy server:query:provider-live-read-executor`. This inspection path does
+  not run a provider command or perform a provider network read.
+- The command-runner handoff is now represented as read-only handoff records,
+  sanitized command result mapping, receipts, and diagnostics. It proves the
+  server can bridge a descriptor to command-runner-shaped evidence without
+  storing raw stdout/stderr or granting provider writes.
+- The approved command-runner smoke completed once against `octocat/Hello-World`
+  through the fixed `gh repo view` field set. The evidence is selected-field
+  repository metadata only and does not add automatic provider execution.
+- Promoted approved-smoke evidence diagnostics are now inspectable through
+  read-only query/control surfaces, `nucleusd`, and Effigy without re-running
+  `gh`.
 
 Next implementation gate:
 
-1. fold persisted status/check refresh records into provider read-intent
-   projection/query/DTOs and desktop seed proof before adding live refresh,
-   credential resolution, provider effects, or raw payload retention
-2. continue reducing god-file pressure opportunistically when touched
+1. choose whether the next provider lane is evidence persistence, a second
+   read-only provider family, or a broader stocktake
+2. keep issue/comment/review stopped refresh and product UI hardening deferred
+   unless the live-read gate exposes a sharper need
+3. continue reducing god-file pressure opportunistically when touched
 
 Until that lane proves durable authority and preflight, keep checkout,
 worktree creation, commit, push, branch mutation, pull-request creation,
