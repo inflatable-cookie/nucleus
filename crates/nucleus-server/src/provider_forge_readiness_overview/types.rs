@@ -12,6 +12,7 @@ pub struct ForgeReadinessOverviewInput {
     pub repo_ref: Option<String>,
     pub authority_host_ref: Option<String>,
     pub projection: ForgeReadIntentProjectionSet,
+    pub approved_live_read_smoke_evidence_count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -36,6 +37,7 @@ pub struct ForgeReadinessOverview {
     pub duplicate_noop_count: usize,
     pub blocker_count: usize,
     pub evidence_ref_count: usize,
+    pub approved_live_read_smoke_evidence_count: usize,
     pub credential_resolution_performed: bool,
     pub provider_network_call_performed: bool,
     pub provider_effect_executed: bool,

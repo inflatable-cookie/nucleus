@@ -171,6 +171,10 @@ pub(super) fn provider_readiness_overview_response_lines(
             overview.remote_repo_refs.len(),
             overview.forge_providers.len()
         ),
+        format!(
+            "live_read approved_smoke_evidence={}",
+            overview.approved_live_read_smoke_evidence_count
+        ),
     ];
     lines.extend(no_effect_lines(
         overview.credential_resolution_performed,

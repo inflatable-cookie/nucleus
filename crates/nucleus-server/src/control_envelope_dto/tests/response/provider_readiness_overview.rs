@@ -35,6 +35,7 @@ fn response_envelope_dto_serializes_provider_readiness_overview_without_effect_a
                 && overview.forge_providers == vec!["github".to_owned()]
                 && overview.blocker_count == 0
                 && overview.evidence_ref_count == 3
+                && overview.approved_live_read_smoke_evidence_count == 1
                 && !overview.provider_network_call_performed
                 && !overview.credential_resolution_performed
                 && !overview.raw_provider_payload_retained
@@ -88,6 +89,7 @@ fn readiness_overview() -> ForgeReadinessOverview {
         duplicate_noop_count: 0,
         blocker_count: 0,
         evidence_ref_count: 3,
+        approved_live_read_smoke_evidence_count: 1,
         credential_resolution_performed: false,
         provider_network_call_performed: false,
         provider_effect_executed: false,

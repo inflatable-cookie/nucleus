@@ -293,6 +293,7 @@ mod tests {
                 duplicate_noop_count: 0,
                 blocker_count: 3,
                 evidence_ref_count: 0,
+                approved_live_read_smoke_evidence_count: 0,
                 credential_resolution_performed: false,
                 provider_network_call_performed: false,
                 provider_effect_executed: false,
@@ -309,6 +310,7 @@ mod tests {
         assert!(rendered.contains("status=unknown"));
         assert!(rendered.contains("records=0"));
         assert!(rendered.contains("missing_evidence_families=3"));
+        assert!(rendered.contains("approved_smoke_evidence=0"));
         assert!(rendered.contains("provider_network_call_performed=false"));
         assert!(rendered.contains("raw_provider_payload_retained=false"));
         assert!(!rendered.contains("access_token"));

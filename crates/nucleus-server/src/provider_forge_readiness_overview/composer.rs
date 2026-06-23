@@ -48,6 +48,7 @@ pub fn forge_readiness_overview(input: ForgeReadinessOverviewInput) -> ForgeRead
         duplicate_noop_count: projection.duplicate_noop_count,
         blocker_count,
         evidence_ref_count: projection.evidence_ref_count,
+        approved_live_read_smoke_evidence_count: input.approved_live_read_smoke_evidence_count,
         credential_resolution_performed: false,
         provider_network_call_performed: false,
         provider_effect_executed: false,

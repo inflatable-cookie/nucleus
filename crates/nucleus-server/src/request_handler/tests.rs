@@ -54,6 +54,7 @@ mod checkpoint_diff;
 mod diagnostics_queries;
 mod host_authority;
 mod project_queries;
+mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
 mod provider_readiness_overview;
 mod read_only_commands;

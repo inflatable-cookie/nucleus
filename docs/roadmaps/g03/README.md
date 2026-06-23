@@ -899,6 +899,13 @@ Completed cards:
 88. Provider live-read command-runner smoke approval - completed
 89. Provider live-read approved smoke evidence promotion - completed
 90. Provider live-read approved smoke evidence control surface - completed
+91. Provider live-read approved smoke evidence persistence - completed
+92. Provider live-read smoke evidence state-backed query - completed
+93. Provider live-read smoke evidence seed replay - completed
+94. Provider live-read smoke evidence readiness integration - completed
+95. Provider live-read second family selection - completed
+96. Provider live-read second family stopped request - completed
+97. Provider live-read boundary stocktake - completed
 
 Current stop:
 
@@ -909,5 +916,24 @@ Current stop:
   request, handoff, sanitized output, and receipt ids
 - read-only query/control, `nucleusd`, and Effigy inspection now expose
   promoted evidence diagnostics without running provider commands
+- promoted approved smoke evidence can now be persisted and read back as a
+  sanitized local-store record
+- smoke evidence diagnostics now read from persisted approved evidence records;
+  empty state reports zero evidence until an explicit seed/replay path writes
+  sanitized local evidence
+- approved smoke evidence can now be replayed explicitly into local state via
+  a duplicate-safe CLI/Effigy surface without provider execution
+- provider readiness overview now carries a read-only approved live-read smoke
+  evidence source count without treating one smoke as general readiness
+- status/check refresh is selected as the second provider live-read family,
+  using a stopped `gh pr checks` selected-field shape before approval
+- status/check live-read target, authority checklist, stopped request, and
+  diagnostics records now exist without provider execution
+- provider live-read execution momentum is paused after stocktake; the next
+  major lane should be selected from product value unless the operator
+  explicitly approves a status/check live smoke
+- the overnight runway is to connect read queries to persisted evidence, add an
+  explicit seed/replay path, decide safe readiness integration, then select and
+  stop-model one second provider read family before a stocktake
 - provider writes, task mutation, callbacks, interruption/recovery execution,
   raw payload retention, and credential material storage remain blocked

@@ -91,3 +91,75 @@ pub struct ProviderLiveReadApprovedSmokeEvidenceDiagnostics {
     pub task_mutation_executed: bool,
     pub raw_provider_payload_retained: bool,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderLiveReadApprovedSmokeEvidencePersistenceInput {
+    pub evidence_records: Vec<ProviderLiveReadApprovedSmokeEvidenceRecord>,
+    pub persistence_evidence_refs: Vec<String>,
+    pub existing_persisted_evidence_ids: Vec<String>,
+    pub provider_write_executed: bool,
+    pub callback_effect_executed: bool,
+    pub interruption_effect_executed: bool,
+    pub recovery_effect_executed: bool,
+    pub task_mutation_executed: bool,
+    pub raw_provider_payload_retained: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderLiveReadApprovedSmokeEvidencePersistenceSet {
+    pub persistence_set_id: String,
+    pub records: Vec<ProviderLiveReadApprovedSmokeEvidencePersistenceRecord>,
+    pub provider_write_executed: bool,
+    pub callback_effect_executed: bool,
+    pub interruption_effect_executed: bool,
+    pub recovery_effect_executed: bool,
+    pub task_mutation_executed: bool,
+    pub raw_provider_payload_retained: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderLiveReadApprovedSmokeEvidencePersistenceRecord {
+    pub persisted_evidence_id: String,
+    pub evidence_id: String,
+    pub evidence_ref: Option<String>,
+    pub command_smoke_request_id: String,
+    pub handoff_id: String,
+    pub output_record_id: String,
+    pub receipt_id: String,
+    pub name_with_owner: Option<String>,
+    pub evidence_status: ProviderLiveReadApprovedSmokeEvidenceStatus,
+    pub evidence_blockers: Vec<ProviderLiveReadApprovedSmokeEvidenceBlocker>,
+    pub persistence_status: ProviderLiveReadApprovedSmokeEvidencePersistenceStatus,
+    pub persistence_blockers: Vec<ProviderLiveReadApprovedSmokeEvidencePersistenceBlocker>,
+    pub duplicate_evidence_detected: bool,
+    pub evidence_refs: Vec<String>,
+    pub provider_network_call_performed: bool,
+    pub smoke_evidence_persisted: bool,
+    pub provider_write_executed: bool,
+    pub callback_effect_executed: bool,
+    pub interruption_effect_executed: bool,
+    pub recovery_effect_executed: bool,
+    pub task_mutation_executed: bool,
+    pub raw_provider_payload_retained: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderLiveReadApprovedSmokeEvidencePersistenceStatus {
+    Persisted,
+    DuplicateNoop,
+    Blocked,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderLiveReadApprovedSmokeEvidencePersistenceBlocker {
+    EvidenceNotPromoted,
+    MissingPersistenceEvidenceRef,
+    ProviderWriteExecuted,
+    CallbackEffectExecuted,
+    InterruptionEffectExecuted,
+    RecoveryEffectExecuted,
+    TaskMutationExecuted,
+    RawProviderPayloadRetained,
+}

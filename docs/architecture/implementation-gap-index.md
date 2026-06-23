@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-21
+Updated: 2026-06-23
 
 ## Purpose
 
@@ -117,18 +117,39 @@ Provider Readiness Overview product surface gap:
   and desktop seed proof
 - represented read families are credential status, repository metadata, PR/MR,
   and status/check
+- approved provider live-read smoke evidence now has persisted local records,
+  explicit replay, state-backed diagnostics, and provider-readiness source
+  counts
+- status/check live-read stopped target, authority checklist, request, and
+  diagnostics records exist for the selected `gh pr checks` shape
 
 Needed:
 
-- implement a fixture-backed provider live-read admission gate before any real
-  provider network call
 - keep issue/comment/review stopped refresh, credential repair, product UI
-  hardening, and real live-read execution deferred until that gate exists
+  hardening, and real status/check live-read execution deferred until a new
+  operator-approved lane exists
 - keep any next provider surface typed, sanitized, fixture-testable, and
   effect-free
 - avoid credential material resolution, provider writes, task mutation, raw
   payload display, callback/interruption/recovery execution, or durable UI
   design commitments
+
+Provider live-read boundary gap:
+
+- live-read evidence is now represented through repository metadata and stopped
+  status/check records
+- a server-owned executor exists for the approved repository-metadata shape,
+  but the status/check family has not been executed
+- the next live smoke would require explicit provider target, credential lease,
+  network authority, payload policy, retention policy, and operator approval
+
+Needed:
+
+- pause provider execution momentum after the stopped status/check lane
+- select the next major product lane from task/project workflow value, not just
+  provider availability
+- if status/check live execution is later approved, add a narrow approval
+  roadmap and keep the first smoke field-limited to `gh pr checks`
 
 Policy:
 

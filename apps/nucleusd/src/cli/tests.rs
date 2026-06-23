@@ -19,6 +19,7 @@ fn cli_config_parses_bootstrap_status_and_state() {
             help: false,
             query: None,
             command_runner: None,
+            provider_live_read_smoke_evidence: None,
         }
     );
 }
@@ -80,6 +81,20 @@ fn cli_config_parses_provider_live_read_smoke_evidence_query_domain() {
     assert_eq!(
         config.query,
         Some(QueryDomain::ProviderLiveReadSmokeEvidence)
+    );
+}
+
+#[test]
+fn cli_config_parses_provider_live_read_smoke_evidence_replay_command() {
+    let config = CliConfig::parse(vec![
+        "provider-live-read-smoke-evidence".to_owned(),
+        "replay-approved".to_owned(),
+    ])
+    .expect("parse provider live-read smoke evidence replay command");
+
+    assert_eq!(
+        config.provider_live_read_smoke_evidence,
+        Some(ProviderLiveReadSmokeEvidenceCommand::ReplayApproved)
     );
 }
 

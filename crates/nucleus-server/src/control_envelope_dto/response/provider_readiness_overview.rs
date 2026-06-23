@@ -30,6 +30,7 @@ pub struct ControlProviderReadinessOverviewDto {
     pub duplicate_noop_count: usize,
     pub blocker_count: usize,
     pub evidence_ref_count: usize,
+    pub approved_live_read_smoke_evidence_count: usize,
     pub credential_resolution_performed: bool,
     pub provider_network_call_performed: bool,
     pub provider_effect_executed: bool,
@@ -82,6 +83,8 @@ impl From<&ForgeReadinessOverview> for ControlProviderReadinessOverviewDto {
             duplicate_noop_count: overview.duplicate_noop_count,
             blocker_count: overview.blocker_count,
             evidence_ref_count: overview.evidence_ref_count,
+            approved_live_read_smoke_evidence_count: overview
+                .approved_live_read_smoke_evidence_count,
             credential_resolution_performed: overview.credential_resolution_performed,
             provider_network_call_performed: overview.provider_network_call_performed,
             provider_effect_executed: overview.provider_effect_executed,

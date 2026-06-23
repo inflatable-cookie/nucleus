@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 
 mod command_runner;
+mod provider_live_read_smoke_evidence;
 mod query_domain;
 
 pub(crate) use command_runner::{
     CliCodexTurnStartRealWriteSmoke, CliDurableLiveProviderWriteSmoke, CliDurableRuntimeSmoke,
     CliReadOnlyCommand, CommandRunnerCommand,
 };
+pub(crate) use provider_live_read_smoke_evidence::ProviderLiveReadSmokeEvidenceCommand;
 pub(crate) use query_domain::QueryDomain;
 
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -17,6 +19,7 @@ pub(crate) struct CliConfig {
     pub(crate) help: bool,
     pub(crate) query: Option<QueryDomain>,
     pub(crate) command_runner: Option<CommandRunnerCommand>,
+    pub(crate) provider_live_read_smoke_evidence: Option<ProviderLiveReadSmokeEvidenceCommand>,
 }
 
 impl CliConfig {
@@ -48,6 +51,13 @@ impl CliConfig {
                     config.command_runner =
                         Some(CommandRunnerCommand::parse_from_iter(command, &mut iter)?);
                 }
+                "provider-live-read-smoke-evidence" => {
+                    let command = iter.next().ok_or_else(|| {
+                        "provider-live-read-smoke-evidence requires a command".to_owned()
+                    })?;
+                    config.provider_live_read_smoke_evidence =
+                        Some(ProviderLiveReadSmokeEvidenceCommand::parse(&command)?);
+                }
                 unknown => return Err(format!("unknown argument: {unknown}")),
             }
         }
@@ -68,6 +78,7 @@ pub(crate) fn print_help() {
     println!("  nucleusd command-runner durable-live-provider-write-smoke [--confirm-real-write] [--confirm-real-effect] [--execute-provider-write]");
     println!("  nucleusd command-runner codex-turn-start-real-write-smoke [--confirm-real-write] [--execute-provider-write]");
     println!("  nucleusd command-runner read-only [--cwd <dir>] [--timeout-ms <ms>] [--stdout-limit <bytes>] [--stderr-limit <bytes>] -- <executable> [args...]");
+    println!("  nucleusd provider-live-read-smoke-evidence replay-approved");
     println!();
     println!("Options:");
     println!("  --state <path>  SQLite state path, default .nucleus/local/nucleus.sqlite");

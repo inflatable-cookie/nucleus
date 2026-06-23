@@ -1,6 +1,7 @@
 //! Stopped provider live-read execution boundary.
 
 mod approved_smoke_evidence;
+mod approved_smoke_evidence_persistence;
 mod approved_smoke_evidence_types;
 mod command_smoke;
 mod command_smoke_types;
@@ -12,16 +13,27 @@ mod handoff;
 mod response;
 mod smoke;
 mod smoke_types;
+mod status_check_smoke;
+mod status_check_smoke_types;
 mod types;
 
 pub use approved_smoke_evidence::{
     provider_live_read_approved_smoke_evidence,
     provider_live_read_approved_smoke_evidence_diagnostics,
 };
+pub use approved_smoke_evidence_persistence::{
+    persist_provider_live_read_approved_smoke_evidence_records,
+    read_provider_live_read_approved_smoke_evidence_records,
+};
 pub use approved_smoke_evidence_types::{
     ProviderLiveReadApprovedSmokeEvidenceBlocker, ProviderLiveReadApprovedSmokeEvidenceDiagnostics,
-    ProviderLiveReadApprovedSmokeEvidenceInput, ProviderLiveReadApprovedSmokeEvidenceRecord,
-    ProviderLiveReadApprovedSmokeEvidenceStatus,
+    ProviderLiveReadApprovedSmokeEvidenceInput,
+    ProviderLiveReadApprovedSmokeEvidencePersistenceBlocker,
+    ProviderLiveReadApprovedSmokeEvidencePersistenceInput,
+    ProviderLiveReadApprovedSmokeEvidencePersistenceRecord,
+    ProviderLiveReadApprovedSmokeEvidencePersistenceSet,
+    ProviderLiveReadApprovedSmokeEvidencePersistenceStatus,
+    ProviderLiveReadApprovedSmokeEvidenceRecord, ProviderLiveReadApprovedSmokeEvidenceStatus,
 };
 pub use command_smoke::{
     provider_live_read_command_smoke_approval, provider_live_read_command_smoke_diagnostics,
@@ -73,6 +85,21 @@ pub use smoke_types::{
     ProviderLiveReadSmokeTargetBlocker, ProviderLiveReadSmokeTargetInput,
     ProviderLiveReadSmokeTargetRecord, ProviderLiveReadSmokeTargetStatus,
 };
+pub use status_check_smoke::{
+    provider_live_read_status_check_smoke_checklist,
+    provider_live_read_status_check_smoke_diagnostics,
+    provider_live_read_status_check_smoke_request, provider_live_read_status_check_smoke_target,
+};
+pub use status_check_smoke_types::{
+    ProviderLiveReadStatusCheckSmokeChecklistBlocker,
+    ProviderLiveReadStatusCheckSmokeChecklistInput,
+    ProviderLiveReadStatusCheckSmokeChecklistRecord,
+    ProviderLiveReadStatusCheckSmokeChecklistStatus, ProviderLiveReadStatusCheckSmokeDiagnostics,
+    ProviderLiveReadStatusCheckSmokeRequestBlocker, ProviderLiveReadStatusCheckSmokeRequestInput,
+    ProviderLiveReadStatusCheckSmokeRequestRecord, ProviderLiveReadStatusCheckSmokeRequestStatus,
+    ProviderLiveReadStatusCheckSmokeTargetBlocker, ProviderLiveReadStatusCheckSmokeTargetInput,
+    ProviderLiveReadStatusCheckSmokeTargetRecord, ProviderLiveReadStatusCheckSmokeTargetStatus,
+};
 pub use types::{
     ProviderLiveReadCapabilityRecord, ProviderLiveReadExecutionDiagnostics,
     ProviderLiveReadFixtureResponseBlocker, ProviderLiveReadFixtureResponseInput,
@@ -86,6 +113,9 @@ pub use types::{
 mod approved_smoke_evidence_tests;
 
 #[cfg(test)]
+mod approved_smoke_evidence_persistence_tests;
+
+#[cfg(test)]
 mod executor_tests;
 
 #[cfg(test)]
@@ -96,3 +126,6 @@ mod tests;
 
 #[cfg(test)]
 mod smoke_tests;
+
+#[cfg(test)]
+mod status_check_smoke_tests;

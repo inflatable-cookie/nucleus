@@ -11,6 +11,7 @@ use nucleus_server::{
 mod cli;
 mod command_runner;
 mod labels;
+mod provider_live_read_smoke_evidence;
 mod query;
 
 fn main() {
@@ -55,6 +56,13 @@ fn run(args: Vec<String>) -> Result<(), String> {
 
     if let Some(command_runner) = config.command_runner {
         command_runner::print_command_runner(&mut handler, &state_path, command_runner)?;
+    }
+
+    if let Some(command) = config.provider_live_read_smoke_evidence {
+        provider_live_read_smoke_evidence::print_provider_live_read_smoke_evidence(
+            handler.state(),
+            command,
+        )?;
     }
 
     Ok(())

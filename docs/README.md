@@ -18,8 +18,8 @@ The repo uses:
 
 ## Current Lane
 
-`g03` effect-gated SCM and forge execution. Current pointer: review the
-provider live-read evidence boundary after `g03/098` and choose the next lane.
+`g03` effect-gated SCM and forge execution. Current pointer: plan the next
+major lane after the provider live-read stocktake.
 
 Current planning artifacts:
 
@@ -136,6 +136,15 @@ Current planning artifacts:
 - `roadmaps/g03/094-provider-live-read-executor-control-surface.md`
 - `roadmaps/g03/095-provider-live-read-executor-command-runner-handoff.md`
 - `roadmaps/g03/096-provider-live-read-command-runner-smoke-approval.md`
+- `roadmaps/g03/097-provider-live-read-approved-smoke-evidence-promotion.md`
+- `roadmaps/g03/098-provider-live-read-approved-smoke-evidence-control-surface.md`
+- `roadmaps/g03/099-provider-live-read-approved-smoke-evidence-persistence.md`
+- `roadmaps/g03/100-provider-live-read-smoke-evidence-state-backed-query.md`
+- `roadmaps/g03/101-provider-live-read-smoke-evidence-seed-replay.md`
+- `roadmaps/g03/102-provider-live-read-smoke-evidence-readiness-integration.md`
+- `roadmaps/g03/103-provider-live-read-second-family-selection.md`
+- `roadmaps/g03/104-provider-live-read-second-family-stopped-request.md`
+- `roadmaps/g03/105-provider-live-read-boundary-stocktake.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
@@ -186,8 +195,9 @@ through smoke target, credential/network authority checklist, and stopped smoke
 request records. The first approved live-read smoke completed manually through
 `gh` against `octocat/Hello-World` as a repository metadata refresh. The
 server-owned read-only executor, command-runner handoff, command smoke
-approval, promoted smoke evidence records, and read-only query/DTO/`nucleusd`/
-Effigy inspection are now represented without automatic provider execution.
+approval, promoted smoke evidence records, read-only query/DTO/`nucleusd`/
+Effigy inspection, and promoted evidence persistence are now represented
+without automatic provider execution.
 Provider writes, task mutation, callback/interruption/recovery execution,
 automatic UI-triggered provider execution, credential material storage, and raw
 payload retention remain blocked.

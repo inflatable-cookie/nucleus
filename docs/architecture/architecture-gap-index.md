@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-17
+Updated: 2026-06-23
 
 ## Purpose
 
@@ -226,6 +226,40 @@ Likely documents:
 - new observability contract
 - update runtime readiness docs
 
+### Provider Live-Read Product Boundary
+
+Current state:
+
+- fixture-backed provider live-read admission is complete
+- the first approved manual GitHub CLI read was promoted as selected-field
+  evidence
+- approved smoke evidence can be persisted, replayed locally, queried, and
+  surfaced as a provider-readiness source count
+- status/check refresh is selected and modeled as the second stopped live-read
+  family
+- no automatic provider execution, provider write, credential material storage,
+  raw payload retention, task mutation, callback, interruption, or recovery
+  execution has been granted
+
+Why it matters:
+
+- the boundary now proves the shape of live-read evidence without proving that
+  more provider work is the highest-value next product lane
+- a live provider read executor must not become a general forge client by
+  momentum
+
+Decision needed:
+
+- decide whether the next major lane should continue provider live-read
+  execution, return to task/project workflow depth, or harden the
+  server/client workflow around existing read models
+
+Likely documents:
+
+- update `027-provider-auth-forge-execution-contract.md` if another live smoke
+  is approved
+- update roadmaps before any real status/check provider command is executed
+
 ## Non-Blocking Gaps
 
 - plugin system runtime split between Rust and TypeScript
@@ -233,6 +267,8 @@ Likely documents:
 - deep research execution topology
 - steward/local-model backend selection
 - Effigy tool-surface shape inside native harnesses
+- visible provider-readiness UI beyond proof surfaces
+- status/check live provider execution beyond stopped records
 
 These should wait until the orchestration and host-authority decisions are
 settled.

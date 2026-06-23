@@ -26,6 +26,7 @@ fn readiness_overview_reports_unknown_for_empty_evidence() {
     assert_eq!(overview.total_read_intent_count, 0);
     assert_eq!(overview.missing_evidence_family_count, 4);
     assert_eq!(overview.blocker_count, 4);
+    assert_eq!(overview.approved_live_read_smoke_evidence_count, 0);
     assert!(!overview.provider_network_call_performed);
     assert!(!overview.credential_resolution_performed);
 }
@@ -186,6 +187,7 @@ fn readiness_overview_keeps_mutating_families_represented_not_executed() {
         repo_ref: None,
         authority_host_ref: None,
         projection,
+        approved_live_read_smoke_evidence_count: 0,
     });
 
     assert_eq!(
@@ -203,5 +205,6 @@ fn input(projection_input: ForgeReadIntentProjectionInput) -> ForgeReadinessOver
         repo_ref: Some("repo:nucleus".to_owned()),
         authority_host_ref: Some("host:local".to_owned()),
         projection: forge_read_intent_projection(projection_input),
+        approved_live_read_smoke_evidence_count: 0,
     }
 }

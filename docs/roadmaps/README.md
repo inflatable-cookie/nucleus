@@ -227,6 +227,13 @@ shape.
 - `g03/096-provider-live-read-command-runner-smoke-approval.md` - completed
 - `g03/097-provider-live-read-approved-smoke-evidence-promotion.md` - completed
 - `g03/098-provider-live-read-approved-smoke-evidence-control-surface.md` - completed
+- `g03/099-provider-live-read-approved-smoke-evidence-persistence.md` - completed
+- `g03/100-provider-live-read-smoke-evidence-state-backed-query.md` - completed
+- `g03/101-provider-live-read-smoke-evidence-seed-replay.md` - completed
+- `g03/102-provider-live-read-smoke-evidence-readiness-integration.md` - completed
+- `g03/103-provider-live-read-second-family-selection.md` - completed
+- `g03/104-provider-live-read-second-family-stopped-request.md` - completed
+- `g03/105-provider-live-read-boundary-stocktake.md` - completed
 
 ## Previous Generation
 
@@ -285,10 +292,9 @@ shape.
 
 ## Next Task
 
-Review the provider live-read evidence boundary after `g03/098` and choose the
-next `g03` lane: either persist promoted smoke evidence, add a second
-read-only provider family, or pause provider work for a broader stocktake. Do
-not add automatic provider execution, provider writes, task mutation,
-callbacks, interruption/recovery execution, raw payload retention, credential
-material storage, or UI-triggered provider reads without an explicit roadmap
-and approval gate.
+Plan the next major lane after the provider live-read stocktake. Prefer
+task/project workflow depth or server/client workflow hardening unless the
+operator explicitly approves a status/check live smoke. Do not add automatic
+provider execution, provider writes, credential material storage, raw payload
+retention, task mutation, callbacks, interruption/recovery execution, or
+UI-triggered provider reads.
