@@ -284,6 +284,13 @@ Current checkpoint:
   retention occurred.
 - The next lane is approved-smoke evidence promotion into server-owned
   executor records, not broader provider read fan-out or UI-triggered execution.
+- Provider live-read status/check smoke and evidence promotion are complete.
+  The provider lane is paused after reassessment; the next active lane is
+  server/client workflow hardening and task/project workflow depth.
+- Task timeline and project authority-map control parity is complete through
+  serialized DTOs, `nucleusd`, and Effigy selectors. A disposable desktop proof
+  panel is deferred to avoid UI churn. The next lane audits task/project
+  workflow depth before adding more behavior.
 
 ## Convergence Exit Criteria
 
@@ -411,18 +418,33 @@ Reason:
 - `090-provider-live-read-smoke-approval-gate.md` - completed
 - `091-provider-live-read-smoke-operator-approval-checkpoint.md` - completed
 - `092-provider-live-read-smoke-closeout-and-executor-selection.md` - completed
-- `093-provider-live-read-server-owned-executor.md` - active
-- `092-provider-live-read-smoke-closeout-and-executor-selection.md` - active
+- `093-provider-live-read-server-owned-executor.md` - completed
+- `094-provider-live-read-executor-control-surface.md` - completed
+- `095-provider-live-read-executor-command-runner-handoff.md` - completed
+- `096-provider-live-read-command-runner-smoke-approval.md` - completed
+- `097-provider-live-read-approved-smoke-evidence-promotion.md` - completed
+- `098-provider-live-read-approved-smoke-evidence-control-surface.md` - completed
+- `099-provider-live-read-approved-smoke-evidence-persistence.md` - completed
+- `100-provider-live-read-smoke-evidence-state-backed-query.md` - completed
+- `101-provider-live-read-smoke-evidence-seed-replay.md` - completed
+- `102-provider-live-read-smoke-evidence-readiness-integration.md` - completed
+- `103-provider-live-read-second-family-selection.md` - completed
+- `104-provider-live-read-second-family-stopped-request.md` - completed
+- `105-provider-live-read-boundary-stocktake.md` - completed
+- `106-provider-live-read-status-check-smoke.md` - completed
+- `107-provider-live-read-reassessment.md` - completed
+- `108-server-client-workflow-hardening.md` - active
+- `109-task-timeline-authority-map-control-parity.md` - completed
+- `110-task-project-workflow-depth.md` - completed
+- `111-planning-artifact-task-seed-promotion.md` - completed
+- `112-planning-task-seed-persistence-and-projection.md` - completed
+- `113-task-seed-promotion-command.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/368-provider-live-read-executor-request-records.md`
-- `batch-cards/369-provider-live-read-gh-command-descriptor.md`
-- `batch-cards/370-provider-live-read-sanitized-output-records.md`
-- `batch-cards/371-provider-live-read-executor-receipts-diagnostics.md`
-- `batch-cards/372-provider-live-read-executor-validation-closeout.md`
+- `batch-cards/469-task-seed-promotion-state-persistence.md`
 
 Paused cards:
 
@@ -430,10 +452,41 @@ None.
 
 Planned cards:
 
-None.
+- `batch-cards/470-task-seed-promotion-diagnostics-query.md`
+- `batch-cards/471-task-seed-promotion-cli-effigy.md`
+- `batch-cards/472-task-seed-promotion-validation.md`
+- `batch-cards/473-task-seed-promotion-next-lane-checkpoint.md`
+- `batch-cards/474-task-seed-promotion-closeout.md`
 
 Completed cards:
 
+- `batch-cards/468-task-seed-promotion-command-model.md`
+- `batch-cards/467-task-seed-promotion-admission-selection.md`
+- `batch-cards/466-planning-task-seed-persistence-closeout.md`
+- `batch-cards/465-planning-task-seed-promotion-readiness-reassessment.md`
+- `batch-cards/464-planning-task-seed-persistence-validation.md`
+- `batch-cards/463-planning-artifact-management-projection-shape.md`
+- `batch-cards/462-planning-task-seed-fixture-effigy-smoke.md`
+- `batch-cards/461-planning-task-seed-query-from-persistence.md`
+- `batch-cards/460-planning-task-seed-local-store-records.md`
+- `batch-cards/459-planning-task-seed-storage-codec-selection.md`
+- `batch-cards/458-planning-task-seed-closeout.md`
+- `batch-cards/457-planning-task-seed-next-lane-checkpoint.md`
+- `batch-cards/456-planning-task-seed-validation.md`
+- `batch-cards/455-planning-task-seed-query-control-cli-effigy.md`
+- `batch-cards/454-planning-task-seed-record-implementation.md`
+- `batch-cards/448-task-project-workflow-validation.md`
+- `batch-cards/447-task-project-control-cli-effigy.md`
+- `batch-cards/446-task-project-read-model-implementation.md`
+- `batch-cards/445-next-task-readiness-surface-selection.md`
+- `batch-cards/444-task-project-workflow-gap-matrix.md`
+- `batch-cards/443-task-project-workflow-implementation-audit.md`
+- `batch-cards/442-task-timeline-authority-map-desktop-proof-decision.md`
+- `batch-cards/441-task-timeline-authority-map-validation.md`
+- `batch-cards/440-task-timeline-authority-map-cli-effigy.md`
+- `batch-cards/439-project-authority-map-control-envelope-dto.md`
+- `batch-cards/438-task-timeline-control-envelope-dto.md`
+- `batch-cards/437-task-timeline-control-envelope-audit.md`
 - `batch-cards/367-provider-live-read-smoke-closeout-validation.md`
 - `batch-cards/366-provider-live-read-executor-gap-selection.md`
 - `batch-cards/365-provider-live-read-smoke-evidence-promotion.md`
@@ -906,6 +959,10 @@ Completed cards:
 95. Provider live-read second family selection - completed
 96. Provider live-read second family stopped request - completed
 97. Provider live-read boundary stocktake - completed
+98. Provider live-read status/check smoke - completed
+99. Provider live-read reassessment - completed
+100. Server/client workflow hardening - active
+101. Task timeline authority-map control parity - active
 
 Current stop:
 
@@ -929,11 +986,19 @@ Current stop:
   using a stopped `gh pr checks` selected-field shape before approval
 - status/check live-read target, authority checklist, stopped request, and
   diagnostics records now exist without provider execution
-- provider live-read execution momentum is paused after stocktake; the next
-  major lane should be selected from product value unless the operator
-  explicitly approves a status/check live smoke
-- the overnight runway is to connect read queries to persisted evidence, add an
-  explicit seed/replay path, decide safe readiness integration, then select and
-  stop-model one second provider read family before a stocktake
+- operator approval has opened one bounded status/check live smoke using
+  selected fields and sanitized evidence only
+- approved status/check smoke completed against `cli/cli#13705` with exit code
+  `0`; sanitized counts are 18 checks, 11 pass, 7 skipped, and no failures,
+  pending checks, or cancellations
+- status/check smoke evidence records now preserve selected fields, target,
+  counts, exit code, and guardrail flags without raw provider payloads
+- provider execution work is paused after live-read proof; the next active lane
+  is server/client workflow hardening over existing read models and control
+  envelopes
+- server/client inventory and gap matrix selected task timeline and project
+  authority-map read-only control parity as the first implementation batch
+- task timeline and project authority-map query DTOs, `nucleusd` domains,
+  Effigy selectors, typed output lines, and focused tests are complete
 - provider writes, task mutation, callbacks, interruption/recovery execution,
   raw payload retention, and credential material storage remain blocked

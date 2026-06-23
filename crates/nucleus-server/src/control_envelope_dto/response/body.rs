@@ -17,8 +17,11 @@ use super::provider_read_intent::ControlProviderReadIntentQueryResultDto;
 use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
-    ControlDiffSummaryRecordDto, ControlProjectAuthorityMapDto,
-    ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
+    ControlDiffSummaryRecordDto, ControlPlanningTaskSeedCandidateDto,
+    ControlPlanningTaskSeedSourceCountsDto, ControlPlanningTaskSeedStatusCountDto,
+    ControlProjectAuthorityMapDto, ControlRuntimeReadinessDiagnosticDto,
+    ControlRuntimeReceiptRecordDto, ControlTaskReadinessCandidateDto,
+    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
     ControlTaskTimelineEntryDto,
 };
 use crate::control_envelope_dto::{
@@ -71,6 +74,22 @@ pub enum ControlResponseBodyDto {
         task_id: String,
         entries: Vec<ControlTaskTimelineEntryDto>,
         last_source_event_id: Option<String>,
+    },
+    TaskReadiness {
+        project_id: String,
+        candidates: Vec<ControlTaskReadinessCandidateDto>,
+        status_counts: Vec<ControlTaskReadinessStatusCountDto>,
+        source_counts: ControlTaskReadinessSourceCountsDto,
+        client_can_mutate: bool,
+        provider_execution_available: bool,
+    },
+    PlanningTaskSeeds {
+        project_id: String,
+        candidates: Vec<ControlPlanningTaskSeedCandidateDto>,
+        status_counts: Vec<ControlPlanningTaskSeedStatusCountDto>,
+        source_counts: ControlPlanningTaskSeedSourceCountsDto,
+        client_can_promote: bool,
+        task_creation_performed: bool,
     },
     ProjectAuthorityMap {
         record: ControlProjectAuthorityMapDto,
@@ -187,6 +206,46 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                         .last_cursor
                         .as_ref()
                         .map(|cursor| cursor.source_event_id.clone()),
+                })
+            }
+            ServerControlResponseBody::Query(ServerQueryResult::TaskReadiness(projection)) => {
+                Ok(Self::TaskReadiness {
+                    project_id: projection.project_id.0.clone(),
+                    candidates: projection
+                        .candidates
+                        .iter()
+                        .map(ControlTaskReadinessCandidateDto::from)
+                        .collect(),
+                    status_counts: projection
+                        .status_counts
+                        .iter()
+                        .map(ControlTaskReadinessStatusCountDto::from)
+                        .collect(),
+                    source_counts: ControlTaskReadinessSourceCountsDto::from(
+                        &projection.source_counts,
+                    ),
+                    client_can_mutate: projection.client_can_mutate,
+                    provider_execution_available: projection.provider_execution_available,
+                })
+            }
+            ServerControlResponseBody::Query(ServerQueryResult::PlanningTaskSeeds(projection)) => {
+                Ok(Self::PlanningTaskSeeds {
+                    project_id: projection.project_id.0.clone(),
+                    candidates: projection
+                        .candidates
+                        .iter()
+                        .map(ControlPlanningTaskSeedCandidateDto::from)
+                        .collect(),
+                    status_counts: projection
+                        .status_counts
+                        .iter()
+                        .map(ControlPlanningTaskSeedStatusCountDto::from)
+                        .collect(),
+                    source_counts: ControlPlanningTaskSeedSourceCountsDto::from(
+                        &projection.source_counts,
+                    ),
+                    client_can_promote: projection.client_can_promote,
+                    task_creation_performed: projection.task_creation_performed,
                 })
             }
             ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)) => {

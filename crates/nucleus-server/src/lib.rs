@@ -38,6 +38,7 @@ pub mod local_read_only_spawn_smoke;
 pub mod local_sandbox_backend;
 pub mod local_transport;
 pub mod management_projection_state;
+pub mod planning_seed;
 pub mod process_control_backend;
 pub mod process_event_transport_backend;
 pub mod process_interruption;

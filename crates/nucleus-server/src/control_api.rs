@@ -8,7 +8,7 @@ use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId};
 use nucleus_core::PersistenceRecordId;
 use nucleus_engine::{
     EngineCheckpointRecord, EngineDiffSummaryRecord, EngineRuntimeReceiptRecord,
-    EngineTaskTimelineProjection,
+    EngineTaskReadinessProjection, EngineTaskSeedCandidateProjection, EngineTaskTimelineProjection,
 };
 use nucleus_local_store::LocalStoreRecord;
 use nucleus_projects::{ProjectId, RepoMembershipId};
@@ -69,6 +69,8 @@ pub enum ServerQueryKind {
     ProviderLiveReadExecutor(ProviderLiveReadExecutorQuery),
     ProviderLiveReadSmokeEvidence(ProviderLiveReadSmokeEvidenceQuery),
     TaskTimeline(TaskTimelineQuery),
+    TaskReadiness(TaskReadinessQuery),
+    PlanningTaskSeeds(PlanningTaskSeedsQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
 
@@ -177,6 +179,18 @@ pub struct TaskTimelineQuery {
     pub task_id: TaskId,
 }
 
+/// Task readiness query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskReadinessQuery {
+    pub project_id: ProjectId,
+}
+
+/// Planning task seed candidate query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanningTaskSeedsQuery {
+    pub project_id: ProjectId,
+}
+
 /// Project authority-map query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectAuthorityMapQuery {
@@ -247,6 +261,8 @@ pub enum ServerQueryResult {
         crate::ProviderLiveReadApprovedSmokeEvidenceDiagnostics,
     ),
     TaskTimeline(EngineTaskTimelineProjection),
+    TaskReadiness(EngineTaskReadinessProjection),
+    PlanningTaskSeeds(EngineTaskSeedCandidateProjection),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     Empty,
     Unsupported {

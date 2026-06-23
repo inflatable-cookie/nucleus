@@ -2,14 +2,24 @@
 
 use serde::{Deserialize, Serialize};
 
+mod authority_domains;
+mod task_workflow;
+
 use crate::control_api::{
-    ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery,
-    ProviderReadinessOverviewQuery, ServerQuery, ServerQueryKind, StateRecordQuery,
-    StateRecordQueryScope,
+    PlanningTaskSeedsQuery, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
+    ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
+    ServerQuery, ServerQueryKind, StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery,
+    TaskTimelineQuery,
 };
 use crate::ids::ServerQueryId;
 use crate::state::ServerStateDomain;
+use authority_domains::{authority_domain_dto, authority_domain_from_dto};
 use nucleus_core::PersistenceRecordId;
+use nucleus_projects::ProjectId;
+use task_workflow::{
+    planning_task_seeds_query_from_action, task_readiness_query_from_action,
+    task_timeline_query_from_action,
+};
 
 use super::protocol::{
     diagnostics_domain_dto, diagnostics_query_from_domain, runtime_metadata_action,
@@ -49,6 +59,27 @@ pub enum ControlQueryDto {
     ProviderLiveReadSmokeEvidence {
         query_id: String,
         action: String,
+    },
+    TaskTimeline {
+        query_id: String,
+        action: String,
+        task_id: String,
+    },
+    TaskReadiness {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    PlanningTaskSeeds {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    ProjectAuthorityMap {
+        query_id: String,
+        action: String,
+        project_id: String,
+        expected_domains: Vec<String>,
     },
 }
 
@@ -91,6 +122,36 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
             ) => Ok(Self::ProviderLiveReadSmokeEvidence {
                 query_id: query.id.0.clone(),
                 action: "diagnostics".to_owned(),
+            }),
+            ServerQueryKind::TaskTimeline(TaskTimelineQuery { task_id }) => {
+                Ok(Self::TaskTimeline {
+                    query_id: query.id.0.clone(),
+                    action: "timeline".to_owned(),
+                    task_id: task_id.0.clone(),
+                })
+            }
+            ServerQueryKind::TaskReadiness(TaskReadinessQuery { project_id }) => {
+                Ok(Self::TaskReadiness {
+                    query_id: query.id.0.clone(),
+                    action: "candidates".to_owned(),
+                    project_id: project_id.0.clone(),
+                })
+            }
+            ServerQueryKind::PlanningTaskSeeds(PlanningTaskSeedsQuery { project_id }) => {
+                Ok(Self::PlanningTaskSeeds {
+                    query_id: query.id.0.clone(),
+                    action: "candidates".to_owned(),
+                    project_id: project_id.0.clone(),
+                })
+            }
+            ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
+                project_id,
+                expected_domains,
+            }) => Ok(Self::ProjectAuthorityMap {
+                query_id: query.id.0.clone(),
+                action: "publication".to_owned(),
+                project_id: project_id.0.clone(),
+                expected_domains: expected_domains.iter().map(authority_domain_dto).collect(),
             }),
             _ => Err(ControlApiCodecError::unsupported(
                 "query shape is not supported by the first control envelope",
@@ -143,6 +204,21 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             ControlQueryDto::ProviderLiveReadSmokeEvidence { action, .. } => {
                 provider_live_read_smoke_evidence_query_from_action(&action)
             }
+            ControlQueryDto::TaskTimeline {
+                action, task_id, ..
+            } => task_timeline_query_from_action(&action, task_id),
+            ControlQueryDto::TaskReadiness {
+                action, project_id, ..
+            } => task_readiness_query_from_action(&action, project_id),
+            ControlQueryDto::PlanningTaskSeeds {
+                action, project_id, ..
+            } => planning_task_seeds_query_from_action(&action, project_id),
+            ControlQueryDto::ProjectAuthorityMap {
+                action,
+                project_id,
+                expected_domains,
+                ..
+            } => project_authority_map_query_from_action(&action, project_id, expected_domains),
         }
     }
 }
@@ -156,7 +232,11 @@ impl ControlQueryDto {
             | Self::ProviderReadIntent { query_id, .. }
             | Self::ProviderReadinessOverview { query_id, .. }
             | Self::ProviderLiveReadExecutor { query_id, .. }
-            | Self::ProviderLiveReadSmokeEvidence { query_id, .. } => query_id.clone(),
+            | Self::ProviderLiveReadSmokeEvidence { query_id, .. }
+            | Self::TaskTimeline { query_id, .. }
+            | Self::TaskReadiness { query_id, .. }
+            | Self::PlanningTaskSeeds { query_id, .. }
+            | Self::ProjectAuthorityMap { query_id, .. } => query_id.clone(),
         }
     }
 }
@@ -209,6 +289,30 @@ fn provider_live_read_smoke_evidence_query_from_action(
         )),
         _ => Err(ControlApiCodecError::unsupported(format!(
             "unsupported provider live-read smoke evidence query action: {action}"
+        ))),
+    }
+}
+
+fn project_authority_map_query_from_action(
+    action: &str,
+    project_id: String,
+    expected_domains: Vec<String>,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "publication" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
+            "project authority-map query requires a project id",
+        )),
+        "publication" => Ok(ServerQueryKind::ProjectAuthorityMap(
+            ProjectAuthorityMapQuery {
+                project_id: ProjectId(project_id),
+                expected_domains: expected_domains
+                    .into_iter()
+                    .map(authority_domain_from_dto)
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported project authority-map query action: {action}"
         ))),
     }
 }

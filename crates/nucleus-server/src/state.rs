@@ -17,6 +17,7 @@ pub enum ServerStateDomain {
     Projects,
     Tasks,
     TaskHistory,
+    Planning,
     Workspaces,
     AdapterRegistry,
     AgentSessions,
@@ -34,6 +35,7 @@ impl ServerStateDomain {
             Self::Projects => PersistenceDomain::Projects,
             Self::Tasks => PersistenceDomain::Tasks,
             Self::TaskHistory => PersistenceDomain::TaskHistory,
+            Self::Planning => PersistenceDomain::Planning,
             Self::Workspaces => PersistenceDomain::Workspaces,
             Self::AdapterRegistry => PersistenceDomain::AdapterRegistry,
             Self::AgentSessions => PersistenceDomain::AgentSessions,
@@ -84,6 +86,10 @@ where
 
     pub fn task_history(&self) -> ServerStateDomainService<'_, B> {
         self.domain(ServerStateDomain::TaskHistory)
+    }
+
+    pub fn planning(&self) -> ServerStateDomainService<'_, B> {
+        self.domain(ServerStateDomain::Planning)
     }
 
     pub fn workspaces(&self) -> ServerStateDomainService<'_, B> {

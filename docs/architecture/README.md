@@ -12,6 +12,13 @@ Architecture records the system shape once planning starts to settle.
 - `architecture-gap-index.md`
 - `implementation-gap-index.md`
 - `engine-orchestration-boundary.md`
+- `server-client-query-surface-inventory.md`
+- `server-client-gap-matrix.md`
+- `task-project-workflow-gap-matrix.md`
+- `planning-task-seed-gap-matrix.md`
+- `planning-task-seed-storage-codec-selection.md`
+- `planning-management-projection-shape.md`
+- `task-seed-promotion-admission.md`
 
 ## Open Questions
 

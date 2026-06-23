@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use cli::CliConfig;
 use nucleus_local_store::SqliteBackend;
 use nucleus_server::{
-    seed_local_project, seed_local_task, LocalControlRequestHandler, LocalProjectSeed,
-    LocalTaskSeed,
+    seed_local_planning_task_seed, seed_local_project, seed_local_task, LocalControlRequestHandler,
+    LocalPlanningTaskSeed, LocalProjectSeed, LocalTaskSeed,
 };
 
 mod cli;
@@ -44,6 +44,11 @@ fn run(args: Vec<String>) -> Result<(), String> {
             .map_err(|error| format!("failed to seed local project: {error:?}"))?;
         seed_local_task(handler.state(), LocalTaskSeed::nucleus_local_bootstrap())
             .map_err(|error| format!("failed to seed local task: {error:?}"))?;
+        seed_local_planning_task_seed(
+            handler.state(),
+            LocalPlanningTaskSeed::nucleus_local_bootstrap(),
+        )
+        .map_err(|error| format!("failed to seed local planning task seed: {error:?}"))?;
     }
 
     if config.status || config.bootstrap {

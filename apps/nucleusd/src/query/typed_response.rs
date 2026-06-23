@@ -5,6 +5,16 @@ use nucleus_server::{
     ControlResponseBodyDto, ControlResponseEnvelopeDto,
 };
 
+mod planning_task_seeds;
+mod task_authority;
+mod task_readiness;
+
+pub(super) use planning_task_seeds::planning_task_seeds_response_lines;
+pub(super) use task_authority::{
+    project_authority_map_response_lines, task_timeline_response_lines,
+};
+pub(super) use task_readiness::task_readiness_response_lines;
+
 pub(super) fn print_typed_dto_response(
     label: &str,
     dto: ControlResponseEnvelopeDto,
@@ -38,6 +48,61 @@ pub(super) fn print_typed_dto_response(
                 label,
                 diagnostics,
             ));
+            Ok(())
+        }
+        ControlResponseBodyDto::TaskTimeline {
+            task_id,
+            entries,
+            last_source_event_id,
+        } => {
+            print_lines(task_timeline_response_lines(
+                label,
+                task_id,
+                entries,
+                last_source_event_id,
+            ));
+            Ok(())
+        }
+        ControlResponseBodyDto::TaskReadiness {
+            project_id,
+            candidates,
+            status_counts,
+            source_counts,
+            client_can_mutate,
+            provider_execution_available,
+        } => {
+            print_lines(task_readiness_response_lines(
+                label,
+                project_id,
+                candidates,
+                status_counts,
+                source_counts,
+                client_can_mutate,
+                provider_execution_available,
+            ));
+            Ok(())
+        }
+        ControlResponseBodyDto::PlanningTaskSeeds {
+            project_id,
+            candidates,
+            status_counts,
+            source_counts,
+            client_can_promote,
+            task_creation_performed,
+        } => {
+            print_lines(planning_task_seeds_response_lines(
+                label,
+                project_id,
+                candidates,
+                status_counts,
+                source_counts,
+                client_can_promote,
+                task_creation_performed,
+            ));
+            Ok(())
+        }
+        ControlResponseBodyDto::ProjectAuthorityMap { record } => {
+            print_lines(project_authority_map_response_lines(label, record));
             Ok(())
         }
         ControlResponseBodyDto::Error { kind, reason } => {

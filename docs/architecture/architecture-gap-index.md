@@ -247,18 +247,19 @@ Why it matters:
   more provider work is the highest-value next product lane
 - a live provider read executor must not become a general forge client by
   momentum
+- the approved repository-metadata and status/check smokes are enough evidence
+  to pause provider execution and harden server/client workflow coherence
 
-Decision needed:
+Decision:
 
-- decide whether the next major lane should continue provider live-read
-  execution, return to task/project workflow depth, or harden the
-  server/client workflow around existing read models
+- pause provider live-read execution work.
+- select server/client workflow hardening around existing read models before
+  adding more provider execution.
 
 Likely documents:
 
-- update `027-provider-auth-forge-execution-contract.md` if another live smoke
-  is approved
-- update roadmaps before any real status/check provider command is executed
+- `docs/roadmaps/g03/107-provider-live-read-reassessment.md`
+- `docs/roadmaps/g03/108-server-client-workflow-hardening.md`
 
 ## Non-Blocking Gaps
 

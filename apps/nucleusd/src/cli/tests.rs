@@ -1,5 +1,7 @@
 use super::*;
 
+mod query;
+
 #[test]
 fn cli_config_parses_bootstrap_status_and_state() {
     let config = CliConfig::parse(vec![
@@ -21,66 +23,6 @@ fn cli_config_parses_bootstrap_status_and_state() {
             command_runner: None,
             provider_live_read_smoke_evidence: None,
         }
-    );
-}
-
-#[test]
-fn cli_config_parses_query_domain() {
-    let config =
-        CliConfig::parse(vec!["query".to_owned(), "tasks".to_owned()]).expect("parse query");
-
-    assert_eq!(config.query, Some(QueryDomain::Tasks));
-}
-
-#[test]
-fn cli_config_parses_command_evidence_query_domain() {
-    let config = CliConfig::parse(vec!["query".to_owned(), "command-evidence".to_owned()])
-        .expect("parse command evidence query");
-
-    assert_eq!(config.query, Some(QueryDomain::CommandEvidence));
-}
-
-#[test]
-fn cli_config_parses_provider_read_intent_query_domain() {
-    let config = CliConfig::parse(vec!["query".to_owned(), "provider-read-intent".to_owned()])
-        .expect("parse provider read-intent query");
-
-    assert_eq!(config.query, Some(QueryDomain::ProviderReadIntent));
-}
-
-#[test]
-fn cli_config_parses_provider_readiness_overview_query_domain() {
-    let config = CliConfig::parse(vec![
-        "query".to_owned(),
-        "provider-readiness-overview".to_owned(),
-    ])
-    .expect("parse provider readiness overview query");
-
-    assert_eq!(config.query, Some(QueryDomain::ProviderReadinessOverview));
-}
-
-#[test]
-fn cli_config_parses_provider_live_read_executor_query_domain() {
-    let config = CliConfig::parse(vec![
-        "query".to_owned(),
-        "provider-live-read-executor".to_owned(),
-    ])
-    .expect("parse provider live-read executor query");
-
-    assert_eq!(config.query, Some(QueryDomain::ProviderLiveReadExecutor));
-}
-
-#[test]
-fn cli_config_parses_provider_live_read_smoke_evidence_query_domain() {
-    let config = CliConfig::parse(vec![
-        "query".to_owned(),
-        "provider-live-read-smoke-evidence".to_owned(),
-    ])
-    .expect("parse provider live-read smoke evidence query");
-
-    assert_eq!(
-        config.query,
-        Some(QueryDomain::ProviderLiveReadSmokeEvidence)
     );
 }
 
@@ -374,14 +316,6 @@ fn cli_config_rejects_unknown_args() {
     let error = CliConfig::parse(vec!["--serve".to_owned()]).expect_err("unknown arg");
 
     assert_eq!(error, "unknown argument: --serve");
-}
-
-#[test]
-fn cli_config_rejects_unknown_query_domain() {
-    let error = CliConfig::parse(vec!["query".to_owned(), "agents".to_owned()])
-        .expect_err("unknown query domain");
-
-    assert_eq!(error, "unsupported query domain: agents");
 }
 
 #[test]

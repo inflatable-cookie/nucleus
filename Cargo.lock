@@ -2025,6 +2025,7 @@ dependencies = [
  "nucleus-orchestration",
  "nucleus-projects",
  "nucleus-server",
+ "nucleus-tasks",
  "serde_json",
  "tempfile",
 ]

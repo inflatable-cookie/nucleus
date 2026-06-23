@@ -14,6 +14,8 @@ mod response;
 mod smoke;
 mod smoke_types;
 mod status_check_smoke;
+mod status_check_smoke_evidence;
+mod status_check_smoke_evidence_types;
 mod status_check_smoke_types;
 mod types;
 
@@ -90,6 +92,16 @@ pub use status_check_smoke::{
     provider_live_read_status_check_smoke_diagnostics,
     provider_live_read_status_check_smoke_request, provider_live_read_status_check_smoke_target,
 };
+pub use status_check_smoke_evidence::{
+    provider_live_read_status_check_smoke_evidence,
+    provider_live_read_status_check_smoke_evidence_diagnostics,
+};
+pub use status_check_smoke_evidence_types::{
+    ProviderLiveReadStatusCheckSmokeEvidenceBlocker,
+    ProviderLiveReadStatusCheckSmokeEvidenceDiagnostics,
+    ProviderLiveReadStatusCheckSmokeEvidenceInput, ProviderLiveReadStatusCheckSmokeEvidenceRecord,
+    ProviderLiveReadStatusCheckSmokeEvidenceStatus,
+};
 pub use status_check_smoke_types::{
     ProviderLiveReadStatusCheckSmokeChecklistBlocker,
     ProviderLiveReadStatusCheckSmokeChecklistInput,
@@ -129,3 +141,6 @@ mod smoke_tests;
 
 #[cfg(test)]
 mod status_check_smoke_tests;
+
+#[cfg(test)]
+mod status_check_smoke_evidence_tests;

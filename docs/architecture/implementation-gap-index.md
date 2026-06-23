@@ -122,11 +122,15 @@ Provider Readiness Overview product surface gap:
   counts
 - status/check live-read stopped target, authority checklist, request, and
   diagnostics records exist for the selected `gh pr checks` shape
+- approved status/check live-read smoke completed against `cli/cli#13705`
+  using selected fields only; sanitized evidence records preserve target,
+  selected fields, exit code, counts, and guardrail flags without raw provider
+  payloads
 
 Needed:
 
 - keep issue/comment/review stopped refresh, credential repair, product UI
-  hardening, and real status/check live-read execution deferred until a new
+  hardening, and additional live provider execution deferred until a new
   operator-approved lane exists
 - keep any next provider surface typed, sanitized, fixture-testable, and
   effect-free
@@ -139,17 +143,37 @@ Provider live-read boundary gap:
 - live-read evidence is now represented through repository metadata and stopped
   status/check records
 - a server-owned executor exists for the approved repository-metadata shape,
-  but the status/check family has not been executed
-- the next live smoke would require explicit provider target, credential lease,
-  network authority, payload policy, retention policy, and operator approval
+  and a bounded approved status/check smoke has produced sanitized count
+  evidence
+- further live smoke work would require explicit provider target, credential
+  lease, network authority, payload policy, retention policy, and operator
+  approval
 
 Needed:
 
-- pause provider execution momentum after the stopped status/check lane
-- select the next major product lane from task/project workflow value, not just
-  provider availability
-- if status/check live execution is later approved, add a narrow approval
-  roadmap and keep the first smoke field-limited to `gh pr checks`
+- pause provider execution momentum after the approved status/check smoke
+- select the next major product lane from client workflow coherence and
+  task/project value, not just provider availability
+- harden read-only server/client query and control surfaces before widening
+  provider execution
+
+Task/project workflow depth gap:
+
+- task records, task commands, work items, review transitions, runtime progress
+  records, task timeline projection, and repo-backed projection records exist
+- planning sessions, accepted planning artifacts, task seed groups, goal
+  records, scoring policy, and project/task priority queues do not exist
+- the selected next product slice is a deterministic read-only task readiness
+  candidate projection, not automatic task ranking or task mutation
+
+Needed:
+
+- compose readiness candidates from existing task fields, agent-readiness,
+  activity state, optional work-item evidence, and timeline refs
+- expose the projection through server query, control DTO, `nucleusd`, and
+  Effigy before visible UI
+- keep scoring, goal loops, task mutation, provider execution, and planning
+  artifact promotion deferred until separately contracted
 
 Policy:
 

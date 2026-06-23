@@ -21,7 +21,9 @@ pub use records::ControlStateRecordDto;
 pub use request::{ControlRequestBodyDto, ControlRequestEnvelopeDto};
 pub use response::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
-    ControlDiagnosticsSnapshotDto, ControlDiffSummaryRecordDto, ControlProjectAuthorityDomainDto,
+    ControlDiagnosticsSnapshotDto, ControlDiffSummaryRecordDto,
+    ControlPlanningTaskSeedCandidateDto, ControlPlanningTaskSeedSourceCountsDto,
+    ControlPlanningTaskSeedStatusCountDto, ControlProjectAuthorityDomainDto,
     ControlProjectAuthorityIssueDto, ControlProjectAuthorityMapDto,
     ControlProviderLiveReadExecutorDiagnosticsDto,
     ControlProviderLiveReadSmokeEvidenceDiagnosticsDto, ControlProviderReadIntentEntryDto,
@@ -29,6 +31,8 @@ pub use response::{
     ControlProviderReadIntentSourceCountsDto, ControlProviderReadinessOverviewDto,
     ControlResponseBodyDto, ControlResponseEnvelopeDto, ControlResponseStatusDto,
     ControlRuntimeReadinessBlockerDto, ControlRuntimeReadinessDiagnosticDto,
+    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
+    ControlTaskReadinessStatusCountDto, ControlTaskTimelineEntryDto,
 };
 pub use tasks::ControlTaskRecordDto;
 

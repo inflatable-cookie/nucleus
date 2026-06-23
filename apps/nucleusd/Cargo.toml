@@ -17,6 +17,7 @@ nucleus-local-store = { path = "../../crates/nucleus-local-store" }
 nucleus-orchestration = { path = "../../crates/nucleus-orchestration" }
 nucleus-projects = { path = "../../crates/nucleus-projects" }
 nucleus-server = { path = "../../crates/nucleus-server" }
+nucleus-tasks = { path = "../../crates/nucleus-tasks" }
 serde_json = "1"
 
 [dev-dependencies]

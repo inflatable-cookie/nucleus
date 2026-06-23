@@ -18,8 +18,8 @@ The repo uses:
 
 ## Current Lane
 
-`g03` effect-gated SCM and forge execution. Current pointer: plan the next
-major lane after the provider live-read stocktake.
+`g03` effect-gated SCM and forge execution. Current pointer: server/client
+workflow hardening after the provider live-read proof pause.
 
 Current planning artifacts:
 
@@ -145,10 +145,20 @@ Current planning artifacts:
 - `roadmaps/g03/103-provider-live-read-second-family-selection.md`
 - `roadmaps/g03/104-provider-live-read-second-family-stopped-request.md`
 - `roadmaps/g03/105-provider-live-read-boundary-stocktake.md`
+- `roadmaps/g03/106-provider-live-read-status-check-smoke.md`
+- `roadmaps/g03/107-provider-live-read-reassessment.md`
+- `roadmaps/g03/108-server-client-workflow-hardening.md`
+- `roadmaps/g03/109-task-timeline-authority-map-control-parity.md`
+- `roadmaps/g03/110-task-project-workflow-depth.md`
+- `roadmaps/g03/111-planning-artifact-task-seed-promotion.md`
 - `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
 - `architecture/implementation-gap-index.md`
+- `architecture/server-client-query-surface-inventory.md`
+- `architecture/server-client-gap-matrix.md`
+- `architecture/task-project-workflow-gap-matrix.md`
+- `architecture/planning-task-seed-gap-matrix.md`
 
 ## Guardrail
 

@@ -10,7 +10,7 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-None.
+- `469-task-seed-promotion-state-persistence.md`
 
 ## Paused Cards
 
@@ -18,10 +18,29 @@ None.
 
 ## Planned Cards
 
-None.
+- `470-task-seed-promotion-diagnostics-query.md`
+- `471-task-seed-promotion-cli-effigy.md`
+- `472-task-seed-promotion-validation.md`
+- `473-task-seed-promotion-next-lane-checkpoint.md`
+- `474-task-seed-promotion-closeout.md`
 
 ## Completed Cards
 
+- `468-task-seed-promotion-command-model.md`
+- `467-task-seed-promotion-admission-selection.md`
+- `466-planning-task-seed-persistence-closeout.md`
+- `465-planning-task-seed-promotion-readiness-reassessment.md`
+- `464-planning-task-seed-persistence-validation.md`
+- `463-planning-artifact-management-projection-shape.md`
+- `462-planning-task-seed-fixture-effigy-smoke.md`
+- `461-planning-task-seed-query-from-persistence.md`
+- `460-planning-task-seed-local-store-records.md`
+- `459-planning-task-seed-storage-codec-selection.md`
+- `458-planning-task-seed-closeout.md`
+- `457-planning-task-seed-next-lane-checkpoint.md`
+- `456-planning-task-seed-validation.md`
+- `455-planning-task-seed-query-control-cli-effigy.md`
+- `454-planning-task-seed-record-implementation.md`
 - `392-provider-live-read-approved-smoke-evidence-validation.md`
 - `391-provider-live-read-approved-smoke-evidence-nucleusd-effigy-query.md`
 - `390-provider-live-read-approved-smoke-evidence-control-dto.md`
@@ -538,3 +557,36 @@ None.
 - `418-provider-live-read-gap-index-refresh.md`
 - `419-provider-live-read-next-lane-decision.md`
 - `420-provider-live-read-stocktake-validation.md`
+- `421-provider-live-read-status-check-target.md`
+- `422-provider-live-read-status-check-approved-smoke.md`
+- `423-provider-live-read-status-check-evidence-promotion.md`
+- `424-provider-live-read-status-check-validation.md`
+- `425-provider-live-read-reassessment.md`
+- `426-provider-live-read-gap-index-refresh.md`
+- `427-server-client-hardening-lane-selection.md`
+- `428-provider-live-read-reassessment-validation.md`
+- `429-server-client-query-surface-inventory.md`
+- `430-server-client-gap-matrix.md`
+- `431-server-client-next-read-model-selection.md`
+- `432-server-client-control-envelope-parity.md`
+- `433-server-client-cli-tauri-parity.md`
+- `434-server-client-proof-surface-hardening.md`
+- `435-server-client-validation.md`
+- `436-server-client-next-lane-checkpoint.md`
+- `437-task-timeline-control-envelope-audit.md`
+- `438-task-timeline-control-envelope-dto.md`
+- `439-project-authority-map-control-envelope-dto.md`
+- `440-task-timeline-authority-map-cli-effigy.md`
+- `441-task-timeline-authority-map-validation.md`
+- `442-task-timeline-authority-map-desktop-proof-decision.md`
+- `443-task-project-workflow-implementation-audit.md`
+- `444-task-project-workflow-gap-matrix.md`
+- `445-next-task-readiness-surface-selection.md`
+- `446-task-project-read-model-implementation.md`
+- `447-task-project-control-cli-effigy.md`
+- `448-task-project-workflow-validation.md`
+- `449-task-project-next-lane-checkpoint.md`
+- `450-task-project-workflow-closeout.md`
+- `451-planning-task-seed-surface-audit.md`
+- `452-planning-task-seed-gap-matrix.md`
+- `453-planning-task-seed-record-selection.md`

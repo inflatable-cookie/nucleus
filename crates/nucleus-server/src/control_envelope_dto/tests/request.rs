@@ -1,11 +1,13 @@
 use crate::control_api::{
-    DiagnosticsQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
-    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ServerControlRequest,
-    ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
-    StateRecordQueryScope,
+    DiagnosticsQuery, PlanningTaskSeedsQuery, ProjectAuthorityMapQuery,
+    ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery,
+    ProviderReadinessOverviewQuery, ServerControlRequest, ServerControlRequestKind, ServerQuery,
+    ServerQueryKind, StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery,
+    TaskTimelineQuery,
 };
 use crate::control_envelope_dto::*;
 use crate::control_serialization_readiness::ControlApiCodecFailure;
+use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ServerCommandId, ServerControlRequestId, ServerQueryId};
 use crate::{ClientId, ServerStateDomain};
 use nucleus_core::RevisionId;
@@ -22,3 +24,4 @@ mod provider_read_intent;
 mod provider_readiness_overview;
 mod runtime;
 mod state;
+mod task_timeline_authority_map;

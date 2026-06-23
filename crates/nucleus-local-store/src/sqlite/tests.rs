@@ -21,6 +21,21 @@ fn sqlite_supported_domains() -> Vec<(PersistenceDomain, PersistenceRecordKind, 
             "task:history:1",
         ),
         (
+            PersistenceDomain::Planning,
+            PersistenceRecordKind::PlanningSession,
+            "planning:session:1",
+        ),
+        (
+            PersistenceDomain::Planning,
+            PersistenceRecordKind::PlanningArtifact,
+            "planning:artifact:1",
+        ),
+        (
+            PersistenceDomain::Planning,
+            PersistenceRecordKind::TaskSeed,
+            "planning:task-seed:1",
+        ),
+        (
             PersistenceDomain::Workspaces,
             PersistenceRecordKind::WorkspaceLayout,
             "workspace:1",
@@ -126,11 +141,13 @@ fn sqlite_single_database_recovers_all_first_domains() {
         let repository = backend
             .open_repository(domain)
             .expect("open repository after restart");
-        let records = repository.list().expect("list after restart");
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].id, PersistenceRecordId(id.to_owned()));
-        assert_eq!(records[0].kind, kind);
-        assert_eq!(records[0].revision_id, RevisionId("rev:1".to_owned()));
+        let record = repository
+            .get(&PersistenceRecordId(id.to_owned()))
+            .expect("get after restart")
+            .expect("record after restart");
+        assert_eq!(record.id, PersistenceRecordId(id.to_owned()));
+        assert_eq!(record.kind, kind);
+        assert_eq!(record.revision_id, RevisionId("rev:1".to_owned()));
     }
 }
 

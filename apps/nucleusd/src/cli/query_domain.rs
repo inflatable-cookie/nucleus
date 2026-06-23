@@ -1,6 +1,6 @@
 use nucleus_server::ServerStateDomain;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum QueryDomain {
     Projects,
     Tasks,
@@ -10,10 +10,17 @@ pub(crate) enum QueryDomain {
     ProviderReadinessOverview,
     ProviderLiveReadExecutor,
     ProviderLiveReadSmokeEvidence,
+    TaskTimeline { task_id: String },
+    TaskReadiness { project_id: String },
+    PlanningTaskSeeds { project_id: String },
+    ProjectAuthorityMap { project_id: String },
 }
 
 impl QueryDomain {
-    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+    pub(crate) fn parse_from_iter<I>(value: &str, iter: &mut I) -> Result<Self, String>
+    where
+        I: Iterator<Item = String>,
+    {
         match value {
             "projects" => Ok(Self::Projects),
             "tasks" => Ok(Self::Tasks),
@@ -23,11 +30,43 @@ impl QueryDomain {
             "provider-readiness-overview" => Ok(Self::ProviderReadinessOverview),
             "provider-live-read-executor" => Ok(Self::ProviderLiveReadExecutor),
             "provider-live-read-smoke-evidence" => Ok(Self::ProviderLiveReadSmokeEvidence),
+            "task-timeline" => {
+                expect_flag(iter, "--task")?;
+                Ok(Self::TaskTimeline {
+                    task_id: iter
+                        .next()
+                        .ok_or_else(|| "task-timeline requires --task <task-id>".to_owned())?,
+                })
+            }
+            "task-readiness" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::TaskReadiness {
+                    project_id: iter.next().ok_or_else(|| {
+                        "task-readiness requires --project <project-id>".to_owned()
+                    })?,
+                })
+            }
+            "planning-task-seeds" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::PlanningTaskSeeds {
+                    project_id: iter.next().ok_or_else(|| {
+                        "planning-task-seeds requires --project <project-id>".to_owned()
+                    })?,
+                })
+            }
+            "project-authority-map" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::ProjectAuthorityMap {
+                    project_id: iter.next().ok_or_else(|| {
+                        "project-authority-map requires --project <project-id>".to_owned()
+                    })?,
+                })
+            }
             _ => Err(format!("unsupported query domain: {value}")),
         }
     }
 
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
             Self::Projects => "projects",
             Self::Tasks => "tasks",
@@ -37,10 +76,14 @@ impl QueryDomain {
             Self::ProviderReadinessOverview => "provider-readiness-overview",
             Self::ProviderLiveReadExecutor => "provider-live-read-executor",
             Self::ProviderLiveReadSmokeEvidence => "provider-live-read-smoke-evidence",
+            Self::TaskTimeline { .. } => "task-timeline",
+            Self::TaskReadiness { .. } => "task-readiness",
+            Self::PlanningTaskSeeds { .. } => "planning-task-seeds",
+            Self::ProjectAuthorityMap { .. } => "project-authority-map",
         }
     }
 
-    pub(crate) fn state_domain(self) -> Option<ServerStateDomain> {
+    pub(crate) fn state_domain(&self) -> Option<ServerStateDomain> {
         match self {
             Self::Projects => Some(ServerStateDomain::Projects),
             Self::Tasks => Some(ServerStateDomain::Tasks),
@@ -49,7 +92,22 @@ impl QueryDomain {
             Self::ProviderReadIntent
             | Self::ProviderReadinessOverview
             | Self::ProviderLiveReadExecutor
-            | Self::ProviderLiveReadSmokeEvidence => None,
+            | Self::ProviderLiveReadSmokeEvidence
+            | Self::TaskTimeline { .. }
+            | Self::TaskReadiness { .. }
+            | Self::PlanningTaskSeeds { .. }
+            | Self::ProjectAuthorityMap { .. } => None,
         }
+    }
+}
+
+fn expect_flag<I>(iter: &mut I, expected: &str) -> Result<(), String>
+where
+    I: Iterator<Item = String>,
+{
+    match iter.next().as_deref() {
+        Some(flag) if flag == expected => Ok(()),
+        Some(flag) => Err(format!("expected {expected}, got {flag}")),
+        None => Err(format!("expected {expected}")),
     }
 }

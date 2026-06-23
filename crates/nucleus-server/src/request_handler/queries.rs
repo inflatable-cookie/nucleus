@@ -60,10 +60,12 @@ use crate::{
 
 mod authority_map;
 mod diagnostics;
+mod planning_task_seeds;
 mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
 mod provider_readiness_overview;
+mod task_readiness;
 mod task_timeline;
 
 pub(crate) fn handle_query<B>(
@@ -127,6 +129,12 @@ where
             )
         }
         ServerQueryKind::TaskTimeline(query) => task_timeline::task_timeline_query(handler, query),
+        ServerQueryKind::TaskReadiness(query) => {
+            task_readiness::task_readiness_query(handler, query)
+        }
+        ServerQueryKind::PlanningTaskSeeds(query) => {
+            planning_task_seeds::planning_task_seeds_query(handler, query)
+        }
         ServerQueryKind::ProjectAuthorityMap(query) => {
             authority_map::project_authority_map_query(query)
         }

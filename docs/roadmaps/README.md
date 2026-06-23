@@ -234,6 +234,14 @@ shape.
 - `g03/103-provider-live-read-second-family-selection.md` - completed
 - `g03/104-provider-live-read-second-family-stopped-request.md` - completed
 - `g03/105-provider-live-read-boundary-stocktake.md` - completed
+- `g03/106-provider-live-read-status-check-smoke.md` - completed
+- `g03/107-provider-live-read-reassessment.md` - completed
+- `g03/108-server-client-workflow-hardening.md` - active
+- `g03/109-task-timeline-authority-map-control-parity.md` - completed
+- `g03/110-task-project-workflow-depth.md` - completed
+- `g03/111-planning-artifact-task-seed-promotion.md` - completed
+- `g03/112-planning-task-seed-persistence-and-projection.md` - completed
+- `g03/113-task-seed-promotion-command.md` - active
 
 ## Previous Generation
 
@@ -292,9 +300,13 @@ shape.
 
 ## Next Task
 
-Plan the next major lane after the provider live-read stocktake. Prefer
-task/project workflow depth or server/client workflow hardening unless the
-operator explicitly approves a status/check live smoke. Do not add automatic
-provider execution, provider writes, credential material storage, raw payload
-retention, task mutation, callbacks, interruption/recovery execution, or
-UI-triggered provider reads.
+Continue `docs/roadmaps/g03/113-task-seed-promotion-command.md`
+with
+`docs/roadmaps/g03/batch-cards/469-task-seed-promotion-state-persistence.md`.
+Persist promotion by composing admitted seed promotion with task-domain create
+and planning seed state update, keeping duplicate and already-promoted paths
+controlled.
+Do not add provider execution, provider writes, credential material storage,
+raw payload retention, agent scheduling, callbacks, interruption/recovery
+execution, SCM/forge mutation, scoring policy, autonomous goal loops, silent
+task creation from seeds, or UI-triggered provider reads.

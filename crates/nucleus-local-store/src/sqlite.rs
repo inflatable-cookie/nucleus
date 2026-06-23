@@ -274,6 +274,13 @@ fn initialize_schema(connection: &Connection) -> LocalStoreResult<()> {
                 media_type TEXT,
                 payload BLOB NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS planning (
+                id TEXT PRIMARY KEY NOT NULL,
+                kind TEXT NOT NULL,
+                revision_id TEXT NOT NULL,
+                media_type TEXT,
+                payload BLOB NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS workspace_layouts (
                 id TEXT PRIMARY KEY NOT NULL,
                 kind TEXT NOT NULL,
@@ -340,6 +347,7 @@ fn table_for_domain(domain: &PersistenceDomain) -> LocalStoreResult<&'static str
         PersistenceDomain::Projects => Ok("projects"),
         PersistenceDomain::Tasks => Ok("tasks"),
         PersistenceDomain::TaskHistory => Ok("task_history"),
+        PersistenceDomain::Planning => Ok("planning"),
         PersistenceDomain::Workspaces => Ok("workspace_layouts"),
         PersistenceDomain::AdapterRegistry => Ok("adapter_instances"),
         PersistenceDomain::AgentSessions => Ok("agent_sessions"),
@@ -360,6 +368,9 @@ fn kind_to_text(kind: &PersistenceRecordKind) -> Option<&'static str> {
         PersistenceRecordKind::RepoMembership => Some("repo_membership"),
         PersistenceRecordKind::Task => Some("task"),
         PersistenceRecordKind::TaskHistoryEntry => Some("task_history_entry"),
+        PersistenceRecordKind::PlanningSession => Some("planning_session"),
+        PersistenceRecordKind::PlanningArtifact => Some("planning_artifact"),
+        PersistenceRecordKind::TaskSeed => Some("task_seed"),
         PersistenceRecordKind::WorkspaceLayout => Some("workspace_layout"),
         PersistenceRecordKind::AdapterInstance => Some("adapter_instance"),
         PersistenceRecordKind::AgentSession => Some("agent_session"),
@@ -378,6 +389,9 @@ fn kind_from_text(value: &str) -> LocalStoreResult<PersistenceRecordKind> {
         "repo_membership" => Ok(PersistenceRecordKind::RepoMembership),
         "task" => Ok(PersistenceRecordKind::Task),
         "task_history_entry" => Ok(PersistenceRecordKind::TaskHistoryEntry),
+        "planning_session" => Ok(PersistenceRecordKind::PlanningSession),
+        "planning_artifact" => Ok(PersistenceRecordKind::PlanningArtifact),
+        "task_seed" => Ok(PersistenceRecordKind::TaskSeed),
         "workspace_layout" => Ok(PersistenceRecordKind::WorkspaceLayout),
         "adapter_instance" => Ok(PersistenceRecordKind::AdapterInstance),
         "agent_session" => Ok(PersistenceRecordKind::AgentSession),

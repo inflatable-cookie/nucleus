@@ -42,7 +42,7 @@ impl CliConfig {
                     let domain = iter
                         .next()
                         .ok_or_else(|| "query requires a domain".to_owned())?;
-                    config.query = Some(QueryDomain::parse(&domain)?);
+                    config.query = Some(QueryDomain::parse_from_iter(&domain, &mut iter)?);
                 }
                 "command-runner" => {
                     let command = iter
@@ -72,6 +72,10 @@ pub(crate) fn print_help() {
     println!("Usage:");
     println!("  nucleusd [--state <path>] [--bootstrap] [--status]");
     println!("  nucleusd [--state <path>] query <projects|tasks|workspaces|command-evidence|provider-read-intent|provider-readiness-overview|provider-live-read-executor|provider-live-read-smoke-evidence>");
+    println!("  nucleusd [--state <path>] query task-timeline --task <task-id>");
+    println!("  nucleusd [--state <path>] query task-readiness --project <project-id>");
+    println!("  nucleusd [--state <path>] query planning-task-seeds --project <project-id>");
+    println!("  nucleusd [--state <path>] query project-authority-map --project <project-id>");
     println!("  nucleusd command-runner smoke");
     println!("  nucleusd command-runner read-only-spawn-smoke");
     println!("  nucleusd command-runner durable-runtime-smoke [--confirm-real-write] [--execute-provider-write]");
@@ -82,7 +86,7 @@ pub(crate) fn print_help() {
     println!();
     println!("Options:");
     println!("  --state <path>  SQLite state path, default .nucleus/local/nucleus.sqlite");
-    println!("  --bootstrap     Seed local project and task records before status");
+    println!("  --bootstrap     Seed local project, task, and planning records before status");
     println!("  --status        Print local state summary");
     println!("  --help          Print this help");
 }

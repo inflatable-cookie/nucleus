@@ -1,5 +1,6 @@
 mod authority;
 mod diagnostics;
+mod planning_task_seeds;
 mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
