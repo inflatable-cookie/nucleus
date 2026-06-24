@@ -75,6 +75,10 @@ pub(crate) fn print_help() {
     println!("  nucleusd [--state <path>] query task-timeline --task <task-id>");
     println!("  nucleusd [--state <path>] query task-readiness --project <project-id>");
     println!("  nucleusd [--state <path>] query planning-task-seeds --project <project-id>");
+    println!(
+        "  nucleusd [--state <path>] query task-seed-promotion-diagnostics --project <project-id>"
+    );
+    println!("  nucleusd [--state <path>] query planning-projection-file-write-diagnostics --project <project-id>");
     println!("  nucleusd [--state <path>] query project-authority-map --project <project-id>");
     println!("  nucleusd command-runner smoke");
     println!("  nucleusd command-runner read-only-spawn-smoke");

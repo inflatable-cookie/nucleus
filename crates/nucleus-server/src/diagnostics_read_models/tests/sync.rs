@@ -34,6 +34,7 @@ fn management_projection_sync_diagnostics_expose_conflict_state_without_provider
         scope: ManagementProjectionCaptureScope::ManagementProjection,
         file_refs: plan.file_refs.clone(),
         receipt_ids: plan.receipt_ids.clone(),
+        write_evidence_refs: Vec::new(),
         assistance_refs: vec!["sync-assist:1".to_owned()],
         summary: None,
     };
@@ -72,6 +73,7 @@ fn management_capture_review_model_exposes_readiness_without_provider_mutation()
             apply_receipt_ids: vec![EngineRuntimeReceiptRecordId(
                 "receipt:management-projection-apply:task:1:accepted".to_owned(),
             )],
+            write_evidence_refs: Vec::new(),
             review_summary_refs: vec!["sync-review:1".to_owned()],
             validation_report_refs: vec!["validation:1".to_owned()],
             blocked_reasons: Vec::new(),

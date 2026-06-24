@@ -2,6 +2,7 @@
 
 mod authority;
 mod diagnostics;
+mod planning_projection_file_write;
 mod planning_task_seeds;
 mod runtime;
 mod task_readiness;
@@ -13,6 +14,10 @@ pub use authority::{
     ControlProjectAuthorityMapDto,
 };
 pub use diagnostics::{ControlDiagnosticsResultDto, ControlDiagnosticsSnapshotDto};
+pub use planning_projection_file_write::{
+    ControlPlanningProjectionFileWriteDiagnosticIssueDto,
+    ControlPlanningProjectionFileWriteDiagnosticsDto,
+};
 pub use planning_task_seeds::{
     ControlPlanningTaskSeedCandidateDto, ControlPlanningTaskSeedSourceCountsDto,
     ControlPlanningTaskSeedStatusCountDto,

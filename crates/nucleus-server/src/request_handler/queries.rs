@@ -60,6 +60,7 @@ use crate::{
 
 mod authority_map;
 mod diagnostics;
+mod planning_projection_file_write_diagnostics;
 mod planning_task_seeds;
 mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
@@ -138,6 +139,9 @@ where
         }
         ServerQueryKind::TaskSeedPromotionDiagnostics(query) => {
             task_seed_promotion_diagnostics::task_seed_promotion_diagnostics_query(handler, query)
+        }
+        ServerQueryKind::PlanningProjectionFileWriteDiagnostics(query) => {
+            planning_projection_file_write_diagnostics::planning_projection_file_write_diagnostics_query(query)
         }
         ServerQueryKind::ProjectAuthorityMap(query) => {
             authority_map::project_authority_map_query(query)

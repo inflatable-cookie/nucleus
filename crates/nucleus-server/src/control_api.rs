@@ -72,6 +72,7 @@ pub enum ServerQueryKind {
     TaskReadiness(TaskReadinessQuery),
     PlanningTaskSeeds(PlanningTaskSeedsQuery),
     TaskSeedPromotionDiagnostics(TaskSeedPromotionDiagnosticsQuery),
+    PlanningProjectionFileWriteDiagnostics(PlanningProjectionFileWriteDiagnosticsQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
 
@@ -198,6 +199,12 @@ pub struct TaskSeedPromotionDiagnosticsQuery {
     pub project_id: ProjectId,
 }
 
+/// Planning projection file-write diagnostics query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanningProjectionFileWriteDiagnosticsQuery {
+    pub project_id: ProjectId,
+}
+
 /// Project authority-map query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectAuthorityMapQuery {
@@ -271,6 +278,7 @@ pub enum ServerQueryResult {
     TaskReadiness(EngineTaskReadinessProjection),
     PlanningTaskSeeds(EngineTaskSeedCandidateProjection),
     TaskSeedPromotionDiagnostics(crate::PlanningTaskSeedPromotionDiagnostics),
+    PlanningProjectionFileWriteDiagnostics(crate::PlanningProjectionFileWriteDiagnostics),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     Empty,
     Unsupported {

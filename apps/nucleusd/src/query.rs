@@ -3,13 +3,13 @@ use std::path::PathBuf;
 use nucleus_local_store::{LocalStoreRecord, SqliteBackend};
 use nucleus_projects::ProjectId;
 use nucleus_server::{
-    ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler, PlanningTaskSeedsQuery,
-    ProjectAuthorityDomain, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
-    ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
-    ServerControlRequest, ServerControlRequestKind, ServerControlResponseBody,
-    ServerControlResponseStatus, ServerQuery, ServerQueryId, ServerQueryKind, ServerStateDomain,
-    StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
-    TaskTimelineQuery,
+    ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler,
+    PlanningProjectionFileWriteDiagnosticsQuery, PlanningTaskSeedsQuery, ProjectAuthorityDomain,
+    ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
+    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ServerControlRequest,
+    ServerControlRequestKind, ServerControlResponseBody, ServerControlResponseStatus, ServerQuery,
+    ServerQueryId, ServerQueryKind, ServerStateDomain, StateRecordQuery, StateRecordQueryScope,
+    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
 };
 use nucleus_tasks::TaskId;
 
@@ -60,6 +60,7 @@ pub(crate) fn print_query(
             | QueryDomain::TaskReadiness { .. }
             | QueryDomain::PlanningTaskSeeds { .. }
             | QueryDomain::TaskSeedPromotionDiagnostics { .. }
+            | QueryDomain::PlanningProjectionFileWriteDiagnostics { .. }
             | QueryDomain::ProjectAuthorityMap { .. }
     ) {
         let dto = ControlResponseEnvelopeDto::try_from(&response)
@@ -158,6 +159,13 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
             ServerQueryKind::TaskSeedPromotionDiagnostics(TaskSeedPromotionDiagnosticsQuery {
                 project_id: ProjectId(project_id.clone()),
             })
+        }
+        QueryDomain::PlanningProjectionFileWriteDiagnostics { project_id } => {
+            ServerQueryKind::PlanningProjectionFileWriteDiagnostics(
+                PlanningProjectionFileWriteDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
         }
         QueryDomain::ProjectAuthorityMap { project_id } => {
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {

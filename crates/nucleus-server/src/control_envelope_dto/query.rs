@@ -3,8 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 mod authority_domains;
+mod planning_projection;
 mod task_workflow;
 
+use crate::control_api::PlanningProjectionFileWriteDiagnosticsQuery;
 use crate::control_api::{
     PlanningTaskSeedsQuery, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
     ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
@@ -16,6 +18,7 @@ use crate::state::ServerStateDomain;
 use authority_domains::{authority_domain_dto, authority_domain_from_dto};
 use nucleus_core::PersistenceRecordId;
 use nucleus_projects::ProjectId;
+use planning_projection::planning_projection_file_write_diagnostics_query_from_action;
 use task_workflow::{
     planning_task_seeds_query_from_action, task_readiness_query_from_action,
     task_seed_promotion_diagnostics_query_from_action, task_timeline_query_from_action,
@@ -76,6 +79,11 @@ pub enum ControlQueryDto {
         project_id: String,
     },
     TaskSeedPromotionDiagnostics {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    PlanningProjectionFileWriteDiagnostics {
         query_id: String,
         action: String,
         project_id: String,
@@ -156,6 +164,13 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                 action: "diagnostics".to_owned(),
                 project_id: project_id.0.clone(),
             }),
+            ServerQueryKind::PlanningProjectionFileWriteDiagnostics(
+                PlanningProjectionFileWriteDiagnosticsQuery { project_id },
+            ) => Ok(Self::PlanningProjectionFileWriteDiagnostics {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
                 project_id,
                 expected_domains,
@@ -228,6 +243,9 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             ControlQueryDto::TaskSeedPromotionDiagnostics {
                 action, project_id, ..
             } => task_seed_promotion_diagnostics_query_from_action(&action, project_id),
+            ControlQueryDto::PlanningProjectionFileWriteDiagnostics {
+                action, project_id, ..
+            } => planning_projection_file_write_diagnostics_query_from_action(&action, project_id),
             ControlQueryDto::ProjectAuthorityMap {
                 action,
                 project_id,
@@ -252,6 +270,7 @@ impl ControlQueryDto {
             | Self::TaskReadiness { query_id, .. }
             | Self::PlanningTaskSeeds { query_id, .. }
             | Self::TaskSeedPromotionDiagnostics { query_id, .. }
+            | Self::PlanningProjectionFileWriteDiagnostics { query_id, .. }
             | Self::ProjectAuthorityMap { query_id, .. } => query_id.clone(),
         }
     }

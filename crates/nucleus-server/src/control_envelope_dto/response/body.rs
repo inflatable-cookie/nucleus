@@ -17,12 +17,13 @@ use super::provider_read_intent::ControlProviderReadIntentQueryResultDto;
 use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
-    ControlDiffSummaryRecordDto, ControlPlanningTaskSeedCandidateDto,
-    ControlPlanningTaskSeedSourceCountsDto, ControlPlanningTaskSeedStatusCountDto,
-    ControlProjectAuthorityMapDto, ControlRuntimeReadinessDiagnosticDto,
-    ControlRuntimeReceiptRecordDto, ControlTaskReadinessCandidateDto,
-    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
-    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
+    ControlDiffSummaryRecordDto, ControlPlanningProjectionFileWriteDiagnosticsDto,
+    ControlPlanningTaskSeedCandidateDto, ControlPlanningTaskSeedSourceCountsDto,
+    ControlPlanningTaskSeedStatusCountDto, ControlProjectAuthorityMapDto,
+    ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
+    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
+    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
+    ControlTaskTimelineEntryDto,
 };
 use crate::control_envelope_dto::{
     ControlApiCodecError, ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -93,6 +94,9 @@ pub enum ControlResponseBodyDto {
     },
     TaskSeedPromotionDiagnostics {
         diagnostics: ControlTaskSeedPromotionDiagnosticsDto,
+    },
+    PlanningProjectionFileWriteDiagnostics {
+        diagnostics: ControlPlanningProjectionFileWriteDiagnosticsDto,
     },
     ProjectAuthorityMap {
         record: ControlProjectAuthorityMapDto,
@@ -255,6 +259,11 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 diagnostics,
             )) => Ok(Self::TaskSeedPromotionDiagnostics {
                 diagnostics: ControlTaskSeedPromotionDiagnosticsDto::from(diagnostics),
+            }),
+            ServerControlResponseBody::Query(
+                ServerQueryResult::PlanningProjectionFileWriteDiagnostics(diagnostics),
+            ) => Ok(Self::PlanningProjectionFileWriteDiagnostics {
+                diagnostics: ControlPlanningProjectionFileWriteDiagnosticsDto::from(diagnostics),
             }),
             ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)) => {
                 Ok(Self::ProjectAuthorityMap {

@@ -304,10 +304,9 @@ shape.
 
 Continue `docs/roadmaps/g03/115-planning-projection-file-export-capture.md`
 with
-`docs/roadmaps/g03/batch-cards/487-planning-projection-cli-effigy-inspection.md`.
-Expose a small CLI/Effigy inspection path for planning projection export/write
-and capture-prep state without performing import, apply, SCM mutation, or
-publication.
+`docs/roadmaps/g03/batch-cards/489-planning-projection-next-lane-checkpoint.md`.
+Close the planning projection file-export lane and choose the next bounded
+lane: import/admission, capture publication, or planning-session depth.
 Do not add provider execution, provider writes, credential material storage,
 raw payload retention, agent scheduling, callbacks, interruption/recovery
 execution, SCM/forge mutation, scoring policy, autonomous goal loops, silent

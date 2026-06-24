@@ -48,15 +48,16 @@ gap is the file export boundary: converting export entries into deterministic
 
 Ready cards:
 
-- `batch-cards/487-planning-projection-cli-effigy-inspection.md`
+- `batch-cards/489-planning-projection-next-lane-checkpoint.md`
 
 Planned cards:
 
-- `batch-cards/488-planning-projection-file-export-validation.md`
-- `batch-cards/489-planning-projection-next-lane-checkpoint.md`
+None.
 
 Completed cards:
 
+- `batch-cards/488-planning-projection-file-export-validation.md`
+- `batch-cards/487-planning-projection-cli-effigy-inspection.md`
 - `batch-cards/486-planning-projection-capture-prep-records.md`
 - `batch-cards/485-planning-projection-file-write-diagnostics.md`
 - `batch-cards/484-planning-projection-file-document-materialization.md`

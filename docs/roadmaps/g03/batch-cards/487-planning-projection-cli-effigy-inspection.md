@@ -1,6 +1,6 @@
 # 487 Planning Projection CLI Effigy Inspection
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-06-24
 Milestone: `../115-planning-projection-file-export-capture.md`
@@ -12,14 +12,22 @@ export and capture-prep readiness if the server surface exists.
 
 ## Work
 
-- [ ] Add `nucleusd` inspection only if a server read model is present.
-- [ ] Add an Effigy selector only if it improves operator inspection.
-- [ ] Show counts, file refs, issue classes, and no-effect flags.
-- [ ] Keep payload dumps, import/apply, and SCM mutation out of scope.
+- [x] Add `nucleusd` inspection only if a server read model is present.
+- [x] Add an Effigy selector only if it improves operator inspection.
+- [x] Show counts, file refs, issue classes, and no-effect flags.
+- [x] Keep payload dumps, import/apply, and SCM mutation out of scope.
 
 ## Acceptance Criteria
 
-- [ ] Inspection is read-only and sanitized.
-- [ ] No projection files are imported or applied.
-- [ ] No SCM/forge mutation, provider execution, task promotion, or UI behavior
+- [x] Inspection is read-only and sanitized.
+- [x] No projection files are imported or applied.
+- [x] No SCM/forge mutation, provider execution, task promotion, or UI behavior
   is added.
+
+## Decision
+
+The first inspection surface is
+`planning-projection-file-write-diagnostics`. It reports sanitized counts,
+issue classes, and no-effect flags from a read-only server query. Until
+planning projection export records are persisted, the query returns an empty
+diagnostic snapshot instead of reading payload files or performing writes.

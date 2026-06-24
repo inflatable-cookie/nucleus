@@ -18,6 +18,7 @@ use nucleus_tasks::{
 
 mod commands;
 mod diagnostics;
+mod planning_projection_file_write;
 mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;

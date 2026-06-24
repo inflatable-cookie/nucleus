@@ -115,6 +115,24 @@ fn cli_config_parses_planning_task_seeds_query_domain() {
 }
 
 #[test]
+fn cli_config_parses_planning_projection_file_write_diagnostics_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "planning-projection-file-write-diagnostics".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+    ])
+    .expect("parse planning projection file-write diagnostics query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::PlanningProjectionFileWriteDiagnostics {
+            project_id: "project:nucleus-local".to_owned()
+        })
+    );
+}
+
+#[test]
 fn cli_config_parses_project_authority_map_query_domain() {
     let config = CliConfig::parse(vec![
         "query".to_owned(),
