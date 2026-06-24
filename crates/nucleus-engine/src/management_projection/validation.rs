@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::types::{
-    ManagementProjectionEnvelope, ManagementProjectionFileRef, ManagementProjectionRecordId,
+    ManagementProjectionEnvelope, ManagementProjectionFileDocument, ManagementProjectionFileRef,
+    ManagementProjectionPayload, ManagementProjectionRecordId, ManagementProjectionRecordKind,
     MANAGEMENT_PROJECTION_SCHEMA_V1,
 };
 
@@ -36,6 +37,7 @@ pub enum ManagementProjectionValidationIssueKind {
     InvalidIdentifier,
     UnsupportedSchemaVersion,
     UnknownRecordKind,
+    MismatchedRecordKind,
     InvalidReference,
     ExcludedStatePresent,
     RequiresRepair,
@@ -115,4 +117,60 @@ pub fn validate_projection_envelope(
         status,
         issues,
     }
+}
+
+pub fn validate_projection_file_document(
+    document: &ManagementProjectionFileDocument,
+    excluded_markers: &[ManagementProjectionExcludedStateMarker],
+) -> ManagementProjectionValidationReport {
+    let mut report = validate_projection_envelope(&document.envelope, excluded_markers);
+
+    if !projection_payload_matches_record_kind(&document.envelope.record_kind, &document.payload) {
+        report.issues.push(ManagementProjectionValidationIssue {
+            kind: ManagementProjectionValidationIssueKind::MismatchedRecordKind,
+            field: Some("payload.kind".to_owned()),
+            summary: "projection envelope record kind does not match payload kind".to_owned(),
+        });
+    }
+
+    if report.status != ManagementProjectionValidationStatus::UnsupportedSchema {
+        report.status = if report.issues.is_empty() {
+            ManagementProjectionValidationStatus::Valid
+        } else {
+            ManagementProjectionValidationStatus::Invalid
+        };
+    }
+
+    report
+}
+
+fn projection_payload_matches_record_kind(
+    record_kind: &ManagementProjectionRecordKind,
+    payload: &ManagementProjectionPayload,
+) -> bool {
+    matches!(
+        (record_kind, payload),
+        (
+            ManagementProjectionRecordKind::Project,
+            ManagementProjectionPayload::Project(_)
+        ) | (
+            ManagementProjectionRecordKind::Task,
+            ManagementProjectionPayload::Task(_)
+        ) | (
+            ManagementProjectionRecordKind::PlanningArtifact,
+            ManagementProjectionPayload::PlanningArtifact(_)
+        ) | (
+            ManagementProjectionRecordKind::PlanningTaskSeed,
+            ManagementProjectionPayload::PlanningTaskSeed(_)
+        ) | (
+            ManagementProjectionRecordKind::Index,
+            ManagementProjectionPayload::Index { .. }
+        ) | (
+            ManagementProjectionRecordKind::ArtifactIndex,
+            ManagementProjectionPayload::ArtifactIndex { .. }
+        ) | (
+            ManagementProjectionRecordKind::Custom(_),
+            ManagementProjectionPayload::Unsupported { .. }
+        )
+    )
 }

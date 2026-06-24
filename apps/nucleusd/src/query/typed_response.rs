@@ -8,12 +8,14 @@ use nucleus_server::{
 mod planning_task_seeds;
 mod task_authority;
 mod task_readiness;
+mod task_seed_promotion;
 
 pub(super) use planning_task_seeds::planning_task_seeds_response_lines;
 pub(super) use task_authority::{
     project_authority_map_response_lines, task_timeline_response_lines,
 };
 pub(super) use task_readiness::task_readiness_response_lines;
+pub(super) use task_seed_promotion::task_seed_promotion_response_lines;
 
 pub(super) fn print_typed_dto_response(
     label: &str,
@@ -99,6 +101,10 @@ pub(super) fn print_typed_dto_response(
                 client_can_promote,
                 task_creation_performed,
             ));
+            Ok(())
+        }
+        ControlResponseBodyDto::TaskSeedPromotionDiagnostics { diagnostics } => {
+            print_lines(task_seed_promotion_response_lines(label, diagnostics));
             Ok(())
         }
         ControlResponseBodyDto::ProjectAuthorityMap { record } => {

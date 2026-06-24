@@ -24,4 +24,5 @@ mod provider_read_intent;
 mod provider_readiness_overview;
 mod runtime;
 mod state;
+mod task_seed_promotion;
 mod task_timeline_authority_map;

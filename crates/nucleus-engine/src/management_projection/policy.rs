@@ -19,6 +19,7 @@ pub fn projection_record_authority_policy(
         | ManagementProjectionRecordKind::Index
         | ManagementProjectionRecordKind::ArtifactIndex
         | ManagementProjectionRecordKind::PlanningArtifact
+        | ManagementProjectionRecordKind::PlanningTaskSeed
         | ManagementProjectionRecordKind::SharedMemory
         | ManagementProjectionRecordKind::ResearchSynthesis => {
             ManagementProjectionAuthorityPolicy::CommittableShared

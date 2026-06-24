@@ -438,13 +438,14 @@ Reason:
 - `110-task-project-workflow-depth.md` - completed
 - `111-planning-artifact-task-seed-promotion.md` - completed
 - `112-planning-task-seed-persistence-and-projection.md` - completed
-- `113-task-seed-promotion-command.md` - active
+- `113-task-seed-promotion-command.md` - completed
+- `114-planning-management-projection-payloads.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/469-task-seed-promotion-state-persistence.md`
+- `batch-cards/475-planning-management-projection-payload-selection.md`
 
 Paused cards:
 
@@ -452,14 +453,22 @@ None.
 
 Planned cards:
 
-- `batch-cards/470-task-seed-promotion-diagnostics-query.md`
-- `batch-cards/471-task-seed-promotion-cli-effigy.md`
-- `batch-cards/472-task-seed-promotion-validation.md`
-- `batch-cards/473-task-seed-promotion-next-lane-checkpoint.md`
-- `batch-cards/474-task-seed-promotion-closeout.md`
+- `batch-cards/476-planning-management-projection-record-kinds.md`
+- `batch-cards/477-planning-management-projection-file-refs.md`
+- `batch-cards/478-planning-management-projection-codec-tests.md`
+- `batch-cards/479-planning-management-projection-export-plan.md`
+- `batch-cards/480-planning-management-projection-query-diagnostics.md`
+- `batch-cards/481-planning-management-projection-validation.md`
+- `batch-cards/482-planning-management-projection-next-lane-checkpoint.md`
 
 Completed cards:
 
+- `batch-cards/474-task-seed-promotion-closeout.md`
+- `batch-cards/473-task-seed-promotion-next-lane-checkpoint.md`
+- `batch-cards/472-task-seed-promotion-validation.md`
+- `batch-cards/471-task-seed-promotion-cli-effigy.md`
+- `batch-cards/470-task-seed-promotion-diagnostics-query.md`
+- `batch-cards/469-task-seed-promotion-state-persistence.md`
 - `batch-cards/468-task-seed-promotion-command-model.md`
 - `batch-cards/467-task-seed-promotion-admission-selection.md`
 - `batch-cards/466-planning-task-seed-persistence-closeout.md`

@@ -5,6 +5,8 @@ use nucleus_tasks::{
     TaskStorageImportance, TaskStorageRecord,
 };
 
+mod planning_projection;
+
 #[test]
 fn management_projection_names_first_shared_file_refs() {
     assert_eq!(ManagementProjectionRoot::default().relative_path, "nucleus");
@@ -29,6 +31,32 @@ fn management_projection_names_first_shared_file_refs() {
         ManagementProjectionFileRef::artifacts_readme().0,
         "nucleus/artifacts/README.md"
     );
+    assert_eq!(
+        ManagementProjectionFileRef::try_planning_artifact("artifact:one")
+            .expect("artifact file ref")
+            .0,
+        "nucleus/planning/artifact:one.toml"
+    );
+    assert_eq!(
+        ManagementProjectionFileRef::try_planning_task_seed("seed:one")
+            .expect("task seed file ref")
+            .0,
+        "nucleus/planning/task-seeds/seed:one.toml"
+    );
+}
+
+#[test]
+fn management_projection_rejects_unsafe_planning_file_ref_ids() {
+    for unsafe_id in ["", ".", "..", "../seed", "artifact/one", "artifact\\one"] {
+        assert!(
+            ManagementProjectionFileRef::try_planning_artifact(unsafe_id).is_err(),
+            "artifact id should be rejected: {unsafe_id}"
+        );
+        assert!(
+            ManagementProjectionFileRef::try_planning_task_seed(unsafe_id).is_err(),
+            "task seed id should be rejected: {unsafe_id}"
+        );
+    }
 }
 
 #[test]

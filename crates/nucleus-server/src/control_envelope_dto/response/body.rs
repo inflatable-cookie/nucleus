@@ -22,7 +22,7 @@ use super::records::{
     ControlProjectAuthorityMapDto, ControlRuntimeReadinessDiagnosticDto,
     ControlRuntimeReceiptRecordDto, ControlTaskReadinessCandidateDto,
     ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
-    ControlTaskTimelineEntryDto,
+    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
 };
 use crate::control_envelope_dto::{
     ControlApiCodecError, ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -90,6 +90,9 @@ pub enum ControlResponseBodyDto {
         source_counts: ControlPlanningTaskSeedSourceCountsDto,
         client_can_promote: bool,
         task_creation_performed: bool,
+    },
+    TaskSeedPromotionDiagnostics {
+        diagnostics: ControlTaskSeedPromotionDiagnosticsDto,
     },
     ProjectAuthorityMap {
         record: ControlProjectAuthorityMapDto,
@@ -248,6 +251,11 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                     task_creation_performed: projection.task_creation_performed,
                 })
             }
+            ServerControlResponseBody::Query(ServerQueryResult::TaskSeedPromotionDiagnostics(
+                diagnostics,
+            )) => Ok(Self::TaskSeedPromotionDiagnostics {
+                diagnostics: ControlTaskSeedPromotionDiagnosticsDto::from(diagnostics),
+            }),
             ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)) => {
                 Ok(Self::ProjectAuthorityMap {
                     record: ControlProjectAuthorityMapDto::from(record),

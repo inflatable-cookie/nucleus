@@ -162,6 +162,13 @@ Implemented in `nucleus-server` and `nucleusd`:
 - `effigy server:query:planning-task-seeds`
 - server query composition from persisted Planning/TaskSeed records
 - bootstrap fixture path for one reviewable planning task seed
+- server-side `TaskCommand::PromoteSeed` composition from planning seed
+  storage into task-domain create plus planning seed promotion-state update
+- serialized command DTO coverage for task seed promotion
+- read-only promotion diagnostics over persisted planning seeds and promoted
+  task refs
+- `nucleusd query task-seed-promotion-diagnostics --project <project-id>`
+- `effigy server:query:task-seed-promotion-diagnostics`
 
 Implemented in storage:
 
@@ -180,7 +187,6 @@ Defined for projection:
 
 Still deferred:
 
-- task seed promotion command
 - management repo projection payload implementation
 
 ## Ownership Boundary

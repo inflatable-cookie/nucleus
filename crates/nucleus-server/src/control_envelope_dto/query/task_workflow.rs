@@ -2,7 +2,8 @@ use nucleus_projects::ProjectId;
 use nucleus_tasks::TaskId;
 
 use crate::control_api::{
-    PlanningTaskSeedsQuery, ServerQueryKind, TaskReadinessQuery, TaskTimelineQuery,
+    PlanningTaskSeedsQuery, ServerQueryKind, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
+    TaskTimelineQuery,
 };
 
 use super::super::ControlApiCodecError;
@@ -54,6 +55,25 @@ pub(super) fn planning_task_seeds_query_from_action(
         })),
         _ => Err(ControlApiCodecError::unsupported(format!(
             "unsupported planning task seed query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn task_seed_promotion_diagnostics_query_from_action(
+    action: &str,
+    project_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "diagnostics" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
+            "task seed promotion diagnostics query requires a project id",
+        )),
+        "diagnostics" => Ok(ServerQueryKind::TaskSeedPromotionDiagnostics(
+            TaskSeedPromotionDiagnosticsQuery {
+                project_id: ProjectId(project_id),
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported task seed promotion diagnostics query action: {action}"
         ))),
     }
 }

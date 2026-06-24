@@ -26,5 +26,6 @@ pub use records::{
     ControlProjectAuthorityIssueDto, ControlProjectAuthorityMapDto,
     ControlRuntimeReadinessBlockerDto, ControlRuntimeReadinessDiagnosticDto,
     ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
-    ControlTaskReadinessStatusCountDto, ControlTaskTimelineEntryDto,
+    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticEntryDto,
+    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
 };

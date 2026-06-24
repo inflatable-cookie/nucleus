@@ -1,9 +1,11 @@
-use nucleus_core::PersistenceRecordId;
+use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
 use nucleus_engine::{
-    EngineRevisionExpectation, EngineTaskCommand, EngineTaskCommandError, EngineTaskCommandOutcome,
-    EngineTaskCommandService, EngineTaskCreateCommand, EngineTaskDelegationCommand,
-    EngineTaskRecord, EngineTaskRepository, EngineTaskTransitionCommand, EngineTaskUpdateChanges,
-    EngineTaskUpdateCommand,
+    admit_task_seed_promotion, decode_task_seed_storage_record, encode_task_seed_storage_record,
+    task_seed_from_storage_record, EngineRevisionExpectation, EngineTaskCommand,
+    EngineTaskCommandError, EngineTaskCommandOutcome, EngineTaskCommandService,
+    EngineTaskCreateCommand, EngineTaskDelegationCommand, EngineTaskRecord, EngineTaskRepository,
+    EngineTaskSeedPromotionCommand, EngineTaskSeedPromotionOutcome, EngineTaskSeedPromotionState,
+    EngineTaskTransitionCommand, EngineTaskUpdateChanges, EngineTaskUpdateCommand,
 };
 use nucleus_local_store::{
     LocalStoreBackend, LocalStoreError, LocalStoreRecord, LocalStoreRecordPayload,
@@ -13,8 +15,8 @@ use nucleus_projects::ProjectId;
 
 use super::handler::LocalControlRequestHandler;
 use crate::commands::{
-    TaskCommand, TaskCreateCommand, TaskDelegationCommand, TaskTransitionCommand,
-    TaskUpdateChanges, TaskUpdateCommand,
+    TaskCommand, TaskCreateCommand, TaskDelegationCommand, TaskSeedPromotionCommand,
+    TaskTransitionCommand, TaskUpdateChanges, TaskUpdateCommand,
 };
 use crate::control_api::{ServerCommandReceiptStatus, ServerControlError};
 use crate::state::ServerStateService;
@@ -27,6 +29,10 @@ pub(crate) fn handle_task_command<B>(
 where
     B: LocalStoreBackend + Clone,
 {
+    if let TaskCommand::PromoteSeed(command) = command {
+        return handle_task_seed_promotion(handler, command_id, command);
+    }
+
     let repository = ServerTaskCommandRepository::new(handler.state());
     let service = EngineTaskCommandService::new(repository);
 
@@ -41,9 +47,136 @@ where
     }
 }
 
+fn handle_task_seed_promotion<B>(
+    handler: &LocalControlRequestHandler<B>,
+    command_id: &str,
+    command: TaskSeedPromotionCommand,
+) -> ServerCommandReceiptStatus
+where
+    B: LocalStoreBackend + Clone,
+{
+    match execute_task_seed_promotion(handler, command_id, command) {
+        Ok(()) => ServerCommandReceiptStatus::AcceptedForStateMutation,
+        Err(error) => ServerCommandReceiptStatus::Rejected(error),
+    }
+}
+
+fn execute_task_seed_promotion<B>(
+    handler: &LocalControlRequestHandler<B>,
+    command_id: &str,
+    command: TaskSeedPromotionCommand,
+) -> Result<(), ServerControlError>
+where
+    B: LocalStoreBackend + Clone,
+{
+    let record_id = PersistenceRecordId(command.seed_id.0.clone());
+    let existing = handler
+        .state()
+        .planning()
+        .get(&record_id)
+        .map_err(local_store_error)?
+        .ok_or_else(|| ServerControlError::NotFound {
+            reason: format!("planning task seed not found: {}", record_id.0),
+        })?;
+
+    if existing.kind != PersistenceRecordKind::TaskSeed {
+        return Err(ServerControlError::InvalidRequest {
+            reason: format!("planning record is not a task seed: {}", record_id.0),
+        });
+    }
+
+    let storage = decode_task_seed_storage_record(&existing.payload.bytes).map_err(|error| {
+        ServerControlError::StorageUnavailable {
+            reason: format!("planning task seed decode failed: {}", error.reason),
+        }
+    })?;
+    let mut seed = task_seed_from_storage_record(&storage);
+    let outcome = admit_task_seed_promotion(
+        EngineTaskSeedPromotionCommand {
+            command_id: command_id.to_owned(),
+            project_id: command.project_id.clone(),
+            seed_id: command.seed_id.clone(),
+            expected_seed_revision: command.expected_seed_revision.clone(),
+            destination_task_id: command.destination_task_id.clone(),
+        },
+        &seed,
+    );
+
+    match outcome {
+        EngineTaskSeedPromotionOutcome::Admitted(admission) => {
+            if let Some(expected) = command.expected_seed_revision.as_ref() {
+                if &existing.revision_id != expected {
+                    return Err(ServerControlError::Conflict {
+                        reason: format!("planning task seed revision conflict for {}", record_id.0),
+                    });
+                }
+            }
+
+            let repository = ServerTaskCommandRepository::new(handler.state());
+            let service = EngineTaskCommandService::new(repository);
+            match service.execute(
+                command_id,
+                EngineTaskCommand::Create(admission.create_command),
+            ) {
+                Ok(EngineTaskCommandOutcome::Mutated) => {}
+                Ok(EngineTaskCommandOutcome::WorkItemAdmitted { .. }) => {
+                    return Err(ServerControlError::InvalidRequest {
+                        reason: "task seed promotion must not schedule agent work".to_owned(),
+                    });
+                }
+                Err(error) => return Err(engine_task_error(error)),
+            }
+
+            seed.promotion = EngineTaskSeedPromotionState::Promoted {
+                task_ref: admission.task_id.0.clone(),
+            };
+            let payload = encode_task_seed_storage_record(&seed).map_err(|error| {
+                ServerControlError::StorageUnavailable {
+                    reason: format!("planning task seed encode failed: {}", error.reason),
+                }
+            })?;
+            let updated = LocalStoreRecord {
+                id: existing.id,
+                domain: PersistenceDomain::Planning,
+                kind: PersistenceRecordKind::TaskSeed,
+                revision_id: RevisionId(format!("rev:planning-task-seed-promotion:{command_id}")),
+                payload: LocalStoreRecordPayload {
+                    media_type: Some("application/json".to_owned()),
+                    bytes: payload,
+                },
+            };
+            handler
+                .state()
+                .planning()
+                .put(updated, planning_revision(command.expected_seed_revision))
+                .map_err(local_store_error)?;
+            Ok(())
+        }
+        EngineTaskSeedPromotionOutcome::AlreadyPromoted { .. } => Ok(()),
+        EngineTaskSeedPromotionOutcome::Blocked { reasons, .. } => {
+            Err(ServerControlError::InvalidRequest {
+                reason: reasons.join("; "),
+            })
+        }
+        EngineTaskSeedPromotionOutcome::Conflict { reason } => {
+            Err(ServerControlError::Conflict { reason })
+        }
+        EngineTaskSeedPromotionOutcome::RepairRequired { reason, .. } => {
+            Err(ServerControlError::Conflict { reason })
+        }
+    }
+}
+
+fn planning_revision(expected_revision: Option<RevisionId>) -> RevisionExpectation {
+    expected_revision
+        .map(RevisionExpectation::Exact)
+        .unwrap_or(RevisionExpectation::MustExist)
+}
+
 fn engine_task_command(command: TaskCommand) -> EngineTaskCommand {
     match command {
         TaskCommand::Create(command) => EngineTaskCommand::Create(engine_create_command(command)),
+        TaskCommand::PromoteSeed(_) => unreachable!("handled before task command conversion"),
         TaskCommand::Update(command) => EngineTaskCommand::Update(engine_update_command(command)),
         TaskCommand::Delegate(command) => {
             EngineTaskCommand::Delegate(engine_delegation_command(command))

@@ -1,6 +1,6 @@
 # 113 Task Seed Promotion Command
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-23
 
@@ -28,48 +28,50 @@ and task-domain owned.
 
 - [x] Define promotion admission rules.
 - [x] Add a task-domain command that creates a task from one reviewed seed.
-- [ ] Persist promotion state back to the planning task seed record.
-- [ ] Expose read-only promotion diagnostics.
-- [ ] Validate duplicate, blocked, rejected, and already-promoted paths.
+- [x] Persist promotion state back to the planning task seed record.
+- [x] Expose read-only promotion diagnostics.
+- [x] Validate duplicate, blocked, rejected, and already-promoted paths.
 
 ## Execution Plan
 
 - [x] Batch 1: define promotion admission model and blocked reasons.
 - [x] Batch 2: implement task-domain promotion command without provider
   execution.
-- [ ] Batch 3: persist promotion state and idempotency evidence.
-- [ ] Batch 4: expose promotion diagnostics through server/CLI/Effigy.
-- [ ] Batch 5: validate and choose whether next lane is planning sessions,
+- [x] Batch 3: persist promotion state and idempotency evidence.
+- [x] Batch 4: expose promotion diagnostics through server/CLI/Effigy.
+- [x] Batch 5: validate and choose whether next lane is planning sessions,
   management projection implementation, or task readiness linkage.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/469-task-seed-promotion-state-persistence.md`
+None.
 
 Planned cards:
 
+None.
+
+Completed cards:
+
+- `batch-cards/467-task-seed-promotion-admission-selection.md`
+- `batch-cards/468-task-seed-promotion-command-model.md`
+- `batch-cards/469-task-seed-promotion-state-persistence.md`
 - `batch-cards/470-task-seed-promotion-diagnostics-query.md`
 - `batch-cards/471-task-seed-promotion-cli-effigy.md`
 - `batch-cards/472-task-seed-promotion-validation.md`
 - `batch-cards/473-task-seed-promotion-next-lane-checkpoint.md`
 - `batch-cards/474-task-seed-promotion-closeout.md`
 
-Completed cards:
-
-- `batch-cards/467-task-seed-promotion-admission-selection.md`
-- `batch-cards/468-task-seed-promotion-command-model.md`
-
 ## Acceptance Criteria
 
-- [ ] Promotion requires an explicit command.
-- [ ] Promotion creates a task through task-domain storage, not by renaming a
+- [x] Promotion requires an explicit command.
+- [x] Promotion creates a task through task-domain storage, not by renaming a
   seed.
-- [ ] Duplicate promotion is idempotent or rejected with a controlled reason.
-- [ ] Blocked, rejected, draft, and already-promoted seeds cannot create new
+- [x] Duplicate promotion is idempotent or rejected with a controlled reason.
+- [x] Blocked, rejected, draft, and already-promoted seeds cannot create new
   tasks.
-- [ ] Provider execution, SCM/forge mutation, scoring policy, autonomous goal
+- [x] Provider execution, SCM/forge mutation, scoring policy, autonomous goal
   loops, and UI-triggered mutation remain out of scope.
 
 ## Stop Conditions

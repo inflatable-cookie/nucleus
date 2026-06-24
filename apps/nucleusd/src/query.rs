@@ -8,7 +8,8 @@ use nucleus_server::{
     ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
     ServerControlRequest, ServerControlRequestKind, ServerControlResponseBody,
     ServerControlResponseStatus, ServerQuery, ServerQueryId, ServerQueryKind, ServerStateDomain,
-    StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery, TaskTimelineQuery,
+    StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
+    TaskTimelineQuery,
 };
 use nucleus_tasks::TaskId;
 
@@ -58,6 +59,7 @@ pub(crate) fn print_query(
             | QueryDomain::TaskTimeline { .. }
             | QueryDomain::TaskReadiness { .. }
             | QueryDomain::PlanningTaskSeeds { .. }
+            | QueryDomain::TaskSeedPromotionDiagnostics { .. }
             | QueryDomain::ProjectAuthorityMap { .. }
     ) {
         let dto = ControlResponseEnvelopeDto::try_from(&response)
@@ -149,6 +151,11 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
         }
         QueryDomain::PlanningTaskSeeds { project_id } => {
             ServerQueryKind::PlanningTaskSeeds(PlanningTaskSeedsQuery {
+                project_id: ProjectId(project_id.clone()),
+            })
+        }
+        QueryDomain::TaskSeedPromotionDiagnostics { project_id } => {
+            ServerQueryKind::TaskSeedPromotionDiagnostics(TaskSeedPromotionDiagnosticsQuery {
                 project_id: ProjectId(project_id.clone()),
             })
         }

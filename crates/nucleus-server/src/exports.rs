@@ -34,6 +34,7 @@ pub use super::local_sandbox_backend::*;
 pub use super::local_transport::*;
 pub use super::management_projection_state::*;
 pub use super::planning_seed::*;
+pub use super::planning_task_seed_promotion_diagnostics::*;
 pub use super::process_control_backend::*;
 pub use super::process_event_transport_backend::*;
 pub use super::process_interruption::*;

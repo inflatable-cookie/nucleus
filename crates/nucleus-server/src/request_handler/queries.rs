@@ -66,6 +66,7 @@ mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
 mod provider_readiness_overview;
 mod task_readiness;
+mod task_seed_promotion_diagnostics;
 mod task_timeline;
 
 pub(crate) fn handle_query<B>(
@@ -134,6 +135,9 @@ where
         }
         ServerQueryKind::PlanningTaskSeeds(query) => {
             planning_task_seeds::planning_task_seeds_query(handler, query)
+        }
+        ServerQueryKind::TaskSeedPromotionDiagnostics(query) => {
+            task_seed_promotion_diagnostics::task_seed_promotion_diagnostics_query(handler, query)
         }
         ServerQueryKind::ProjectAuthorityMap(query) => {
             authority_map::project_authority_map_query(query)

@@ -71,6 +71,7 @@ pub enum ServerQueryKind {
     TaskTimeline(TaskTimelineQuery),
     TaskReadiness(TaskReadinessQuery),
     PlanningTaskSeeds(PlanningTaskSeedsQuery),
+    TaskSeedPromotionDiagnostics(TaskSeedPromotionDiagnosticsQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
 
@@ -191,6 +192,12 @@ pub struct PlanningTaskSeedsQuery {
     pub project_id: ProjectId,
 }
 
+/// Planning task seed promotion diagnostics query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskSeedPromotionDiagnosticsQuery {
+    pub project_id: ProjectId,
+}
+
 /// Project authority-map query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectAuthorityMapQuery {
@@ -263,6 +270,7 @@ pub enum ServerQueryResult {
     TaskTimeline(EngineTaskTimelineProjection),
     TaskReadiness(EngineTaskReadinessProjection),
     PlanningTaskSeeds(EngineTaskSeedCandidateProjection),
+    TaskSeedPromotionDiagnostics(crate::PlanningTaskSeedPromotionDiagnostics),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     Empty,
     Unsupported {

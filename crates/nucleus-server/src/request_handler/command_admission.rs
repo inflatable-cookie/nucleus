@@ -48,6 +48,7 @@ fn orchestration_admission_from_command(
 fn task_command_target_ref(command: &TaskCommand) -> Option<String> {
     match command {
         TaskCommand::Create(command) => Some(command.project_id.0.clone()),
+        TaskCommand::PromoteSeed(command) => Some(command.seed_id.0.clone()),
         TaskCommand::Update(command) => Some(command.task_id.0.clone()),
         TaskCommand::Delegate(command) => Some(command.task_id.0.clone()),
         TaskCommand::Start(command) => Some(command.task_id.0.clone()),

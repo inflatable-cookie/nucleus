@@ -19,22 +19,31 @@ pub use conflicts::{
     ManagementProjectionSchemaConflictKind, ManagementProjectionScmConflictKind,
     ManagementProjectionSemanticConflictKind, ManagementProjectionUnsupportedConflictKind,
 };
-pub use export::export_project_task_projection;
+pub use export::{
+    export_project_planning_projection, export_project_task_projection,
+    planning_projection_export_diagnostics,
+};
 pub use policy::{
     default_local_only_projection_markers, projection_record_authority_policy,
     ManagementProjectionAuthorityPolicy,
 };
 pub use types::{
-    ManagementProjectionEnvelope, ManagementProjectionExportEntry, ManagementProjectionExportPlan,
+    ManagementProjectionEnvelope, ManagementProjectionExportEntry, ManagementProjectionExportIssue,
+    ManagementProjectionExportIssueKind, ManagementProjectionExportPlan,
     ManagementProjectionFileCodecError, ManagementProjectionFileDocument,
-    ManagementProjectionFileFormat, ManagementProjectionFileRef, ManagementProjectionPayload,
+    ManagementProjectionFileFormat, ManagementProjectionFileRef, ManagementProjectionFileRefError,
+    ManagementProjectionPayload, ManagementProjectionPlanningArtifactBody,
+    ManagementProjectionPlanningArtifactKind, ManagementProjectionPlanningArtifactRecord,
+    ManagementProjectionPlanningArtifactStatus, ManagementProjectionPlanningExportDiagnostics,
+    ManagementProjectionPlanningReviewState, ManagementProjectionPlanningTaskSeedRecord,
     ManagementProjectionRecordId, ManagementProjectionRecordKind, ManagementProjectionRoot,
     ManagementProjectionSchemaVersion, MANAGEMENT_PROJECTION_ROOT, MANAGEMENT_PROJECTION_SCHEMA_V1,
 };
 pub use validation::{
-    validate_projection_envelope, ManagementProjectionExcludedStateMarker,
-    ManagementProjectionValidationIssue, ManagementProjectionValidationIssueKind,
-    ManagementProjectionValidationReport, ManagementProjectionValidationStatus,
+    validate_projection_envelope, validate_projection_file_document,
+    ManagementProjectionExcludedStateMarker, ManagementProjectionValidationIssue,
+    ManagementProjectionValidationIssueKind, ManagementProjectionValidationReport,
+    ManagementProjectionValidationStatus,
 };
 
 #[cfg(test)]

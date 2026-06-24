@@ -133,3 +133,47 @@ fn request_envelope_dto_serializes_task_create_command() {
             && command.agent_readiness.validation_commands == vec!["effigy test --plan"]
     ));
 }
+
+#[test]
+fn request_envelope_dto_serializes_task_seed_promotion_command() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:promote-seed".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Command(crate::commands::ServerCommand {
+            id: ServerCommandId("command:dto:promote-seed".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: crate::commands::ServerCommandKind::Task(
+                crate::commands::TaskCommand::PromoteSeed(
+                    crate::commands::TaskSeedPromotionCommand {
+                        project_id: ProjectId("project:dto".to_owned()),
+                        seed_id: nucleus_engine::EngineTaskSeedId("seed:dto".to_owned()),
+                        expected_seed_revision: Some(RevisionId("rev:seed:dto".to_owned())),
+                        destination_task_id: Some(nucleus_tasks::TaskId(
+                            "task:command:dto:promote-seed".to_owned(),
+                        )),
+                    },
+                ),
+            ),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert!(matches!(
+        restored.kind,
+        ServerControlRequestKind::Command(crate::commands::ServerCommand {
+            kind: crate::commands::ServerCommandKind::Task(
+                crate::commands::TaskCommand::PromoteSeed(command)
+            ),
+            ..
+        }) if command.project_id.0 == "project:dto"
+            && command.seed_id.0 == "seed:dto"
+            && command.expected_seed_revision == Some(RevisionId("rev:seed:dto".to_owned()))
+            && command.destination_task_id == Some(nucleus_tasks::TaskId(
+                "task:command:dto:promote-seed".to_owned()
+            ))
+    ));
+}

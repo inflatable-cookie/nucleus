@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{
-    ReadOnlyCommand, ServerCommand, ServerCommandKind, TaskCommand, TaskTransitionCommand,
+    ReadOnlyCommand, ServerCommand, ServerCommandKind, TaskCommand, TaskSeedPromotionCommand,
+    TaskTransitionCommand,
 };
 use crate::ids::ServerCommandId;
 use nucleus_core::RevisionId;
@@ -62,6 +63,13 @@ pub enum ControlCommandDto {
         allowed_actions: Option<Vec<String>>,
         stop_conditions: Option<Vec<String>>,
         validation_commands: Option<Vec<String>>,
+    },
+    TaskSeedPromotion {
+        command_id: String,
+        project_id: String,
+        seed_id: String,
+        expected_seed_revision: Option<String>,
+        destination_task_id: Option<String>,
     },
     ReadOnlyCommand {
         command_id: String,
@@ -176,6 +184,21 @@ impl ControlCommandDto {
                 stop_conditions,
                 validation_commands,
             ),
+            Self::TaskSeedPromotion {
+                command_id,
+                project_id,
+                seed_id,
+                expected_seed_revision,
+                destination_task_id,
+            } => Ok((
+                ServerCommandId(command_id),
+                ServerCommandKind::Task(TaskCommand::PromoteSeed(TaskSeedPromotionCommand {
+                    project_id: nucleus_projects::ProjectId(project_id),
+                    seed_id: nucleus_engine::EngineTaskSeedId(seed_id),
+                    expected_seed_revision: expected_seed_revision.map(RevisionId),
+                    destination_task_id: destination_task_id.map(TaskId),
+                })),
+            )),
             Self::ReadOnlyCommand {
                 command_id,
                 project_id,
@@ -261,6 +284,7 @@ fn task_command_dto(
             None,
         ),
         TaskCommand::Create(command) => task_create_dto(command_id, command),
+        TaskCommand::PromoteSeed(command) => task_seed_promotion_dto(command_id, command),
         TaskCommand::Update(command) => task_update_dto(command_id, command),
         TaskCommand::Delegate(_) => {
             return Err(ControlApiCodecError::unsupported(
@@ -270,6 +294,25 @@ fn task_command_dto(
     };
 
     Ok(dto)
+}
+
+fn task_seed_promotion_dto(
+    command_id: &ServerCommandId,
+    command: &TaskSeedPromotionCommand,
+) -> ControlCommandDto {
+    ControlCommandDto::TaskSeedPromotion {
+        command_id: command_id.0.clone(),
+        project_id: command.project_id.0.clone(),
+        seed_id: command.seed_id.0.clone(),
+        expected_seed_revision: command
+            .expected_seed_revision
+            .as_ref()
+            .map(|revision| revision.0.clone()),
+        destination_task_id: command
+            .destination_task_id
+            .as_ref()
+            .map(|task_id| task_id.0.clone()),
+    }
 }
 
 fn transition_kind(

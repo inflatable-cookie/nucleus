@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-22
+Updated: 2026-06-24
 
 ## Purpose
 
@@ -10,7 +10,7 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `469-task-seed-promotion-state-persistence.md`
+- `479-planning-management-projection-export-plan.md`
 
 ## Paused Cards
 
@@ -18,14 +18,22 @@ None.
 
 ## Planned Cards
 
-- `470-task-seed-promotion-diagnostics-query.md`
-- `471-task-seed-promotion-cli-effigy.md`
-- `472-task-seed-promotion-validation.md`
-- `473-task-seed-promotion-next-lane-checkpoint.md`
-- `474-task-seed-promotion-closeout.md`
+- `480-planning-management-projection-query-diagnostics.md`
+- `481-planning-management-projection-validation.md`
+- `482-planning-management-projection-next-lane-checkpoint.md`
 
 ## Completed Cards
 
+- `478-planning-management-projection-codec-tests.md`
+- `477-planning-management-projection-file-refs.md`
+- `476-planning-management-projection-record-kinds.md`
+- `475-planning-management-projection-payload-selection.md`
+- `474-task-seed-promotion-closeout.md`
+- `473-task-seed-promotion-next-lane-checkpoint.md`
+- `472-task-seed-promotion-validation.md`
+- `471-task-seed-promotion-cli-effigy.md`
+- `470-task-seed-promotion-diagnostics-query.md`
+- `469-task-seed-promotion-state-persistence.md`
 - `468-task-seed-promotion-command-model.md`
 - `467-task-seed-promotion-admission-selection.md`
 - `466-planning-task-seed-persistence-closeout.md`

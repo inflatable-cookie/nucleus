@@ -13,6 +13,7 @@ pub(crate) enum QueryDomain {
     TaskTimeline { task_id: String },
     TaskReadiness { project_id: String },
     PlanningTaskSeeds { project_id: String },
+    TaskSeedPromotionDiagnostics { project_id: String },
     ProjectAuthorityMap { project_id: String },
 }
 
@@ -54,6 +55,14 @@ impl QueryDomain {
                     })?,
                 })
             }
+            "task-seed-promotion-diagnostics" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::TaskSeedPromotionDiagnostics {
+                    project_id: iter.next().ok_or_else(|| {
+                        "task-seed-promotion-diagnostics requires --project <project-id>".to_owned()
+                    })?,
+                })
+            }
             "project-authority-map" => {
                 expect_flag(iter, "--project")?;
                 Ok(Self::ProjectAuthorityMap {
@@ -79,6 +88,7 @@ impl QueryDomain {
             Self::TaskTimeline { .. } => "task-timeline",
             Self::TaskReadiness { .. } => "task-readiness",
             Self::PlanningTaskSeeds { .. } => "planning-task-seeds",
+            Self::TaskSeedPromotionDiagnostics { .. } => "task-seed-promotion-diagnostics",
             Self::ProjectAuthorityMap { .. } => "project-authority-map",
         }
     }
@@ -96,6 +106,7 @@ impl QueryDomain {
             | Self::TaskTimeline { .. }
             | Self::TaskReadiness { .. }
             | Self::PlanningTaskSeeds { .. }
+            | Self::TaskSeedPromotionDiagnostics { .. }
             | Self::ProjectAuthorityMap { .. } => None,
         }
     }

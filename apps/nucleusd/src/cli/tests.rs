@@ -41,6 +41,24 @@ fn cli_config_parses_provider_live_read_smoke_evidence_replay_command() {
 }
 
 #[test]
+fn cli_config_parses_task_seed_promotion_diagnostics_query() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "task-seed-promotion-diagnostics".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+    ])
+    .expect("parse task seed promotion diagnostics query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::TaskSeedPromotionDiagnostics {
+            project_id: "project:nucleus-local".to_owned()
+        })
+    );
+}
+
+#[test]
 fn cli_config_parses_command_runner_smoke() {
     let config = CliConfig::parse(vec!["command-runner".to_owned(), "smoke".to_owned()])
         .expect("parse command-runner smoke");

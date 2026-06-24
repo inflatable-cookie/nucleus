@@ -3,7 +3,8 @@ use nucleus_server::{
     ControlCommandEvidenceRecordDto, ControlProviderLiveReadExecutorDiagnosticsDto,
     ControlProviderLiveReadSmokeEvidenceDiagnosticsDto, ControlProviderReadIntentProjectionDto,
     ControlProviderReadIntentQueryResultDto, ControlProviderReadIntentSourceCountsDto,
-    ControlProviderReadinessOverviewDto, LocalControlRequestHandler,
+    ControlProviderReadinessOverviewDto, ControlTaskSeedPromotionDiagnosticEntryDto,
+    ControlTaskSeedPromotionDiagnosticsDto, LocalControlRequestHandler,
 };
 
 use super::*;
@@ -172,6 +173,49 @@ fn task_readiness_response_lines_are_read_only() {
     assert!(!rendered.contains("access_token"));
     assert!(!rendered.contains("raw_payload"));
     assert!(!rendered.contains("provider_write_executed=true"));
+}
+
+#[test]
+fn task_seed_promotion_response_lines_are_read_only_and_sanitized() {
+    let lines = typed_response::task_seed_promotion_response_lines(
+        "task-seed-promotion-diagnostics",
+        ControlTaskSeedPromotionDiagnosticsDto {
+            project_id: "project:nucleus-local".to_owned(),
+            task_seed_records: 1,
+            ready_count: 0,
+            blocked_count: 0,
+            rejected_count: 0,
+            promoted_count: 1,
+            duplicate_promoted_task_ref_count: 0,
+            missing_promoted_task_ref_count: 0,
+            entries: vec![ControlTaskSeedPromotionDiagnosticEntryDto {
+                seed_id: "seed:planning:ready".to_owned(),
+                project_id: "project:nucleus-local".to_owned(),
+                readiness: "promoted".to_owned(),
+                review_state: "accepted".to_owned(),
+                promotion_state: "promoted".to_owned(),
+                promoted_task_ref: Some("task:command:promote-seed".to_owned()),
+                promoted_task_exists: true,
+                duplicate_promoted_task_ref: false,
+                blocking_question_count: 0,
+            }],
+            client_can_mutate: false,
+            task_creation_performed: false,
+            provider_execution_performed: false,
+            raw_planning_body_exposed: false,
+        },
+    );
+    let rendered = lines.join("\n");
+
+    assert!(rendered.contains("domain=task-seed-promotion-diagnostics"));
+    assert!(rendered.contains("records=1"));
+    assert!(rendered.contains("client_can_mutate=false"));
+    assert!(rendered.contains("task_creation_performed=false"));
+    assert!(rendered.contains("provider_execution_performed=false"));
+    assert!(rendered.contains("raw_planning_body_exposed=false"));
+    assert!(!rendered.contains("problem_statement"));
+    assert!(!rendered.contains("private:context"));
+    assert!(!rendered.contains("raw_payload"));
 }
 
 #[test]

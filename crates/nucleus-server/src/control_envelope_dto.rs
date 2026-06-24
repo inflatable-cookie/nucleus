@@ -32,7 +32,8 @@ pub use response::{
     ControlResponseBodyDto, ControlResponseEnvelopeDto, ControlResponseStatusDto,
     ControlRuntimeReadinessBlockerDto, ControlRuntimeReadinessDiagnosticDto,
     ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
-    ControlTaskReadinessStatusCountDto, ControlTaskTimelineEntryDto,
+    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticEntryDto,
+    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
 };
 pub use tasks::ControlTaskRecordDto;
 

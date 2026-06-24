@@ -5,6 +5,7 @@ mod diagnostics;
 mod planning_task_seeds;
 mod runtime;
 mod task_readiness;
+mod task_seed_promotion;
 mod timeline;
 
 pub use authority::{
@@ -24,5 +25,8 @@ pub use runtime::{
 pub use task_readiness::{
     ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
     ControlTaskReadinessStatusCountDto,
+};
+pub use task_seed_promotion::{
+    ControlTaskSeedPromotionDiagnosticEntryDto, ControlTaskSeedPromotionDiagnosticsDto,
 };
 pub use timeline::ControlTaskTimelineEntryDto;

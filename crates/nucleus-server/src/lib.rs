@@ -39,6 +39,7 @@ pub mod local_sandbox_backend;
 pub mod local_transport;
 pub mod management_projection_state;
 pub mod planning_seed;
+pub mod planning_task_seed_promotion_diagnostics;
 pub mod process_control_backend;
 pub mod process_event_transport_backend;
 pub mod process_interruption;

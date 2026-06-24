@@ -9,7 +9,7 @@ use crate::control_api::{
     PlanningTaskSeedsQuery, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
     ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
     ServerQuery, ServerQueryKind, StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery,
-    TaskTimelineQuery,
+    TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
 };
 use crate::ids::ServerQueryId;
 use crate::state::ServerStateDomain;
@@ -18,7 +18,7 @@ use nucleus_core::PersistenceRecordId;
 use nucleus_projects::ProjectId;
 use task_workflow::{
     planning_task_seeds_query_from_action, task_readiness_query_from_action,
-    task_timeline_query_from_action,
+    task_seed_promotion_diagnostics_query_from_action, task_timeline_query_from_action,
 };
 
 use super::protocol::{
@@ -71,6 +71,11 @@ pub enum ControlQueryDto {
         project_id: String,
     },
     PlanningTaskSeeds {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    TaskSeedPromotionDiagnostics {
         query_id: String,
         action: String,
         project_id: String,
@@ -144,6 +149,13 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                     project_id: project_id.0.clone(),
                 })
             }
+            ServerQueryKind::TaskSeedPromotionDiagnostics(TaskSeedPromotionDiagnosticsQuery {
+                project_id,
+            }) => Ok(Self::TaskSeedPromotionDiagnostics {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
                 project_id,
                 expected_domains,
@@ -213,6 +225,9 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             ControlQueryDto::PlanningTaskSeeds {
                 action, project_id, ..
             } => planning_task_seeds_query_from_action(&action, project_id),
+            ControlQueryDto::TaskSeedPromotionDiagnostics {
+                action, project_id, ..
+            } => task_seed_promotion_diagnostics_query_from_action(&action, project_id),
             ControlQueryDto::ProjectAuthorityMap {
                 action,
                 project_id,
@@ -236,6 +251,7 @@ impl ControlQueryDto {
             | Self::TaskTimeline { query_id, .. }
             | Self::TaskReadiness { query_id, .. }
             | Self::PlanningTaskSeeds { query_id, .. }
+            | Self::TaskSeedPromotionDiagnostics { query_id, .. }
             | Self::ProjectAuthorityMap { query_id, .. } => query_id.clone(),
         }
     }

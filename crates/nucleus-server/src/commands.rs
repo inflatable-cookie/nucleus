@@ -63,6 +63,7 @@ pub enum ProjectCommand {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TaskCommand {
     Create(TaskCreateCommand),
+    PromoteSeed(TaskSeedPromotionCommand),
     Update(TaskUpdateCommand),
     Delegate(TaskDelegationCommand),
     Start(TaskTransitionCommand),
@@ -73,6 +74,15 @@ pub enum TaskCommand {
     },
     Complete(TaskTransitionCommand),
     Archive(TaskTransitionCommand),
+}
+
+/// Promote one reviewed planning task seed into one task-domain record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskSeedPromotionCommand {
+    pub project_id: ProjectId,
+    pub seed_id: nucleus_engine::EngineTaskSeedId,
+    pub expected_seed_revision: Option<RevisionId>,
+    pub destination_task_id: Option<TaskId>,
 }
 
 /// Task create command.
