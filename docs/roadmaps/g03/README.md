@@ -446,7 +446,7 @@ Reason:
 
 Ready cards:
 
-- `batch-cards/483-planning-projection-file-write-boundary-selection.md`
+- `batch-cards/487-planning-projection-cli-effigy-inspection.md`
 
 Paused cards:
 
@@ -454,15 +454,15 @@ None.
 
 Planned cards:
 
-- `batch-cards/484-planning-projection-file-document-materialization.md`
-- `batch-cards/485-planning-projection-file-write-diagnostics.md`
-- `batch-cards/486-planning-projection-capture-prep-records.md`
-- `batch-cards/487-planning-projection-cli-effigy-inspection.md`
 - `batch-cards/488-planning-projection-file-export-validation.md`
 - `batch-cards/489-planning-projection-next-lane-checkpoint.md`
 
 Completed cards:
 
+- `batch-cards/486-planning-projection-capture-prep-records.md`
+- `batch-cards/485-planning-projection-file-write-diagnostics.md`
+- `batch-cards/484-planning-projection-file-document-materialization.md`
+- `batch-cards/483-planning-projection-file-write-boundary-selection.md`
 - `batch-cards/482-planning-management-projection-next-lane-checkpoint.md`
 - `batch-cards/481-planning-management-projection-validation.md`
 - `batch-cards/480-planning-management-projection-query-diagnostics.md`

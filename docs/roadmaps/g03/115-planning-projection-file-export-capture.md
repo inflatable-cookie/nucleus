@@ -26,20 +26,20 @@ gap is the file export boundary: converting export entries into deterministic
 
 ## Goals
 
-- [ ] Select the first planning projection file-write boundary.
-- [ ] Write planning projection TOML documents under scoped `nucleus/` paths.
-- [ ] Preserve deterministic output and controlled blocked records.
-- [ ] Prepare management-capture evidence without creating commits or shares.
+- [x] Select the first planning projection file-write boundary.
+- [x] Write planning projection TOML documents under scoped `nucleus/` paths.
+- [x] Preserve deterministic output and controlled blocked records.
+- [x] Prepare management-capture evidence without creating commits or shares.
 - [ ] Keep import/admission, merge policy, SCM mutation, forge mutation, task
   promotion, provider execution, and UI out of scope.
 
 ## Execution Plan
 
-- [ ] Batch 1: select file-write boundary, authority, and blocked paths.
-- [ ] Batch 2: implement deterministic planning projection file document
+- [x] Batch 1: select file-write boundary, authority, and blocked paths.
+- [x] Batch 2: implement deterministic planning projection file document
   materialization without import/apply.
-- [ ] Batch 3: add write diagnostics and no-effect evidence.
-- [ ] Batch 4: connect planning projection files to management-capture prep
+- [x] Batch 3: add write diagnostics and no-effect evidence.
+- [x] Batch 4: connect planning projection files to management-capture prep
   records without SCM publication.
 - [ ] Batch 5: validate and choose import/admission, capture publication, or
   planning-session depth as the next lane.
@@ -48,29 +48,28 @@ gap is the file export boundary: converting export entries into deterministic
 
 Ready cards:
 
-- `batch-cards/483-planning-projection-file-write-boundary-selection.md`
+- `batch-cards/487-planning-projection-cli-effigy-inspection.md`
 
 Planned cards:
 
-- `batch-cards/484-planning-projection-file-document-materialization.md`
-- `batch-cards/485-planning-projection-file-write-diagnostics.md`
-- `batch-cards/486-planning-projection-capture-prep-records.md`
-- `batch-cards/487-planning-projection-cli-effigy-inspection.md`
 - `batch-cards/488-planning-projection-file-export-validation.md`
 - `batch-cards/489-planning-projection-next-lane-checkpoint.md`
 
 Completed cards:
 
-- None yet.
+- `batch-cards/486-planning-projection-capture-prep-records.md`
+- `batch-cards/485-planning-projection-file-write-diagnostics.md`
+- `batch-cards/484-planning-projection-file-document-materialization.md`
+- `batch-cards/483-planning-projection-file-write-boundary-selection.md`
 
 ## Acceptance Criteria
 
-- [ ] Planning projection files are written only under `nucleus/planning/` and
+- [x] Planning projection files are written only under `nucleus/planning/` and
   `nucleus/planning/task-seeds/`.
-- [ ] Invalid refs and unsupported records are surfaced as controlled issues.
-- [ ] No projection import, active planning mutation, task promotion, SCM/forge
+- [x] Invalid refs and unsupported records are surfaced as controlled issues.
+- [x] No projection import, active planning mutation, task promotion, SCM/forge
   mutation, provider execution, or UI behavior is added.
-- [ ] Capture prep cites file refs and sanitized evidence only.
+- [x] Capture prep cites file refs and sanitized evidence only.
 
 ## Stop Conditions
 

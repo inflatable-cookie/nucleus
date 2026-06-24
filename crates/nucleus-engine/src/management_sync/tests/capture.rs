@@ -106,6 +106,83 @@ fn management_capture_command_blocks_policy_gates() {
 }
 
 #[test]
+fn management_capture_command_accepts_planning_projection_write_evidence() {
+    let planning_file_refs = vec![
+        ManagementProjectionFileRef::try_planning_artifact("artifact:roadmap").unwrap(),
+        ManagementProjectionFileRef::try_planning_task_seed("seed:projection").unwrap(),
+    ];
+    let mut command = capture_command(vec![
+        ManagementProjectionCapturePolicyGate::EvidenceSanitized,
+        ManagementProjectionCapturePolicyGate::UserApprovalRequired,
+    ]);
+    command.requested_file_refs = planning_file_refs.clone();
+    command.evidence = ManagementProjectionCaptureEvidence {
+        projection_file_refs: planning_file_refs.clone(),
+        apply_receipt_ids: Vec::new(),
+        write_evidence_refs: vec!["evidence:planning-projection-write:1".to_owned()],
+        review_summary_refs: vec!["review:planning-projection-write:1".to_owned()],
+        validation_report_refs: vec!["validation:planning-projection-write:1".to_owned()],
+        blocked_reasons: Vec::new(),
+    };
+
+    let admission = command.admit();
+    let prep = ManagementProjectionCapturePrepRecord::from_admitted_command(
+        ManagementProjectionCapturePrepId("capture-prep:planning-write".to_owned()),
+        &command,
+        &admission,
+    );
+
+    assert!(admission.is_accepted());
+    assert!(!admission.provider_mutation_allowed);
+    assert!(!command.mutates_provider());
+    assert!(!command.is_share_or_publish());
+    assert!(prep.receipt_ids.is_empty());
+    assert_eq!(
+        prep.write_evidence_refs,
+        vec!["evidence:planning-projection-write:1".to_owned()]
+    );
+    assert_eq!(
+        prep.share_readiness(),
+        ManagementProjectionCaptureShareReadiness::ReadyForReviewBoundary
+    );
+}
+
+#[test]
+fn management_capture_command_blocks_unresolved_planning_write_issues() {
+    let planning_file_refs = vec![
+        ManagementProjectionFileRef::try_planning_artifact("artifact:roadmap").unwrap(),
+        ManagementProjectionFileRef::try_planning_task_seed("seed:projection").unwrap(),
+    ];
+    let mut command = capture_command(vec![
+        ManagementProjectionCapturePolicyGate::EvidenceSanitized,
+    ]);
+    command.requested_file_refs = planning_file_refs.clone();
+    command.evidence = ManagementProjectionCaptureEvidence {
+        projection_file_refs: planning_file_refs,
+        apply_receipt_ids: Vec::new(),
+        write_evidence_refs: vec!["evidence:planning-projection-write:blocked".to_owned()],
+        review_summary_refs: Vec::new(),
+        validation_report_refs: vec!["validation:planning-projection-write:blocked".to_owned()],
+        blocked_reasons: vec!["planning projection export has unresolved issues: 1".to_owned()],
+    };
+
+    let admission = command.admit();
+    let prep = ManagementProjectionCapturePrepRecord::from_admitted_command(
+        ManagementProjectionCapturePrepId("capture-prep:planning-write-blocked".to_owned()),
+        &command,
+        &admission,
+    );
+
+    assert!(!admission.is_accepted());
+    assert_eq!(
+        prep.share_readiness(),
+        ManagementProjectionCaptureShareReadiness::Blocked(
+            "capture command requires projection files and capture evidence".to_owned()
+        )
+    );
+}
+
+#[test]
 fn management_capture_records_allow_git_and_convergence_mappings_without_core_terms() {
     let git = capture_command(vec![
         ManagementProjectionCapturePolicyGate::ProjectionApplied,

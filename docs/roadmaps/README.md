@@ -304,9 +304,10 @@ shape.
 
 Continue `docs/roadmaps/g03/115-planning-projection-file-export-capture.md`
 with
-`docs/roadmaps/g03/batch-cards/483-planning-projection-file-write-boundary-selection.md`.
-Select the first planning projection file-write boundary before implementing
-file materialization or capture prep.
+`docs/roadmaps/g03/batch-cards/487-planning-projection-cli-effigy-inspection.md`.
+Expose a small CLI/Effigy inspection path for planning projection export/write
+and capture-prep state without performing import, apply, SCM mutation, or
+publication.
 Do not add provider execution, provider writes, credential material storage,
 raw payload retention, agent scheduling, callbacks, interruption/recovery
 execution, SCM/forge mutation, scoring policy, autonomous goal loops, silent

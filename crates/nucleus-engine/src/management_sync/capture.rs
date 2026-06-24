@@ -18,6 +18,7 @@ pub struct ManagementProjectionCapturePrepRecord {
     pub scope: ManagementProjectionCaptureScope,
     pub file_refs: Vec<ManagementProjectionFileRef>,
     pub receipt_ids: Vec<EngineRuntimeReceiptRecordId>,
+    pub write_evidence_refs: Vec<String>,
     pub assistance_refs: Vec<String>,
     pub summary: Option<String>,
 }
@@ -35,6 +36,7 @@ impl ManagementProjectionCapturePrepRecord {
             scope: ManagementProjectionCaptureScope::ManagementProjection,
             file_refs: plan.file_refs.clone(),
             receipt_ids: plan.receipt_ids.clone(),
+            write_evidence_refs: Vec::new(),
             assistance_refs,
             summary: plan.summary.clone(),
         }
@@ -59,6 +61,7 @@ impl ManagementProjectionCapturePrepRecord {
             scope: command.scope.clone(),
             file_refs: command.requested_file_refs.clone(),
             receipt_ids: command.evidence.apply_receipt_ids.clone(),
+            write_evidence_refs: command.evidence.write_evidence_refs.clone(),
             assistance_refs: command.evidence.review_summary_refs.clone(),
             summary: Some(command.reason.summary()),
         }
@@ -72,14 +75,19 @@ impl ManagementProjectionCapturePrepRecord {
         !self.file_refs.is_empty() && !self.receipt_ids.is_empty()
     }
 
+    pub fn cites_projection_files_and_capture_evidence(&self) -> bool {
+        !self.file_refs.is_empty()
+            && (!self.receipt_ids.is_empty() || !self.write_evidence_refs.is_empty())
+    }
+
     pub fn share_readiness(&self) -> ManagementProjectionCaptureShareReadiness {
         match &self.status {
             ManagementProjectionCapturePrepStatus::ReadyForApproval => {
-                if self.cites_projection_files_and_receipts() {
+                if self.cites_projection_files_and_capture_evidence() {
                     ManagementProjectionCaptureShareReadiness::ReadyForReviewBoundary
                 } else {
                     ManagementProjectionCaptureShareReadiness::Blocked(
-                        "capture prep requires projection files and apply receipts".to_owned(),
+                        "capture prep requires projection files and capture evidence".to_owned(),
                     )
                 }
             }
@@ -175,8 +183,10 @@ impl ManagementProjectionCaptureCommand {
         {
             return Some("capture command can only cite nucleus/ projection files".to_owned());
         }
-        if !self.evidence.cites_projection_files_and_apply_receipts() {
-            return Some("capture command requires projection files and apply receipts".to_owned());
+        if !self.evidence.cites_projection_files_and_capture_evidence() {
+            return Some(
+                "capture command requires projection files and capture evidence".to_owned(),
+            );
         }
         if self.policy_gates.iter().any(|gate| gate.blocks_capture()) {
             return Some("capture command has blocking policy gates".to_owned());
@@ -233,6 +243,7 @@ impl ManagementProjectionCapturePolicyGate {
 pub struct ManagementProjectionCaptureEvidence {
     pub projection_file_refs: Vec<ManagementProjectionFileRef>,
     pub apply_receipt_ids: Vec<EngineRuntimeReceiptRecordId>,
+    pub write_evidence_refs: Vec<String>,
     pub review_summary_refs: Vec<String>,
     pub validation_report_refs: Vec<String>,
     pub blocked_reasons: Vec<String>,
@@ -242,6 +253,12 @@ impl ManagementProjectionCaptureEvidence {
     pub fn cites_projection_files_and_apply_receipts(&self) -> bool {
         !self.projection_file_refs.is_empty()
             && !self.apply_receipt_ids.is_empty()
+            && self.blocked_reasons.is_empty()
+    }
+
+    pub fn cites_projection_files_and_capture_evidence(&self) -> bool {
+        !self.projection_file_refs.is_empty()
+            && (!self.apply_receipt_ids.is_empty() || !self.write_evidence_refs.is_empty())
             && self.blocked_reasons.is_empty()
     }
 }

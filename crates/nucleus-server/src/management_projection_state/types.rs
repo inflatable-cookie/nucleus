@@ -30,6 +30,34 @@ pub struct ManagementProjectionExportFileWrite {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanningProjectionFileWriteDiagnostics {
+    pub materialized_planning_artifact_files: usize,
+    pub materialized_planning_task_seed_files: usize,
+    pub invalid_ref_count: usize,
+    pub unsupported_record_count: usize,
+    pub encode_failure_count: usize,
+    pub skipped_write_count: usize,
+    pub issues: Vec<PlanningProjectionFileWriteDiagnosticIssue>,
+    pub import_or_apply_authority: bool,
+    pub scm_mutation_authority: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanningProjectionFileWriteDiagnosticIssue {
+    pub file_ref: Option<ManagementProjectionFileRef>,
+    pub class: PlanningProjectionFileWriteDiagnosticIssueClass,
+    pub summary: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PlanningProjectionFileWriteDiagnosticIssueClass {
+    InvalidRef,
+    UnsupportedRecord,
+    EncodeFailed,
+    SkippedWrite,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ManagementProjectionImportStagingRequest {
     pub repo_root: PathBuf,
     pub file_refs: Vec<ManagementProjectionFileRef>,
