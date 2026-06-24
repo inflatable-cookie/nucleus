@@ -242,7 +242,8 @@ shape.
 - `g03/111-planning-artifact-task-seed-promotion.md` - completed
 - `g03/112-planning-task-seed-persistence-and-projection.md` - completed
 - `g03/113-task-seed-promotion-command.md` - completed
-- `g03/114-planning-management-projection-payloads.md` - active
+- `g03/114-planning-management-projection-payloads.md` - completed
+- `g03/115-planning-projection-file-export-capture.md` - active
 
 ## Previous Generation
 
@@ -301,11 +302,11 @@ shape.
 
 ## Next Task
 
-Continue `docs/roadmaps/g03/114-planning-management-projection-payloads.md`
+Continue `docs/roadmaps/g03/115-planning-projection-file-export-capture.md`
 with
-`docs/roadmaps/g03/batch-cards/482-planning-management-projection-next-lane-checkpoint.md`.
-Choose the next lane from implementation evidence and either prepare the next
-ready roadmap or stop on an explicit planning gap.
+`docs/roadmaps/g03/batch-cards/483-planning-projection-file-write-boundary-selection.md`.
+Select the first planning projection file-write boundary before implementing
+file materialization or capture prep.
 Do not add provider execution, provider writes, credential material storage,
 raw payload retention, agent scheduling, callbacks, interruption/recovery
 execution, SCM/forge mutation, scoring policy, autonomous goal loops, silent

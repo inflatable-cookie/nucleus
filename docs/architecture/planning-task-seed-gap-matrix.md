@@ -230,7 +230,8 @@ not be used as the promotion path.
 
 ## Planning Gaps
 
-- management projection payload implementation for planning records
+- planning projection file materialization
+- management-capture preparation for planning projection files
 - whether planning sessions and task seed groups should live in one module or
   a future `nucleus-planning` crate
 - multi-user merge/review policy for planning artifacts and task seeds

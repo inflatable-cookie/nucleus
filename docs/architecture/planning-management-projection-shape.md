@@ -132,12 +132,18 @@ First implementation should stage conflicts for review. It should not auto-merge
 semantic conflicts or apply shared files as active planning authority without a
 review/admission step.
 
-## Deferred Work
+## Implemented Work
 
 - concrete management projection payload types
 - file ref constructors for planning artifacts and task seeds
 - TOML encode/decode tests for planning projection records
 - management projection export from Planning domain records
+- read-only planning projection export diagnostics
+
+## Deferred Work
+
+- planning projection file materialization
+- management-capture preparation for planning projection files
 - management projection import/admission for planning records
 - multi-user merge policy
 - promotion from reviewed task seed to active task

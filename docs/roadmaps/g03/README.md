@@ -439,13 +439,14 @@ Reason:
 - `111-planning-artifact-task-seed-promotion.md` - completed
 - `112-planning-task-seed-persistence-and-projection.md` - completed
 - `113-task-seed-promotion-command.md` - completed
-- `114-planning-management-projection-payloads.md` - active
+- `114-planning-management-projection-payloads.md` - completed
+- `115-planning-projection-file-export-capture.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/475-planning-management-projection-payload-selection.md`
+- `batch-cards/483-planning-projection-file-write-boundary-selection.md`
 
 Paused cards:
 
@@ -453,16 +454,23 @@ None.
 
 Planned cards:
 
-- `batch-cards/476-planning-management-projection-record-kinds.md`
-- `batch-cards/477-planning-management-projection-file-refs.md`
-- `batch-cards/478-planning-management-projection-codec-tests.md`
-- `batch-cards/479-planning-management-projection-export-plan.md`
-- `batch-cards/480-planning-management-projection-query-diagnostics.md`
-- `batch-cards/481-planning-management-projection-validation.md`
-- `batch-cards/482-planning-management-projection-next-lane-checkpoint.md`
+- `batch-cards/484-planning-projection-file-document-materialization.md`
+- `batch-cards/485-planning-projection-file-write-diagnostics.md`
+- `batch-cards/486-planning-projection-capture-prep-records.md`
+- `batch-cards/487-planning-projection-cli-effigy-inspection.md`
+- `batch-cards/488-planning-projection-file-export-validation.md`
+- `batch-cards/489-planning-projection-next-lane-checkpoint.md`
 
 Completed cards:
 
+- `batch-cards/482-planning-management-projection-next-lane-checkpoint.md`
+- `batch-cards/481-planning-management-projection-validation.md`
+- `batch-cards/480-planning-management-projection-query-diagnostics.md`
+- `batch-cards/479-planning-management-projection-export-plan.md`
+- `batch-cards/478-planning-management-projection-codec-tests.md`
+- `batch-cards/477-planning-management-projection-file-refs.md`
+- `batch-cards/476-planning-management-projection-record-kinds.md`
+- `batch-cards/475-planning-management-projection-payload-selection.md`
 - `batch-cards/474-task-seed-promotion-closeout.md`
 - `batch-cards/473-task-seed-promotion-next-lane-checkpoint.md`
 - `batch-cards/472-task-seed-promotion-validation.md`

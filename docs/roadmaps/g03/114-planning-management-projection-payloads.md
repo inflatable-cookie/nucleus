@@ -1,6 +1,6 @@
 # 114 Planning Management Projection Payloads
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-06-24
 
@@ -29,7 +29,7 @@ state, not UI or provider execution.
   projection files.
 - [x] Add encode/decode validation without filesystem writes.
 - [x] Add export planning from persisted Planning records.
-- [ ] Keep import/admission, merge policy, SCM mutation, task promotion,
+- [x] Keep import/admission, merge policy, SCM mutation, task promotion,
   provider execution, and UI out of scope.
 
 ## Execution Plan
@@ -38,14 +38,14 @@ state, not UI or provider execution.
 - [x] Batch 2: add deterministic file refs and TOML codec tests.
 - [x] Batch 3: add export plan composition from Planning domain records.
 - [x] Batch 4: expose read-only diagnostics/CLI inspection if needed.
-- [ ] Batch 5: validate and choose import/admission or planning-session depth
+- [x] Batch 5: validate and choose import/admission or planning-session depth
   as the next lane.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/482-planning-management-projection-next-lane-checkpoint.md`
+- None.
 
 Planned cards:
 
@@ -53,6 +53,7 @@ Planned cards:
 
 Completed cards:
 
+- `batch-cards/482-planning-management-projection-next-lane-checkpoint.md`
 - `batch-cards/481-planning-management-projection-validation.md`
 - `batch-cards/480-planning-management-projection-query-diagnostics.md`
 - `batch-cards/479-planning-management-projection-export-plan.md`
@@ -67,7 +68,18 @@ Completed cards:
 - [x] Planning task seeds are not encoded as active tasks.
 - [x] Projection encode/decode is deterministic and tested.
 - [x] Export planning is read-only and does not write files or mutate SCM.
-- [ ] Import/admission and merge policy remain explicit later work.
+- [x] Import/admission and merge policy remain explicit later work.
+
+## Next Lane
+
+Selected: `115-planning-projection-file-export-capture.md`.
+
+Reason: roadmap `114` proved planning projection payloads, deterministic refs,
+TOML codecs, read-only export plans, controlled export issues, and read-only
+diagnostics. The next committable-state gap is deterministic projection file
+export and capture preparation. Projection import/admission and merge review
+remain deferred because semantic conflict policy is still a larger planning
+gap.
 
 ## Stop Conditions
 
