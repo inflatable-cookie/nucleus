@@ -54,9 +54,11 @@ use crate::{
 
 mod authority_map;
 mod diagnostics;
+mod memory_proposal_review_diagnostics;
 mod memory_proposals;
 mod planning_capture_publication_diagnostics;
 mod planning_projection_file_write_diagnostics;
+mod planning_projection_import_apply_diagnostics;
 mod planning_projection_import_diagnostics;
 mod planning_sessions;
 mod planning_task_seeds;
@@ -64,6 +66,7 @@ mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
 mod provider_readiness_overview;
+mod research_run_briefs;
 mod runtime_metadata;
 mod task_readiness;
 mod task_seed_promotion_diagnostics;
@@ -144,6 +147,14 @@ where
         ServerQueryKind::MemoryProposals(query) => {
             memory_proposals::memory_proposals_query(handler, query)
         }
+        ServerQueryKind::MemoryProposalReviewDiagnostics(query) => {
+            memory_proposal_review_diagnostics::memory_proposal_review_diagnostics_query(
+                handler, query,
+            )
+        }
+        ServerQueryKind::ResearchRunBriefs(query) => {
+            research_run_briefs::research_run_briefs_query(handler, query)
+        }
         ServerQueryKind::TaskSeedPromotionDiagnostics(query) => {
             task_seed_promotion_diagnostics::task_seed_promotion_diagnostics_query(handler, query)
         }
@@ -152,6 +163,9 @@ where
         }
         ServerQueryKind::PlanningProjectionImportDiagnostics(query) => {
             planning_projection_import_diagnostics::planning_projection_import_diagnostics_query(query)
+        }
+        ServerQueryKind::PlanningProjectionImportApplyDiagnostics(query) => {
+            planning_projection_import_apply_diagnostics::planning_projection_import_apply_diagnostics_query(handler, query)
         }
         ServerQueryKind::PlanningCapturePublicationDiagnostics(query) => {
             planning_capture_publication_diagnostics::planning_capture_publication_diagnostics_query(handler, query)

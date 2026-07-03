@@ -1,17 +1,23 @@
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{
-    ReadOnlyCommand, ServerCommand, ServerCommandKind, TaskCommand, TaskSeedPromotionCommand,
-    TaskTransitionCommand,
+    ServerCommand, ServerCommandKind, TaskCommand, TaskSeedPromotionCommand, TaskTransitionCommand,
 };
 use crate::ids::ServerCommandId;
+use crate::memory_proposal_review_command::MemoryProposalReviewCommand;
 use nucleus_core::RevisionId;
 use nucleus_tasks::TaskId;
 
 use super::ControlApiCodecError;
 
+mod memory_proposal_review;
+mod read_only;
 mod task_authoring;
 
+use memory_proposal_review::{
+    memory_proposal_review_action, memory_proposal_review_dto, ControlMemoryProposalReviewActionDto,
+};
+use read_only::{read_only_command_dto, read_only_command_kind};
 use task_authoring::{
     task_create_dto, task_create_kind, task_update_dto, task_update_kind,
     ControlTaskAcceptanceCriterionDto,
@@ -71,6 +77,14 @@ pub enum ControlCommandDto {
         expected_seed_revision: Option<String>,
         destination_task_id: Option<String>,
     },
+    MemoryProposalReview {
+        command_id: String,
+        action: ControlMemoryProposalReviewActionDto,
+        proposal_id: String,
+        expected_revision: String,
+        reviewer_ref: Option<String>,
+        note: Option<String>,
+    },
     ReadOnlyCommand {
         command_id: String,
         project_id: String,
@@ -104,6 +118,9 @@ impl TryFrom<&ServerCommand> for ControlCommandDto {
             ServerCommandKind::Task(task_command) => task_command_dto(&command.id, task_command),
             ServerCommandKind::ReadOnlyCommand(read_only_command) => {
                 Ok(read_only_command_dto(&command.id, read_only_command))
+            }
+            ServerCommandKind::MemoryProposalReview(review_command) => {
+                Ok(memory_proposal_review_dto(&command.id, review_command))
             }
             _ => Err(ControlApiCodecError::unsupported(
                 "command shape is not supported by the first command DTO",
@@ -199,6 +216,24 @@ impl ControlCommandDto {
                     destination_task_id: destination_task_id.map(TaskId),
                 })),
             )),
+            Self::MemoryProposalReview {
+                command_id,
+                action,
+                proposal_id,
+                expected_revision,
+                reviewer_ref,
+                note,
+            } => Ok((
+                ServerCommandId(command_id.clone()),
+                ServerCommandKind::MemoryProposalReview(MemoryProposalReviewCommand {
+                    command_id,
+                    proposal_id,
+                    expected_revision: RevisionId(expected_revision),
+                    action: memory_proposal_review_action(action),
+                    reviewer_ref,
+                    note,
+                }),
+            )),
             Self::ReadOnlyCommand {
                 command_id,
                 project_id,
@@ -210,39 +245,19 @@ impl ControlCommandDto {
                 stdout_limit_bytes,
                 stderr_limit_bytes,
                 command_display,
-            } => Ok((
-                ServerCommandId(command_id),
-                ServerCommandKind::ReadOnlyCommand(ReadOnlyCommand {
-                    project_id: nucleus_projects::ProjectId(project_id),
-                    execution_host_id: crate::EngineHostId(execution_host_id),
-                    executable,
-                    argv,
-                    working_directory: std::path::PathBuf::from(working_directory),
-                    timeout_ms,
-                    stdout_limit_bytes,
-                    stderr_limit_bytes,
-                    command_display,
-                }),
-            )),
+            } => read_only_command_kind(
+                command_id,
+                project_id,
+                execution_host_id,
+                executable,
+                argv,
+                working_directory,
+                timeout_ms,
+                stdout_limit_bytes,
+                stderr_limit_bytes,
+                command_display,
+            ),
         }
-    }
-}
-
-fn read_only_command_dto(
-    command_id: &ServerCommandId,
-    command: &ReadOnlyCommand,
-) -> ControlCommandDto {
-    ControlCommandDto::ReadOnlyCommand {
-        command_id: command_id.0.clone(),
-        project_id: command.project_id.0.clone(),
-        execution_host_id: command.execution_host_id.0.clone(),
-        executable: command.executable.clone(),
-        argv: command.argv.clone(),
-        working_directory: command.working_directory.display().to_string(),
-        timeout_ms: command.timeout_ms,
-        stdout_limit_bytes: command.stdout_limit_bytes,
-        stderr_limit_bytes: command.stderr_limit_bytes,
-        command_display: command.command_display.clone(),
     }
 }
 

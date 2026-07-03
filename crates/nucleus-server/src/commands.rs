@@ -10,6 +10,7 @@ use nucleus_tasks::{
 use nucleus_workspaces::{WorkspaceLayout, WorkspaceLayoutId};
 
 use crate::ids::{ClientId, ServerCommandId};
+use crate::memory_proposal_review_command::MemoryProposalReviewCommand;
 
 /// Command sent by a control-plane client to the server.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,6 +28,7 @@ pub enum ServerCommandKind {
     Workspace(WorkspaceCommand),
     AgentSession(AgentSessionCommand),
     Steward(NativeStewardCommandRequest),
+    MemoryProposalReview(MemoryProposalReviewCommand),
     ReadOnlyCommand(ReadOnlyCommand),
     ConfigureModelRoute(ModelRoute),
 }

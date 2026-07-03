@@ -153,10 +153,25 @@ Updated: 2026-06-16
   title, sanitized brief text, status, scope boundary, source plan refs,
   confidence, coverage summary, and timestamps. Tests prove run briefs are not
   active execution, status does not grant execution authority, and scope does
-  not grant source access authority. Crawlers, browser automation, source
-  retrieval, model orchestration, citation rendering, raw source retention,
-  promotion, projection/apply, task creation, and UI behavior remain out of
-  scope.
+  not grant source access authority. Research question records now cover
+  question ids, run refs, priority, status, source requirements, answer
+  summaries, evidence refs, and open gap refs without execution authority or
+  raw source payload storage. Source refs now cover web pages, official docs,
+  source repos, code files, issues/discussions, papers, PDFs, package
+  registries, local files, human notes, model-generated leads, and custom refs
+  with reliability and retrieval-method hints only. Observations and synthesis
+  refs now distinguish evidence, inference, speculation, and recommendation,
+  and link candidate promotion targets to memory proposals, planning artifacts,
+  task seeds, and source evidence by ref only. Crawlers, browser automation,
+  source retrieval, model orchestration, citation rendering, raw source
+  retention, promotion, projection/apply, task creation, and UI behavior remain
+  out of scope. JSON storage records now round-trip run briefs, questions,
+  source refs, observations, synthesis refs, confidence, coverage, and
+  promotion target refs while excluding raw browser caches, copyrighted source
+  payloads, raw transcripts, provider payloads, private notes, credentials, and
+  secret-bearing files. Read-only inspection is now available through server
+  query/control DTO, `nucleusd query research-run-briefs`, and Effigy, returning
+  sanitized counts and refs only.
 - `nucleus-workspaces`: first draft modular workspace layout, panel, and
   surface types. The workspace contract now requires a stronger
   Loophole-inspired display/window/surface/region/panel hierarchy before real
@@ -378,10 +393,13 @@ Updated: 2026-06-16
   local shell state. A task list panel lists `task_records` DTOs. Shell-level
   task selection and task detail display use typed task DTOs as local view
   state. Task detail transition controls can submit start, block, complete,
-  and archive commands, then refresh task records. It does not implement
-  project/task create/edit forms, live subscriptions, provider process
-  lifecycle, remote transport, command execution, persisted focus, or durable
-  state authority.
+  and archive commands, then refresh task records. A disposable read-only
+  planning proof panel queries planning sessions, memory proposals, and
+  research run briefs through the same control envelope and renders summary
+  DTOs only. It does not implement project/task create/edit forms, accepted
+  memory mutation, planning import apply/review, research execution, live
+  subscriptions, provider process lifecycle, remote transport, command
+  execution, persisted focus, final UI layout, or durable state authority.
 
 ## External Systems To Research
 

@@ -10,7 +10,7 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `523-research-question-source-ref-records.md`
+- `532-memory-proposal-review-command-boundary.md`
 
 ## Paused Cards
 
@@ -18,13 +18,22 @@ None.
 
 ## Planned Cards
 
-- `524-research-observation-synthesis-linkage.md`
-- `525-research-run-brief-storage-codec.md`
-- `526-research-run-brief-query-cli-effigy.md`
-- `527-deep-research-run-brief-validation-next-lane.md`
+- `533-memory-proposal-review-command-model.md`
+- `534-memory-proposal-review-persistence.md`
+- `535-memory-proposal-review-diagnostics-query-cli-effigy.md`
+- `536-memory-proposal-review-validation-next-lane.md`
 
 ## Completed Cards
 
+- `531-disposable-ui-proof-validation-next-lane.md`
+- `530-disposable-planning-memory-research-summary-surface.md`
+- `529-disposable-ui-root-effigy-launch.md`
+- `528-disposable-planning-research-ui-proof-boundary.md`
+- `527-deep-research-run-brief-validation-next-lane.md`
+- `526-research-run-brief-query-cli-effigy.md`
+- `525-research-run-brief-storage-codec.md`
+- `524-research-observation-synthesis-linkage.md`
+- `523-research-question-source-ref-records.md`
 - `522-research-run-brief-record-types.md`
 - `521-nucleus-research-crate-front-door.md`
 - `520-deep-research-run-brief-boundary-selection.md`

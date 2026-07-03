@@ -2,8 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   buildCommandHistoryQuery,
   buildDiagnosticsQuery,
+  buildMemoryProposalsQuery,
+  buildPlanningSessionsQuery,
   buildProviderReadIntentQuery,
   buildProviderReadinessOverviewQuery,
+  buildResearchRunBriefsQuery,
   buildRuntimeReadinessQuery,
   buildTaskWorkProgressQuery,
   type ControlRequestEnvelopeDto,
@@ -23,6 +26,14 @@ import {
   type RuntimeReadinessQueryResult,
   type TaskWorkProgressQueryResult,
 } from "./responses";
+import {
+  memoryProposalsFromResponse,
+  planningSessionsFromResponse,
+  researchRunBriefsFromResponse,
+  type MemoryProposalsQueryResult,
+  type PlanningSessionsQueryResult,
+  type ResearchRunBriefsQueryResult,
+} from "./planningResearch";
 import type { DiagnosticsDomain } from "./types";
 
 export async function submitControlEnvelope(
@@ -61,4 +72,25 @@ export async function queryProviderReadinessOverview(): Promise<ProviderReadines
 export async function queryProviderReadIntent(): Promise<ProviderReadIntentQueryResult> {
   const response = await submitControlEnvelope(buildProviderReadIntentQuery());
   return providerReadIntentFromResponse(response);
+}
+
+export async function queryPlanningSessions(
+  projectId: string,
+): Promise<PlanningSessionsQueryResult> {
+  const response = await submitControlEnvelope(buildPlanningSessionsQuery(projectId));
+  return planningSessionsFromResponse(response);
+}
+
+export async function queryMemoryProposals(
+  projectId: string,
+): Promise<MemoryProposalsQueryResult> {
+  const response = await submitControlEnvelope(buildMemoryProposalsQuery(projectId));
+  return memoryProposalsFromResponse(response);
+}
+
+export async function queryResearchRunBriefs(
+  projectId: string,
+): Promise<ResearchRunBriefsQueryResult> {
+  const response = await submitControlEnvelope(buildResearchRunBriefsQuery(projectId));
+  return researchRunBriefsFromResponse(response);
 }

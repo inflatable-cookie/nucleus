@@ -5,6 +5,7 @@ use super::command_events::append_command_admitted_event;
 use super::handler::LocalControlRequestHandler;
 use super::steward_commands::handle_steward_command;
 use super::task_commands::handle_task_command;
+use crate::memory_proposal_review_persistence::review_memory_proposal;
 use std::path::Path;
 
 use crate::commands::{AgentSessionCommand, ServerCommand, ServerCommandKind};
@@ -90,6 +91,12 @@ where
             reason: "agent session runtime control is not implemented".to_owned(),
         }),
         ServerCommandKind::Steward(steward_command) => handle_steward_command(&steward_command),
+        ServerCommandKind::MemoryProposalReview(command) => {
+            match review_memory_proposal(handler.state(), command) {
+                Ok(_) => ServerCommandReceiptStatus::AcceptedForStateMutation,
+                Err(error) => ServerCommandReceiptStatus::Rejected(error),
+            }
+        }
         ServerCommandKind::ReadOnlyCommand(read_only_command) => {
             return handle_read_only_command(handler, request_id, command_id, read_only_command);
         }

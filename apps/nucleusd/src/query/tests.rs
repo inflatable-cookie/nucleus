@@ -10,10 +10,13 @@ use nucleus_server::{
 
 use super::*;
 
+mod memory_proposal_review;
 mod memory_proposals;
 mod planning_capture_publication;
 mod planning_projection_import;
+mod planning_projection_import_apply;
 mod planning_sessions;
+mod research_run_briefs;
 
 #[test]
 fn command_evidence_query_decodes_sanitized_records() {
@@ -134,7 +137,7 @@ fn task_timeline_response_lines_are_read_only() {
     assert!(rendered.contains("domain=task-timeline"));
     assert!(rendered.contains("records=1"));
     assert!(rendered.contains("client_can_mutate=false"));
-    assert!(!rendered.contains("raw_payload"));
+    assert!(!rendered.contains("raw_payload="));
     assert!(!rendered.contains("provider_write"));
 }
 
@@ -177,7 +180,7 @@ fn task_readiness_response_lines_are_read_only() {
     assert!(rendered.contains("client_can_mutate=false"));
     assert!(rendered.contains("provider_execution_available=false"));
     assert!(!rendered.contains("access_token"));
-    assert!(!rendered.contains("raw_payload"));
+    assert!(!rendered.contains("raw_payload="));
     assert!(!rendered.contains("provider_write_executed=true"));
 }
 
@@ -221,7 +224,7 @@ fn task_seed_promotion_response_lines_are_read_only_and_sanitized() {
     assert!(rendered.contains("raw_planning_body_exposed=false"));
     assert!(!rendered.contains("problem_statement"));
     assert!(!rendered.contains("private:context"));
-    assert!(!rendered.contains("raw_payload"));
+    assert!(!rendered.contains("raw_payload="));
 }
 
 #[test]

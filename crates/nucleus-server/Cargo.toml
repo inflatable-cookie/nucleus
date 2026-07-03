@@ -16,6 +16,7 @@ nucleus-native-harness = { path = "../nucleus-native-harness" }
 nucleus-orchestration = { path = "../nucleus-orchestration" }
 nucleus-planning = { path = "../nucleus-planning" }
 nucleus-projects = { path = "../nucleus-projects" }
+nucleus-research = { path = "../nucleus-research" }
 nucleus-scm-forge = { path = "../nucleus-scm-forge" }
 nucleus-tasks = { path = "../nucleus-tasks" }
 nucleus-workspaces = { path = "../nucleus-workspaces" }

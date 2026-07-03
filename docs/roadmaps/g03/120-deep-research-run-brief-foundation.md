@@ -1,6 +1,6 @@
 # 120 Deep Research Run Brief Foundation
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-03
 
@@ -33,13 +33,13 @@ and read-only diagnostics.
   modules.
 - [x] Model research run ids, run status, scope boundary, brief text, source
   plan refs, confidence, coverage, and timestamps.
-- [ ] Model research questions, source refs, observation refs, synthesis refs,
+- [x] Model research questions, source refs, observation refs, synthesis refs,
   memory proposal refs, planning artifact refs, and task seed refs as refs
   only.
-- [ ] Add JSON storage codec for research run brief records.
-- [ ] Expose read-only server/query/CLI/Effigy inspection if the storage shape
+- [x] Add JSON storage codec for research run brief records.
+- [x] Expose read-only server/query/CLI/Effigy inspection if the storage shape
   is stable.
-- [ ] Keep crawling, browser automation, provider execution, model
+- [x] Keep crawling, browser automation, provider execution, model
   orchestration, source retrieval, raw source retention, projection/apply,
   accepted memory promotion, task creation, UI behavior, embeddings, semantic
   search, and SCM/forge mutation out of scope.
@@ -49,12 +49,12 @@ and read-only diagnostics.
 - [x] Batch 1: select the research run brief boundary and deferred surfaces.
 - [x] Batch 2: add `nucleus-research` crate front door and module skeleton.
 - [x] Batch 3: add research run brief value records.
-- [ ] Batch 4: add research question and source ref records.
-- [ ] Batch 5: add observation/synthesis linkage and promotion target refs.
-- [ ] Batch 6: add storage codec and local-store shape.
-- [ ] Batch 7: expose read-only server/query/CLI/Effigy inspection if storage
+- [x] Batch 4: add research question and source ref records.
+- [x] Batch 5: add observation/synthesis linkage and promotion target refs.
+- [x] Batch 6: add storage codec and local-store shape.
+- [x] Batch 7: expose read-only server/query/CLI/Effigy inspection if storage
   is ready.
-- [ ] Batch 8: validate and choose whether the next lane is accepted memory
+- [x] Batch 8: validate and choose whether the next lane is accepted memory
   review commands, research execution planning, planning import apply/review,
   or a disposable planning/research UI proof.
 
@@ -62,17 +62,18 @@ and read-only diagnostics.
 
 Ready cards:
 
-- `batch-cards/523-research-question-source-ref-records.md`
+None.
 
 Planned cards:
 
-- `batch-cards/524-research-observation-synthesis-linkage.md`
-- `batch-cards/525-research-run-brief-storage-codec.md`
-- `batch-cards/526-research-run-brief-query-cli-effigy.md`
 - `batch-cards/527-deep-research-run-brief-validation-next-lane.md`
 
 Completed cards:
 
+- `batch-cards/526-research-run-brief-query-cli-effigy.md`
+- `batch-cards/525-research-run-brief-storage-codec.md`
+- `batch-cards/524-research-observation-synthesis-linkage.md`
+- `batch-cards/523-research-question-source-ref-records.md`
 - `batch-cards/522-research-run-brief-record-types.md`
 - `batch-cards/521-nucleus-research-crate-front-door.md`
 - `batch-cards/520-deep-research-run-brief-boundary-selection.md`
@@ -80,13 +81,13 @@ Completed cards:
 ## Acceptance Criteria
 
 - [x] Research run brief records are owned by a focused crate.
-- [ ] Research output remains evidence until explicitly promoted.
-- [ ] Questions, sources, observations, synthesis, memories, planning
+- [x] Research output remains evidence until explicitly promoted.
+- [x] Questions, sources, observations, synthesis, memories, planning
   artifacts, and task seeds are linked through refs only.
-- [ ] Raw browser caches, copyrighted source payloads, raw transcripts,
+- [x] Raw browser caches, copyrighted source payloads, raw transcripts,
   provider payloads, private notes, credentials, and secret-bearing files are
   excluded.
-- [ ] No crawling, browser automation, source retrieval, provider execution,
+- [x] No crawling, browser automation, source retrieval, provider execution,
   model orchestration, accepted memory promotion, task creation,
   projection/apply, UI behavior, embedding, semantic search, or SCM/forge
   effect is added.

@@ -2,12 +2,15 @@
 
 mod authority;
 mod diagnostics;
+mod memory_proposal_review;
 mod memory_proposals;
 mod planning_capture_publication;
 mod planning_projection_file_write;
 mod planning_projection_import;
+mod planning_projection_import_apply;
 mod planning_sessions;
 mod planning_task_seeds;
+mod research_run_briefs;
 mod runtime;
 mod task_readiness;
 mod task_seed_promotion;
@@ -18,6 +21,9 @@ pub use authority::{
     ControlProjectAuthorityMapDto,
 };
 pub use diagnostics::{ControlDiagnosticsResultDto, ControlDiagnosticsSnapshotDto};
+pub use memory_proposal_review::{
+    ControlMemoryProposalReviewDiagnosticEntryDto, ControlMemoryProposalReviewDiagnosticsDto,
+};
 pub use memory_proposals::{
     ControlMemoryProposalRetentionCountDto, ControlMemoryProposalScopeCountDto,
     ControlMemoryProposalSensitivityCountDto, ControlMemoryProposalSourceCountsDto,
@@ -33,6 +39,10 @@ pub use planning_projection_file_write::{
 pub use planning_projection_import::{
     ControlPlanningProjectionImportBucketDto, ControlPlanningProjectionImportDiagnosticsDto,
 };
+pub use planning_projection_import_apply::{
+    ControlPlanningProjectionImportApplyBucketDto,
+    ControlPlanningProjectionImportApplyDiagnosticsDto,
+};
 pub use planning_sessions::{
     ControlPlanningSessionOutputRefsDto, ControlPlanningSessionSourceCountsDto,
     ControlPlanningSessionStatusCountDto, ControlPlanningSessionSummaryDto,
@@ -40,6 +50,11 @@ pub use planning_sessions::{
 pub use planning_task_seeds::{
     ControlPlanningTaskSeedCandidateDto, ControlPlanningTaskSeedSourceCountsDto,
     ControlPlanningTaskSeedStatusCountDto,
+};
+pub use research_run_briefs::{
+    ControlResearchObservationKindCountDto, ControlResearchRunBriefSourceCountsDto,
+    ControlResearchRunBriefStatusCountDto, ControlResearchRunBriefSummaryDto,
+    ControlResearchSourceKindCountDto, ControlResearchSynthesisKindCountDto,
 };
 pub use runtime::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiffSummaryRecordDto,

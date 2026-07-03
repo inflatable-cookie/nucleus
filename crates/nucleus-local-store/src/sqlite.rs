@@ -1,8 +1,11 @@
 //! SQLite backend for first server-local storage domains.
 
+mod kinds;
+
 use std::path::{Path, PathBuf};
 
-use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
+use kinds::{kind_from_text, kind_to_text};
+use nucleus_core::{PersistenceDomain, PersistenceRecordId, RevisionId};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::backend::{
@@ -288,6 +291,7 @@ fn initialize_schema(connection: &Connection) -> LocalStoreResult<()> {
                 media_type TEXT,
                 payload BLOB NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS deep_research (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL, revision_id TEXT NOT NULL, media_type TEXT, payload BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS workspace_layouts (
                 id TEXT PRIMARY KEY NOT NULL,
                 kind TEXT NOT NULL,
@@ -356,6 +360,7 @@ fn table_for_domain(domain: &PersistenceDomain) -> LocalStoreResult<&'static str
         PersistenceDomain::TaskHistory => Ok("task_history"),
         PersistenceDomain::SharedMemory => Ok("shared_memory"),
         PersistenceDomain::Planning => Ok("planning"),
+        PersistenceDomain::DeepResearch => Ok("deep_research"),
         PersistenceDomain::Workspaces => Ok("workspace_layouts"),
         PersistenceDomain::AdapterRegistry => Ok("adapter_instances"),
         PersistenceDomain::AgentSessions => Ok("agent_sessions"),
@@ -366,52 +371,6 @@ fn table_for_domain(domain: &PersistenceDomain) -> LocalStoreResult<&'static str
         PersistenceDomain::RuntimeEffects => Ok("runtime_effects"),
         other => Err(LocalStoreError::UnsupportedDomain {
             domain: other.clone(),
-        }),
-    }
-}
-
-fn kind_to_text(kind: &PersistenceRecordKind) -> Option<&'static str> {
-    match kind {
-        PersistenceRecordKind::Project => Some("project"),
-        PersistenceRecordKind::RepoMembership => Some("repo_membership"),
-        PersistenceRecordKind::Task => Some("task"),
-        PersistenceRecordKind::TaskHistoryEntry => Some("task_history_entry"),
-        PersistenceRecordKind::SharedMemoryRecord => Some("shared_memory_record"),
-        PersistenceRecordKind::PlanningSession => Some("planning_session"),
-        PersistenceRecordKind::PlanningArtifact => Some("planning_artifact"),
-        PersistenceRecordKind::TaskSeed => Some("task_seed"),
-        PersistenceRecordKind::WorkspaceLayout => Some("workspace_layout"),
-        PersistenceRecordKind::AdapterInstance => Some("adapter_instance"),
-        PersistenceRecordKind::AgentSession => Some("agent_session"),
-        PersistenceRecordKind::ModelRoute => Some("model_route"),
-        PersistenceRecordKind::Event => Some("event"),
-        PersistenceRecordKind::CommandEvidence => Some("command_evidence"),
-        PersistenceRecordKind::ArtifactMetadata => Some("artifact_metadata"),
-        PersistenceRecordKind::RuntimeEffect => Some("runtime_effect"),
-        _ => None,
-    }
-}
-
-fn kind_from_text(value: &str) -> LocalStoreResult<PersistenceRecordKind> {
-    match value {
-        "project" => Ok(PersistenceRecordKind::Project),
-        "repo_membership" => Ok(PersistenceRecordKind::RepoMembership),
-        "task" => Ok(PersistenceRecordKind::Task),
-        "task_history_entry" => Ok(PersistenceRecordKind::TaskHistoryEntry),
-        "shared_memory_record" => Ok(PersistenceRecordKind::SharedMemoryRecord),
-        "planning_session" => Ok(PersistenceRecordKind::PlanningSession),
-        "planning_artifact" => Ok(PersistenceRecordKind::PlanningArtifact),
-        "task_seed" => Ok(PersistenceRecordKind::TaskSeed),
-        "workspace_layout" => Ok(PersistenceRecordKind::WorkspaceLayout),
-        "adapter_instance" => Ok(PersistenceRecordKind::AdapterInstance),
-        "agent_session" => Ok(PersistenceRecordKind::AgentSession),
-        "model_route" => Ok(PersistenceRecordKind::ModelRoute),
-        "event" => Ok(PersistenceRecordKind::Event),
-        "command_evidence" => Ok(PersistenceRecordKind::CommandEvidence),
-        "artifact_metadata" => Ok(PersistenceRecordKind::ArtifactMetadata),
-        "runtime_effect" => Ok(PersistenceRecordKind::RuntimeEffect),
-        other => Err(LocalStoreError::UnsupportedRecordKind {
-            reason: format!("unsupported SQLite record kind in row: {other}"),
         }),
     }
 }

@@ -2,6 +2,7 @@ use super::*;
 use crate::fixtures::fixture_record;
 use crate::revisions::RevisionExpectation;
 use crate::transactions::LocalStoreTransactionPosture;
+use nucleus_core::PersistenceRecordKind;
 
 fn sqlite_supported_domains() -> Vec<(PersistenceDomain, PersistenceRecordKind, &'static str)> {
     vec![
@@ -34,6 +35,11 @@ fn sqlite_supported_domains() -> Vec<(PersistenceDomain, PersistenceRecordKind, 
             PersistenceDomain::Planning,
             PersistenceRecordKind::PlanningArtifact,
             "planning:artifact:1",
+        ),
+        (
+            PersistenceDomain::Planning,
+            PersistenceRecordKind::PlanningImportApplyPlan,
+            "planning:import-apply-plan:1",
         ),
         (
             PersistenceDomain::Planning,

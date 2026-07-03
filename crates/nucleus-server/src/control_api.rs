@@ -18,9 +18,11 @@ use nucleus_workspaces::WorkspaceLayoutId;
 use crate::client_protocol::ProjectAuthorityMapPublicationRecord;
 use crate::commands::ServerCommand;
 pub use crate::control_api_planning_queries::{
-    MemoryProposalsQuery, PlanningCapturePublicationDiagnosticsQuery,
-    PlanningProjectionFileWriteDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
-    PlanningSessionsQuery, PlanningTaskSeedsQuery, TaskSeedPromotionDiagnosticsQuery,
+    MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
+    PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
+    PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
+    PlanningSessionsQuery, PlanningTaskSeedsQuery, ResearchRunBriefsQuery,
+    TaskSeedPromotionDiagnosticsQuery,
 };
 use crate::diagnostics_read_models::{
     CodexProviderDiagnosticsDto, EffigyDiagnosticsDto, ScmSessionDiagnosticsDto,
@@ -32,6 +34,7 @@ use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryI
 use crate::memory_proposals_projection::MemoryProposalsProjection;
 use crate::planning_sessions_projection::PlanningSessionsProjection;
 use crate::read_only_command_control::ReadOnlyCommandControlResult;
+use crate::research_run_briefs_projection::ResearchRunBriefsProjection;
 use crate::runtime_effect_storage::{
     RuntimeEffectStorageQuery, RuntimeEffectStorageRecordId, RuntimeEffectStorageRef,
 };
@@ -80,9 +83,12 @@ pub enum ServerQueryKind {
     PlanningTaskSeeds(PlanningTaskSeedsQuery),
     PlanningSessions(PlanningSessionsQuery),
     MemoryProposals(MemoryProposalsQuery),
+    MemoryProposalReviewDiagnostics(MemoryProposalReviewDiagnosticsQuery),
+    ResearchRunBriefs(ResearchRunBriefsQuery),
     TaskSeedPromotionDiagnostics(TaskSeedPromotionDiagnosticsQuery),
     PlanningProjectionFileWriteDiagnostics(PlanningProjectionFileWriteDiagnosticsQuery),
     PlanningProjectionImportDiagnostics(PlanningProjectionImportDiagnosticsQuery),
+    PlanningProjectionImportApplyDiagnostics(PlanningProjectionImportApplyDiagnosticsQuery),
     PlanningCapturePublicationDiagnostics(PlanningCapturePublicationDiagnosticsQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
@@ -272,9 +278,12 @@ pub enum ServerQueryResult {
     PlanningTaskSeeds(EngineTaskSeedCandidateProjection),
     PlanningSessions(PlanningSessionsProjection),
     MemoryProposals(MemoryProposalsProjection),
+    MemoryProposalReviewDiagnostics(crate::MemoryProposalReviewDiagnostics),
+    ResearchRunBriefs(ResearchRunBriefsProjection),
     TaskSeedPromotionDiagnostics(crate::PlanningTaskSeedPromotionDiagnostics),
     PlanningProjectionFileWriteDiagnostics(crate::PlanningProjectionFileWriteDiagnostics),
     PlanningProjectionImportDiagnostics(crate::PlanningProjectionImportDiagnostics),
+    PlanningProjectionImportApplyDiagnostics(crate::PlanningProjectionImportApplyDiagnostics),
     PlanningCapturePublicationDiagnostics(
         crate::PlanningCapturePublicationStoppedRequestDiagnostics,
     ),

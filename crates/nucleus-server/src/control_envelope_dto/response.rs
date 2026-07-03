@@ -10,6 +10,7 @@ mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
 mod provider_readiness_overview;
 mod records;
+mod research_run_briefs;
 
 pub use body::ControlResponseBodyDto;
 pub use envelope::{ControlResponseEnvelopeDto, ControlResponseStatusDto};
@@ -23,18 +24,24 @@ pub use provider_readiness_overview::ControlProviderReadinessOverviewDto;
 pub use records::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
     ControlDiagnosticsSnapshotDto, ControlDiffSummaryRecordDto,
-    ControlMemoryProposalRetentionCountDto, ControlMemoryProposalScopeCountDto,
+    ControlMemoryProposalRetentionCountDto, ControlMemoryProposalReviewDiagnosticEntryDto,
+    ControlMemoryProposalReviewDiagnosticsDto, ControlMemoryProposalScopeCountDto,
     ControlMemoryProposalSensitivityCountDto, ControlMemoryProposalSourceCountsDto,
     ControlMemoryProposalStatusCountDto, ControlMemoryProposalSummaryDto,
     ControlPlanningCapturePublicationBucketDto, ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticIssueDto,
-    ControlPlanningProjectionFileWriteDiagnosticsDto, ControlPlanningProjectionImportBucketDto,
+    ControlPlanningProjectionFileWriteDiagnosticsDto,
+    ControlPlanningProjectionImportApplyBucketDto,
+    ControlPlanningProjectionImportApplyDiagnosticsDto, ControlPlanningProjectionImportBucketDto,
     ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningSessionOutputRefsDto,
     ControlPlanningSessionSourceCountsDto, ControlPlanningSessionStatusCountDto,
     ControlPlanningSessionSummaryDto, ControlPlanningTaskSeedCandidateDto,
     ControlPlanningTaskSeedSourceCountsDto, ControlPlanningTaskSeedStatusCountDto,
     ControlProjectAuthorityDomainDto, ControlProjectAuthorityIssueDto,
-    ControlProjectAuthorityMapDto, ControlRuntimeReadinessBlockerDto,
+    ControlProjectAuthorityMapDto, ControlResearchObservationKindCountDto,
+    ControlResearchRunBriefSourceCountsDto, ControlResearchRunBriefStatusCountDto,
+    ControlResearchRunBriefSummaryDto, ControlResearchSourceKindCountDto,
+    ControlResearchSynthesisKindCountDto, ControlRuntimeReadinessBlockerDto,
     ControlRuntimeReadinessDiagnosticDto, ControlTaskReadinessCandidateDto,
     ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
     ControlTaskSeedPromotionDiagnosticEntryDto, ControlTaskSeedPromotionDiagnosticsDto,

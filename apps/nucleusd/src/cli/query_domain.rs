@@ -15,9 +15,12 @@ pub(crate) enum QueryDomain {
     PlanningTaskSeeds { project_id: String },
     PlanningSessions { project_id: String },
     MemoryProposals { project_id: String },
+    MemoryProposalReviewDiagnostics { project_id: String },
+    ResearchRunBriefs { project_id: String },
     TaskSeedPromotionDiagnostics { project_id: String },
     PlanningProjectionFileWriteDiagnostics { project_id: String },
     PlanningProjectionImportDiagnostics { project_id: String },
+    PlanningProjectionImportApplyDiagnostics { project_id: String },
     PlanningCapturePublicationDiagnostics { project_id: String },
     ProjectAuthorityMap { project_id: String },
 }
@@ -76,6 +79,23 @@ impl QueryDomain {
                     })?,
                 })
             }
+            "memory-proposal-review-diagnostics" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::MemoryProposalReviewDiagnostics {
+                    project_id: iter.next().ok_or_else(|| {
+                        "memory-proposal-review-diagnostics requires --project <project-id>"
+                            .to_owned()
+                    })?,
+                })
+            }
+            "research-run-briefs" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::ResearchRunBriefs {
+                    project_id: iter.next().ok_or_else(|| {
+                        "research-run-briefs requires --project <project-id>".to_owned()
+                    })?,
+                })
+            }
             "task-seed-promotion-diagnostics" => {
                 expect_flag(iter, "--project")?;
                 Ok(Self::TaskSeedPromotionDiagnostics {
@@ -98,6 +118,15 @@ impl QueryDomain {
                 Ok(Self::PlanningProjectionImportDiagnostics {
                     project_id: iter.next().ok_or_else(|| {
                         "planning-projection-import-diagnostics requires --project <project-id>"
+                            .to_owned()
+                    })?,
+                })
+            }
+            "planning-projection-import-apply-diagnostics" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::PlanningProjectionImportApplyDiagnostics {
+                    project_id: iter.next().ok_or_else(|| {
+                        "planning-projection-import-apply-diagnostics requires --project <project-id>"
                             .to_owned()
                     })?,
                 })
@@ -138,12 +167,17 @@ impl QueryDomain {
             Self::PlanningTaskSeeds { .. } => "planning-task-seeds",
             Self::PlanningSessions { .. } => "planning-sessions",
             Self::MemoryProposals { .. } => "memory-proposals",
+            Self::MemoryProposalReviewDiagnostics { .. } => "memory-proposal-review-diagnostics",
+            Self::ResearchRunBriefs { .. } => "research-run-briefs",
             Self::TaskSeedPromotionDiagnostics { .. } => "task-seed-promotion-diagnostics",
             Self::PlanningProjectionFileWriteDiagnostics { .. } => {
                 "planning-projection-file-write-diagnostics"
             }
             Self::PlanningProjectionImportDiagnostics { .. } => {
                 "planning-projection-import-diagnostics"
+            }
+            Self::PlanningProjectionImportApplyDiagnostics { .. } => {
+                "planning-projection-import-apply-diagnostics"
             }
             Self::PlanningCapturePublicationDiagnostics { .. } => {
                 "planning-capture-publication-diagnostics"
@@ -167,9 +201,12 @@ impl QueryDomain {
             | Self::PlanningTaskSeeds { .. }
             | Self::PlanningSessions { .. }
             | Self::MemoryProposals { .. }
+            | Self::MemoryProposalReviewDiagnostics { .. }
+            | Self::ResearchRunBriefs { .. }
             | Self::TaskSeedPromotionDiagnostics { .. }
             | Self::PlanningProjectionFileWriteDiagnostics { .. }
             | Self::PlanningProjectionImportDiagnostics { .. }
+            | Self::PlanningProjectionImportApplyDiagnostics { .. }
             | Self::PlanningCapturePublicationDiagnostics { .. }
             | Self::ProjectAuthorityMap { .. } => None,
         }

@@ -11,17 +11,18 @@ use nucleus_server::{
     forge_credential_status_refresh, forge_pull_request_refresh, forge_repository_metadata_refresh,
     forge_status_check_refresh, persist_forge_credential_status_refreshes,
     persist_forge_pull_request_refreshes, persist_forge_repository_metadata_refreshes,
-    persist_forge_status_check_refreshes, seed_local_project, seed_local_task,
-    write_command_evidence, ControlApiCodecError, ControlRequestEnvelopeDto,
-    ControlResponseEnvelopeDto, ForgeCredentialStatusRefreshInput,
-    ForgeCredentialStatusRefreshPersistenceInput, ForgeNetworkCredentialKind,
-    ForgeNetworkCredentialResolutionBoundary, ForgeNetworkCredentialStatus,
-    ForgeNetworkExecutionCredentialRef, ForgeNetworkExecutionOperationFamily,
-    ForgePullRequestProvider, ForgePullRequestRefreshInput,
+    persist_forge_status_check_refreshes, seed_local_memory_proposal, seed_local_planning_session,
+    seed_local_project, seed_local_research_run_brief, seed_local_task, write_command_evidence,
+    ControlApiCodecError, ControlRequestEnvelopeDto, ControlResponseEnvelopeDto,
+    ForgeCredentialStatusRefreshInput, ForgeCredentialStatusRefreshPersistenceInput,
+    ForgeNetworkCredentialKind, ForgeNetworkCredentialResolutionBoundary,
+    ForgeNetworkCredentialStatus, ForgeNetworkExecutionCredentialRef,
+    ForgeNetworkExecutionOperationFamily, ForgePullRequestProvider, ForgePullRequestRefreshInput,
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
-    ForgeStatusCheckRefreshScope, LocalControlRequestHandler, LocalProjectSeed, LocalTaskSeed,
+    ForgeStatusCheckRefreshScope, LocalControlRequestHandler, LocalMemoryProposalSeed,
+    LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed,
     TauriIpcControlCommandAdapter,
 };
 
@@ -40,6 +41,21 @@ impl DesktopState {
             .expect("local desktop command evidence seed should be writable");
         seed_local_provider_readiness_evidence(handler.state())
             .expect("local desktop provider readiness evidence seed should be writable");
+        seed_local_planning_session(
+            handler.state(),
+            LocalPlanningSessionSeed::nucleus_local_bootstrap(),
+        )
+        .expect("local desktop planning session seed should be writable");
+        seed_local_memory_proposal(
+            handler.state(),
+            LocalMemoryProposalSeed::nucleus_local_bootstrap(),
+        )
+        .expect("local desktop memory proposal seed should be writable");
+        seed_local_research_run_brief(
+            handler.state(),
+            LocalResearchRunBriefSeed::nucleus_local_bootstrap(),
+        )
+        .expect("local desktop research run seed should be writable");
         let adapter = TauriIpcControlCommandAdapter::fixture_backed(handler);
 
         Self {

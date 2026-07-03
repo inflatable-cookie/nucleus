@@ -82,6 +82,12 @@ Current runway bands:
   retrieval, provider/model execution, citation rendering, accepted synthesis
   promotion, accepted memory mutation, task creation, projection/apply, final
   UI, embeddings, semantic search, or SCM/forge mutation
+- disposable planning/research UI proof before accepted memory review commands,
+  planning import apply/review, research execution planning, final UI design,
+  plugin runtime, editor surface, or panel-layout work
+- memory proposal review commands before accepted memory record creation,
+  memory projection, embeddings, semantic search, provider-native memory sync,
+  automatic extraction, or desktop review controls
 
 Current checkpoint:
 
@@ -455,13 +461,17 @@ Reason:
 - `117-planning-projection-import-admission.md` - completed
 - `118-structured-planning-domain-foundation.md` - completed
 - `119-planning-memory-proposal-foundation.md` - completed
-- `120-deep-research-run-brief-foundation.md` - active
+- `120-deep-research-run-brief-foundation.md` - completed
+- `121-disposable-planning-research-ui-proof.md` - completed
+- `122-memory-proposal-review-command-foundation.md` - completed
+- `123-planning-projection-import-review-apply.md` - completed
+- `124-planning-import-active-apply-admission.md` - ready
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/523-research-question-source-ref-records.md`
+- `batch-cards/543-planning-import-active-apply-admission-boundary.md`
 
 Paused cards:
 
@@ -469,13 +479,33 @@ None.
 
 Planned cards:
 
-- `batch-cards/524-research-observation-synthesis-linkage.md`
-- `batch-cards/525-research-run-brief-storage-codec.md`
-- `batch-cards/526-research-run-brief-query-cli-effigy.md`
-- `batch-cards/527-deep-research-run-brief-validation-next-lane.md`
+- `batch-cards/544-planning-import-active-apply-admission-model.md`
+- `batch-cards/545-planning-import-active-apply-admission-persistence.md`
+- `batch-cards/546-planning-import-active-apply-diagnostics-query-cli-effigy.md`
+- `batch-cards/547-planning-import-active-apply-validation-next-lane.md`
 
 Completed cards:
 
+- `batch-cards/542-planning-import-apply-validation-next-lane.md`
+- `batch-cards/541-planning-import-apply-diagnostics-query-cli-effigy.md`
+- `batch-cards/540-planning-import-apply-stopped-persistence.md`
+- `batch-cards/539-planning-import-apply-dry-run-plan.md`
+- `batch-cards/538-planning-import-apply-readiness-model.md`
+- `batch-cards/537-planning-import-review-apply-boundary.md`
+- `batch-cards/536-memory-proposal-review-validation-next-lane.md`
+- `batch-cards/535-memory-proposal-review-diagnostics-query-cli-effigy.md`
+- `batch-cards/534-memory-proposal-review-persistence.md`
+- `batch-cards/533-memory-proposal-review-command-model.md`
+- `batch-cards/532-memory-proposal-review-command-boundary.md`
+- `batch-cards/531-disposable-ui-proof-validation-next-lane.md`
+- `batch-cards/530-disposable-planning-memory-research-summary-surface.md`
+- `batch-cards/529-disposable-ui-root-effigy-launch.md`
+- `batch-cards/528-disposable-planning-research-ui-proof-boundary.md`
+- `batch-cards/527-deep-research-run-brief-validation-next-lane.md`
+- `batch-cards/526-research-run-brief-query-cli-effigy.md`
+- `batch-cards/525-research-run-brief-storage-codec.md`
+- `batch-cards/524-research-observation-synthesis-linkage.md`
+- `batch-cards/523-research-question-source-ref-records.md`
 - `batch-cards/522-research-run-brief-record-types.md`
 - `batch-cards/521-nucleus-research-crate-front-door.md`
 - `batch-cards/520-deep-research-run-brief-boundary-selection.md`
@@ -1132,8 +1162,22 @@ Current stop:
   run brief records before any crawler, browser automation, source retrieval,
   provider/model execution, citation rendering, promotion, projection/apply,
   task creation, UI behavior, embedding, semantic search, or SCM/forge effect.
+- research questions, source refs, observations, synthesis refs, and promotion
+  target refs are now present. They preserve provenance, distinguish
+  model-generated leads from evidence, and link to memory proposals, planning
+  artifacts, task seeds, and source evidence by ref only.
+- research storage records now round-trip run briefs, questions, source refs,
+  observations, synthesis refs, confidence, coverage, and promotion target
+  refs as sanitized JSON without raw browser caches, copyrighted source
+  payloads, raw transcripts, provider payloads, private notes, credentials, or
+  secret-bearing files.
+- read-only research run brief inspection is present through server query,
+  control DTO, `nucleusd query research-run-briefs`, and Effigy selector. The
+  query reports sanitized run/status/source/observation/synthesis counts and
+  no-effect flags without exposing raw sources, raw transcripts, provider
+  payloads, private notes, browser caches, credentials, or secrets.
 - ready card:
-  `batch-cards/523-research-question-source-ref-records.md`
+  `batch-cards/527-deep-research-run-brief-validation-next-lane.md`
 - roadmap `118` is complete with `nucleus-planning`, planning/exploration
   records, storage codecs, and read-only planning session inspection; the next
   selected lane is planning-memory proposal foundation
@@ -1160,6 +1204,17 @@ Current stop:
   applying imports
 - read-only diagnostics now summarize candidates, admissions, blockers,
   duplicates, conflicts, evidence refs, and no-effect flags
+- structured planning, memory proposals, deep research run briefs, disposable
+  planning/research inspection, and memory proposal review commands are now
+  represented as server-owned, read-only or proposal-only surfaces
+- memory proposal review commands can queue, defer, reject, or mark proposals
+  reviewed for later promotion without creating accepted memory, projection,
+  embeddings, semantic search, provider-native memory sync, automatic
+  extraction, or final UI controls
+- the next selected lane is planning projection import review/apply because
+  import/admission records, conflict staging, diagnostics, and app-native
+  planning records now exist; accepted memory authority, research execution,
+  and final UI remain deferred
 - provider writes, task mutation outside explicit task-domain commands,
   callbacks, interruption/recovery execution, raw payload retention, active
   planning mutation, semantic merge resolution, task promotion without review,

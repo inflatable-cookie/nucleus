@@ -248,7 +248,10 @@ shape.
 - `g03/117-planning-projection-import-admission.md` - completed
 - `g03/118-structured-planning-domain-foundation.md` - completed
 - `g03/119-planning-memory-proposal-foundation.md` - completed
-- `g03/120-deep-research-run-brief-foundation.md` - active
+- `g03/120-deep-research-run-brief-foundation.md` - completed
+- `g03/121-disposable-planning-research-ui-proof.md` - completed
+- `g03/122-memory-proposal-review-command-foundation.md` - completed
+- `g03/123-planning-projection-import-review-apply.md` - ready
 
 ## Previous Generation
 
@@ -307,17 +310,23 @@ shape.
 
 ## Next Task
 
-Continue `docs/roadmaps/g03/120-deep-research-run-brief-foundation.md`
+Continue `docs/roadmaps/g03/123-planning-projection-import-review-apply.md`
 with
-`docs/roadmaps/g03/batch-cards/523-research-question-source-ref-records.md`.
-Add research question and source reference vocabulary without adding crawler,
-browser automation, source retrieval, provider/model execution, research
-scheduler, raw source retention, citation renderer, accepted synthesis
+`docs/roadmaps/g03/124-planning-import-active-apply-admission.md`
+with
+`docs/roadmaps/g03/batch-cards/543-planning-import-active-apply-admission-boundary.md`.
+Define the active planning apply admission boundary over stopped apply records.
+Keep actual planning record mutation, task creation, task promotion,
+projection writes, SCM/forge mutation, provider execution, semantic merge
+automation, accepted memory mutation, and UI behavior out of scope.
+Do not reopen crawler, browser automation, source retrieval, provider/model
+execution, raw source retention, citation rendering, accepted synthesis
 promotion, accepted memory mutation, task creation, projection/apply, final UI,
 embeddings, semantic search, SCM/forge mutation, or any provider/task/browser
-effect.
+effect while selecting the boundary.
 Do not add provider execution, provider writes, credential material storage,
 raw payload retention, agent scheduling, callbacks, interruption/recovery
-execution, real SCM/forge mutation, active planning mutation, semantic merge
-resolution, task promotion, scoring policy, autonomous goal loops, silent task
-creation from seeds, or UI-triggered provider reads.
+execution, real SCM/forge mutation, active planning mutation before explicit
+review/apply admission, semantic merge resolution, task promotion, scoring
+policy, autonomous goal loops, silent task creation from seeds, or UI-triggered
+provider reads.

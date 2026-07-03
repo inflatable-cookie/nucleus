@@ -17,6 +17,15 @@ import {
   type ProviderReadinessOverviewAction,
   type RuntimeMetadataAction,
 } from "./types";
+import type {
+  ControlMemoryProposalSourceCountsDto,
+  ControlMemoryProposalSummaryDto,
+  ControlPlanningSessionSourceCountsDto,
+  ControlPlanningSessionSummaryDto,
+  ControlResearchRunBriefSourceCountsDto,
+  ControlResearchRunBriefSummaryDto,
+  CountByLabelDto,
+} from "./planningResearch";
 
 export type ControlQueryDto =
   | {
@@ -44,6 +53,12 @@ export type ControlQueryDto =
       kind: "provider_readiness_overview";
       query_id: string;
       action: ProviderReadinessOverviewAction;
+    }
+  | {
+      kind: "planning_sessions" | "memory_proposals" | "research_run_briefs";
+      query_id: string;
+      action: "sessions" | "proposals" | "runs";
+      project_id: string;
     };
 
 export type ControlCommandDto = {
@@ -112,6 +127,39 @@ export type ControlResponseEnvelopeDto = {
     | {
         type: "provider_readiness_overview";
         overview: ControlProviderReadinessOverviewDto;
+      }
+    | {
+        type: "planning_sessions";
+        project_id: string;
+        sessions: ControlPlanningSessionSummaryDto[];
+        status_counts: CountByLabelDto[];
+        source_counts: ControlPlanningSessionSourceCountsDto;
+        client_can_mutate: false;
+        provider_execution_available: false;
+      }
+    | {
+        type: "memory_proposals";
+        project_id: string;
+        proposals: ControlMemoryProposalSummaryDto[];
+        status_counts: CountByLabelDto[];
+        scope_counts: CountByLabelDto[];
+        sensitivity_counts: CountByLabelDto[];
+        retention_counts: CountByLabelDto[];
+        source_counts: ControlMemoryProposalSourceCountsDto;
+        client_can_mutate: false;
+        provider_execution_available: false;
+      }
+    | {
+        type: "research_run_briefs";
+        project_id: string;
+        runs: ControlResearchRunBriefSummaryDto[];
+        status_counts: CountByLabelDto[];
+        source_kind_counts: CountByLabelDto[];
+        observation_kind_counts: CountByLabelDto[];
+        synthesis_kind_counts: CountByLabelDto[];
+        source_counts: ControlResearchRunBriefSourceCountsDto;
+        client_can_mutate: false;
+        provider_execution_available: false;
       }
     | { type: "state_records"; domain: string; records: unknown[] }
     | { type: "command_receipt"; command_id: string; status: string }
@@ -211,6 +259,33 @@ export function buildProviderReadIntentQuery(): ControlRequestEnvelopeDto {
     kind: "provider_read_intent",
     query_id: "",
     action: "projection",
+  });
+}
+
+export function buildPlanningSessionsQuery(projectId: string): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "planning_sessions",
+    query_id: "",
+    action: "sessions",
+    project_id: projectId,
+  });
+}
+
+export function buildMemoryProposalsQuery(projectId: string): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "memory_proposals",
+    query_id: "",
+    action: "proposals",
+    project_id: projectId,
+  });
+}
+
+export function buildResearchRunBriefsQuery(projectId: string): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "research_run_briefs",
+    query_id: "",
+    action: "runs",
+    project_id: projectId,
   });
 }
 

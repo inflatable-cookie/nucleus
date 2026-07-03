@@ -2,8 +2,9 @@ use nucleus_projects::ProjectId;
 use nucleus_tasks::TaskId;
 
 use crate::control_api::{
-    MemoryProposalsQuery, PlanningSessionsQuery, PlanningTaskSeedsQuery, ServerQueryKind,
-    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery, PlanningSessionsQuery,
+    PlanningTaskSeedsQuery, ResearchRunBriefsQuery, ServerQueryKind, TaskReadinessQuery,
+    TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
 };
 
 use super::super::ControlApiCodecError;
@@ -86,6 +87,39 @@ pub(super) fn memory_proposals_query_from_action(
         })),
         _ => Err(ControlApiCodecError::unsupported(
             "memory proposals query action is not supported",
+        )),
+    }
+}
+
+pub(super) fn memory_proposal_review_diagnostics_query_from_action(
+    action: &str,
+    project_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "diagnostics" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
+            "memory proposal review diagnostics query requires a project id",
+        )),
+        "diagnostics" => Ok(ServerQueryKind::MemoryProposalReviewDiagnostics(
+            MemoryProposalReviewDiagnosticsQuery {
+                project_id: ProjectId(project_id),
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported memory proposal review diagnostics query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn research_run_briefs_query_from_action(
+    action: &str,
+    project_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "diagnostics" | "runs" => Ok(ServerQueryKind::ResearchRunBriefs(ResearchRunBriefsQuery {
+            project_id: ProjectId(project_id),
+        })),
+        _ => Err(ControlApiCodecError::unsupported(
+            "research run brief query action is not supported",
         )),
     }
 }

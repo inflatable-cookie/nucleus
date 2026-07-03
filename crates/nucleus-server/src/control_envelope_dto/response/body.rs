@@ -2,15 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::control_api::{ServerControlResponseBody, ServerQueryResult};
-use crate::read_only_command_control::{
-    ReadOnlyCommandControlRejection, ReadOnlyCommandControlResult,
-};
+mod read_only;
 
-use super::helpers::{
-    command_execution_status_dto, command_receipt_status_dto, control_error_dto, retention_dto,
-    state_record_set_dto,
-};
+use read_only::{read_only_command_result_dto, ControlReadOnlyCommandRejectionDto};
+
+use crate::control_api::{ServerControlResponseBody, ServerQueryResult};
+
+use super::helpers::{command_receipt_status_dto, control_error_dto, state_record_set_dto};
 use super::memory_proposals::memory_proposals_body_dto;
 use super::planning_sessions_body::planning_sessions_body_dto;
 use super::provider_live_read_executor::ControlProviderLiveReadExecutorDiagnosticsDto;
@@ -20,19 +18,25 @@ use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
     ControlDiffSummaryRecordDto, ControlMemoryProposalRetentionCountDto,
-    ControlMemoryProposalScopeCountDto, ControlMemoryProposalSensitivityCountDto,
-    ControlMemoryProposalSourceCountsDto, ControlMemoryProposalStatusCountDto,
-    ControlMemoryProposalSummaryDto, ControlPlanningCapturePublicationDiagnosticsDto,
+    ControlMemoryProposalReviewDiagnosticsDto, ControlMemoryProposalScopeCountDto,
+    ControlMemoryProposalSensitivityCountDto, ControlMemoryProposalSourceCountsDto,
+    ControlMemoryProposalStatusCountDto, ControlMemoryProposalSummaryDto,
+    ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticsDto,
+    ControlPlanningProjectionImportApplyDiagnosticsDto,
     ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningSessionSourceCountsDto,
     ControlPlanningSessionStatusCountDto, ControlPlanningSessionSummaryDto,
     ControlPlanningTaskSeedCandidateDto, ControlPlanningTaskSeedSourceCountsDto,
     ControlPlanningTaskSeedStatusCountDto, ControlProjectAuthorityMapDto,
+    ControlResearchObservationKindCountDto, ControlResearchRunBriefSourceCountsDto,
+    ControlResearchRunBriefStatusCountDto, ControlResearchRunBriefSummaryDto,
+    ControlResearchSourceKindCountDto, ControlResearchSynthesisKindCountDto,
     ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
     ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
     ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
     ControlTaskTimelineEntryDto,
 };
+use super::research_run_briefs::research_run_briefs_body_dto;
 use crate::control_envelope_dto::{
     ControlApiCodecError, ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
 };
@@ -119,6 +123,20 @@ pub enum ControlResponseBodyDto {
         client_can_mutate: bool,
         provider_execution_available: bool,
     },
+    MemoryProposalReviewDiagnostics {
+        diagnostics: ControlMemoryProposalReviewDiagnosticsDto,
+    },
+    ResearchRunBriefs {
+        project_id: String,
+        runs: Vec<ControlResearchRunBriefSummaryDto>,
+        status_counts: Vec<ControlResearchRunBriefStatusCountDto>,
+        source_kind_counts: Vec<ControlResearchSourceKindCountDto>,
+        observation_kind_counts: Vec<ControlResearchObservationKindCountDto>,
+        synthesis_kind_counts: Vec<ControlResearchSynthesisKindCountDto>,
+        source_counts: ControlResearchRunBriefSourceCountsDto,
+        client_can_mutate: bool,
+        provider_execution_available: bool,
+    },
     TaskSeedPromotionDiagnostics {
         diagnostics: ControlTaskSeedPromotionDiagnosticsDto,
     },
@@ -127,6 +145,9 @@ pub enum ControlResponseBodyDto {
     },
     PlanningProjectionImportDiagnostics {
         diagnostics: ControlPlanningProjectionImportDiagnosticsDto,
+    },
+    PlanningProjectionImportApplyDiagnostics {
+        diagnostics: ControlPlanningProjectionImportApplyDiagnosticsDto,
     },
     PlanningCapturePublicationDiagnostics {
         diagnostics: ControlPlanningCapturePublicationDiagnosticsDto,
@@ -294,6 +315,14 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
             ServerControlResponseBody::Query(ServerQueryResult::MemoryProposals(projection)) => {
                 Ok(memory_proposals_body_dto(projection))
             }
+            ServerControlResponseBody::Query(
+                ServerQueryResult::MemoryProposalReviewDiagnostics(diagnostics),
+            ) => Ok(Self::MemoryProposalReviewDiagnostics {
+                diagnostics: ControlMemoryProposalReviewDiagnosticsDto::from(diagnostics),
+            }),
+            ServerControlResponseBody::Query(ServerQueryResult::ResearchRunBriefs(projection)) => {
+                Ok(research_run_briefs_body_dto(projection))
+            }
             ServerControlResponseBody::Query(ServerQueryResult::TaskSeedPromotionDiagnostics(
                 diagnostics,
             )) => Ok(Self::TaskSeedPromotionDiagnostics {
@@ -308,6 +337,11 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 ServerQueryResult::PlanningProjectionImportDiagnostics(diagnostics),
             ) => Ok(Self::PlanningProjectionImportDiagnostics {
                 diagnostics: ControlPlanningProjectionImportDiagnosticsDto::from(diagnostics),
+            }),
+            ServerControlResponseBody::Query(
+                ServerQueryResult::PlanningProjectionImportApplyDiagnostics(diagnostics),
+            ) => Ok(Self::PlanningProjectionImportApplyDiagnostics {
+                diagnostics: ControlPlanningProjectionImportApplyDiagnosticsDto::from(diagnostics),
             }),
             ServerControlResponseBody::Query(
                 ServerQueryResult::PlanningCapturePublicationDiagnostics(diagnostics),
@@ -349,57 +383,6 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
             ServerControlResponseBody::Error(error) => {
                 let (kind, reason) = control_error_dto(error);
                 Ok(Self::Error { kind, reason })
-            }
-        }
-    }
-}
-
-/// Serializable sanitized rejection for read-only command results.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ControlReadOnlyCommandRejectionDto {
-    HostReadinessBlocked { blockers: usize },
-    RunnerRejected { reasons: Vec<String> },
-    SpawnFailed { reason: String },
-}
-
-pub(super) fn read_only_command_result_dto(
-    result: &ReadOnlyCommandControlResult,
-) -> ControlResponseBodyDto {
-    ControlResponseBodyDto::ReadOnlyCommandResult {
-        command_id: result.command_id.0.clone(),
-        command_request_id: result.command_request_id.0.clone(),
-        evidence_id: result.evidence_id.0.clone(),
-        status: command_execution_status_dto(&result.status),
-        exit_status: result.exit_status,
-        retention: retention_dto(&result.retention),
-        summary: result.summary.clone(),
-        stdout_captured_bytes: result.stdout_captured_bytes,
-        stderr_captured_bytes: result.stderr_captured_bytes,
-        stdout_truncated: result.stdout_truncated,
-        stderr_truncated: result.stderr_truncated,
-        events: result.events,
-        rejection: result.rejection.as_ref().map(read_only_rejection_dto),
-    }
-}
-
-pub(super) fn read_only_rejection_dto(
-    rejection: &ReadOnlyCommandControlRejection,
-) -> ControlReadOnlyCommandRejectionDto {
-    match rejection {
-        ReadOnlyCommandControlRejection::HostReadinessBlocked { blockers } => {
-            ControlReadOnlyCommandRejectionDto::HostReadinessBlocked {
-                blockers: *blockers,
-            }
-        }
-        ReadOnlyCommandControlRejection::RunnerRejected { reasons } => {
-            ControlReadOnlyCommandRejectionDto::RunnerRejected {
-                reasons: reasons.clone(),
-            }
-        }
-        ReadOnlyCommandControlRejection::SpawnFailed { reason } => {
-            ControlReadOnlyCommandRejectionDto::SpawnFailed {
-                reason: reason.clone(),
             }
         }
     }

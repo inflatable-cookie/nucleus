@@ -1,14 +1,17 @@
 mod authority;
 mod diagnostics;
+mod memory_proposal_review;
 mod memory_proposals;
 mod planning_capture_publication;
 mod planning_projection_file_write;
 mod planning_projection_import;
+mod planning_projection_import_apply;
 mod planning_sessions;
 mod planning_task_seeds;
 mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
 mod provider_readiness_overview;
+mod research_run_briefs;
 mod runtime;
 mod state_records;

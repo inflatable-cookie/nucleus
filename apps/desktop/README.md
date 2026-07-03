@@ -107,3 +107,9 @@ Unsupported task mutations are still absent.
 
 Accepted transition commands trigger a server refresh. The task list and detail
 panel update from refreshed DTOs rather than optimistic local mutation.
+
+The planning proof panel is disposable and read-only. It queries planning
+sessions, memory proposals, and research run briefs through the same Tauri
+control envelope used by the CLI-backed server DTOs. It must not add review,
+accept, apply, execute, promote, task creation, provider, browser, SCM, forge,
+or final layout authority.

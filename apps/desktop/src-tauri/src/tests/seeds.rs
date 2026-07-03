@@ -108,3 +108,96 @@ fn desktop_state_seeds_local_task_for_task_queries() {
 
     let _ = std::fs::remove_file(database_path);
 }
+
+#[test]
+fn desktop_state_seeds_planning_memory_and_research_for_proof_queries() {
+    let database_path = std::env::temp_dir().join(format!(
+        "nucleus-desktop-planning-proof-seed-test-{}.sqlite",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&database_path);
+    let state = DesktopState::new(SqliteBackend::new(database_path.clone()));
+
+    let planning = state
+        .submit_control_envelope(query_request(ControlQueryDto::PlanningSessions {
+            query_id: "desktop-query-planning-sessions".to_owned(),
+            action: "sessions".to_owned(),
+            project_id: "project:nucleus-local".to_owned(),
+        }))
+        .expect("desktop planning sessions should route through the server adapter");
+    let memory = state
+        .submit_control_envelope(query_request(ControlQueryDto::MemoryProposals {
+            query_id: "desktop-query-memory-proposals".to_owned(),
+            action: "proposals".to_owned(),
+            project_id: "project:nucleus-local".to_owned(),
+        }))
+        .expect("desktop memory proposals should route through the server adapter");
+    let research = state
+        .submit_control_envelope(query_request(ControlQueryDto::ResearchRunBriefs {
+            query_id: "desktop-query-research-run-briefs".to_owned(),
+            action: "runs".to_owned(),
+            project_id: "project:nucleus-local".to_owned(),
+        }))
+        .expect("desktop research run briefs should route through the server adapter");
+
+    assert!(matches!(
+        planning.body,
+        nucleus_server::ControlResponseBodyDto::PlanningSessions {
+            ref sessions,
+            client_can_mutate: false,
+            provider_execution_available: false,
+            ..
+        } if sessions.len() == 1
+            && sessions[0].session_id == "planning-session:nucleus-local:bootstrap"
+    ));
+    assert!(matches!(
+        memory.body,
+        nucleus_server::ControlResponseBodyDto::MemoryProposals {
+            ref proposals,
+            client_can_mutate: false,
+            provider_execution_available: false,
+            ..
+        } if proposals.len() == 1
+            && proposals[0].proposal_id == "memory-proposal:nucleus-local:harness-identity"
+    ));
+    assert!(matches!(
+        research.body,
+        nucleus_server::ControlResponseBodyDto::ResearchRunBriefs {
+            ref runs,
+            client_can_mutate: false,
+            provider_execution_available: false,
+            ..
+        } if runs.len() == 1
+            && runs[0].run_id == "research-run:nucleus-local:harness-communications"
+    ));
+
+    for response in [planning, memory, research] {
+        let json = serde_json::to_string(&response).expect("response json");
+        for forbidden in [
+            "raw_transcript",
+            "raw_provider_payload",
+            "secret",
+            "credential",
+            "private_note",
+            "browser_cache",
+            "source_body",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "planning proof seed response should not contain {forbidden}"
+            );
+        }
+    }
+
+    let _ = std::fs::remove_file(database_path);
+}
+
+fn query_request(query: ControlQueryDto) -> ControlRequestEnvelopeDto {
+    ControlRequestEnvelopeDto {
+        protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),
+        protocol_version: CONTROL_API_PROTOCOL_VERSION_V1,
+        request_id: "desktop-request-planning-proof".to_owned(),
+        client_id: "desktop-client".to_owned(),
+        body: ControlRequestBodyDto::Query { query },
+    }
+}

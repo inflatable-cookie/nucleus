@@ -19,6 +19,7 @@ pub enum ServerStateDomain {
     TaskHistory,
     SharedMemory,
     Planning,
+    DeepResearch,
     Workspaces,
     AdapterRegistry,
     AgentSessions,
@@ -38,6 +39,7 @@ impl ServerStateDomain {
             Self::TaskHistory => PersistenceDomain::TaskHistory,
             Self::SharedMemory => PersistenceDomain::SharedMemory,
             Self::Planning => PersistenceDomain::Planning,
+            Self::DeepResearch => PersistenceDomain::DeepResearch,
             Self::Workspaces => PersistenceDomain::Workspaces,
             Self::AdapterRegistry => PersistenceDomain::AdapterRegistry,
             Self::AgentSessions => PersistenceDomain::AgentSessions,
@@ -96,6 +98,10 @@ where
 
     pub fn planning(&self) -> ServerStateDomainService<'_, B> {
         self.domain(ServerStateDomain::Planning)
+    }
+
+    pub fn deep_research(&self) -> ServerStateDomainService<'_, B> {
+        self.domain(ServerStateDomain::DeepResearch)
     }
 
     pub fn workspaces(&self) -> ServerStateDomainService<'_, B> {

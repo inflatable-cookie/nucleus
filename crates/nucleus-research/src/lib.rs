@@ -17,7 +17,29 @@ pub use ids::{
     ResearchObservationId, ResearchQuestionId, ResearchRunBriefId, ResearchSourceId,
     ResearchSynthesisId,
 };
+pub use questions::{
+    ResearchQuestion, ResearchQuestionPriority, ResearchQuestionSourceRequirement,
+    ResearchQuestionStatus,
+};
+pub use refs::ResearchPromotionTargetRefs;
 pub use runs::{
     ResearchBrief, ResearchConfidence, ResearchCoverageSummary, ResearchRunBrief,
     ResearchRunBriefStatus, ResearchRunScopeBoundary, ResearchRunTimestamps, ResearchRunTitle,
+};
+pub use sources::{
+    ResearchRetrievalMethodHint, ResearchSourceKind, ResearchSourceRef, ResearchSourceReliability,
+};
+pub use storage_shape::{
+    decode_research_run_brief_storage_record, encode_research_run_brief_storage_payload,
+    ResearchConfidenceStorage, ResearchCoverageStorageSummary, ResearchObservationStorageKind,
+    ResearchObservationStorageRecord, ResearchPromotionTargetStorageRefs,
+    ResearchQuestionSourceRequirementStorage, ResearchQuestionStoragePriority,
+    ResearchQuestionStorageRecord, ResearchQuestionStorageStatus, ResearchRecordCodecError,
+    ResearchRetrievalStorageMethodHint, ResearchRunBriefStorageRecord,
+    ResearchRunBriefStorageStatus, ResearchRunScopeStorageBoundary, ResearchSourceStorageKind,
+    ResearchSourceStorageRef, ResearchSourceStorageReliability, ResearchSynthesisStorageKind,
+    ResearchSynthesisStorageRef, RESEARCH_STORAGE_SCHEMA_VERSION,
+};
+pub use synthesis::{
+    ResearchObservation, ResearchObservationKind, ResearchSynthesisKind, ResearchSynthesisRef,
 };

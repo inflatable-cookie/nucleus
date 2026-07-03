@@ -89,3 +89,34 @@ fn provider_readiness_panel_has_no_forbidden_provider_controls() {
     assert!(component.contains("Source counts"));
     assert!(component.contains("No provider controls."));
 }
+
+#[test]
+fn planning_research_proof_panel_has_no_forbidden_mutation_controls() {
+    let component = include_str!("../../../src/lib/PlanningResearchProofPanel.svelte");
+
+    for forbidden in [
+        "buildStartTaskCommand",
+        "buildBlockTaskCommand",
+        "buildCompleteTaskCommand",
+        "buildArchiveTaskCommand",
+        "submitControlEnvelope",
+        "approve",
+        "apply",
+        "execute",
+        "promote",
+        "create task",
+        "provider write",
+        "browser automation",
+        "source retrieval",
+        "merge",
+    ] {
+        assert!(
+            !component.to_lowercase().contains(&forbidden.to_lowercase()),
+            "planning proof panel should not expose {forbidden}"
+        );
+    }
+    assert!(component.contains("queryPlanningSessions"));
+    assert!(component.contains("queryMemoryProposals"));
+    assert!(component.contains("queryResearchRunBriefs"));
+    assert!(component.contains("Read-only inspection."));
+}

@@ -7,12 +7,14 @@ mod id;
 mod planning_projection;
 mod project_authority;
 mod provider;
+mod state;
 mod task_workflow;
 
 use crate::control_api::{
-    MemoryProposalsQuery, PlanningCapturePublicationDiagnosticsQuery,
-    PlanningProjectionFileWriteDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
-    PlanningSessionsQuery,
+    MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
+    PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
+    PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
+    PlanningSessionsQuery, ResearchRunBriefsQuery,
 };
 use crate::control_api::{
     PlanningTaskSeedsQuery, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
@@ -21,12 +23,11 @@ use crate::control_api::{
     TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
 };
 use crate::ids::ServerQueryId;
-use crate::state::ServerStateDomain;
 use authority_domains::authority_domain_dto;
-use nucleus_core::PersistenceRecordId;
 use planning_projection::{
     planning_capture_publication_diagnostics_query_from_action,
     planning_projection_file_write_diagnostics_query_from_action,
+    planning_projection_import_apply_diagnostics_query_from_action,
     planning_projection_import_diagnostics_query_from_action,
 };
 use project_authority::project_authority_map_query_from_action;
@@ -35,9 +36,11 @@ use provider::{
     provider_live_read_smoke_evidence_query_from_action, provider_read_intent_query_from_action,
     provider_readiness_overview_query_from_action,
 };
+pub use state::{ControlQueryScopeDto, ControlStateDomainDto};
 use task_workflow::{
-    memory_proposals_query_from_action, planning_sessions_query_from_action,
-    planning_task_seeds_query_from_action, task_readiness_query_from_action,
+    memory_proposal_review_diagnostics_query_from_action, memory_proposals_query_from_action,
+    planning_sessions_query_from_action, planning_task_seeds_query_from_action,
+    research_run_briefs_query_from_action, task_readiness_query_from_action,
     task_seed_promotion_diagnostics_query_from_action, task_timeline_query_from_action,
 };
 
@@ -46,6 +49,7 @@ use super::protocol::{
     runtime_metadata_query_from_action,
 };
 use super::ControlApiCodecError;
+use crate::state::ServerStateDomain;
 
 /// Serializable query DTO.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -105,6 +109,16 @@ pub enum ControlQueryDto {
         action: String,
         project_id: String,
     },
+    MemoryProposalReviewDiagnostics {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    ResearchRunBriefs {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
     TaskSeedPromotionDiagnostics {
         query_id: String,
         action: String,
@@ -116,6 +130,11 @@ pub enum ControlQueryDto {
         project_id: String,
     },
     PlanningProjectionImportDiagnostics {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    PlanningProjectionImportApplyDiagnostics {
         query_id: String,
         action: String,
         project_id: String,
@@ -208,6 +227,20 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                     project_id: project_id.0.clone(),
                 })
             }
+            ServerQueryKind::MemoryProposalReviewDiagnostics(
+                MemoryProposalReviewDiagnosticsQuery { project_id },
+            ) => Ok(Self::MemoryProposalReviewDiagnostics {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
+            ServerQueryKind::ResearchRunBriefs(ResearchRunBriefsQuery { project_id }) => {
+                Ok(Self::ResearchRunBriefs {
+                    query_id: query.id.0.clone(),
+                    action: "diagnostics".to_owned(),
+                    project_id: project_id.0.clone(),
+                })
+            }
             ServerQueryKind::TaskSeedPromotionDiagnostics(TaskSeedPromotionDiagnosticsQuery {
                 project_id,
             }) => Ok(Self::TaskSeedPromotionDiagnostics {
@@ -225,6 +258,13 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
             ServerQueryKind::PlanningProjectionImportDiagnostics(
                 PlanningProjectionImportDiagnosticsQuery { project_id },
             ) => Ok(Self::PlanningProjectionImportDiagnostics {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
+            ServerQueryKind::PlanningProjectionImportApplyDiagnostics(
+                PlanningProjectionImportApplyDiagnosticsQuery { project_id },
+            ) => Ok(Self::PlanningProjectionImportApplyDiagnostics {
                 query_id: query.id.0.clone(),
                 action: "diagnostics".to_owned(),
                 project_id: project_id.0.clone(),
@@ -311,6 +351,12 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             ControlQueryDto::MemoryProposals {
                 action, project_id, ..
             } => memory_proposals_query_from_action(&action, project_id),
+            ControlQueryDto::MemoryProposalReviewDiagnostics {
+                action, project_id, ..
+            } => memory_proposal_review_diagnostics_query_from_action(&action, project_id),
+            ControlQueryDto::ResearchRunBriefs {
+                action, project_id, ..
+            } => research_run_briefs_query_from_action(&action, project_id),
             ControlQueryDto::TaskSeedPromotionDiagnostics {
                 action, project_id, ..
             } => task_seed_promotion_diagnostics_query_from_action(&action, project_id),
@@ -320,6 +366,13 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             ControlQueryDto::PlanningProjectionImportDiagnostics {
                 action, project_id, ..
             } => planning_projection_import_diagnostics_query_from_action(&action, project_id),
+            ControlQueryDto::PlanningProjectionImportApplyDiagnostics {
+                action,
+                project_id,
+                ..
+            } => {
+                planning_projection_import_apply_diagnostics_query_from_action(&action, project_id)
+            }
             ControlQueryDto::PlanningCapturePublicationDiagnostics {
                 action, project_id, ..
             } => planning_capture_publication_diagnostics_query_from_action(&action, project_id),
@@ -342,67 +395,4 @@ fn state_query_dto(
         domain: ControlStateDomainDto::from(&query.domain),
         scope: ControlQueryScopeDto::try_from(&query.scope)?,
     })
-}
-
-/// Supported state domain DTOs for the first control envelope.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ControlStateDomainDto {
-    Projects,
-    Tasks,
-    Workspaces,
-}
-
-impl From<&ServerStateDomain> for ControlStateDomainDto {
-    fn from(domain: &ServerStateDomain) -> Self {
-        match domain {
-            ServerStateDomain::Projects => Self::Projects,
-            ServerStateDomain::Tasks => Self::Tasks,
-            ServerStateDomain::Workspaces => Self::Workspaces,
-            _ => Self::Projects,
-        }
-    }
-}
-
-impl From<ControlStateDomainDto> for ServerStateDomain {
-    fn from(domain: ControlStateDomainDto) -> Self {
-        match domain {
-            ControlStateDomainDto::Projects => Self::Projects,
-            ControlStateDomainDto::Tasks => Self::Tasks,
-            ControlStateDomainDto::Workspaces => Self::Workspaces,
-        }
-    }
-}
-
-/// Supported state query scopes for the first control envelope.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ControlQueryScopeDto {
-    Get { id: String },
-    List,
-}
-
-impl TryFrom<&StateRecordQueryScope> for ControlQueryScopeDto {
-    type Error = ControlApiCodecError;
-
-    fn try_from(scope: &StateRecordQueryScope) -> Result<Self, Self::Error> {
-        match scope {
-            StateRecordQueryScope::Get(id) => Ok(Self::Get { id: id.0.clone() }),
-            StateRecordQueryScope::List => Ok(Self::List),
-            _ => Err(ControlApiCodecError::unsupported(
-                "indexed state scopes are not supported by the first control envelope",
-            )),
-        }
-    }
-}
-
-impl TryFrom<ControlQueryScopeDto> for StateRecordQueryScope {
-    type Error = ControlApiCodecError;
-
-    fn try_from(scope: ControlQueryScopeDto) -> Result<Self, Self::Error> {
-        Ok(match scope {
-            ControlQueryScopeDto::Get { id } => StateRecordQueryScope::Get(PersistenceRecordId(id)),
-            ControlQueryScopeDto::List => StateRecordQueryScope::List,
-        })
-    }
 }

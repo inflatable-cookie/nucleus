@@ -1989,6 +1989,8 @@ name = "nucleus-research"
 version = "0.0.0"
 dependencies = [
  "nucleus-projects",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2014,6 +2016,7 @@ dependencies = [
  "nucleus-orchestration",
  "nucleus-planning",
  "nucleus-projects",
+ "nucleus-research",
  "nucleus-scm-forge",
  "nucleus-tasks",
  "nucleus-workspaces",

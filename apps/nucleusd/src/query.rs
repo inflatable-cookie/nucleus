@@ -3,11 +3,13 @@ use std::path::PathBuf;
 use nucleus_local_store::{LocalStoreRecord, SqliteBackend};
 use nucleus_projects::ProjectId;
 use nucleus_server::{
-    ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler, MemoryProposalsQuery,
+    ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler,
+    MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
     PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
-    PlanningProjectionImportDiagnosticsQuery, PlanningSessionsQuery, PlanningTaskSeedsQuery,
-    ProjectAuthorityDomain, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
-    ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
+    PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
+    PlanningSessionsQuery, PlanningTaskSeedsQuery, ProjectAuthorityDomain,
+    ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
+    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
     ServerControlRequest, ServerControlRequestKind, ServerControlResponseBody,
     ServerControlResponseStatus, ServerQuery, ServerQueryId, ServerQueryKind, ServerStateDomain,
     StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
@@ -63,9 +65,12 @@ pub(crate) fn print_query(
             | QueryDomain::PlanningTaskSeeds { .. }
             | QueryDomain::PlanningSessions { .. }
             | QueryDomain::MemoryProposals { .. }
+            | QueryDomain::MemoryProposalReviewDiagnostics { .. }
+            | QueryDomain::ResearchRunBriefs { .. }
             | QueryDomain::TaskSeedPromotionDiagnostics { .. }
             | QueryDomain::PlanningProjectionFileWriteDiagnostics { .. }
             | QueryDomain::PlanningProjectionImportDiagnostics { .. }
+            | QueryDomain::PlanningProjectionImportApplyDiagnostics { .. }
             | QueryDomain::PlanningCapturePublicationDiagnostics { .. }
             | QueryDomain::ProjectAuthorityMap { .. }
     ) {
@@ -171,6 +176,16 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
                 project_id: ProjectId(project_id.clone()),
             })
         }
+        QueryDomain::MemoryProposalReviewDiagnostics { project_id } => {
+            ServerQueryKind::MemoryProposalReviewDiagnostics(MemoryProposalReviewDiagnosticsQuery {
+                project_id: ProjectId(project_id.clone()),
+            })
+        }
+        QueryDomain::ResearchRunBriefs { project_id } => {
+            ServerQueryKind::ResearchRunBriefs(ResearchRunBriefsQuery {
+                project_id: ProjectId(project_id.clone()),
+            })
+        }
         QueryDomain::TaskSeedPromotionDiagnostics { project_id } => {
             ServerQueryKind::TaskSeedPromotionDiagnostics(TaskSeedPromotionDiagnosticsQuery {
                 project_id: ProjectId(project_id.clone()),
@@ -186,6 +201,13 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
         QueryDomain::PlanningProjectionImportDiagnostics { project_id } => {
             ServerQueryKind::PlanningProjectionImportDiagnostics(
                 PlanningProjectionImportDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
+        }
+        QueryDomain::PlanningProjectionImportApplyDiagnostics { project_id } => {
+            ServerQueryKind::PlanningProjectionImportApplyDiagnostics(
+                PlanningProjectionImportApplyDiagnosticsQuery {
                     project_id: ProjectId(project_id.clone()),
                 },
             )

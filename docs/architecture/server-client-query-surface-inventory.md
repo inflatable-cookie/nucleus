@@ -36,6 +36,9 @@ reached by `nucleusd`, Effigy, Tauri IPC, and the desktop proof shell.
 | Provider readiness overview | yes | yes | yes | yes | yes | yes | yes |
 | Provider live-read executor diagnostics | yes | yes | yes | yes | not visibly proven | no | yes |
 | Provider live-read smoke evidence diagnostics | yes | yes | yes | yes | not visibly proven | no | yes |
+| Planning sessions | yes | yes | yes | yes | yes | yes | yes |
+| Memory proposals | yes | yes | yes | yes | yes | yes | yes |
+| Research run briefs | yes | yes | yes | yes | yes | yes | yes |
 | Task timeline | yes | no first-envelope DTO found | no | no | no | no | yes |
 | Project authority map | yes | no first-envelope DTO found | no | no | no | no | yes |
 | Adapter/session queries | type vocabulary only | no | no | no | no | no | yes |
@@ -48,8 +51,8 @@ reached by `nucleusd`, Effigy, Tauri IPC, and the desktop proof shell.
   envelope.
 - `nucleusd query` is strongest for state records and provider-read surfaces.
 - The desktop proof shell renders projects, tasks, runtime readiness, task work
-  progress, provider readiness, command diagnostics, and diagnostics proof
-  panels.
+  progress, provider readiness, command diagnostics, diagnostics proof,
+  planning sessions, memory proposals, and research run brief panels.
 - Provider read intent and live-read evidence are CLI/Effigy visible, but not
   desktop-visible.
 - Task timeline and project authority map are server/query concepts but are

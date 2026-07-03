@@ -78,10 +78,15 @@ pub(crate) fn print_help() {
     println!("  nucleusd [--state <path>] query planning-sessions --project <project-id>");
     println!("  nucleusd [--state <path>] query memory-proposals --project <project-id>");
     println!(
+        "  nucleusd [--state <path>] query memory-proposal-review-diagnostics --project <project-id>"
+    );
+    println!("  nucleusd [--state <path>] query research-run-briefs --project <project-id>");
+    println!(
         "  nucleusd [--state <path>] query task-seed-promotion-diagnostics --project <project-id>"
     );
     println!("  nucleusd [--state <path>] query planning-projection-file-write-diagnostics --project <project-id>");
     println!("  nucleusd [--state <path>] query planning-projection-import-diagnostics --project <project-id>");
+    println!("  nucleusd [--state <path>] query planning-projection-import-apply-diagnostics --project <project-id>");
     println!("  nucleusd [--state <path>] query planning-capture-publication-diagnostics --project <project-id>");
     println!("  nucleusd [--state <path>] query project-authority-map --project <project-id>");
     println!("  nucleusd command-runner smoke");

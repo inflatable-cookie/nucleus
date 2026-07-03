@@ -53,6 +53,7 @@ fn handler(
 mod checkpoint_diff;
 mod diagnostics_queries;
 mod host_authority;
+mod memory_proposal_review;
 mod project_queries;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;

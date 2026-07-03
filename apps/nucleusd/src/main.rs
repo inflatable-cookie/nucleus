@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use cli::CliConfig;
 use nucleus_local_store::SqliteBackend;
 use nucleus_server::{
-    seed_local_planning_session, seed_local_planning_task_seed, seed_local_project,
-    seed_local_task, LocalControlRequestHandler, LocalPlanningSessionSeed, LocalPlanningTaskSeed,
-    LocalProjectSeed, LocalTaskSeed,
+    seed_local_memory_proposal, seed_local_planning_session, seed_local_planning_task_seed,
+    seed_local_project, seed_local_research_run_brief, seed_local_task, LocalControlRequestHandler,
+    LocalMemoryProposalSeed, LocalPlanningSessionSeed, LocalPlanningTaskSeed, LocalProjectSeed,
+    LocalResearchRunBriefSeed, LocalTaskSeed,
 };
 
 mod cli;
@@ -55,6 +56,16 @@ fn run(args: Vec<String>) -> Result<(), String> {
             LocalPlanningSessionSeed::nucleus_local_bootstrap(),
         )
         .map_err(|error| format!("failed to seed local planning session: {error:?}"))?;
+        seed_local_memory_proposal(
+            handler.state(),
+            LocalMemoryProposalSeed::nucleus_local_bootstrap(),
+        )
+        .map_err(|error| format!("failed to seed local memory proposal: {error:?}"))?;
+        seed_local_research_run_brief(
+            handler.state(),
+            LocalResearchRunBriefSeed::nucleus_local_bootstrap(),
+        )
+        .map_err(|error| format!("failed to seed local research run brief: {error:?}"))?;
     }
 
     if config.status || config.bootstrap {

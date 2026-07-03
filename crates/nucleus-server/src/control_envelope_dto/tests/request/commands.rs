@@ -177,3 +177,41 @@ fn request_envelope_dto_serializes_task_seed_promotion_command() {
             ))
     ));
 }
+
+#[test]
+fn request_envelope_dto_serializes_memory_proposal_review_command() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:memory-review".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Command(crate::commands::ServerCommand {
+            id: ServerCommandId("command:dto:memory-review".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: crate::commands::ServerCommandKind::MemoryProposalReview(
+                crate::MemoryProposalReviewCommand {
+                    command_id: "command:dto:memory-review".to_owned(),
+                    proposal_id: "memory-proposal:dto".to_owned(),
+                    expected_revision: RevisionId("rev:memory-proposal:dto".to_owned()),
+                    action: crate::MemoryProposalReviewAction::MarkReviewedForPromotion,
+                    reviewer_ref: Some("user:tom".to_owned()),
+                    note: Some("Reviewed at the proposal layer only.".to_owned()),
+                },
+            ),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert!(matches!(
+        restored.kind,
+        ServerControlRequestKind::Command(crate::commands::ServerCommand {
+            kind: crate::commands::ServerCommandKind::MemoryProposalReview(command),
+            ..
+        }) if command.proposal_id == "memory-proposal:dto"
+            && command.expected_revision == RevisionId("rev:memory-proposal:dto".to_owned())
+            && command.action == crate::MemoryProposalReviewAction::MarkReviewedForPromotion
+            && command.reviewer_ref == Some("user:tom".to_owned())
+    ));
+}
