@@ -274,6 +274,13 @@ fn initialize_schema(connection: &Connection) -> LocalStoreResult<()> {
                 media_type TEXT,
                 payload BLOB NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS shared_memory (
+                id TEXT PRIMARY KEY NOT NULL,
+                kind TEXT NOT NULL,
+                revision_id TEXT NOT NULL,
+                media_type TEXT,
+                payload BLOB NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS planning (
                 id TEXT PRIMARY KEY NOT NULL,
                 kind TEXT NOT NULL,
@@ -347,6 +354,7 @@ fn table_for_domain(domain: &PersistenceDomain) -> LocalStoreResult<&'static str
         PersistenceDomain::Projects => Ok("projects"),
         PersistenceDomain::Tasks => Ok("tasks"),
         PersistenceDomain::TaskHistory => Ok("task_history"),
+        PersistenceDomain::SharedMemory => Ok("shared_memory"),
         PersistenceDomain::Planning => Ok("planning"),
         PersistenceDomain::Workspaces => Ok("workspace_layouts"),
         PersistenceDomain::AdapterRegistry => Ok("adapter_instances"),
@@ -368,6 +376,7 @@ fn kind_to_text(kind: &PersistenceRecordKind) -> Option<&'static str> {
         PersistenceRecordKind::RepoMembership => Some("repo_membership"),
         PersistenceRecordKind::Task => Some("task"),
         PersistenceRecordKind::TaskHistoryEntry => Some("task_history_entry"),
+        PersistenceRecordKind::SharedMemoryRecord => Some("shared_memory_record"),
         PersistenceRecordKind::PlanningSession => Some("planning_session"),
         PersistenceRecordKind::PlanningArtifact => Some("planning_artifact"),
         PersistenceRecordKind::TaskSeed => Some("task_seed"),
@@ -389,6 +398,7 @@ fn kind_from_text(value: &str) -> LocalStoreResult<PersistenceRecordKind> {
         "repo_membership" => Ok(PersistenceRecordKind::RepoMembership),
         "task" => Ok(PersistenceRecordKind::Task),
         "task_history_entry" => Ok(PersistenceRecordKind::TaskHistoryEntry),
+        "shared_memory_record" => Ok(PersistenceRecordKind::SharedMemoryRecord),
         "planning_session" => Ok(PersistenceRecordKind::PlanningSession),
         "planning_artifact" => Ok(PersistenceRecordKind::PlanningArtifact),
         "task_seed" => Ok(PersistenceRecordKind::TaskSeed),

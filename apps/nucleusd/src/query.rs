@@ -3,14 +3,15 @@ use std::path::PathBuf;
 use nucleus_local_store::{LocalStoreRecord, SqliteBackend};
 use nucleus_projects::ProjectId;
 use nucleus_server::{
-    ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler,
+    ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler, MemoryProposalsQuery,
     PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
-    PlanningProjectionImportDiagnosticsQuery, PlanningTaskSeedsQuery, ProjectAuthorityDomain,
-    ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
-    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ServerControlRequest,
-    ServerControlRequestKind, ServerControlResponseBody, ServerControlResponseStatus, ServerQuery,
-    ServerQueryId, ServerQueryKind, ServerStateDomain, StateRecordQuery, StateRecordQueryScope,
-    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    PlanningProjectionImportDiagnosticsQuery, PlanningSessionsQuery, PlanningTaskSeedsQuery,
+    ProjectAuthorityDomain, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
+    ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
+    ServerControlRequest, ServerControlRequestKind, ServerControlResponseBody,
+    ServerControlResponseStatus, ServerQuery, ServerQueryId, ServerQueryKind, ServerStateDomain,
+    StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
+    TaskTimelineQuery,
 };
 use nucleus_tasks::TaskId;
 
@@ -60,6 +61,8 @@ pub(crate) fn print_query(
             | QueryDomain::TaskTimeline { .. }
             | QueryDomain::TaskReadiness { .. }
             | QueryDomain::PlanningTaskSeeds { .. }
+            | QueryDomain::PlanningSessions { .. }
+            | QueryDomain::MemoryProposals { .. }
             | QueryDomain::TaskSeedPromotionDiagnostics { .. }
             | QueryDomain::PlanningProjectionFileWriteDiagnostics { .. }
             | QueryDomain::PlanningProjectionImportDiagnostics { .. }
@@ -155,6 +158,16 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
         }
         QueryDomain::PlanningTaskSeeds { project_id } => {
             ServerQueryKind::PlanningTaskSeeds(PlanningTaskSeedsQuery {
+                project_id: ProjectId(project_id.clone()),
+            })
+        }
+        QueryDomain::PlanningSessions { project_id } => {
+            ServerQueryKind::PlanningSessions(PlanningSessionsQuery {
+                project_id: ProjectId(project_id.clone()),
+            })
+        }
+        QueryDomain::MemoryProposals { project_id } => {
+            ServerQueryKind::MemoryProposals(MemoryProposalsQuery {
                 project_id: ProjectId(project_id.clone()),
             })
         }

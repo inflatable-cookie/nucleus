@@ -1,8 +1,8 @@
 # 108 Server Client Workflow Hardening
 
-Status: active
+Status: completed
 Owner: Tom
-Updated: 2026-06-23
+Updated: 2026-07-03
 
 ## Purpose
 
@@ -28,19 +28,19 @@ usable without widening provider effects.
   Tauri IPC, and desktop proof UI.
 - [x] Identify duplicate, missing, or server-only read models that should be
   client-safe.
-- [ ] Add bounded read-only integration where the path is already governed.
-- [ ] Keep Tauri UI disposable and Rust-side authority intact.
-- [ ] Leave provider execution paused unless a later roadmap explicitly reopens
+- [x] Add bounded read-only integration where the path is already governed.
+- [x] Keep Tauri UI disposable and Rust-side authority intact.
+- [x] Leave provider execution paused unless a later roadmap explicitly reopens
   it.
 
 ## Execution Plan
 
-- [ ] Audit query/control surface coverage and record the gap matrix.
-- [ ] Harden one or two read-only server/client paths that already have clear
+- [x] Audit query/control surface coverage and record the gap matrix.
+- [x] Harden one or two read-only server/client paths that already have clear
   contracts.
-- [ ] Keep DTOs sanitized, serialized, and testable without provider effects.
-- [ ] Validate CLI, request-handler, and Tauri IPC parity where touched.
-- [ ] Reassess whether the next lane should move to task/project workflow
+- [x] Keep DTOs sanitized, serialized, and testable without provider effects.
+- [x] Validate CLI, request-handler, and Tauri IPC parity where touched.
+- [x] Reassess whether the next lane should move to task/project workflow
   depth, client layout persistence, or continued server/client hardening.
 
 ## Batch Cards
@@ -50,20 +50,28 @@ Cards:
 - completed: `batch-cards/429-server-client-query-surface-inventory.md`
 - completed: `batch-cards/430-server-client-gap-matrix.md`
 - completed: `batch-cards/431-server-client-next-read-model-selection.md`
-- `batch-cards/432-server-client-control-envelope-parity.md`
-- `batch-cards/433-server-client-cli-tauri-parity.md`
-- `batch-cards/434-server-client-proof-surface-hardening.md`
-- `batch-cards/435-server-client-validation.md`
-- `batch-cards/436-server-client-next-lane-checkpoint.md`
+- completed by follow-on roadmaps: `batch-cards/432-server-client-control-envelope-parity.md`
+- completed by follow-on roadmaps: `batch-cards/433-server-client-cli-tauri-parity.md`
+- completed by follow-on roadmaps: `batch-cards/434-server-client-proof-surface-hardening.md`
+- completed by follow-on roadmaps: `batch-cards/435-server-client-validation.md`
+- completed by follow-on roadmaps: `batch-cards/436-server-client-next-lane-checkpoint.md`
 
 ## Acceptance Criteria
 
 - [x] Query/control coverage is visible without reading scattered source
   files.
-- [ ] Any new implementation is read-only, sanitized, and server/host-owned.
-- [ ] CLI and Tauri IPC coverage do not drift where both claim the same query.
-- [ ] Desktop proof UI remains disposable and does not become state authority.
-- [ ] Provider execution remains paused.
+- [x] Any new implementation is read-only, sanitized, and server/host-owned.
+- [x] CLI and Tauri IPC coverage do not drift where both claim the same query.
+- [x] Desktop proof UI remains disposable and does not become state authority.
+- [x] Provider execution remains paused.
+
+## Closeout
+
+This wrapper lane is complete through child roadmaps `109` through `117`.
+Those lanes hardened task timeline, project authority map, task/project
+readiness, planning task seeds, task seed promotion, planning projection
+payloads, file export, publication/share gates, and import/admission
+diagnostics without granting provider, SCM, forge, UI, or raw-payload effects.
 
 ## Stop Conditions
 

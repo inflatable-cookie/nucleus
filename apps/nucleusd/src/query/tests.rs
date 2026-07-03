@@ -10,8 +10,10 @@ use nucleus_server::{
 
 use super::*;
 
+mod memory_proposals;
 mod planning_capture_publication;
 mod planning_projection_import;
+mod planning_sessions;
 
 #[test]
 fn command_evidence_query_decodes_sanitized_records() {

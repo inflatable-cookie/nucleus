@@ -13,6 +13,8 @@ pub(crate) enum QueryDomain {
     TaskTimeline { task_id: String },
     TaskReadiness { project_id: String },
     PlanningTaskSeeds { project_id: String },
+    PlanningSessions { project_id: String },
+    MemoryProposals { project_id: String },
     TaskSeedPromotionDiagnostics { project_id: String },
     PlanningProjectionFileWriteDiagnostics { project_id: String },
     PlanningProjectionImportDiagnostics { project_id: String },
@@ -55,6 +57,22 @@ impl QueryDomain {
                 Ok(Self::PlanningTaskSeeds {
                     project_id: iter.next().ok_or_else(|| {
                         "planning-task-seeds requires --project <project-id>".to_owned()
+                    })?,
+                })
+            }
+            "planning-sessions" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::PlanningSessions {
+                    project_id: iter.next().ok_or_else(|| {
+                        "planning-sessions requires --project <project-id>".to_owned()
+                    })?,
+                })
+            }
+            "memory-proposals" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::MemoryProposals {
+                    project_id: iter.next().ok_or_else(|| {
+                        "memory-proposals requires --project <project-id>".to_owned()
                     })?,
                 })
             }
@@ -118,6 +136,8 @@ impl QueryDomain {
             Self::TaskTimeline { .. } => "task-timeline",
             Self::TaskReadiness { .. } => "task-readiness",
             Self::PlanningTaskSeeds { .. } => "planning-task-seeds",
+            Self::PlanningSessions { .. } => "planning-sessions",
+            Self::MemoryProposals { .. } => "memory-proposals",
             Self::TaskSeedPromotionDiagnostics { .. } => "task-seed-promotion-diagnostics",
             Self::PlanningProjectionFileWriteDiagnostics { .. } => {
                 "planning-projection-file-write-diagnostics"
@@ -145,6 +165,8 @@ impl QueryDomain {
             | Self::TaskTimeline { .. }
             | Self::TaskReadiness { .. }
             | Self::PlanningTaskSeeds { .. }
+            | Self::PlanningSessions { .. }
+            | Self::MemoryProposals { .. }
             | Self::TaskSeedPromotionDiagnostics { .. }
             | Self::PlanningProjectionFileWriteDiagnostics { .. }
             | Self::PlanningProjectionImportDiagnostics { .. }

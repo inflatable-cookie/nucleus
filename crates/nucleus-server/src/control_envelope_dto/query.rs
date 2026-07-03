@@ -3,14 +3,16 @@
 use serde::{Deserialize, Serialize};
 
 mod authority_domains;
+mod id;
 mod planning_projection;
 mod project_authority;
 mod provider;
 mod task_workflow;
 
 use crate::control_api::{
-    PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
-    PlanningProjectionImportDiagnosticsQuery,
+    MemoryProposalsQuery, PlanningCapturePublicationDiagnosticsQuery,
+    PlanningProjectionFileWriteDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
+    PlanningSessionsQuery,
 };
 use crate::control_api::{
     PlanningTaskSeedsQuery, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
@@ -34,6 +36,7 @@ use provider::{
     provider_readiness_overview_query_from_action,
 };
 use task_workflow::{
+    memory_proposals_query_from_action, planning_sessions_query_from_action,
     planning_task_seeds_query_from_action, task_readiness_query_from_action,
     task_seed_promotion_diagnostics_query_from_action, task_timeline_query_from_action,
 };
@@ -88,6 +91,16 @@ pub enum ControlQueryDto {
         project_id: String,
     },
     PlanningTaskSeeds {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    PlanningSessions {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    MemoryProposals {
         query_id: String,
         action: String,
         project_id: String,
@@ -178,6 +191,20 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                 Ok(Self::PlanningTaskSeeds {
                     query_id: query.id.0.clone(),
                     action: "candidates".to_owned(),
+                    project_id: project_id.0.clone(),
+                })
+            }
+            ServerQueryKind::PlanningSessions(PlanningSessionsQuery { project_id }) => {
+                Ok(Self::PlanningSessions {
+                    query_id: query.id.0.clone(),
+                    action: "sessions".to_owned(),
+                    project_id: project_id.0.clone(),
+                })
+            }
+            ServerQueryKind::MemoryProposals(MemoryProposalsQuery { project_id }) => {
+                Ok(Self::MemoryProposals {
+                    query_id: query.id.0.clone(),
+                    action: "diagnostics".to_owned(),
                     project_id: project_id.0.clone(),
                 })
             }
@@ -278,6 +305,12 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             ControlQueryDto::PlanningTaskSeeds {
                 action, project_id, ..
             } => planning_task_seeds_query_from_action(&action, project_id),
+            ControlQueryDto::PlanningSessions {
+                action, project_id, ..
+            } => planning_sessions_query_from_action(&action, project_id),
+            ControlQueryDto::MemoryProposals {
+                action, project_id, ..
+            } => memory_proposals_query_from_action(&action, project_id),
             ControlQueryDto::TaskSeedPromotionDiagnostics {
                 action, project_id, ..
             } => task_seed_promotion_diagnostics_query_from_action(&action, project_id),
@@ -296,28 +329,6 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
                 expected_domains,
                 ..
             } => project_authority_map_query_from_action(&action, project_id, expected_domains),
-        }
-    }
-}
-
-impl ControlQueryDto {
-    pub(super) fn query_id(&self) -> String {
-        match self {
-            Self::State { query_id, .. }
-            | Self::RuntimeMetadata { query_id, .. }
-            | Self::Diagnostics { query_id, .. }
-            | Self::ProviderReadIntent { query_id, .. }
-            | Self::ProviderReadinessOverview { query_id, .. }
-            | Self::ProviderLiveReadExecutor { query_id, .. }
-            | Self::ProviderLiveReadSmokeEvidence { query_id, .. }
-            | Self::TaskTimeline { query_id, .. }
-            | Self::TaskReadiness { query_id, .. }
-            | Self::PlanningTaskSeeds { query_id, .. }
-            | Self::TaskSeedPromotionDiagnostics { query_id, .. }
-            | Self::PlanningProjectionFileWriteDiagnostics { query_id, .. }
-            | Self::PlanningProjectionImportDiagnostics { query_id, .. }
-            | Self::PlanningCapturePublicationDiagnostics { query_id, .. }
-            | Self::ProjectAuthorityMap { query_id, .. } => query_id.clone(),
         }
     }
 }

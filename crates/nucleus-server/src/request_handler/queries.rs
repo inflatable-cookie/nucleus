@@ -54,9 +54,11 @@ use crate::{
 
 mod authority_map;
 mod diagnostics;
+mod memory_proposals;
 mod planning_capture_publication_diagnostics;
 mod planning_projection_file_write_diagnostics;
 mod planning_projection_import_diagnostics;
+mod planning_sessions;
 mod planning_task_seeds;
 mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
@@ -135,6 +137,12 @@ where
         }
         ServerQueryKind::PlanningTaskSeeds(query) => {
             planning_task_seeds::planning_task_seeds_query(handler, query)
+        }
+        ServerQueryKind::PlanningSessions(query) => {
+            planning_sessions::planning_sessions_query(handler, query)
+        }
+        ServerQueryKind::MemoryProposals(query) => {
+            memory_proposals::memory_proposals_query(handler, query)
         }
         ServerQueryKind::TaskSeedPromotionDiagnostics(query) => {
             task_seed_promotion_diagnostics::task_seed_promotion_diagnostics_query(handler, query)

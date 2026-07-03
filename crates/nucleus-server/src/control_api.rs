@@ -17,6 +17,11 @@ use nucleus_workspaces::WorkspaceLayoutId;
 
 use crate::client_protocol::ProjectAuthorityMapPublicationRecord;
 use crate::commands::ServerCommand;
+pub use crate::control_api_planning_queries::{
+    MemoryProposalsQuery, PlanningCapturePublicationDiagnosticsQuery,
+    PlanningProjectionFileWriteDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
+    PlanningSessionsQuery, PlanningTaskSeedsQuery, TaskSeedPromotionDiagnosticsQuery,
+};
 use crate::diagnostics_read_models::{
     CodexProviderDiagnosticsDto, EffigyDiagnosticsDto, ScmSessionDiagnosticsDto,
     StewardDiagnosticsDto, SyncDiagnosticsDto, TaskAgentDiagnosticsDto,
@@ -24,6 +29,8 @@ use crate::diagnostics_read_models::{
 };
 use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
+use crate::memory_proposals_projection::MemoryProposalsProjection;
+use crate::planning_sessions_projection::PlanningSessionsProjection;
 use crate::read_only_command_control::ReadOnlyCommandControlResult;
 use crate::runtime_effect_storage::{
     RuntimeEffectStorageQuery, RuntimeEffectStorageRecordId, RuntimeEffectStorageRef,
@@ -71,6 +78,8 @@ pub enum ServerQueryKind {
     TaskTimeline(TaskTimelineQuery),
     TaskReadiness(TaskReadinessQuery),
     PlanningTaskSeeds(PlanningTaskSeedsQuery),
+    PlanningSessions(PlanningSessionsQuery),
+    MemoryProposals(MemoryProposalsQuery),
     TaskSeedPromotionDiagnostics(TaskSeedPromotionDiagnosticsQuery),
     PlanningProjectionFileWriteDiagnostics(PlanningProjectionFileWriteDiagnosticsQuery),
     PlanningProjectionImportDiagnostics(PlanningProjectionImportDiagnosticsQuery),
@@ -189,36 +198,6 @@ pub struct TaskReadinessQuery {
     pub project_id: ProjectId,
 }
 
-/// Planning task seed candidate query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlanningTaskSeedsQuery {
-    pub project_id: ProjectId,
-}
-
-/// Planning task seed promotion diagnostics query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TaskSeedPromotionDiagnosticsQuery {
-    pub project_id: ProjectId,
-}
-
-/// Planning projection file-write diagnostics query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlanningProjectionFileWriteDiagnosticsQuery {
-    pub project_id: ProjectId,
-}
-
-/// Planning projection import diagnostics query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlanningProjectionImportDiagnosticsQuery {
-    pub project_id: ProjectId,
-}
-
-/// Planning capture publication stopped-request diagnostics query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlanningCapturePublicationDiagnosticsQuery {
-    pub project_id: ProjectId,
-}
-
 /// Project authority-map query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectAuthorityMapQuery {
@@ -291,6 +270,8 @@ pub enum ServerQueryResult {
     TaskTimeline(EngineTaskTimelineProjection),
     TaskReadiness(EngineTaskReadinessProjection),
     PlanningTaskSeeds(EngineTaskSeedCandidateProjection),
+    PlanningSessions(PlanningSessionsProjection),
+    MemoryProposals(MemoryProposalsProjection),
     TaskSeedPromotionDiagnostics(crate::PlanningTaskSeedPromotionDiagnostics),
     PlanningProjectionFileWriteDiagnostics(crate::PlanningProjectionFileWriteDiagnostics),
     PlanningProjectionImportDiagnostics(crate::PlanningProjectionImportDiagnostics),

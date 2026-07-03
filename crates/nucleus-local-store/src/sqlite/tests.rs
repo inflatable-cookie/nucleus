@@ -21,6 +21,11 @@ fn sqlite_supported_domains() -> Vec<(PersistenceDomain, PersistenceRecordKind, 
             "task:history:1",
         ),
         (
+            PersistenceDomain::SharedMemory,
+            PersistenceRecordKind::SharedMemoryRecord,
+            "memory:1",
+        ),
+        (
             PersistenceDomain::Planning,
             PersistenceRecordKind::PlanningSession,
             "planning:session:1",
@@ -306,16 +311,30 @@ fn sqlite_repository_enforces_revision_expectations() {
 }
 
 #[test]
-fn sqlite_repository_rejects_unsupported_domains() {
-    let error = match SqliteRepository::open_in_memory(PersistenceDomain::SharedMemory) {
-        Ok(_) => panic!("shared memory is outside this SQLite slice"),
-        Err(error) => error,
-    };
+fn sqlite_repository_stores_shared_memory_records() {
+    let mut repository =
+        SqliteRepository::open_in_memory(PersistenceDomain::SharedMemory).expect("repository");
+    let record = fixture_record(
+        PersistenceDomain::SharedMemory,
+        PersistenceRecordKind::SharedMemoryRecord,
+        "memory:1",
+        "rev:1",
+    );
+
+    repository
+        .put(
+            record.clone(),
+            RevisionExpectation::MustNotExist,
+            LocalStoreTransactionPosture::Autocommit,
+        )
+        .expect("put shared memory");
 
     assert_eq!(
-        error,
-        LocalStoreError::UnsupportedDomain {
-            domain: PersistenceDomain::SharedMemory,
-        }
+        repository
+            .get(&record.id)
+            .expect("read shared memory")
+            .expect("record exists")
+            .kind,
+        PersistenceRecordKind::SharedMemoryRecord
     );
 }

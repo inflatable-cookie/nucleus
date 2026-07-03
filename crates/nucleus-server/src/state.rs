@@ -17,6 +17,7 @@ pub enum ServerStateDomain {
     Projects,
     Tasks,
     TaskHistory,
+    SharedMemory,
     Planning,
     Workspaces,
     AdapterRegistry,
@@ -35,6 +36,7 @@ impl ServerStateDomain {
             Self::Projects => PersistenceDomain::Projects,
             Self::Tasks => PersistenceDomain::Tasks,
             Self::TaskHistory => PersistenceDomain::TaskHistory,
+            Self::SharedMemory => PersistenceDomain::SharedMemory,
             Self::Planning => PersistenceDomain::Planning,
             Self::Workspaces => PersistenceDomain::Workspaces,
             Self::AdapterRegistry => PersistenceDomain::AdapterRegistry,
@@ -86,6 +88,10 @@ where
 
     pub fn task_history(&self) -> ServerStateDomainService<'_, B> {
         self.domain(ServerStateDomain::TaskHistory)
+    }
+
+    pub fn shared_memory(&self) -> ServerStateDomainService<'_, B> {
+        self.domain(ServerStateDomain::SharedMemory)
     }
 
     pub fn planning(&self) -> ServerStateDomainService<'_, B> {
@@ -290,6 +296,7 @@ mod tests {
         let domains = [
             ServerStateDomain::Projects,
             ServerStateDomain::Tasks,
+            ServerStateDomain::SharedMemory,
             ServerStateDomain::Workspaces,
             ServerStateDomain::AdapterRegistry,
             ServerStateDomain::AgentSessions,

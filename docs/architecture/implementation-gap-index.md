@@ -18,7 +18,7 @@ implementation lane can be chosen deliberately.
 Current state:
 
 - `effigy doctor` currently exits successfully
-- the current doctor report has 147 findings: 147 warnings and 0 errors
+- the current doctor report has 163 findings: 163 warnings and 0 errors
 - `crates/nucleus-server/src/lib.rs` remains a compact crate front door
 - the first health rebaseline split request-handler diagnostics tests,
   control-envelope diagnostics response tests, diagnostics query routing, and
@@ -1013,12 +1013,17 @@ Likely crates:
 
 ### Planning, Memory, Research, And Effigy
 
-Missing crates:
+Crate status:
 
-- `nucleus-memory`
-- `nucleus-planning`
-- `nucleus-research`
-- `nucleus-effigy-integration`
+- `nucleus-memory`: scaffolded with proposal records and storage codec
+- `nucleus-planning`: scaffolded with planning/exploration records and storage
+  codec
+- `nucleus-research`: scaffolded with research run brief records. Question,
+  source, observation, synthesis, storage, and read-only diagnostics are still
+  missing. Crawling, browser automation, source retrieval, provider/model
+  execution, citation rendering, promotion, projection/apply, task creation,
+  and UI behavior remain explicitly out of scope.
+- `nucleus-effigy-integration`: missing
 
 Missing runtime:
 

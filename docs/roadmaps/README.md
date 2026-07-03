@@ -236,7 +236,7 @@ shape.
 - `g03/105-provider-live-read-boundary-stocktake.md` - completed
 - `g03/106-provider-live-read-status-check-smoke.md` - completed
 - `g03/107-provider-live-read-reassessment.md` - completed
-- `g03/108-server-client-workflow-hardening.md` - active
+- `g03/108-server-client-workflow-hardening.md` - completed
 - `g03/109-task-timeline-authority-map-control-parity.md` - completed
 - `g03/110-task-project-workflow-depth.md` - completed
 - `g03/111-planning-artifact-task-seed-promotion.md` - completed
@@ -245,7 +245,10 @@ shape.
 - `g03/114-planning-management-projection-payloads.md` - completed
 - `g03/115-planning-projection-file-export-capture.md` - completed
 - `g03/116-planning-projection-capture-publication-gate.md` - completed
-- `g03/117-planning-projection-import-admission.md` - active
+- `g03/117-planning-projection-import-admission.md` - completed
+- `g03/118-structured-planning-domain-foundation.md` - completed
+- `g03/119-planning-memory-proposal-foundation.md` - completed
+- `g03/120-deep-research-run-brief-foundation.md` - active
 
 ## Previous Generation
 
@@ -304,11 +307,15 @@ shape.
 
 ## Next Task
 
-Continue `docs/roadmaps/g03/117-planning-projection-import-admission.md`
+Continue `docs/roadmaps/g03/120-deep-research-run-brief-foundation.md`
 with
-`docs/roadmaps/g03/batch-cards/504-planning-projection-import-next-lane-checkpoint.md`.
-Choose the next lane after planning projection import/admission from
-implementation evidence.
+`docs/roadmaps/g03/batch-cards/523-research-question-source-ref-records.md`.
+Add research question and source reference vocabulary without adding crawler,
+browser automation, source retrieval, provider/model execution, research
+scheduler, raw source retention, citation renderer, accepted synthesis
+promotion, accepted memory mutation, task creation, projection/apply, final UI,
+embeddings, semantic search, SCM/forge mutation, or any provider/task/browser
+effect.
 Do not add provider execution, provider writes, credential material storage,
 raw payload retention, agent scheduling, callbacks, interruption/recovery
 execution, real SCM/forge mutation, active planning mutation, semantic merge

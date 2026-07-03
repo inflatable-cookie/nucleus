@@ -11,20 +11,27 @@ use super::helpers::{
     command_execution_status_dto, command_receipt_status_dto, control_error_dto, retention_dto,
     state_record_set_dto,
 };
+use super::memory_proposals::memory_proposals_body_dto;
+use super::planning_sessions_body::planning_sessions_body_dto;
 use super::provider_live_read_executor::ControlProviderLiveReadExecutorDiagnosticsDto;
 use super::provider_live_read_smoke_evidence::ControlProviderLiveReadSmokeEvidenceDiagnosticsDto;
 use super::provider_read_intent::ControlProviderReadIntentQueryResultDto;
 use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
-    ControlDiffSummaryRecordDto, ControlPlanningCapturePublicationDiagnosticsDto,
+    ControlDiffSummaryRecordDto, ControlMemoryProposalRetentionCountDto,
+    ControlMemoryProposalScopeCountDto, ControlMemoryProposalSensitivityCountDto,
+    ControlMemoryProposalSourceCountsDto, ControlMemoryProposalStatusCountDto,
+    ControlMemoryProposalSummaryDto, ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticsDto,
-    ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningTaskSeedCandidateDto,
-    ControlPlanningTaskSeedSourceCountsDto, ControlPlanningTaskSeedStatusCountDto,
-    ControlProjectAuthorityMapDto, ControlRuntimeReadinessDiagnosticDto,
-    ControlRuntimeReceiptRecordDto, ControlTaskReadinessCandidateDto,
-    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
-    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
+    ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningSessionSourceCountsDto,
+    ControlPlanningSessionStatusCountDto, ControlPlanningSessionSummaryDto,
+    ControlPlanningTaskSeedCandidateDto, ControlPlanningTaskSeedSourceCountsDto,
+    ControlPlanningTaskSeedStatusCountDto, ControlProjectAuthorityMapDto,
+    ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
+    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
+    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
+    ControlTaskTimelineEntryDto,
 };
 use crate::control_envelope_dto::{
     ControlApiCodecError, ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -92,6 +99,25 @@ pub enum ControlResponseBodyDto {
         source_counts: ControlPlanningTaskSeedSourceCountsDto,
         client_can_promote: bool,
         task_creation_performed: bool,
+    },
+    PlanningSessions {
+        project_id: String,
+        sessions: Vec<ControlPlanningSessionSummaryDto>,
+        status_counts: Vec<ControlPlanningSessionStatusCountDto>,
+        source_counts: ControlPlanningSessionSourceCountsDto,
+        client_can_mutate: bool,
+        provider_execution_available: bool,
+    },
+    MemoryProposals {
+        project_id: String,
+        proposals: Vec<ControlMemoryProposalSummaryDto>,
+        status_counts: Vec<ControlMemoryProposalStatusCountDto>,
+        scope_counts: Vec<ControlMemoryProposalScopeCountDto>,
+        sensitivity_counts: Vec<ControlMemoryProposalSensitivityCountDto>,
+        retention_counts: Vec<ControlMemoryProposalRetentionCountDto>,
+        source_counts: ControlMemoryProposalSourceCountsDto,
+        client_can_mutate: bool,
+        provider_execution_available: bool,
     },
     TaskSeedPromotionDiagnostics {
         diagnostics: ControlTaskSeedPromotionDiagnosticsDto,
@@ -261,6 +287,12 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                     client_can_promote: projection.client_can_promote,
                     task_creation_performed: projection.task_creation_performed,
                 })
+            }
+            ServerControlResponseBody::Query(ServerQueryResult::PlanningSessions(projection)) => {
+                Ok(planning_sessions_body_dto(projection))
+            }
+            ServerControlResponseBody::Query(ServerQueryResult::MemoryProposals(projection)) => {
+                Ok(memory_proposals_body_dto(projection))
             }
             ServerControlResponseBody::Query(ServerQueryResult::TaskSeedPromotionDiagnostics(
                 diagnostics,

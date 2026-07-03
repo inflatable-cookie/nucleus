@@ -3,6 +3,8 @@
 mod body;
 mod envelope;
 mod helpers;
+mod memory_proposals;
+mod planning_sessions_body;
 mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
@@ -21,10 +23,15 @@ pub use provider_readiness_overview::ControlProviderReadinessOverviewDto;
 pub use records::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
     ControlDiagnosticsSnapshotDto, ControlDiffSummaryRecordDto,
+    ControlMemoryProposalRetentionCountDto, ControlMemoryProposalScopeCountDto,
+    ControlMemoryProposalSensitivityCountDto, ControlMemoryProposalSourceCountsDto,
+    ControlMemoryProposalStatusCountDto, ControlMemoryProposalSummaryDto,
     ControlPlanningCapturePublicationBucketDto, ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticIssueDto,
     ControlPlanningProjectionFileWriteDiagnosticsDto, ControlPlanningProjectionImportBucketDto,
-    ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningTaskSeedCandidateDto,
+    ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningSessionOutputRefsDto,
+    ControlPlanningSessionSourceCountsDto, ControlPlanningSessionStatusCountDto,
+    ControlPlanningSessionSummaryDto, ControlPlanningTaskSeedCandidateDto,
     ControlPlanningTaskSeedSourceCountsDto, ControlPlanningTaskSeedStatusCountDto,
     ControlProjectAuthorityDomainDto, ControlProjectAuthorityIssueDto,
     ControlProjectAuthorityMapDto, ControlRuntimeReadinessBlockerDto,

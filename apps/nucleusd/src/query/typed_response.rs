@@ -2,18 +2,22 @@ use nucleus_server::{
     ControlCommandEvidenceRecordDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
 };
 
+mod memory_proposals;
 mod planning_capture_publication;
 mod planning_projection_file_write;
 mod planning_projection_import;
+mod planning_sessions;
 mod planning_task_seeds;
 mod provider;
 mod task_authority;
 mod task_readiness;
 mod task_seed_promotion;
 
+pub(super) use memory_proposals::memory_proposals_response_lines;
 pub(super) use planning_capture_publication::planning_capture_publication_response_lines;
 pub(super) use planning_projection_file_write::planning_projection_file_write_response_lines;
 pub(super) use planning_projection_import::planning_projection_import_response_lines;
+pub(super) use planning_sessions::planning_sessions_response_lines;
 pub(super) use planning_task_seeds::planning_task_seeds_response_lines;
 pub(super) use provider::{
     provider_live_read_executor_response_lines, provider_live_read_smoke_evidence_response_lines,
@@ -108,6 +112,50 @@ pub(super) fn print_typed_dto_response(
                 source_counts,
                 client_can_promote,
                 task_creation_performed,
+            ));
+            Ok(())
+        }
+        ControlResponseBodyDto::PlanningSessions {
+            project_id,
+            sessions,
+            status_counts,
+            source_counts,
+            client_can_mutate,
+            provider_execution_available,
+        } => {
+            print_lines(planning_sessions_response_lines(
+                label,
+                project_id,
+                sessions,
+                status_counts,
+                source_counts,
+                client_can_mutate,
+                provider_execution_available,
+            ));
+            Ok(())
+        }
+        ControlResponseBodyDto::MemoryProposals {
+            project_id,
+            proposals,
+            status_counts,
+            scope_counts,
+            sensitivity_counts,
+            retention_counts,
+            source_counts,
+            client_can_mutate,
+            provider_execution_available,
+        } => {
+            print_lines(memory_proposals_response_lines(
+                label,
+                project_id,
+                proposals,
+                status_counts,
+                scope_counts,
+                sensitivity_counts,
+                retention_counts,
+                source_counts,
+                client_can_mutate,
+                provider_execution_available,
             ));
             Ok(())
         }

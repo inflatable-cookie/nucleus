@@ -1943,6 +1943,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nucleus-memory"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nucleus-native-harness"
 version = "0.0.0"
 dependencies = [
@@ -1959,12 +1967,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "nucleus-planning"
+version = "0.0.0"
+dependencies = [
+ "nucleus-projects",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nucleus-projects"
 version = "0.0.0"
 dependencies = [
  "nucleus-core",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "nucleus-research"
+version = "0.0.0"
+dependencies = [
+ "nucleus-projects",
 ]
 
 [[package]]
@@ -1985,8 +2009,10 @@ dependencies = [
  "nucleus-core",
  "nucleus-engine",
  "nucleus-local-store",
+ "nucleus-memory",
  "nucleus-native-harness",
  "nucleus-orchestration",
+ "nucleus-planning",
  "nucleus-projects",
  "nucleus-scm-forge",
  "nucleus-tasks",

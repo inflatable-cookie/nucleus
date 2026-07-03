@@ -74,6 +74,14 @@ Current runway bands:
   forge network execution
 - planning projection payloads, deterministic file export, capture prep, and
   publication/share gates before projection import/admission
+- structured planning domain foundation before active import apply, memory
+  extraction, deep research execution, or final planning UI
+- memory proposal foundation before accepted memory mutation, embeddings,
+  semantic search, provider-native memory sync, projection, or final memory UI
+- deep research run brief foundation before crawler, browser automation, source
+  retrieval, provider/model execution, citation rendering, accepted synthesis
+  promotion, accepted memory mutation, task creation, projection/apply, final
+  UI, embeddings, semantic search, or SCM/forge mutation
 
 Current checkpoint:
 
@@ -435,7 +443,7 @@ Reason:
 - `105-provider-live-read-boundary-stocktake.md` - completed
 - `106-provider-live-read-status-check-smoke.md` - completed
 - `107-provider-live-read-reassessment.md` - completed
-- `108-server-client-workflow-hardening.md` - active
+- `108-server-client-workflow-hardening.md` - completed
 - `109-task-timeline-authority-map-control-parity.md` - completed
 - `110-task-project-workflow-depth.md` - completed
 - `111-planning-artifact-task-seed-promotion.md` - completed
@@ -444,13 +452,16 @@ Reason:
 - `114-planning-management-projection-payloads.md` - completed
 - `115-planning-projection-file-export-capture.md` - completed
 - `116-planning-projection-capture-publication-gate.md` - completed
-- `117-planning-projection-import-admission.md` - active
+- `117-planning-projection-import-admission.md` - completed
+- `118-structured-planning-domain-foundation.md` - completed
+- `119-planning-memory-proposal-foundation.md` - completed
+- `120-deep-research-run-brief-foundation.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/497-planning-projection-import-boundary-selection.md`
+- `batch-cards/523-research-question-source-ref-records.md`
 
 Paused cards:
 
@@ -458,10 +469,47 @@ None.
 
 Planned cards:
 
-None.
+- `batch-cards/524-research-observation-synthesis-linkage.md`
+- `batch-cards/525-research-run-brief-storage-codec.md`
+- `batch-cards/526-research-run-brief-query-cli-effigy.md`
+- `batch-cards/527-deep-research-run-brief-validation-next-lane.md`
 
 Completed cards:
 
+- `batch-cards/522-research-run-brief-record-types.md`
+- `batch-cards/521-nucleus-research-crate-front-door.md`
+- `batch-cards/520-deep-research-run-brief-boundary-selection.md`
+- `batch-cards/519-memory-foundation-validation-next-lane.md`
+- `batch-cards/518-memory-proposal-query-cli-effigy.md`
+- `batch-cards/517-memory-planning-linkage-storage-codec.md`
+- `batch-cards/516-memory-review-sensitivity-retention-records.md`
+- `batch-cards/515-memory-proposal-record-types.md`
+- `batch-cards/514-nucleus-memory-crate-front-door.md`
+- `batch-cards/513-memory-proposal-boundary-selection.md`
+- `batch-cards/512-structured-planning-validation-next-lane.md`
+- `batch-cards/511-planning-session-query-cli-effigy.md`
+- `batch-cards/510-planning-session-storage-codec.md`
+- `batch-cards/509-planning-artifact-task-seed-linkage.md`
+- `batch-cards/508-exploration-question-option-records.md`
+- `batch-cards/507-planning-session-record-types.md`
+- `batch-cards/506-nucleus-planning-crate-front-door.md`
+- `batch-cards/505-structured-planning-domain-boundary-selection.md`
+- `batch-cards/504-planning-projection-import-next-lane-checkpoint.md`
+- `batch-cards/503-planning-projection-import-validation.md`
+- `batch-cards/502-planning-projection-import-cli-effigy.md`
+- `batch-cards/501-planning-projection-import-diagnostics.md`
+- `batch-cards/500-planning-projection-import-conflict-staging.md`
+- `batch-cards/499-planning-projection-import-admission-records.md`
+- `batch-cards/498-planning-projection-import-scan-candidates.md`
+- `batch-cards/497-planning-projection-import-boundary-selection.md`
+- `batch-cards/496-planning-capture-publication-next-lane-checkpoint.md`
+- `batch-cards/495-planning-capture-publication-validation.md`
+- `batch-cards/494-planning-capture-publication-cli-effigy.md`
+- `batch-cards/493-planning-capture-publication-diagnostics.md`
+- `batch-cards/492-planning-capture-publication-stopped-request.md`
+- `batch-cards/491-planning-capture-publication-admission-records.md`
+- `batch-cards/490-planning-capture-publication-boundary-selection.md`
+- `batch-cards/489-planning-projection-next-lane-checkpoint.md`
 - `batch-cards/488-planning-projection-file-export-validation.md`
 - `batch-cards/487-planning-projection-cli-effigy-inspection.md`
 - `batch-cards/486-planning-projection-capture-prep-records.md`
@@ -983,7 +1031,7 @@ Completed cards:
 97. Provider live-read boundary stocktake - completed
 98. Provider live-read status/check smoke - completed
 99. Provider live-read reassessment - completed
-100. Server/client workflow hardening - active
+100. Server/client workflow hardening - completed
 101. Task timeline authority-map control parity - completed
 102. Task/project workflow depth - completed
 103. Planning artifact task seed promotion - completed
@@ -991,7 +1039,11 @@ Completed cards:
 105. Task seed promotion command - completed
 106. Planning management projection payloads - completed
 107. Planning projection file export capture - completed
-108. Planning projection capture publication gate - active
+108. Planning projection capture publication gate - completed
+109. Planning projection import admission - completed
+110. Structured planning domain foundation - completed
+111. Planning memory proposal foundation - completed
+112. Deep research run brief foundation - active
 
 Current stop:
 
@@ -1036,10 +1088,55 @@ Current stop:
   execution, task promotion, or UI behavior
 - roadmap `116` closed with an adapter-neutral publication/share gate for
   prepared planning projection management captures
-- roadmap `117` is active and selects planning projection import/admission as
-  the next lane
+- roadmap `117` is complete and selected structured planning domain foundation
+  as the next lane
+- memory proposal boundary selection is complete. The selected first slice is a
+  `nucleus-memory` proposal-only crate with ids, scopes, kinds, review
+  statuses, source refs, confidence, sensitivity, retention, review state,
+  supersession refs, and promotion target refs. Accepted memory mutation,
+  embeddings, semantic search, autonomous extraction, provider-native sync,
+  projection files, final UI, raw transcript storage, provider payload storage,
+  raw terminal stream storage, credential/secret value storage, and
+  private-note storage by default remain deferred.
+- the `nucleus-memory` crate front door is scaffolded with named modules for
+  ids, proposals, source refs, review vocabulary, and storage shape. It does
+  not yet define memory value records or behavior.
+- memory proposal record types are present for stable ids, scopes, kinds,
+  proposal-only statuses, title, sanitized payload summary/detail, source refs,
+  confidence, and timestamps. Tests prove proposals are not authoritative
+  accepted memory, source refs are not memory identity, and scope/kind do not
+  grant visibility or projection authority.
+- review, sensitivity, retention, and supersession records are present. Tests
+  prove user-private and restricted records are not shared project context by
+  default, secret-adjacent records require sanitized summaries and never allow
+  secret values, retention does not grant projection authority, and review
+  state does not mutate accepted memory.
+- memory linkage refs and JSON storage records are present. The codec round
+  trips proposal ids, scope, kind, status, source refs, linkage refs,
+  confidence, review, sensitivity, retention, supersession, and timestamps.
+  Tests prove link refs do not grant mutation authority and the storage shape
+  excludes raw transcripts, provider payloads, terminal streams, credentials,
+  secret values, and private notes.
+- read-only memory proposal inspection is present through server query,
+  control DTO, `nucleusd query memory-proposals`, and Effigy selector. The
+  query reports sanitized proposal counts, scope/status/sensitivity/retention
+  buckets, source/link/supersession counts, and no-effect flags without
+  exposing proposal bodies, private memory bodies, raw transcripts, provider
+  payloads, terminal streams, credentials, secret values, or effects.
+- roadmap `119` is complete and selected deep research run brief foundation as
+  the next lane. Accepted memory review commands, planning import apply/review,
+  and visible planning/memory UI proof remain deferred until research run
+  briefs can produce inspectable records.
+- roadmap `120` is active. Its first three cards selected the bounded research
+  run brief model, added the `nucleus-research` crate front door, and modeled
+  run brief records before any crawler, browser automation, source retrieval,
+  provider/model execution, citation rendering, promotion, projection/apply,
+  task creation, UI behavior, embedding, semantic search, or SCM/forge effect.
 - ready card:
-  `batch-cards/504-planning-projection-import-next-lane-checkpoint.md`
+  `batch-cards/523-research-question-source-ref-records.md`
+- roadmap `118` is complete with `nucleus-planning`, planning/exploration
+  records, storage codecs, and read-only planning session inspection; the next
+  selected lane is planning-memory proposal foundation
 - publication/share admission records now distinguish Git-like,
   snapshot/publication-like, forge-review-like, manual, and custom adapter
   families without granting the underlying effect
@@ -1063,8 +1160,8 @@ Current stop:
   applying imports
 - read-only diagnostics now summarize candidates, admissions, blockers,
   duplicates, conflicts, evidence refs, and no-effect flags
-- next work is adding optional read-only server query, `nucleusd`, and Effigy
-  inspection for import diagnostics
-- provider writes, task mutation, callbacks, interruption/recovery execution,
-  raw payload retention, active planning mutation, semantic merge resolution,
-  task promotion, and credential material storage remain blocked
+- provider writes, task mutation outside explicit task-domain commands,
+  callbacks, interruption/recovery execution, raw payload retention, active
+  planning mutation, semantic merge resolution, task promotion without review,
+  accepted memory mutation, research execution, and credential material storage
+  remain blocked

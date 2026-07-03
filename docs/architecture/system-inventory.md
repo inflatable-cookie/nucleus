@@ -107,20 +107,56 @@ Updated: 2026-06-16
   storage projection can now rebuild a domain task for create/update-safe
   fields while leaving runtime, history, provider, and command evidence state
   outside the projection.
-- `nucleus-memory`: planned, not scaffolded. Future shared memory crate for
-  memory records, scopes, source refs, review state, sensitivity, retention,
-  and projection boundaries. The local store crate leaves room for this domain,
-  but no Rust memory domain crate or behavior exists yet.
-- `nucleus-planning`: planned, not scaffolded. Future structured planning
-  crate for open-ended exploration sessions, guided planning sessions,
-  accepted artifacts, task seeds, question backlogs, option maps, review state,
-  and projection boundaries. The local store crate leaves room for this domain,
-  but no Rust planning domain crate or behavior exists yet.
-- `nucleus-research`: planned, not scaffolded. Future deep research crate for
-  research runs, question sets, source records, observations, synthesis,
-  confidence, gaps, and projection boundaries. The local store crate leaves
-  room for this domain, but no Rust research domain crate or behavior exists
-  yet.
+- `nucleus-memory`: focused crate scaffold is present. It currently has a
+  small front door and named modules for ids, proposals, source refs, review
+  vocabulary, and storage shape. Memory proposal records now cover stable
+  ids, scopes, kinds, proposal-only statuses, title, sanitized payload
+  summary/detail, source refs, confidence, and timestamps. Tests prove proposed
+  memory is not authoritative accepted memory, source refs are not memory
+  identity, and scope/kind do not grant visibility or projection authority.
+  Review, sensitivity, retention, and supersession records now represent
+  user-private, restricted, secret-adjacent, local-only, expiry, archive, and
+  proposal-lineage boundaries without accepting memory or granting projection
+  authority. Cross-domain linkage refs and JSON storage records now cover
+  planning sessions, exploration sessions, planning artifacts, task seeds,
+  research briefs, tasks, sanitized evidence refs, source refs, review,
+  sensitivity, retention, supersession, and timestamps. The codec round trips
+  the storage shape and excludes raw transcripts, provider payloads, terminal
+  streams, credentials, secret values, and private notes. Promotion target
+  refs, accepted memory mutation, embeddings, semantic search, autonomous
+  extraction, provider-native memory sync, projection files, final review UI,
+  and private-note storage by default remain deferred. Read-only memory
+  proposal inspection is now available through server query/control DTO,
+  `nucleusd query memory-proposals`, and Effigy, returning sanitized counts and
+  refs only.
+- `nucleus-planning`: focused crate scaffold is present. It currently has a
+  small front door and named modules for ids, sessions, exploration,
+  artifacts, refs, and storage shape. Guided planning session value records now
+  cover session ids, project ids, kinds, statuses, participants, source refs,
+  output refs, and timestamps without storage or runtime effects. Open-ended
+  exploration records now cover exploration sessions, question backlogs,
+  assumptions, options, tradeoffs, risks, opportunities, constraints, decision
+  refs, and explicit promotion refs without forcing next-task creation.
+  Planning artifact and task-seed linkage records now map app-native planning
+  refs to existing engine/server compatibility records while preserving task
+  seed promotion authority in the task-domain path. The crate now has a first
+  JSON storage codec for planning session and exploration session storage
+  records, including stable ids, statuses, refs, questions, assumptions,
+  options, notes, and promotion refs. The codec deliberately excludes raw
+  transcripts, provider payloads, secrets, private memories, active task
+  mutation, projection/import apply, model orchestration, task creation, memory
+  extraction, deep research execution, and UI behavior.
+- `nucleus-research`: focused crate scaffold is present. It currently has a
+  small front door and named modules for ids, runs, questions, sources,
+  synthesis, refs, and storage shape. Research run brief records now cover
+  stable ids, optional project refs for project-bound or standalone runs,
+  title, sanitized brief text, status, scope boundary, source plan refs,
+  confidence, coverage summary, and timestamps. Tests prove run briefs are not
+  active execution, status does not grant execution authority, and scope does
+  not grant source access authority. Crawlers, browser automation, source
+  retrieval, model orchestration, citation rendering, raw source retention,
+  promotion, projection/apply, task creation, and UI behavior remain out of
+  scope.
 - `nucleus-workspaces`: first draft modular workspace layout, panel, and
   surface types. The workspace contract now requires a stronger
   Loophole-inspired display/window/surface/region/panel hierarchy before real
@@ -147,8 +183,14 @@ Updated: 2026-06-16
   client boundary and is transport-free. It also now includes transport-neutral
   control API request, command/query, response, result, and error vocabulary.
   Control API types cover project, task, workspace, adapter/session, model
-  route, and runtime metadata query surfaces, but do not implement request
-  handling. Local client auth readiness gates now allow explicit local-only
+  route, runtime metadata, and read-only planning session query surfaces. The
+  planning session query scans the planning local-store domain, decodes
+  app-native planning session records, reports sanitized session counts, status
+  counts, source-kind counts, prompt/template refs, and output refs, and keeps
+  source material values, provider payloads, secrets, private memories,
+  mutation, task creation, and runtime effects out of the response. `nucleusd`
+  and Effigy have a bootstrap-backed `planning-sessions` query for inspection.
+  Local client auth readiness gates now allow explicit local-only
   unpaired access, deny unsupported local auth states, and defer remote-style
   auth postures without implementing auth flows. It does not implement
   networking, pairing, command execution, scheduling, provider processes, live

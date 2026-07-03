@@ -1,8 +1,8 @@
 # 117 Planning Projection Import Admission
 
-Status: active
+Status: completed
 Owner: Tom
-Updated: 2026-07-02
+Updated: 2026-07-03
 
 ## Purpose
 
@@ -51,14 +51,14 @@ add UI behavior.
 - [x] Batch 4: stage semantic conflict review records without resolving them.
 - [x] Batch 5: expose diagnostics and read-only inspection if the server
   surface is ready.
-- [ ] Batch 6: validate and choose planning-session depth, task-readiness
+- [x] Batch 6: validate and choose planning-session depth, task-readiness
   linkage, or import apply/review as the next lane.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/504-planning-projection-import-next-lane-checkpoint.md`
+- None.
 
 Planned cards:
 
@@ -66,6 +66,7 @@ None.
 
 Completed cards:
 
+- `batch-cards/504-planning-projection-import-next-lane-checkpoint.md`
 - `batch-cards/503-planning-projection-import-validation.md`
 - `batch-cards/502-planning-projection-import-cli-effigy.md`
 - `batch-cards/501-planning-projection-import-diagnostics.md`
@@ -93,3 +94,15 @@ Completed cards:
 - The work requires SCM, forge, provider, callback, interruption, or recovery
   effects.
 - The work requires raw payload retention or UI behavior.
+
+## Next Lane
+
+Selected: `118-structured-planning-domain-foundation.md`.
+
+Reason: planning projection export/import mechanics are now represented as
+stopped, reviewable, diagnostics-backed surfaces. Continuing into active import
+apply would over-invest in sync plumbing before Nucleus has an app-native
+planning domain to apply into. The next valuable step is structured planning
+session and exploration record foundations: this reconnects the work to the
+original product goal of guided project ideation, planning, task seeds, and
+project backbone state.

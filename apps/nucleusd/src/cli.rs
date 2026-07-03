@@ -75,6 +75,8 @@ pub(crate) fn print_help() {
     println!("  nucleusd [--state <path>] query task-timeline --task <task-id>");
     println!("  nucleusd [--state <path>] query task-readiness --project <project-id>");
     println!("  nucleusd [--state <path>] query planning-task-seeds --project <project-id>");
+    println!("  nucleusd [--state <path>] query planning-sessions --project <project-id>");
+    println!("  nucleusd [--state <path>] query memory-proposals --project <project-id>");
     println!(
         "  nucleusd [--state <path>] query task-seed-promotion-diagnostics --project <project-id>"
     );

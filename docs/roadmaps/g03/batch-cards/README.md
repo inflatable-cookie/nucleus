@@ -10,7 +10,7 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `504-planning-projection-import-next-lane-checkpoint.md`
+- `523-research-question-source-ref-records.md`
 
 ## Paused Cards
 
@@ -18,10 +18,32 @@ None.
 
 ## Planned Cards
 
-None.
+- `524-research-observation-synthesis-linkage.md`
+- `525-research-run-brief-storage-codec.md`
+- `526-research-run-brief-query-cli-effigy.md`
+- `527-deep-research-run-brief-validation-next-lane.md`
 
 ## Completed Cards
 
+- `522-research-run-brief-record-types.md`
+- `521-nucleus-research-crate-front-door.md`
+- `520-deep-research-run-brief-boundary-selection.md`
+- `519-memory-foundation-validation-next-lane.md`
+- `518-memory-proposal-query-cli-effigy.md`
+- `517-memory-planning-linkage-storage-codec.md`
+- `516-memory-review-sensitivity-retention-records.md`
+- `515-memory-proposal-record-types.md`
+- `514-nucleus-memory-crate-front-door.md`
+- `513-memory-proposal-boundary-selection.md`
+- `512-structured-planning-validation-next-lane.md`
+- `511-planning-session-query-cli-effigy.md`
+- `510-planning-session-storage-codec.md`
+- `509-planning-artifact-task-seed-linkage.md`
+- `508-exploration-question-option-records.md`
+- `507-planning-session-record-types.md`
+- `506-nucleus-planning-crate-front-door.md`
+- `505-structured-planning-domain-boundary-selection.md`
+- `504-planning-projection-import-next-lane-checkpoint.md`
 - `503-planning-projection-import-validation.md`
 - `502-planning-projection-import-cli-effigy.md`
 - `501-planning-projection-import-diagnostics.md`

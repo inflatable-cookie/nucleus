@@ -210,6 +210,39 @@ Reason:
 This keeps execution focused on one real workflow while protecting the core
 engine boundary from more proof-surface sprawl.
 
+## 2026-07-03 Stocktake Direction
+
+Current selected workflow:
+
+- planning-memory proposal foundation
+
+Reason:
+
+- task/project workflow, task seeds, task seed promotion, planning projection
+  payloads, deterministic file export, publication/share gates, and
+  import/admission diagnostics are now represented as controlled server
+  surfaces
+- continuing into active import apply would overbuild synchronization
+  mechanics before there is an app-native planning domain to apply into
+- shared memory and deep research should attach to planning sessions,
+  exploration outputs, accepted artifacts, and task seeds rather than stand as
+  disconnected systems
+- guided planning and open-ended exploration are core product surfaces from the
+  original Nucleus goal
+
+Near runway:
+
+1. Complete structured planning domain foundation. Done.
+2. Create the focused `nucleus-memory` proposal boundary.
+3. Model proposed memory scope, kind, status, review, sensitivity, confidence,
+   retention, and source refs without accepting memory automatically.
+4. Link memory proposals to planning sessions, exploration output, planning
+   artifacts, research brief refs, task seeds, tasks, and evidence refs.
+5. Add storage and read-only inspection only after the record model is stable.
+6. Reassess whether the next lane is deep research run briefs, accepted memory
+   review commands, planning import apply/review, or a disposable
+   planning/memory UI proof.
+
 ## Phase 0: Reassessment And Planning Base
 
 Goal: make the planning base trustworthy.
