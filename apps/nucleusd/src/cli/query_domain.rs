@@ -15,6 +15,8 @@ pub(crate) enum QueryDomain {
     PlanningTaskSeeds { project_id: String },
     TaskSeedPromotionDiagnostics { project_id: String },
     PlanningProjectionFileWriteDiagnostics { project_id: String },
+    PlanningProjectionImportDiagnostics { project_id: String },
+    PlanningCapturePublicationDiagnostics { project_id: String },
     ProjectAuthorityMap { project_id: String },
 }
 
@@ -73,6 +75,24 @@ impl QueryDomain {
                     })?,
                 })
             }
+            "planning-projection-import-diagnostics" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::PlanningProjectionImportDiagnostics {
+                    project_id: iter.next().ok_or_else(|| {
+                        "planning-projection-import-diagnostics requires --project <project-id>"
+                            .to_owned()
+                    })?,
+                })
+            }
+            "planning-capture-publication-diagnostics" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::PlanningCapturePublicationDiagnostics {
+                    project_id: iter.next().ok_or_else(|| {
+                        "planning-capture-publication-diagnostics requires --project <project-id>"
+                            .to_owned()
+                    })?,
+                })
+            }
             "project-authority-map" => {
                 expect_flag(iter, "--project")?;
                 Ok(Self::ProjectAuthorityMap {
@@ -102,6 +122,12 @@ impl QueryDomain {
             Self::PlanningProjectionFileWriteDiagnostics { .. } => {
                 "planning-projection-file-write-diagnostics"
             }
+            Self::PlanningProjectionImportDiagnostics { .. } => {
+                "planning-projection-import-diagnostics"
+            }
+            Self::PlanningCapturePublicationDiagnostics { .. } => {
+                "planning-capture-publication-diagnostics"
+            }
             Self::ProjectAuthorityMap { .. } => "project-authority-map",
         }
     }
@@ -121,6 +147,8 @@ impl QueryDomain {
             | Self::PlanningTaskSeeds { .. }
             | Self::TaskSeedPromotionDiagnostics { .. }
             | Self::PlanningProjectionFileWriteDiagnostics { .. }
+            | Self::PlanningProjectionImportDiagnostics { .. }
+            | Self::PlanningCapturePublicationDiagnostics { .. }
             | Self::ProjectAuthorityMap { .. } => None,
         }
     }

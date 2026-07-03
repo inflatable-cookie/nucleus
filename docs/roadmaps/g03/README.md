@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-22
+Updated: 2026-07-02
 
 ## Purpose
 
@@ -72,6 +72,8 @@ Current runway bands:
   records
 - Git/forge runner health and boundary rebaseline before provider auth or
   forge network execution
+- planning projection payloads, deterministic file export, capture prep, and
+  publication/share gates before projection import/admission
 
 Current checkpoint:
 
@@ -440,13 +442,15 @@ Reason:
 - `112-planning-task-seed-persistence-and-projection.md` - completed
 - `113-task-seed-promotion-command.md` - completed
 - `114-planning-management-projection-payloads.md` - completed
-- `115-planning-projection-file-export-capture.md` - active
+- `115-planning-projection-file-export-capture.md` - completed
+- `116-planning-projection-capture-publication-gate.md` - completed
+- `117-planning-projection-import-admission.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/489-planning-projection-next-lane-checkpoint.md`
+- `batch-cards/497-planning-projection-import-boundary-selection.md`
 
 Paused cards:
 
@@ -980,7 +984,14 @@ Completed cards:
 98. Provider live-read status/check smoke - completed
 99. Provider live-read reassessment - completed
 100. Server/client workflow hardening - active
-101. Task timeline authority-map control parity - active
+101. Task timeline authority-map control parity - completed
+102. Task/project workflow depth - completed
+103. Planning artifact task seed promotion - completed
+104. Planning task seed persistence and projection - completed
+105. Task seed promotion command - completed
+106. Planning management projection payloads - completed
+107. Planning projection file export capture - completed
+108. Planning projection capture publication gate - active
 
 Current stop:
 
@@ -1011,12 +1022,49 @@ Current stop:
   pending checks, or cancellations
 - status/check smoke evidence records now preserve selected fields, target,
   counts, exit code, and guardrail flags without raw provider payloads
-- provider execution work is paused after live-read proof; the next active lane
-  is server/client workflow hardening over existing read models and control
-  envelopes
+- provider execution work is paused after live-read proof; server/client
+  workflow hardening over existing read models and control envelopes became the
+  follow-on lane
 - server/client inventory and gap matrix selected task timeline and project
   authority-map read-only control parity as the first implementation batch
 - task timeline and project authority-map query DTOs, `nucleusd` domains,
   Effigy selectors, typed output lines, and focused tests are complete
+- planning artifact/task seed projection payloads, deterministic file refs,
+  TOML codecs, export planning, file materialization, write diagnostics, and
+  capture-prep evidence are complete
+- roadmap `115` closed without import/apply, SCM/forge mutation, provider
+  execution, task promotion, or UI behavior
+- roadmap `116` closed with an adapter-neutral publication/share gate for
+  prepared planning projection management captures
+- roadmap `117` is active and selects planning projection import/admission as
+  the next lane
+- ready card:
+  `batch-cards/504-planning-projection-import-next-lane-checkpoint.md`
+- publication/share admission records now distinguish Git-like,
+  snapshot/publication-like, forge-review-like, manual, and custom adapter
+  families without granting the underlying effect
+- stopped publication/share requests now persist sanitized request intent from
+  admitted planning capture publication records
+- diagnostics now report stopped request counts, blockers, adapter-family
+  buckets, operation buckets, evidence refs, file refs, and no-effect flags
+- read-only server, DTO, `nucleusd`, and Effigy inspection now expose planning
+  capture publication readiness without executing effects
+- validation for the planning capture publication gate is complete
+- the import/admission boundary is selected: scan candidates, stopped
+  admission, conflict staging, and deferred apply are distinct stages
+- read-only projected-file scan candidates now classify ready planning
+  artifact/task-seed refs and blocked unsupported schema, unsafe path,
+  unsupported kind, and parse-failure states without effects
+- stopped import admission records now admit reviewed candidates, block
+  unreviewed/blocked/conflicting/missing-id candidates, and duplicate-noop
+  repeated file refs without effects
+- semantic conflict staging now links artifact, task seed, and missing-ref
+  conflicts to candidate/admission records without resolving conflicts or
+  applying imports
+- read-only diagnostics now summarize candidates, admissions, blockers,
+  duplicates, conflicts, evidence refs, and no-effect flags
+- next work is adding optional read-only server query, `nucleusd`, and Effigy
+  inspection for import diagnostics
 - provider writes, task mutation, callbacks, interruption/recovery execution,
-  raw payload retention, and credential material storage remain blocked
+  raw payload retention, active planning mutation, semantic merge resolution,
+  task promotion, and credential material storage remain blocked

@@ -1,8 +1,8 @@
 # 489 Planning Projection Next Lane Checkpoint
 
-Status: planned
+Status: completed
 Owner: Tom
-Updated: 2026-06-24
+Updated: 2026-07-02
 Milestone: `../115-planning-projection-file-export-capture.md`
 
 ## Purpose
@@ -18,5 +18,25 @@ Choose the next lane after planning projection file export and capture prep.
 
 ## Acceptance Criteria
 
-- [ ] Choice follows implementation evidence.
-- [ ] Next roadmap has ready cards or an explicit planning gap.
+- [x] Choice follows implementation evidence.
+- [x] Next roadmap has ready cards or an explicit planning gap.
+
+## Decision
+
+Selected next lane:
+`../116-planning-projection-capture-publication-gate.md`.
+
+Reason:
+
+- file export and capture prep are implemented
+- capture prep already produces sanitized evidence refs
+- G03 is still an effect-gated SCM/publication generation
+- capture publication can be modeled as explicit authority and stopped
+  publication planning before any SCM, forge, provider, or UI effect
+
+Deferred:
+
+- projection import/admission
+- semantic merge review
+- planning session depth
+- task readiness linkage from promoted planning output

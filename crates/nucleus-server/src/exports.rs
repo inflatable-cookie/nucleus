@@ -185,6 +185,8 @@ pub use super::provider_live_read_admission::*;
 pub use super::provider_live_read_executor_query::*;
 pub use super::provider_live_read_smoke_evidence_query::*;
 pub use super::provider_live_read_smoke_evidence_replay::*;
+pub use super::provider_planning_capture_publication_admission::*;
+pub use super::provider_planning_capture_publication_stopped_request::*;
 pub use super::provider_records::*;
 pub use super::provider_retention_policy::*;
 pub use super::provider_retry_reconciliation::*;

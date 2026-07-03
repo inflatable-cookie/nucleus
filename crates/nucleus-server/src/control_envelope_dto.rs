@@ -22,8 +22,10 @@ pub use request::{ControlRequestBodyDto, ControlRequestEnvelopeDto};
 pub use response::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
     ControlDiagnosticsSnapshotDto, ControlDiffSummaryRecordDto,
+    ControlPlanningCapturePublicationBucketDto, ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticIssueDto,
-    ControlPlanningProjectionFileWriteDiagnosticsDto, ControlPlanningTaskSeedCandidateDto,
+    ControlPlanningProjectionFileWriteDiagnosticsDto, ControlPlanningProjectionImportBucketDto,
+    ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningTaskSeedCandidateDto,
     ControlPlanningTaskSeedSourceCountsDto, ControlPlanningTaskSeedStatusCountDto,
     ControlProjectAuthorityDomainDto, ControlProjectAuthorityIssueDto,
     ControlProjectAuthorityMapDto, ControlProviderLiveReadExecutorDiagnosticsDto,

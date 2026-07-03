@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-23
+Updated: 2026-07-02
 
 ## Purpose
 
@@ -169,6 +169,7 @@ Implemented in `nucleus-server` and `nucleusd`:
   task refs
 - `nucleusd query task-seed-promotion-diagnostics --project <project-id>`
 - `effigy server:query:task-seed-promotion-diagnostics`
+- planning projection file-write diagnostics query and Effigy inspection
 
 Implemented in storage:
 
@@ -184,10 +185,15 @@ Defined for projection:
 - planning artifact management projection file shape
 - planning task seed management projection file shape
 - merge and review gaps before projection import/export
+- deterministic planning projection payloads and file refs
+- deterministic planning projection file materialization
+- management-capture preparation from sanitized planning projection file-write
+  evidence
 
 Still deferred:
 
-- management repo projection payload implementation
+- management repo projection import/admission
+- semantic merge review for planning projection records
 
 ## Ownership Boundary
 
@@ -230,8 +236,8 @@ not be used as the promotion path.
 
 ## Planning Gaps
 
-- planning projection file materialization
-- management-capture preparation for planning projection files
+- planning projection capture publication/share gate
+- management projection import/admission for planning records
 - whether planning sessions and task seed groups should live in one module or
   a future `nucleus-planning` crate
 - multi-user merge/review policy for planning artifacts and task seeds

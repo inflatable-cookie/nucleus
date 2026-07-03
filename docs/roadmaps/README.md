@@ -243,7 +243,9 @@ shape.
 - `g03/112-planning-task-seed-persistence-and-projection.md` - completed
 - `g03/113-task-seed-promotion-command.md` - completed
 - `g03/114-planning-management-projection-payloads.md` - completed
-- `g03/115-planning-projection-file-export-capture.md` - active
+- `g03/115-planning-projection-file-export-capture.md` - completed
+- `g03/116-planning-projection-capture-publication-gate.md` - completed
+- `g03/117-planning-projection-import-admission.md` - active
 
 ## Previous Generation
 
@@ -302,12 +304,13 @@ shape.
 
 ## Next Task
 
-Continue `docs/roadmaps/g03/115-planning-projection-file-export-capture.md`
+Continue `docs/roadmaps/g03/117-planning-projection-import-admission.md`
 with
-`docs/roadmaps/g03/batch-cards/489-planning-projection-next-lane-checkpoint.md`.
-Close the planning projection file-export lane and choose the next bounded
-lane: import/admission, capture publication, or planning-session depth.
+`docs/roadmaps/g03/batch-cards/504-planning-projection-import-next-lane-checkpoint.md`.
+Choose the next lane after planning projection import/admission from
+implementation evidence.
 Do not add provider execution, provider writes, credential material storage,
 raw payload retention, agent scheduling, callbacks, interruption/recovery
-execution, SCM/forge mutation, scoring policy, autonomous goal loops, silent
-task creation from seeds, or UI-triggered provider reads.
+execution, real SCM/forge mutation, active planning mutation, semantic merge
+resolution, task promotion, scoring policy, autonomous goal loops, silent task
+creation from seeds, or UI-triggered provider reads.

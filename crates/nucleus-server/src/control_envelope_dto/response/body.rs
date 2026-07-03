@@ -17,13 +17,14 @@ use super::provider_read_intent::ControlProviderReadIntentQueryResultDto;
 use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
-    ControlDiffSummaryRecordDto, ControlPlanningProjectionFileWriteDiagnosticsDto,
-    ControlPlanningTaskSeedCandidateDto, ControlPlanningTaskSeedSourceCountsDto,
-    ControlPlanningTaskSeedStatusCountDto, ControlProjectAuthorityMapDto,
-    ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
-    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
-    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
-    ControlTaskTimelineEntryDto,
+    ControlDiffSummaryRecordDto, ControlPlanningCapturePublicationDiagnosticsDto,
+    ControlPlanningProjectionFileWriteDiagnosticsDto,
+    ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningTaskSeedCandidateDto,
+    ControlPlanningTaskSeedSourceCountsDto, ControlPlanningTaskSeedStatusCountDto,
+    ControlProjectAuthorityMapDto, ControlRuntimeReadinessDiagnosticDto,
+    ControlRuntimeReceiptRecordDto, ControlTaskReadinessCandidateDto,
+    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
+    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
 };
 use crate::control_envelope_dto::{
     ControlApiCodecError, ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -97,6 +98,12 @@ pub enum ControlResponseBodyDto {
     },
     PlanningProjectionFileWriteDiagnostics {
         diagnostics: ControlPlanningProjectionFileWriteDiagnosticsDto,
+    },
+    PlanningProjectionImportDiagnostics {
+        diagnostics: ControlPlanningProjectionImportDiagnosticsDto,
+    },
+    PlanningCapturePublicationDiagnostics {
+        diagnostics: ControlPlanningCapturePublicationDiagnosticsDto,
     },
     ProjectAuthorityMap {
         record: ControlProjectAuthorityMapDto,
@@ -264,6 +271,16 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 ServerQueryResult::PlanningProjectionFileWriteDiagnostics(diagnostics),
             ) => Ok(Self::PlanningProjectionFileWriteDiagnostics {
                 diagnostics: ControlPlanningProjectionFileWriteDiagnosticsDto::from(diagnostics),
+            }),
+            ServerControlResponseBody::Query(
+                ServerQueryResult::PlanningProjectionImportDiagnostics(diagnostics),
+            ) => Ok(Self::PlanningProjectionImportDiagnostics {
+                diagnostics: ControlPlanningProjectionImportDiagnosticsDto::from(diagnostics),
+            }),
+            ServerControlResponseBody::Query(
+                ServerQueryResult::PlanningCapturePublicationDiagnostics(diagnostics),
+            ) => Ok(Self::PlanningCapturePublicationDiagnostics {
+                diagnostics: ControlPlanningCapturePublicationDiagnosticsDto::from(diagnostics),
             }),
             ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)) => {
                 Ok(Self::ProjectAuthorityMap {

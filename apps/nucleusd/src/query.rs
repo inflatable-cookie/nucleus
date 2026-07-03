@@ -4,7 +4,8 @@ use nucleus_local_store::{LocalStoreRecord, SqliteBackend};
 use nucleus_projects::ProjectId;
 use nucleus_server::{
     ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler,
-    PlanningProjectionFileWriteDiagnosticsQuery, PlanningTaskSeedsQuery, ProjectAuthorityDomain,
+    PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
+    PlanningProjectionImportDiagnosticsQuery, PlanningTaskSeedsQuery, ProjectAuthorityDomain,
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
     ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ServerControlRequest,
     ServerControlRequestKind, ServerControlResponseBody, ServerControlResponseStatus, ServerQuery,
@@ -61,6 +62,8 @@ pub(crate) fn print_query(
             | QueryDomain::PlanningTaskSeeds { .. }
             | QueryDomain::TaskSeedPromotionDiagnostics { .. }
             | QueryDomain::PlanningProjectionFileWriteDiagnostics { .. }
+            | QueryDomain::PlanningProjectionImportDiagnostics { .. }
+            | QueryDomain::PlanningCapturePublicationDiagnostics { .. }
             | QueryDomain::ProjectAuthorityMap { .. }
     ) {
         let dto = ControlResponseEnvelopeDto::try_from(&response)
@@ -163,6 +166,20 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
         QueryDomain::PlanningProjectionFileWriteDiagnostics { project_id } => {
             ServerQueryKind::PlanningProjectionFileWriteDiagnostics(
                 PlanningProjectionFileWriteDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
+        }
+        QueryDomain::PlanningProjectionImportDiagnostics { project_id } => {
+            ServerQueryKind::PlanningProjectionImportDiagnostics(
+                PlanningProjectionImportDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
+        }
+        QueryDomain::PlanningCapturePublicationDiagnostics { project_id } => {
+            ServerQueryKind::PlanningCapturePublicationDiagnostics(
+                PlanningCapturePublicationDiagnosticsQuery {
                     project_id: ProjectId(project_id.clone()),
                 },
             )

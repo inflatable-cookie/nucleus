@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-23
+Updated: 2026-07-02
 
 ## Purpose
 
@@ -114,6 +114,62 @@ Importing or reading a task seed projection file must not:
 
 Promotion must remain a later task-domain command.
 
+## Import Admission Boundary
+
+Planning projection import has four distinct stages:
+
+- scan: inspect projected files under supported management paths and classify
+  them as candidates
+- admission: accept reviewed candidates into stopped import records
+- conflict staging: record semantic conflicts that must be reviewed before
+  apply
+- apply: mutate active planning/task authority, intentionally deferred
+
+Projected files are shared management artifacts, not active server authority.
+Import must therefore read files into controlled server records before any
+planning state changes. A clean scan or admission record only proves that a
+file is shaped well enough for review; it does not make the file authoritative.
+
+First supported paths:
+
+- `nucleus/planning/<artifact-id>.toml`
+- `nucleus/planning/task-seeds/<seed-id>.toml`
+
+First candidate states:
+
+- ready
+- blocked unsupported schema
+- blocked unsupported record kind
+- blocked unsafe path
+- blocked parse failure
+- blocked duplicate projection id
+- blocked missing source refs
+- blocked semantic conflict
+
+First admission states:
+
+- admitted stopped import
+- duplicate no-op
+- blocked
+
+No-effect flags must remain explicit for:
+
+- active planning mutation
+- task creation
+- task seed promotion
+- agent scheduling
+- provider execution
+- SCM mutation
+- forge mutation
+- callback, interruption, and recovery execution
+- raw payload retention
+- UI-triggered apply
+
+Semantic conflicts are staged, not resolved. The first conflict set should
+cover artifact title/body conflicts, review-state conflicts, lineage conflicts,
+duplicate task seed ids, task seed promotion-state conflicts, and missing
+source refs.
+
 ## Merge And Review Gaps
 
 Open gaps before implementation:
@@ -139,11 +195,28 @@ review/admission step.
 - TOML encode/decode tests for planning projection records
 - management projection export from Planning domain records
 - read-only planning projection export diagnostics
+- deterministic planning projection file materialization under
+  `nucleus/planning/` and `nucleus/planning/task-seeds/`
+- planning projection file-write diagnostics
+- management-capture preparation from sanitized planning projection file-write
+  evidence
+- planning projection capture publication/share admission and stopped request
+  diagnostics
+- selected planning projection import/admission boundary and blocked authority
+  model
+- read-only planning projection import scan candidates for planning artifacts
+  and task seeds
+- stopped planning projection import admission records from reviewed scan
+  candidates
+- planning projection import semantic conflict staging records for artifact,
+  task seed, and missing-ref conflicts
+- read-only planning projection import diagnostics over candidates,
+  admissions, conflicts, blockers, evidence refs, and no-effect flags
+- server query, control DTO, CLI, and Effigy inspection for planning projection
+  import diagnostics
 
 ## Deferred Work
 
-- planning projection file materialization
-- management-capture preparation for planning projection files
-- management projection import/admission for planning records
+- active apply of admitted planning records
 - multi-user merge policy
 - promotion from reviewed task seed to active task

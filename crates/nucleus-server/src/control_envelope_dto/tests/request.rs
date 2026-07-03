@@ -1,5 +1,6 @@
 use crate::control_api::{
-    DiagnosticsQuery, PlanningTaskSeedsQuery, ProjectAuthorityMapQuery,
+    DiagnosticsQuery, PlanningCapturePublicationDiagnosticsQuery,
+    PlanningProjectionImportDiagnosticsQuery, PlanningTaskSeedsQuery, ProjectAuthorityMapQuery,
     ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery,
     ProviderReadinessOverviewQuery, ServerControlRequest, ServerControlRequestKind, ServerQuery,
     ServerQueryKind, StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery,
@@ -18,7 +19,9 @@ use nucleus_tasks::{
 
 mod commands;
 mod diagnostics;
+mod planning_capture_publication;
 mod planning_projection_file_write;
+mod planning_projection_import;
 mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;

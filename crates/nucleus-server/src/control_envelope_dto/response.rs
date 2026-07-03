@@ -21,8 +21,10 @@ pub use provider_readiness_overview::ControlProviderReadinessOverviewDto;
 pub use records::{
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
     ControlDiagnosticsSnapshotDto, ControlDiffSummaryRecordDto,
+    ControlPlanningCapturePublicationBucketDto, ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticIssueDto,
-    ControlPlanningProjectionFileWriteDiagnosticsDto, ControlPlanningTaskSeedCandidateDto,
+    ControlPlanningProjectionFileWriteDiagnosticsDto, ControlPlanningProjectionImportBucketDto,
+    ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningTaskSeedCandidateDto,
     ControlPlanningTaskSeedSourceCountsDto, ControlPlanningTaskSeedStatusCountDto,
     ControlProjectAuthorityDomainDto, ControlProjectAuthorityIssueDto,
     ControlProjectAuthorityMapDto, ControlRuntimeReadinessBlockerDto,

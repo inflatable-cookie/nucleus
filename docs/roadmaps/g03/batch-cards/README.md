@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-24
+Updated: 2026-07-03
 
 ## Purpose
 
@@ -10,7 +10,7 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `479-planning-management-projection-export-plan.md`
+- `504-planning-projection-import-next-lane-checkpoint.md`
 
 ## Paused Cards
 
@@ -18,12 +18,35 @@ None.
 
 ## Planned Cards
 
-- `480-planning-management-projection-query-diagnostics.md`
-- `481-planning-management-projection-validation.md`
-- `482-planning-management-projection-next-lane-checkpoint.md`
+None.
 
 ## Completed Cards
 
+- `503-planning-projection-import-validation.md`
+- `502-planning-projection-import-cli-effigy.md`
+- `501-planning-projection-import-diagnostics.md`
+- `500-planning-projection-import-conflict-staging.md`
+- `499-planning-projection-import-admission-records.md`
+- `498-planning-projection-import-scan-candidates.md`
+- `497-planning-projection-import-boundary-selection.md`
+- `496-planning-capture-publication-next-lane-checkpoint.md`
+- `495-planning-capture-publication-validation.md`
+- `494-planning-capture-publication-cli-effigy.md`
+- `493-planning-capture-publication-diagnostics.md`
+- `492-planning-capture-publication-stopped-request.md`
+- `491-planning-capture-publication-admission-records.md`
+- `490-planning-capture-publication-boundary-selection.md`
+- `489-planning-projection-next-lane-checkpoint.md`
+- `488-planning-projection-file-export-validation.md`
+- `487-planning-projection-cli-effigy-inspection.md`
+- `486-planning-projection-capture-prep-records.md`
+- `485-planning-projection-file-write-diagnostics.md`
+- `484-planning-projection-file-document-materialization.md`
+- `483-planning-projection-file-write-boundary-selection.md`
+- `482-planning-management-projection-next-lane-checkpoint.md`
+- `481-planning-management-projection-validation.md`
+- `480-planning-management-projection-query-diagnostics.md`
+- `479-planning-management-projection-export-plan.md`
 - `478-planning-management-projection-codec-tests.md`
 - `477-planning-management-projection-file-refs.md`
 - `476-planning-management-projection-record-kinds.md`

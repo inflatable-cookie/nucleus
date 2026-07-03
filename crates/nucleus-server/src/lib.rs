@@ -190,6 +190,8 @@ pub mod provider_live_read_admission;
 pub mod provider_live_read_executor_query;
 pub mod provider_live_read_smoke_evidence_query;
 pub mod provider_live_read_smoke_evidence_replay;
+pub mod provider_planning_capture_publication_admission;
+pub mod provider_planning_capture_publication_stopped_request;
 pub mod provider_records;
 pub mod provider_retention_policy;
 pub mod provider_retry_reconciliation;

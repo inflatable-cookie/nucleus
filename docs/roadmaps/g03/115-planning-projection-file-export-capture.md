@@ -1,8 +1,8 @@
 # 115 Planning Projection File Export Capture
 
-Status: active
+Status: completed
 Owner: Tom
-Updated: 2026-06-24
+Updated: 2026-07-02
 
 ## Purpose
 
@@ -30,7 +30,7 @@ gap is the file export boundary: converting export entries into deterministic
 - [x] Write planning projection TOML documents under scoped `nucleus/` paths.
 - [x] Preserve deterministic output and controlled blocked records.
 - [x] Prepare management-capture evidence without creating commits or shares.
-- [ ] Keep import/admission, merge policy, SCM mutation, forge mutation, task
+- [x] Keep import/admission, merge policy, SCM mutation, forge mutation, task
   promotion, provider execution, and UI out of scope.
 
 ## Execution Plan
@@ -41,14 +41,14 @@ gap is the file export boundary: converting export entries into deterministic
 - [x] Batch 3: add write diagnostics and no-effect evidence.
 - [x] Batch 4: connect planning projection files to management-capture prep
   records without SCM publication.
-- [ ] Batch 5: validate and choose import/admission, capture publication, or
+- [x] Batch 5: validate and choose import/admission, capture publication, or
   planning-session depth as the next lane.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/489-planning-projection-next-lane-checkpoint.md`
+- None.
 
 Planned cards:
 
@@ -56,6 +56,7 @@ None.
 
 Completed cards:
 
+- `batch-cards/489-planning-projection-next-lane-checkpoint.md`
 - `batch-cards/488-planning-projection-file-export-validation.md`
 - `batch-cards/487-planning-projection-cli-effigy-inspection.md`
 - `batch-cards/486-planning-projection-capture-prep-records.md`
@@ -79,3 +80,14 @@ Completed cards:
 - The work requires creating commits, pushing, publishing, or opening forge
   review boundaries.
 - The work requires provider execution, raw payload retention, or UI behavior.
+
+## Next Lane
+
+Selected: `116-planning-projection-capture-publication-gate.md`.
+
+Reason: roadmap `115` proved deterministic file materialization, write
+diagnostics, read-only inspection, and capture-prep evidence for planning
+projection files. The next G03-aligned gap is an explicit publication/share
+gate over those prepared management captures. Import/admission and semantic
+merge review remain deferred because they need planning-specific conflict
+policy before projected files can become active planning authority.

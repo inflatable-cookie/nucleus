@@ -10,6 +10,9 @@ use nucleus_server::{
 
 use super::*;
 
+mod planning_capture_publication;
+mod planning_projection_import;
+
 #[test]
 fn command_evidence_query_decodes_sanitized_records() {
     let temp_dir = tempfile::tempdir().expect("temp dir");

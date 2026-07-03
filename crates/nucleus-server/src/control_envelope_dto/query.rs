@@ -4,9 +4,14 @@ use serde::{Deserialize, Serialize};
 
 mod authority_domains;
 mod planning_projection;
+mod project_authority;
+mod provider;
 mod task_workflow;
 
-use crate::control_api::PlanningProjectionFileWriteDiagnosticsQuery;
+use crate::control_api::{
+    PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
+    PlanningProjectionImportDiagnosticsQuery,
+};
 use crate::control_api::{
     PlanningTaskSeedsQuery, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
     ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
@@ -15,10 +20,19 @@ use crate::control_api::{
 };
 use crate::ids::ServerQueryId;
 use crate::state::ServerStateDomain;
-use authority_domains::{authority_domain_dto, authority_domain_from_dto};
+use authority_domains::authority_domain_dto;
 use nucleus_core::PersistenceRecordId;
-use nucleus_projects::ProjectId;
-use planning_projection::planning_projection_file_write_diagnostics_query_from_action;
+use planning_projection::{
+    planning_capture_publication_diagnostics_query_from_action,
+    planning_projection_file_write_diagnostics_query_from_action,
+    planning_projection_import_diagnostics_query_from_action,
+};
+use project_authority::project_authority_map_query_from_action;
+use provider::{
+    provider_live_read_executor_query_from_action,
+    provider_live_read_smoke_evidence_query_from_action, provider_read_intent_query_from_action,
+    provider_readiness_overview_query_from_action,
+};
 use task_workflow::{
     planning_task_seeds_query_from_action, task_readiness_query_from_action,
     task_seed_promotion_diagnostics_query_from_action, task_timeline_query_from_action,
@@ -84,6 +98,16 @@ pub enum ControlQueryDto {
         project_id: String,
     },
     PlanningProjectionFileWriteDiagnostics {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    PlanningProjectionImportDiagnostics {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    PlanningCapturePublicationDiagnostics {
         query_id: String,
         action: String,
         project_id: String,
@@ -171,6 +195,20 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                 action: "diagnostics".to_owned(),
                 project_id: project_id.0.clone(),
             }),
+            ServerQueryKind::PlanningProjectionImportDiagnostics(
+                PlanningProjectionImportDiagnosticsQuery { project_id },
+            ) => Ok(Self::PlanningProjectionImportDiagnostics {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
+            ServerQueryKind::PlanningCapturePublicationDiagnostics(
+                PlanningCapturePublicationDiagnosticsQuery { project_id },
+            ) => Ok(Self::PlanningCapturePublicationDiagnostics {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
                 project_id,
                 expected_domains,
@@ -246,6 +284,12 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             ControlQueryDto::PlanningProjectionFileWriteDiagnostics {
                 action, project_id, ..
             } => planning_projection_file_write_diagnostics_query_from_action(&action, project_id),
+            ControlQueryDto::PlanningProjectionImportDiagnostics {
+                action, project_id, ..
+            } => planning_projection_import_diagnostics_query_from_action(&action, project_id),
+            ControlQueryDto::PlanningCapturePublicationDiagnostics {
+                action, project_id, ..
+            } => planning_capture_publication_diagnostics_query_from_action(&action, project_id),
             ControlQueryDto::ProjectAuthorityMap {
                 action,
                 project_id,
@@ -271,84 +315,10 @@ impl ControlQueryDto {
             | Self::PlanningTaskSeeds { query_id, .. }
             | Self::TaskSeedPromotionDiagnostics { query_id, .. }
             | Self::PlanningProjectionFileWriteDiagnostics { query_id, .. }
+            | Self::PlanningProjectionImportDiagnostics { query_id, .. }
+            | Self::PlanningCapturePublicationDiagnostics { query_id, .. }
             | Self::ProjectAuthorityMap { query_id, .. } => query_id.clone(),
         }
-    }
-}
-
-fn provider_read_intent_query_from_action(
-    action: &str,
-) -> Result<ServerQueryKind, ControlApiCodecError> {
-    match action {
-        "projection" => Ok(ServerQueryKind::ProviderReadIntent(
-            ProviderReadIntentQuery::Projection,
-        )),
-        _ => Err(ControlApiCodecError::unsupported(format!(
-            "unsupported provider read-intent query action: {action}"
-        ))),
-    }
-}
-
-fn provider_readiness_overview_query_from_action(
-    action: &str,
-) -> Result<ServerQueryKind, ControlApiCodecError> {
-    match action {
-        "overview" => Ok(ServerQueryKind::ProviderReadinessOverview(
-            ProviderReadinessOverviewQuery::Overview,
-        )),
-        _ => Err(ControlApiCodecError::unsupported(format!(
-            "unsupported provider readiness overview query action: {action}"
-        ))),
-    }
-}
-
-fn provider_live_read_executor_query_from_action(
-    action: &str,
-) -> Result<ServerQueryKind, ControlApiCodecError> {
-    match action {
-        "diagnostics" => Ok(ServerQueryKind::ProviderLiveReadExecutor(
-            ProviderLiveReadExecutorQuery::Diagnostics,
-        )),
-        _ => Err(ControlApiCodecError::unsupported(format!(
-            "unsupported provider live-read executor query action: {action}"
-        ))),
-    }
-}
-
-fn provider_live_read_smoke_evidence_query_from_action(
-    action: &str,
-) -> Result<ServerQueryKind, ControlApiCodecError> {
-    match action {
-        "diagnostics" => Ok(ServerQueryKind::ProviderLiveReadSmokeEvidence(
-            ProviderLiveReadSmokeEvidenceQuery::Diagnostics,
-        )),
-        _ => Err(ControlApiCodecError::unsupported(format!(
-            "unsupported provider live-read smoke evidence query action: {action}"
-        ))),
-    }
-}
-
-fn project_authority_map_query_from_action(
-    action: &str,
-    project_id: String,
-    expected_domains: Vec<String>,
-) -> Result<ServerQueryKind, ControlApiCodecError> {
-    match action {
-        "publication" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
-            "project authority-map query requires a project id",
-        )),
-        "publication" => Ok(ServerQueryKind::ProjectAuthorityMap(
-            ProjectAuthorityMapQuery {
-                project_id: ProjectId(project_id),
-                expected_domains: expected_domains
-                    .into_iter()
-                    .map(authority_domain_from_dto)
-                    .collect::<Result<Vec<_>, _>>()?,
-            },
-        )),
-        _ => Err(ControlApiCodecError::unsupported(format!(
-            "unsupported project authority-map query action: {action}"
-        ))),
     }
 }
 

@@ -7,13 +7,11 @@ use nucleus_local_store::LocalStoreRecord;
 use nucleus_local_store::{LocalStoreBackend, LocalStoreError};
 
 use super::handler::LocalControlRequestHandler;
-use crate::checkpoint_diff_state::{read_checkpoint_records, read_diff_summary_records};
 use crate::control_api::{
-    AdapterSessionQuery, DiagnosticsQuery, ModelRouteQuery, RuntimeMetadataQuery,
-    ServerControlError, ServerControlResponse, ServerControlResponseBody,
-    ServerControlResponseStatus, ServerDiagnosticsQueryResult, ServerDiagnosticsSnapshot,
-    ServerQuery, ServerQueryKind, ServerQueryResult, ServerStateRecordSet, StateRecordQuery,
-    StateRecordQueryScope,
+    AdapterSessionQuery, DiagnosticsQuery, ModelRouteQuery, ServerControlError,
+    ServerControlResponse, ServerControlResponseBody, ServerControlResponseStatus,
+    ServerDiagnosticsQueryResult, ServerDiagnosticsSnapshot, ServerQuery, ServerQueryKind,
+    ServerQueryResult, ServerStateRecordSet, StateRecordQuery, StateRecordQueryScope,
 };
 use crate::diagnostics_read_models::{
     codex_callback_diagnostics, codex_callback_response_execution_diagnostics,
@@ -26,11 +24,8 @@ use crate::diagnostics_read_models::{
     scm_session_diagnostics, steward_diagnostics, sync_diagnostics, task_agent_diagnostics,
 };
 use crate::ids::ServerControlRequestId;
-use crate::runtime_readiness_diagnostics::local_host_runtime_readiness_diagnostics;
-use crate::runtime_receipt_state::read_runtime_receipts;
 use crate::state::ServerStateService;
 use crate::state::{ServerStateDomain, ServerStateDomainService};
-use crate::task_agent_work_unit_state::read_task_agent_work_unit_source_records;
 use crate::{
     completion_scm_capture_control_dto,
     completion_scm_capture_diagnostics_from_persisted_admissions,
@@ -52,20 +47,22 @@ use crate::{
     scm_capture_review_readiness, scm_capture_workflow_control_dto,
     scm_capture_workflow_diagnostics, scm_capture_workflow_projection,
     scm_change_request_prep_control_dto,
-    scm_change_request_prep_diagnostics_from_persisted_records,
-    unsupported_local_host_runtime_discovery, CompletionScmReadModelInput, EngineHostId,
+    scm_change_request_prep_diagnostics_from_persisted_records, CompletionScmReadModelInput,
     LiveEvidenceCompletionReadModelInput, ScmCaptureReviewReadinessInput,
     ScmCaptureWorkflowProjectionInput,
 };
 
 mod authority_map;
 mod diagnostics;
+mod planning_capture_publication_diagnostics;
 mod planning_projection_file_write_diagnostics;
+mod planning_projection_import_diagnostics;
 mod planning_task_seeds;
 mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
 mod provider_readiness_overview;
+mod runtime_metadata;
 mod task_readiness;
 mod task_seed_promotion_diagnostics;
 mod task_timeline;
@@ -114,7 +111,9 @@ where
         }
         ServerQueryKind::AdapterSession(query) => adapter_session_query(handler, query),
         ServerQueryKind::ModelRoute(query) => model_route_query(handler, query),
-        ServerQueryKind::RuntimeMetadata(query) => runtime_metadata_query(handler, query),
+        ServerQueryKind::RuntimeMetadata(query) => {
+            runtime_metadata::runtime_metadata_query(handler, query)
+        }
         ServerQueryKind::Diagnostics(query) => diagnostics::diagnostics_query(handler, query),
         ServerQueryKind::ProviderReadIntent(query) => {
             provider_read_intent::provider_read_intent_query(handler, query)
@@ -142,6 +141,12 @@ where
         }
         ServerQueryKind::PlanningProjectionFileWriteDiagnostics(query) => {
             planning_projection_file_write_diagnostics::planning_projection_file_write_diagnostics_query(query)
+        }
+        ServerQueryKind::PlanningProjectionImportDiagnostics(query) => {
+            planning_projection_import_diagnostics::planning_projection_import_diagnostics_query(query)
+        }
+        ServerQueryKind::PlanningCapturePublicationDiagnostics(query) => {
+            planning_capture_publication_diagnostics::planning_capture_publication_diagnostics_query(handler, query)
         }
         ServerQueryKind::ProjectAuthorityMap(query) => {
             authority_map::project_authority_map_query(query)
@@ -227,61 +232,7 @@ where
     }
 }
 
-fn runtime_metadata_query<B>(
-    handler: &LocalControlRequestHandler<B>,
-    query: RuntimeMetadataQuery,
-) -> Result<ServerQueryResult, ServerControlError>
-where
-    B: LocalStoreBackend + Clone,
-{
-    match query {
-        RuntimeMetadataQuery::GetStoredEffect(record_id) => read_state_records(
-            handler.state.runtime_effects(),
-            StateRecordQueryScope::Get(PersistenceRecordId(record_id.0)),
-        )
-        .map(ServerQueryResult::RuntimeMetadata),
-        RuntimeMetadataQuery::ListCommandEvidence => read_state_records(
-            handler.state.command_evidence(),
-            StateRecordQueryScope::List,
-        )
-        .map(ServerQueryResult::RuntimeMetadata),
-        RuntimeMetadataQuery::ListRuntimeReceipts => read_runtime_receipts(handler.state())
-            .map(ServerQueryResult::RuntimeReceipts)
-            .map_err(storage_error),
-        RuntimeMetadataQuery::ListCheckpointRecords => read_checkpoint_records(handler.state())
-            .map(ServerQueryResult::CheckpointRecords)
-            .map_err(storage_error),
-        RuntimeMetadataQuery::ListDiffSummaryRecords => read_diff_summary_records(handler.state())
-            .map(ServerQueryResult::DiffSummaryRecords)
-            .map_err(storage_error),
-        RuntimeMetadataQuery::ListTaskWorkProgress => {
-            let records =
-                read_task_agent_work_unit_source_records(handler.state()).map_err(storage_error)?;
-            Ok(ServerQueryResult::TaskWorkProgress(
-                task_agent_diagnostics(&records).work_units,
-            ))
-        }
-        RuntimeMetadataQuery::ListArtifactMetadata => read_state_records(
-            handler.state.artifact_metadata(),
-            StateRecordQueryScope::List,
-        )
-        .map(ServerQueryResult::RuntimeMetadata),
-        RuntimeMetadataQuery::GetLocalRuntimeReadiness => {
-            let discovery =
-                unsupported_local_host_runtime_discovery(EngineHostId("host:local".to_owned()));
-            Ok(ServerQueryResult::RuntimeReadiness(vec![
-                local_host_runtime_readiness_diagnostics(&discovery),
-            ]))
-        }
-        RuntimeMetadataQuery::StoredEffects(_) | RuntimeMetadataQuery::ResolveRuntimeRef(_) => {
-            Ok(ServerQueryResult::Unsupported {
-                reason: "runtime metadata ref queries are not implemented".to_owned(),
-            })
-        }
-    }
-}
-
-fn read_state_records<B>(
+pub(super) fn read_state_records<B>(
     service: ServerStateDomainService<'_, B>,
     scope: StateRecordQueryScope,
 ) -> Result<ServerStateRecordSet, ServerControlError>
@@ -412,7 +363,7 @@ where
     }
 }
 
-fn storage_error(error: LocalStoreError) -> ServerControlError {
+pub(super) fn storage_error(error: LocalStoreError) -> ServerControlError {
     ServerControlError::StorageUnavailable {
         reason: format!("{error:?}"),
     }
