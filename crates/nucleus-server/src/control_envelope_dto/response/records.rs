@@ -1,6 +1,12 @@
 //! Response record DTOs.
 
 mod accepted_memory;
+mod accepted_memory_projection;
+mod accepted_memory_projection_import;
+mod accepted_memory_projection_import_apply;
+mod accepted_memory_projection_import_blockers;
+mod accepted_memory_projection_writes;
+mod accepted_memory_review;
 mod authority;
 mod diagnostics;
 mod memory_proposal_review;
@@ -23,6 +29,34 @@ pub use accepted_memory::{
     ControlAcceptedMemoryRetentionCountDto, ControlAcceptedMemoryScopeCountDto,
     ControlAcceptedMemorySensitivityCountDto, ControlAcceptedMemorySourceCountsDto,
     ControlAcceptedMemoryStatusCountDto, ControlAcceptedMemorySummaryDto,
+};
+pub use accepted_memory_projection::{
+    ControlAcceptedMemoryProjectionBlockerDto, ControlAcceptedMemoryProjectionCountsDto,
+    ControlAcceptedMemoryProjectionDiagnosticsDto, ControlAcceptedMemoryProjectionEntryDto,
+};
+pub use accepted_memory_projection_import::{
+    ControlAcceptedMemoryProjectionImportAdmissionDto,
+    ControlAcceptedMemoryProjectionImportBlockerDto,
+    ControlAcceptedMemoryProjectionImportCandidateDto,
+    ControlAcceptedMemoryProjectionImportConflictDto,
+    ControlAcceptedMemoryProjectionImportCountsDto,
+    ControlAcceptedMemoryProjectionImportDiagnosticsDto,
+    ControlAcceptedMemoryProjectionImportSummaryDto,
+};
+pub use accepted_memory_projection_import_apply::{
+    ControlAcceptedMemoryProjectionImportApplyBlockerDto,
+    ControlAcceptedMemoryProjectionImportApplyCountsDto,
+    ControlAcceptedMemoryProjectionImportApplyDiagnosticsDto,
+    ControlAcceptedMemoryProjectionImportApplyRecordDto,
+};
+pub use accepted_memory_projection_writes::{
+    ControlAcceptedMemoryProjectionWriteBlockerDto, ControlAcceptedMemoryProjectionWriteCountsDto,
+    ControlAcceptedMemoryProjectionWriteDiagnosticsDto,
+    ControlAcceptedMemoryProjectionWriteEntryDto,
+};
+pub use accepted_memory_review::{
+    ControlAcceptedMemoryReviewReadinessCountsDto, ControlAcceptedMemoryReviewReadinessDto,
+    ControlAcceptedMemoryReviewReadinessRecordDto,
 };
 pub use authority::{
     ControlProjectAuthorityDomainDto, ControlProjectAuthorityIssueDto,

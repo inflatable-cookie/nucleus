@@ -15,11 +15,15 @@ use super::provider::{
     provider_readiness_overview_query_from_action,
 };
 use super::task_workflow::{
-    accepted_memory_query_from_action, memory_proposal_review_diagnostics_query_from_action,
-    memory_proposals_query_from_action, planning_sessions_query_from_action,
-    planning_task_seeds_query_from_action, research_run_briefs_query_from_action,
-    task_readiness_query_from_action, task_seed_promotion_diagnostics_query_from_action,
-    task_timeline_query_from_action,
+    accepted_memory_projection_diagnostics_query_from_action,
+    accepted_memory_projection_import_apply_diagnostics_query_from_action,
+    accepted_memory_projection_import_diagnostics_query_from_action,
+    accepted_memory_projection_write_diagnostics_query_from_action,
+    accepted_memory_query_from_action, accepted_memory_review_readiness_query_from_action,
+    memory_proposal_review_diagnostics_query_from_action, memory_proposals_query_from_action,
+    planning_sessions_query_from_action, planning_task_seeds_query_from_action,
+    research_run_briefs_query_from_action, task_readiness_query_from_action,
+    task_seed_promotion_diagnostics_query_from_action, task_timeline_query_from_action,
 };
 use super::ControlQueryDto;
 use crate::control_envelope_dto::protocol::{
@@ -69,6 +73,33 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             ControlQueryDto::AcceptedMemory {
                 action, project_id, ..
             } => accepted_memory_query_from_action(&action, project_id),
+            ControlQueryDto::AcceptedMemoryProjectionDiagnostics {
+                action, project_id, ..
+            } => accepted_memory_projection_diagnostics_query_from_action(&action, project_id),
+            ControlQueryDto::AcceptedMemoryProjectionWriteDiagnostics {
+                action,
+                project_id,
+                ..
+            } => {
+                accepted_memory_projection_write_diagnostics_query_from_action(&action, project_id)
+            }
+            ControlQueryDto::AcceptedMemoryProjectionImportDiagnostics {
+                action,
+                project_id,
+                ..
+            } => {
+                accepted_memory_projection_import_diagnostics_query_from_action(&action, project_id)
+            }
+            ControlQueryDto::AcceptedMemoryProjectionImportApplyDiagnostics {
+                action,
+                project_id,
+                ..
+            } => accepted_memory_projection_import_apply_diagnostics_query_from_action(
+                &action, project_id,
+            ),
+            ControlQueryDto::AcceptedMemoryReviewReadiness {
+                action, project_id, ..
+            } => accepted_memory_review_readiness_query_from_action(&action, project_id),
             ControlQueryDto::MemoryProposalReviewDiagnostics {
                 action, project_id, ..
             } => memory_proposal_review_diagnostics_query_from_action(&action, project_id),

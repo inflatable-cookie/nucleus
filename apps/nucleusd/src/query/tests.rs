@@ -1,6 +1,18 @@
 use nucleus_local_store::SqliteBackend;
 use nucleus_server::{
-    ControlCommandEvidenceRecordDto, ControlPlanningProjectionFileWriteDiagnosticsDto,
+    ControlAcceptedMemoryProjectionBlockerDto, ControlAcceptedMemoryProjectionCountsDto,
+    ControlAcceptedMemoryProjectionDiagnosticsDto, ControlAcceptedMemoryProjectionEntryDto,
+    ControlAcceptedMemoryProjectionImportAdmissionDto,
+    ControlAcceptedMemoryProjectionImportBlockerDto,
+    ControlAcceptedMemoryProjectionImportCandidateDto,
+    ControlAcceptedMemoryProjectionImportConflictDto,
+    ControlAcceptedMemoryProjectionImportCountsDto,
+    ControlAcceptedMemoryProjectionImportDiagnosticsDto,
+    ControlAcceptedMemoryProjectionImportSummaryDto,
+    ControlAcceptedMemoryProjectionWriteBlockerDto, ControlAcceptedMemoryProjectionWriteCountsDto,
+    ControlAcceptedMemoryProjectionWriteDiagnosticsDto,
+    ControlAcceptedMemoryProjectionWriteEntryDto, ControlCommandEvidenceRecordDto,
+    ControlPlanningProjectionFileWriteDiagnosticsDto,
     ControlProviderLiveReadExecutorDiagnosticsDto,
     ControlProviderLiveReadSmokeEvidenceDiagnosticsDto, ControlProviderReadIntentProjectionDto,
     ControlProviderReadIntentQueryResultDto, ControlProviderReadIntentSourceCountsDto,
@@ -11,6 +23,11 @@ use nucleus_server::{
 use super::*;
 
 mod accepted_memory;
+mod accepted_memory_projection;
+mod accepted_memory_projection_import;
+mod accepted_memory_projection_import_apply;
+mod accepted_memory_projection_writes;
+mod accepted_memory_review;
 mod memory_proposal_review;
 mod memory_proposals;
 mod planning_capture_publication;

@@ -2,9 +2,11 @@ use nucleus_projects::ProjectId;
 use nucleus_tasks::TaskId;
 
 use crate::control_api::{
-    AcceptedMemoryQuery, MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
-    PlanningSessionsQuery, PlanningTaskSeedsQuery, ResearchRunBriefsQuery, ServerQueryKind,
-    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    AcceptedMemoryProjectionDiagnosticsQuery, AcceptedMemoryProjectionImportApplyDiagnosticsQuery,
+    AcceptedMemoryProjectionImportDiagnosticsQuery, AcceptedMemoryProjectionWriteDiagnosticsQuery,
+    AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery, MemoryProposalReviewDiagnosticsQuery,
+    MemoryProposalsQuery, PlanningSessionsQuery, PlanningTaskSeedsQuery, ResearchRunBriefsQuery,
+    ServerQueryKind, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
 };
 
 use super::super::ControlApiCodecError;
@@ -104,6 +106,103 @@ pub(super) fn accepted_memory_query_from_action(
         })),
         _ => Err(ControlApiCodecError::unsupported(format!(
             "unsupported accepted memory query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn accepted_memory_projection_diagnostics_query_from_action(
+    action: &str,
+    project_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "diagnostics" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
+            "accepted memory projection diagnostics query requires a project id",
+        )),
+        "diagnostics" => Ok(ServerQueryKind::AcceptedMemoryProjectionDiagnostics(
+            AcceptedMemoryProjectionDiagnosticsQuery {
+                project_id: ProjectId(project_id),
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported accepted memory projection diagnostics query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn accepted_memory_projection_write_diagnostics_query_from_action(
+    action: &str,
+    project_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "diagnostics" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
+            "accepted memory projection write diagnostics query requires a project id",
+        )),
+        "diagnostics" => Ok(ServerQueryKind::AcceptedMemoryProjectionWriteDiagnostics(
+            AcceptedMemoryProjectionWriteDiagnosticsQuery {
+                project_id: ProjectId(project_id),
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported accepted memory projection write diagnostics query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn accepted_memory_projection_import_diagnostics_query_from_action(
+    action: &str,
+    project_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "diagnostics" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
+            "accepted memory projection import diagnostics query requires a project id",
+        )),
+        "diagnostics" => Ok(ServerQueryKind::AcceptedMemoryProjectionImportDiagnostics(
+            AcceptedMemoryProjectionImportDiagnosticsQuery {
+                project_id: ProjectId(project_id),
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported accepted memory projection import diagnostics query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn accepted_memory_projection_import_apply_diagnostics_query_from_action(
+    action: &str,
+    project_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "diagnostics" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
+            "accepted memory projection import apply diagnostics query requires a project id",
+        )),
+        "diagnostics" => Ok(
+            ServerQueryKind::AcceptedMemoryProjectionImportApplyDiagnostics(
+                AcceptedMemoryProjectionImportApplyDiagnosticsQuery {
+                    project_id: ProjectId(project_id),
+                },
+            ),
+        ),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported accepted memory projection import apply diagnostics query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn accepted_memory_review_readiness_query_from_action(
+    action: &str,
+    project_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "diagnostics" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
+            "accepted memory review readiness query requires a project id",
+        )),
+        "diagnostics" => Ok(ServerQueryKind::AcceptedMemoryReviewReadiness(
+            AcceptedMemoryReviewReadinessQuery {
+                project_id: ProjectId(project_id),
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported accepted memory review readiness query action: {action}"
         ))),
     }
 }

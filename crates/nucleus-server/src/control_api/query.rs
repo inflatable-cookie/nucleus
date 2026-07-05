@@ -11,8 +11,11 @@ use crate::runtime_effect_storage::{
 use crate::state::ServerStateDomain;
 
 use super::{
-    AcceptedMemoryQuery, MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
-    PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
+    AcceptedMemoryProjectionDiagnosticsQuery, AcceptedMemoryProjectionImportApplyDiagnosticsQuery,
+    AcceptedMemoryProjectionImportDiagnosticsQuery, AcceptedMemoryProjectionWriteDiagnosticsQuery,
+    AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery, MemoryProposalReviewDiagnosticsQuery,
+    MemoryProposalsQuery, PlanningCapturePublicationDiagnosticsQuery,
+    PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ResearchRunBriefsQuery,
@@ -38,6 +41,13 @@ pub enum ServerQueryKind {
     PlanningTaskSeeds(PlanningTaskSeedsQuery),
     PlanningSessions(PlanningSessionsQuery),
     AcceptedMemory(AcceptedMemoryQuery),
+    AcceptedMemoryProjectionDiagnostics(AcceptedMemoryProjectionDiagnosticsQuery),
+    AcceptedMemoryProjectionWriteDiagnostics(AcceptedMemoryProjectionWriteDiagnosticsQuery),
+    AcceptedMemoryProjectionImportDiagnostics(AcceptedMemoryProjectionImportDiagnosticsQuery),
+    AcceptedMemoryProjectionImportApplyDiagnostics(
+        AcceptedMemoryProjectionImportApplyDiagnosticsQuery,
+    ),
+    AcceptedMemoryReviewReadiness(AcceptedMemoryReviewReadinessQuery),
     MemoryProposals(MemoryProposalsQuery),
     MemoryProposalReviewDiagnostics(MemoryProposalReviewDiagnosticsQuery),
     ResearchRunBriefs(ResearchRunBriefsQuery),

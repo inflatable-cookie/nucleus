@@ -94,6 +94,9 @@ Current runway bands:
 - accepted memory projection policy before memory projection file writes,
   embeddings, semantic search, provider-native memory sync, automatic
   extraction, SCM/forge mutation, or final memory UI
+- accepted memory review and product consumption readiness before active
+  accepted-memory apply, SCM share, embeddings/search, provider-native memory
+  sync, automatic extraction, task mutation, or final memory UI
 
 Current checkpoint:
 
@@ -476,13 +479,18 @@ Reason:
 - `126-minimum-planning-import-apply-proof.md` - completed
 - `127-accepted-memory-authority-proof.md` - completed
 - `128-accepted-memory-read-only-inspection.md` - completed
-- `129-accepted-memory-projection-policy-gate.md` - ready
+- `129-accepted-memory-projection-policy-gate.md` - completed
+- `130-accepted-memory-projection-file-materialization.md` - completed
+- `131-accepted-memory-projection-import-validation.md` - completed
+- `132-accepted-memory-import-apply-admission.md` - completed
+- `133-accepted-memory-review-product-consumption-readiness.md` - completed
+- `134-accepted-memory-import-apply-review-commands.md` - ready
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/565-accepted-memory-projection-policy-model.md`
+- `batch-cards/587-accepted-memory-import-apply-review-command-boundary.md`
 
 Paused cards:
 
@@ -492,13 +500,34 @@ Paused cards:
 
 Planned cards:
 
-- `batch-cards/566-accepted-memory-stopped-export-plan.md`
-- `batch-cards/567-accepted-memory-projection-diagnostics-query.md`
-- `batch-cards/568-accepted-memory-projection-dto-cli-effigy.md`
-- `batch-cards/569-accepted-memory-projection-validation-next-lane.md`
+- `batch-cards/588-accepted-memory-import-apply-review-command-model.md`
+- `batch-cards/589-accepted-memory-import-apply-review-diagnostics-control.md`
+- `batch-cards/590-accepted-memory-import-apply-review-validation-next-lane.md`
 
 Completed cards:
 
+- `batch-cards/586-accepted-memory-review-product-consumption-validation.md`
+- `batch-cards/585-accepted-memory-review-control-diagnostics.md`
+- `batch-cards/584-accepted-memory-review-read-model-shape.md`
+- `batch-cards/583-accepted-memory-review-consumption-boundary.md`
+- `batch-cards/582-accepted-memory-import-apply-validation-next-lane.md`
+- `batch-cards/581-accepted-memory-import-apply-diagnostics-control.md`
+- `batch-cards/580-accepted-memory-import-apply-admission-records.md`
+- `batch-cards/579-accepted-memory-import-apply-policy.md`
+- `batch-cards/578-accepted-memory-import-validation-next-lane.md`
+- `batch-cards/577-accepted-memory-import-diagnostics-control.md`
+- `batch-cards/576-accepted-memory-import-conflict-staging.md`
+- `batch-cards/575-accepted-memory-import-candidates-and-admission.md`
+- `batch-cards/574-accepted-memory-projection-validation-next-lane.md`
+- `batch-cards/573-accepted-memory-projection-write-diagnostics-control.md`
+- `batch-cards/572-accepted-memory-projection-file-materialization.md`
+- `batch-cards/571-accepted-memory-projection-payload-codec.md`
+- `batch-cards/570-accepted-memory-projection-write-admission.md`
+- `batch-cards/569-accepted-memory-projection-validation-next-lane.md`
+- `batch-cards/568-accepted-memory-projection-dto-cli-effigy.md`
+- `batch-cards/567-accepted-memory-projection-diagnostics-query.md`
+- `batch-cards/566-accepted-memory-stopped-export-plan.md`
+- `batch-cards/565-accepted-memory-projection-policy-model.md`
 - `batch-cards/564-accepted-memory-read-inspection-validation.md`
 - `batch-cards/563-accepted-memory-dto-cli-effigy-inspection.md`
 - `batch-cards/562-accepted-memory-query-control.md`
@@ -1256,3 +1285,51 @@ Current stop:
   planning mutation, semantic merge resolution, task promotion without review,
   accepted memory mutation, research execution, and credential material storage
   remain blocked
+- accepted-memory projection policy is complete through eligibility,
+  deterministic stopped refs, read-only diagnostics, control DTOs, `nucleusd`,
+  and Effigy inspection without writing files or exposing raw memory bodies
+- the next selected lane is accepted-memory projection file materialization,
+  beginning with write admission and payload codec before any scoped
+  `nucleus/memory/` file write; SCM/forge mutation, import/apply,
+  embeddings/search/provider sync, automatic extraction, task mutation, and
+  final UI remain blocked
+- accepted-memory projection file materialization is complete through write
+  admission, sanitized TOML payload codec, and a scoped `nucleus/memory/`
+  materializer; query/control/CLI diagnostics are next
+- accepted-memory projection file materialization is now complete through
+  query/control/CLI/Effigy diagnostics; the next selected lane is read-only
+  import validation for projected `nucleus/memory/*.toml` files before active
+  apply or SCM share
+- accepted-memory projection import validation is complete through candidate
+  scan, validation, admission classes, conflict staging, and read-only
+  diagnostics without active memory mutation
+- the next selected lane is stopped accepted-memory import apply/admission:
+  operator-reviewed apply authority over validated projected memory imports
+  before any accepted-memory mutation, SCM share, search, provider sync,
+  automatic extraction, task mutation, or final UI
+- stopped accepted-memory import apply policy is complete. Eligible records,
+  required refs, blocked states, duplicate no-op handling, and deferred effects
+  are defined for the model card without granting active memory mutation.
+- stopped accepted-memory import apply/admission records are implemented as a
+  server model over conflict-stage records. They require operator approval,
+  preserve candidate/file/conflict/provenance/evidence refs, classify duplicate
+  no-op, block conflicts/missing refs/raw payload/effect widening, and keep all
+  no-effect flags false.
+- stopped accepted-memory import apply/admission diagnostics are exposed through
+  server query/control DTO, `nucleusd`, and Effigy. The bootstrap smoke reports
+  no apply records in current state and all active-memory/projection/SCM/search/
+  provider/extraction/task/agent/UI effect flags false.
+- stopped accepted-memory import apply/admission is validated and closed. The
+  next selected lane is accepted-memory review and product-consumption
+  readiness: compose existing accepted-memory, proposal review, projection,
+  import validation, and stopped apply/admission surfaces into a read-only
+  readiness view before active apply, SCM sharing, search, provider sync,
+  automatic extraction, task mutation, or final UI.
+- accepted-memory review readiness now has a read-only server projection,
+  control-envelope DTO, `nucleusd` query, and Effigy selector. The bootstrap
+  smoke reports zero records and all active-memory/projection/SCM/search/
+  provider/extraction/task/agent/UI effect flags false.
+- accepted-memory review/product-consumption readiness is complete. The next
+  selected lane is accepted-memory import-apply review commands: create
+  explicit approved/deferred/rejected review receipts before any active
+  accepted-memory mutation executor.

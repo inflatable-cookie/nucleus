@@ -1,4 +1,6 @@
 use crate::control_api::{
+    AcceptedMemoryProjectionDiagnosticsQuery, AcceptedMemoryProjectionImportApplyDiagnosticsQuery,
+    AcceptedMemoryProjectionImportDiagnosticsQuery, AcceptedMemoryProjectionWriteDiagnosticsQuery,
     AcceptedMemoryQuery, DiagnosticsQuery, MemoryProposalReviewDiagnosticsQuery,
     MemoryProposalsQuery, PlanningCapturePublicationDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
@@ -21,6 +23,10 @@ use nucleus_tasks::{
 };
 
 mod accepted_memory;
+mod accepted_memory_projection;
+mod accepted_memory_projection_import;
+mod accepted_memory_projection_import_apply;
+mod accepted_memory_projection_writes;
 mod commands;
 mod diagnostics;
 mod memory_proposal_review;

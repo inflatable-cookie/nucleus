@@ -6,6 +6,44 @@
 pub mod accepted_memory_persistence;
 pub mod accepted_memory_projection;
 mod accepted_memory_projection_counts;
+pub mod accepted_memory_projection_diagnostics;
+pub mod accepted_memory_projection_export_plan;
+#[cfg(test)]
+mod accepted_memory_projection_export_plan_tests;
+pub mod accepted_memory_projection_file_materialization;
+#[cfg(test)]
+mod accepted_memory_projection_file_materialization_tests;
+pub mod accepted_memory_projection_import_admission;
+#[cfg(test)]
+mod accepted_memory_projection_import_admission_tests;
+pub mod accepted_memory_projection_import_apply_admission;
+#[cfg(test)]
+mod accepted_memory_projection_import_apply_admission_tests;
+pub mod accepted_memory_projection_import_apply_diagnostics;
+#[cfg(test)]
+mod accepted_memory_projection_import_apply_diagnostics_tests;
+pub mod accepted_memory_projection_import_conflicts;
+#[cfg(test)]
+mod accepted_memory_projection_import_conflicts_tests;
+pub mod accepted_memory_projection_import_diagnostics;
+mod accepted_memory_projection_import_duplicates;
+pub mod accepted_memory_projection_import_records;
+mod accepted_memory_projection_import_validation;
+pub mod accepted_memory_projection_payload;
+#[cfg(test)]
+mod accepted_memory_projection_payload_tests;
+pub mod accepted_memory_projection_policy;
+#[cfg(test)]
+mod accepted_memory_projection_policy_tests;
+#[cfg(test)]
+mod accepted_memory_projection_test_fixtures;
+pub mod accepted_memory_projection_write_admission;
+#[cfg(test)]
+mod accepted_memory_projection_write_admission_tests;
+pub mod accepted_memory_projection_write_diagnostics;
+pub mod accepted_memory_review_readiness;
+#[cfg(test)]
+mod accepted_memory_review_readiness_tests;
 pub mod artifact_store_backend;
 pub mod authority;
 pub mod checkpoint_diff_state;

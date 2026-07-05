@@ -12,7 +12,11 @@ use super::provider_read_intent::ControlProviderReadIntentQueryResultDto;
 use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
     ControlAcceptedMemoryConfidenceCountDto, ControlAcceptedMemoryKindCountDto,
-    ControlAcceptedMemoryRetentionCountDto, ControlAcceptedMemoryScopeCountDto,
+    ControlAcceptedMemoryProjectionDiagnosticsDto,
+    ControlAcceptedMemoryProjectionImportApplyDiagnosticsDto,
+    ControlAcceptedMemoryProjectionImportDiagnosticsDto,
+    ControlAcceptedMemoryProjectionWriteDiagnosticsDto, ControlAcceptedMemoryRetentionCountDto,
+    ControlAcceptedMemoryReviewReadinessDto, ControlAcceptedMemoryScopeCountDto,
     ControlAcceptedMemorySensitivityCountDto, ControlAcceptedMemorySourceCountsDto,
     ControlAcceptedMemoryStatusCountDto, ControlAcceptedMemorySummaryDto,
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
@@ -136,6 +140,21 @@ pub enum ControlResponseBodyDto {
         projection_written: bool,
         embedding_available: bool,
         provider_sync_available: bool,
+    },
+    AcceptedMemoryProjectionDiagnostics {
+        diagnostics: ControlAcceptedMemoryProjectionDiagnosticsDto,
+    },
+    AcceptedMemoryProjectionWriteDiagnostics {
+        diagnostics: ControlAcceptedMemoryProjectionWriteDiagnosticsDto,
+    },
+    AcceptedMemoryProjectionImportDiagnostics {
+        diagnostics: ControlAcceptedMemoryProjectionImportDiagnosticsDto,
+    },
+    AcceptedMemoryProjectionImportApplyDiagnostics {
+        diagnostics: ControlAcceptedMemoryProjectionImportApplyDiagnosticsDto,
+    },
+    AcceptedMemoryReviewReadiness {
+        readiness: ControlAcceptedMemoryReviewReadinessDto,
     },
     MemoryProposalReviewDiagnostics {
         diagnostics: ControlMemoryProposalReviewDiagnosticsDto,

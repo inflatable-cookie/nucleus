@@ -12,8 +12,11 @@ mod state;
 mod task_workflow;
 
 use crate::control_api::{
-    AcceptedMemoryQuery, MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
-    PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
+    AcceptedMemoryProjectionDiagnosticsQuery, AcceptedMemoryProjectionImportApplyDiagnosticsQuery,
+    AcceptedMemoryProjectionImportDiagnosticsQuery, AcceptedMemoryProjectionWriteDiagnosticsQuery,
+    AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery, MemoryProposalReviewDiagnosticsQuery,
+    MemoryProposalsQuery, PlanningCapturePublicationDiagnosticsQuery,
+    PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
     PlanningSessionsQuery, ResearchRunBriefsQuery,
@@ -90,6 +93,31 @@ pub enum ControlQueryDto {
         project_id: String,
     },
     AcceptedMemory {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    AcceptedMemoryProjectionDiagnostics {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    AcceptedMemoryProjectionWriteDiagnostics {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    AcceptedMemoryProjectionImportDiagnostics {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    AcceptedMemoryProjectionImportApplyDiagnostics {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    AcceptedMemoryReviewReadiness {
         query_id: String,
         action: String,
         project_id: String,
@@ -224,6 +252,41 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                     project_id: project_id.0.clone(),
                 })
             }
+            ServerQueryKind::AcceptedMemoryProjectionDiagnostics(
+                AcceptedMemoryProjectionDiagnosticsQuery { project_id },
+            ) => Ok(Self::AcceptedMemoryProjectionDiagnostics {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
+            ServerQueryKind::AcceptedMemoryProjectionWriteDiagnostics(
+                AcceptedMemoryProjectionWriteDiagnosticsQuery { project_id },
+            ) => Ok(Self::AcceptedMemoryProjectionWriteDiagnostics {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
+            ServerQueryKind::AcceptedMemoryProjectionImportDiagnostics(
+                AcceptedMemoryProjectionImportDiagnosticsQuery { project_id },
+            ) => Ok(Self::AcceptedMemoryProjectionImportDiagnostics {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
+            ServerQueryKind::AcceptedMemoryProjectionImportApplyDiagnostics(
+                AcceptedMemoryProjectionImportApplyDiagnosticsQuery { project_id },
+            ) => Ok(Self::AcceptedMemoryProjectionImportApplyDiagnostics {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
+            ServerQueryKind::AcceptedMemoryReviewReadiness(
+                AcceptedMemoryReviewReadinessQuery { project_id },
+            ) => Ok(Self::AcceptedMemoryReviewReadiness {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
             ServerQueryKind::MemoryProposalReviewDiagnostics(
                 MemoryProposalReviewDiagnosticsQuery { project_id },
             ) => Ok(Self::MemoryProposalReviewDiagnostics {

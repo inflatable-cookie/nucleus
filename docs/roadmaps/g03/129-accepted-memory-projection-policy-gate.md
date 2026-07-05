@@ -1,6 +1,6 @@
 # 129 Accepted Memory Projection Policy Gate
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-07-05
 
@@ -29,41 +29,102 @@ mutate tasks, call SCM/forge providers, or add final UI behavior.
 
 ## Goals
 
-- [ ] Add a server-owned projection eligibility model for accepted memory.
-- [ ] Classify accepted records into projectable, local-only, blocked, and
+- [x] Add a server-owned projection eligibility model for accepted memory.
+- [x] Classify accepted records into projectable, local-only, blocked, and
   review-required buckets.
-- [ ] Produce deterministic stopped export-plan refs for eligible records
+- [x] Produce deterministic stopped export-plan refs for eligible records
   without writing files.
-- [ ] Expose read-only diagnostics through server query, control DTO,
+- [x] Expose read-only diagnostics through server query.
+- [x] Expose read-only diagnostics through control DTO,
   `nucleusd`, and Effigy.
-- [ ] Keep real projection writes, import/apply, SCM/forge mutation,
+- [x] Keep real projection writes, import/apply, SCM/forge mutation,
   embeddings, search, provider sync, automatic extraction, task mutation, and
   final UI out of scope.
 
 ## Execution Plan
 
-- [ ] Batch 1: projection policy and eligibility model.
-- [ ] Batch 2: stopped export-plan refs and path policy.
-- [ ] Batch 3: server query and diagnostics projection.
-- [ ] Batch 4: serialized DTO, `nucleusd`, and Effigy inspection.
-- [ ] Batch 5: validation and next-lane selection.
+- [x] Batch 1: projection policy and eligibility model.
+- [x] Batch 2: stopped export-plan refs and path policy.
+- [x] Batch 3: server query and diagnostics projection.
+- [x] Batch 4: serialized DTO, `nucleusd`, and Effigy inspection.
+- [x] Batch 5: validation and next-lane selection.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/565-accepted-memory-projection-policy-model.md`
+- None
 
 Planned cards:
 
-- `batch-cards/566-accepted-memory-stopped-export-plan.md`
-- `batch-cards/567-accepted-memory-projection-diagnostics-query.md`
-- `batch-cards/568-accepted-memory-projection-dto-cli-effigy.md`
-- `batch-cards/569-accepted-memory-projection-validation-next-lane.md`
+- None
 
 Completed cards:
 
-- None.
+- `batch-cards/569-accepted-memory-projection-validation-next-lane.md`
+- `batch-cards/568-accepted-memory-projection-dto-cli-effigy.md`
+- `batch-cards/567-accepted-memory-projection-diagnostics-query.md`
+- `batch-cards/566-accepted-memory-stopped-export-plan.md`
+- `batch-cards/565-accepted-memory-projection-policy-model.md`
+
+## Policy Result
+
+Accepted-memory projection policy now classifies accepted-memory storage
+records as projectable, local-only, review-required, or blocked before any
+projection path is materialized.
+
+The policy remains server-local and no-effect. It blocks or defers records for
+sensitivity, retention, lifecycle status, supersession, missing review
+evidence, missing project scope, out-of-scope project refs, and unsafe memory
+ids.
+
+## Export Plan Result
+
+Accepted-memory projection now has stopped export-plan records. Projectable
+accepted memories produce deterministic plan refs and file refs under
+`nucleus/memory/<memory-id>.toml`.
+
+Blocked records preserve sanitized policy and export blockers for policy
+denial, unsupported schema, unsupported memory kind, and unsafe path refs. The
+plan records explicitly report that no projection file write or SCM effect has
+run.
+
+## Query Result
+
+Accepted-memory projection readiness now has a read-only server query result.
+It reads shared-memory state, decodes accepted-memory records, skips proposal
+and decode-failed records, suppresses out-of-scope accepted ids, and reports
+projectable, local-only, blocked, review-required, and skipped counts.
+
+The server query keeps DTO/CLI/Effigy exposure, projection file writes,
+import/apply, SCM/forge effects, embeddings, search, provider sync, task
+mutation, and UI behavior out of scope.
+
+## DTO CLI Effigy Result
+
+Accepted-memory projection readiness now crosses the transport and operator
+inspection boundary. The control envelope has request/response DTOs for the
+diagnostics query, `nucleusd` exposes `query accepted-memory-projection
+--project <project-id>`, and Effigy exposes
+`server:query:accepted-memory-projection`.
+
+The rendered output includes counts, plan refs, path refs, blocker reasons,
+and no-effect flags. It does not expose raw memory bodies, provider payloads,
+terminal streams, projection writes, SCM effects, import/apply effects,
+embeddings, semantic search, provider sync, task mutation, or UI behavior.
+
+## Validation And Next Lane Result
+
+Validation passed for focused accepted-memory projection tests, server
+control-envelope tests, `nucleusd` rendering tests, relevant cargo checks,
+docs QA, Northstar QA, diff check, and doctor. Doctor remains warning-only for
+existing god-file findings.
+
+The next lane is `130-accepted-memory-projection-file-materialization.md`.
+That lane may add scoped projection file writes only after explicit write
+admission and a deterministic sanitized payload codec. SCM/forge mutation,
+import/apply, embeddings, semantic search, provider-native sync, automatic
+extraction, task mutation, and final UI remain out of scope.
 
 ## Lane Decision
 
@@ -89,9 +150,9 @@ review state, supersession, path safety, and export intent.
 
 ## Acceptance Criteria
 
-- [ ] Projection eligibility is explicit and testable.
-- [ ] Sensitive, local-only, restricted, stale, superseded, and unreviewed
+- [x] Projection eligibility is explicit and testable.
+- [x] Sensitive, local-only, restricted, stale, superseded, and unreviewed
   records are blocked or review-required before projection.
-- [ ] Export-plan refs are deterministic and path-safe without writing files.
-- [ ] Diagnostics expose counts, blocker reasons, refs, and no-effect flags.
-- [ ] The next lane is selected from validation evidence.
+- [x] Export-plan refs are deterministic and path-safe without writing files.
+- [x] Diagnostics expose counts, blocker reasons, refs, and no-effect flags.
+- [x] The next lane is selected from validation evidence.

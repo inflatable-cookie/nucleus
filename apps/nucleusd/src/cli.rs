@@ -77,6 +77,13 @@ pub(crate) fn print_help() {
     println!("  nucleusd [--state <path>] query planning-task-seeds --project <project-id>");
     println!("  nucleusd [--state <path>] query planning-sessions --project <project-id>");
     println!("  nucleusd [--state <path>] query accepted-memory --project <project-id>");
+    println!("  nucleusd [--state <path>] query accepted-memory-projection --project <project-id>");
+    println!("  nucleusd [--state <path>] query accepted-memory-projection-writes --project <project-id>");
+    println!("  nucleusd [--state <path>] query accepted-memory-projection-import --project <project-id>");
+    println!("  nucleusd [--state <path>] query accepted-memory-projection-import-apply --project <project-id>");
+    println!(
+        "  nucleusd [--state <path>] query accepted-memory-review-readiness --project <project-id>"
+    );
     println!("  nucleusd [--state <path>] query memory-proposals --project <project-id>");
     println!(
         "  nucleusd [--state <path>] query memory-proposal-review-diagnostics --project <project-id>"

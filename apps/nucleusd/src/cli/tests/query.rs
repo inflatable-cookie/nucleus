@@ -169,6 +169,132 @@ fn cli_config_parses_accepted_memory_query_domain() {
 }
 
 #[test]
+fn cli_config_parses_accepted_memory_projection_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "accepted-memory-projection".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+    ])
+    .expect("parse accepted memory projection query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::AcceptedMemoryProjection {
+            project_id: "project:nucleus-local".to_owned()
+        })
+    );
+}
+
+#[test]
+fn cli_config_parses_accepted_memory_projection_writes_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "accepted-memory-projection-writes".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+    ])
+    .expect("parse accepted memory projection writes query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::AcceptedMemoryProjectionWrites {
+            project_id: "project:nucleus-local".to_owned()
+        })
+    );
+}
+
+#[test]
+fn cli_config_parses_accepted_memory_projection_import_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "accepted-memory-projection-import".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+    ])
+    .expect("parse accepted memory projection import query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::AcceptedMemoryProjectionImport {
+            project_id: "project:nucleus-local".to_owned()
+        })
+    );
+}
+
+#[test]
+fn cli_config_parses_accepted_memory_import_alias_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "accepted-memory-import".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+    ])
+    .expect("parse accepted memory import query alias");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::AcceptedMemoryProjectionImport {
+            project_id: "project:nucleus-local".to_owned()
+        })
+    );
+}
+
+#[test]
+fn cli_config_parses_accepted_memory_projection_import_apply_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "accepted-memory-projection-import-apply".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+    ])
+    .expect("parse accepted memory projection import apply query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::AcceptedMemoryProjectionImportApply {
+            project_id: "project:nucleus-local".to_owned()
+        })
+    );
+}
+
+#[test]
+fn cli_config_parses_accepted_memory_import_apply_alias_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "accepted-memory-import-apply".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+    ])
+    .expect("parse accepted memory import apply query alias");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::AcceptedMemoryProjectionImportApply {
+            project_id: "project:nucleus-local".to_owned()
+        })
+    );
+}
+
+#[test]
+fn cli_config_parses_accepted_memory_review_readiness_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "accepted-memory-review-readiness".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+    ])
+    .expect("parse accepted memory review readiness query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::AcceptedMemoryReviewReadiness {
+            project_id: "project:nucleus-local".to_owned()
+        })
+    );
+}
+
+#[test]
 fn cli_config_parses_memory_proposal_review_diagnostics_query_domain() {
     let config = CliConfig::parse(vec![
         "query".to_owned(),

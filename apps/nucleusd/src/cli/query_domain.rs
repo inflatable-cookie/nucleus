@@ -15,6 +15,11 @@ pub(crate) enum QueryDomain {
     PlanningTaskSeeds { project_id: String },
     PlanningSessions { project_id: String },
     AcceptedMemory { project_id: String },
+    AcceptedMemoryProjection { project_id: String },
+    AcceptedMemoryProjectionWrites { project_id: String },
+    AcceptedMemoryProjectionImport { project_id: String },
+    AcceptedMemoryProjectionImportApply { project_id: String },
+    AcceptedMemoryReviewReadiness { project_id: String },
     MemoryProposals { project_id: String },
     MemoryProposalReviewDiagnostics { project_id: String },
     ResearchRunBriefs { project_id: String },
@@ -78,6 +83,50 @@ impl QueryDomain {
                 Ok(Self::AcceptedMemory {
                     project_id: iter.next().ok_or_else(|| {
                         "accepted-memory requires --project <project-id>".to_owned()
+                    })?,
+                })
+            }
+            "accepted-memory-projection" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::AcceptedMemoryProjection {
+                    project_id: iter.next().ok_or_else(|| {
+                        "accepted-memory-projection requires --project <project-id>".to_owned()
+                    })?,
+                })
+            }
+            "accepted-memory-projection-writes" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::AcceptedMemoryProjectionWrites {
+                    project_id: iter.next().ok_or_else(|| {
+                        "accepted-memory-projection-writes requires --project <project-id>"
+                            .to_owned()
+                    })?,
+                })
+            }
+            "accepted-memory-import" | "accepted-memory-projection-import" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::AcceptedMemoryProjectionImport {
+                    project_id: iter.next().ok_or_else(|| {
+                        "accepted-memory-projection-import requires --project <project-id>"
+                            .to_owned()
+                    })?,
+                })
+            }
+            "accepted-memory-import-apply" | "accepted-memory-projection-import-apply" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::AcceptedMemoryProjectionImportApply {
+                    project_id: iter.next().ok_or_else(|| {
+                        "accepted-memory-projection-import-apply requires --project <project-id>"
+                            .to_owned()
+                    })?,
+                })
+            }
+            "accepted-memory-review" | "accepted-memory-review-readiness" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::AcceptedMemoryReviewReadiness {
+                    project_id: iter.next().ok_or_else(|| {
+                        "accepted-memory-review-readiness requires --project <project-id>"
+                            .to_owned()
                     })?,
                 })
             }
@@ -186,6 +235,13 @@ impl QueryDomain {
             Self::PlanningTaskSeeds { .. } => "planning-task-seeds",
             Self::PlanningSessions { .. } => "planning-sessions",
             Self::AcceptedMemory { .. } => "accepted-memory",
+            Self::AcceptedMemoryProjection { .. } => "accepted-memory-projection",
+            Self::AcceptedMemoryProjectionWrites { .. } => "accepted-memory-projection-writes",
+            Self::AcceptedMemoryProjectionImport { .. } => "accepted-memory-projection-import",
+            Self::AcceptedMemoryProjectionImportApply { .. } => {
+                "accepted-memory-projection-import-apply"
+            }
+            Self::AcceptedMemoryReviewReadiness { .. } => "accepted-memory-review-readiness",
             Self::MemoryProposals { .. } => "memory-proposals",
             Self::MemoryProposalReviewDiagnostics { .. } => "memory-proposal-review-diagnostics",
             Self::ResearchRunBriefs { .. } => "research-run-briefs",
@@ -224,6 +280,11 @@ impl QueryDomain {
             | Self::PlanningTaskSeeds { .. }
             | Self::PlanningSessions { .. }
             | Self::AcceptedMemory { .. }
+            | Self::AcceptedMemoryProjection { .. }
+            | Self::AcceptedMemoryProjectionWrites { .. }
+            | Self::AcceptedMemoryProjectionImport { .. }
+            | Self::AcceptedMemoryProjectionImportApply { .. }
+            | Self::AcceptedMemoryReviewReadiness { .. }
             | Self::MemoryProposals { .. }
             | Self::MemoryProposalReviewDiagnostics { .. }
             | Self::ResearchRunBriefs { .. }

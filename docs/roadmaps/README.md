@@ -257,7 +257,12 @@ shape.
 - `g03/126-minimum-planning-import-apply-proof.md` - completed
 - `g03/127-accepted-memory-authority-proof.md` - completed
 - `g03/128-accepted-memory-read-only-inspection.md` - completed
-- `g03/129-accepted-memory-projection-policy-gate.md` - ready
+- `g03/129-accepted-memory-projection-policy-gate.md` - completed
+- `g03/130-accepted-memory-projection-file-materialization.md` - completed
+- `g03/131-accepted-memory-projection-import-validation.md` - completed
+- `g03/132-accepted-memory-import-apply-admission.md` - completed
+- `g03/133-accepted-memory-review-product-consumption-readiness.md` - completed
+- `g03/134-accepted-memory-import-apply-review-commands.md` - ready
 
 ## Previous Generation
 
@@ -316,22 +321,12 @@ shape.
 
 ## Next Task
 
-Continue `docs/roadmaps/g03/129-accepted-memory-projection-policy-gate.md`
+Continue
+`docs/roadmaps/g03/134-accepted-memory-import-apply-review-commands.md`
 with
-`docs/roadmaps/g03/batch-cards/565-accepted-memory-projection-policy-model.md`.
-Add the pure accepted-memory projection policy model for projectable,
-local-only, blocked, and review-required records. Keep projection file writes,
-embeddings, semantic search, provider-native sync, automatic extraction, raw
-transcript retention, SCM/forge mutation, task mutation, and UI behavior out
-of scope.
-Do not reopen crawler, browser automation, source retrieval, provider/model
-execution, raw source retention, citation rendering, accepted synthesis
-promotion, accepted memory mutation, task creation, projection/apply, final UI,
-embeddings, semantic search, SCM/forge mutation, or any provider/task/browser
-effect while selecting the boundary.
-Do not add provider execution, provider writes, credential material storage,
-raw payload retention, agent scheduling, callbacks, interruption/recovery
-execution, real SCM/forge mutation, active planning mutation before explicit
-review/apply admission, semantic merge resolution, task promotion, scoring
-policy, autonomous goal loops, silent task creation from seeds, or UI-triggered
-provider reads.
+`docs/roadmaps/g03/batch-cards/587-accepted-memory-import-apply-review-command-boundary.md`.
+Define the accepted-memory import-apply review command boundary for approving,
+deferring, or rejecting stopped apply/admission records. Do not mutate active
+accepted memory, write projection files, call SCM/forge providers, run
+embeddings/search, sync provider-native memory, perform automatic extraction,
+mutate tasks, schedule agents, or add final UI behavior.

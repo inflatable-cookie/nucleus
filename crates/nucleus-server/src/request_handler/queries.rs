@@ -53,6 +53,12 @@ use crate::{
 };
 
 mod accepted_memory;
+mod accepted_memory_projection_diagnostics;
+mod accepted_memory_projection_import_apply_diagnostics;
+mod accepted_memory_projection_import_diagnostics;
+mod accepted_memory_projection_write_diagnostics;
+mod accepted_memory_queries;
+mod accepted_memory_review_readiness;
 mod authority_map;
 mod diagnostics;
 mod memory_proposal_review_diagnostics;
@@ -146,8 +152,13 @@ where
         ServerQueryKind::PlanningSessions(query) => {
             planning_sessions::planning_sessions_query(handler, query)
         }
-        ServerQueryKind::AcceptedMemory(query) => {
-            accepted_memory::accepted_memory_query(handler, query)
+        query @ (ServerQueryKind::AcceptedMemory(_)
+        | ServerQueryKind::AcceptedMemoryProjectionDiagnostics(_)
+        | ServerQueryKind::AcceptedMemoryProjectionWriteDiagnostics(_)
+        | ServerQueryKind::AcceptedMemoryProjectionImportDiagnostics(_)
+        | ServerQueryKind::AcceptedMemoryProjectionImportApplyDiagnostics(_)
+        | ServerQueryKind::AcceptedMemoryReviewReadiness(_)) => {
+            accepted_memory_queries::accepted_memory_query(handler, query)
         }
         ServerQueryKind::MemoryProposals(query) => {
             memory_proposals::memory_proposals_query(handler, query)

@@ -13,11 +13,19 @@ use nucleus_engine::{
 use nucleus_local_store::LocalStoreRecord;
 
 use crate::accepted_memory_projection::AcceptedMemoryProjection;
+use crate::accepted_memory_projection_diagnostics::AcceptedMemoryProjectionDiagnostics;
+use crate::accepted_memory_projection_import_apply_diagnostics::AcceptedMemoryProjectionImportApplyDiagnostics;
+use crate::accepted_memory_projection_import_diagnostics::AcceptedMemoryProjectionImportDiagnostics;
+use crate::accepted_memory_projection_write_diagnostics::AcceptedMemoryProjectionWriteDiagnostics;
+use crate::accepted_memory_review_readiness::AcceptedMemoryReviewReadiness;
 use crate::client_protocol::ProjectAuthorityMapPublicationRecord;
 use crate::commands::ServerCommand;
 pub use crate::control_api_planning_queries::{
-    AcceptedMemoryQuery, MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
-    PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
+    AcceptedMemoryProjectionDiagnosticsQuery, AcceptedMemoryProjectionImportApplyDiagnosticsQuery,
+    AcceptedMemoryProjectionImportDiagnosticsQuery, AcceptedMemoryProjectionWriteDiagnosticsQuery,
+    AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery, MemoryProposalReviewDiagnosticsQuery,
+    MemoryProposalsQuery, PlanningCapturePublicationDiagnosticsQuery,
+    PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ResearchRunBriefsQuery,
@@ -128,6 +136,11 @@ pub enum ServerQueryResult {
     PlanningTaskSeeds(EngineTaskSeedCandidateProjection),
     PlanningSessions(PlanningSessionsProjection),
     AcceptedMemory(AcceptedMemoryProjection),
+    AcceptedMemoryProjectionDiagnostics(AcceptedMemoryProjectionDiagnostics),
+    AcceptedMemoryProjectionWriteDiagnostics(AcceptedMemoryProjectionWriteDiagnostics),
+    AcceptedMemoryProjectionImportDiagnostics(AcceptedMemoryProjectionImportDiagnostics),
+    AcceptedMemoryProjectionImportApplyDiagnostics(AcceptedMemoryProjectionImportApplyDiagnostics),
+    AcceptedMemoryReviewReadiness(AcceptedMemoryReviewReadiness),
     MemoryProposals(MemoryProposalsProjection),
     MemoryProposalReviewDiagnostics(crate::MemoryProposalReviewDiagnostics),
     ResearchRunBriefs(ResearchRunBriefsProjection),

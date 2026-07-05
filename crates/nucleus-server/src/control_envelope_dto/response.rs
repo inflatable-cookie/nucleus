@@ -1,6 +1,12 @@
 //! Serializable control response DTOs.
 
 mod accepted_memory;
+mod accepted_memory_body_conversion;
+mod accepted_memory_projection;
+mod accepted_memory_projection_import;
+mod accepted_memory_projection_import_apply;
+mod accepted_memory_projection_writes;
+mod accepted_memory_review;
 mod body;
 mod body_conversion;
 mod envelope;
@@ -25,7 +31,24 @@ pub use provider_read_intent::{
 pub use provider_readiness_overview::ControlProviderReadinessOverviewDto;
 pub use records::{
     ControlAcceptedMemoryConfidenceCountDto, ControlAcceptedMemoryKindCountDto,
-    ControlAcceptedMemoryRetentionCountDto, ControlAcceptedMemoryScopeCountDto,
+    ControlAcceptedMemoryProjectionBlockerDto, ControlAcceptedMemoryProjectionCountsDto,
+    ControlAcceptedMemoryProjectionDiagnosticsDto, ControlAcceptedMemoryProjectionEntryDto,
+    ControlAcceptedMemoryProjectionImportAdmissionDto,
+    ControlAcceptedMemoryProjectionImportApplyBlockerDto,
+    ControlAcceptedMemoryProjectionImportApplyCountsDto,
+    ControlAcceptedMemoryProjectionImportApplyDiagnosticsDto,
+    ControlAcceptedMemoryProjectionImportApplyRecordDto,
+    ControlAcceptedMemoryProjectionImportBlockerDto,
+    ControlAcceptedMemoryProjectionImportCandidateDto,
+    ControlAcceptedMemoryProjectionImportConflictDto,
+    ControlAcceptedMemoryProjectionImportCountsDto,
+    ControlAcceptedMemoryProjectionImportDiagnosticsDto,
+    ControlAcceptedMemoryProjectionImportSummaryDto,
+    ControlAcceptedMemoryProjectionWriteBlockerDto, ControlAcceptedMemoryProjectionWriteCountsDto,
+    ControlAcceptedMemoryProjectionWriteDiagnosticsDto,
+    ControlAcceptedMemoryProjectionWriteEntryDto, ControlAcceptedMemoryRetentionCountDto,
+    ControlAcceptedMemoryReviewReadinessCountsDto, ControlAcceptedMemoryReviewReadinessDto,
+    ControlAcceptedMemoryReviewReadinessRecordDto, ControlAcceptedMemoryScopeCountDto,
     ControlAcceptedMemorySensitivityCountDto, ControlAcceptedMemorySourceCountsDto,
     ControlAcceptedMemoryStatusCountDto, ControlAcceptedMemorySummaryDto,
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,

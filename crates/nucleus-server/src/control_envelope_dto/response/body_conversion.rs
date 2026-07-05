@@ -1,6 +1,6 @@
 //! Server response to transport response body conversion.
 
-use super::accepted_memory::accepted_memory_body_dto;
+use super::accepted_memory_body_conversion::accepted_memory_query_body_dto;
 use super::body::read_only::read_only_command_result_dto;
 use super::body::ControlResponseBodyDto;
 use super::helpers::{command_receipt_status_dto, control_error_dto, state_record_set_dto};
@@ -33,6 +33,10 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
     fn try_from(
         body: &ServerControlResponseBody,
     ) -> Result<Self, <ControlResponseBodyDto as TryFrom<&ServerControlResponseBody>>::Error> {
+        if let Some(dto) = accepted_memory_query_body_dto(body) {
+            return Ok(dto);
+        }
+
         match body {
             ServerControlResponseBody::Query(ServerQueryResult::Empty) => Ok(Self::QueryEmpty),
             ServerControlResponseBody::Query(ServerQueryResult::Unsupported { reason }) => {
@@ -147,9 +151,14 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
             ServerControlResponseBody::Query(ServerQueryResult::PlanningSessions(projection)) => {
                 Ok(planning_sessions_body_dto(projection))
             }
-            ServerControlResponseBody::Query(ServerQueryResult::AcceptedMemory(projection)) => {
-                Ok(accepted_memory_body_dto(projection))
-            }
+            ServerControlResponseBody::Query(
+                ServerQueryResult::AcceptedMemory(_)
+                | ServerQueryResult::AcceptedMemoryProjectionDiagnostics(_)
+                | ServerQueryResult::AcceptedMemoryProjectionWriteDiagnostics(_)
+                | ServerQueryResult::AcceptedMemoryProjectionImportDiagnostics(_)
+                | ServerQueryResult::AcceptedMemoryProjectionImportApplyDiagnostics(_)
+                | ServerQueryResult::AcceptedMemoryReviewReadiness(_),
+            ) => unreachable!("accepted memory query bodies are handled before the main match"),
             ServerControlResponseBody::Query(ServerQueryResult::MemoryProposals(projection)) => {
                 Ok(memory_proposals_body_dto(projection))
             }

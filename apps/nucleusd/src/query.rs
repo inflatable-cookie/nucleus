@@ -3,8 +3,10 @@ use std::path::PathBuf;
 use nucleus_local_store::{LocalStoreRecord, SqliteBackend};
 use nucleus_projects::ProjectId;
 use nucleus_server::{
-    AcceptedMemoryQuery, ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler,
-    MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
+    AcceptedMemoryProjectionDiagnosticsQuery, AcceptedMemoryProjectionImportApplyDiagnosticsQuery,
+    AcceptedMemoryProjectionImportDiagnosticsQuery, AcceptedMemoryProjectionWriteDiagnosticsQuery,
+    AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery, ClientId, ControlResponseEnvelopeDto,
+    LocalControlRequestHandler, MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
     PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
@@ -66,6 +68,11 @@ pub(crate) fn print_query(
             | QueryDomain::PlanningTaskSeeds { .. }
             | QueryDomain::PlanningSessions { .. }
             | QueryDomain::AcceptedMemory { .. }
+            | QueryDomain::AcceptedMemoryProjection { .. }
+            | QueryDomain::AcceptedMemoryProjectionWrites { .. }
+            | QueryDomain::AcceptedMemoryProjectionImport { .. }
+            | QueryDomain::AcceptedMemoryProjectionImportApply { .. }
+            | QueryDomain::AcceptedMemoryReviewReadiness { .. }
             | QueryDomain::MemoryProposals { .. }
             | QueryDomain::MemoryProposalReviewDiagnostics { .. }
             | QueryDomain::ResearchRunBriefs { .. }
@@ -176,6 +183,39 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
         }
         QueryDomain::AcceptedMemory { project_id } => {
             ServerQueryKind::AcceptedMemory(AcceptedMemoryQuery {
+                project_id: ProjectId(project_id.clone()),
+            })
+        }
+        QueryDomain::AcceptedMemoryProjection { project_id } => {
+            ServerQueryKind::AcceptedMemoryProjectionDiagnostics(
+                AcceptedMemoryProjectionDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
+        }
+        QueryDomain::AcceptedMemoryProjectionWrites { project_id } => {
+            ServerQueryKind::AcceptedMemoryProjectionWriteDiagnostics(
+                AcceptedMemoryProjectionWriteDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
+        }
+        QueryDomain::AcceptedMemoryProjectionImport { project_id } => {
+            ServerQueryKind::AcceptedMemoryProjectionImportDiagnostics(
+                AcceptedMemoryProjectionImportDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
+        }
+        QueryDomain::AcceptedMemoryProjectionImportApply { project_id } => {
+            ServerQueryKind::AcceptedMemoryProjectionImportApplyDiagnostics(
+                AcceptedMemoryProjectionImportApplyDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
+        }
+        QueryDomain::AcceptedMemoryReviewReadiness { project_id } => {
+            ServerQueryKind::AcceptedMemoryReviewReadiness(AcceptedMemoryReviewReadinessQuery {
                 project_id: ProjectId(project_id.clone()),
             })
         }

@@ -16,6 +16,11 @@ impl ControlQueryDto {
             | Self::PlanningSessions { query_id, .. }
             | Self::MemoryProposals { query_id, .. }
             | Self::AcceptedMemory { query_id, .. }
+            | Self::AcceptedMemoryProjectionDiagnostics { query_id, .. }
+            | Self::AcceptedMemoryProjectionWriteDiagnostics { query_id, .. }
+            | Self::AcceptedMemoryProjectionImportDiagnostics { query_id, .. }
+            | Self::AcceptedMemoryProjectionImportApplyDiagnostics { query_id, .. }
+            | Self::AcceptedMemoryReviewReadiness { query_id, .. }
             | Self::MemoryProposalReviewDiagnostics { query_id, .. }
             | Self::ResearchRunBriefs { query_id, .. }
             | Self::TaskSeedPromotionDiagnostics { query_id, .. }
