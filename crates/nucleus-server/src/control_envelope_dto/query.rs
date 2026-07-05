@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 mod authority_domains;
+mod from_dto;
 mod id;
 mod planning_projection;
 mod project_authority;
@@ -11,45 +12,24 @@ mod state;
 mod task_workflow;
 
 use crate::control_api::{
-    MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
+    AcceptedMemoryQuery, MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
     PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
+    PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
     PlanningSessionsQuery, ResearchRunBriefsQuery,
 };
 use crate::control_api::{
     PlanningTaskSeedsQuery, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
     ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
-    ServerQuery, ServerQueryKind, StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery,
+    ServerQuery, ServerQueryKind, StateRecordQuery, TaskReadinessQuery,
     TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
 };
 use crate::ids::ServerQueryId;
 use authority_domains::authority_domain_dto;
-use planning_projection::{
-    planning_capture_publication_diagnostics_query_from_action,
-    planning_projection_file_write_diagnostics_query_from_action,
-    planning_projection_import_apply_diagnostics_query_from_action,
-    planning_projection_import_diagnostics_query_from_action,
-};
-use project_authority::project_authority_map_query_from_action;
-use provider::{
-    provider_live_read_executor_query_from_action,
-    provider_live_read_smoke_evidence_query_from_action, provider_read_intent_query_from_action,
-    provider_readiness_overview_query_from_action,
-};
 pub use state::{ControlQueryScopeDto, ControlStateDomainDto};
-use task_workflow::{
-    memory_proposal_review_diagnostics_query_from_action, memory_proposals_query_from_action,
-    planning_sessions_query_from_action, planning_task_seeds_query_from_action,
-    research_run_briefs_query_from_action, task_readiness_query_from_action,
-    task_seed_promotion_diagnostics_query_from_action, task_timeline_query_from_action,
-};
 
-use super::protocol::{
-    diagnostics_domain_dto, diagnostics_query_from_domain, runtime_metadata_action,
-    runtime_metadata_query_from_action,
-};
+use super::protocol::{diagnostics_domain_dto, runtime_metadata_action};
 use super::ControlApiCodecError;
-use crate::state::ServerStateDomain;
 
 /// Serializable query DTO.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -109,6 +89,11 @@ pub enum ControlQueryDto {
         action: String,
         project_id: String,
     },
+    AcceptedMemory {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
     MemoryProposalReviewDiagnostics {
         query_id: String,
         action: String,
@@ -135,6 +120,11 @@ pub enum ControlQueryDto {
         project_id: String,
     },
     PlanningProjectionImportApplyDiagnostics {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
+    PlanningProjectionImportActiveApplyDiagnostics {
         query_id: String,
         action: String,
         project_id: String,
@@ -227,6 +217,13 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                     project_id: project_id.0.clone(),
                 })
             }
+            ServerQueryKind::AcceptedMemory(AcceptedMemoryQuery { project_id }) => {
+                Ok(Self::AcceptedMemory {
+                    query_id: query.id.0.clone(),
+                    action: "memory".to_owned(),
+                    project_id: project_id.0.clone(),
+                })
+            }
             ServerQueryKind::MemoryProposalReviewDiagnostics(
                 MemoryProposalReviewDiagnosticsQuery { project_id },
             ) => Ok(Self::MemoryProposalReviewDiagnostics {
@@ -269,6 +266,13 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                 action: "diagnostics".to_owned(),
                 project_id: project_id.0.clone(),
             }),
+            ServerQueryKind::PlanningProjectionImportActiveApplyDiagnostics(
+                PlanningProjectionImportActiveApplyDiagnosticsQuery { project_id },
+            ) => Ok(Self::PlanningProjectionImportActiveApplyDiagnostics {
+                query_id: query.id.0.clone(),
+                action: "diagnostics".to_owned(),
+                project_id: project_id.0.clone(),
+            }),
             ServerQueryKind::PlanningCapturePublicationDiagnostics(
                 PlanningCapturePublicationDiagnosticsQuery { project_id },
             ) => Ok(Self::PlanningCapturePublicationDiagnostics {
@@ -288,100 +292,6 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
             _ => Err(ControlApiCodecError::unsupported(
                 "query shape is not supported by the first control envelope",
             )),
-        }
-    }
-}
-
-impl TryFrom<ControlQueryDto> for ServerQueryKind {
-    type Error = ControlApiCodecError;
-
-    fn try_from(query: ControlQueryDto) -> Result<Self, Self::Error> {
-        match query {
-            ControlQueryDto::State {
-                domain,
-                scope,
-                query_id: _,
-            } => {
-                let domain = ServerStateDomain::from(domain);
-                let query = StateRecordQuery {
-                    domain: domain.clone(),
-                    scope: StateRecordQueryScope::try_from(scope)?,
-                };
-                Ok(match domain {
-                    ServerStateDomain::Projects => ServerQueryKind::Project(query),
-                    ServerStateDomain::Tasks => ServerQueryKind::Task(query),
-                    ServerStateDomain::Workspaces => ServerQueryKind::Workspace(query),
-                    _ => {
-                        return Err(ControlApiCodecError::unsupported(
-                            "state domain is not supported by the first control envelope",
-                        ));
-                    }
-                })
-            }
-            ControlQueryDto::RuntimeMetadata { action, .. } => Ok(
-                ServerQueryKind::RuntimeMetadata(runtime_metadata_query_from_action(&action)?),
-            ),
-            ControlQueryDto::Diagnostics { domain, .. } => Ok(ServerQueryKind::Diagnostics(
-                diagnostics_query_from_domain(&domain)?,
-            )),
-            ControlQueryDto::ProviderReadIntent { action, .. } => {
-                provider_read_intent_query_from_action(&action)
-            }
-            ControlQueryDto::ProviderReadinessOverview { action, .. } => {
-                provider_readiness_overview_query_from_action(&action)
-            }
-            ControlQueryDto::ProviderLiveReadExecutor { action, .. } => {
-                provider_live_read_executor_query_from_action(&action)
-            }
-            ControlQueryDto::ProviderLiveReadSmokeEvidence { action, .. } => {
-                provider_live_read_smoke_evidence_query_from_action(&action)
-            }
-            ControlQueryDto::TaskTimeline {
-                action, task_id, ..
-            } => task_timeline_query_from_action(&action, task_id),
-            ControlQueryDto::TaskReadiness {
-                action, project_id, ..
-            } => task_readiness_query_from_action(&action, project_id),
-            ControlQueryDto::PlanningTaskSeeds {
-                action, project_id, ..
-            } => planning_task_seeds_query_from_action(&action, project_id),
-            ControlQueryDto::PlanningSessions {
-                action, project_id, ..
-            } => planning_sessions_query_from_action(&action, project_id),
-            ControlQueryDto::MemoryProposals {
-                action, project_id, ..
-            } => memory_proposals_query_from_action(&action, project_id),
-            ControlQueryDto::MemoryProposalReviewDiagnostics {
-                action, project_id, ..
-            } => memory_proposal_review_diagnostics_query_from_action(&action, project_id),
-            ControlQueryDto::ResearchRunBriefs {
-                action, project_id, ..
-            } => research_run_briefs_query_from_action(&action, project_id),
-            ControlQueryDto::TaskSeedPromotionDiagnostics {
-                action, project_id, ..
-            } => task_seed_promotion_diagnostics_query_from_action(&action, project_id),
-            ControlQueryDto::PlanningProjectionFileWriteDiagnostics {
-                action, project_id, ..
-            } => planning_projection_file_write_diagnostics_query_from_action(&action, project_id),
-            ControlQueryDto::PlanningProjectionImportDiagnostics {
-                action, project_id, ..
-            } => planning_projection_import_diagnostics_query_from_action(&action, project_id),
-            ControlQueryDto::PlanningProjectionImportApplyDiagnostics {
-                action,
-                project_id,
-                ..
-            } => {
-                planning_projection_import_apply_diagnostics_query_from_action(&action, project_id)
-            }
-            ControlQueryDto::PlanningCapturePublicationDiagnostics {
-                action, project_id, ..
-            } => planning_capture_publication_diagnostics_query_from_action(&action, project_id),
-            ControlQueryDto::ProjectAuthorityMap {
-                action,
-                project_id,
-                expected_domains,
-                ..
-            } => project_authority_map_query_from_action(&action, project_id, expected_domains),
         }
     }
 }

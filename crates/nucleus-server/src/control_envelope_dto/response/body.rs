@@ -2,20 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 
-mod read_only;
+pub(in crate::control_envelope_dto::response) mod read_only;
 
-use read_only::{read_only_command_result_dto, ControlReadOnlyCommandRejectionDto};
+use read_only::ControlReadOnlyCommandRejectionDto;
 
-use crate::control_api::{ServerControlResponseBody, ServerQueryResult};
-
-use super::helpers::{command_receipt_status_dto, control_error_dto, state_record_set_dto};
-use super::memory_proposals::memory_proposals_body_dto;
-use super::planning_sessions_body::planning_sessions_body_dto;
 use super::provider_live_read_executor::ControlProviderLiveReadExecutorDiagnosticsDto;
 use super::provider_live_read_smoke_evidence::ControlProviderLiveReadSmokeEvidenceDiagnosticsDto;
 use super::provider_read_intent::ControlProviderReadIntentQueryResultDto;
 use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
+    ControlAcceptedMemoryConfidenceCountDto, ControlAcceptedMemoryKindCountDto,
+    ControlAcceptedMemoryRetentionCountDto, ControlAcceptedMemoryScopeCountDto,
+    ControlAcceptedMemorySensitivityCountDto, ControlAcceptedMemorySourceCountsDto,
+    ControlAcceptedMemoryStatusCountDto, ControlAcceptedMemorySummaryDto,
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
     ControlDiffSummaryRecordDto, ControlMemoryProposalRetentionCountDto,
     ControlMemoryProposalReviewDiagnosticsDto, ControlMemoryProposalScopeCountDto,
@@ -23,6 +22,7 @@ use super::records::{
     ControlMemoryProposalStatusCountDto, ControlMemoryProposalSummaryDto,
     ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticsDto,
+    ControlPlanningProjectionImportActiveApplyDiagnosticsDto,
     ControlPlanningProjectionImportApplyDiagnosticsDto,
     ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningSessionSourceCountsDto,
     ControlPlanningSessionStatusCountDto, ControlPlanningSessionSummaryDto,
@@ -36,9 +36,8 @@ use super::records::{
     ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
     ControlTaskTimelineEntryDto,
 };
-use super::research_run_briefs::research_run_briefs_body_dto;
 use crate::control_envelope_dto::{
-    ControlApiCodecError, ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
+    ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
 };
 use crate::diagnostics_read_models::TaskAgentWorkUnitDiagnosticDto;
 
@@ -123,6 +122,21 @@ pub enum ControlResponseBodyDto {
         client_can_mutate: bool,
         provider_execution_available: bool,
     },
+    AcceptedMemory {
+        project_id: String,
+        memories: Vec<ControlAcceptedMemorySummaryDto>,
+        status_counts: Vec<ControlAcceptedMemoryStatusCountDto>,
+        scope_counts: Vec<ControlAcceptedMemoryScopeCountDto>,
+        kind_counts: Vec<ControlAcceptedMemoryKindCountDto>,
+        sensitivity_counts: Vec<ControlAcceptedMemorySensitivityCountDto>,
+        retention_counts: Vec<ControlAcceptedMemoryRetentionCountDto>,
+        confidence_counts: Vec<ControlAcceptedMemoryConfidenceCountDto>,
+        source_counts: ControlAcceptedMemorySourceCountsDto,
+        client_can_mutate: bool,
+        projection_written: bool,
+        embedding_available: bool,
+        provider_sync_available: bool,
+    },
     MemoryProposalReviewDiagnostics {
         diagnostics: ControlMemoryProposalReviewDiagnosticsDto,
     },
@@ -148,6 +162,9 @@ pub enum ControlResponseBodyDto {
     },
     PlanningProjectionImportApplyDiagnostics {
         diagnostics: ControlPlanningProjectionImportApplyDiagnosticsDto,
+    },
+    PlanningProjectionImportActiveApplyDiagnostics {
+        diagnostics: ControlPlanningProjectionImportActiveApplyDiagnosticsDto,
     },
     PlanningCapturePublicationDiagnostics {
         diagnostics: ControlPlanningCapturePublicationDiagnosticsDto,
@@ -190,200 +207,4 @@ pub enum ControlResponseBodyDto {
         kind: String,
         reason: String,
     },
-}
-
-impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
-    type Error = ControlApiCodecError;
-
-    fn try_from(
-        body: &ServerControlResponseBody,
-    ) -> Result<Self, <ControlResponseBodyDto as TryFrom<&ServerControlResponseBody>>::Error> {
-        match body {
-            ServerControlResponseBody::Query(ServerQueryResult::Empty) => Ok(Self::QueryEmpty),
-            ServerControlResponseBody::Query(ServerQueryResult::Unsupported { reason }) => {
-                Ok(Self::QueryUnsupported {
-                    reason: reason.clone(),
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::Diagnostics(result)) => {
-                Ok(Self::Diagnostics {
-                    result: ControlDiagnosticsResultDto::from(result),
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::StateRecords(records))
-            | ServerControlResponseBody::Query(ServerQueryResult::AdapterSessions(records))
-            | ServerControlResponseBody::Query(ServerQueryResult::ModelRoutes(records))
-            | ServerControlResponseBody::Query(ServerQueryResult::RuntimeMetadata(records)) => {
-                state_record_set_dto(records)
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::RuntimeReadiness(records)) => {
-                Ok(Self::RuntimeReadinessDiagnostics {
-                    records: records
-                        .iter()
-                        .map(ControlRuntimeReadinessDiagnosticDto::from)
-                        .collect(),
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::RuntimeReceipts(records)) => {
-                Ok(Self::RuntimeReceiptRecords {
-                    records: records
-                        .iter()
-                        .map(ControlRuntimeReceiptRecordDto::from)
-                        .collect(),
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::CheckpointRecords(records)) => {
-                Ok(Self::CheckpointRecords {
-                    records: records
-                        .iter()
-                        .map(ControlCheckpointRecordDto::from)
-                        .collect(),
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::DiffSummaryRecords(records)) => {
-                Ok(Self::DiffSummaryRecords {
-                    records: records
-                        .iter()
-                        .map(ControlDiffSummaryRecordDto::from)
-                        .collect(),
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::TaskWorkProgress(records)) => {
-                Ok(Self::TaskWorkProgressRecords {
-                    records: records.clone(),
-                    client_can_mutate: false,
-                    provider_execution_available: false,
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::TaskTimeline(projection)) => {
-                Ok(Self::TaskTimeline {
-                    task_id: projection.task_id.0.clone(),
-                    entries: projection
-                        .entries
-                        .iter()
-                        .map(ControlTaskTimelineEntryDto::from)
-                        .collect(),
-                    last_source_event_id: projection
-                        .last_cursor
-                        .as_ref()
-                        .map(|cursor| cursor.source_event_id.clone()),
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::TaskReadiness(projection)) => {
-                Ok(Self::TaskReadiness {
-                    project_id: projection.project_id.0.clone(),
-                    candidates: projection
-                        .candidates
-                        .iter()
-                        .map(ControlTaskReadinessCandidateDto::from)
-                        .collect(),
-                    status_counts: projection
-                        .status_counts
-                        .iter()
-                        .map(ControlTaskReadinessStatusCountDto::from)
-                        .collect(),
-                    source_counts: ControlTaskReadinessSourceCountsDto::from(
-                        &projection.source_counts,
-                    ),
-                    client_can_mutate: projection.client_can_mutate,
-                    provider_execution_available: projection.provider_execution_available,
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::PlanningTaskSeeds(projection)) => {
-                Ok(Self::PlanningTaskSeeds {
-                    project_id: projection.project_id.0.clone(),
-                    candidates: projection
-                        .candidates
-                        .iter()
-                        .map(ControlPlanningTaskSeedCandidateDto::from)
-                        .collect(),
-                    status_counts: projection
-                        .status_counts
-                        .iter()
-                        .map(ControlPlanningTaskSeedStatusCountDto::from)
-                        .collect(),
-                    source_counts: ControlPlanningTaskSeedSourceCountsDto::from(
-                        &projection.source_counts,
-                    ),
-                    client_can_promote: projection.client_can_promote,
-                    task_creation_performed: projection.task_creation_performed,
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::PlanningSessions(projection)) => {
-                Ok(planning_sessions_body_dto(projection))
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::MemoryProposals(projection)) => {
-                Ok(memory_proposals_body_dto(projection))
-            }
-            ServerControlResponseBody::Query(
-                ServerQueryResult::MemoryProposalReviewDiagnostics(diagnostics),
-            ) => Ok(Self::MemoryProposalReviewDiagnostics {
-                diagnostics: ControlMemoryProposalReviewDiagnosticsDto::from(diagnostics),
-            }),
-            ServerControlResponseBody::Query(ServerQueryResult::ResearchRunBriefs(projection)) => {
-                Ok(research_run_briefs_body_dto(projection))
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::TaskSeedPromotionDiagnostics(
-                diagnostics,
-            )) => Ok(Self::TaskSeedPromotionDiagnostics {
-                diagnostics: ControlTaskSeedPromotionDiagnosticsDto::from(diagnostics),
-            }),
-            ServerControlResponseBody::Query(
-                ServerQueryResult::PlanningProjectionFileWriteDiagnostics(diagnostics),
-            ) => Ok(Self::PlanningProjectionFileWriteDiagnostics {
-                diagnostics: ControlPlanningProjectionFileWriteDiagnosticsDto::from(diagnostics),
-            }),
-            ServerControlResponseBody::Query(
-                ServerQueryResult::PlanningProjectionImportDiagnostics(diagnostics),
-            ) => Ok(Self::PlanningProjectionImportDiagnostics {
-                diagnostics: ControlPlanningProjectionImportDiagnosticsDto::from(diagnostics),
-            }),
-            ServerControlResponseBody::Query(
-                ServerQueryResult::PlanningProjectionImportApplyDiagnostics(diagnostics),
-            ) => Ok(Self::PlanningProjectionImportApplyDiagnostics {
-                diagnostics: ControlPlanningProjectionImportApplyDiagnosticsDto::from(diagnostics),
-            }),
-            ServerControlResponseBody::Query(
-                ServerQueryResult::PlanningCapturePublicationDiagnostics(diagnostics),
-            ) => Ok(Self::PlanningCapturePublicationDiagnostics {
-                diagnostics: ControlPlanningCapturePublicationDiagnosticsDto::from(diagnostics),
-            }),
-            ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)) => {
-                Ok(Self::ProjectAuthorityMap {
-                    record: ControlProjectAuthorityMapDto::from(record),
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::ProviderReadIntent(result)) => {
-                Ok(Self::ProviderReadIntent {
-                    result: ControlProviderReadIntentQueryResultDto::from(result),
-                })
-            }
-            ServerControlResponseBody::Query(ServerQueryResult::ProviderReadinessOverview(
-                overview,
-            )) => Ok(Self::ProviderReadinessOverview {
-                overview: ControlProviderReadinessOverviewDto::from(overview),
-            }),
-            ServerControlResponseBody::Query(
-                ServerQueryResult::ProviderLiveReadExecutorDiagnostics(diagnostics),
-            ) => Ok(Self::ProviderLiveReadExecutorDiagnostics {
-                diagnostics: ControlProviderLiveReadExecutorDiagnosticsDto::from(diagnostics),
-            }),
-            ServerControlResponseBody::Query(
-                ServerQueryResult::ProviderLiveReadSmokeEvidenceDiagnostics(diagnostics),
-            ) => Ok(Self::ProviderLiveReadSmokeEvidenceDiagnostics {
-                diagnostics: ControlProviderLiveReadSmokeEvidenceDiagnosticsDto::from(diagnostics),
-            }),
-            ServerControlResponseBody::Command(receipt) => Ok(Self::CommandReceipt {
-                command_id: receipt.command_id.0.clone(),
-                status: command_receipt_status_dto(&receipt.status),
-            }),
-            ServerControlResponseBody::ReadOnlyCommand(result) => {
-                Ok(read_only_command_result_dto(result))
-            }
-            ServerControlResponseBody::Error(error) => {
-                let (kind, reason) = control_error_dto(error);
-                Ok(Self::Error { kind, reason })
-            }
-        }
-    }
 }

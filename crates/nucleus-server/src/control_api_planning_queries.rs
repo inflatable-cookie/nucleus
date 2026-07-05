@@ -20,6 +20,12 @@ pub struct MemoryProposalsQuery {
     pub project_id: ProjectId,
 }
 
+/// Accepted memory inspection query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptedMemoryQuery {
+    pub project_id: ProjectId,
+}
+
 /// Memory proposal review diagnostics query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryProposalReviewDiagnosticsQuery {
@@ -53,6 +59,12 @@ pub struct PlanningProjectionImportDiagnosticsQuery {
 /// Planning projection import apply diagnostics query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlanningProjectionImportApplyDiagnosticsQuery {
+    pub project_id: ProjectId,
+}
+
+/// Planning projection import active-apply diagnostics query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanningProjectionImportActiveApplyDiagnosticsQuery {
     pub project_id: ProjectId,
 }
 

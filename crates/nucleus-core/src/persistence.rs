@@ -37,6 +37,7 @@ pub enum PersistenceRecordKind {
     PlanningSession,
     PlanningArtifact,
     PlanningImportApplyPlan,
+    PlanningImportActiveApplyAdmission,
     TaskSeed,
     ResearchRun,
     ResearchQuestion,

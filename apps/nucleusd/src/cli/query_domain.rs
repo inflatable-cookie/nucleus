@@ -14,6 +14,7 @@ pub(crate) enum QueryDomain {
     TaskReadiness { project_id: String },
     PlanningTaskSeeds { project_id: String },
     PlanningSessions { project_id: String },
+    AcceptedMemory { project_id: String },
     MemoryProposals { project_id: String },
     MemoryProposalReviewDiagnostics { project_id: String },
     ResearchRunBriefs { project_id: String },
@@ -21,6 +22,7 @@ pub(crate) enum QueryDomain {
     PlanningProjectionFileWriteDiagnostics { project_id: String },
     PlanningProjectionImportDiagnostics { project_id: String },
     PlanningProjectionImportApplyDiagnostics { project_id: String },
+    PlanningProjectionImportActiveApplyDiagnostics { project_id: String },
     PlanningCapturePublicationDiagnostics { project_id: String },
     ProjectAuthorityMap { project_id: String },
 }
@@ -68,6 +70,14 @@ impl QueryDomain {
                 Ok(Self::PlanningSessions {
                     project_id: iter.next().ok_or_else(|| {
                         "planning-sessions requires --project <project-id>".to_owned()
+                    })?,
+                })
+            }
+            "accepted-memory" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::AcceptedMemory {
+                    project_id: iter.next().ok_or_else(|| {
+                        "accepted-memory requires --project <project-id>".to_owned()
                     })?,
                 })
             }
@@ -131,6 +141,15 @@ impl QueryDomain {
                     })?,
                 })
             }
+            "planning-projection-import-active-apply-diagnostics" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::PlanningProjectionImportActiveApplyDiagnostics {
+                    project_id: iter.next().ok_or_else(|| {
+                        "planning-projection-import-active-apply-diagnostics requires --project <project-id>"
+                            .to_owned()
+                    })?,
+                })
+            }
             "planning-capture-publication-diagnostics" => {
                 expect_flag(iter, "--project")?;
                 Ok(Self::PlanningCapturePublicationDiagnostics {
@@ -166,6 +185,7 @@ impl QueryDomain {
             Self::TaskReadiness { .. } => "task-readiness",
             Self::PlanningTaskSeeds { .. } => "planning-task-seeds",
             Self::PlanningSessions { .. } => "planning-sessions",
+            Self::AcceptedMemory { .. } => "accepted-memory",
             Self::MemoryProposals { .. } => "memory-proposals",
             Self::MemoryProposalReviewDiagnostics { .. } => "memory-proposal-review-diagnostics",
             Self::ResearchRunBriefs { .. } => "research-run-briefs",
@@ -178,6 +198,9 @@ impl QueryDomain {
             }
             Self::PlanningProjectionImportApplyDiagnostics { .. } => {
                 "planning-projection-import-apply-diagnostics"
+            }
+            Self::PlanningProjectionImportActiveApplyDiagnostics { .. } => {
+                "planning-projection-import-active-apply-diagnostics"
             }
             Self::PlanningCapturePublicationDiagnostics { .. } => {
                 "planning-capture-publication-diagnostics"
@@ -200,6 +223,7 @@ impl QueryDomain {
             | Self::TaskReadiness { .. }
             | Self::PlanningTaskSeeds { .. }
             | Self::PlanningSessions { .. }
+            | Self::AcceptedMemory { .. }
             | Self::MemoryProposals { .. }
             | Self::MemoryProposalReviewDiagnostics { .. }
             | Self::ResearchRunBriefs { .. }
@@ -207,6 +231,7 @@ impl QueryDomain {
             | Self::PlanningProjectionFileWriteDiagnostics { .. }
             | Self::PlanningProjectionImportDiagnostics { .. }
             | Self::PlanningProjectionImportApplyDiagnostics { .. }
+            | Self::PlanningProjectionImportActiveApplyDiagnostics { .. }
             | Self::PlanningCapturePublicationDiagnostics { .. }
             | Self::ProjectAuthorityMap { .. } => None,
         }

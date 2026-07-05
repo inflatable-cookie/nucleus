@@ -2,11 +2,13 @@ use nucleus_server::{
     ControlCommandEvidenceRecordDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
 };
 
+mod accepted_memory;
 mod memory_proposal_review;
 mod memory_proposals;
 mod planning_capture_publication;
 mod planning_projection_file_write;
 mod planning_projection_import;
+mod planning_projection_import_active_apply;
 mod planning_projection_import_apply;
 mod planning_sessions;
 mod planning_task_seeds;
@@ -16,11 +18,13 @@ mod task_authority;
 mod task_readiness;
 mod task_seed_promotion;
 
+pub(super) use accepted_memory::accepted_memory_response_lines;
 pub(super) use memory_proposal_review::memory_proposal_review_response_lines;
 pub(super) use memory_proposals::memory_proposals_response_lines;
 pub(super) use planning_capture_publication::planning_capture_publication_response_lines;
 pub(super) use planning_projection_file_write::planning_projection_file_write_response_lines;
 pub(super) use planning_projection_import::planning_projection_import_response_lines;
+pub(super) use planning_projection_import_active_apply::planning_projection_import_active_apply_response_lines;
 pub(super) use planning_projection_import_apply::planning_projection_import_apply_response_lines;
 pub(super) use planning_sessions::planning_sessions_response_lines;
 pub(super) use planning_task_seeds::planning_task_seeds_response_lines;
@@ -165,6 +169,39 @@ pub(super) fn print_typed_dto_response(
             ));
             Ok(())
         }
+        ControlResponseBodyDto::AcceptedMemory {
+            project_id,
+            memories,
+            status_counts,
+            scope_counts,
+            kind_counts,
+            sensitivity_counts,
+            retention_counts,
+            confidence_counts,
+            source_counts,
+            client_can_mutate,
+            projection_written,
+            embedding_available,
+            provider_sync_available,
+        } => {
+            print_lines(accepted_memory_response_lines(
+                label,
+                project_id,
+                memories,
+                status_counts,
+                scope_counts,
+                kind_counts,
+                sensitivity_counts,
+                retention_counts,
+                confidence_counts,
+                source_counts,
+                client_can_mutate,
+                projection_written,
+                embedding_available,
+                provider_sync_available,
+            ));
+            Ok(())
+        }
         ControlResponseBodyDto::MemoryProposalReviewDiagnostics { diagnostics } => {
             print_lines(memory_proposal_review_response_lines(label, diagnostics));
             Ok(())
@@ -214,6 +251,13 @@ pub(super) fn print_typed_dto_response(
         }
         ControlResponseBodyDto::PlanningProjectionImportApplyDiagnostics { diagnostics } => {
             print_lines(planning_projection_import_apply_response_lines(
+                label,
+                diagnostics,
+            ));
+            Ok(())
+        }
+        ControlResponseBodyDto::PlanningProjectionImportActiveApplyDiagnostics { diagnostics } => {
+            print_lines(planning_projection_import_active_apply_response_lines(
                 label,
                 diagnostics,
             ));

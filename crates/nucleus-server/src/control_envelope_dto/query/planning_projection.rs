@@ -2,6 +2,7 @@ use nucleus_projects::ProjectId;
 
 use crate::control_api::{
     PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
+    PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
     ServerQueryKind,
 };
@@ -80,6 +81,27 @@ pub(super) fn planning_projection_import_apply_diagnostics_query_from_action(
         )),
         _ => Err(ControlApiCodecError::unsupported(format!(
             "unsupported planning projection import apply diagnostics action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn planning_projection_import_active_apply_diagnostics_query_from_action(
+    action: &str,
+    project_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "diagnostics" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
+            "planning projection import active apply diagnostics requires a project id",
+        )),
+        "diagnostics" => Ok(
+            ServerQueryKind::PlanningProjectionImportActiveApplyDiagnostics(
+                PlanningProjectionImportActiveApplyDiagnosticsQuery {
+                    project_id: ProjectId(project_id),
+                },
+            ),
+        ),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported planning projection import active apply diagnostics action: {action}"
         ))),
     }
 }

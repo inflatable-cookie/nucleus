@@ -15,12 +15,14 @@ impl ControlQueryDto {
             | Self::PlanningTaskSeeds { query_id, .. }
             | Self::PlanningSessions { query_id, .. }
             | Self::MemoryProposals { query_id, .. }
+            | Self::AcceptedMemory { query_id, .. }
             | Self::MemoryProposalReviewDiagnostics { query_id, .. }
             | Self::ResearchRunBriefs { query_id, .. }
             | Self::TaskSeedPromotionDiagnostics { query_id, .. }
             | Self::PlanningProjectionFileWriteDiagnostics { query_id, .. }
             | Self::PlanningProjectionImportDiagnostics { query_id, .. }
             | Self::PlanningProjectionImportApplyDiagnostics { query_id, .. }
+            | Self::PlanningProjectionImportActiveApplyDiagnostics { query_id, .. }
             | Self::PlanningCapturePublicationDiagnostics { query_id, .. }
             | Self::ProjectAuthorityMap { query_id, .. } => query_id.clone(),
         }

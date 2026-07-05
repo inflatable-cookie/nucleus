@@ -4,22 +4,21 @@
 //! implement HTTP, WebSocket, Tauri IPC, auth middleware, scheduling, command
 //! execution, storage replay, or provider runtime behavior.
 
-use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId};
-use nucleus_core::PersistenceRecordId;
+mod query;
+
 use nucleus_engine::{
     EngineCheckpointRecord, EngineDiffSummaryRecord, EngineRuntimeReceiptRecord,
     EngineTaskReadinessProjection, EngineTaskSeedCandidateProjection, EngineTaskTimelineProjection,
 };
 use nucleus_local_store::LocalStoreRecord;
-use nucleus_projects::{ProjectId, RepoMembershipId};
-use nucleus_tasks::TaskId;
-use nucleus_workspaces::WorkspaceLayoutId;
 
+use crate::accepted_memory_projection::AcceptedMemoryProjection;
 use crate::client_protocol::ProjectAuthorityMapPublicationRecord;
 use crate::commands::ServerCommand;
 pub use crate::control_api_planning_queries::{
-    MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
+    AcceptedMemoryQuery, MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
     PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
+    PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ResearchRunBriefsQuery,
     TaskSeedPromotionDiagnosticsQuery,
@@ -29,17 +28,15 @@ use crate::diagnostics_read_models::{
     StewardDiagnosticsDto, SyncDiagnosticsDto, TaskAgentDiagnosticsDto,
     TaskAgentWorkUnitDiagnosticDto,
 };
-use crate::host_authority::ProjectAuthorityDomain;
 use crate::ids::{ClientId, ServerCommandId, ServerControlRequestId, ServerQueryId};
 use crate::memory_proposals_projection::MemoryProposalsProjection;
 use crate::planning_sessions_projection::PlanningSessionsProjection;
 use crate::read_only_command_control::ReadOnlyCommandControlResult;
 use crate::research_run_briefs_projection::ResearchRunBriefsProjection;
-use crate::runtime_effect_storage::{
-    RuntimeEffectStorageQuery, RuntimeEffectStorageRecordId, RuntimeEffectStorageRef,
-};
 use crate::runtime_readiness_diagnostics::RuntimeReadinessDiagnostics;
 use crate::state::ServerStateDomain;
+
+pub use query::*;
 
 /// Request sent to the server control boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,153 +59,6 @@ pub struct ServerQuery {
     pub id: ServerQueryId,
     pub client_id: ClientId,
     pub kind: ServerQueryKind,
-}
-
-/// Top-level query categories.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ServerQueryKind {
-    Project(StateRecordQuery),
-    Task(StateRecordQuery),
-    Workspace(StateRecordQuery),
-    AdapterSession(AdapterSessionQuery),
-    ModelRoute(ModelRouteQuery),
-    RuntimeMetadata(RuntimeMetadataQuery),
-    Diagnostics(DiagnosticsQuery),
-    ProviderReadIntent(ProviderReadIntentQuery),
-    ProviderReadinessOverview(ProviderReadinessOverviewQuery),
-    ProviderLiveReadExecutor(ProviderLiveReadExecutorQuery),
-    ProviderLiveReadSmokeEvidence(ProviderLiveReadSmokeEvidenceQuery),
-    TaskTimeline(TaskTimelineQuery),
-    TaskReadiness(TaskReadinessQuery),
-    PlanningTaskSeeds(PlanningTaskSeedsQuery),
-    PlanningSessions(PlanningSessionsQuery),
-    MemoryProposals(MemoryProposalsQuery),
-    MemoryProposalReviewDiagnostics(MemoryProposalReviewDiagnosticsQuery),
-    ResearchRunBriefs(ResearchRunBriefsQuery),
-    TaskSeedPromotionDiagnostics(TaskSeedPromotionDiagnosticsQuery),
-    PlanningProjectionFileWriteDiagnostics(PlanningProjectionFileWriteDiagnosticsQuery),
-    PlanningProjectionImportDiagnostics(PlanningProjectionImportDiagnosticsQuery),
-    PlanningProjectionImportApplyDiagnostics(PlanningProjectionImportApplyDiagnosticsQuery),
-    PlanningCapturePublicationDiagnostics(PlanningCapturePublicationDiagnosticsQuery),
-    ProjectAuthorityMap(ProjectAuthorityMapQuery),
-}
-
-/// Generic persisted-state query scoped to one state domain.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StateRecordQuery {
-    pub domain: ServerStateDomain,
-    pub scope: StateRecordQueryScope,
-}
-
-/// Record query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum StateRecordQueryScope {
-    Get(PersistenceRecordId),
-    List,
-    ListByProject(ProjectId),
-    ListByTask(TaskId),
-    ListByWorkspace(WorkspaceLayoutId),
-    ListByRepo(RepoMembershipId),
-}
-
-/// Adapter registry and session query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AdapterSessionQuery {
-    ListAdapters,
-    GetAdapter(AdapterIdentity),
-    ListSessions,
-    GetSession(AgentSessionId),
-    ListSessionsForProject(ProjectId),
-}
-
-/// Model route query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ModelRouteQuery {
-    ListRoutes,
-    GetRoute(String),
-    ResolveRouteForProject(ProjectId),
-    ResolveRouteForTask(TaskId),
-}
-
-/// Runtime metadata query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RuntimeMetadataQuery {
-    StoredEffects(RuntimeEffectStorageQuery),
-    GetStoredEffect(RuntimeEffectStorageRecordId),
-    ResolveRuntimeRef(RuntimeEffectStorageRef),
-    ListCommandEvidence,
-    ListRuntimeReceipts,
-    ListCheckpointRecords,
-    ListDiffSummaryRecords,
-    ListTaskWorkProgress,
-    ListArtifactMetadata,
-    GetLocalRuntimeReadiness,
-}
-
-/// Client-safe diagnostics query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DiagnosticsQuery {
-    Steward,
-    Effigy,
-    ManagementSync,
-    ScmSession,
-    TaskAgent,
-    CodexProvider,
-    LiveEvidenceCompletion,
-    CompletionScmReadiness,
-    CompletionScmCapture,
-    CompletionScmCapturePreparation,
-    ScmCaptureDryRun,
-    ScmCaptureDryRunExecution,
-    GitDryRunExecution,
-    ScmCaptureWorkflow,
-    ScmCaptureReview,
-    ScmCaptureReviewDecision,
-    ScmChangeRequestPreparation,
-    All,
-}
-
-/// Provider read-intent query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProviderReadIntentQuery {
-    Projection,
-}
-
-/// Provider readiness overview query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProviderReadinessOverviewQuery {
-    Overview,
-}
-
-/// Provider live-read executor query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProviderLiveReadExecutorQuery {
-    Diagnostics,
-}
-
-/// Provider live-read smoke evidence query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProviderLiveReadSmokeEvidenceQuery {
-    Diagnostics,
-}
-
-/// Task timeline query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TaskTimelineQuery {
-    pub task_id: TaskId,
-}
-
-/// Task readiness query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TaskReadinessQuery {
-    pub project_id: ProjectId,
-}
-
-/// Project authority-map query shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProjectAuthorityMapQuery {
-    pub project_id: ProjectId,
-    pub expected_domains: Vec<ProjectAuthorityDomain>,
 }
 
 /// Response emitted by the server control boundary.
@@ -277,6 +127,7 @@ pub enum ServerQueryResult {
     TaskReadiness(EngineTaskReadinessProjection),
     PlanningTaskSeeds(EngineTaskSeedCandidateProjection),
     PlanningSessions(PlanningSessionsProjection),
+    AcceptedMemory(AcceptedMemoryProjection),
     MemoryProposals(MemoryProposalsProjection),
     MemoryProposalReviewDiagnostics(crate::MemoryProposalReviewDiagnostics),
     ResearchRunBriefs(ResearchRunBriefsProjection),
@@ -284,6 +135,9 @@ pub enum ServerQueryResult {
     PlanningProjectionFileWriteDiagnostics(crate::PlanningProjectionFileWriteDiagnostics),
     PlanningProjectionImportDiagnostics(crate::PlanningProjectionImportDiagnostics),
     PlanningProjectionImportApplyDiagnostics(crate::PlanningProjectionImportApplyDiagnostics),
+    PlanningProjectionImportActiveApplyDiagnostics(
+        crate::PlanningProjectionImportActiveApplyDiagnostics,
+    ),
     PlanningCapturePublicationDiagnostics(
         crate::PlanningCapturePublicationStoppedRequestDiagnostics,
     ),
@@ -364,6 +218,7 @@ mod tests {
     use super::*;
     use nucleus_core::{PersistenceDomain, PersistenceRecordKind};
     use nucleus_local_store::fixture_record;
+    use nucleus_tasks::TaskId;
 
     #[test]
     fn control_request_can_wrap_command_without_transport() {

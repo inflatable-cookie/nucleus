@@ -10,10 +10,12 @@ use nucleus_server::{
 
 use super::*;
 
+mod accepted_memory;
 mod memory_proposal_review;
 mod memory_proposals;
 mod planning_capture_publication;
 mod planning_projection_import;
+mod planning_projection_import_active_apply;
 mod planning_projection_import_apply;
 mod planning_sessions;
 mod research_run_briefs;

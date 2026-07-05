@@ -2,9 +2,9 @@ use nucleus_projects::ProjectId;
 use nucleus_tasks::TaskId;
 
 use crate::control_api::{
-    MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery, PlanningSessionsQuery,
-    PlanningTaskSeedsQuery, ResearchRunBriefsQuery, ServerQueryKind, TaskReadinessQuery,
-    TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    AcceptedMemoryQuery, MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
+    PlanningSessionsQuery, PlanningTaskSeedsQuery, ResearchRunBriefsQuery, ServerQueryKind,
+    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
 };
 
 use super::super::ControlApiCodecError;
@@ -88,6 +88,23 @@ pub(super) fn memory_proposals_query_from_action(
         _ => Err(ControlApiCodecError::unsupported(
             "memory proposals query action is not supported",
         )),
+    }
+}
+
+pub(super) fn accepted_memory_query_from_action(
+    action: &str,
+    project_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "memory" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
+            "accepted memory query requires a project id",
+        )),
+        "memory" => Ok(ServerQueryKind::AcceptedMemory(AcceptedMemoryQuery {
+            project_id: ProjectId(project_id),
+        })),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported accepted memory query action: {action}"
+        ))),
     }
 }
 

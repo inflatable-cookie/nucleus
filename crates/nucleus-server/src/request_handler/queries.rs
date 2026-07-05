@@ -52,12 +52,14 @@ use crate::{
     ScmCaptureWorkflowProjectionInput,
 };
 
+mod accepted_memory;
 mod authority_map;
 mod diagnostics;
 mod memory_proposal_review_diagnostics;
 mod memory_proposals;
 mod planning_capture_publication_diagnostics;
 mod planning_projection_file_write_diagnostics;
+mod planning_projection_import_active_apply_diagnostics;
 mod planning_projection_import_apply_diagnostics;
 mod planning_projection_import_diagnostics;
 mod planning_sessions;
@@ -144,6 +146,9 @@ where
         ServerQueryKind::PlanningSessions(query) => {
             planning_sessions::planning_sessions_query(handler, query)
         }
+        ServerQueryKind::AcceptedMemory(query) => {
+            accepted_memory::accepted_memory_query(handler, query)
+        }
         ServerQueryKind::MemoryProposals(query) => {
             memory_proposals::memory_proposals_query(handler, query)
         }
@@ -166,6 +171,9 @@ where
         }
         ServerQueryKind::PlanningProjectionImportApplyDiagnostics(query) => {
             planning_projection_import_apply_diagnostics::planning_projection_import_apply_diagnostics_query(handler, query)
+        }
+        ServerQueryKind::PlanningProjectionImportActiveApplyDiagnostics(query) => {
+            planning_projection_import_active_apply_diagnostics::planning_projection_import_active_apply_diagnostics_query(handler, query)
         }
         ServerQueryKind::PlanningCapturePublicationDiagnostics(query) => {
             planning_capture_publication_diagnostics::planning_capture_publication_diagnostics_query(handler, query)

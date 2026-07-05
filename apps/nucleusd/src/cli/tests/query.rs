@@ -151,6 +151,24 @@ fn cli_config_parses_memory_proposals_query_domain() {
 }
 
 #[test]
+fn cli_config_parses_accepted_memory_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "accepted-memory".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+    ])
+    .expect("parse accepted memory query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::AcceptedMemory {
+            project_id: "project:nucleus-local".to_owned()
+        })
+    );
+}
+
+#[test]
 fn cli_config_parses_memory_proposal_review_diagnostics_query_domain() {
     let config = CliConfig::parse(vec![
         "query".to_owned(),
@@ -237,6 +255,26 @@ fn cli_config_parses_planning_projection_import_apply_diagnostics_query_domain()
         Some(QueryDomain::PlanningProjectionImportApplyDiagnostics {
             project_id: "project:nucleus-local".to_owned()
         })
+    );
+}
+
+#[test]
+fn cli_config_parses_planning_projection_import_active_apply_diagnostics_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "planning-projection-import-active-apply-diagnostics".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+    ])
+    .expect("parse planning projection import active apply diagnostics query");
+
+    assert_eq!(
+        config.query,
+        Some(
+            QueryDomain::PlanningProjectionImportActiveApplyDiagnostics {
+                project_id: "project:nucleus-local".to_owned()
+            }
+        )
     );
 }
 

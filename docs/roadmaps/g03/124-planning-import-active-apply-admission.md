@@ -1,8 +1,8 @@
 # 124 Planning Import Active Apply Admission
 
-Status: ready
+Status: completed
 Owner: Tom
-Updated: 2026-07-03
+Updated: 2026-07-04
 
 ## Purpose
 
@@ -30,27 +30,27 @@ remain separate authority lanes.
 
 ## Goals
 
-- [ ] Select the active-apply admission boundary over stopped apply records.
-- [ ] Require explicit operator approval and revision expectations.
-- [ ] Preserve conflict, stale revision, missing ref, unsupported kind, and
+- [x] Select the active-apply admission boundary over stopped apply records.
+- [x] Require explicit operator approval and revision expectations.
+- [x] Preserve conflict, stale revision, missing ref, unsupported kind, and
   repair-required blockers.
-- [ ] Persist active-apply admission records without applying them.
-- [ ] Expose read-only diagnostics through server query/control, `nucleusd`,
+- [x] Persist active-apply admission records without applying them.
+- [x] Expose read-only diagnostics through server query/control, `nucleusd`,
   and Effigy before any mutation executor.
-- [ ] Keep actual planning record mutation, task creation, task promotion,
+- [x] Keep actual planning record mutation, task creation, task promotion,
   projection writes, SCM/forge mutation, provider execution, semantic merge
   automation, accepted memory mutation, and UI behavior out of scope.
 
 ## Execution Plan
 
-- [ ] Batch 1: define active-apply admission authority, inputs, stop
+- [x] Batch 1: define active-apply admission authority, inputs, stop
   conditions, and deferred effects.
-- [ ] Batch 2: model active-apply admission records from stopped apply
+- [x] Batch 2: model active-apply admission records from stopped apply
   diagnostics and operator approval refs.
-- [ ] Batch 3: persist active-apply admission records with duplicate no-op and
+- [x] Batch 3: persist active-apply admission records with duplicate no-op and
   no-effect flags.
-- [ ] Batch 4: expose active-apply admission diagnostics query/control/CLI/Effigy.
-- [ ] Batch 5: validate and choose whether to build a stopped apply executor,
+- [x] Batch 4: expose active-apply admission diagnostics query/control/CLI/Effigy.
+- [x] Batch 5: validate and choose whether to build a stopped apply executor,
   desktop review controls, accepted memory authority, or research execution
   planning.
 
@@ -58,30 +58,94 @@ remain separate authority lanes.
 
 Ready cards:
 
-- `batch-cards/543-planning-import-active-apply-admission-boundary.md`
+None.
 
 Planned cards:
 
-- `batch-cards/544-planning-import-active-apply-admission-model.md`
-- `batch-cards/545-planning-import-active-apply-admission-persistence.md`
-- `batch-cards/546-planning-import-active-apply-diagnostics-query-cli-effigy.md`
-- `batch-cards/547-planning-import-active-apply-validation-next-lane.md`
+None.
 
 Completed cards:
 
-None.
+- `batch-cards/547-planning-import-active-apply-validation-next-lane.md`
+- `batch-cards/546-planning-import-active-apply-diagnostics-query-cli-effigy.md`
+- `batch-cards/545-planning-import-active-apply-admission-persistence.md`
+- `batch-cards/544-planning-import-active-apply-admission-model.md`
+- `batch-cards/543-planning-import-active-apply-admission-boundary.md`
+
+## Boundary Decision
+
+Active-apply admission is a stopped planning authority record over a persisted
+stopped apply plan. It does not apply the plan. It decides whether a later
+executor may be built for that record.
+
+Eligible inputs:
+
+- a persisted stopped apply record from roadmap `123`
+- stopped apply status `Persisted`
+- at least one planned operation
+- zero blocked operations
+- zero raw payload or payload-body flags
+- no effect-permission flags on the stopped apply record
+- operation record ids and file refs present for every planned operation
+- expected current revision present for every planned operation that updates an
+  existing planning target
+- observed revision matching the expected revision when both are present
+- sanitized evidence refs for the stopped apply record and operations
+- explicit operator approval ref for this admission step
+
+Required refs:
+
+- stopped apply record id
+- dry-run plan id
+- approval ref
+- operator ref
+- revision expectation refs per operation
+- sanitized evidence refs
+- admission request id for duplicate detection
+
+Blocked cases:
+
+- stopped apply record is missing, blocked, or duplicate no-op
+- no planned operations exist
+- any blocked operation exists
+- any operation is inspect-only or unsupported
+- missing record id, file ref, evidence ref, or required revision expectation
+- stale revision evidence
+- conflict, repair-required, unsupported, or missing-ref blocker evidence
+- raw projected payload, private planning body, provider payload, source body,
+  terminal stream, credential, or secret material is present
+- active planning mutation, task creation, task promotion, projection write,
+  SCM/forge mutation, provider execution, agent scheduling, semantic merge,
+  accepted memory mutation, callback, interruption, recovery, or UI apply is
+  requested
+
+Deferred effects:
+
+- active planning record mutation
+- apply executor invocation
+- semantic merge resolution
+- task creation or task seed promotion
+- projection file writes
+- SCM, forge, provider, callback, interruption, or recovery effects
+- accepted memory mutation
+- desktop review controls or final UI behavior
+
+The next model card should implement admission request/record/status/blocker
+types only. A successful admission may set `apply_admitted = true` on the
+admission record, but it must not mutate active planning records or call an
+executor.
 
 ## Acceptance Criteria
 
-- [ ] Active-apply admission records are distinct from stopped apply plans and
+- [x] Active-apply admission records are distinct from stopped apply plans and
   from any future apply execution receipts.
-- [ ] Admission requires an explicit operator approval ref.
-- [ ] Admission preserves revision expectations and sanitized evidence refs.
-- [ ] Blocked, stale, conflict, unsupported, repair-required, missing-ref, and
+- [x] Admission requires an explicit operator approval ref.
+- [x] Admission preserves revision expectations and sanitized evidence refs.
+- [x] Blocked, stale, conflict, unsupported, repair-required, missing-ref, and
   raw-payload cases do not receive apply authority.
-- [ ] Diagnostics expose counts and no-effect flags without raw projected file
+- [x] Diagnostics expose counts and no-effect flags without raw projected file
   payloads or private planning bodies.
-- [ ] No active planning mutation, task creation, task promotion, provider
+- [x] No active planning mutation, task creation, task promotion, provider
   execution, agent scheduling, SCM/forge mutation, semantic merge automation,
   accepted memory mutation, or UI behavior is added.
 

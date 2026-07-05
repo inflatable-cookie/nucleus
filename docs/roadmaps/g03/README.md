@@ -88,6 +88,12 @@ Current runway bands:
 - memory proposal review commands before accepted memory record creation,
   memory projection, embeddings, semantic search, provider-native memory sync,
   automatic extraction, or desktop review controls
+- accepted memory authority proof before memory projection, embeddings,
+  semantic search, provider-native memory sync, automatic extraction, or final
+  memory UI
+- accepted memory projection policy before memory projection file writes,
+  embeddings, semantic search, provider-native memory sync, automatic
+  extraction, SCM/forge mutation, or final memory UI
 
 Current checkpoint:
 
@@ -465,27 +471,53 @@ Reason:
 - `121-disposable-planning-research-ui-proof.md` - completed
 - `122-memory-proposal-review-command-foundation.md` - completed
 - `123-planning-projection-import-review-apply.md` - completed
-- `124-planning-import-active-apply-admission.md` - ready
+- `124-planning-import-active-apply-admission.md` - completed
+- `125-planning-import-active-apply-executor-boundary.md` - paused
+- `126-minimum-planning-import-apply-proof.md` - completed
+- `127-accepted-memory-authority-proof.md` - completed
+- `128-accepted-memory-read-only-inspection.md` - completed
+- `129-accepted-memory-projection-policy-gate.md` - ready
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/543-planning-import-active-apply-admission-boundary.md`
+- `batch-cards/565-accepted-memory-projection-policy-model.md`
 
 Paused cards:
 
-None.
+- `batch-cards/550-planning-import-active-apply-executor-persistence.md`
+- `batch-cards/551-planning-import-active-apply-executor-diagnostics-query-cli-effigy.md`
+- `batch-cards/552-planning-import-active-apply-executor-validation-next-lane.md`
 
 Planned cards:
 
-- `batch-cards/544-planning-import-active-apply-admission-model.md`
-- `batch-cards/545-planning-import-active-apply-admission-persistence.md`
-- `batch-cards/546-planning-import-active-apply-diagnostics-query-cli-effigy.md`
-- `batch-cards/547-planning-import-active-apply-validation-next-lane.md`
+- `batch-cards/566-accepted-memory-stopped-export-plan.md`
+- `batch-cards/567-accepted-memory-projection-diagnostics-query.md`
+- `batch-cards/568-accepted-memory-projection-dto-cli-effigy.md`
+- `batch-cards/569-accepted-memory-projection-validation-next-lane.md`
 
 Completed cards:
 
+- `batch-cards/564-accepted-memory-read-inspection-validation.md`
+- `batch-cards/563-accepted-memory-dto-cli-effigy-inspection.md`
+- `batch-cards/562-accepted-memory-query-control.md`
+- `batch-cards/561-accepted-memory-read-projection.md`
+- `batch-cards/560-accepted-memory-validation-next-lane.md`
+- `batch-cards/559-accepted-memory-persistence-receipts.md`
+- `batch-cards/558-memory-proposal-acceptance-admission.md`
+- `batch-cards/557-accepted-memory-storage-shape.md`
+- `batch-cards/556-accepted-memory-authority-boundary.md`
+- `batch-cards/555-minimum-planning-import-apply-proof-validation-next-lane.md`
+- `batch-cards/554-minimum-planning-import-apply-proof-implementation.md`
+- `batch-cards/553-minimum-planning-import-apply-proof-scope.md`
+- `batch-cards/549-planning-import-active-apply-executor-plan-model.md`
+- `batch-cards/548-planning-import-active-apply-executor-boundary.md`
+- `batch-cards/547-planning-import-active-apply-validation-next-lane.md`
+- `batch-cards/546-planning-import-active-apply-diagnostics-query-cli-effigy.md`
+- `batch-cards/545-planning-import-active-apply-admission-persistence.md`
+- `batch-cards/544-planning-import-active-apply-admission-model.md`
+- `batch-cards/543-planning-import-active-apply-admission-boundary.md`
 - `batch-cards/542-planning-import-apply-validation-next-lane.md`
 - `batch-cards/541-planning-import-apply-diagnostics-query-cli-effigy.md`
 - `batch-cards/540-planning-import-apply-stopped-persistence.md`
@@ -1215,6 +1247,10 @@ Current stop:
   import/admission records, conflict staging, diagnostics, and app-native
   planning records now exist; accepted memory authority, research execution,
   and final UI remain deferred
+- minimum planning import apply proof is complete. Reviewed planning imports
+  can update one existing planning artifact through exact revision matching and
+  sanitized receipts. Planning import/apply now pauses; the next selected lane
+  is accepted memory authority from reviewed memory proposals.
 - provider writes, task mutation outside explicit task-domain commands,
   callbacks, interruption/recovery execution, raw payload retention, active
   planning mutation, semantic merge resolution, task promotion without review,

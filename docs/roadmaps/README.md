@@ -251,7 +251,13 @@ shape.
 - `g03/120-deep-research-run-brief-foundation.md` - completed
 - `g03/121-disposable-planning-research-ui-proof.md` - completed
 - `g03/122-memory-proposal-review-command-foundation.md` - completed
-- `g03/123-planning-projection-import-review-apply.md` - ready
+- `g03/123-planning-projection-import-review-apply.md` - completed
+- `g03/124-planning-import-active-apply-admission.md` - completed
+- `g03/125-planning-import-active-apply-executor-boundary.md` - paused
+- `g03/126-minimum-planning-import-apply-proof.md` - completed
+- `g03/127-accepted-memory-authority-proof.md` - completed
+- `g03/128-accepted-memory-read-only-inspection.md` - completed
+- `g03/129-accepted-memory-projection-policy-gate.md` - ready
 
 ## Previous Generation
 
@@ -310,15 +316,14 @@ shape.
 
 ## Next Task
 
-Continue `docs/roadmaps/g03/123-planning-projection-import-review-apply.md`
+Continue `docs/roadmaps/g03/129-accepted-memory-projection-policy-gate.md`
 with
-`docs/roadmaps/g03/124-planning-import-active-apply-admission.md`
-with
-`docs/roadmaps/g03/batch-cards/543-planning-import-active-apply-admission-boundary.md`.
-Define the active planning apply admission boundary over stopped apply records.
-Keep actual planning record mutation, task creation, task promotion,
-projection writes, SCM/forge mutation, provider execution, semantic merge
-automation, accepted memory mutation, and UI behavior out of scope.
+`docs/roadmaps/g03/batch-cards/565-accepted-memory-projection-policy-model.md`.
+Add the pure accepted-memory projection policy model for projectable,
+local-only, blocked, and review-required records. Keep projection file writes,
+embeddings, semantic search, provider-native sync, automatic extraction, raw
+transcript retention, SCM/forge mutation, task mutation, and UI behavior out
+of scope.
 Do not reopen crawler, browser automation, source retrieval, provider/model
 execution, raw source retention, citation rendering, accepted synthesis
 promotion, accepted memory mutation, task creation, projection/apply, final UI,

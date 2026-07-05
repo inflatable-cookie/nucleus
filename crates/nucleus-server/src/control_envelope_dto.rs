@@ -20,6 +20,10 @@ pub use query::{ControlQueryDto, ControlQueryScopeDto, ControlStateDomainDto};
 pub use records::ControlStateRecordDto;
 pub use request::{ControlRequestBodyDto, ControlRequestEnvelopeDto};
 pub use response::{
+    ControlAcceptedMemoryConfidenceCountDto, ControlAcceptedMemoryKindCountDto,
+    ControlAcceptedMemoryRetentionCountDto, ControlAcceptedMemoryScopeCountDto,
+    ControlAcceptedMemorySensitivityCountDto, ControlAcceptedMemorySourceCountsDto,
+    ControlAcceptedMemoryStatusCountDto, ControlAcceptedMemorySummaryDto,
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
     ControlDiagnosticsSnapshotDto, ControlDiffSummaryRecordDto,
     ControlMemoryProposalRetentionCountDto, ControlMemoryProposalReviewDiagnosticEntryDto,
@@ -29,6 +33,8 @@ pub use response::{
     ControlPlanningCapturePublicationBucketDto, ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticIssueDto,
     ControlPlanningProjectionFileWriteDiagnosticsDto,
+    ControlPlanningProjectionImportActiveApplyBucketDto,
+    ControlPlanningProjectionImportActiveApplyDiagnosticsDto,
     ControlPlanningProjectionImportApplyBucketDto,
     ControlPlanningProjectionImportApplyDiagnosticsDto, ControlPlanningProjectionImportBucketDto,
     ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningSessionOutputRefsDto,

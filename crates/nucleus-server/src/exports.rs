@@ -1,3 +1,5 @@
+pub use super::accepted_memory_persistence::*;
+pub use super::accepted_memory_projection::*;
 pub use super::artifact_store_backend::*;
 pub use super::authority::*;
 pub use super::checkpoint_diff_state::*;

@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use nucleus_local_store::{LocalStoreRecord, SqliteBackend};
 use nucleus_projects::ProjectId;
 use nucleus_server::{
-    ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler,
+    AcceptedMemoryQuery, ClientId, ControlResponseEnvelopeDto, LocalControlRequestHandler,
     MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
     PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
+    PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ProjectAuthorityDomain,
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
@@ -64,6 +65,7 @@ pub(crate) fn print_query(
             | QueryDomain::TaskReadiness { .. }
             | QueryDomain::PlanningTaskSeeds { .. }
             | QueryDomain::PlanningSessions { .. }
+            | QueryDomain::AcceptedMemory { .. }
             | QueryDomain::MemoryProposals { .. }
             | QueryDomain::MemoryProposalReviewDiagnostics { .. }
             | QueryDomain::ResearchRunBriefs { .. }
@@ -71,6 +73,7 @@ pub(crate) fn print_query(
             | QueryDomain::PlanningProjectionFileWriteDiagnostics { .. }
             | QueryDomain::PlanningProjectionImportDiagnostics { .. }
             | QueryDomain::PlanningProjectionImportApplyDiagnostics { .. }
+            | QueryDomain::PlanningProjectionImportActiveApplyDiagnostics { .. }
             | QueryDomain::PlanningCapturePublicationDiagnostics { .. }
             | QueryDomain::ProjectAuthorityMap { .. }
     ) {
@@ -171,6 +174,11 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
                 project_id: ProjectId(project_id.clone()),
             })
         }
+        QueryDomain::AcceptedMemory { project_id } => {
+            ServerQueryKind::AcceptedMemory(AcceptedMemoryQuery {
+                project_id: ProjectId(project_id.clone()),
+            })
+        }
         QueryDomain::MemoryProposals { project_id } => {
             ServerQueryKind::MemoryProposals(MemoryProposalsQuery {
                 project_id: ProjectId(project_id.clone()),
@@ -208,6 +216,13 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
         QueryDomain::PlanningProjectionImportApplyDiagnostics { project_id } => {
             ServerQueryKind::PlanningProjectionImportApplyDiagnostics(
                 PlanningProjectionImportApplyDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
+        }
+        QueryDomain::PlanningProjectionImportActiveApplyDiagnostics { project_id } => {
+            ServerQueryKind::PlanningProjectionImportActiveApplyDiagnostics(
+                PlanningProjectionImportActiveApplyDiagnosticsQuery {
                     project_id: ProjectId(project_id.clone()),
                 },
             )

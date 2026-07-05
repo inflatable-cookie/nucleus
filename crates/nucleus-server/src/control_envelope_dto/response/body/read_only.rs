@@ -15,7 +15,7 @@ pub enum ControlReadOnlyCommandRejectionDto {
     SpawnFailed { reason: String },
 }
 
-pub(super) fn read_only_command_result_dto(
+pub(in crate::control_envelope_dto::response) fn read_only_command_result_dto(
     result: &ReadOnlyCommandControlResult,
 ) -> ControlResponseBodyDto {
     ControlResponseBodyDto::ReadOnlyCommandResult {

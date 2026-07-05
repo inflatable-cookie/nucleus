@@ -1,16 +1,37 @@
-//! App-native shared memory proposal domain types.
+//! App-native shared memory domain types.
 //!
-//! This crate owns proposal-side memory vocabulary. It does not implement
-//! accepted-memory mutation, autonomous extraction, embeddings, semantic
-//! search, provider-native memory sync, projection apply, or UI behavior.
+//! This crate owns proposal-side and accepted-memory storage vocabulary. It
+//! does not implement autonomous extraction, embeddings, semantic search,
+//! provider-native memory sync, projection apply, or UI behavior.
 
+pub mod acceptance;
+pub mod accepted;
+pub mod accepted_storage;
 pub mod ids;
 pub mod proposals;
 pub mod refs;
 pub mod review;
 pub mod storage_shape;
 
-pub use ids::MemoryProposalId;
+#[cfg(test)]
+mod acceptance_tests;
+
+pub use acceptance::{
+    admit_memory_proposal_acceptance, MemoryProposalAcceptanceAdmission,
+    MemoryProposalAcceptanceAdmissionStatus, MemoryProposalAcceptanceBlocker,
+    MemoryProposalAcceptanceCommand, MemoryProposalAcceptanceNoEffects,
+};
+pub use accepted::{
+    AcceptedMemory, AcceptedMemoryActors, AcceptedMemoryBody, AcceptedMemoryReview,
+    AcceptedMemoryStatus, AcceptedMemoryTimestamps,
+};
+pub use accepted_storage::{
+    decode_accepted_memory_storage_record, encode_accepted_memory_storage_payload,
+    AcceptedMemoryRecordCodecError, AcceptedMemoryStorageActors, AcceptedMemoryStorageBody,
+    AcceptedMemoryStorageRecord, AcceptedMemoryStorageReview, AcceptedMemoryStorageStatus,
+    AcceptedMemorySupersessionStorageRefs, ACCEPTED_MEMORY_STORAGE_SCHEMA_VERSION,
+};
+pub use ids::{MemoryId, MemoryProposalId};
 pub use proposals::{
     MemoryKind, MemoryProposal, MemoryProposalPayload, MemoryProposalStatus, MemoryProposalTitle,
     MemoryScope, MemoryTimestamps,

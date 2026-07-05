@@ -1,6 +1,8 @@
 //! Serializable control response DTOs.
 
+mod accepted_memory;
 mod body;
+mod body_conversion;
 mod envelope;
 mod helpers;
 mod memory_proposals;
@@ -22,6 +24,10 @@ pub use provider_read_intent::{
 };
 pub use provider_readiness_overview::ControlProviderReadinessOverviewDto;
 pub use records::{
+    ControlAcceptedMemoryConfidenceCountDto, ControlAcceptedMemoryKindCountDto,
+    ControlAcceptedMemoryRetentionCountDto, ControlAcceptedMemoryScopeCountDto,
+    ControlAcceptedMemorySensitivityCountDto, ControlAcceptedMemorySourceCountsDto,
+    ControlAcceptedMemoryStatusCountDto, ControlAcceptedMemorySummaryDto,
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
     ControlDiagnosticsSnapshotDto, ControlDiffSummaryRecordDto,
     ControlMemoryProposalRetentionCountDto, ControlMemoryProposalReviewDiagnosticEntryDto,
@@ -31,6 +37,8 @@ pub use records::{
     ControlPlanningCapturePublicationBucketDto, ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticIssueDto,
     ControlPlanningProjectionFileWriteDiagnosticsDto,
+    ControlPlanningProjectionImportActiveApplyBucketDto,
+    ControlPlanningProjectionImportActiveApplyDiagnosticsDto,
     ControlPlanningProjectionImportApplyBucketDto,
     ControlPlanningProjectionImportApplyDiagnosticsDto, ControlPlanningProjectionImportBucketDto,
     ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningSessionOutputRefsDto,

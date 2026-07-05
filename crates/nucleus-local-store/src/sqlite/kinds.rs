@@ -12,6 +12,9 @@ pub(super) fn kind_to_text(kind: &PersistenceRecordKind) -> Option<&'static str>
         PersistenceRecordKind::PlanningSession => Some("planning_session"),
         PersistenceRecordKind::PlanningArtifact => Some("planning_artifact"),
         PersistenceRecordKind::PlanningImportApplyPlan => Some("planning_import_apply_plan"),
+        PersistenceRecordKind::PlanningImportActiveApplyAdmission => {
+            Some("planning_import_active_apply_admission")
+        }
         PersistenceRecordKind::TaskSeed => Some("task_seed"),
         PersistenceRecordKind::ResearchRun => Some("research_run"),
         PersistenceRecordKind::WorkspaceLayout => Some("workspace_layout"),
@@ -36,6 +39,9 @@ pub(super) fn kind_from_text(value: &str) -> LocalStoreResult<PersistenceRecordK
         "planning_session" => Ok(PersistenceRecordKind::PlanningSession),
         "planning_artifact" => Ok(PersistenceRecordKind::PlanningArtifact),
         "planning_import_apply_plan" => Ok(PersistenceRecordKind::PlanningImportApplyPlan),
+        "planning_import_active_apply_admission" => {
+            Ok(PersistenceRecordKind::PlanningImportActiveApplyAdmission)
+        }
         "task_seed" => Ok(PersistenceRecordKind::TaskSeed),
         "research_run" => Ok(PersistenceRecordKind::ResearchRun),
         "workspace_layout" => Ok(PersistenceRecordKind::WorkspaceLayout),

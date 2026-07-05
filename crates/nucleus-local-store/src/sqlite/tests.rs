@@ -43,6 +43,11 @@ fn sqlite_supported_domains() -> Vec<(PersistenceDomain, PersistenceRecordKind, 
         ),
         (
             PersistenceDomain::Planning,
+            PersistenceRecordKind::PlanningImportActiveApplyAdmission,
+            "planning:import-active-apply-admission:1",
+        ),
+        (
+            PersistenceDomain::Planning,
             PersistenceRecordKind::TaskSeed,
             "planning:task-seed:1",
         ),

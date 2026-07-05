@@ -3,6 +3,9 @@
 //! This crate names the server authority surface. It does not implement
 //! networking, authentication, process control, or runtime routing yet.
 
+pub mod accepted_memory_persistence;
+pub mod accepted_memory_projection;
+mod accepted_memory_projection_counts;
 pub mod artifact_store_backend;
 pub mod authority;
 pub mod checkpoint_diff_state;
@@ -258,6 +261,10 @@ pub mod tauri_ipc_command;
 pub mod tauri_ipc_readiness;
 pub mod transport_readiness;
 
+#[cfg(test)]
+mod accepted_memory_persistence_tests;
+#[cfg(test)]
+mod accepted_memory_projection_tests;
 mod exports;
 #[cfg(test)]
 mod live_workflow_authority;
