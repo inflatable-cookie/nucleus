@@ -1,12 +1,15 @@
 //! Serializable control response DTOs.
 
 mod accepted_memory;
+mod accepted_memory_active_apply;
 mod accepted_memory_body_conversion;
+mod accepted_memory_import_apply_review;
 mod accepted_memory_projection;
 mod accepted_memory_projection_import;
 mod accepted_memory_projection_import_apply;
 mod accepted_memory_projection_writes;
 mod accepted_memory_review;
+mod accepted_memory_review_receipt_storage;
 mod body;
 mod body_conversion;
 mod envelope;
@@ -30,7 +33,12 @@ pub use provider_read_intent::{
 };
 pub use provider_readiness_overview::ControlProviderReadinessOverviewDto;
 pub use records::{
-    ControlAcceptedMemoryConfidenceCountDto, ControlAcceptedMemoryKindCountDto,
+    ControlAcceptedMemoryActiveApplyCountsDto, ControlAcceptedMemoryActiveApplyDiagnosticsDto,
+    ControlAcceptedMemoryActiveApplyRecordDto, ControlAcceptedMemoryConfidenceCountDto,
+    ControlAcceptedMemoryImportApplyReviewBlockerDto,
+    ControlAcceptedMemoryImportApplyReviewCountsDto,
+    ControlAcceptedMemoryImportApplyReviewDiagnosticsDto,
+    ControlAcceptedMemoryImportApplyReviewReceiptDto, ControlAcceptedMemoryKindCountDto,
     ControlAcceptedMemoryProjectionBlockerDto, ControlAcceptedMemoryProjectionCountsDto,
     ControlAcceptedMemoryProjectionDiagnosticsDto, ControlAcceptedMemoryProjectionEntryDto,
     ControlAcceptedMemoryProjectionImportAdmissionDto,
@@ -48,7 +56,10 @@ pub use records::{
     ControlAcceptedMemoryProjectionWriteDiagnosticsDto,
     ControlAcceptedMemoryProjectionWriteEntryDto, ControlAcceptedMemoryRetentionCountDto,
     ControlAcceptedMemoryReviewReadinessCountsDto, ControlAcceptedMemoryReviewReadinessDto,
-    ControlAcceptedMemoryReviewReadinessRecordDto, ControlAcceptedMemoryScopeCountDto,
+    ControlAcceptedMemoryReviewReadinessRecordDto,
+    ControlAcceptedMemoryReviewReceiptStorageCountsDto,
+    ControlAcceptedMemoryReviewReceiptStorageDiagnosticsDto,
+    ControlAcceptedMemoryReviewReceiptStorageRecordDto, ControlAcceptedMemoryScopeCountDto,
     ControlAcceptedMemorySensitivityCountDto, ControlAcceptedMemorySourceCountsDto,
     ControlAcceptedMemoryStatusCountDto, ControlAcceptedMemorySummaryDto,
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,

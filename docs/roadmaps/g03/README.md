@@ -484,13 +484,16 @@ Reason:
 - `131-accepted-memory-projection-import-validation.md` - completed
 - `132-accepted-memory-import-apply-admission.md` - completed
 - `133-accepted-memory-review-product-consumption-readiness.md` - completed
-- `134-accepted-memory-import-apply-review-commands.md` - ready
+- `134-accepted-memory-import-apply-review-commands.md` - completed
+- `135-accepted-memory-review-receipt-persistence-and-apply-admission.md` -
+  completed
+- `136-accepted-memory-active-apply-executor-boundary.md` - ready
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/587-accepted-memory-import-apply-review-command-boundary.md`
+- `batch-cards/596-accepted-memory-active-apply-executor-boundary.md`
 
 Paused cards:
 
@@ -500,12 +503,22 @@ Paused cards:
 
 Planned cards:
 
-- `batch-cards/588-accepted-memory-import-apply-review-command-model.md`
-- `batch-cards/589-accepted-memory-import-apply-review-diagnostics-control.md`
-- `batch-cards/590-accepted-memory-import-apply-review-validation-next-lane.md`
+- `batch-cards/600-accepted-memory-active-apply-validation-next-lane.md`
+- `batch-cards/599-accepted-memory-active-apply-diagnostics-control.md`
+- `batch-cards/598-accepted-memory-active-apply-receipts-idempotency.md`
+- `batch-cards/597-accepted-memory-active-apply-storage-mutation.md`
 
 Completed cards:
 
+- `batch-cards/595-accepted-memory-apply-admission-validation-next-lane.md`
+- `batch-cards/594-accepted-memory-active-apply-admission-diagnostics.md`
+- `batch-cards/593-accepted-memory-active-apply-admission-boundary.md`
+- `batch-cards/592-accepted-memory-review-receipt-storage-query.md`
+- `batch-cards/591-accepted-memory-review-receipt-persistence-boundary.md`
+- `batch-cards/590-accepted-memory-import-apply-review-validation-next-lane.md`
+- `batch-cards/589-accepted-memory-import-apply-review-diagnostics-control.md`
+- `batch-cards/588-accepted-memory-import-apply-review-command-model.md`
+- `batch-cards/587-accepted-memory-import-apply-review-command-boundary.md`
 - `batch-cards/586-accepted-memory-review-product-consumption-validation.md`
 - `batch-cards/585-accepted-memory-review-control-diagnostics.md`
 - `batch-cards/584-accepted-memory-review-read-model-shape.md`
@@ -1333,3 +1346,15 @@ Current stop:
   selected lane is accepted-memory import-apply review commands: create
   explicit approved/deferred/rejected review receipts before any active
   accepted-memory mutation executor.
+- accepted-memory import-apply review command boundary and pure model are
+  complete. The model creates sanitized approved/deferred/rejected/blocked
+  review receipts over stopped apply/admission records without active memory,
+  projection, SCM/forge, search, provider sync, automatic extraction, task,
+  agent, or UI effects.
+- accepted-memory import-apply review diagnostics are complete through
+  read-only server query/control DTO, `nucleusd`, and Effigy surfaces.
+  Diagnostics synthesize sanitized review receipts but do not persist operator
+  decisions.
+- accepted-memory import-apply review commands are validated and closed. The
+  next selected lane is durable review receipt persistence and stopped active
+  apply admission before any active accepted-memory mutation executor.

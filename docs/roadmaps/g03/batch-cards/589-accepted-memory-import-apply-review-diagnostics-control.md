@@ -1,8 +1,8 @@
 # 589 Accepted Memory Import Apply Review Diagnostics Control
 
-Status: planned
+Status: completed
 Owner: Tom
-Updated: 2026-07-05
+Updated: 2026-07-06
 Milestone: `../134-accepted-memory-import-apply-review-commands.md`
 
 ## Purpose
@@ -12,17 +12,37 @@ read-only control surfaces.
 
 ## Work
 
-- [ ] Add server query/read model over review receipts.
-- [ ] Add control-envelope DTO conversion.
-- [ ] Add `nucleusd query` output.
-- [ ] Add Effigy selector if stable.
-- [ ] Add focused server, DTO, CLI, and selector tests.
+- [x] Add server query/read model over review receipts.
+- [x] Add control-envelope DTO conversion.
+- [x] Add `nucleusd query` output.
+- [x] Add Effigy selector if stable.
+- [x] Add focused server, DTO, CLI, and selector tests.
 
 ## Acceptance Criteria
 
-- [ ] Diagnostics distinguish approved, deferred, rejected, blocked, duplicate,
+- [x] Diagnostics distinguish approved, deferred, rejected, blocked, duplicate,
   conflict, and approval-required review states.
-- [ ] Diagnostics expose refs and counts without raw memory bodies.
-- [ ] No active accepted-memory mutation, projection write, SCM/forge mutation,
+- [x] Diagnostics expose refs and counts without raw memory bodies.
+- [x] No active accepted-memory mutation, projection write, SCM/forge mutation,
   embeddings/search/provider sync, automatic extraction, task mutation, agent
   scheduling, or final UI behavior is added.
+
+## Implementation Result
+
+Added read-only accepted-memory import-apply review diagnostics through:
+
+- `AcceptedMemoryImportApplyReviewDiagnostics`
+- `ServerQueryKind::AcceptedMemoryImportApplyReviewDiagnostics`
+- control-envelope request/response DTO conversion
+- `nucleusd query accepted-memory-import-apply-review-diagnostics --project <project-id>`
+- Effigy selector `server:query:accepted-memory-import-apply-review-diagnostics`
+
+Diagnostics synthesize sanitized review-command validation receipts from
+stopped import-apply admissions. They expose receipt refs, command refs,
+admission refs, decision/status counts, duplicate/conflict/approval-required
+counts, blockers, provenance refs, and evidence refs without raw memory bodies.
+
+No review receipts are persisted. No active accepted-memory apply, projection
+write, SCM/forge mutation, embeddings/search, provider-native memory sync,
+automatic extraction, task mutation, agent scheduling, or final UI behavior is
+performed.

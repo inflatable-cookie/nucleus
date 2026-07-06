@@ -50,6 +50,24 @@ pub struct AcceptedMemoryProjectionImportApplyDiagnosticsQuery {
     pub project_id: ProjectId,
 }
 
+/// Accepted memory import-apply review receipt diagnostics query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptedMemoryImportApplyReviewDiagnosticsQuery {
+    pub project_id: ProjectId,
+}
+
+/// Accepted memory review receipt storage diagnostics query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptedMemoryReviewReceiptStorageDiagnosticsQuery {
+    pub project_id: ProjectId,
+}
+
+/// Accepted memory active-apply diagnostics query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptedMemoryActiveApplyDiagnosticsQuery {
+    pub project_id: ProjectId,
+}
+
 /// Accepted memory review/product readiness query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceptedMemoryReviewReadinessQuery {

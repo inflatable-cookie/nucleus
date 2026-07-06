@@ -157,6 +157,9 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 | ServerQueryResult::AcceptedMemoryProjectionWriteDiagnostics(_)
                 | ServerQueryResult::AcceptedMemoryProjectionImportDiagnostics(_)
                 | ServerQueryResult::AcceptedMemoryProjectionImportApplyDiagnostics(_)
+                | ServerQueryResult::AcceptedMemoryImportApplyReviewDiagnostics(_)
+                | ServerQueryResult::AcceptedMemoryReviewReceiptStorageDiagnostics(_)
+                | ServerQueryResult::AcceptedMemoryActiveApplyDiagnostics(_)
                 | ServerQueryResult::AcceptedMemoryReviewReadiness(_),
             ) => unreachable!("accepted memory query bodies are handled before the main match"),
             ServerControlResponseBody::Query(ServerQueryResult::MemoryProposals(projection)) => {

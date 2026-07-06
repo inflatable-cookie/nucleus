@@ -12,7 +12,6 @@ use nucleus_server::{
     ControlAcceptedMemoryProjectionWriteBlockerDto, ControlAcceptedMemoryProjectionWriteCountsDto,
     ControlAcceptedMemoryProjectionWriteDiagnosticsDto,
     ControlAcceptedMemoryProjectionWriteEntryDto, ControlCommandEvidenceRecordDto,
-    ControlPlanningProjectionFileWriteDiagnosticsDto,
     ControlProviderLiveReadExecutorDiagnosticsDto,
     ControlProviderLiveReadSmokeEvidenceDiagnosticsDto, ControlProviderReadIntentProjectionDto,
     ControlProviderReadIntentQueryResultDto, ControlProviderReadIntentSourceCountsDto,
@@ -23,14 +22,18 @@ use nucleus_server::{
 use super::*;
 
 mod accepted_memory;
+mod accepted_memory_active_apply;
+mod accepted_memory_import_apply_review;
 mod accepted_memory_projection;
 mod accepted_memory_projection_import;
 mod accepted_memory_projection_import_apply;
 mod accepted_memory_projection_writes;
 mod accepted_memory_review;
+mod accepted_memory_review_receipt_storage;
 mod memory_proposal_review;
 mod memory_proposals;
 mod planning_capture_publication;
+mod planning_projection_file_write;
 mod planning_projection_import;
 mod planning_projection_import_active_apply;
 mod planning_projection_import_apply;
@@ -244,36 +247,6 @@ fn task_seed_promotion_response_lines_are_read_only_and_sanitized() {
     assert!(!rendered.contains("problem_statement"));
     assert!(!rendered.contains("private:context"));
     assert!(!rendered.contains("raw_payload="));
-}
-
-#[test]
-fn planning_projection_file_write_response_lines_are_read_only_and_sanitized() {
-    let lines = typed_response::planning_projection_file_write_response_lines(
-        "planning-projection-file-write-diagnostics",
-        ControlPlanningProjectionFileWriteDiagnosticsDto {
-            materialized_planning_artifact_files: 1,
-            materialized_planning_task_seed_files: 1,
-            invalid_ref_count: 0,
-            unsupported_record_count: 0,
-            encode_failure_count: 0,
-            skipped_write_count: 0,
-            issues: Vec::new(),
-            import_or_apply_authority: false,
-            scm_mutation_authority: false,
-        },
-    );
-    let rendered = lines.join("\n");
-
-    assert!(rendered.contains("domain=planning-projection-file-write-diagnostics"));
-    assert!(rendered.contains("records=2"));
-    assert!(rendered.contains("planning_artifacts=1"));
-    assert!(rendered.contains("planning_task_seeds=1"));
-    assert!(rendered.contains("import_or_apply_authority=false"));
-    assert!(rendered.contains("scm_mutation_authority=false"));
-    assert!(rendered.contains("payloads_exposed=false"));
-    assert!(!rendered.contains("problem_statement"));
-    assert!(!rendered.contains("raw_payload"));
-    assert!(!rendered.contains("provider_write_executed=true"));
 }
 
 #[test]

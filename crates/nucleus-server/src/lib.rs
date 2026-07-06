@@ -3,6 +3,14 @@
 //! This crate names the server authority surface. It does not implement
 //! networking, authentication, process control, or runtime routing yet.
 
+pub mod accepted_memory_active_apply_admission;
+#[cfg(test)]
+mod accepted_memory_active_apply_admission_tests;
+pub mod accepted_memory_active_apply_diagnostics;
+pub mod accepted_memory_import_apply_review_command;
+#[cfg(test)]
+mod accepted_memory_import_apply_review_command_tests;
+pub mod accepted_memory_import_apply_review_diagnostics;
 pub mod accepted_memory_persistence;
 pub mod accepted_memory_projection;
 mod accepted_memory_projection_counts;
@@ -44,6 +52,8 @@ pub mod accepted_memory_projection_write_diagnostics;
 pub mod accepted_memory_review_readiness;
 #[cfg(test)]
 mod accepted_memory_review_readiness_tests;
+pub mod accepted_memory_review_receipt_persistence;
+pub mod accepted_memory_review_receipt_storage_diagnostics;
 pub mod artifact_store_backend;
 pub mod authority;
 pub mod checkpoint_diff_state;

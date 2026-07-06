@@ -3,11 +3,14 @@ use nucleus_server::{
 };
 
 mod accepted_memory;
+mod accepted_memory_active_apply;
+mod accepted_memory_import_apply_review;
 mod accepted_memory_projection;
 mod accepted_memory_projection_import;
 mod accepted_memory_projection_import_apply;
 mod accepted_memory_projection_writes;
 mod accepted_memory_review;
+mod accepted_memory_review_receipt_storage;
 mod memory_proposal_review;
 mod memory_proposals;
 mod planning_capture_publication;
@@ -24,11 +27,14 @@ mod task_readiness;
 mod task_seed_promotion;
 
 pub(super) use accepted_memory::accepted_memory_response_lines;
+pub(super) use accepted_memory_active_apply::accepted_memory_active_apply_response_lines;
+pub(super) use accepted_memory_import_apply_review::accepted_memory_import_apply_review_response_lines;
 pub(super) use accepted_memory_projection::accepted_memory_projection_response_lines;
 pub(super) use accepted_memory_projection_import::accepted_memory_projection_import_response_lines;
 pub(super) use accepted_memory_projection_import_apply::accepted_memory_projection_import_apply_response_lines;
 pub(super) use accepted_memory_projection_writes::accepted_memory_projection_writes_response_lines;
 pub(super) use accepted_memory_review::accepted_memory_review_response_lines;
+pub(super) use accepted_memory_review_receipt_storage::accepted_memory_review_receipt_storage_response_lines;
 pub(super) use memory_proposal_review::memory_proposal_review_response_lines;
 pub(super) use memory_proposals::memory_proposals_response_lines;
 pub(super) use planning_capture_publication::planning_capture_publication_response_lines;
@@ -235,6 +241,27 @@ pub(super) fn print_typed_dto_response(
         }
         ControlResponseBodyDto::AcceptedMemoryProjectionImportApplyDiagnostics { diagnostics } => {
             print_lines(accepted_memory_projection_import_apply_response_lines(
+                label,
+                diagnostics,
+            ));
+            Ok(())
+        }
+        ControlResponseBodyDto::AcceptedMemoryImportApplyReviewDiagnostics { diagnostics } => {
+            print_lines(accepted_memory_import_apply_review_response_lines(
+                label,
+                diagnostics,
+            ));
+            Ok(())
+        }
+        ControlResponseBodyDto::AcceptedMemoryReviewReceiptStorageDiagnostics { diagnostics } => {
+            print_lines(accepted_memory_review_receipt_storage_response_lines(
+                label,
+                diagnostics,
+            ));
+            Ok(())
+        }
+        ControlResponseBodyDto::AcceptedMemoryActiveApplyDiagnostics { diagnostics } => {
+            print_lines(accepted_memory_active_apply_response_lines(
                 label,
                 diagnostics,
             ));

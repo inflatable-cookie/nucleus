@@ -1,12 +1,15 @@
 //! Response record DTOs.
 
 mod accepted_memory;
+mod accepted_memory_active_apply;
+mod accepted_memory_import_apply_review;
 mod accepted_memory_projection;
 mod accepted_memory_projection_import;
 mod accepted_memory_projection_import_apply;
 mod accepted_memory_projection_import_blockers;
 mod accepted_memory_projection_writes;
 mod accepted_memory_review;
+mod accepted_memory_review_receipt_storage;
 mod authority;
 mod diagnostics;
 mod memory_proposal_review;
@@ -29,6 +32,16 @@ pub use accepted_memory::{
     ControlAcceptedMemoryRetentionCountDto, ControlAcceptedMemoryScopeCountDto,
     ControlAcceptedMemorySensitivityCountDto, ControlAcceptedMemorySourceCountsDto,
     ControlAcceptedMemoryStatusCountDto, ControlAcceptedMemorySummaryDto,
+};
+pub use accepted_memory_active_apply::{
+    ControlAcceptedMemoryActiveApplyCountsDto, ControlAcceptedMemoryActiveApplyDiagnosticsDto,
+    ControlAcceptedMemoryActiveApplyRecordDto,
+};
+pub use accepted_memory_import_apply_review::{
+    ControlAcceptedMemoryImportApplyReviewBlockerDto,
+    ControlAcceptedMemoryImportApplyReviewCountsDto,
+    ControlAcceptedMemoryImportApplyReviewDiagnosticsDto,
+    ControlAcceptedMemoryImportApplyReviewReceiptDto,
 };
 pub use accepted_memory_projection::{
     ControlAcceptedMemoryProjectionBlockerDto, ControlAcceptedMemoryProjectionCountsDto,
@@ -57,6 +70,11 @@ pub use accepted_memory_projection_writes::{
 pub use accepted_memory_review::{
     ControlAcceptedMemoryReviewReadinessCountsDto, ControlAcceptedMemoryReviewReadinessDto,
     ControlAcceptedMemoryReviewReadinessRecordDto,
+};
+pub use accepted_memory_review_receipt_storage::{
+    ControlAcceptedMemoryReviewReceiptStorageCountsDto,
+    ControlAcceptedMemoryReviewReceiptStorageDiagnosticsDto,
+    ControlAcceptedMemoryReviewReceiptStorageRecordDto,
 };
 pub use authority::{
     ControlProjectAuthorityDomainDto, ControlProjectAuthorityIssueDto,

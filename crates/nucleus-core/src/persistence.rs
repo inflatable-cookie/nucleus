@@ -34,6 +34,7 @@ pub enum PersistenceRecordKind {
     Task,
     TaskHistoryEntry,
     SharedMemoryRecord,
+    SharedMemoryReviewReceipt,
     PlanningSession,
     PlanningArtifact,
     PlanningImportApplyPlan,

@@ -20,7 +20,12 @@ pub use query::{ControlQueryDto, ControlQueryScopeDto, ControlStateDomainDto};
 pub use records::ControlStateRecordDto;
 pub use request::{ControlRequestBodyDto, ControlRequestEnvelopeDto};
 pub use response::{
-    ControlAcceptedMemoryConfidenceCountDto, ControlAcceptedMemoryKindCountDto,
+    ControlAcceptedMemoryActiveApplyCountsDto, ControlAcceptedMemoryActiveApplyDiagnosticsDto,
+    ControlAcceptedMemoryActiveApplyRecordDto, ControlAcceptedMemoryConfidenceCountDto,
+    ControlAcceptedMemoryImportApplyReviewBlockerDto,
+    ControlAcceptedMemoryImportApplyReviewCountsDto,
+    ControlAcceptedMemoryImportApplyReviewDiagnosticsDto,
+    ControlAcceptedMemoryImportApplyReviewReceiptDto, ControlAcceptedMemoryKindCountDto,
     ControlAcceptedMemoryProjectionBlockerDto, ControlAcceptedMemoryProjectionCountsDto,
     ControlAcceptedMemoryProjectionDiagnosticsDto, ControlAcceptedMemoryProjectionEntryDto,
     ControlAcceptedMemoryProjectionImportAdmissionDto,
@@ -38,7 +43,10 @@ pub use response::{
     ControlAcceptedMemoryProjectionWriteDiagnosticsDto,
     ControlAcceptedMemoryProjectionWriteEntryDto, ControlAcceptedMemoryRetentionCountDto,
     ControlAcceptedMemoryReviewReadinessCountsDto, ControlAcceptedMemoryReviewReadinessDto,
-    ControlAcceptedMemoryReviewReadinessRecordDto, ControlAcceptedMemoryScopeCountDto,
+    ControlAcceptedMemoryReviewReadinessRecordDto,
+    ControlAcceptedMemoryReviewReceiptStorageCountsDto,
+    ControlAcceptedMemoryReviewReceiptStorageDiagnosticsDto,
+    ControlAcceptedMemoryReviewReceiptStorageRecordDto, ControlAcceptedMemoryScopeCountDto,
     ControlAcceptedMemorySensitivityCountDto, ControlAcceptedMemorySourceCountsDto,
     ControlAcceptedMemoryStatusCountDto, ControlAcceptedMemorySummaryDto,
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,

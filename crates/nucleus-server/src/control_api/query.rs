@@ -11,9 +11,11 @@ use crate::runtime_effect_storage::{
 use crate::state::ServerStateDomain;
 
 use super::{
+    AcceptedMemoryActiveApplyDiagnosticsQuery, AcceptedMemoryImportApplyReviewDiagnosticsQuery,
     AcceptedMemoryProjectionDiagnosticsQuery, AcceptedMemoryProjectionImportApplyDiagnosticsQuery,
     AcceptedMemoryProjectionImportDiagnosticsQuery, AcceptedMemoryProjectionWriteDiagnosticsQuery,
-    AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery, MemoryProposalReviewDiagnosticsQuery,
+    AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery,
+    AcceptedMemoryReviewReceiptStorageDiagnosticsQuery, MemoryProposalReviewDiagnosticsQuery,
     MemoryProposalsQuery, PlanningCapturePublicationDiagnosticsQuery,
     PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
@@ -47,6 +49,11 @@ pub enum ServerQueryKind {
     AcceptedMemoryProjectionImportApplyDiagnostics(
         AcceptedMemoryProjectionImportApplyDiagnosticsQuery,
     ),
+    AcceptedMemoryImportApplyReviewDiagnostics(AcceptedMemoryImportApplyReviewDiagnosticsQuery),
+    AcceptedMemoryReviewReceiptStorageDiagnostics(
+        AcceptedMemoryReviewReceiptStorageDiagnosticsQuery,
+    ),
+    AcceptedMemoryActiveApplyDiagnostics(AcceptedMemoryActiveApplyDiagnosticsQuery),
     AcceptedMemoryReviewReadiness(AcceptedMemoryReviewReadinessQuery),
     MemoryProposals(MemoryProposalsQuery),
     MemoryProposalReviewDiagnostics(MemoryProposalReviewDiagnosticsQuery),

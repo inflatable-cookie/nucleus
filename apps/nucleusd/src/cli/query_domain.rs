@@ -19,6 +19,9 @@ pub(crate) enum QueryDomain {
     AcceptedMemoryProjectionWrites { project_id: String },
     AcceptedMemoryProjectionImport { project_id: String },
     AcceptedMemoryProjectionImportApply { project_id: String },
+    AcceptedMemoryImportApplyReviewDiagnostics { project_id: String },
+    AcceptedMemoryReviewReceiptStorageDiagnostics { project_id: String },
+    AcceptedMemoryActiveApplyDiagnostics { project_id: String },
     AcceptedMemoryReviewReadiness { project_id: String },
     MemoryProposals { project_id: String },
     MemoryProposalReviewDiagnostics { project_id: String },
@@ -117,6 +120,33 @@ impl QueryDomain {
                 Ok(Self::AcceptedMemoryProjectionImportApply {
                     project_id: iter.next().ok_or_else(|| {
                         "accepted-memory-projection-import-apply requires --project <project-id>"
+                            .to_owned()
+                    })?,
+                })
+            }
+            "accepted-memory-import-apply-review-diagnostics" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::AcceptedMemoryImportApplyReviewDiagnostics {
+                    project_id: iter.next().ok_or_else(|| {
+                        "accepted-memory-import-apply-review-diagnostics requires --project <project-id>"
+                            .to_owned()
+                    })?,
+                })
+            }
+            "accepted-memory-review-receipt-storage-diagnostics" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::AcceptedMemoryReviewReceiptStorageDiagnostics {
+                    project_id: iter.next().ok_or_else(|| {
+                        "accepted-memory-review-receipt-storage-diagnostics requires --project <project-id>"
+                            .to_owned()
+                    })?,
+                })
+            }
+            "accepted-memory-active-apply-diagnostics" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::AcceptedMemoryActiveApplyDiagnostics {
+                    project_id: iter.next().ok_or_else(|| {
+                        "accepted-memory-active-apply-diagnostics requires --project <project-id>"
                             .to_owned()
                     })?,
                 })
@@ -241,6 +271,15 @@ impl QueryDomain {
             Self::AcceptedMemoryProjectionImportApply { .. } => {
                 "accepted-memory-projection-import-apply"
             }
+            Self::AcceptedMemoryImportApplyReviewDiagnostics { .. } => {
+                "accepted-memory-import-apply-review-diagnostics"
+            }
+            Self::AcceptedMemoryReviewReceiptStorageDiagnostics { .. } => {
+                "accepted-memory-review-receipt-storage-diagnostics"
+            }
+            Self::AcceptedMemoryActiveApplyDiagnostics { .. } => {
+                "accepted-memory-active-apply-diagnostics"
+            }
             Self::AcceptedMemoryReviewReadiness { .. } => "accepted-memory-review-readiness",
             Self::MemoryProposals { .. } => "memory-proposals",
             Self::MemoryProposalReviewDiagnostics { .. } => "memory-proposal-review-diagnostics",
@@ -284,6 +323,9 @@ impl QueryDomain {
             | Self::AcceptedMemoryProjectionWrites { .. }
             | Self::AcceptedMemoryProjectionImport { .. }
             | Self::AcceptedMemoryProjectionImportApply { .. }
+            | Self::AcceptedMemoryImportApplyReviewDiagnostics { .. }
+            | Self::AcceptedMemoryReviewReceiptStorageDiagnostics { .. }
+            | Self::AcceptedMemoryActiveApplyDiagnostics { .. }
             | Self::AcceptedMemoryReviewReadiness { .. }
             | Self::MemoryProposals { .. }
             | Self::MemoryProposalReviewDiagnostics { .. }

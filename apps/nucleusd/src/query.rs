@@ -3,9 +3,11 @@ use std::path::PathBuf;
 use nucleus_local_store::{LocalStoreRecord, SqliteBackend};
 use nucleus_projects::ProjectId;
 use nucleus_server::{
+    AcceptedMemoryActiveApplyDiagnosticsQuery, AcceptedMemoryImportApplyReviewDiagnosticsQuery,
     AcceptedMemoryProjectionDiagnosticsQuery, AcceptedMemoryProjectionImportApplyDiagnosticsQuery,
     AcceptedMemoryProjectionImportDiagnosticsQuery, AcceptedMemoryProjectionWriteDiagnosticsQuery,
-    AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery, ClientId, ControlResponseEnvelopeDto,
+    AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery,
+    AcceptedMemoryReviewReceiptStorageDiagnosticsQuery, ClientId, ControlResponseEnvelopeDto,
     LocalControlRequestHandler, MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery,
     PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
@@ -72,6 +74,9 @@ pub(crate) fn print_query(
             | QueryDomain::AcceptedMemoryProjectionWrites { .. }
             | QueryDomain::AcceptedMemoryProjectionImport { .. }
             | QueryDomain::AcceptedMemoryProjectionImportApply { .. }
+            | QueryDomain::AcceptedMemoryImportApplyReviewDiagnostics { .. }
+            | QueryDomain::AcceptedMemoryReviewReceiptStorageDiagnostics { .. }
+            | QueryDomain::AcceptedMemoryActiveApplyDiagnostics { .. }
             | QueryDomain::AcceptedMemoryReviewReadiness { .. }
             | QueryDomain::MemoryProposals { .. }
             | QueryDomain::MemoryProposalReviewDiagnostics { .. }
@@ -210,6 +215,27 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
         QueryDomain::AcceptedMemoryProjectionImportApply { project_id } => {
             ServerQueryKind::AcceptedMemoryProjectionImportApplyDiagnostics(
                 AcceptedMemoryProjectionImportApplyDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
+        }
+        QueryDomain::AcceptedMemoryImportApplyReviewDiagnostics { project_id } => {
+            ServerQueryKind::AcceptedMemoryImportApplyReviewDiagnostics(
+                AcceptedMemoryImportApplyReviewDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
+        }
+        QueryDomain::AcceptedMemoryReviewReceiptStorageDiagnostics { project_id } => {
+            ServerQueryKind::AcceptedMemoryReviewReceiptStorageDiagnostics(
+                AcceptedMemoryReviewReceiptStorageDiagnosticsQuery {
+                    project_id: ProjectId(project_id.clone()),
+                },
+            )
+        }
+        QueryDomain::AcceptedMemoryActiveApplyDiagnostics { project_id } => {
+            ServerQueryKind::AcceptedMemoryActiveApplyDiagnostics(
+                AcceptedMemoryActiveApplyDiagnosticsQuery {
                     project_id: ProjectId(project_id.clone()),
                 },
             )

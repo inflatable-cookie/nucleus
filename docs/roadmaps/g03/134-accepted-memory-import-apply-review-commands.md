@@ -1,8 +1,8 @@
 # 134 Accepted Memory Import Apply Review Commands
 
-Status: ready
+Status: completed
 Owner: Tom
-Updated: 2026-07-05
+Updated: 2026-07-06
 
 ## Purpose
 
@@ -28,41 +28,42 @@ agents, or implement final UI behavior.
 
 ## Goals
 
-- [ ] Define approve, defer, and reject review decisions for stopped
+- [x] Define approve, defer, and reject review decisions for stopped
   import-apply admissions.
-- [ ] Persist sanitized review receipts with operator, approval, admission,
+- [x] Model sanitized review receipts with operator, approval, admission,
   conflict, candidate, file, provenance, and evidence refs.
-- [ ] Keep review receipts distinct from active apply receipts.
-- [ ] Expose read-only review diagnostics through server query/control,
+- [x] Keep review receipts distinct from active apply receipts.
+- [x] Expose read-only review diagnostics through server query/control,
   `nucleusd`, and Effigy if the command model holds.
-- [ ] Keep active accepted-memory mutation, projection writes, SCM/forge
+- [x] Keep active accepted-memory mutation, projection writes, SCM/forge
   mutation, embeddings/search/provider sync, automatic extraction, task
   mutation, agent scheduling, and final UI behavior out of scope.
 
 ## Execution Plan
 
-- [ ] Batch 1: define command boundary, decisions, required refs, blockers,
+- [x] Batch 1: define command boundary, decisions, required refs, blockers,
   no-effect flags, and receipt classes.
-- [ ] Batch 2: implement review command model and sanitized receipt records.
-- [ ] Batch 3: expose read-only review diagnostics through server query/control
+- [x] Batch 2: implement review command model and sanitized receipt records.
+- [x] Batch 3: expose read-only review diagnostics through server query/control
   and CLI surfaces.
-- [ ] Batch 4: validate and choose the next bounded lane.
+- [x] Batch 4: validate and choose the next bounded lane.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/587-accepted-memory-import-apply-review-command-boundary.md`
+- None.
 
 Planned cards:
 
-- `batch-cards/588-accepted-memory-import-apply-review-command-model.md`
-- `batch-cards/589-accepted-memory-import-apply-review-diagnostics-control.md`
-- `batch-cards/590-accepted-memory-import-apply-review-validation-next-lane.md`
+- None.
 
 Completed cards:
 
-None.
+- `batch-cards/590-accepted-memory-import-apply-review-validation-next-lane.md`
+- `batch-cards/589-accepted-memory-import-apply-review-diagnostics-control.md`
+- `batch-cards/588-accepted-memory-import-apply-review-command-model.md`
+- `batch-cards/587-accepted-memory-import-apply-review-command-boundary.md`
 
 ## Boundary
 
@@ -89,12 +90,22 @@ accepted-memory records or change projection/import state.
 
 ## Acceptance Criteria
 
-- [ ] Review decisions and receipts are distinct from active apply execution.
-- [ ] Approval requires operator and approval refs.
-- [ ] Deferral and rejection preserve admission, conflict, candidate, file,
+- [x] Review decisions and receipts are distinct from active apply execution.
+- [x] Approval requires operator and approval refs.
+- [x] Deferral and rejection preserve admission, conflict, candidate, file,
   provenance, and evidence refs.
-- [ ] Blocked, conflicted, duplicate, missing-ref, raw-payload, or
+- [x] Blocked, conflicted, duplicate, missing-ref, raw-payload, or
   effect-widened admissions cannot receive unsafe approval.
-- [ ] No active accepted-memory mutation, projection write, SCM/forge mutation,
+- [x] No active accepted-memory mutation, projection write, SCM/forge mutation,
   embeddings/search/provider sync, automatic extraction, task mutation, agent
   scheduling, or final UI behavior is added.
+
+## Closeout
+
+Review-command receipts are modeled and exposed through read-only diagnostics.
+They are not persisted yet. That distinction is deliberate: the next lane must
+make operator review receipts durable before any active accepted-memory apply
+executor can exist.
+
+Next selected lane:
+`135-accepted-memory-review-receipt-persistence-and-apply-admission.md`.

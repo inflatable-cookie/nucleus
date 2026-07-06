@@ -11,12 +11,14 @@ use super::provider_live_read_smoke_evidence::ControlProviderLiveReadSmokeEviden
 use super::provider_read_intent::ControlProviderReadIntentQueryResultDto;
 use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
-    ControlAcceptedMemoryConfidenceCountDto, ControlAcceptedMemoryKindCountDto,
+    ControlAcceptedMemoryActiveApplyDiagnosticsDto, ControlAcceptedMemoryConfidenceCountDto,
+    ControlAcceptedMemoryImportApplyReviewDiagnosticsDto, ControlAcceptedMemoryKindCountDto,
     ControlAcceptedMemoryProjectionDiagnosticsDto,
     ControlAcceptedMemoryProjectionImportApplyDiagnosticsDto,
     ControlAcceptedMemoryProjectionImportDiagnosticsDto,
     ControlAcceptedMemoryProjectionWriteDiagnosticsDto, ControlAcceptedMemoryRetentionCountDto,
-    ControlAcceptedMemoryReviewReadinessDto, ControlAcceptedMemoryScopeCountDto,
+    ControlAcceptedMemoryReviewReadinessDto,
+    ControlAcceptedMemoryReviewReceiptStorageDiagnosticsDto, ControlAcceptedMemoryScopeCountDto,
     ControlAcceptedMemorySensitivityCountDto, ControlAcceptedMemorySourceCountsDto,
     ControlAcceptedMemoryStatusCountDto, ControlAcceptedMemorySummaryDto,
     ControlCheckpointRecordDto, ControlCommandEvidenceRecordDto, ControlDiagnosticsResultDto,
@@ -152,6 +154,15 @@ pub enum ControlResponseBodyDto {
     },
     AcceptedMemoryProjectionImportApplyDiagnostics {
         diagnostics: ControlAcceptedMemoryProjectionImportApplyDiagnosticsDto,
+    },
+    AcceptedMemoryImportApplyReviewDiagnostics {
+        diagnostics: ControlAcceptedMemoryImportApplyReviewDiagnosticsDto,
+    },
+    AcceptedMemoryReviewReceiptStorageDiagnostics {
+        diagnostics: ControlAcceptedMemoryReviewReceiptStorageDiagnosticsDto,
+    },
+    AcceptedMemoryActiveApplyDiagnostics {
+        diagnostics: ControlAcceptedMemoryActiveApplyDiagnosticsDto,
     },
     AcceptedMemoryReviewReadiness {
         readiness: ControlAcceptedMemoryReviewReadinessDto,

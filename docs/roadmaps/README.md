@@ -262,7 +262,9 @@ shape.
 - `g03/131-accepted-memory-projection-import-validation.md` - completed
 - `g03/132-accepted-memory-import-apply-admission.md` - completed
 - `g03/133-accepted-memory-review-product-consumption-readiness.md` - completed
-- `g03/134-accepted-memory-import-apply-review-commands.md` - ready
+- `g03/134-accepted-memory-import-apply-review-commands.md` - completed
+- `g03/135-accepted-memory-review-receipt-persistence-and-apply-admission.md` - completed
+- `g03/136-accepted-memory-active-apply-executor-boundary.md` - ready
 
 ## Previous Generation
 
@@ -322,11 +324,8 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g03/134-accepted-memory-import-apply-review-commands.md`
+`docs/roadmaps/g03/136-accepted-memory-active-apply-executor-boundary.md`
 with
-`docs/roadmaps/g03/batch-cards/587-accepted-memory-import-apply-review-command-boundary.md`.
-Define the accepted-memory import-apply review command boundary for approving,
-deferring, or rejecting stopped apply/admission records. Do not mutate active
-accepted memory, write projection files, call SCM/forge providers, run
-embeddings/search, sync provider-native memory, perform automatic extraction,
-mutate tasks, schedule agents, or add final UI behavior.
+`docs/roadmaps/g03/batch-cards/596-accepted-memory-active-apply-executor-boundary.md`.
+Define the minimal server-local accepted-memory apply executor boundary behind
+durable approved review receipts and admitted active-apply authority.

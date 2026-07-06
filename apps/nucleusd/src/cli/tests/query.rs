@@ -1,5 +1,9 @@
 use crate::cli::{CliConfig, QueryDomain};
 
+mod accepted_memory_active_apply;
+mod accepted_memory_import_apply_review;
+mod accepted_memory_review_receipt_storage;
+
 #[test]
 fn cli_config_parses_query_domain() {
     let config =

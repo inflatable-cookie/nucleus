@@ -53,12 +53,15 @@ use crate::{
 };
 
 mod accepted_memory;
+mod accepted_memory_active_apply_diagnostics;
+mod accepted_memory_import_apply_review_diagnostics;
 mod accepted_memory_projection_diagnostics;
 mod accepted_memory_projection_import_apply_diagnostics;
 mod accepted_memory_projection_import_diagnostics;
 mod accepted_memory_projection_write_diagnostics;
 mod accepted_memory_queries;
 mod accepted_memory_review_readiness;
+mod accepted_memory_review_receipt_storage_diagnostics;
 mod authority_map;
 mod diagnostics;
 mod memory_proposal_review_diagnostics;
@@ -157,6 +160,9 @@ where
         | ServerQueryKind::AcceptedMemoryProjectionWriteDiagnostics(_)
         | ServerQueryKind::AcceptedMemoryProjectionImportDiagnostics(_)
         | ServerQueryKind::AcceptedMemoryProjectionImportApplyDiagnostics(_)
+        | ServerQueryKind::AcceptedMemoryImportApplyReviewDiagnostics(_)
+        | ServerQueryKind::AcceptedMemoryReviewReceiptStorageDiagnostics(_)
+        | ServerQueryKind::AcceptedMemoryActiveApplyDiagnostics(_)
         | ServerQueryKind::AcceptedMemoryReviewReadiness(_)) => {
             accepted_memory_queries::accepted_memory_query(handler, query)
         }

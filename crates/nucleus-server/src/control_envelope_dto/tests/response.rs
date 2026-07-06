@@ -1,8 +1,11 @@
 mod accepted_memory;
+mod accepted_memory_active_apply;
+mod accepted_memory_import_apply_review;
 mod accepted_memory_projection;
 mod accepted_memory_projection_import;
 mod accepted_memory_projection_import_apply;
 mod accepted_memory_projection_writes;
+mod accepted_memory_review_receipt_storage;
 mod authority;
 mod diagnostics;
 mod memory_proposal_review;

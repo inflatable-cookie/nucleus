@@ -20,6 +20,9 @@ impl ControlQueryDto {
             | Self::AcceptedMemoryProjectionWriteDiagnostics { query_id, .. }
             | Self::AcceptedMemoryProjectionImportDiagnostics { query_id, .. }
             | Self::AcceptedMemoryProjectionImportApplyDiagnostics { query_id, .. }
+            | Self::AcceptedMemoryImportApplyReviewDiagnostics { query_id, .. }
+            | Self::AcceptedMemoryReviewReceiptStorageDiagnostics { query_id, .. }
+            | Self::AcceptedMemoryActiveApplyDiagnostics { query_id, .. }
             | Self::AcceptedMemoryReviewReadiness { query_id, .. }
             | Self::MemoryProposalReviewDiagnostics { query_id, .. }
             | Self::ResearchRunBriefs { query_id, .. }

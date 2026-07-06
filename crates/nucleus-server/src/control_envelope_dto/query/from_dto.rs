@@ -15,11 +15,14 @@ use super::provider::{
     provider_readiness_overview_query_from_action,
 };
 use super::task_workflow::{
+    accepted_memory_active_apply_diagnostics_query_from_action,
+    accepted_memory_import_apply_review_diagnostics_query_from_action,
     accepted_memory_projection_diagnostics_query_from_action,
     accepted_memory_projection_import_apply_diagnostics_query_from_action,
     accepted_memory_projection_import_diagnostics_query_from_action,
     accepted_memory_projection_write_diagnostics_query_from_action,
     accepted_memory_query_from_action, accepted_memory_review_readiness_query_from_action,
+    accepted_memory_review_receipt_storage_diagnostics_query_from_action,
     memory_proposal_review_diagnostics_query_from_action, memory_proposals_query_from_action,
     planning_sessions_query_from_action, planning_task_seeds_query_from_action,
     research_run_briefs_query_from_action, task_readiness_query_from_action,
@@ -97,6 +100,23 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             } => accepted_memory_projection_import_apply_diagnostics_query_from_action(
                 &action, project_id,
             ),
+            ControlQueryDto::AcceptedMemoryImportApplyReviewDiagnostics {
+                action,
+                project_id,
+                ..
+            } => accepted_memory_import_apply_review_diagnostics_query_from_action(
+                &action, project_id,
+            ),
+            ControlQueryDto::AcceptedMemoryReviewReceiptStorageDiagnostics {
+                action,
+                project_id,
+                ..
+            } => accepted_memory_review_receipt_storage_diagnostics_query_from_action(
+                &action, project_id,
+            ),
+            ControlQueryDto::AcceptedMemoryActiveApplyDiagnostics {
+                action, project_id, ..
+            } => accepted_memory_active_apply_diagnostics_query_from_action(&action, project_id),
             ControlQueryDto::AcceptedMemoryReviewReadiness {
                 action, project_id, ..
             } => accepted_memory_review_readiness_query_from_action(&action, project_id),

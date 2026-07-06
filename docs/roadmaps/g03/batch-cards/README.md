@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-03
+Updated: 2026-07-06
 
 ## Purpose
 
@@ -10,21 +10,58 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `532-memory-proposal-review-command-boundary.md`
+- `596-accepted-memory-active-apply-executor-boundary.md`
 
 ## Paused Cards
 
-None.
+- `550-planning-import-active-apply-executor-persistence.md`
+- `551-planning-import-active-apply-executor-diagnostics-query-cli-effigy.md`
+- `552-planning-import-active-apply-executor-validation-next-lane.md`
 
 ## Planned Cards
 
-- `533-memory-proposal-review-command-model.md`
-- `534-memory-proposal-review-persistence.md`
-- `535-memory-proposal-review-diagnostics-query-cli-effigy.md`
-- `536-memory-proposal-review-validation-next-lane.md`
+- `600-accepted-memory-active-apply-validation-next-lane.md`
+- `599-accepted-memory-active-apply-diagnostics-control.md`
+- `598-accepted-memory-active-apply-receipts-idempotency.md`
+- `597-accepted-memory-active-apply-storage-mutation.md`
 
 ## Completed Cards
 
+- `595-accepted-memory-apply-admission-validation-next-lane.md`
+- `594-accepted-memory-active-apply-admission-diagnostics.md`
+- `593-accepted-memory-active-apply-admission-boundary.md`
+- `592-accepted-memory-review-receipt-storage-query.md`
+- `591-accepted-memory-review-receipt-persistence-boundary.md`
+- `590-accepted-memory-import-apply-review-validation-next-lane.md`
+- `589-accepted-memory-import-apply-review-diagnostics-control.md`
+- `588-accepted-memory-import-apply-review-command-model.md`
+- `587-accepted-memory-import-apply-review-command-boundary.md`
+- `586-accepted-memory-review-product-consumption-validation.md`
+- `585-accepted-memory-review-control-diagnostics.md`
+- `584-accepted-memory-review-read-model-shape.md`
+- `583-accepted-memory-review-consumption-boundary.md`
+- `582-accepted-memory-import-apply-validation-next-lane.md`
+- `581-accepted-memory-import-apply-diagnostics-control.md`
+- `580-accepted-memory-import-apply-admission-records.md`
+- `579-accepted-memory-import-apply-policy.md`
+- `578-accepted-memory-import-validation-next-lane.md`
+- `577-accepted-memory-import-diagnostics-control.md`
+- `576-accepted-memory-import-conflict-staging.md`
+- `575-accepted-memory-import-candidates-and-admission.md`
+- `574-accepted-memory-projection-validation-next-lane.md`
+- `573-accepted-memory-projection-write-diagnostics-control.md`
+- `572-accepted-memory-projection-file-materialization.md`
+- `571-accepted-memory-projection-payload-codec.md`
+- `570-accepted-memory-projection-write-admission.md`
+- `569-accepted-memory-projection-validation-next-lane.md`
+- `568-accepted-memory-projection-dto-cli-effigy.md`
+- `567-accepted-memory-projection-diagnostics-query.md`
+- `566-accepted-memory-stopped-export-plan.md`
+- `536-memory-proposal-review-validation-next-lane.md`
+- `535-memory-proposal-review-diagnostics-query-cli-effigy.md`
+- `534-memory-proposal-review-persistence.md`
+- `533-memory-proposal-review-command-model.md`
+- `532-memory-proposal-review-command-boundary.md`
 - `531-disposable-ui-proof-validation-next-lane.md`
 - `530-disposable-planning-memory-research-summary-surface.md`
 - `529-disposable-ui-root-effigy-launch.md`

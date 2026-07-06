@@ -11,6 +11,7 @@ pub mod ids;
 pub mod proposals;
 pub mod refs;
 pub mod review;
+pub mod review_receipt_storage;
 pub mod storage_shape;
 
 #[cfg(test)]
@@ -40,6 +41,15 @@ pub use refs::{MemorySourceKind, MemorySourceRef};
 pub use review::{
     MemoryConfidence, MemoryRetentionPosture, MemoryReviewState, MemoryReviewStatus,
     MemorySensitivity, MemorySupersessionRefs,
+};
+pub use review_receipt_storage::{
+    decode_accepted_memory_review_receipt_storage_record,
+    encode_accepted_memory_review_receipt_storage_payload,
+    AcceptedMemoryReviewReceiptAdmissionBlockerStorage,
+    AcceptedMemoryReviewReceiptAdmissionStatusStorage, AcceptedMemoryReviewReceiptBlockerStorage,
+    AcceptedMemoryReviewReceiptDecisionStorage, AcceptedMemoryReviewReceiptRecordCodecError,
+    AcceptedMemoryReviewReceiptStatusStorage, AcceptedMemoryReviewReceiptStorageRecord,
+    ACCEPTED_MEMORY_REVIEW_RECEIPT_STORAGE_SCHEMA_VERSION,
 };
 pub use storage_shape::{
     decode_memory_proposal_storage_record, encode_memory_proposal_storage_payload,

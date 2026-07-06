@@ -1,10 +1,12 @@
 use nucleus_local_store::LocalStoreBackend;
 
 use super::{
-    accepted_memory, accepted_memory_projection_diagnostics,
+    accepted_memory, accepted_memory_active_apply_diagnostics,
+    accepted_memory_import_apply_review_diagnostics, accepted_memory_projection_diagnostics,
     accepted_memory_projection_import_apply_diagnostics,
     accepted_memory_projection_import_diagnostics, accepted_memory_projection_write_diagnostics,
-    accepted_memory_review_readiness, LocalControlRequestHandler,
+    accepted_memory_review_readiness, accepted_memory_review_receipt_storage_diagnostics,
+    LocalControlRequestHandler,
 };
 use crate::control_api::{ServerControlError, ServerQueryKind, ServerQueryResult};
 
@@ -36,6 +38,21 @@ where
         }
         ServerQueryKind::AcceptedMemoryProjectionImportApplyDiagnostics(query) => {
             accepted_memory_projection_import_apply_diagnostics::accepted_memory_projection_import_apply_diagnostics_query(
+                handler, query,
+            )
+        }
+        ServerQueryKind::AcceptedMemoryImportApplyReviewDiagnostics(query) => {
+            accepted_memory_import_apply_review_diagnostics::accepted_memory_import_apply_review_diagnostics_query(
+                handler, query,
+            )
+        }
+        ServerQueryKind::AcceptedMemoryReviewReceiptStorageDiagnostics(query) => {
+            accepted_memory_review_receipt_storage_diagnostics::accepted_memory_review_receipt_storage_diagnostics_query(
+                handler, query,
+            )
+        }
+        ServerQueryKind::AcceptedMemoryActiveApplyDiagnostics(query) => {
+            accepted_memory_active_apply_diagnostics::accepted_memory_active_apply_diagnostics_query(
                 handler, query,
             )
         }

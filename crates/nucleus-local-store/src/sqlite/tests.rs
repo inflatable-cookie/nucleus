@@ -27,6 +27,11 @@ fn sqlite_supported_domains() -> Vec<(PersistenceDomain, PersistenceRecordKind, 
             "memory:1",
         ),
         (
+            PersistenceDomain::SharedMemory,
+            PersistenceRecordKind::SharedMemoryReviewReceipt,
+            "memory:review-receipt:1",
+        ),
+        (
             PersistenceDomain::Planning,
             PersistenceRecordKind::PlanningSession,
             "planning:session:1",
