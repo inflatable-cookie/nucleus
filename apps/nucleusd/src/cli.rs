@@ -103,6 +103,7 @@ pub(crate) fn print_help() {
     println!("  nucleusd [--state <path>] query planning-projection-import-active-apply-diagnostics --project <project-id>");
     println!("  nucleusd [--state <path>] query planning-capture-publication-diagnostics --project <project-id>");
     println!("  nucleusd [--state <path>] query product-workflow-summary --project <project-id>");
+    println!("  nucleusd [--state <path>] query task-workflow-drilldown --project <project-id> --task <task-id>");
     println!("  nucleusd [--state <path>] query project-authority-map --project <project-id>");
     println!("  nucleusd command-runner smoke");
     println!("  nucleusd command-runner read-only-spawn-smoke");

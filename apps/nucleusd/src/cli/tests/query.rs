@@ -102,6 +102,27 @@ fn cli_config_parses_task_readiness_query_domain() {
 }
 
 #[test]
+fn cli_config_parses_task_workflow_drilldown_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "task-workflow-drilldown".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+        "--task".to_owned(),
+        "task:nucleus-local:bootstrap".to_owned(),
+    ])
+    .expect("parse task workflow drilldown query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::TaskWorkflowDrilldown {
+            project_id: "project:nucleus-local".to_owned(),
+            task_id: "task:nucleus-local:bootstrap".to_owned()
+        })
+    );
+}
+
+#[test]
 fn cli_config_parses_planning_task_seeds_query_domain() {
     let config = CliConfig::parse(vec![
         "query".to_owned(),

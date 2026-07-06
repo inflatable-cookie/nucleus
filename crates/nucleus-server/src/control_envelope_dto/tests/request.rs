@@ -11,7 +11,7 @@ use crate::control_api::{
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
     ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
     ServerControlRequest, ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
-    StateRecordQueryScope, TaskReadinessQuery, TaskTimelineQuery,
+    StateRecordQueryScope, TaskReadinessQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::control_envelope_dto::*;
 use crate::control_serialization_readiness::ControlApiCodecFailure;
@@ -52,3 +52,4 @@ mod runtime;
 mod state;
 mod task_seed_promotion;
 mod task_timeline_authority_map;
+mod task_workflow_drilldown;

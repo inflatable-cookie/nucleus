@@ -9,6 +9,7 @@ import {
   buildProviderReadinessOverviewQuery,
   buildResearchRunBriefsQuery,
   buildRuntimeReadinessQuery,
+  buildTaskWorkflowDrilldownQuery,
   buildTaskWorkProgressQuery,
   type ControlRequestEnvelopeDto,
   type ControlResponseEnvelopeDto,
@@ -31,6 +32,10 @@ import {
   productWorkflowSummaryFromResponse,
   type ProductWorkflowSummaryQueryResult,
 } from "./productWorkflow";
+import {
+  taskWorkflowDrilldownFromResponse,
+  type TaskWorkflowDrilldownQueryResult,
+} from "./taskWorkflow";
 import {
   memoryProposalsFromResponse,
   planningSessionsFromResponse,
@@ -105,4 +110,14 @@ export async function queryProductWorkflowSummary(
 ): Promise<ProductWorkflowSummaryQueryResult> {
   const response = await submitControlEnvelope(buildProductWorkflowSummaryQuery(projectId));
   return productWorkflowSummaryFromResponse(response);
+}
+
+export async function queryTaskWorkflowDrilldown(
+  projectId: string,
+  taskId: string,
+): Promise<TaskWorkflowDrilldownQueryResult> {
+  const response = await submitControlEnvelope(
+    buildTaskWorkflowDrilldownQuery(projectId, taskId),
+  );
+  return taskWorkflowDrilldownFromResponse(response);
 }

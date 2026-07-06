@@ -41,6 +41,7 @@ use super::records::{
     ControlRuntimeReceiptRecordDto, ControlTaskReadinessCandidateDto,
     ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
     ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
+    ControlTaskWorkflowDrilldownDto,
 };
 use crate::control_envelope_dto::{
     ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -201,6 +202,9 @@ pub enum ControlResponseBodyDto {
     },
     ProductWorkflowSummary {
         summary: ControlProductWorkflowSummaryDto,
+    },
+    TaskWorkflowDrilldown {
+        drilldown: ControlTaskWorkflowDrilldownDto,
     },
     ProjectAuthorityMap {
         record: ControlProjectAuthorityMapDto,

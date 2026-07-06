@@ -266,7 +266,8 @@ shape.
 - `g03/135-accepted-memory-review-receipt-persistence-and-apply-admission.md` - completed
 - `g03/136-accepted-memory-active-apply-executor-boundary.md` - superseded
 - `g04/001-product-workflow-rebaseline-and-vertical-slice.md` - completed
-- `g04/002-product-workflow-source-composition.md` - ready
+- `g04/002-product-workflow-source-composition.md` - completed
+- `g04/003-task-workflow-drilldown-and-handoff-readiness.md` - ready
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -327,9 +328,7 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g04/002-product-workflow-source-composition.md`
+`docs/roadmaps/g04/003-task-workflow-drilldown-and-handoff-readiness.md`
 with
-`docs/roadmaps/g04/batch-cards/006-product-workflow-planning-context-composition.md`.
-Feed existing planning session and task seed records into the product workflow
-summary without opening planning apply, task promotion, provider execution, SCM
-mutation, or UI mutation.
+`docs/roadmaps/g04/batch-cards/016-selected-task-work-loop-boundary.md`.
+Define the selected-task work-loop boundary before adding more code.

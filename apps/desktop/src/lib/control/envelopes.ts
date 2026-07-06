@@ -27,6 +27,7 @@ import type {
   CountByLabelDto,
 } from "./planningResearch";
 import type { ControlProductWorkflowSummaryDto } from "./productWorkflow";
+import type { ControlTaskWorkflowDrilldownDto } from "./taskWorkflow";
 
 export type ControlQueryDto =
   | {
@@ -66,6 +67,13 @@ export type ControlQueryDto =
       query_id: string;
       action: "summary";
       project_id: string;
+    }
+  | {
+      kind: "task_workflow_drilldown";
+      query_id: string;
+      action: "drilldown";
+      project_id: string;
+      task_id: string;
     };
 
 export type ControlCommandDto = {
@@ -171,6 +179,10 @@ export type ControlResponseEnvelopeDto = {
     | {
         type: "product_workflow_summary";
         summary: ControlProductWorkflowSummaryDto;
+      }
+    | {
+        type: "task_workflow_drilldown";
+        drilldown: ControlTaskWorkflowDrilldownDto;
       }
     | { type: "state_records"; domain: string; records: unknown[] }
     | { type: "command_receipt"; command_id: string; status: string }
@@ -306,6 +318,19 @@ export function buildProductWorkflowSummaryQuery(projectId: string): ControlRequ
     query_id: "",
     action: "summary",
     project_id: projectId,
+  });
+}
+
+export function buildTaskWorkflowDrilldownQuery(
+  projectId: string,
+  taskId: string,
+): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "task_workflow_drilldown",
+    query_id: "",
+    action: "drilldown",
+    project_id: projectId,
+    task_id: taskId,
   });
 }
 

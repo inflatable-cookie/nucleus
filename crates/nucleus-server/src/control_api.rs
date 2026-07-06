@@ -163,6 +163,7 @@ pub enum ServerQueryResult {
         crate::PlanningCapturePublicationStoppedRequestDiagnostics,
     ),
     ProductWorkflowSummary(crate::ProductWorkflowSummary),
+    TaskWorkflowDrilldown(crate::TaskWorkflowDrilldown),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     Empty,
     Unsupported {

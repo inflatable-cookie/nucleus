@@ -152,3 +152,34 @@ fn product_workflow_proof_panel_has_no_forbidden_mutation_controls() {
     assert!(component.contains("queryProductWorkflowSummary"));
     assert!(component.contains("Read-only workflow."));
 }
+
+#[test]
+fn task_workflow_drilldown_proof_panel_has_no_forbidden_mutation_controls() {
+    let component = include_str!("../../../src/lib/TaskWorkflowDrilldownProofPanel.svelte");
+
+    for forbidden in [
+        "buildStartTaskCommand",
+        "buildBlockTaskCommand",
+        "buildCompleteTaskCommand",
+        "buildArchiveTaskCommand",
+        "submitControlEnvelope",
+        "approve button",
+        "run provider",
+        "execute provider",
+        "create task",
+        "browser automation",
+        "source retrieval",
+        "merge",
+        "commit button",
+        "push button",
+        "pull request",
+        "final design",
+    ] {
+        assert!(
+            !component.to_lowercase().contains(&forbidden.to_lowercase()),
+            "task workflow drilldown proof panel should not expose {forbidden}"
+        );
+    }
+    assert!(component.contains("queryTaskWorkflowDrilldown"));
+    assert!(component.contains("Read-only selected task drilldown."));
+}

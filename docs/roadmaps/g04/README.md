@@ -43,26 +43,33 @@ Current checkpoint:
 - accepted-memory active apply executor is superseded and deferred
 - `docs/roadmaps/deferred-lanes.md` tracks valid return-later lanes
 - the first product workflow slice is validated
-- the active path is now source composition for existing planning, context,
-  runtime, review, SCM, and next-step records
+- source composition for existing planning, context, runtime, review, SCM, and
+  next-step records is validated
+- the task workflow drilldown boundary, read model, DTOs, CLI, and Effigy
+  selector are validated
+- the disposable desktop proof for the selected-task drilldown is in place
+- the task workflow drilldown lane is validated and the next lane is selected
+- the active path is selected-task work-loop composition
 
 ## Roadmaps
 
 - `001-product-workflow-rebaseline-and-vertical-slice.md` - completed
-- `002-product-workflow-source-composition.md` - ready
+- `002-product-workflow-source-composition.md` - completed
+- `003-task-workflow-drilldown-and-handoff-readiness.md` - completed
+- `004-selected-task-work-loop-composition.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/006-product-workflow-planning-context-composition.md`
+- `batch-cards/016-selected-task-work-loop-boundary.md`
 
 Planned cards:
 
-- `batch-cards/007-product-workflow-memory-research-composition.md`
-- `batch-cards/008-product-workflow-runtime-review-composition.md`
-- `batch-cards/009-product-workflow-scm-next-composition.md`
-- `batch-cards/010-product-workflow-source-composition-validation.md`
+- `batch-cards/017-selected-task-work-loop-guidance-read-model.md`
+- `batch-cards/018-selected-task-work-loop-desktop-composition.md`
+- `batch-cards/019-review-scm-handoff-gap-presentation.md`
+- `batch-cards/020-selected-task-work-loop-validation-next-lane.md`
 
 Completed cards:
 
@@ -71,3 +78,13 @@ Completed cards:
 - `batch-cards/003-product-workflow-cli-effigy-inspection.md`
 - `batch-cards/004-disposable-product-workflow-proof.md`
 - `batch-cards/005-product-workflow-validation-next-lane.md`
+- `batch-cards/006-product-workflow-planning-context-composition.md`
+- `batch-cards/007-product-workflow-memory-research-composition.md`
+- `batch-cards/008-product-workflow-runtime-review-composition.md`
+- `batch-cards/009-product-workflow-scm-next-composition.md`
+- `batch-cards/010-product-workflow-source-composition-validation.md`
+- `batch-cards/011-task-workflow-drilldown-boundary.md`
+- `batch-cards/012-task-workflow-drilldown-read-model.md`
+- `batch-cards/013-task-workflow-drilldown-cli-effigy.md`
+- `batch-cards/014-disposable-task-workflow-drilldown-proof.md`
+- `batch-cards/015-task-workflow-drilldown-validation-next-lane.md`

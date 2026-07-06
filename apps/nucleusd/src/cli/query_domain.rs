@@ -33,6 +33,7 @@ pub(crate) enum QueryDomain {
     PlanningProjectionImportActiveApplyDiagnostics { project_id: String },
     PlanningCapturePublicationDiagnostics { project_id: String },
     ProductWorkflowSummary { project_id: String },
+    TaskWorkflowDrilldown { project_id: String, task_id: String },
     ProjectAuthorityMap { project_id: String },
 }
 
@@ -247,6 +248,19 @@ impl QueryDomain {
                     })?,
                 })
             }
+            "task-workflow-drilldown" => {
+                expect_flag(iter, "--project")?;
+                let project_id = iter.next().ok_or_else(|| {
+                    "task-workflow-drilldown requires --project <project-id>".to_owned()
+                })?;
+                expect_flag(iter, "--task")?;
+                Ok(Self::TaskWorkflowDrilldown {
+                    project_id,
+                    task_id: iter.next().ok_or_else(|| {
+                        "task-workflow-drilldown requires --task <task-id>".to_owned()
+                    })?,
+                })
+            }
             "project-authority-map" => {
                 expect_flag(iter, "--project")?;
                 Ok(Self::ProjectAuthorityMap {
@@ -310,6 +324,7 @@ impl QueryDomain {
                 "planning-capture-publication-diagnostics"
             }
             Self::ProductWorkflowSummary { .. } => "product-workflow-summary",
+            Self::TaskWorkflowDrilldown { .. } => "task-workflow-drilldown",
             Self::ProjectAuthorityMap { .. } => "project-authority-map",
         }
     }
@@ -347,6 +362,7 @@ impl QueryDomain {
             | Self::PlanningProjectionImportActiveApplyDiagnostics { .. }
             | Self::PlanningCapturePublicationDiagnostics { .. }
             | Self::ProductWorkflowSummary { .. }
+            | Self::TaskWorkflowDrilldown { .. }
             | Self::ProjectAuthorityMap { .. } => None,
         }
     }

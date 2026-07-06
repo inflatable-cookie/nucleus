@@ -306,6 +306,7 @@ pub mod server_read_only_spawn;
 pub mod state;
 pub mod task_agent_work_unit_state;
 pub mod task_seed;
+pub mod task_workflow_drilldown;
 pub mod tauri_ipc_command;
 pub mod tauri_ipc_readiness;
 pub mod transport_readiness;

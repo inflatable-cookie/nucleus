@@ -12,6 +12,18 @@ use crate::{
     ProductWorkflowTaskLane,
 };
 
+mod context;
+mod planning_context;
+mod runtime_review;
+mod scm_next;
+#[cfg(test)]
+mod tests;
+
+use context::context_refs;
+use planning_context::planning_context;
+use runtime_review::runtime_review_refs;
+use scm_next::scm_next_refs;
+
 pub(crate) fn product_workflow_summary_query<B>(
     handler: &LocalControlRequestHandler<B>,
     query: ProductWorkflowSummaryQuery,
@@ -27,6 +39,15 @@ where
 
     let (project_display_name, project_status) = project_display(handler, &query)?;
     let task_candidates = task_candidates(handler, &query)?;
+    let planning_context = planning_context(handler, &query)?;
+    let context = context_refs(handler, &query)?;
+    let runtime_review = runtime_review_refs(handler, &task_candidates)?;
+    let scm_next = scm_next_refs(
+        handler,
+        &task_candidates,
+        &planning_context,
+        &runtime_review,
+    )?;
 
     Ok(ServerQueryResult::ProductWorkflowSummary(
         product_workflow_summary(ProductWorkflowSummaryInput {
@@ -35,17 +56,17 @@ where
             project_status,
             authority_refs: Vec::new(),
             task_candidates,
-            planning_session_refs: Vec::new(),
-            task_seed_refs: Vec::new(),
-            accepted_planning_refs: Vec::new(),
-            memory_proposal_refs: Vec::new(),
-            accepted_memory_refs: Vec::new(),
-            research_run_refs: Vec::new(),
-            runtime_evidence_refs: Vec::new(),
-            command_evidence_refs: Vec::new(),
-            review_refs: Vec::new(),
-            scm_readiness_refs: Vec::new(),
-            next_step: None,
+            planning_session_refs: planning_context.planning_session_refs,
+            task_seed_refs: planning_context.task_seed_refs,
+            accepted_planning_refs: planning_context.accepted_planning_refs,
+            memory_proposal_refs: context.memory_proposal_refs,
+            accepted_memory_refs: context.accepted_memory_refs,
+            research_run_refs: context.research_run_refs,
+            runtime_evidence_refs: runtime_review.runtime_evidence_refs,
+            command_evidence_refs: runtime_review.command_evidence_refs,
+            review_refs: runtime_review.review_refs,
+            scm_readiness_refs: scm_next.scm_readiness_refs,
+            next_step: scm_next.next_step,
         }),
     ))
 }
@@ -129,59 +150,5 @@ fn project_status_label(status: &ProjectStorageStatus) -> &'static str {
         ProjectStorageStatus::Active => "active",
         ProjectStorageStatus::Parked => "parked",
         ProjectStorageStatus::Archived => "archived",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::project_seed::{seed_local_project, LocalProjectSeed};
-    use crate::task_seed::{seed_local_task, LocalTaskSeed};
-    use nucleus_projects::ProjectId;
-
-    #[test]
-    fn product_workflow_summary_query_reads_project_and_task_sources_without_effects() {
-        let temp_dir = tempfile::tempdir().expect("temp dir");
-        let backend = nucleus_local_store::SqliteBackend::new(temp_dir.path().join("state.sqlite"));
-        let handler = crate::request_handler::LocalControlRequestHandler::new(backend, None);
-        seed_local_project(handler.state(), LocalProjectSeed::nucleus_local()).expect("project");
-        seed_local_task(handler.state(), LocalTaskSeed::nucleus_local_bootstrap()).expect("task");
-
-        let result = product_workflow_summary_query(
-            &handler,
-            ProductWorkflowSummaryQuery {
-                project_id: ProjectId("project:nucleus-local".to_owned()),
-            },
-        )
-        .expect("product workflow summary");
-
-        let ServerQueryResult::ProductWorkflowSummary(summary) = result else {
-            panic!("expected product workflow summary result");
-        };
-
-        assert_eq!(summary.project_id.0, "project:nucleus-local");
-        assert_eq!(
-            summary.project.display_name,
-            Some("Nucleus Local".to_owned())
-        );
-        assert_eq!(summary.project.status, Some("active".to_owned()));
-        assert_eq!(summary.source_counts.task_candidates, 1);
-        assert_eq!(
-            summary
-                .task_lanes
-                .iter()
-                .find(|lane| lane.lane == ProductWorkflowTaskLane::Ready)
-                .expect("ready lane")
-                .count,
-            1
-        );
-        assert!(summary
-            .gaps
-            .iter()
-            .all(|gap| gap.area != crate::ProductWorkflowGapArea::Tasks));
-        assert!(!summary.no_effects.task_mutation_performed);
-        assert!(!summary.no_effects.provider_execution_performed);
-        assert!(!summary.no_effects.scm_or_forge_mutation_performed);
-        assert!(!summary.no_effects.ui_effect_performed);
     }
 }

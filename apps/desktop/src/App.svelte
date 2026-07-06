@@ -10,6 +10,7 @@
   import RuntimeReadinessPanel from "./lib/RuntimeReadinessPanel.svelte";
   import TaskDetailPanel from "./lib/TaskDetailPanel.svelte";
   import TaskListPanel from "./lib/TaskListPanel.svelte";
+  import TaskWorkflowDrilldownProofPanel from "./lib/TaskWorkflowDrilldownProofPanel.svelte";
   import TaskWorkProgressPanel from "./lib/TaskWorkProgressPanel.svelte";
   import type { ControlTaskRecordDto } from "./lib/control";
 
@@ -54,6 +55,7 @@
       />
       <RuntimeReadinessPanel />
       <TaskWorkProgressPanel />
+      <TaskWorkflowDrilldownProofPanel {selectedTask} />
       <ProductWorkflowProofPanel {selectedProjectId} />
       <PlanningResearchProofPanel />
       <ProviderReadinessOverviewPanel />

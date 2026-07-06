@@ -271,6 +271,7 @@ pub use super::server_read_only_spawn::*;
 pub use super::state::*;
 pub use super::task_agent_work_unit_state::*;
 pub use super::task_seed::*;
+pub use super::task_workflow_drilldown::*;
 pub use super::tauri_ipc_command::*;
 pub use super::tauri_ipc_readiness::*;
 pub use super::transport_readiness::*;

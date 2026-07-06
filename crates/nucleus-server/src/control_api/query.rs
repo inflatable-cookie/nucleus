@@ -67,6 +67,7 @@ pub enum ServerQueryKind {
     ),
     PlanningCapturePublicationDiagnostics(PlanningCapturePublicationDiagnosticsQuery),
     ProductWorkflowSummary(ProductWorkflowSummaryQuery),
+    TaskWorkflowDrilldown(TaskWorkflowDrilldownQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
 
@@ -179,6 +180,13 @@ pub struct TaskTimelineQuery {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskReadinessQuery {
     pub project_id: ProjectId,
+}
+
+/// Selected task workflow drilldown query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskWorkflowDrilldownQuery {
+    pub project_id: ProjectId,
+    pub task_id: TaskId,
 }
 
 /// Project authority-map query shape.

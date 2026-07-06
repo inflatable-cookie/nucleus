@@ -93,4 +93,9 @@ pub use records::{
     ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
     ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticEntryDto,
     ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
+    ControlTaskWorkflowDrilldownDto, ControlTaskWorkflowGapDto, ControlTaskWorkflowNextDto,
+    ControlTaskWorkflowNoEffectsDto, ControlTaskWorkflowReadinessDto, ControlTaskWorkflowReviewDto,
+    ControlTaskWorkflowRuntimeDto, ControlTaskWorkflowScmHandoffDto,
+    ControlTaskWorkflowSourceCountsDto, ControlTaskWorkflowTaskDto, ControlTaskWorkflowTimelineDto,
+    ControlTaskWorkflowWorkItemDto, ControlTaskWorkflowWorkProgressDto,
 };

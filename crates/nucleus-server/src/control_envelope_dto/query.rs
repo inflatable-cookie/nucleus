@@ -163,6 +163,12 @@ pub enum ControlQueryDto {
         action: String,
         project_id: String,
     },
+    TaskWorkflowDrilldown {
+        query_id: String,
+        action: String,
+        project_id: String,
+        task_id: String,
+    },
     ProjectAuthorityMap {
         query_id: String,
         action: String,

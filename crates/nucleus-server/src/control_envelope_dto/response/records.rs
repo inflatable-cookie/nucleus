@@ -26,6 +26,7 @@ mod research_run_briefs;
 mod runtime;
 mod task_readiness;
 mod task_seed_promotion;
+mod task_workflow_drilldown;
 mod timeline;
 
 pub use accepted_memory::{
@@ -141,5 +142,12 @@ pub use task_readiness::{
 };
 pub use task_seed_promotion::{
     ControlTaskSeedPromotionDiagnosticEntryDto, ControlTaskSeedPromotionDiagnosticsDto,
+};
+pub use task_workflow_drilldown::{
+    ControlTaskWorkflowDrilldownDto, ControlTaskWorkflowGapDto, ControlTaskWorkflowNextDto,
+    ControlTaskWorkflowNoEffectsDto, ControlTaskWorkflowReadinessDto, ControlTaskWorkflowReviewDto,
+    ControlTaskWorkflowRuntimeDto, ControlTaskWorkflowScmHandoffDto,
+    ControlTaskWorkflowSourceCountsDto, ControlTaskWorkflowTaskDto, ControlTaskWorkflowTimelineDto,
+    ControlTaskWorkflowWorkItemDto, ControlTaskWorkflowWorkProgressDto,
 };
 pub use timeline::ControlTaskTimelineEntryDto;

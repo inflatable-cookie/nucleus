@@ -1,6 +1,6 @@
 # 002 Product Workflow Source Composition
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-07-06
 
@@ -26,43 +26,44 @@ review, SCM, or next-step evidence.
 
 ## Goals
 
-- [ ] Compose planning sessions, task seeds, and accepted planning refs into
+- [x] Compose planning sessions, task seeds, and accepted planning refs into
   the workflow summary.
-- [ ] Compose memory proposal, accepted-memory, and research brief refs into
+- [x] Compose memory proposal, accepted-memory, and research brief refs into
   the context band.
-- [ ] Compose runtime evidence, command evidence, and review refs where those
+- [x] Compose runtime evidence, command evidence, and review refs where those
   records already exist.
-- [ ] Compose SCM readiness and next-step source records without performing SCM
+- [x] Compose SCM readiness and next-step source records without performing SCM
   or task mutations.
-- [ ] Keep query, DTO, CLI, Effigy, and desktop surfaces read-only and
+- [x] Keep query, DTO, CLI, Effigy, and desktop surfaces read-only and
   shape-stable.
-- [ ] Keep deferred lanes deferred unless source composition proves a product
+- [x] Keep deferred lanes deferred unless source composition proves a product
   blocker.
 
 ## Execution Plan
 
-- [ ] Batch 1: planning context source composition.
-- [ ] Batch 2: memory and research context composition.
-- [ ] Batch 3: runtime and review source composition.
-- [ ] Batch 4: SCM readiness and next-step composition.
-- [ ] Batch 5: validation and next lane selection.
+- [x] Batch 1: planning context source composition.
+- [x] Batch 2: memory and research context composition.
+- [x] Batch 3: runtime and review source composition.
+- [x] Batch 4: SCM readiness and next-step composition.
+- [x] Batch 5: validation and next lane selection.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/006-product-workflow-planning-context-composition.md`
+- None. This roadmap is complete.
 
 Planned cards:
 
+- None.
+
+Completed cards:
+
+- `batch-cards/006-product-workflow-planning-context-composition.md`
 - `batch-cards/007-product-workflow-memory-research-composition.md`
 - `batch-cards/008-product-workflow-runtime-review-composition.md`
 - `batch-cards/009-product-workflow-scm-next-composition.md`
 - `batch-cards/010-product-workflow-source-composition-validation.md`
-
-Completed cards:
-
-No completed cards yet.
 
 ## Boundary
 
@@ -87,11 +88,11 @@ This lane must not:
 
 ## Acceptance Criteria
 
-- [ ] Existing planning records remove the planning gap.
-- [ ] Existing memory or research records remove the context gap.
-- [ ] Existing runtime or review records remove the relevant runtime/review
+- [x] Existing planning records remove the planning gap.
+- [x] Existing memory or research records remove the context gap.
+- [x] Existing runtime or review records remove the relevant runtime/review
   gaps.
-- [ ] Existing SCM or next-step records remove the relevant SCM/next gaps.
-- [ ] Missing sources remain explicit gaps.
-- [ ] The disposable product workflow proof continues to consume the server
+- [x] Existing SCM or next-step records remove the relevant SCM/next gaps.
+- [x] Missing sources remain explicit gaps.
+- [x] The disposable product workflow proof continues to consume the server
   summary without client authority.

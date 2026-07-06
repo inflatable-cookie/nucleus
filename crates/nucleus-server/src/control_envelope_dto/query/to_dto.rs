@@ -12,7 +12,7 @@ use crate::control_api::{
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
     ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery, ServerQuery,
     ServerQueryKind, StateRecordQuery, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
-    TaskTimelineQuery,
+    TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::ids::ServerQueryId;
 
@@ -222,6 +222,15 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                     project_id: project_id.0.clone(),
                 })
             }
+            ServerQueryKind::TaskWorkflowDrilldown(TaskWorkflowDrilldownQuery {
+                project_id,
+                task_id,
+            }) => Ok(Self::TaskWorkflowDrilldown {
+                query_id: query.id.0.clone(),
+                action: "drilldown".to_owned(),
+                project_id: project_id.0.clone(),
+                task_id: task_id.0.clone(),
+            }),
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
                 project_id,
                 expected_domains,

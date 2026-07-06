@@ -26,6 +26,7 @@ mod research_run_briefs;
 mod task_authority;
 mod task_readiness;
 mod task_seed_promotion;
+mod task_workflow_drilldown;
 
 pub(super) use accepted_memory::accepted_memory_response_lines;
 pub(super) use accepted_memory_active_apply::accepted_memory_active_apply_response_lines;
@@ -56,6 +57,7 @@ pub(super) use task_authority::{
 };
 pub(super) use task_readiness::task_readiness_response_lines;
 pub(super) use task_seed_promotion::task_seed_promotion_response_lines;
+pub(super) use task_workflow_drilldown::task_workflow_drilldown_response_lines;
 
 pub(super) fn print_typed_dto_response(
     label: &str,
@@ -328,26 +330,22 @@ pub(super) fn print_typed_dto_response(
             Ok(())
         }
         ControlResponseBodyDto::PlanningProjectionImportActiveApplyDiagnostics { diagnostics } => {
-            print_lines(planning_projection_import_active_apply_response_lines(
+            print_ok(planning_projection_import_active_apply_response_lines(
                 label,
                 diagnostics,
-            ));
-            Ok(())
+            ))
         }
-        ControlResponseBodyDto::PlanningCapturePublicationDiagnostics { diagnostics } => {
-            print_lines(planning_capture_publication_response_lines(
-                label,
-                diagnostics,
-            ));
-            Ok(())
-        }
+        ControlResponseBodyDto::PlanningCapturePublicationDiagnostics { diagnostics } => print_ok(
+            planning_capture_publication_response_lines(label, diagnostics),
+        ),
         ControlResponseBodyDto::ProductWorkflowSummary { summary } => {
-            print_lines(product_workflow_response_lines(label, summary));
-            Ok(())
+            print_ok(product_workflow_response_lines(label, summary))
+        }
+        ControlResponseBodyDto::TaskWorkflowDrilldown { drilldown } => {
+            print_ok(task_workflow_drilldown_response_lines(label, drilldown))
         }
         ControlResponseBodyDto::ProjectAuthorityMap { record } => {
-            print_lines(project_authority_map_response_lines(label, record));
-            Ok(())
+            print_ok(project_authority_map_response_lines(label, record))
         }
         ControlResponseBodyDto::Error { kind, reason } => {
             Err(format!("{label} query failed: {kind}: {reason}"))
@@ -362,6 +360,11 @@ fn print_lines(lines: Vec<String>) {
     for line in lines {
         println!("{line}");
     }
+}
+
+fn print_ok(lines: Vec<String>) -> Result<(), String> {
+    print_lines(lines);
+    Ok(())
 }
 
 pub(super) fn command_evidence_response_lines(

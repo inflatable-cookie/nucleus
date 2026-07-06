@@ -88,6 +88,7 @@ fn product_workflow_response_lines_are_read_only_and_sanitized() {
     assert!(rendered.contains("domain=product-workflow-summary"));
     assert!(rendered.contains("project_id=project:nucleus-local"));
     assert!(rendered.contains("task_candidates=1"));
+    assert!(rendered.contains("planning_sessions=1"));
     assert!(rendered.contains("lane label=ready count=1"));
     assert!(rendered.contains("task_mutation=false"));
     assert!(rendered.contains("provider_execution=false"));

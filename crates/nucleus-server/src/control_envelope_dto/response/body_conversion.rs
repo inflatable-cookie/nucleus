@@ -22,7 +22,7 @@ use super::records::{
     ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
     ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
     ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
-    ControlTaskTimelineEntryDto,
+    ControlTaskTimelineEntryDto, ControlTaskWorkflowDrilldownDto,
 };
 use super::research_run_briefs::research_run_briefs_body_dto;
 use crate::control_api::{ServerControlResponseBody, ServerQueryResult};
@@ -210,6 +210,11 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 summary,
             )) => Ok(Self::ProductWorkflowSummary {
                 summary: ControlProductWorkflowSummaryDto::from(summary),
+            }),
+            ServerControlResponseBody::Query(ServerQueryResult::TaskWorkflowDrilldown(
+                drilldown,
+            )) => Ok(Self::TaskWorkflowDrilldown {
+                drilldown: ControlTaskWorkflowDrilldownDto::from(drilldown),
             }),
             ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)) => {
                 Ok(Self::ProjectAuthorityMap {

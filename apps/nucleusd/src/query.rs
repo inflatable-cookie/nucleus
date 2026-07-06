@@ -19,6 +19,7 @@ use nucleus_server::{
     ServerControlResponseBody, ServerControlResponseStatus, ServerQuery, ServerQueryId,
     ServerQueryKind, ServerStateDomain, StateRecordQuery, StateRecordQueryScope,
     TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    TaskWorkflowDrilldownQuery,
 };
 use nucleus_tasks::TaskId;
 
@@ -88,6 +89,7 @@ pub(crate) fn print_query(
             | QueryDomain::PlanningProjectionImportActiveApplyDiagnostics { .. }
             | QueryDomain::PlanningCapturePublicationDiagnostics { .. }
             | QueryDomain::ProductWorkflowSummary { .. }
+            | QueryDomain::TaskWorkflowDrilldown { .. }
             | QueryDomain::ProjectAuthorityMap { .. }
     ) {
         let dto = ControlResponseEnvelopeDto::try_from(&response)
@@ -306,6 +308,13 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
                 project_id: ProjectId(project_id.clone()),
             })
         }
+        QueryDomain::TaskWorkflowDrilldown {
+            project_id,
+            task_id,
+        } => ServerQueryKind::TaskWorkflowDrilldown(TaskWorkflowDrilldownQuery {
+            project_id: ProjectId(project_id.clone()),
+            task_id: TaskId(task_id.clone()),
+        }),
         QueryDomain::ProjectAuthorityMap { project_id } => {
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
                 project_id: ProjectId(project_id.clone()),

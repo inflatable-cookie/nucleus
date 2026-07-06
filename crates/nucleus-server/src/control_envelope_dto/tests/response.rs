@@ -25,3 +25,4 @@ mod provider_readiness_overview;
 mod research_run_briefs;
 mod runtime;
 mod state_records;
+mod task_workflow_drilldown;
