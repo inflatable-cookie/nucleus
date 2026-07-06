@@ -32,6 +32,7 @@ pub(crate) enum QueryDomain {
     PlanningProjectionImportApplyDiagnostics { project_id: String },
     PlanningProjectionImportActiveApplyDiagnostics { project_id: String },
     PlanningCapturePublicationDiagnostics { project_id: String },
+    ProductWorkflowSummary { project_id: String },
     ProjectAuthorityMap { project_id: String },
 }
 
@@ -238,6 +239,14 @@ impl QueryDomain {
                     })?,
                 })
             }
+            "product-workflow-summary" => {
+                expect_flag(iter, "--project")?;
+                Ok(Self::ProductWorkflowSummary {
+                    project_id: iter.next().ok_or_else(|| {
+                        "product-workflow-summary requires --project <project-id>".to_owned()
+                    })?,
+                })
+            }
             "project-authority-map" => {
                 expect_flag(iter, "--project")?;
                 Ok(Self::ProjectAuthorityMap {
@@ -300,6 +309,7 @@ impl QueryDomain {
             Self::PlanningCapturePublicationDiagnostics { .. } => {
                 "planning-capture-publication-diagnostics"
             }
+            Self::ProductWorkflowSummary { .. } => "product-workflow-summary",
             Self::ProjectAuthorityMap { .. } => "project-authority-map",
         }
     }
@@ -336,6 +346,7 @@ impl QueryDomain {
             | Self::PlanningProjectionImportApplyDiagnostics { .. }
             | Self::PlanningProjectionImportActiveApplyDiagnostics { .. }
             | Self::PlanningCapturePublicationDiagnostics { .. }
+            | Self::ProductWorkflowSummary { .. }
             | Self::ProjectAuthorityMap { .. } => None,
         }
     }

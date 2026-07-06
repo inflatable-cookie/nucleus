@@ -264,7 +264,10 @@ shape.
 - `g03/133-accepted-memory-review-product-consumption-readiness.md` - completed
 - `g03/134-accepted-memory-import-apply-review-commands.md` - completed
 - `g03/135-accepted-memory-review-receipt-persistence-and-apply-admission.md` - completed
-- `g03/136-accepted-memory-active-apply-executor-boundary.md` - ready
+- `g03/136-accepted-memory-active-apply-executor-boundary.md` - superseded
+- `g04/001-product-workflow-rebaseline-and-vertical-slice.md` - completed
+- `g04/002-product-workflow-source-composition.md` - ready
+- `deferred-lanes.md` - active
 
 ## Previous Generation
 
@@ -324,8 +327,9 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g03/136-accepted-memory-active-apply-executor-boundary.md`
+`docs/roadmaps/g04/002-product-workflow-source-composition.md`
 with
-`docs/roadmaps/g03/batch-cards/596-accepted-memory-active-apply-executor-boundary.md`.
-Define the minimal server-local accepted-memory apply executor boundary behind
-durable approved review receipts and admitted active-apply authority.
+`docs/roadmaps/g04/batch-cards/006-product-workflow-planning-context-composition.md`.
+Feed existing planning session and task seed records into the product workflow
+summary without opening planning apply, task promotion, provider execution, SCM
+mutation, or UI mutation.

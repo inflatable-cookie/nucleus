@@ -104,6 +104,7 @@ pub mod process_event_transport_backend;
 pub mod process_interruption;
 pub mod process_supervision_events;
 pub mod process_supervisor;
+pub mod product_workflow_summary;
 pub mod project_seed;
 pub mod provider_backpressure_summary;
 pub mod provider_command_persistence;

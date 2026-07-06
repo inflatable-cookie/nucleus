@@ -1,6 +1,6 @@
 # 598 Accepted Memory Active Apply Receipts Idempotency
 
-Status: planned
+Status: superseded
 Owner: Tom
 Updated: 2026-07-06
 Milestone: `../136-accepted-memory-active-apply-executor-boundary.md`
@@ -8,6 +8,12 @@ Milestone: `../136-accepted-memory-active-apply-executor-boundary.md`
 ## Purpose
 
 Persist sanitized active-apply receipts and idempotency outcomes.
+
+## Superseded Reason
+
+Deferred by `../../g04/001-product-workflow-rebaseline-and-vertical-slice.md`.
+Apply receipts should return with the active accepted-memory apply executor,
+not as a standalone continuation of the memory lane.
 
 ## Work
 

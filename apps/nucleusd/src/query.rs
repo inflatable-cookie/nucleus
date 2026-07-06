@@ -12,13 +12,13 @@ use nucleus_server::{
     PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
-    PlanningSessionsQuery, PlanningTaskSeedsQuery, ProjectAuthorityDomain,
-    ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
-    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
-    ServerControlRequest, ServerControlRequestKind, ServerControlResponseBody,
-    ServerControlResponseStatus, ServerQuery, ServerQueryId, ServerQueryKind, ServerStateDomain,
-    StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
-    TaskTimelineQuery,
+    PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
+    ProjectAuthorityDomain, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
+    ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
+    ResearchRunBriefsQuery, ServerControlRequest, ServerControlRequestKind,
+    ServerControlResponseBody, ServerControlResponseStatus, ServerQuery, ServerQueryId,
+    ServerQueryKind, ServerStateDomain, StateRecordQuery, StateRecordQueryScope,
+    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
 };
 use nucleus_tasks::TaskId;
 
@@ -87,6 +87,7 @@ pub(crate) fn print_query(
             | QueryDomain::PlanningProjectionImportApplyDiagnostics { .. }
             | QueryDomain::PlanningProjectionImportActiveApplyDiagnostics { .. }
             | QueryDomain::PlanningCapturePublicationDiagnostics { .. }
+            | QueryDomain::ProductWorkflowSummary { .. }
             | QueryDomain::ProjectAuthorityMap { .. }
     ) {
         let dto = ControlResponseEnvelopeDto::try_from(&response)
@@ -299,6 +300,11 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
                     project_id: ProjectId(project_id.clone()),
                 },
             )
+        }
+        QueryDomain::ProductWorkflowSummary { project_id } => {
+            ServerQueryKind::ProductWorkflowSummary(ProductWorkflowSummaryQuery {
+                project_id: ProjectId(project_id.clone()),
+            })
         }
         QueryDomain::ProjectAuthorityMap { project_id } => {
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {

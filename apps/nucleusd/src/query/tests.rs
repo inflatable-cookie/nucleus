@@ -38,6 +38,7 @@ mod planning_projection_import;
 mod planning_projection_import_active_apply;
 mod planning_projection_import_apply;
 mod planning_sessions;
+mod product_workflow;
 mod research_run_briefs;
 
 #[test]

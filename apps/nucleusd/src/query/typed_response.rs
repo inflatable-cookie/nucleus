@@ -20,6 +20,7 @@ mod planning_projection_import_active_apply;
 mod planning_projection_import_apply;
 mod planning_sessions;
 mod planning_task_seeds;
+mod product_workflow;
 mod provider;
 mod research_run_briefs;
 mod task_authority;
@@ -44,6 +45,7 @@ pub(super) use planning_projection_import_active_apply::planning_projection_impo
 pub(super) use planning_projection_import_apply::planning_projection_import_apply_response_lines;
 pub(super) use planning_sessions::planning_sessions_response_lines;
 pub(super) use planning_task_seeds::planning_task_seeds_response_lines;
+pub(super) use product_workflow::product_workflow_response_lines;
 pub(super) use provider::{
     provider_live_read_executor_response_lines, provider_live_read_smoke_evidence_response_lines,
     provider_read_intent_response_lines, provider_readiness_overview_response_lines,
@@ -337,6 +339,10 @@ pub(super) fn print_typed_dto_response(
                 label,
                 diagnostics,
             ));
+            Ok(())
+        }
+        ControlResponseBodyDto::ProductWorkflowSummary { summary } => {
+            print_lines(product_workflow_response_lines(label, summary));
             Ok(())
         }
         ControlResponseBodyDto::ProjectAuthorityMap { record } => {

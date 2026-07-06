@@ -1,6 +1,6 @@
 # g03 Batch Cards
 
-Status: active
+Status: closed
 Owner: Tom
 Updated: 2026-07-06
 
@@ -10,7 +10,7 @@ Hold execution cards for `g03`.
 
 ## Ready Cards
 
-- `596-accepted-memory-active-apply-executor-boundary.md`
+- None.
 
 ## Paused Cards
 
@@ -20,10 +20,15 @@ Hold execution cards for `g03`.
 
 ## Planned Cards
 
+- None.
+
+## Superseded Cards
+
 - `600-accepted-memory-active-apply-validation-next-lane.md`
 - `599-accepted-memory-active-apply-diagnostics-control.md`
 - `598-accepted-memory-active-apply-receipts-idempotency.md`
 - `597-accepted-memory-active-apply-storage-mutation.md`
+- `596-accepted-memory-active-apply-executor-boundary.md`
 
 ## Completed Cards
 

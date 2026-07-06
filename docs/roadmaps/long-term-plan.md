@@ -243,6 +243,40 @@ Near runway:
    review commands, planning import apply/review, or a disposable
    planning/memory UI proof.
 
+## 2026-07-06 G04 Rollover Direction
+
+Current selected workflow:
+
+- product workflow vertical slice
+
+Reason:
+
+- g03 has become large and has delivered enough backend proof surfaces for SCM,
+  provider reads, planning projection, memory proposals, accepted memory,
+  projection import, review, durable review receipts, and stopped active-apply
+  admission diagnostics
+- continuing into active accepted-memory apply would deepen one subsystem
+  before the project/task/agent workflow feels coherent
+- deferred lanes now have an explicit return queue in
+  `docs/roadmaps/deferred-lanes.md`
+- the next useful pressure is product coherence: project, task, planning,
+  runtime evidence, review, and SCM readiness in one understandable workflow
+
+Near runway:
+
+1. Close g03 as an effect-gated backend proof generation. Done.
+2. Mark accepted-memory active apply executor work superseded and deferred.
+   Done.
+3. Open g04 around a product workflow vertical slice. Done.
+4. Define the workflow slice boundary before implementation.
+5. Compose a read-only workflow summary from existing records.
+6. Expose the summary through `nucleusd` and Effigy.
+7. Add a disposable desktop proof only after the server read model is useful.
+
+Do not return to accepted-memory active apply, provider expansion, SCM/forge
+mutation, panel layout, plugin runtime, final UI, or broad automation until a
+visible workflow proves the need.
+
 ## Phase 0: Reassessment And Planning Base
 
 Goal: make the planning base trustworthy.

@@ -1,8 +1,8 @@
 # g03 Effect-Gated SCM Execution
 
-Status: active
+Status: closed
 Owner: Tom
-Updated: 2026-07-02
+Updated: 2026-07-06
 
 ## Purpose
 
@@ -487,13 +487,13 @@ Reason:
 - `134-accepted-memory-import-apply-review-commands.md` - completed
 - `135-accepted-memory-review-receipt-persistence-and-apply-admission.md` -
   completed
-- `136-accepted-memory-active-apply-executor-boundary.md` - ready
+- `136-accepted-memory-active-apply-executor-boundary.md` - superseded
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/596-accepted-memory-active-apply-executor-boundary.md`
+- None.
 
 Paused cards:
 
@@ -503,10 +503,15 @@ Paused cards:
 
 Planned cards:
 
+- None.
+
+Superseded cards:
+
 - `batch-cards/600-accepted-memory-active-apply-validation-next-lane.md`
 - `batch-cards/599-accepted-memory-active-apply-diagnostics-control.md`
 - `batch-cards/598-accepted-memory-active-apply-receipts-idempotency.md`
 - `batch-cards/597-accepted-memory-active-apply-storage-mutation.md`
+- `batch-cards/596-accepted-memory-active-apply-executor-boundary.md`
 
 Completed cards:
 

@@ -17,6 +17,7 @@ mod planning_projection_import_active_apply;
 mod planning_projection_import_apply;
 mod planning_sessions;
 mod planning_task_seeds;
+mod product_workflow;
 mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;

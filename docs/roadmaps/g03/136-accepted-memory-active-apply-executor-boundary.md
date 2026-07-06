@@ -1,8 +1,23 @@
 # 136 Accepted Memory Active Apply Executor Boundary
 
-Status: ready
+Status: superseded
 Owner: Tom
 Updated: 2026-07-06
+
+## Superseded By
+
+`docs/roadmaps/g04/001-product-workflow-rebaseline-and-vertical-slice.md`
+
+## Reason
+
+This lane is valid future work, but it is not the right active path now.
+Accepted-memory proposal, review, acceptance, projection, import, review
+receipt, and active-apply admission surfaces are already deep enough for the
+current product phase. Continuing into active accepted-memory mutation before
+the project/task/agent workflow feels coherent would over-optimize one
+subsystem.
+
+The return point is tracked in `docs/roadmaps/deferred-lanes.md`.
 
 ## Purpose
 
@@ -59,10 +74,15 @@ raw payloads, or implement final UI behavior.
 
 Ready cards:
 
-- `batch-cards/596-accepted-memory-active-apply-executor-boundary.md`
+- None.
 
 Planned cards:
 
+- None.
+
+Superseded cards:
+
+- `batch-cards/596-accepted-memory-active-apply-executor-boundary.md`
 - `batch-cards/597-accepted-memory-active-apply-storage-mutation.md`
 - `batch-cards/598-accepted-memory-active-apply-receipts-idempotency.md`
 - `batch-cards/599-accepted-memory-active-apply-diagnostics-control.md`

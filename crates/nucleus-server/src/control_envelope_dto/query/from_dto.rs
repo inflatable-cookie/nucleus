@@ -7,6 +7,7 @@ use super::planning_projection::{
     planning_projection_import_active_apply_diagnostics_query_from_action,
     planning_projection_import_apply_diagnostics_query_from_action,
     planning_projection_import_diagnostics_query_from_action,
+    product_workflow_summary_query_from_action,
 };
 use super::project_authority::project_authority_map_query_from_action;
 use super::provider::{
@@ -152,6 +153,9 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             ControlQueryDto::PlanningCapturePublicationDiagnostics {
                 action, project_id, ..
             } => planning_capture_publication_diagnostics_query_from_action(&action, project_id),
+            ControlQueryDto::ProductWorkflowSummary {
+                action, project_id, ..
+            } => product_workflow_summary_query_from_action(&action, project_id),
             ControlQueryDto::ProjectAuthorityMap {
                 action,
                 project_id,

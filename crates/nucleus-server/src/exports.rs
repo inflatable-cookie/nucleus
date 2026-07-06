@@ -69,6 +69,7 @@ pub use super::process_event_transport_backend::*;
 pub use super::process_interruption::*;
 pub use super::process_supervision_events::*;
 pub use super::process_supervisor::*;
+pub use super::product_workflow_summary::*;
 pub use super::project_seed::*;
 pub use super::provider_backpressure_summary::*;
 pub use super::provider_command_persistence::*;

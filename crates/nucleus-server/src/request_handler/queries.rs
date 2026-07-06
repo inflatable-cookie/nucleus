@@ -73,6 +73,7 @@ mod planning_projection_import_apply_diagnostics;
 mod planning_projection_import_diagnostics;
 mod planning_sessions;
 mod planning_task_seeds;
+mod product_workflow_summary;
 mod provider_live_read_executor;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
@@ -194,6 +195,9 @@ where
         }
         ServerQueryKind::PlanningCapturePublicationDiagnostics(query) => {
             planning_capture_publication_diagnostics::planning_capture_publication_diagnostics_query(handler, query)
+        }
+        ServerQueryKind::ProductWorkflowSummary(query) => {
+            product_workflow_summary::product_workflow_summary_query(handler, query)
         }
         ServerQueryKind::ProjectAuthorityMap(query) => {
             authority_map::project_authority_map_query(query)

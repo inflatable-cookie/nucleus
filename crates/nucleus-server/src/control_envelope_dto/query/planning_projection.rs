@@ -4,7 +4,7 @@ use crate::control_api::{
     PlanningCapturePublicationDiagnosticsQuery, PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
-    ServerQueryKind,
+    ProductWorkflowSummaryQuery, ServerQueryKind,
 };
 
 use super::ControlApiCodecError;
@@ -43,6 +43,25 @@ pub(super) fn planning_capture_publication_diagnostics_query_from_action(
         )),
         _ => Err(ControlApiCodecError::unsupported(format!(
             "unsupported planning capture publication diagnostics action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn product_workflow_summary_query_from_action(
+    action: &str,
+    project_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "summary" if project_id.trim().is_empty() => Err(ControlApiCodecError::unsupported(
+            "product workflow summary requires a project id",
+        )),
+        "summary" => Ok(ServerQueryKind::ProductWorkflowSummary(
+            ProductWorkflowSummaryQuery {
+                project_id: ProjectId(project_id),
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported product workflow summary action: {action}"
         ))),
     }
 }

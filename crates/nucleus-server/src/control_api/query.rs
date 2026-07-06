@@ -20,8 +20,8 @@ use super::{
     PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
-    PlanningSessionsQuery, PlanningTaskSeedsQuery, ResearchRunBriefsQuery,
-    TaskSeedPromotionDiagnosticsQuery,
+    PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
+    ResearchRunBriefsQuery, TaskSeedPromotionDiagnosticsQuery,
 };
 
 /// Top-level query categories.
@@ -66,6 +66,7 @@ pub enum ServerQueryKind {
         PlanningProjectionImportActiveApplyDiagnosticsQuery,
     ),
     PlanningCapturePublicationDiagnostics(PlanningCapturePublicationDiagnosticsQuery),
+    ProductWorkflowSummary(ProductWorkflowSummaryQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
 

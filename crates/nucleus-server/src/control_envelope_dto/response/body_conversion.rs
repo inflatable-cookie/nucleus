@@ -18,10 +18,11 @@ use super::records::{
     ControlPlanningProjectionImportApplyDiagnosticsDto,
     ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningTaskSeedCandidateDto,
     ControlPlanningTaskSeedSourceCountsDto, ControlPlanningTaskSeedStatusCountDto,
-    ControlProjectAuthorityMapDto, ControlRuntimeReadinessDiagnosticDto,
-    ControlRuntimeReceiptRecordDto, ControlTaskReadinessCandidateDto,
-    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
-    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
+    ControlProductWorkflowSummaryDto, ControlProjectAuthorityMapDto,
+    ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
+    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
+    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
+    ControlTaskTimelineEntryDto,
 };
 use super::research_run_briefs::research_run_briefs_body_dto;
 use crate::control_api::{ServerControlResponseBody, ServerQueryResult};
@@ -204,6 +205,11 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 ServerQueryResult::PlanningCapturePublicationDiagnostics(diagnostics),
             ) => Ok(Self::PlanningCapturePublicationDiagnostics {
                 diagnostics: ControlPlanningCapturePublicationDiagnosticsDto::from(diagnostics),
+            }),
+            ServerControlResponseBody::Query(ServerQueryResult::ProductWorkflowSummary(
+                summary,
+            )) => Ok(Self::ProductWorkflowSummary {
+                summary: ControlProductWorkflowSummaryDto::from(summary),
             }),
             ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)) => {
                 Ok(Self::ProjectAuthorityMap {

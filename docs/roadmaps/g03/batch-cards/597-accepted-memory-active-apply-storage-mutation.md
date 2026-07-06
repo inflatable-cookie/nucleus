@@ -1,6 +1,6 @@
 # 597 Accepted Memory Active Apply Storage Mutation
 
-Status: planned
+Status: superseded
 Owner: Tom
 Updated: 2026-07-06
 Milestone: `../136-accepted-memory-active-apply-executor-boundary.md`
@@ -9,6 +9,12 @@ Milestone: `../136-accepted-memory-active-apply-executor-boundary.md`
 
 Implement the minimal server-local accepted-memory mutation behind admitted
 active-apply authority.
+
+## Superseded Reason
+
+Deferred by `../../g04/001-product-workflow-rebaseline-and-vertical-slice.md`.
+Return through `docs/roadmaps/deferred-lanes.md` after the project/task/agent
+workflow proves that active accepted-memory apply is needed.
 
 ## Work
 

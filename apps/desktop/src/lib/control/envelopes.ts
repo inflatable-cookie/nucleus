@@ -26,6 +26,7 @@ import type {
   ControlResearchRunBriefSummaryDto,
   CountByLabelDto,
 } from "./planningResearch";
+import type { ControlProductWorkflowSummaryDto } from "./productWorkflow";
 
 export type ControlQueryDto =
   | {
@@ -58,6 +59,12 @@ export type ControlQueryDto =
       kind: "planning_sessions" | "memory_proposals" | "research_run_briefs";
       query_id: string;
       action: "sessions" | "proposals" | "runs";
+      project_id: string;
+    }
+  | {
+      kind: "product_workflow_summary";
+      query_id: string;
+      action: "summary";
       project_id: string;
     };
 
@@ -160,6 +167,10 @@ export type ControlResponseEnvelopeDto = {
         source_counts: ControlResearchRunBriefSourceCountsDto;
         client_can_mutate: false;
         provider_execution_available: false;
+      }
+    | {
+        type: "product_workflow_summary";
+        summary: ControlProductWorkflowSummaryDto;
       }
     | { type: "state_records"; domain: string; records: unknown[] }
     | { type: "command_receipt"; command_id: string; status: string }
@@ -285,6 +296,15 @@ export function buildResearchRunBriefsQuery(projectId: string): ControlRequestEn
     kind: "research_run_briefs",
     query_id: "",
     action: "runs",
+    project_id: projectId,
+  });
+}
+
+export function buildProductWorkflowSummaryQuery(projectId: string): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "product_workflow_summary",
+    query_id: "",
+    action: "summary",
     project_id: projectId,
   });
 }

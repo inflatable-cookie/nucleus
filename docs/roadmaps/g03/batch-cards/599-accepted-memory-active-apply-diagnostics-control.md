@@ -1,6 +1,6 @@
 # 599 Accepted Memory Active Apply Diagnostics Control
 
-Status: planned
+Status: superseded
 Owner: Tom
 Updated: 2026-07-06
 Milestone: `../136-accepted-memory-active-apply-executor-boundary.md`
@@ -8,6 +8,12 @@ Milestone: `../136-accepted-memory-active-apply-executor-boundary.md`
 ## Purpose
 
 Expose active apply executor results through read-only diagnostics.
+
+## Superseded Reason
+
+Deferred by `../../g04/001-product-workflow-rebaseline-and-vertical-slice.md`.
+Diagnostics for active apply should follow a real executor need, not extend
+the current accepted-memory proof chain by momentum.
 
 ## Work
 

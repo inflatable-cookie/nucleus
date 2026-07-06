@@ -33,8 +33,8 @@ pub use crate::control_api_planning_queries::{
     PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
-    PlanningSessionsQuery, PlanningTaskSeedsQuery, ResearchRunBriefsQuery,
-    TaskSeedPromotionDiagnosticsQuery,
+    PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
+    ResearchRunBriefsQuery, TaskSeedPromotionDiagnosticsQuery,
 };
 use crate::diagnostics_read_models::{
     CodexProviderDiagnosticsDto, EffigyDiagnosticsDto, ScmSessionDiagnosticsDto,
@@ -162,6 +162,7 @@ pub enum ServerQueryResult {
     PlanningCapturePublicationDiagnostics(
         crate::PlanningCapturePublicationStoppedRequestDiagnostics,
     ),
+    ProductWorkflowSummary(crate::ProductWorkflowSummary),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     Empty,
     Unsupported {

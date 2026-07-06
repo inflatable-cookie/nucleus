@@ -1,6 +1,6 @@
 # 600 Accepted Memory Active Apply Validation Next Lane
 
-Status: planned
+Status: superseded
 Owner: Tom
 Updated: 2026-07-06
 Milestone: `../136-accepted-memory-active-apply-executor-boundary.md`
@@ -9,6 +9,12 @@ Milestone: `../136-accepted-memory-active-apply-executor-boundary.md`
 
 Validate the minimal active accepted-memory apply lane and select the next
 bounded lane.
+
+## Superseded Reason
+
+Deferred by `../../g04/001-product-workflow-rebaseline-and-vertical-slice.md`.
+The next validation checkpoint is now the g04 product workflow slice, not
+continued accepted-memory mutation.
 
 ## Work
 

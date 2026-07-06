@@ -4,6 +4,7 @@ import {
   buildDiagnosticsQuery,
   buildMemoryProposalsQuery,
   buildPlanningSessionsQuery,
+  buildProductWorkflowSummaryQuery,
   buildProviderReadIntentQuery,
   buildProviderReadinessOverviewQuery,
   buildResearchRunBriefsQuery,
@@ -26,6 +27,10 @@ import {
   type RuntimeReadinessQueryResult,
   type TaskWorkProgressQueryResult,
 } from "./responses";
+import {
+  productWorkflowSummaryFromResponse,
+  type ProductWorkflowSummaryQueryResult,
+} from "./productWorkflow";
 import {
   memoryProposalsFromResponse,
   planningSessionsFromResponse,
@@ -93,4 +98,11 @@ export async function queryResearchRunBriefs(
 ): Promise<ResearchRunBriefsQueryResult> {
   const response = await submitControlEnvelope(buildResearchRunBriefsQuery(projectId));
   return researchRunBriefsFromResponse(response);
+}
+
+export async function queryProductWorkflowSummary(
+  projectId: string,
+): Promise<ProductWorkflowSummaryQueryResult> {
+  const response = await submitControlEnvelope(buildProductWorkflowSummaryQuery(projectId));
+  return productWorkflowSummaryFromResponse(response);
 }

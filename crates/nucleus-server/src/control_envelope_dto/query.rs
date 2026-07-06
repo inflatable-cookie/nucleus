@@ -158,6 +158,11 @@ pub enum ControlQueryDto {
         action: String,
         project_id: String,
     },
+    ProductWorkflowSummary {
+        query_id: String,
+        action: String,
+        project_id: String,
+    },
     ProjectAuthorityMap {
         query_id: String,
         action: String,

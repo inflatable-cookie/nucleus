@@ -18,8 +18,9 @@ The repo uses:
 
 ## Current Lane
 
-`g03` effect-gated SCM and forge execution. Current pointer: server/client
-workflow hardening after the provider live-read proof pause.
+`g04` product workflow vertical slice. Current pointer: project/task/planning/
+runtime evidence/review/SCM readiness workflow rebaseline after g03's
+effect-gated backend proof run.
 
 Current planning artifacts:
 

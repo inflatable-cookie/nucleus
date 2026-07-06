@@ -121,3 +121,9 @@ pub struct PlanningProjectionImportActiveApplyDiagnosticsQuery {
 pub struct PlanningCapturePublicationDiagnosticsQuery {
     pub project_id: ProjectId,
 }
+
+/// Product workflow summary query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductWorkflowSummaryQuery {
+    pub project_id: ProjectId,
+}

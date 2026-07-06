@@ -8,10 +8,11 @@ use crate::control_api::{
     PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
-    PlanningSessionsQuery, PlanningTaskSeedsQuery, ProjectAuthorityMapQuery,
-    ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery,
-    ProviderReadinessOverviewQuery, ResearchRunBriefsQuery, ServerQuery, ServerQueryKind,
-    StateRecordQuery, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
+    ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
+    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery, ServerQuery,
+    ServerQueryKind, StateRecordQuery, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
+    TaskTimelineQuery,
 };
 use crate::ids::ServerQueryId;
 
@@ -214,6 +215,13 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                 action: "diagnostics".to_owned(),
                 project_id: project_id.0.clone(),
             }),
+            ServerQueryKind::ProductWorkflowSummary(ProductWorkflowSummaryQuery { project_id }) => {
+                Ok(Self::ProductWorkflowSummary {
+                    query_id: query.id.0.clone(),
+                    action: "summary".to_owned(),
+                    project_id: project_id.0.clone(),
+                })
+            }
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
                 project_id,
                 expected_domains,

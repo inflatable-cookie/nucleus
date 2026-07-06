@@ -32,6 +32,7 @@ impl ControlQueryDto {
             | Self::PlanningProjectionImportApplyDiagnostics { query_id, .. }
             | Self::PlanningProjectionImportActiveApplyDiagnostics { query_id, .. }
             | Self::PlanningCapturePublicationDiagnostics { query_id, .. }
+            | Self::ProductWorkflowSummary { query_id, .. }
             | Self::ProjectAuthorityMap { query_id, .. } => query_id.clone(),
         }
     }

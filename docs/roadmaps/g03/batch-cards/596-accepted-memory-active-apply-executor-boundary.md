@@ -1,6 +1,6 @@
 # 596 Accepted Memory Active Apply Executor Boundary
 
-Status: ready
+Status: superseded
 Owner: Tom
 Updated: 2026-07-06
 Milestone: `../136-accepted-memory-active-apply-executor-boundary.md`
@@ -9,6 +9,13 @@ Milestone: `../136-accepted-memory-active-apply-executor-boundary.md`
 
 Define the minimal executor boundary for applying accepted-memory imports into
 server-local accepted-memory records.
+
+## Superseded Reason
+
+Deferred by `../../g04/001-product-workflow-rebaseline-and-vertical-slice.md`.
+The executor boundary remains valid future work, but the active roadmap now
+needs a product workflow vertical slice before more accepted-memory mutation
+machinery.
 
 ## Work
 

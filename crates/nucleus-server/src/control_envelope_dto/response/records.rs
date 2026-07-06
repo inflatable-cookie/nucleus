@@ -21,6 +21,7 @@ mod planning_projection_import_active_apply;
 mod planning_projection_import_apply;
 mod planning_sessions;
 mod planning_task_seeds;
+mod product_workflow;
 mod research_run_briefs;
 mod runtime;
 mod task_readiness;
@@ -114,6 +115,15 @@ pub use planning_sessions::{
 pub use planning_task_seeds::{
     ControlPlanningTaskSeedCandidateDto, ControlPlanningTaskSeedSourceCountsDto,
     ControlPlanningTaskSeedStatusCountDto,
+};
+#[allow(unused_imports)]
+pub use product_workflow::{
+    ControlProductWorkflowContextDto, ControlProductWorkflowGapDto, ControlProductWorkflowLaneDto,
+    ControlProductWorkflowNextDto, ControlProductWorkflowNoEffectsDto,
+    ControlProductWorkflowPlanningContextDto, ControlProductWorkflowProjectDto,
+    ControlProductWorkflowReviewDto, ControlProductWorkflowRuntimeDto,
+    ControlProductWorkflowScmReadinessDto, ControlProductWorkflowSourceCountsDto,
+    ControlProductWorkflowSummaryDto,
 };
 pub use research_run_briefs::{
     ControlResearchObservationKindCountDto, ControlResearchRunBriefSourceCountsDto,

@@ -120,3 +120,35 @@ fn planning_research_proof_panel_has_no_forbidden_mutation_controls() {
     assert!(component.contains("queryResearchRunBriefs"));
     assert!(component.contains("Read-only inspection."));
 }
+
+#[test]
+fn product_workflow_proof_panel_has_no_forbidden_mutation_controls() {
+    let component = include_str!("../../../src/lib/ProductWorkflowProofPanel.svelte");
+
+    for forbidden in [
+        "buildStartTaskCommand",
+        "buildBlockTaskCommand",
+        "buildCompleteTaskCommand",
+        "buildArchiveTaskCommand",
+        "submitControlEnvelope",
+        "approve",
+        "apply button",
+        "apply import",
+        "create task",
+        "browser automation",
+        "source retrieval",
+        "merge",
+        "commit",
+        "push",
+        "pull request",
+        "panel layout",
+        "plugin runtime",
+    ] {
+        assert!(
+            !component.to_lowercase().contains(&forbidden.to_lowercase()),
+            "product workflow proof panel should not expose {forbidden}"
+        );
+    }
+    assert!(component.contains("queryProductWorkflowSummary"));
+    assert!(component.contains("Read-only workflow."));
+}

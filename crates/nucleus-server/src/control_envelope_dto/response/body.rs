@@ -33,14 +33,14 @@ use super::records::{
     ControlPlanningProjectionImportDiagnosticsDto, ControlPlanningSessionSourceCountsDto,
     ControlPlanningSessionStatusCountDto, ControlPlanningSessionSummaryDto,
     ControlPlanningTaskSeedCandidateDto, ControlPlanningTaskSeedSourceCountsDto,
-    ControlPlanningTaskSeedStatusCountDto, ControlProjectAuthorityMapDto,
-    ControlResearchObservationKindCountDto, ControlResearchRunBriefSourceCountsDto,
-    ControlResearchRunBriefStatusCountDto, ControlResearchRunBriefSummaryDto,
-    ControlResearchSourceKindCountDto, ControlResearchSynthesisKindCountDto,
-    ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
-    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
-    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
-    ControlTaskTimelineEntryDto,
+    ControlPlanningTaskSeedStatusCountDto, ControlProductWorkflowSummaryDto,
+    ControlProjectAuthorityMapDto, ControlResearchObservationKindCountDto,
+    ControlResearchRunBriefSourceCountsDto, ControlResearchRunBriefStatusCountDto,
+    ControlResearchRunBriefSummaryDto, ControlResearchSourceKindCountDto,
+    ControlResearchSynthesisKindCountDto, ControlRuntimeReadinessDiagnosticDto,
+    ControlRuntimeReceiptRecordDto, ControlTaskReadinessCandidateDto,
+    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
+    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
 };
 use crate::control_envelope_dto::{
     ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -198,6 +198,9 @@ pub enum ControlResponseBodyDto {
     },
     PlanningCapturePublicationDiagnostics {
         diagnostics: ControlPlanningCapturePublicationDiagnosticsDto,
+    },
+    ProductWorkflowSummary {
+        summary: ControlProductWorkflowSummaryDto,
     },
     ProjectAuthorityMap {
         record: ControlProjectAuthorityMapDto,
