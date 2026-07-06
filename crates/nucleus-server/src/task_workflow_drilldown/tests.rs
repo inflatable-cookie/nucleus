@@ -3,8 +3,9 @@ use nucleus_tasks::TaskId;
 
 use super::{
     task_workflow_drilldown, TaskWorkflowDrilldownInput, TaskWorkflowGapArea,
-    TaskWorkflowNextStepInput, TaskWorkflowNextStepSource, TaskWorkflowReadinessInput,
-    TaskWorkflowTaskInput, TaskWorkflowWorkProgressInput,
+    TaskWorkflowGuidanceSource, TaskWorkflowNextStepInput, TaskWorkflowNextStepSource,
+    TaskWorkflowReadinessInput, TaskWorkflowSafeAction, TaskWorkflowTaskInput,
+    TaskWorkflowWorkProgressInput,
 };
 
 #[test]
@@ -59,6 +60,14 @@ fn task_workflow_drilldown_sanitizes_refs_and_reports_no_effects() {
     );
     assert_eq!(drilldown.source_counts.work_items, 1);
     assert!(drilldown.gaps.is_empty());
+    assert_eq!(
+        drilldown.guidance.source,
+        TaskWorkflowGuidanceSource::Runtime
+    );
+    assert_eq!(
+        drilldown.guidance.safe_action,
+        TaskWorkflowSafeAction::Inspect
+    );
     assert!(!drilldown.no_effects.task_mutation_performed);
     assert!(!drilldown.no_effects.provider_execution_performed);
     assert!(!drilldown.no_effects.scm_or_forge_mutation_performed);
@@ -93,5 +102,13 @@ fn task_workflow_drilldown_reports_missing_sources_as_gaps() {
     assert_eq!(
         drilldown.next.source,
         TaskWorkflowNextStepSource::BlockedByMissingPathway
+    );
+    assert_eq!(
+        drilldown.guidance.source,
+        TaskWorkflowGuidanceSource::Blocked
+    );
+    assert_eq!(
+        drilldown.guidance.safe_action,
+        TaskWorkflowSafeAction::Blocked
     );
 }

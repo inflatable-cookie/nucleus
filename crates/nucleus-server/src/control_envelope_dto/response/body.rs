@@ -38,7 +38,8 @@ use super::records::{
     ControlResearchRunBriefSourceCountsDto, ControlResearchRunBriefStatusCountDto,
     ControlResearchRunBriefSummaryDto, ControlResearchSourceKindCountDto,
     ControlResearchSynthesisKindCountDto, ControlRuntimeReadinessDiagnosticDto,
-    ControlRuntimeReceiptRecordDto, ControlTaskReadinessCandidateDto,
+    ControlRuntimeReceiptRecordDto, ControlSelectedTaskActionReadinessDto,
+    ControlSelectedTaskOperatorActionGateDto, ControlTaskReadinessCandidateDto,
     ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
     ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
     ControlTaskWorkflowDrilldownDto,
@@ -205,6 +206,12 @@ pub enum ControlResponseBodyDto {
     },
     TaskWorkflowDrilldown {
         drilldown: ControlTaskWorkflowDrilldownDto,
+    },
+    SelectedTaskActionReadiness {
+        readiness: ControlSelectedTaskActionReadinessDto,
+    },
+    SelectedTaskOperatorActionGate {
+        gate: ControlSelectedTaskOperatorActionGateDto,
     },
     ProjectAuthorityMap {
         record: ControlProjectAuthorityMapDto,

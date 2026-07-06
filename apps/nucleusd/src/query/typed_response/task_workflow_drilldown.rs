@@ -65,6 +65,17 @@ pub(crate) fn task_workflow_drilldown_response_lines(
             drilldown.next.blocked_reason.unwrap_or_else(|| "-".to_owned())
         ),
         format!(
+            "guidance source={} safe_action={} evidence_refs={} missing_evidence_areas={} blocked_reason={}",
+            drilldown.guidance.source,
+            drilldown.guidance.safe_action,
+            drilldown.guidance.evidence_refs.len(),
+            drilldown.guidance.missing_evidence_areas.len(),
+            drilldown
+                .guidance
+                .blocked_reason
+                .unwrap_or_else(|| "-".to_owned())
+        ),
+        format!(
             "no_effects task_mutation={} provider_execution={} provider_write={} scm_or_forge_mutation={} accepted_memory_apply={} planning_apply={} projection_write={} agent_scheduling={} ui_effect={}",
             drilldown.no_effects.task_mutation_performed,
             drilldown.no_effects.provider_execution_performed,

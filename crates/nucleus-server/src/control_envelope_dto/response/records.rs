@@ -24,6 +24,8 @@ mod planning_task_seeds;
 mod product_workflow;
 mod research_run_briefs;
 mod runtime;
+mod selected_task_action_readiness;
+mod selected_task_operator_action_gate;
 mod task_readiness;
 mod task_seed_promotion;
 mod task_workflow_drilldown;
@@ -136,6 +138,17 @@ pub use runtime::{
     ControlRuntimeReadinessBlockerDto, ControlRuntimeReadinessDiagnosticDto,
     ControlRuntimeReceiptRecordDto,
 };
+pub use selected_task_action_readiness::{
+    ControlSelectedTaskActionBlockerDto, ControlSelectedTaskActionDto,
+    ControlSelectedTaskActionNoEffectsDto, ControlSelectedTaskActionReadinessDto,
+    ControlSelectedTaskActionSourceCountsDto,
+};
+pub use selected_task_operator_action_gate::{
+    ControlSelectedTaskOperatorActionBlockerDto, ControlSelectedTaskOperatorActionCandidateDto,
+    ControlSelectedTaskOperatorActionGateDto, ControlSelectedTaskOperatorActionGateSourceCountsDto,
+    ControlSelectedTaskOperatorActionNoEffectsDto,
+    ControlSelectedTaskOperatorTaskCommandCandidateDto,
+};
 pub use task_readiness::{
     ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
     ControlTaskReadinessStatusCountDto,
@@ -144,9 +157,9 @@ pub use task_seed_promotion::{
     ControlTaskSeedPromotionDiagnosticEntryDto, ControlTaskSeedPromotionDiagnosticsDto,
 };
 pub use task_workflow_drilldown::{
-    ControlTaskWorkflowDrilldownDto, ControlTaskWorkflowGapDto, ControlTaskWorkflowNextDto,
-    ControlTaskWorkflowNoEffectsDto, ControlTaskWorkflowReadinessDto, ControlTaskWorkflowReviewDto,
-    ControlTaskWorkflowRuntimeDto, ControlTaskWorkflowScmHandoffDto,
+    ControlTaskWorkflowDrilldownDto, ControlTaskWorkflowGapDto, ControlTaskWorkflowGuidanceDto,
+    ControlTaskWorkflowNextDto, ControlTaskWorkflowNoEffectsDto, ControlTaskWorkflowReadinessDto,
+    ControlTaskWorkflowReviewDto, ControlTaskWorkflowRuntimeDto, ControlTaskWorkflowScmHandoffDto,
     ControlTaskWorkflowSourceCountsDto, ControlTaskWorkflowTaskDto, ControlTaskWorkflowTimelineDto,
     ControlTaskWorkflowWorkItemDto, ControlTaskWorkflowWorkProgressDto,
 };

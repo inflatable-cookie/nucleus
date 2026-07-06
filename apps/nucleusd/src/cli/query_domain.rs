@@ -34,6 +34,8 @@ pub(crate) enum QueryDomain {
     PlanningCapturePublicationDiagnostics { project_id: String },
     ProductWorkflowSummary { project_id: String },
     TaskWorkflowDrilldown { project_id: String, task_id: String },
+    SelectedTaskActionReadiness { project_id: String, task_id: String },
+    SelectedTaskOperatorActionGate { project_id: String, task_id: String },
     ProjectAuthorityMap { project_id: String },
 }
 
@@ -261,6 +263,32 @@ impl QueryDomain {
                     })?,
                 })
             }
+            "selected-task-action-readiness" => {
+                expect_flag(iter, "--project")?;
+                let project_id = iter.next().ok_or_else(|| {
+                    "selected-task-action-readiness requires --project <project-id>".to_owned()
+                })?;
+                expect_flag(iter, "--task")?;
+                Ok(Self::SelectedTaskActionReadiness {
+                    project_id,
+                    task_id: iter.next().ok_or_else(|| {
+                        "selected-task-action-readiness requires --task <task-id>".to_owned()
+                    })?,
+                })
+            }
+            "selected-task-operator-action-gate" => {
+                expect_flag(iter, "--project")?;
+                let project_id = iter.next().ok_or_else(|| {
+                    "selected-task-operator-action-gate requires --project <project-id>".to_owned()
+                })?;
+                expect_flag(iter, "--task")?;
+                Ok(Self::SelectedTaskOperatorActionGate {
+                    project_id,
+                    task_id: iter.next().ok_or_else(|| {
+                        "selected-task-operator-action-gate requires --task <task-id>".to_owned()
+                    })?,
+                })
+            }
             "project-authority-map" => {
                 expect_flag(iter, "--project")?;
                 Ok(Self::ProjectAuthorityMap {
@@ -325,6 +353,8 @@ impl QueryDomain {
             }
             Self::ProductWorkflowSummary { .. } => "product-workflow-summary",
             Self::TaskWorkflowDrilldown { .. } => "task-workflow-drilldown",
+            Self::SelectedTaskActionReadiness { .. } => "selected-task-action-readiness",
+            Self::SelectedTaskOperatorActionGate { .. } => "selected-task-operator-action-gate",
             Self::ProjectAuthorityMap { .. } => "project-authority-map",
         }
     }
@@ -363,6 +393,8 @@ impl QueryDomain {
             | Self::PlanningCapturePublicationDiagnostics { .. }
             | Self::ProductWorkflowSummary { .. }
             | Self::TaskWorkflowDrilldown { .. }
+            | Self::SelectedTaskActionReadiness { .. }
+            | Self::SelectedTaskOperatorActionGate { .. }
             | Self::ProjectAuthorityMap { .. } => None,
         }
     }

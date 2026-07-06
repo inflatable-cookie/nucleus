@@ -1,3 +1,4 @@
+use super::guidance::task_workflow_guidance;
 use super::types::{
     TaskWorkflowDrilldown, TaskWorkflowDrilldownInput, TaskWorkflowGap, TaskWorkflowGapArea,
     TaskWorkflowNextStep, TaskWorkflowNextStepInput, TaskWorkflowNextStepSource,
@@ -51,6 +52,19 @@ pub fn task_workflow_drilldown(input: TaskWorkflowDrilldownInput) -> TaskWorkflo
         scm_handoff_refs: scm_handoff_refs.len(),
     };
 
+    let gaps = gaps(&source_counts, &next);
+    let guidance = task_workflow_guidance(
+        task.as_ref(),
+        readiness.as_ref(),
+        &work_items,
+        &runtime_receipt_refs,
+        &command_evidence_refs,
+        &task_completion_refs,
+        &review_refs,
+        &scm_handoff_refs,
+        &gaps,
+    );
+
     TaskWorkflowDrilldown {
         drilldown_id: format!("task-workflow-drilldown:{}", input.task_id.0),
         project_id: input.project_id,
@@ -70,9 +84,10 @@ pub fn task_workflow_drilldown(input: TaskWorkflowDrilldownInput) -> TaskWorkflo
         scm_handoff: TaskWorkflowScmHandoffSummary {
             handoff_refs: scm_handoff_refs,
         },
-        gaps: gaps(&source_counts, &next),
         next,
+        guidance,
         source_counts,
+        gaps,
         no_effects: TaskWorkflowNoEffects::read_only(),
     }
 }

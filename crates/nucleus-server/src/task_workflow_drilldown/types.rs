@@ -79,6 +79,7 @@ pub struct TaskWorkflowDrilldown {
     pub review: TaskWorkflowReviewSummary,
     pub scm_handoff: TaskWorkflowScmHandoffSummary,
     pub next: TaskWorkflowNextStep,
+    pub guidance: TaskWorkflowGuidance,
     pub source_counts: TaskWorkflowSourceCounts,
     pub gaps: Vec<TaskWorkflowGap>,
     pub no_effects: TaskWorkflowNoEffects,
@@ -150,6 +151,37 @@ pub struct TaskWorkflowNextStep {
     pub summary: String,
     pub rationale_refs: Vec<String>,
     pub blocked_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskWorkflowGuidance {
+    pub source: TaskWorkflowGuidanceSource,
+    pub safe_action: TaskWorkflowSafeAction,
+    pub reason: String,
+    pub evidence_refs: Vec<String>,
+    pub missing_evidence_areas: Vec<TaskWorkflowGapArea>,
+    pub blocked_reason: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskWorkflowGuidanceSource {
+    Task,
+    Readiness,
+    Runtime,
+    Review,
+    ScmHandoff,
+    Blocked,
+    NoOp,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskWorkflowSafeAction {
+    Inspect,
+    Plan,
+    Review,
+    PrepareHandoff,
+    Wait,
+    Blocked,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

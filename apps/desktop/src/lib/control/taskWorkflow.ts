@@ -58,6 +58,15 @@ export type ControlTaskWorkflowNoEffectsDto = {
   ui_effect_performed: boolean;
 };
 
+export type ControlTaskWorkflowGuidanceDto = {
+  source: string;
+  safe_action: string;
+  reason: string;
+  evidence_refs: string[];
+  missing_evidence_areas: string[];
+  blocked_reason: string | null;
+};
+
 export type ControlTaskWorkflowDrilldownDto = {
   drilldown_id: string;
   project_id: string;
@@ -80,8 +89,94 @@ export type ControlTaskWorkflowDrilldownDto = {
     rationale_refs: string[];
     blocked_reason: string | null;
   };
+  guidance: ControlTaskWorkflowGuidanceDto;
   source_counts: ControlTaskWorkflowSourceCountsDto;
   gaps: ControlTaskWorkflowGapDto[];
+  no_effects: ControlTaskWorkflowNoEffectsDto;
+};
+
+export type ControlSelectedTaskActionDto = {
+  family: string;
+  status: "allowed" | "blocked" | "not_applicable" | "different_lane" | string;
+  label: string;
+  reason: string;
+  evidence_refs: string[];
+  blocker_refs: string[];
+};
+
+export type ControlSelectedTaskActionSourceCountsDto = {
+  task_records: number;
+  readiness_refs: number;
+  work_items: number;
+  active_work_items: number;
+  completed_work_items: number;
+  runtime_evidence_refs: number;
+  completion_refs: number;
+  review_refs: number;
+  scm_handoff_refs: number;
+  gap_count: number;
+};
+
+export type ControlSelectedTaskActionBlockerDto = {
+  family: string;
+  reason: string;
+  evidence_refs: string[];
+};
+
+export type ControlSelectedTaskActionReadinessDto = {
+  readiness_id: string;
+  project_id: string;
+  task_id: string;
+  actions: ControlSelectedTaskActionDto[];
+  source_counts: ControlSelectedTaskActionSourceCountsDto;
+  blockers: ControlSelectedTaskActionBlockerDto[];
+  no_effects: ControlTaskWorkflowNoEffectsDto;
+};
+
+export type ControlSelectedTaskOperatorTaskCommandCandidateDto = {
+  action: "start" | "block" | "complete" | "archive" | string;
+  task_id: string;
+  expected_revision: string | null;
+};
+
+export type ControlSelectedTaskOperatorActionCandidateDto = {
+  family: string;
+  readiness_status: "allowed" | "blocked" | "not_applicable" | "different_lane" | string;
+  disposition: "task_command_candidate" | "blocked" | "read_only" | "deferred" | string;
+  task_command: ControlSelectedTaskOperatorTaskCommandCandidateDto | null;
+  label: string;
+  reason: string;
+  evidence_refs: string[];
+  blocker_refs: string[];
+  expected_revision_required: boolean;
+  reason_required: boolean;
+};
+
+export type ControlSelectedTaskOperatorActionGateSourceCountsDto = {
+  readiness_actions: number;
+  task_command_candidates: number;
+  blocked_actions: number;
+  read_only_actions: number;
+  deferred_actions: number;
+  evidence_refs: number;
+  blocker_refs: number;
+};
+
+export type ControlSelectedTaskOperatorActionBlockerDto = {
+  family: string;
+  reason: string;
+  evidence_refs: string[];
+};
+
+export type ControlSelectedTaskOperatorActionGateDto = {
+  gate_id: string;
+  project_id: string;
+  task_id: string;
+  expected_revision: string | null;
+  actor_ref: string | null;
+  candidates: ControlSelectedTaskOperatorActionCandidateDto[];
+  source_counts: ControlSelectedTaskOperatorActionGateSourceCountsDto;
+  blockers: ControlSelectedTaskOperatorActionBlockerDto[];
   no_effects: ControlTaskWorkflowNoEffectsDto;
 };
 
@@ -89,6 +184,20 @@ export type TaskWorkflowDrilldownQueryResult =
   | {
       state: "record";
       drilldown: ControlTaskWorkflowDrilldownDto;
+    }
+  | QueryFallback;
+
+export type SelectedTaskActionReadinessQueryResult =
+  | {
+      state: "record";
+      readiness: ControlSelectedTaskActionReadinessDto;
+    }
+  | QueryFallback;
+
+export type SelectedTaskOperatorActionGateQueryResult =
+  | {
+      state: "record";
+      gate: ControlSelectedTaskOperatorActionGateDto;
     }
   | QueryFallback;
 
@@ -121,6 +230,60 @@ export function taskWorkflowDrilldownFromResponse(
       return {
         state: "unexpected",
         reason: `unexpected task workflow drilldown response: ${response.body.type}`,
+      };
+  }
+}
+
+export function selectedTaskActionReadinessFromResponse(
+  response: ControlResponseEnvelopeDto,
+): SelectedTaskActionReadinessQueryResult {
+  switch (response.body.type) {
+    case "selected_task_action_readiness":
+      return {
+        state: "record",
+        readiness: response.body.readiness,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return { state: "unsupported", reason: response.body.reason };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected selected task action readiness response: ${response.body.type}`,
+      };
+  }
+}
+
+export function selectedTaskOperatorActionGateFromResponse(
+  response: ControlResponseEnvelopeDto,
+): SelectedTaskOperatorActionGateQueryResult {
+  switch (response.body.type) {
+    case "selected_task_operator_action_gate":
+      return {
+        state: "record",
+        gate: response.body.gate,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return { state: "unsupported", reason: response.body.reason };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected selected task operator action gate response: ${response.body.type}`,
       };
   }
 }

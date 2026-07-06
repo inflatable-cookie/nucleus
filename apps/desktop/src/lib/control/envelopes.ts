@@ -27,7 +27,11 @@ import type {
   CountByLabelDto,
 } from "./planningResearch";
 import type { ControlProductWorkflowSummaryDto } from "./productWorkflow";
-import type { ControlTaskWorkflowDrilldownDto } from "./taskWorkflow";
+import type {
+  ControlSelectedTaskActionReadinessDto,
+  ControlSelectedTaskOperatorActionGateDto,
+  ControlTaskWorkflowDrilldownDto,
+} from "./taskWorkflow";
 
 export type ControlQueryDto =
   | {
@@ -72,6 +76,20 @@ export type ControlQueryDto =
       kind: "task_workflow_drilldown";
       query_id: string;
       action: "drilldown";
+      project_id: string;
+      task_id: string;
+    }
+  | {
+      kind: "selected_task_action_readiness";
+      query_id: string;
+      action: "readiness";
+      project_id: string;
+      task_id: string;
+    }
+  | {
+      kind: "selected_task_operator_action_gate";
+      query_id: string;
+      action: "gate";
       project_id: string;
       task_id: string;
     };
@@ -183,6 +201,14 @@ export type ControlResponseEnvelopeDto = {
     | {
         type: "task_workflow_drilldown";
         drilldown: ControlTaskWorkflowDrilldownDto;
+      }
+    | {
+        type: "selected_task_action_readiness";
+        readiness: ControlSelectedTaskActionReadinessDto;
+      }
+    | {
+        type: "selected_task_operator_action_gate";
+        gate: ControlSelectedTaskOperatorActionGateDto;
       }
     | { type: "state_records"; domain: string; records: unknown[] }
     | { type: "command_receipt"; command_id: string; status: string }
@@ -329,6 +355,32 @@ export function buildTaskWorkflowDrilldownQuery(
     kind: "task_workflow_drilldown",
     query_id: "",
     action: "drilldown",
+    project_id: projectId,
+    task_id: taskId,
+  });
+}
+
+export function buildSelectedTaskActionReadinessQuery(
+  projectId: string,
+  taskId: string,
+): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "selected_task_action_readiness",
+    query_id: "",
+    action: "readiness",
+    project_id: projectId,
+    task_id: taskId,
+  });
+}
+
+export function buildSelectedTaskOperatorActionGateQuery(
+  projectId: string,
+  taskId: string,
+): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "selected_task_operator_action_gate",
+    query_id: "",
+    action: "gate",
     project_id: projectId,
     task_id: taskId,
   });

@@ -10,7 +10,8 @@ use crate::control_api::{
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
     ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
-    ServerControlRequest, ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
+    SelectedTaskActionReadinessQuery, SelectedTaskOperatorActionGateQuery, ServerControlRequest,
+    ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
     StateRecordQueryScope, TaskReadinessQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::control_envelope_dto::*;
@@ -49,6 +50,8 @@ mod provider_read_intent;
 mod provider_readiness_overview;
 mod research_run_briefs;
 mod runtime;
+mod selected_task_action_readiness;
+mod selected_task_operator_action_gate;
 mod state;
 mod task_seed_promotion;
 mod task_timeline_authority_map;

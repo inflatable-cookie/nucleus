@@ -1,6 +1,4 @@
-use nucleus_server::{
-    ControlCommandEvidenceRecordDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
-};
+use nucleus_server::{ControlResponseBodyDto, ControlResponseEnvelopeDto};
 
 mod accepted_memory;
 mod accepted_memory_active_apply;
@@ -11,6 +9,7 @@ mod accepted_memory_projection_import_apply;
 mod accepted_memory_projection_writes;
 mod accepted_memory_review;
 mod accepted_memory_review_receipt_storage;
+mod command_evidence;
 mod memory_proposal_review;
 mod memory_proposals;
 mod planning_capture_publication;
@@ -23,6 +22,8 @@ mod planning_task_seeds;
 mod product_workflow;
 mod provider;
 mod research_run_briefs;
+mod selected_task_action_readiness;
+mod selected_task_operator_action_gate;
 mod task_authority;
 mod task_readiness;
 mod task_seed_promotion;
@@ -37,6 +38,7 @@ pub(super) use accepted_memory_projection_import_apply::accepted_memory_projecti
 pub(super) use accepted_memory_projection_writes::accepted_memory_projection_writes_response_lines;
 pub(super) use accepted_memory_review::accepted_memory_review_response_lines;
 pub(super) use accepted_memory_review_receipt_storage::accepted_memory_review_receipt_storage_response_lines;
+pub(super) use command_evidence::command_evidence_response_lines;
 pub(super) use memory_proposal_review::memory_proposal_review_response_lines;
 pub(super) use memory_proposals::memory_proposals_response_lines;
 pub(super) use planning_capture_publication::planning_capture_publication_response_lines;
@@ -52,6 +54,8 @@ pub(super) use provider::{
     provider_read_intent_response_lines, provider_readiness_overview_response_lines,
 };
 pub(super) use research_run_briefs::research_run_briefs_response_lines;
+pub(super) use selected_task_action_readiness::selected_task_action_readiness_response_lines;
+pub(super) use selected_task_operator_action_gate::selected_task_operator_action_gate_response_lines;
 pub(super) use task_authority::{
     project_authority_map_response_lines, task_timeline_response_lines,
 };
@@ -344,6 +348,12 @@ pub(super) fn print_typed_dto_response(
         ControlResponseBodyDto::TaskWorkflowDrilldown { drilldown } => {
             print_ok(task_workflow_drilldown_response_lines(label, drilldown))
         }
+        ControlResponseBodyDto::SelectedTaskActionReadiness { readiness } => print_ok(
+            selected_task_action_readiness_response_lines(label, readiness),
+        ),
+        ControlResponseBodyDto::SelectedTaskOperatorActionGate { gate } => print_ok(
+            selected_task_operator_action_gate_response_lines(label, gate),
+        ),
         ControlResponseBodyDto::ProjectAuthorityMap { record } => {
             print_ok(project_authority_map_response_lines(label, record))
         }
@@ -365,44 +375,4 @@ fn print_lines(lines: Vec<String>) {
 fn print_ok(lines: Vec<String>) -> Result<(), String> {
     print_lines(lines);
     Ok(())
-}
-
-pub(super) fn command_evidence_response_lines(
-    label: &str,
-    records: Vec<ControlCommandEvidenceRecordDto>,
-) -> Vec<String> {
-    let mut lines = vec![
-        format!("domain={label}"),
-        format!("records={}", records.len()),
-    ];
-    for record in records {
-        lines.extend(command_evidence_record_lines(record));
-    }
-    lines
-}
-
-fn command_evidence_record_lines(record: ControlCommandEvidenceRecordDto) -> Vec<String> {
-    let mut lines = vec![
-        format!("record evidence_id={}", record.evidence_id),
-        format!("  request_id={}", record.command_request_id),
-        format!("  status={}", record.status),
-        format!("  retention={}", record.retention),
-    ];
-    match record.exit_status {
-        Some(status) => lines.push(format!("  exit_status={status}")),
-        None => lines.push("  exit_status=none".to_owned()),
-    }
-    lines.push(format!(
-        "  stdout_artifact_ref={}",
-        record.stdout_artifact_ref.as_deref().unwrap_or("none")
-    ));
-    lines.push(format!(
-        "  stderr_artifact_ref={}",
-        record.stderr_artifact_ref.as_deref().unwrap_or("none")
-    ));
-    lines.push("  raw_output=not_retained".to_owned());
-    if let Some(summary) = record.summary {
-        lines.push(format!("  summary={summary}"));
-    }
-    lines
 }

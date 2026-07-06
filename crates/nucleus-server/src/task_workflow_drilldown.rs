@@ -1,6 +1,7 @@
 //! Read-only task workflow drilldown.
 
 mod builder;
+mod guidance;
 #[cfg(test)]
 mod tests;
 mod types;

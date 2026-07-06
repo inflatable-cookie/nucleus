@@ -20,6 +20,7 @@ use super::records::{
     ControlPlanningTaskSeedSourceCountsDto, ControlPlanningTaskSeedStatusCountDto,
     ControlProductWorkflowSummaryDto, ControlProjectAuthorityMapDto,
     ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
+    ControlSelectedTaskActionReadinessDto, ControlSelectedTaskOperatorActionGateDto,
     ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
     ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
     ControlTaskTimelineEntryDto, ControlTaskWorkflowDrilldownDto,
@@ -215,6 +216,16 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 drilldown,
             )) => Ok(Self::TaskWorkflowDrilldown {
                 drilldown: ControlTaskWorkflowDrilldownDto::from(drilldown),
+            }),
+            ServerControlResponseBody::Query(ServerQueryResult::SelectedTaskActionReadiness(
+                readiness,
+            )) => Ok(Self::SelectedTaskActionReadiness {
+                readiness: ControlSelectedTaskActionReadinessDto::from(readiness),
+            }),
+            ServerControlResponseBody::Query(
+                ServerQueryResult::SelectedTaskOperatorActionGate(gate),
+            ) => Ok(Self::SelectedTaskOperatorActionGate {
+                gate: ControlSelectedTaskOperatorActionGateDto::from(gate),
             }),
             ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)) => {
                 Ok(Self::ProjectAuthorityMap {

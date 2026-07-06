@@ -72,6 +72,8 @@ mod provider_read_intent;
 mod provider_readiness_overview;
 mod research_run_briefs;
 mod runtime_metadata;
+mod selected_task_action_readiness;
+mod selected_task_operator_action_gate;
 mod state_records;
 mod task_readiness;
 mod task_seed_promotion_diagnostics;
@@ -199,6 +201,14 @@ where
         }
         ServerQueryKind::TaskWorkflowDrilldown(query) => {
             task_workflow_drilldown::task_workflow_drilldown_query(handler, query)
+        }
+        ServerQueryKind::SelectedTaskActionReadiness(query) => {
+            selected_task_action_readiness::selected_task_action_readiness_query(handler, query)
+        }
+        ServerQueryKind::SelectedTaskOperatorActionGate(query) => {
+            selected_task_operator_action_gate::selected_task_operator_action_gate_query(
+                handler, query,
+            )
         }
         ServerQueryKind::ProjectAuthorityMap(query) => {
             authority_map::project_authority_map_query(query)

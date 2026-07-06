@@ -10,7 +10,8 @@ use crate::control_api::{
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
-    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery, ServerQuery,
+    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
+    SelectedTaskActionReadinessQuery, SelectedTaskOperatorActionGateQuery, ServerQuery,
     ServerQueryKind, StateRecordQuery, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
     TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
@@ -228,6 +229,26 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
             }) => Ok(Self::TaskWorkflowDrilldown {
                 query_id: query.id.0.clone(),
                 action: "drilldown".to_owned(),
+                project_id: project_id.0.clone(),
+                task_id: task_id.0.clone(),
+            }),
+            ServerQueryKind::SelectedTaskActionReadiness(SelectedTaskActionReadinessQuery {
+                project_id,
+                task_id,
+            }) => Ok(Self::SelectedTaskActionReadiness {
+                query_id: query.id.0.clone(),
+                action: "readiness".to_owned(),
+                project_id: project_id.0.clone(),
+                task_id: task_id.0.clone(),
+            }),
+            ServerQueryKind::SelectedTaskOperatorActionGate(
+                SelectedTaskOperatorActionGateQuery {
+                    project_id,
+                    task_id,
+                },
+            ) => Ok(Self::SelectedTaskOperatorActionGate {
+                query_id: query.id.0.clone(),
+                action: "gate".to_owned(),
                 project_id: project_id.0.clone(),
                 task_id: task_id.0.clone(),
             }),

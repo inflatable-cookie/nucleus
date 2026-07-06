@@ -169,6 +169,18 @@ pub enum ControlQueryDto {
         project_id: String,
         task_id: String,
     },
+    SelectedTaskActionReadiness {
+        query_id: String,
+        action: String,
+        project_id: String,
+        task_id: String,
+    },
+    SelectedTaskOperatorActionGate {
+        query_id: String,
+        action: String,
+        project_id: String,
+        task_id: String,
+    },
     ProjectAuthorityMap {
         query_id: String,
         action: String,

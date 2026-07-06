@@ -164,8 +164,11 @@ fn task_workflow_drilldown_proof_panel_has_no_forbidden_mutation_controls() {
         "buildArchiveTaskCommand",
         "submitControlEnvelope",
         "approve button",
+        "execute task command",
+        "run task command",
         "run provider",
         "execute provider",
+        "schedule delegation",
         "create task",
         "browser automation",
         "source retrieval",
@@ -181,5 +184,18 @@ fn task_workflow_drilldown_proof_panel_has_no_forbidden_mutation_controls() {
         );
     }
     assert!(component.contains("queryTaskWorkflowDrilldown"));
+    assert!(component.contains("queryProductWorkflowSummary"));
+    assert!(component.contains("querySelectedTaskActionReadiness"));
+    assert!(component.contains("querySelectedTaskOperatorActionGate"));
+    assert!(component.contains("Work-loop guidance"));
+    assert!(component.contains("Selected task action readiness"));
+    assert!(component.contains("Selected task operator action gate"));
+    assert!(component.contains("Task command candidates"));
+    assert!(component.contains("Deferred and read-only actions"));
+    assert!(component.contains("Allowed action affordances"));
+    assert!(component.contains("Blocked action affordances"));
+    assert!(component.contains("Guidance missing evidence"));
+    assert!(component.contains("Review readiness"));
+    assert!(component.contains("Handoff readiness"));
     assert!(component.contains("Read-only selected task drilldown."));
 }

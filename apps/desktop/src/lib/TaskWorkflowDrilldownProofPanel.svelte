@@ -2,10 +2,18 @@
   import { Button, StatusIndicator, Surface, Text } from "@poodle/svelte";
   import { refreshCw } from "@poodle/icons-lucide";
   import {
+    queryProductWorkflowSummary,
+    querySelectedTaskActionReadiness,
+    querySelectedTaskOperatorActionGate,
     queryTaskWorkflowDrilldown,
+    type ControlSelectedTaskActionDto,
+    type ControlSelectedTaskOperatorActionCandidateDto,
     type ControlTaskRecordDto,
     type ControlTaskWorkflowDrilldownDto,
     type ControlTaskWorkflowGapDto,
+    type ProductWorkflowSummaryQueryResult,
+    type SelectedTaskActionReadinessQueryResult,
+    type SelectedTaskOperatorActionGateQueryResult,
     type TaskWorkflowDrilldownQueryResult,
   } from "./control";
 
@@ -20,11 +28,50 @@
 
   let loading = $state(false);
   let result = $state<TaskWorkflowDrilldownQueryResult | null>(null);
+  let workflowResult = $state<ProductWorkflowSummaryQueryResult | null>(null);
+  let actionReadinessResult = $state<SelectedTaskActionReadinessQueryResult | null>(null);
+  let operatorGateResult = $state<SelectedTaskOperatorActionGateQueryResult | null>(null);
   let failure = $state<string | null>(null);
 
   const projectId = $derived(selectedTask?.project_id ?? fallbackProjectId);
   const taskId = $derived(selectedTask?.task_id ?? fallbackTaskId);
   const drilldown = $derived(result?.state === "record" ? result.drilldown : null);
+  const workflowSummary = $derived(
+    workflowResult?.state === "record" ? workflowResult.summary : null,
+  );
+  const actionReadiness = $derived(
+    actionReadinessResult?.state === "record" ? actionReadinessResult.readiness : null,
+  );
+  const operatorGate = $derived(
+    operatorGateResult?.state === "record" ? operatorGateResult.gate : null,
+  );
+  const allowedActions = $derived(
+    actionReadiness?.actions.filter((action) => action.status === "allowed") ?? [],
+  );
+  const blockedActions = $derived(
+    actionReadiness?.actions.filter((action) => action.status === "blocked") ?? [],
+  );
+  const otherActions = $derived(
+    actionReadiness?.actions.filter(
+      (action) => action.status !== "allowed" && action.status !== "blocked",
+    ) ?? [],
+  );
+  const taskCommandCandidates = $derived(
+    operatorGate?.candidates.filter(
+      (candidate) => candidate.disposition === "task_command_candidate",
+    ) ?? [],
+  );
+  const blockedGateCandidates = $derived(
+    operatorGate?.candidates.filter((candidate) => candidate.disposition === "blocked") ?? [],
+  );
+  const passiveGateCandidates = $derived(
+    operatorGate?.candidates.filter(
+      (candidate) => candidate.disposition === "read_only" || candidate.disposition === "deferred",
+    ) ?? [],
+  );
+  const selectedLane = $derived(
+    workflowSummary?.task_lanes.find((lane) => lane.task_refs.includes(taskId)) ?? null,
+  );
   const noEffects = $derived(drilldown ? noEffectFlags(drilldown).every((row) => !row[1]) : false);
   const statusLabel = $derived(
     loading
@@ -32,7 +79,7 @@
       : failure
         ? "error"
         : drilldown
-          ? drilldown.next.source
+          ? drilldown.guidance.safe_action
           : (result?.state ?? "idle"),
   );
   const statusTone = $derived(
@@ -44,9 +91,21 @@
     failure = null;
 
     try {
-      result = await queryTaskWorkflowDrilldown(projectId, taskId);
+      const [workflow, drilldownResult, actionReadiness, operatorGate] = await Promise.all([
+        queryProductWorkflowSummary(projectId),
+        queryTaskWorkflowDrilldown(projectId, taskId),
+        querySelectedTaskActionReadiness(projectId, taskId),
+        querySelectedTaskOperatorActionGate(projectId, taskId),
+      ]);
+      workflowResult = workflow;
+      result = drilldownResult;
+      actionReadinessResult = actionReadiness;
+      operatorGateResult = operatorGate;
     } catch (error) {
       result = null;
+      workflowResult = null;
+      actionReadinessResult = null;
+      operatorGateResult = null;
       failure = error instanceof Error ? error.message : String(error);
     } finally {
       loading = false;
@@ -72,6 +131,26 @@
       gaps.find((gap) => gap.area === area || gap.area === `${area}_missing`)?.reason ??
       "source refs present"
     );
+  }
+
+  function guidanceLabel(source: string, action: string) {
+    return `${action.replaceAll("_", " ")} from ${source.replaceAll("_", " ")}`;
+  }
+
+  function selectedContextLabel(record: ControlTaskWorkflowDrilldownDto) {
+    return `${record.project_id} / ${record.task_id}`;
+  }
+
+  function actionLabel(action: ControlSelectedTaskActionDto) {
+    return action.label || action.family.replaceAll("_", " ");
+  }
+
+  function gateCandidateLabel(candidate: ControlSelectedTaskOperatorActionCandidateDto) {
+    return candidate.label || candidate.family.replaceAll("_", " ");
+  }
+
+  function gateCommandLabel(candidate: ControlSelectedTaskOperatorActionCandidateDto) {
+    return candidate.task_command?.action ?? candidate.disposition.replaceAll("_", " ");
   }
 
   function fallbackMessage(value: TaskWorkflowDrilldownQueryResult | null) {
@@ -119,6 +198,36 @@
         <Text tone="muted">Loading task workflow.</Text>
       </div>
     {:else if drilldown}
+      <div class="work-loop-guidance" aria-label="Work-loop guidance">
+        <div>
+          <h3>Work-loop guidance</h3>
+          <p>{drilldown.guidance.reason}</p>
+          {#if drilldown.guidance.blocked_reason}
+            <small>{drilldown.guidance.blocked_reason}</small>
+          {:else}
+            <small>{guidanceLabel(drilldown.guidance.source, drilldown.guidance.safe_action)}</small>
+          {/if}
+        </div>
+        <dl>
+          <div>
+            <dt>Selected</dt>
+            <dd>{selectedContextLabel(drilldown)}</dd>
+          </div>
+          <div>
+            <dt>Project lane</dt>
+            <dd>{selectedLane?.lane ?? "not in project lane"}</dd>
+          </div>
+          <div>
+            <dt>Project next</dt>
+            <dd>{workflowSummary?.next.next_ref ?? workflowSummary?.next.source ?? "unavailable"}</dd>
+          </div>
+          <div>
+            <dt>Evidence refs</dt>
+            <dd>{drilldown.guidance.evidence_refs.length}</dd>
+          </div>
+        </dl>
+      </div>
+
       <div class="drilldown-identity">
         <div>
           <span>{drilldown.task?.title ?? drilldown.task_id}</span>
@@ -137,6 +246,211 @@
           <small>effects</small>
         </div>
       </div>
+
+      <div class="selected-task-context" aria-label="Selected task context">
+        <section>
+          <h3>Task</h3>
+          <dl>
+            <div>
+              <dt>Action</dt>
+              <dd>{drilldown.task?.action_type ?? "unknown"}</dd>
+            </div>
+            <div>
+              <dt>Assignment</dt>
+              <dd>{drilldown.task?.assignment ?? "unknown"}</dd>
+            </div>
+            <div>
+              <dt>Activity</dt>
+              <dd>{drilldown.task?.activity ?? "unknown"}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section>
+          <h3>Project workflow</h3>
+          <dl>
+            <div>
+              <dt>Project</dt>
+              <dd>{workflowSummary?.project.display_name ?? drilldown.project_id}</dd>
+            </div>
+            <div>
+              <dt>Lane count</dt>
+              <dd>{selectedLane?.count ?? 0}</dd>
+            </div>
+            <div>
+              <dt>Workflow gaps</dt>
+              <dd>{workflowSummary?.gaps.length ?? "unavailable"}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+
+      <div class="review-handoff-readiness" aria-label="Review and handoff readiness">
+        <section>
+          <h3>Review readiness</h3>
+          <p>{gapReason(drilldown.gaps, "review")}</p>
+          <dl>
+            <div>
+              <dt>Review refs</dt>
+              <dd>{drilldown.review.review_refs.length}</dd>
+            </div>
+            <div>
+              <dt>Safe action</dt>
+              <dd>
+                {drilldown.guidance.source === "review"
+                  ? drilldown.guidance.safe_action.replaceAll("_", " ")
+                  : "inspect evidence"}
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <section>
+          <h3>Handoff readiness</h3>
+          <p>{gapReason(drilldown.gaps, "scm_handoff")}</p>
+          <dl>
+            <div>
+              <dt>Handoff refs</dt>
+              <dd>{drilldown.scm_handoff.handoff_refs.length}</dd>
+            </div>
+            <div>
+              <dt>Safe action</dt>
+              <dd>
+                {drilldown.guidance.source === "scm_handoff"
+                  ? drilldown.guidance.safe_action.replaceAll("_", " ")
+                  : "inspect readiness"}
+              </dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+
+      {#if actionReadiness}
+        <div class="action-readiness" aria-label="Selected task action readiness">
+          <section>
+            <h3>Allowed action affordances</h3>
+            {#if allowedActions.length > 0}
+              {#each allowedActions as action}
+                <article>
+                  <strong>{actionLabel(action)}</strong>
+                  <span>{action.reason}</span>
+                  <small>evidence refs {action.evidence_refs.length}</small>
+                </article>
+              {/each}
+            {:else}
+              <p>No allowed affordances.</p>
+            {/if}
+          </section>
+
+          <section>
+            <h3>Blocked action affordances</h3>
+            {#if blockedActions.length > 0}
+              {#each blockedActions as action}
+                <article>
+                  <strong>{actionLabel(action)}</strong>
+                  <span>{action.reason}</span>
+                  <small>blocker refs {action.blocker_refs.length}</small>
+                </article>
+              {/each}
+            {:else}
+              <p>No blocked affordances.</p>
+            {/if}
+          </section>
+
+          <section>
+            <h3>Other lanes</h3>
+            {#if otherActions.length > 0}
+              {#each otherActions as action}
+                <article>
+                  <strong>{actionLabel(action)}</strong>
+                  <span>{action.status.replaceAll("_", " ")}: {action.reason}</span>
+                  <small>evidence refs {action.evidence_refs.length}</small>
+                </article>
+              {/each}
+            {:else}
+              <p>No different-lane or not-applicable affordances.</p>
+            {/if}
+          </section>
+        </div>
+
+        <div class="action-readiness-counts" aria-label="Action readiness source counts">
+          <span>actions {actionReadiness.actions.length}</span>
+          <span>blockers {actionReadiness.blockers.length}</span>
+          <span>active work {actionReadiness.source_counts.active_work_items}</span>
+          <span>runtime refs {actionReadiness.source_counts.runtime_evidence_refs}</span>
+          <span>review refs {actionReadiness.source_counts.review_refs}</span>
+          <span>handoff refs {actionReadiness.source_counts.scm_handoff_refs}</span>
+        </div>
+      {:else if actionReadinessResult && actionReadinessResult.state !== "record"}
+        <div class="panel-message">
+          <Text tone="muted">Action readiness unavailable.</Text>
+        </div>
+      {/if}
+
+      {#if operatorGate}
+        <div class="operator-action-gate" aria-label="Selected task operator action gate">
+          <section>
+            <h3>Task command candidates</h3>
+            {#if taskCommandCandidates.length > 0}
+              {#each taskCommandCandidates as candidate}
+                <article>
+                  <strong>{gateCandidateLabel(candidate)}</strong>
+                  <span>{candidate.reason}</span>
+                  <small>
+                    command {gateCommandLabel(candidate)}, revision
+                    {candidate.expected_revision_required ? "required" : "not required"},
+                    reason {candidate.reason_required ? "required" : "not required"}
+                  </small>
+                </article>
+              {/each}
+            {:else}
+              <p>No task command candidates.</p>
+            {/if}
+          </section>
+
+          <section>
+            <h3>Blocked operator actions</h3>
+            {#if blockedGateCandidates.length > 0}
+              {#each blockedGateCandidates as candidate}
+                <article>
+                  <strong>{gateCandidateLabel(candidate)}</strong>
+                  <span>{candidate.reason}</span>
+                  <small>blocker refs {candidate.blocker_refs.length}</small>
+                </article>
+              {/each}
+            {:else}
+              <p>No blocked operator actions.</p>
+            {/if}
+          </section>
+
+          <section>
+            <h3>Deferred and read-only actions</h3>
+            {#if passiveGateCandidates.length > 0}
+              {#each passiveGateCandidates as candidate}
+                <article>
+                  <strong>{gateCandidateLabel(candidate)}</strong>
+                  <span>{candidate.disposition.replaceAll("_", " ")}: {candidate.reason}</span>
+                  <small>task command none</small>
+                </article>
+              {/each}
+            {:else}
+              <p>No deferred or read-only actions.</p>
+            {/if}
+          </section>
+        </div>
+
+        <div class="operator-action-gate-counts" aria-label="Operator action gate counts">
+          <span>candidates {operatorGate.source_counts.task_command_candidates}</span>
+          <span>blocked {operatorGate.source_counts.blocked_actions}</span>
+          <span>read-only {operatorGate.source_counts.read_only_actions}</span>
+          <span>deferred {operatorGate.source_counts.deferred_actions}</span>
+          <span>gate effects {operatorGate.no_effects.task_mutation_performed ? "check" : "none"}</span>
+        </div>
+      {:else if operatorGateResult && operatorGateResult.state !== "record"}
+        <div class="panel-message">
+          <Text tone="muted">Operator action gate unavailable.</Text>
+        </div>
+      {/if}
 
       <div class="drilldown-sections">
         <section>
@@ -209,6 +523,14 @@
           <span class:flagged={value}>{label}: {value ? "true" : "false"}</span>
         {/each}
       </div>
+
+      {#if drilldown.guidance.missing_evidence_areas.length > 0}
+        <div class="guidance-missing" aria-label="Guidance missing evidence">
+          {#each drilldown.guidance.missing_evidence_areas as area}
+            <span>{area.replaceAll("_", " ")}</span>
+          {/each}
+        </div>
+      {/if}
     {:else}
       <div class="panel-message">
         <Text tone="muted">{fallbackMessage(result)}</Text>
@@ -232,20 +554,124 @@
   }
 
   .drilldown-identity,
-  .drilldown-sections {
+  .drilldown-sections,
+  .action-readiness,
+  .operator-action-gate,
+  .selected-task-context,
+  .review-handoff-readiness {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.5rem;
   }
 
+  .work-loop-guidance,
   .drilldown-identity div,
   .drilldown-sections section,
+  .action-readiness section,
+  .operator-action-gate section,
+  .selected-task-context section,
+  .review-handoff-readiness section,
   .work-items div {
     min-width: 0;
     padding: 0.75rem;
     border: 1px solid var(--poodle-color-border-subtle);
     border-radius: var(--poodle-radius-surface);
     background: var(--poodle-color-background-canvas);
+  }
+
+  .work-loop-guidance {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+
+  .work-loop-guidance h3,
+  .action-readiness h3,
+  .operator-action-gate h3,
+  .selected-task-context h3,
+  .review-handoff-readiness h3 {
+    margin: 0 0 0.45rem;
+    color: var(--poodle-color-text-primary);
+    font-size: 0.8125rem;
+    letter-spacing: 0;
+  }
+
+  .work-loop-guidance p {
+    margin: 0 0 0.35rem;
+    color: var(--poodle-color-text-primary);
+  }
+
+  .review-handoff-readiness p {
+    margin: 0 0 0.5rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.78rem;
+  }
+
+  .action-readiness {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .operator-action-gate {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .action-readiness article {
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--poodle-color-border-subtle);
+  }
+
+  .action-readiness article:first-of-type {
+    border-top: 0;
+  }
+
+  .operator-action-gate article {
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--poodle-color-border-subtle);
+  }
+
+  .operator-action-gate article:first-of-type {
+    border-top: 0;
+  }
+
+  .action-readiness strong {
+    overflow: hidden;
+    color: var(--poodle-color-text-primary);
+    font-size: 0.8rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .operator-action-gate strong {
+    overflow: hidden;
+    color: var(--poodle-color-text-primary);
+    font-size: 0.8rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .action-readiness span,
+  .action-readiness p,
+  .action-readiness small {
+    margin: 0;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.75rem;
+  }
+
+  .operator-action-gate span,
+  .operator-action-gate p,
+  .operator-action-gate small {
+    margin: 0;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.75rem;
+  }
+
+  .work-loop-guidance small {
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.75rem;
   }
 
   .drilldown-identity span,
@@ -287,17 +713,48 @@
     margin: 0 0 0.5rem;
   }
 
+  .work-loop-guidance dl,
+  .selected-task-context dl,
+  .review-handoff-readiness dl {
+    display: grid;
+    gap: 0.35rem;
+    margin: 0;
+  }
+
+  .work-loop-guidance dl div,
+  .review-handoff-readiness dl div,
   .drilldown-sections dl div {
     display: flex;
     justify-content: space-between;
     gap: 0.5rem;
   }
 
+  .selected-task-context dl div {
+    display: grid;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+
+  .work-loop-guidance dt,
+  .work-loop-guidance dd,
+  .selected-task-context dt,
+  .selected-task-context dd,
+  .review-handoff-readiness dt,
+  .review-handoff-readiness dd,
   .drilldown-sections dt,
   .drilldown-sections dd {
     margin: 0;
     color: var(--poodle-color-text-secondary);
     font-size: 0.75rem;
+  }
+
+  .work-loop-guidance dd,
+  .selected-task-context dd,
+  .review-handoff-readiness dd {
+    overflow: hidden;
+    color: var(--poodle-color-text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .work-items {
@@ -321,6 +778,51 @@
     gap: 0.35rem;
   }
 
+  .action-readiness-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .operator-action-gate-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .operator-action-gate-counts span {
+    padding: 0.25rem 0.45rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.72rem;
+    border: 1px solid var(--poodle-color-border-subtle);
+    border-radius: var(--poodle-radius-control);
+    background: var(--poodle-color-background-canvas);
+  }
+
+  .action-readiness-counts span {
+    padding: 0.25rem 0.45rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.72rem;
+    border: 1px solid var(--poodle-color-border-subtle);
+    border-radius: var(--poodle-radius-control);
+    background: var(--poodle-color-background-canvas);
+  }
+
+  .guidance-missing {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .guidance-missing span {
+    padding: 0.25rem 0.45rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.72rem;
+    border: 1px solid var(--poodle-color-border-subtle);
+    border-radius: var(--poodle-radius-control);
+    background: var(--poodle-color-background-canvas);
+  }
+
   .drilldown-no-effects span {
     padding: 0.25rem 0.45rem;
     color: var(--poodle-color-text-secondary);
@@ -336,8 +838,13 @@
   }
 
   @media (max-width: 980px) {
+    .work-loop-guidance,
     .drilldown-identity,
-    .drilldown-sections {
+    .drilldown-sections,
+    .action-readiness,
+    .operator-action-gate,
+    .selected-task-context,
+    .review-handoff-readiness {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }

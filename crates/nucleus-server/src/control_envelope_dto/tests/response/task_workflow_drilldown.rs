@@ -68,12 +68,15 @@ fn response_envelope_dto_serializes_task_workflow_drilldown_without_effects() {
                 && drilldown.task_id == "task:dto"
                 && drilldown.source_counts.work_items == 1
                 && drilldown.next.source == "task"
+                && drilldown.guidance.source == "readiness"
+                && drilldown.guidance.safe_action == "plan"
                 && !drilldown.no_effects.task_mutation_performed
                 && !drilldown.no_effects.provider_execution_performed
                 && !drilldown.no_effects.scm_or_forge_mutation_performed
                 && !drilldown.no_effects.ui_effect_performed
     ));
     assert!(json.contains("\"type\":\"task_workflow_drilldown\""));
+    assert!(json.contains("\"guidance\""));
     assert!(json.contains("\"task_mutation_performed\":false"));
     assert!(json.contains("\"provider_execution_performed\":false"));
 }

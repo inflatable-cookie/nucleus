@@ -1,7 +1,7 @@
 use nucleus_server::{
-    ControlTaskWorkflowDrilldownDto, ControlTaskWorkflowGapDto, ControlTaskWorkflowNextDto,
-    ControlTaskWorkflowNoEffectsDto, ControlTaskWorkflowReadinessDto, ControlTaskWorkflowReviewDto,
-    ControlTaskWorkflowRuntimeDto, ControlTaskWorkflowScmHandoffDto,
+    ControlTaskWorkflowDrilldownDto, ControlTaskWorkflowGapDto, ControlTaskWorkflowGuidanceDto,
+    ControlTaskWorkflowNextDto, ControlTaskWorkflowNoEffectsDto, ControlTaskWorkflowReadinessDto,
+    ControlTaskWorkflowReviewDto, ControlTaskWorkflowRuntimeDto, ControlTaskWorkflowScmHandoffDto,
     ControlTaskWorkflowSourceCountsDto, ControlTaskWorkflowTaskDto, ControlTaskWorkflowTimelineDto,
     ControlTaskWorkflowWorkItemDto, ControlTaskWorkflowWorkProgressDto,
 };
@@ -65,6 +65,14 @@ fn task_workflow_drilldown_response_lines_are_read_only_and_sanitized() {
                 rationale_refs: vec!["roadmap:next".to_owned()],
                 blocked_reason: None,
             },
+            guidance: ControlTaskWorkflowGuidanceDto {
+                source: "runtime".to_owned(),
+                safe_action: "inspect".to_owned(),
+                reason: "Selected task has active or waiting work evidence to inspect.".to_owned(),
+                evidence_refs: vec!["work:1".to_owned()],
+                missing_evidence_areas: vec!["review_missing".to_owned()],
+                blocked_reason: None,
+            },
             source_counts: ControlTaskWorkflowSourceCountsDto {
                 task_records: 1,
                 readiness_refs: 1,
@@ -100,6 +108,7 @@ fn task_workflow_drilldown_response_lines_are_read_only_and_sanitized() {
     assert!(rendered.contains("task_id=task:nucleus-local:bootstrap"));
     assert!(rendered.contains("work_items=1"));
     assert!(rendered.contains("next source=task"));
+    assert!(rendered.contains("guidance source=runtime safe_action=inspect"));
     assert!(rendered.contains("task_mutation=false"));
     assert!(rendered.contains("provider_execution=false"));
     assert!(rendered.contains("scm_or_forge_mutation=false"));

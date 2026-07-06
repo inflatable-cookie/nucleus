@@ -7,6 +7,8 @@ import {
   buildProductWorkflowSummaryQuery,
   buildProviderReadIntentQuery,
   buildProviderReadinessOverviewQuery,
+  buildSelectedTaskActionReadinessQuery,
+  buildSelectedTaskOperatorActionGateQuery,
   buildResearchRunBriefsQuery,
   buildRuntimeReadinessQuery,
   buildTaskWorkflowDrilldownQuery,
@@ -33,7 +35,11 @@ import {
   type ProductWorkflowSummaryQueryResult,
 } from "./productWorkflow";
 import {
+  selectedTaskActionReadinessFromResponse,
+  selectedTaskOperatorActionGateFromResponse,
   taskWorkflowDrilldownFromResponse,
+  type SelectedTaskActionReadinessQueryResult,
+  type SelectedTaskOperatorActionGateQueryResult,
   type TaskWorkflowDrilldownQueryResult,
 } from "./taskWorkflow";
 import {
@@ -120,4 +126,24 @@ export async function queryTaskWorkflowDrilldown(
     buildTaskWorkflowDrilldownQuery(projectId, taskId),
   );
   return taskWorkflowDrilldownFromResponse(response);
+}
+
+export async function querySelectedTaskActionReadiness(
+  projectId: string,
+  taskId: string,
+): Promise<SelectedTaskActionReadinessQueryResult> {
+  const response = await submitControlEnvelope(
+    buildSelectedTaskActionReadinessQuery(projectId, taskId),
+  );
+  return selectedTaskActionReadinessFromResponse(response);
+}
+
+export async function querySelectedTaskOperatorActionGate(
+  projectId: string,
+  taskId: string,
+): Promise<SelectedTaskOperatorActionGateQueryResult> {
+  const response = await submitControlEnvelope(
+    buildSelectedTaskOperatorActionGateQuery(projectId, taskId),
+  );
+  return selectedTaskOperatorActionGateFromResponse(response);
 }

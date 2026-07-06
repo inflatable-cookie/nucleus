@@ -10,14 +10,11 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `016-selected-task-work-loop-boundary.md`
+- `030-selected-task-operator-action-validation-next-lane.md`
 
 ## Planned Cards
 
-- `017-selected-task-work-loop-guidance-read-model.md`
-- `018-selected-task-work-loop-desktop-composition.md`
-- `019-review-scm-handoff-gap-presentation.md`
-- `020-selected-task-work-loop-validation-next-lane.md`
+- None.
 
 ## Completed Cards
 
@@ -36,3 +33,17 @@ Hold execution cards for `g04`.
 - `013-task-workflow-drilldown-cli-effigy.md`
 - `014-disposable-task-workflow-drilldown-proof.md`
 - `015-task-workflow-drilldown-validation-next-lane.md`
+- `016-selected-task-work-loop-boundary.md`
+- `017-selected-task-work-loop-guidance-read-model.md`
+- `018-selected-task-work-loop-desktop-composition.md`
+- `019-review-scm-handoff-gap-presentation.md`
+- `020-selected-task-work-loop-validation-next-lane.md`
+- `021-selected-task-action-readiness-boundary.md`
+- `022-selected-task-action-readiness-read-model.md`
+- `023-selected-task-action-readiness-cli-effigy.md`
+- `024-selected-task-action-readiness-desktop-proof.md`
+- `025-selected-task-action-readiness-validation-next-lane.md`
+- `026-selected-task-operator-action-boundary.md`
+- `027-selected-task-operator-action-gate-read-model.md`
+- `028-selected-task-operator-action-cli-effigy.md`
+- `029-selected-task-operator-action-desktop-proof.md`

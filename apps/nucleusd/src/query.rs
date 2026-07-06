@@ -15,11 +15,11 @@ use nucleus_server::{
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
     ProjectAuthorityDomain, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
     ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
-    ResearchRunBriefsQuery, ServerControlRequest, ServerControlRequestKind,
-    ServerControlResponseBody, ServerControlResponseStatus, ServerQuery, ServerQueryId,
-    ServerQueryKind, ServerStateDomain, StateRecordQuery, StateRecordQueryScope,
-    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
-    TaskWorkflowDrilldownQuery,
+    ResearchRunBriefsQuery, SelectedTaskActionReadinessQuery, SelectedTaskOperatorActionGateQuery,
+    ServerControlRequest, ServerControlRequestKind, ServerControlResponseBody,
+    ServerControlResponseStatus, ServerQuery, ServerQueryId, ServerQueryKind, ServerStateDomain,
+    StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
+    TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use nucleus_tasks::TaskId;
 
@@ -90,6 +90,8 @@ pub(crate) fn print_query(
             | QueryDomain::PlanningCapturePublicationDiagnostics { .. }
             | QueryDomain::ProductWorkflowSummary { .. }
             | QueryDomain::TaskWorkflowDrilldown { .. }
+            | QueryDomain::SelectedTaskActionReadiness { .. }
+            | QueryDomain::SelectedTaskOperatorActionGate { .. }
             | QueryDomain::ProjectAuthorityMap { .. }
     ) {
         let dto = ControlResponseEnvelopeDto::try_from(&response)
@@ -312,6 +314,20 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
             project_id,
             task_id,
         } => ServerQueryKind::TaskWorkflowDrilldown(TaskWorkflowDrilldownQuery {
+            project_id: ProjectId(project_id.clone()),
+            task_id: TaskId(task_id.clone()),
+        }),
+        QueryDomain::SelectedTaskActionReadiness {
+            project_id,
+            task_id,
+        } => ServerQueryKind::SelectedTaskActionReadiness(SelectedTaskActionReadinessQuery {
+            project_id: ProjectId(project_id.clone()),
+            task_id: TaskId(task_id.clone()),
+        }),
+        QueryDomain::SelectedTaskOperatorActionGate {
+            project_id,
+            task_id,
+        } => ServerQueryKind::SelectedTaskOperatorActionGate(SelectedTaskOperatorActionGateQuery {
             project_id: ProjectId(project_id.clone()),
             task_id: TaskId(task_id.clone()),
         }),

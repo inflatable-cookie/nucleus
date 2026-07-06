@@ -13,6 +13,7 @@ pub struct ControlTaskWorkflowDrilldownDto {
     pub review: ControlTaskWorkflowReviewDto,
     pub scm_handoff: ControlTaskWorkflowScmHandoffDto,
     pub next: ControlTaskWorkflowNextDto,
+    pub guidance: ControlTaskWorkflowGuidanceDto,
     pub source_counts: ControlTaskWorkflowSourceCountsDto,
     pub gaps: Vec<ControlTaskWorkflowGapDto>,
     pub no_effects: ControlTaskWorkflowNoEffectsDto,
@@ -83,6 +84,16 @@ pub struct ControlTaskWorkflowNextDto {
     pub next_ref: Option<String>,
     pub summary: String,
     pub rationale_refs: Vec<String>,
+    pub blocked_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ControlTaskWorkflowGuidanceDto {
+    pub source: String,
+    pub safe_action: String,
+    pub reason: String,
+    pub evidence_refs: Vec<String>,
+    pub missing_evidence_areas: Vec<String>,
     pub blocked_reason: Option<String>,
 }
 

@@ -1,15 +1,16 @@
 use crate::{
-    TaskWorkflowDrilldown, TaskWorkflowGap, TaskWorkflowGapArea, TaskWorkflowNextStep,
-    TaskWorkflowNextStepSource, TaskWorkflowNoEffects, TaskWorkflowReadinessSummary,
-    TaskWorkflowReviewSummary, TaskWorkflowRuntimeSummary, TaskWorkflowScmHandoffSummary,
+    TaskWorkflowDrilldown, TaskWorkflowGap, TaskWorkflowGapArea, TaskWorkflowGuidance,
+    TaskWorkflowGuidanceSource, TaskWorkflowNextStep, TaskWorkflowNextStepSource,
+    TaskWorkflowNoEffects, TaskWorkflowReadinessSummary, TaskWorkflowReviewSummary,
+    TaskWorkflowRuntimeSummary, TaskWorkflowSafeAction, TaskWorkflowScmHandoffSummary,
     TaskWorkflowSourceCounts, TaskWorkflowTaskSummary, TaskWorkflowTimelineSummary,
     TaskWorkflowWorkProgressItem, TaskWorkflowWorkProgressSummary,
 };
 
 use super::types::{
-    ControlTaskWorkflowDrilldownDto, ControlTaskWorkflowGapDto, ControlTaskWorkflowNextDto,
-    ControlTaskWorkflowNoEffectsDto, ControlTaskWorkflowReadinessDto, ControlTaskWorkflowReviewDto,
-    ControlTaskWorkflowRuntimeDto, ControlTaskWorkflowScmHandoffDto,
+    ControlTaskWorkflowDrilldownDto, ControlTaskWorkflowGapDto, ControlTaskWorkflowGuidanceDto,
+    ControlTaskWorkflowNextDto, ControlTaskWorkflowNoEffectsDto, ControlTaskWorkflowReadinessDto,
+    ControlTaskWorkflowReviewDto, ControlTaskWorkflowRuntimeDto, ControlTaskWorkflowScmHandoffDto,
     ControlTaskWorkflowSourceCountsDto, ControlTaskWorkflowTaskDto, ControlTaskWorkflowTimelineDto,
     ControlTaskWorkflowWorkItemDto, ControlTaskWorkflowWorkProgressDto,
 };
@@ -34,6 +35,7 @@ impl From<&TaskWorkflowDrilldown> for ControlTaskWorkflowDrilldownDto {
             review: ControlTaskWorkflowReviewDto::from(&drilldown.review),
             scm_handoff: ControlTaskWorkflowScmHandoffDto::from(&drilldown.scm_handoff),
             next: ControlTaskWorkflowNextDto::from(&drilldown.next),
+            guidance: ControlTaskWorkflowGuidanceDto::from(&drilldown.guidance),
             source_counts: ControlTaskWorkflowSourceCountsDto::from(&drilldown.source_counts),
             gaps: drilldown
                 .gaps
@@ -144,6 +146,23 @@ impl From<&TaskWorkflowNextStep> for ControlTaskWorkflowNextDto {
     }
 }
 
+impl From<&TaskWorkflowGuidance> for ControlTaskWorkflowGuidanceDto {
+    fn from(guidance: &TaskWorkflowGuidance) -> Self {
+        Self {
+            source: guidance_source_label(guidance.source).to_owned(),
+            safe_action: safe_action_label(guidance.safe_action).to_owned(),
+            reason: guidance.reason.clone(),
+            evidence_refs: guidance.evidence_refs.clone(),
+            missing_evidence_areas: guidance
+                .missing_evidence_areas
+                .iter()
+                .map(|area| gap_area_label(*area).to_owned())
+                .collect(),
+            blocked_reason: guidance.blocked_reason.clone(),
+        }
+    }
+}
+
 impl From<&TaskWorkflowSourceCounts> for ControlTaskWorkflowSourceCountsDto {
     fn from(counts: &TaskWorkflowSourceCounts) -> Self {
         Self {
@@ -192,6 +211,29 @@ fn next_source_label(source: TaskWorkflowNextStepSource) -> &'static str {
         TaskWorkflowNextStepSource::Review => "review",
         TaskWorkflowNextStepSource::ScmHandoff => "scm_handoff",
         TaskWorkflowNextStepSource::BlockedByMissingPathway => "blocked_by_missing_pathway",
+    }
+}
+
+fn guidance_source_label(source: TaskWorkflowGuidanceSource) -> &'static str {
+    match source {
+        TaskWorkflowGuidanceSource::Task => "task",
+        TaskWorkflowGuidanceSource::Readiness => "readiness",
+        TaskWorkflowGuidanceSource::Runtime => "runtime",
+        TaskWorkflowGuidanceSource::Review => "review",
+        TaskWorkflowGuidanceSource::ScmHandoff => "scm_handoff",
+        TaskWorkflowGuidanceSource::Blocked => "blocked",
+        TaskWorkflowGuidanceSource::NoOp => "no_op",
+    }
+}
+
+fn safe_action_label(action: TaskWorkflowSafeAction) -> &'static str {
+    match action {
+        TaskWorkflowSafeAction::Inspect => "inspect",
+        TaskWorkflowSafeAction::Plan => "plan",
+        TaskWorkflowSafeAction::Review => "review",
+        TaskWorkflowSafeAction::PrepareHandoff => "prepare_handoff",
+        TaskWorkflowSafeAction::Wait => "wait",
+        TaskWorkflowSafeAction::Blocked => "blocked",
     }
 }
 

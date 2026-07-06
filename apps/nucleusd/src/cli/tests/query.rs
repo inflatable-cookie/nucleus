@@ -123,6 +123,48 @@ fn cli_config_parses_task_workflow_drilldown_query_domain() {
 }
 
 #[test]
+fn cli_config_parses_selected_task_action_readiness_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "selected-task-action-readiness".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+        "--task".to_owned(),
+        "task:nucleus-local:bootstrap".to_owned(),
+    ])
+    .expect("parse selected task action readiness query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::SelectedTaskActionReadiness {
+            project_id: "project:nucleus-local".to_owned(),
+            task_id: "task:nucleus-local:bootstrap".to_owned()
+        })
+    );
+}
+
+#[test]
+fn cli_config_parses_selected_task_operator_action_gate_query_domain() {
+    let config = CliConfig::parse(vec![
+        "query".to_owned(),
+        "selected-task-operator-action-gate".to_owned(),
+        "--project".to_owned(),
+        "project:nucleus-local".to_owned(),
+        "--task".to_owned(),
+        "task:nucleus-local:bootstrap".to_owned(),
+    ])
+    .expect("parse selected task operator action gate query");
+
+    assert_eq!(
+        config.query,
+        Some(QueryDomain::SelectedTaskOperatorActionGate {
+            project_id: "project:nucleus-local".to_owned(),
+            task_id: "task:nucleus-local:bootstrap".to_owned()
+        })
+    );
+}
+
+#[test]
 fn cli_config_parses_planning_task_seeds_query_domain() {
     let config = CliConfig::parse(vec![
         "query".to_owned(),

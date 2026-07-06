@@ -267,7 +267,10 @@ shape.
 - `g03/136-accepted-memory-active-apply-executor-boundary.md` - superseded
 - `g04/001-product-workflow-rebaseline-and-vertical-slice.md` - completed
 - `g04/002-product-workflow-source-composition.md` - completed
-- `g04/003-task-workflow-drilldown-and-handoff-readiness.md` - ready
+- `g04/003-task-workflow-drilldown-and-handoff-readiness.md` - completed
+- `g04/004-selected-task-work-loop-composition.md` - completed
+- `g04/005-selected-task-action-readiness.md` - completed
+- `g04/006-selected-task-operator-action-gate.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -328,7 +331,7 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g04/003-task-workflow-drilldown-and-handoff-readiness.md`
+`docs/roadmaps/g04/006-selected-task-operator-action-gate.md`
 with
-`docs/roadmaps/g04/batch-cards/016-selected-task-work-loop-boundary.md`.
-Define the selected-task work-loop boundary before adding more code.
+`docs/roadmaps/g04/batch-cards/030-selected-task-operator-action-validation-next-lane.md`.
+Validate the selected-task operator action gate lane and choose the next product lane.

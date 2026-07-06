@@ -164,6 +164,8 @@ pub enum ServerQueryResult {
     ),
     ProductWorkflowSummary(crate::ProductWorkflowSummary),
     TaskWorkflowDrilldown(crate::TaskWorkflowDrilldown),
+    SelectedTaskActionReadiness(crate::SelectedTaskActionReadiness),
+    SelectedTaskOperatorActionGate(crate::SelectedTaskOperatorActionGate),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     Empty,
     Unsupported {

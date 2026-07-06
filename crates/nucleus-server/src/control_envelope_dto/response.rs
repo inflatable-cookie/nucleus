@@ -93,9 +93,19 @@ pub use records::{
     ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
     ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticEntryDto,
     ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
-    ControlTaskWorkflowDrilldownDto, ControlTaskWorkflowGapDto, ControlTaskWorkflowNextDto,
-    ControlTaskWorkflowNoEffectsDto, ControlTaskWorkflowReadinessDto, ControlTaskWorkflowReviewDto,
-    ControlTaskWorkflowRuntimeDto, ControlTaskWorkflowScmHandoffDto,
+    ControlTaskWorkflowDrilldownDto, ControlTaskWorkflowGapDto, ControlTaskWorkflowGuidanceDto,
+    ControlTaskWorkflowNextDto, ControlTaskWorkflowNoEffectsDto, ControlTaskWorkflowReadinessDto,
+    ControlTaskWorkflowReviewDto, ControlTaskWorkflowRuntimeDto, ControlTaskWorkflowScmHandoffDto,
     ControlTaskWorkflowSourceCountsDto, ControlTaskWorkflowTaskDto, ControlTaskWorkflowTimelineDto,
     ControlTaskWorkflowWorkItemDto, ControlTaskWorkflowWorkProgressDto,
+};
+#[allow(unused_imports)]
+pub use records::{
+    ControlSelectedTaskActionBlockerDto, ControlSelectedTaskActionDto,
+    ControlSelectedTaskActionNoEffectsDto, ControlSelectedTaskActionReadinessDto,
+    ControlSelectedTaskActionSourceCountsDto, ControlSelectedTaskOperatorActionBlockerDto,
+    ControlSelectedTaskOperatorActionCandidateDto, ControlSelectedTaskOperatorActionGateDto,
+    ControlSelectedTaskOperatorActionGateSourceCountsDto,
+    ControlSelectedTaskOperatorActionNoEffectsDto,
+    ControlSelectedTaskOperatorTaskCommandCandidateDto,
 };

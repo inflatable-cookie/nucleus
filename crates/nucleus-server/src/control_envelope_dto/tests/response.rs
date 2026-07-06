@@ -24,5 +24,7 @@ mod provider_read_intent;
 mod provider_readiness_overview;
 mod research_run_briefs;
 mod runtime;
+mod selected_task_action_readiness;
+mod selected_task_operator_action_gate;
 mod state_records;
 mod task_workflow_drilldown;

@@ -302,6 +302,8 @@ pub mod runtime_receipt_state;
 pub mod sandbox_backend;
 pub mod scheduler;
 pub mod secret_store;
+pub mod selected_task_action_readiness;
+pub mod selected_task_operator_action_gate;
 pub mod server_read_only_spawn;
 pub mod state;
 pub mod task_agent_work_unit_state;

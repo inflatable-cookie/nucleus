@@ -50,26 +50,39 @@ Current checkpoint:
 - the disposable desktop proof for the selected-task drilldown is in place
 - the task workflow drilldown lane is validated and the next lane is selected
 - the active path is selected-task work-loop composition
+- the selected-task work-loop boundary and source map are defined
+- selected-task read-only guidance is now part of the task workflow drilldown
+- the disposable desktop proof now composes selected task, project workflow,
+  guidance, review readiness, and handoff readiness
+- selected-task work-loop composition is validated
+- the active path is selected-task action readiness
+- the selected-task action readiness boundary and read model are in place
+- selected-task action readiness has CLI, control DTO, and Effigy inspection
+- selected-task action readiness is visible in the disposable desktop proof
+- selected-task action readiness is validated
+- the active path is selected-task operator action gate
+- selected-task operator task-action boundary and read-only gate are in place
+- selected-task operator action gate has CLI and Effigy inspection
+- selected-task operator action gate is visible in the disposable desktop proof
 
 ## Roadmaps
 
 - `001-product-workflow-rebaseline-and-vertical-slice.md` - completed
 - `002-product-workflow-source-composition.md` - completed
 - `003-task-workflow-drilldown-and-handoff-readiness.md` - completed
-- `004-selected-task-work-loop-composition.md` - active
+- `004-selected-task-work-loop-composition.md` - completed
+- `005-selected-task-action-readiness.md` - completed
+- `006-selected-task-operator-action-gate.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/016-selected-task-work-loop-boundary.md`
+- `batch-cards/030-selected-task-operator-action-validation-next-lane.md`
 
 Planned cards:
 
-- `batch-cards/017-selected-task-work-loop-guidance-read-model.md`
-- `batch-cards/018-selected-task-work-loop-desktop-composition.md`
-- `batch-cards/019-review-scm-handoff-gap-presentation.md`
-- `batch-cards/020-selected-task-work-loop-validation-next-lane.md`
+- None.
 
 Completed cards:
 
@@ -88,3 +101,17 @@ Completed cards:
 - `batch-cards/013-task-workflow-drilldown-cli-effigy.md`
 - `batch-cards/014-disposable-task-workflow-drilldown-proof.md`
 - `batch-cards/015-task-workflow-drilldown-validation-next-lane.md`
+- `batch-cards/016-selected-task-work-loop-boundary.md`
+- `batch-cards/017-selected-task-work-loop-guidance-read-model.md`
+- `batch-cards/018-selected-task-work-loop-desktop-composition.md`
+- `batch-cards/019-review-scm-handoff-gap-presentation.md`
+- `batch-cards/020-selected-task-work-loop-validation-next-lane.md`
+- `batch-cards/021-selected-task-action-readiness-boundary.md`
+- `batch-cards/022-selected-task-action-readiness-read-model.md`
+- `batch-cards/023-selected-task-action-readiness-cli-effigy.md`
+- `batch-cards/024-selected-task-action-readiness-desktop-proof.md`
+- `batch-cards/025-selected-task-action-readiness-validation-next-lane.md`
+- `batch-cards/026-selected-task-operator-action-boundary.md`
+- `batch-cards/027-selected-task-operator-action-gate-read-model.md`
+- `batch-cards/028-selected-task-operator-action-cli-effigy.md`
+- `batch-cards/029-selected-task-operator-action-desktop-proof.md`

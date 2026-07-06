@@ -68,6 +68,8 @@ pub enum ServerQueryKind {
     PlanningCapturePublicationDiagnostics(PlanningCapturePublicationDiagnosticsQuery),
     ProductWorkflowSummary(ProductWorkflowSummaryQuery),
     TaskWorkflowDrilldown(TaskWorkflowDrilldownQuery),
+    SelectedTaskActionReadiness(SelectedTaskActionReadinessQuery),
+    SelectedTaskOperatorActionGate(SelectedTaskOperatorActionGateQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
 
@@ -185,6 +187,20 @@ pub struct TaskReadinessQuery {
 /// Selected task workflow drilldown query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskWorkflowDrilldownQuery {
+    pub project_id: ProjectId,
+    pub task_id: TaskId,
+}
+
+/// Selected task action readiness query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedTaskActionReadinessQuery {
+    pub project_id: ProjectId,
+    pub task_id: TaskId,
+}
+
+/// Selected task operator action gate query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedTaskOperatorActionGateQuery {
     pub project_id: ProjectId,
     pub task_id: TaskId,
 }

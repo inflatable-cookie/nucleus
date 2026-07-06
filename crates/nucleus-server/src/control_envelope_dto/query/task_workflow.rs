@@ -3,7 +3,8 @@ use nucleus_tasks::TaskId;
 
 use crate::control_api::{
     MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery, PlanningSessionsQuery,
-    PlanningTaskSeedsQuery, ResearchRunBriefsQuery, ServerQueryKind, TaskReadinessQuery,
+    PlanningTaskSeedsQuery, ResearchRunBriefsQuery, SelectedTaskActionReadinessQuery,
+    SelectedTaskOperatorActionGateQuery, ServerQueryKind, TaskReadinessQuery,
     TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 
@@ -74,6 +75,52 @@ pub(super) fn task_workflow_drilldown_query_from_action(
         )),
         _ => Err(ControlApiCodecError::unsupported(format!(
             "unsupported task workflow drilldown query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn selected_task_action_readiness_query_from_action(
+    action: &str,
+    project_id: String,
+    task_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "readiness" if project_id.trim().is_empty() || task_id.trim().is_empty() => {
+            Err(ControlApiCodecError::unsupported(
+                "selected task action readiness query requires project and task ids",
+            ))
+        }
+        "readiness" => Ok(ServerQueryKind::SelectedTaskActionReadiness(
+            SelectedTaskActionReadinessQuery {
+                project_id: ProjectId(project_id),
+                task_id: TaskId(task_id),
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported selected task action readiness query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn selected_task_operator_action_gate_query_from_action(
+    action: &str,
+    project_id: String,
+    task_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "gate" if project_id.trim().is_empty() || task_id.trim().is_empty() => {
+            Err(ControlApiCodecError::unsupported(
+                "selected task operator action gate query requires project and task ids",
+            ))
+        }
+        "gate" => Ok(ServerQueryKind::SelectedTaskOperatorActionGate(
+            SelectedTaskOperatorActionGateQuery {
+                project_id: ProjectId(project_id),
+                task_id: TaskId(task_id),
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported selected task operator action gate query action: {action}"
         ))),
     }
 }
