@@ -15,9 +15,11 @@ use nucleus_server::{
     ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
     ResearchRunBriefsQuery, RuntimeMetadataQuery, SelectedTaskActionFamily,
     SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
-    SelectedTaskOperatorActionGateQuery, SelectedTaskReviewNextQuery, ServerQueryKind,
-    ServerStateDomain, StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery,
-    TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
+    SelectedTaskOperatorActionGateQuery, SelectedTaskReviewDecisionAction,
+    SelectedTaskReviewDecisionAdmissionQuery, SelectedTaskReviewDecisionApplyQuery,
+    SelectedTaskReviewNextQuery, SelectedTaskScmHandoffQuery, ServerQueryKind, ServerStateDomain,
+    StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
+    TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use nucleus_tasks::TaskId;
 
@@ -204,6 +206,13 @@ pub(super) fn query_kind(query: &QueryDomain) -> ServerQueryKind {
             project_id: ProjectId(project_id.clone()),
             task_id: TaskId(task_id.clone()),
         }),
+        QueryDomain::SelectedTaskScmHandoff {
+            project_id,
+            task_id,
+        } => ServerQueryKind::SelectedTaskScmHandoff(SelectedTaskScmHandoffQuery {
+            project_id: ProjectId(project_id.clone()),
+            task_id: TaskId(task_id.clone()),
+        }),
         QueryDomain::SelectedTaskCommandAdmission {
             project_id,
             task_id,
@@ -221,6 +230,46 @@ pub(super) fn query_kind(query: &QueryDomain) -> ServerQueryKind {
             reason: reason.clone(),
             operator_ref: operator_ref.clone(),
         }),
+        QueryDomain::SelectedTaskReviewDecisionAdmission(args) => {
+            ServerQueryKind::SelectedTaskReviewDecisionAdmission(
+                SelectedTaskReviewDecisionAdmissionQuery {
+                    project_id: ProjectId(args.project_id.clone()),
+                    task_id: TaskId(args.task_id.clone()),
+                    action: selected_task_review_decision_action(&args.action),
+                    expected_revision: args
+                        .expected_revision
+                        .as_ref()
+                        .map(|revision| RevisionId(revision.clone())),
+                    current_revision: args
+                        .current_revision
+                        .as_ref()
+                        .map(|revision| RevisionId(revision.clone())),
+                    reason: args.reason.clone(),
+                    operator_ref: args.operator_ref.clone(),
+                    reviewed_evidence_refs: args.reviewed_evidence_refs.clone(),
+                    idempotency_key: args.idempotency_key.clone(),
+                },
+            )
+        }
+        QueryDomain::SelectedTaskReviewDecisionApply(args) => {
+            ServerQueryKind::SelectedTaskReviewDecisionApply(SelectedTaskReviewDecisionApplyQuery {
+                project_id: ProjectId(args.project_id.clone()),
+                task_id: TaskId(args.task_id.clone()),
+                action: selected_task_review_decision_action(&args.action),
+                expected_revision: args
+                    .expected_revision
+                    .as_ref()
+                    .map(|revision| RevisionId(revision.clone())),
+                current_revision: args
+                    .current_revision
+                    .as_ref()
+                    .map(|revision| RevisionId(revision.clone())),
+                reason: args.reason.clone(),
+                operator_ref: args.operator_ref.clone(),
+                reviewed_evidence_refs: args.reviewed_evidence_refs.clone(),
+                idempotency_key: args.idempotency_key.clone(),
+            })
+        }
         QueryDomain::ProjectAuthorityMap { project_id } => {
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
                 project_id: ProjectId(project_id.clone()),
@@ -270,6 +319,16 @@ fn selected_task_action_family(family: &str) -> SelectedTaskActionFamily {
         "review_work_evidence" => SelectedTaskActionFamily::ReviewWorkEvidence,
         "prepare_scm_handoff" => SelectedTaskActionFamily::PrepareScmHandoff,
         _ => SelectedTaskActionFamily::StartSelectedTask,
+    }
+}
+
+fn selected_task_review_decision_action(action: &str) -> SelectedTaskReviewDecisionAction {
+    match action {
+        "accept_evidence" => SelectedTaskReviewDecisionAction::AcceptEvidence,
+        "reject_evidence" => SelectedTaskReviewDecisionAction::RejectEvidence,
+        "request_changes" => SelectedTaskReviewDecisionAction::RequestChanges,
+        "abandon_review" => SelectedTaskReviewDecisionAction::AbandonReview,
+        _ => SelectedTaskReviewDecisionAction::AcceptEvidence,
     }
 }
 

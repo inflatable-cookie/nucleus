@@ -25,7 +25,9 @@ mod research_run_briefs;
 mod selected_task_action_readiness;
 mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
+mod selected_task_review_decision;
 mod selected_task_review_next;
+mod selected_task_scm_handoff;
 mod task_authority;
 mod task_readiness;
 mod task_seed_promotion;
@@ -59,7 +61,12 @@ pub(super) use research_run_briefs::research_run_briefs_response_lines;
 pub(super) use selected_task_action_readiness::selected_task_action_readiness_response_lines;
 pub(super) use selected_task_command_admission::selected_task_command_admission_response_lines;
 pub(super) use selected_task_operator_action_gate::selected_task_operator_action_gate_response_lines;
+pub(super) use selected_task_review_decision::{
+    selected_task_review_decision_admission_response_lines,
+    selected_task_review_decision_apply_response_lines,
+};
 pub(super) use selected_task_review_next::selected_task_review_next_response_lines;
+pub(super) use selected_task_scm_handoff::selected_task_scm_handoff_response_lines;
 pub(super) use task_authority::{
     project_authority_map_response_lines, task_timeline_response_lines,
 };
@@ -361,8 +368,17 @@ pub(super) fn print_typed_dto_response(
         ControlResponseBodyDto::SelectedTaskCommandAdmission { admission } => print_ok(
             selected_task_command_admission_response_lines(label, admission),
         ),
+        ControlResponseBodyDto::SelectedTaskReviewDecisionAdmission { admission } => print_ok(
+            selected_task_review_decision_admission_response_lines(label, admission),
+        ),
+        ControlResponseBodyDto::SelectedTaskReviewDecisionApply { record } => print_ok(
+            selected_task_review_decision_apply_response_lines(label, record),
+        ),
         ControlResponseBodyDto::SelectedTaskReviewNext { review_next } => {
             print_ok(selected_task_review_next_response_lines(label, review_next))
+        }
+        ControlResponseBodyDto::SelectedTaskScmHandoff { handoff } => {
+            print_ok(selected_task_scm_handoff_response_lines(label, handoff))
         }
         ControlResponseBodyDto::ProjectAuthorityMap { record } => {
             print_ok(project_authority_map_response_lines(label, record))

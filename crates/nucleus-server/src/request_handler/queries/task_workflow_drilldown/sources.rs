@@ -17,7 +17,11 @@ use crate::runtime_receipt_state::read_runtime_receipts;
 use crate::task_agent_work_unit_state::read_task_agent_work_unit_source_records;
 use crate::TaskWorkflowReadinessInput;
 use crate::TaskWorkflowWorkProgressInput;
-use crate::{read_live_evidence_review_decisions, read_live_evidence_task_completions};
+use crate::{
+    read_live_evidence_review_decisions, read_live_evidence_task_completions,
+    read_selected_task_review_decisions, SelectedTaskReviewDecisionOutcome,
+    SelectedTaskReviewDecisionPersistenceStatus,
+};
 
 pub(super) fn selected_task<B>(
     handler: &LocalControlRequestHandler<B>,
@@ -100,6 +104,17 @@ where
         .map(|entry| entry.entry_id.0)
         .collect::<Vec<_>>();
     refs.extend(
+        read_selected_task_review_decisions(handler.state())
+            .map_err(storage_error)?
+            .into_iter()
+            .filter(|record| {
+                record.task_id == query.task_id.0
+                    && record.status == SelectedTaskReviewDecisionPersistenceStatus::Persisted
+                    && record.outcome == SelectedTaskReviewDecisionOutcome::Accepted
+            })
+            .flat_map(|record| record.timeline_refs),
+    );
+    refs.extend(
         work_progress
             .iter()
             .flat_map(|item| item.timeline_entry_refs.iter().cloned()),
@@ -116,12 +131,23 @@ where
 {
     let records =
         read_task_agent_work_unit_source_records(handler.state()).map_err(storage_error)?;
-    Ok(task_agent_diagnostics(&records)
+    let mut work_progress = task_agent_diagnostics(&records)
         .work_units
         .into_iter()
         .filter(|work| work.project_id == query.project_id.0 && work.task_id == query.task_id.0)
         .map(work_progress_input)
-        .collect())
+        .collect::<Vec<_>>();
+    let decisions = read_selected_task_review_decisions(handler.state())
+        .map_err(storage_error)?
+        .into_iter()
+        .filter(|record| {
+            record.project_id == query.project_id.0
+                && record.task_id == query.task_id.0
+                && record.status == SelectedTaskReviewDecisionPersistenceStatus::Persisted
+        })
+        .collect::<Vec<_>>();
+    apply_selected_review_decisions(&mut work_progress, decisions);
+    Ok(work_progress)
 }
 
 pub(super) fn selected_runtime_refs<B>(
@@ -184,12 +210,49 @@ where
         .map(|record| record.decision_id)
         .collect::<Vec<_>>();
     refs.extend(
+        read_selected_task_review_decisions(handler.state())
+            .map_err(storage_error)?
+            .into_iter()
+            .filter(|record| {
+                record.task_id == query.task_id.0
+                    && record.status == SelectedTaskReviewDecisionPersistenceStatus::Persisted
+            })
+            .map(|record| record.decision_id),
+    );
+    refs.extend(
         work_progress
             .iter()
             .filter(|work| work.review_status != "not_ready")
             .map(|work| format!("{}:review:{}", work.work_item_ref, work.review_status)),
     );
     Ok(refs)
+}
+
+fn apply_selected_review_decisions(
+    work_progress: &mut [TaskWorkflowWorkProgressInput],
+    mut decisions: Vec<crate::SelectedTaskReviewDecisionRecord>,
+) {
+    decisions.sort_by(|left, right| left.decision_id.cmp(&right.decision_id));
+    for decision in decisions {
+        let status = outcome_label(decision.outcome);
+        for item in work_progress.iter_mut().filter(|item| {
+            decision
+                .work_item_refs
+                .iter()
+                .any(|reference| reference == &item.work_item_ref)
+        }) {
+            item.review_status = status.to_owned();
+        }
+    }
+}
+
+fn outcome_label(outcome: SelectedTaskReviewDecisionOutcome) -> &'static str {
+    match outcome {
+        SelectedTaskReviewDecisionOutcome::Accepted => "accepted",
+        SelectedTaskReviewDecisionOutcome::Rejected => "rejected",
+        SelectedTaskReviewDecisionOutcome::NeedsChanges => "needs_changes",
+        SelectedTaskReviewDecisionOutcome::Abandoned => "abandoned",
+    }
 }
 
 fn work_progress_input(work: TaskAgentWorkUnitDiagnosticDto) -> TaskWorkflowWorkProgressInput {

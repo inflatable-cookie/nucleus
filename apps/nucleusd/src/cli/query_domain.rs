@@ -2,10 +2,20 @@ use nucleus_server::ServerStateDomain;
 
 mod labels;
 mod selected_task_command_admission;
+mod selected_task_queries;
+mod selected_task_review_decision;
 mod state_domain;
 
 use labels::query_domain_label;
 use selected_task_command_admission::parse_selected_task_command_admission;
+use selected_task_queries::{
+    parse_selected_task_action_readiness, parse_selected_task_operator_action_gate,
+    parse_selected_task_review_next, parse_selected_task_scm_handoff,
+};
+use selected_task_review_decision::{
+    parse_selected_task_review_decision_admission, parse_selected_task_review_decision_apply,
+    SelectedTaskReviewDecisionQueryArgs,
+};
 use state_domain::query_domain_state_domain;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -103,6 +113,10 @@ pub(crate) enum QueryDomain {
         project_id: String,
         task_id: String,
     },
+    SelectedTaskScmHandoff {
+        project_id: String,
+        task_id: String,
+    },
     SelectedTaskCommandAdmission {
         project_id: String,
         task_id: String,
@@ -111,6 +125,8 @@ pub(crate) enum QueryDomain {
         reason: Option<String>,
         operator_ref: String,
     },
+    SelectedTaskReviewDecisionAdmission(SelectedTaskReviewDecisionQueryArgs),
+    SelectedTaskReviewDecisionApply(SelectedTaskReviewDecisionQueryArgs),
     ProjectAuthorityMap {
         project_id: String,
     },
@@ -340,46 +356,17 @@ impl QueryDomain {
                     })?,
                 })
             }
-            "selected-task-action-readiness" => {
-                expect_flag(iter, "--project")?;
-                let project_id = iter.next().ok_or_else(|| {
-                    "selected-task-action-readiness requires --project <project-id>".to_owned()
-                })?;
-                expect_flag(iter, "--task")?;
-                Ok(Self::SelectedTaskActionReadiness {
-                    project_id,
-                    task_id: iter.next().ok_or_else(|| {
-                        "selected-task-action-readiness requires --task <task-id>".to_owned()
-                    })?,
-                })
-            }
-            "selected-task-operator-action-gate" => {
-                expect_flag(iter, "--project")?;
-                let project_id = iter.next().ok_or_else(|| {
-                    "selected-task-operator-action-gate requires --project <project-id>".to_owned()
-                })?;
-                expect_flag(iter, "--task")?;
-                Ok(Self::SelectedTaskOperatorActionGate {
-                    project_id,
-                    task_id: iter.next().ok_or_else(|| {
-                        "selected-task-operator-action-gate requires --task <task-id>".to_owned()
-                    })?,
-                })
-            }
-            "selected-task-review-next" => {
-                expect_flag(iter, "--project")?;
-                let project_id = iter.next().ok_or_else(|| {
-                    "selected-task-review-next requires --project <project-id>".to_owned()
-                })?;
-                expect_flag(iter, "--task")?;
-                Ok(Self::SelectedTaskReviewNext {
-                    project_id,
-                    task_id: iter.next().ok_or_else(|| {
-                        "selected-task-review-next requires --task <task-id>".to_owned()
-                    })?,
-                })
-            }
+            "selected-task-action-readiness" => parse_selected_task_action_readiness(iter),
+            "selected-task-operator-action-gate" => parse_selected_task_operator_action_gate(iter),
+            "selected-task-review-next" => parse_selected_task_review_next(iter),
+            "selected-task-scm-handoff" => parse_selected_task_scm_handoff(iter),
             "selected-task-command-admission" => parse_selected_task_command_admission(iter),
+            "selected-task-review-decision-admission" => {
+                parse_selected_task_review_decision_admission(iter)
+            }
+            "selected-task-review-decision-apply" => {
+                parse_selected_task_review_decision_apply(iter)
+            }
             "project-authority-map" => {
                 expect_flag(iter, "--project")?;
                 Ok(Self::ProjectAuthorityMap {

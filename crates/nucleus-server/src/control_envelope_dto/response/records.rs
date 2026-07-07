@@ -27,7 +27,9 @@ mod runtime;
 mod selected_task_action_readiness;
 mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
+mod selected_task_review_decision;
 mod selected_task_review_next;
+mod selected_task_scm_handoff;
 mod task_readiness;
 mod task_seed_promotion;
 mod task_workflow_drilldown;
@@ -156,11 +158,21 @@ pub use selected_task_operator_action_gate::{
     ControlSelectedTaskOperatorActionNoEffectsDto,
     ControlSelectedTaskOperatorTaskCommandCandidateDto,
 };
+pub use selected_task_review_decision::{
+    ControlSelectedTaskReviewDecisionAdmissionDto, ControlSelectedTaskReviewDecisionNoEffectsDto,
+    ControlSelectedTaskReviewDecisionRecordDto,
+};
 pub use selected_task_review_next::{
     ControlSelectedTaskReviewEvidenceDto, ControlSelectedTaskReviewGapDto,
     ControlSelectedTaskReviewNextDto, ControlSelectedTaskReviewNextNoEffectsDto,
     ControlSelectedTaskReviewNextSourceCountsDto, ControlSelectedTaskReviewNextStepDto,
     ControlSelectedTaskReviewSummaryDto,
+};
+pub use selected_task_scm_handoff::{
+    ControlSelectedTaskScmHandoffDto, ControlSelectedTaskScmHandoffEvidenceDto,
+    ControlSelectedTaskScmHandoffGapDto, ControlSelectedTaskScmHandoffNextStepDto,
+    ControlSelectedTaskScmHandoffNoEffectsDto, ControlSelectedTaskScmHandoffSourceCountsDto,
+    ControlSelectedTaskScmHandoffSummaryDto, ControlSelectedTaskScmHandoffTargetDto,
 };
 pub use task_readiness::{
     ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,

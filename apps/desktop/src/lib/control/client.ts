@@ -17,6 +17,10 @@ import {
   buildSelectedTaskActionReadinessQuery,
   buildSelectedTaskCommandAdmissionQuery,
   buildSelectedTaskOperatorActionGateQuery,
+  buildSelectedTaskReviewDecisionAdmissionQuery,
+  buildSelectedTaskReviewDecisionApplyQuery,
+  buildSelectedTaskReviewNextQuery,
+  buildSelectedTaskScmHandoffQuery,
   buildTaskWorkflowDrilldownQuery,
 } from "./taskCommandEnvelopes";
 import {
@@ -47,6 +51,21 @@ import {
   type SelectedTaskOperatorActionGateQueryResult,
   type TaskWorkflowDrilldownQueryResult,
 } from "./taskWorkflow";
+import {
+  selectedTaskReviewNextFromResponse,
+  type SelectedTaskReviewNextQueryResult,
+} from "./selectedTaskReviewNext";
+import {
+  selectedTaskReviewDecisionAdmissionFromResponse,
+  selectedTaskReviewDecisionApplyFromResponse,
+  type SelectedTaskReviewDecisionAction,
+  type SelectedTaskReviewDecisionAdmissionQueryResult,
+  type SelectedTaskReviewDecisionApplyQueryResult,
+} from "./selectedTaskReviewDecision";
+import {
+  selectedTaskScmHandoffFromResponse,
+  type SelectedTaskScmHandoffQueryResult,
+} from "./selectedTaskScmHandoff";
 import {
   memoryProposalsFromResponse,
   planningSessionsFromResponse,
@@ -153,6 +172,26 @@ export async function querySelectedTaskOperatorActionGate(
   return selectedTaskOperatorActionGateFromResponse(response);
 }
 
+export async function querySelectedTaskReviewNext(
+  projectId: string,
+  taskId: string,
+): Promise<SelectedTaskReviewNextQueryResult> {
+  const response = await submitControlEnvelope(
+    buildSelectedTaskReviewNextQuery(projectId, taskId),
+  );
+  return selectedTaskReviewNextFromResponse(response);
+}
+
+export async function querySelectedTaskScmHandoff(
+  projectId: string,
+  taskId: string,
+): Promise<SelectedTaskScmHandoffQueryResult> {
+  const response = await submitControlEnvelope(
+    buildSelectedTaskScmHandoffQuery(projectId, taskId),
+  );
+  return selectedTaskScmHandoffFromResponse(response);
+}
+
 export async function querySelectedTaskCommandAdmission(
   projectId: string,
   taskId: string,
@@ -170,4 +209,50 @@ export async function querySelectedTaskCommandAdmission(
     ),
   );
   return selectedTaskCommandAdmissionFromResponse(response);
+}
+
+export async function querySelectedTaskReviewDecisionAdmission(
+  projectId: string,
+  taskId: string,
+  action: SelectedTaskReviewDecisionAction,
+  expectedRevision: string | null,
+  reason: string | null,
+  reviewedEvidenceRefs: string[],
+  idempotencyKey: string,
+): Promise<SelectedTaskReviewDecisionAdmissionQueryResult> {
+  const response = await submitControlEnvelope(
+    buildSelectedTaskReviewDecisionAdmissionQuery(
+      projectId,
+      taskId,
+      action,
+      expectedRevision,
+      reason,
+      reviewedEvidenceRefs,
+      idempotencyKey,
+    ),
+  );
+  return selectedTaskReviewDecisionAdmissionFromResponse(response);
+}
+
+export async function querySelectedTaskReviewDecisionApply(
+  projectId: string,
+  taskId: string,
+  action: SelectedTaskReviewDecisionAction,
+  expectedRevision: string | null,
+  reason: string | null,
+  reviewedEvidenceRefs: string[],
+  idempotencyKey: string,
+): Promise<SelectedTaskReviewDecisionApplyQueryResult> {
+  const response = await submitControlEnvelope(
+    buildSelectedTaskReviewDecisionApplyQuery(
+      projectId,
+      taskId,
+      action,
+      expectedRevision,
+      reason,
+      reviewedEvidenceRefs,
+      idempotencyKey,
+    ),
+  );
+  return selectedTaskReviewDecisionApplyFromResponse(response);
 }

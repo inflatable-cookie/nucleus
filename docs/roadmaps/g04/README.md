@@ -78,6 +78,27 @@ Current checkpoint:
 - the active path is selected-task review and next-step presentation
 - selected-task review/next boundary and server read model are in place
 - selected-task review/next has control DTOs, CLI, and Effigy inspection
+- selected-task review/next is visible in the disposable desktop proof
+- selected-task review/next is validated
+- the active path is selected-task SCM handoff readiness
+- selected-task SCM handoff readiness boundary and source map are defined
+- selected-task SCM handoff readiness server read model is in place
+- selected-task SCM handoff readiness has control DTOs, CLI, and Effigy
+  inspection
+- selected-task SCM handoff readiness is visible in the disposable desktop
+  proof
+- selected-task SCM handoff readiness is validated
+- the active path is g04 product workflow closeout and next-phase selection
+- g04 vertical-slice evidence inventory is complete
+- deferred lanes are compared against current product gaps
+- next phase selected: selected-task review decision controls
+- product workflow closeout validation is complete
+- selected-task review-decision boundary and pure admission are in place
+- selected-task review-decision records and read-model refresh are in place
+- selected-task review-decision CLI, Effigy, and desktop proof controls are in
+  place
+- selected-task review-decision controls are validated
+- the active path is selected-task review outcome routing
 
 ## Roadmaps
 
@@ -89,17 +110,24 @@ Current checkpoint:
 - `006-selected-task-operator-action-gate.md` - completed
 - `007-selected-task-command-admission-controls.md` - completed
 - `008-task-command-outcome-coherence.md` - completed
-- `009-selected-task-review-next-step-presentation.md` - active
+- `009-selected-task-review-next-step-presentation.md` - completed
+- `010-selected-task-scm-handoff-readiness.md` - completed
+- `011-product-workflow-closeout-and-next-phase-selection.md` - completed
+- `012-selected-task-review-decision-controls.md` - completed
+- `013-selected-task-review-outcome-routing.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/043-selected-task-review-next-desktop-proof.md`
+- `batch-cards/060-selected-task-review-outcome-boundary.md`
 
 Planned cards:
 
-- `batch-cards/044-selected-task-review-next-validation.md`
+- `batch-cards/061-selected-task-review-outcome-read-model.md`
+- `batch-cards/062-selected-task-review-outcome-cli-effigy.md`
+- `batch-cards/063-selected-task-review-outcome-desktop-proof.md`
+- `batch-cards/064-selected-task-review-outcome-validation.md`
 
 Completed cards:
 
@@ -145,3 +173,20 @@ Completed cards:
 - `batch-cards/040-selected-task-review-next-boundary.md`
 - `batch-cards/041-selected-task-review-next-read-model.md`
 - `batch-cards/042-selected-task-review-next-cli-effigy.md`
+- `batch-cards/043-selected-task-review-next-desktop-proof.md`
+- `batch-cards/044-selected-task-review-next-validation.md`
+- `batch-cards/045-selected-task-scm-handoff-boundary.md`
+- `batch-cards/046-selected-task-scm-handoff-read-model.md`
+- `batch-cards/047-selected-task-scm-handoff-cli-effigy.md`
+- `batch-cards/048-selected-task-scm-handoff-desktop-proof.md`
+- `batch-cards/049-selected-task-scm-handoff-validation.md`
+- `batch-cards/050-g04-vertical-slice-evidence-inventory.md`
+- `batch-cards/051-deferred-lane-gap-comparison.md`
+- `batch-cards/052-next-phase-decision-runway.md`
+- `batch-cards/053-product-workflow-closeout-validation.md`
+- `batch-cards/054-selected-task-review-decision-boundary.md`
+- `batch-cards/055-selected-task-review-decision-admission.md`
+- `batch-cards/056-selected-task-review-decision-records.md`
+- `batch-cards/057-selected-task-review-decision-cli-effigy.md`
+- `batch-cards/058-selected-task-review-decision-desktop-proof.md`
+- `batch-cards/059-selected-task-review-decision-outcome-validation.md`

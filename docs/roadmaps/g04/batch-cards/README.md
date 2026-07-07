@@ -10,11 +10,14 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `043-selected-task-review-next-desktop-proof.md`
+- `060-selected-task-review-outcome-boundary.md`
 
 ## Planned Cards
 
-- `044-selected-task-review-next-validation.md`
+- `061-selected-task-review-outcome-read-model.md`
+- `062-selected-task-review-outcome-cli-effigy.md`
+- `063-selected-task-review-outcome-desktop-proof.md`
+- `064-selected-task-review-outcome-validation.md`
 
 ## Completed Cards
 
@@ -60,3 +63,20 @@ Hold execution cards for `g04`.
 - `040-selected-task-review-next-boundary.md`
 - `041-selected-task-review-next-read-model.md`
 - `042-selected-task-review-next-cli-effigy.md`
+- `043-selected-task-review-next-desktop-proof.md`
+- `044-selected-task-review-next-validation.md`
+- `045-selected-task-scm-handoff-boundary.md`
+- `046-selected-task-scm-handoff-read-model.md`
+- `047-selected-task-scm-handoff-cli-effigy.md`
+- `048-selected-task-scm-handoff-desktop-proof.md`
+- `049-selected-task-scm-handoff-validation.md`
+- `050-g04-vertical-slice-evidence-inventory.md`
+- `051-deferred-lane-gap-comparison.md`
+- `052-next-phase-decision-runway.md`
+- `053-product-workflow-closeout-validation.md`
+- `054-selected-task-review-decision-boundary.md`
+- `055-selected-task-review-decision-admission.md`
+- `056-selected-task-review-decision-records.md`
+- `057-selected-task-review-decision-cli-effigy.md`
+- `058-selected-task-review-decision-desktop-proof.md`
+- `059-selected-task-review-decision-outcome-validation.md`

@@ -1,6 +1,7 @@
 use super::*;
 
 mod query;
+mod selected_task_scm_handoff;
 
 #[test]
 fn cli_config_parses_bootstrap_status_and_state() {

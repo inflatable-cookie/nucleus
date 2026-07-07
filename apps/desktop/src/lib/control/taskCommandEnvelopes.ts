@@ -3,7 +3,12 @@ import {
   buildControlQueryEnvelope,
   type ControlRequestEnvelopeDto,
 } from "./envelopes";
-import { CONTROL_CLIENT_ID, type ControlTaskRecordDto, type ControlTaskTransitionAction } from "./types";
+import type { SelectedTaskReviewDecisionAction } from "./selectedTaskReviewDecision";
+import {
+  CONTROL_CLIENT_ID,
+  type ControlTaskRecordDto,
+  type ControlTaskTransitionAction,
+} from "./types";
 
 export function buildTaskWorkflowDrilldownQuery(
   projectId: string,
@@ -44,6 +49,32 @@ export function buildSelectedTaskOperatorActionGateQuery(
   });
 }
 
+export function buildSelectedTaskReviewNextQuery(
+  projectId: string,
+  taskId: string,
+): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "selected_task_review_next",
+    query_id: "",
+    action: "review_next",
+    project_id: projectId,
+    task_id: taskId,
+  });
+}
+
+export function buildSelectedTaskScmHandoffQuery(
+  projectId: string,
+  taskId: string,
+): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "selected_task_scm_handoff",
+    query_id: "",
+    action: "handoff",
+    project_id: projectId,
+    task_id: taskId,
+  });
+}
+
 export function buildSelectedTaskCommandAdmissionQuery(
   projectId: string,
   taskId: string,
@@ -61,6 +92,56 @@ export function buildSelectedTaskCommandAdmissionQuery(
     expected_revision: expectedRevision,
     reason,
     operator_ref: CONTROL_CLIENT_ID,
+  });
+}
+
+export function buildSelectedTaskReviewDecisionAdmissionQuery(
+  projectId: string,
+  taskId: string,
+  action: SelectedTaskReviewDecisionAction,
+  expectedRevision: string | null,
+  reason: string | null,
+  reviewedEvidenceRefs: string[],
+  idempotencyKey: string,
+): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "selected_task_review_decision_admission",
+    query_id: "",
+    action: "dry_run",
+    project_id: projectId,
+    task_id: taskId,
+    decision_action: action,
+    expected_revision: expectedRevision,
+    current_revision: expectedRevision,
+    reason,
+    operator_ref: CONTROL_CLIENT_ID,
+    reviewed_evidence_refs: reviewedEvidenceRefs,
+    idempotency_key: idempotencyKey,
+  });
+}
+
+export function buildSelectedTaskReviewDecisionApplyQuery(
+  projectId: string,
+  taskId: string,
+  action: SelectedTaskReviewDecisionAction,
+  expectedRevision: string | null,
+  reason: string | null,
+  reviewedEvidenceRefs: string[],
+  idempotencyKey: string,
+): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "selected_task_review_decision_apply",
+    query_id: "",
+    action: "apply",
+    project_id: projectId,
+    task_id: taskId,
+    decision_action: action,
+    expected_revision: expectedRevision,
+    current_revision: expectedRevision,
+    reason,
+    operator_ref: CONTROL_CLIENT_ID,
+    reviewed_evidence_refs: reviewedEvidenceRefs,
+    idempotency_key: idempotencyKey,
   });
 }
 

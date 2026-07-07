@@ -12,14 +12,17 @@ use crate::control_api::{
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
     ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
     SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
-    SelectedTaskOperatorActionGateQuery, SelectedTaskReviewNextQuery, ServerQuery, ServerQueryKind,
-    StateRecordQuery, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
-    TaskWorkflowDrilldownQuery,
+    SelectedTaskOperatorActionGateQuery, SelectedTaskReviewDecisionAdmissionQuery,
+    SelectedTaskReviewDecisionApplyQuery, SelectedTaskReviewNextQuery, SelectedTaskScmHandoffQuery,
+    ServerQuery, ServerQueryKind, StateRecordQuery, TaskReadinessQuery,
+    TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::ids::ServerQueryId;
 
 use super::authority_domains::authority_domain_dto;
-use super::task_workflow::selected_task_action_family_label;
+use super::task_workflow::{
+    selected_task_action_family_label, selected_task_review_decision_action_label,
+};
 use super::{ControlQueryDto, ControlQueryScopeDto, ControlStateDomainDto};
 use crate::control_envelope_dto::protocol::{diagnostics_domain_dto, runtime_metadata_action};
 use crate::control_envelope_dto::ControlApiCodecError;
@@ -263,6 +266,15 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                 project_id: project_id.0.clone(),
                 task_id: task_id.0.clone(),
             }),
+            ServerQueryKind::SelectedTaskScmHandoff(SelectedTaskScmHandoffQuery {
+                project_id,
+                task_id,
+            }) => Ok(Self::SelectedTaskScmHandoff {
+                query_id: query.id.0.clone(),
+                action: "handoff".to_owned(),
+                project_id: project_id.0.clone(),
+                task_id: task_id.0.clone(),
+            }),
             ServerQueryKind::SelectedTaskCommandAdmission(SelectedTaskCommandAdmissionQuery {
                 project_id,
                 task_id,
@@ -281,6 +293,60 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                     .map(|revision| revision.0.clone()),
                 reason: reason.clone(),
                 operator_ref: operator_ref.clone(),
+            }),
+            ServerQueryKind::SelectedTaskReviewDecisionAdmission(
+                SelectedTaskReviewDecisionAdmissionQuery {
+                    project_id,
+                    task_id,
+                    action,
+                    expected_revision,
+                    current_revision,
+                    reason,
+                    operator_ref,
+                    reviewed_evidence_refs,
+                    idempotency_key,
+                },
+            ) => Ok(Self::SelectedTaskReviewDecisionAdmission {
+                query_id: query.id.0.clone(),
+                action: "dry_run".to_owned(),
+                project_id: project_id.0.clone(),
+                task_id: task_id.0.clone(),
+                decision_action: selected_task_review_decision_action_label(*action).to_owned(),
+                expected_revision: expected_revision
+                    .as_ref()
+                    .map(|revision| revision.0.clone()),
+                current_revision: current_revision.as_ref().map(|revision| revision.0.clone()),
+                reason: reason.clone(),
+                operator_ref: operator_ref.clone(),
+                reviewed_evidence_refs: reviewed_evidence_refs.clone(),
+                idempotency_key: idempotency_key.clone(),
+            }),
+            ServerQueryKind::SelectedTaskReviewDecisionApply(
+                SelectedTaskReviewDecisionApplyQuery {
+                    project_id,
+                    task_id,
+                    action,
+                    expected_revision,
+                    current_revision,
+                    reason,
+                    operator_ref,
+                    reviewed_evidence_refs,
+                    idempotency_key,
+                },
+            ) => Ok(Self::SelectedTaskReviewDecisionApply {
+                query_id: query.id.0.clone(),
+                action: "apply".to_owned(),
+                project_id: project_id.0.clone(),
+                task_id: task_id.0.clone(),
+                decision_action: selected_task_review_decision_action_label(*action).to_owned(),
+                expected_revision: expected_revision
+                    .as_ref()
+                    .map(|revision| revision.0.clone()),
+                current_revision: current_revision.as_ref().map(|revision| revision.0.clone()),
+                reason: reason.clone(),
+                operator_ref: operator_ref.clone(),
+                reviewed_evidence_refs: reviewed_evidence_refs.clone(),
+                idempotency_key: idempotency_key.clone(),
             }),
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
                 project_id,

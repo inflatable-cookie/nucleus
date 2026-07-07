@@ -11,8 +11,9 @@ use crate::control_api::{
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
     ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
     SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
-    SelectedTaskOperatorActionGateQuery, SelectedTaskReviewNextQuery, ServerControlRequest,
-    ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
+    SelectedTaskOperatorActionGateQuery, SelectedTaskReviewDecisionAdmissionQuery,
+    SelectedTaskReviewDecisionApplyQuery, SelectedTaskReviewNextQuery, SelectedTaskScmHandoffQuery,
+    ServerControlRequest, ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
     StateRecordQueryScope, TaskReadinessQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::control_envelope_dto::*;
@@ -54,7 +55,9 @@ mod runtime;
 mod selected_task_action_readiness;
 mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
+mod selected_task_review_decision;
 mod selected_task_review_next;
+mod selected_task_scm_handoff;
 mod state;
 mod task_seed_promotion;
 mod task_timeline_authority_map;

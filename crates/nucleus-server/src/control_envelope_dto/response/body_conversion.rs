@@ -21,10 +21,12 @@ use super::records::{
     ControlProductWorkflowSummaryDto, ControlProjectAuthorityMapDto,
     ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
     ControlSelectedTaskActionReadinessDto, ControlSelectedTaskCommandAdmissionDto,
-    ControlSelectedTaskOperatorActionGateDto, ControlSelectedTaskReviewNextDto,
-    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
-    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
-    ControlTaskTimelineEntryDto, ControlTaskWorkflowDrilldownDto,
+    ControlSelectedTaskOperatorActionGateDto, ControlSelectedTaskReviewDecisionAdmissionDto,
+    ControlSelectedTaskReviewDecisionRecordDto, ControlSelectedTaskReviewNextDto,
+    ControlSelectedTaskScmHandoffDto, ControlTaskReadinessCandidateDto,
+    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
+    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
+    ControlTaskWorkflowDrilldownDto,
 };
 use super::research_run_briefs::research_run_briefs_body_dto;
 use crate::control_api::{ServerControlResponseBody, ServerQueryResult};
@@ -233,10 +235,25 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
             )) => Ok(Self::SelectedTaskReviewNext {
                 review_next: ControlSelectedTaskReviewNextDto::from(review_next),
             }),
+            ServerControlResponseBody::Query(ServerQueryResult::SelectedTaskScmHandoff(
+                handoff,
+            )) => Ok(Self::SelectedTaskScmHandoff {
+                handoff: ControlSelectedTaskScmHandoffDto::from(handoff),
+            }),
             ServerControlResponseBody::Query(ServerQueryResult::SelectedTaskCommandAdmission(
                 admission,
             )) => Ok(Self::SelectedTaskCommandAdmission {
                 admission: ControlSelectedTaskCommandAdmissionDto::from(admission),
+            }),
+            ServerControlResponseBody::Query(
+                ServerQueryResult::SelectedTaskReviewDecisionAdmission(admission),
+            ) => Ok(Self::SelectedTaskReviewDecisionAdmission {
+                admission: ControlSelectedTaskReviewDecisionAdmissionDto::from(admission),
+            }),
+            ServerControlResponseBody::Query(
+                ServerQueryResult::SelectedTaskReviewDecisionApply(record),
+            ) => Ok(Self::SelectedTaskReviewDecisionApply {
+                record: ControlSelectedTaskReviewDecisionRecordDto::from(record),
             }),
             ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)) => {
                 Ok(Self::ProjectAuthorityMap {

@@ -37,7 +37,10 @@ impl ControlQueryDto {
             | Self::SelectedTaskActionReadiness { query_id, .. }
             | Self::SelectedTaskOperatorActionGate { query_id, .. }
             | Self::SelectedTaskReviewNext { query_id, .. }
+            | Self::SelectedTaskScmHandoff { query_id, .. }
             | Self::SelectedTaskCommandAdmission { query_id, .. }
+            | Self::SelectedTaskReviewDecisionAdmission { query_id, .. }
+            | Self::SelectedTaskReviewDecisionApply { query_id, .. }
             | Self::ProjectAuthorityMap { query_id, .. } => query_id.clone(),
         }
     }

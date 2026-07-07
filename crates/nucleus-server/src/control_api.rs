@@ -167,7 +167,10 @@ pub enum ServerQueryResult {
     SelectedTaskActionReadiness(crate::SelectedTaskActionReadiness),
     SelectedTaskOperatorActionGate(crate::SelectedTaskOperatorActionGate),
     SelectedTaskReviewNext(crate::SelectedTaskReviewNext),
+    SelectedTaskScmHandoff(crate::SelectedTaskScmHandoffReadiness),
     SelectedTaskCommandAdmission(crate::SelectedTaskCommandAdmission),
+    SelectedTaskReviewDecisionAdmission(crate::SelectedTaskReviewDecisionAdmission),
+    SelectedTaskReviewDecisionApply(crate::SelectedTaskReviewDecisionRecord),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     Empty,
     Unsupported {

@@ -75,7 +75,9 @@ mod runtime_metadata;
 mod selected_task_action_readiness;
 mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
+mod selected_task_review_decision;
 mod selected_task_review_next;
+mod selected_task_scm_handoff;
 mod state_records;
 mod task_readiness;
 mod task_seed_promotion_diagnostics;
@@ -215,8 +217,21 @@ where
         ServerQueryKind::SelectedTaskReviewNext(query) => {
             selected_task_review_next::selected_task_review_next_query(handler, query)
         }
+        ServerQueryKind::SelectedTaskScmHandoff(query) => {
+            selected_task_scm_handoff::selected_task_scm_handoff_query(handler, query)
+        }
         ServerQueryKind::SelectedTaskCommandAdmission(query) => {
             selected_task_command_admission::selected_task_command_admission_query(handler, query)
+        }
+        ServerQueryKind::SelectedTaskReviewDecisionAdmission(query) => {
+            selected_task_review_decision::selected_task_review_decision_admission_query(
+                handler, query,
+            )
+        }
+        ServerQueryKind::SelectedTaskReviewDecisionApply(query) => {
+            selected_task_review_decision::selected_task_review_decision_apply_query(
+                handler, query,
+            )
         }
         ServerQueryKind::ProjectAuthorityMap(query) => {
             authority_map::project_authority_map_query(query)

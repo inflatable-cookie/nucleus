@@ -40,10 +40,11 @@ use super::records::{
     ControlResearchSynthesisKindCountDto, ControlRuntimeReadinessDiagnosticDto,
     ControlRuntimeReceiptRecordDto, ControlSelectedTaskActionReadinessDto,
     ControlSelectedTaskCommandAdmissionDto, ControlSelectedTaskOperatorActionGateDto,
-    ControlSelectedTaskReviewNextDto, ControlTaskReadinessCandidateDto,
-    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
-    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
-    ControlTaskWorkflowDrilldownDto,
+    ControlSelectedTaskReviewDecisionAdmissionDto, ControlSelectedTaskReviewDecisionRecordDto,
+    ControlSelectedTaskReviewNextDto, ControlSelectedTaskScmHandoffDto,
+    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
+    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
+    ControlTaskTimelineEntryDto, ControlTaskWorkflowDrilldownDto,
 };
 use crate::control_envelope_dto::{
     ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -217,8 +218,17 @@ pub enum ControlResponseBodyDto {
     SelectedTaskReviewNext {
         review_next: ControlSelectedTaskReviewNextDto,
     },
+    SelectedTaskScmHandoff {
+        handoff: ControlSelectedTaskScmHandoffDto,
+    },
     SelectedTaskCommandAdmission {
         admission: ControlSelectedTaskCommandAdmissionDto,
+    },
+    SelectedTaskReviewDecisionAdmission {
+        admission: ControlSelectedTaskReviewDecisionAdmissionDto,
+    },
+    SelectedTaskReviewDecisionApply {
+        record: ControlSelectedTaskReviewDecisionRecordDto,
     },
     ProjectAuthorityMap {
         record: ControlProjectAuthorityMapDto,

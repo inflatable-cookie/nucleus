@@ -10,10 +10,16 @@
     querySelectedTaskActionReadiness,
     querySelectedTaskCommandAdmission,
     querySelectedTaskOperatorActionGate,
+    querySelectedTaskReviewDecisionAdmission,
+    querySelectedTaskReviewDecisionApply,
+    querySelectedTaskReviewNext,
+    querySelectedTaskScmHandoff,
     queryTaskWorkflowDrilldown,
     submitControlEnvelope,
     type ControlSelectedTaskActionDto,
     type ControlSelectedTaskCommandAdmissionDto,
+    type ControlSelectedTaskReviewDecisionAdmissionDto,
+    type ControlSelectedTaskReviewDecisionRecordDto,
     type ControlSelectedTaskOperatorActionCandidateDto,
     type ControlTaskRecordDto,
     type ControlTaskWorkflowDrilldownDto,
@@ -21,6 +27,9 @@
     type ProductWorkflowSummaryQueryResult,
     type SelectedTaskActionReadinessQueryResult,
     type SelectedTaskOperatorActionGateQueryResult,
+    type SelectedTaskReviewDecisionAction,
+    type SelectedTaskReviewNextQueryResult,
+    type SelectedTaskScmHandoffQueryResult,
     type TaskWorkflowDrilldownQueryResult,
   } from "./control";
 
@@ -37,16 +46,28 @@
     submittedRevision: string;
   };
 
+  type ReviewDecisionAdmissionMap = Partial<
+    Record<SelectedTaskReviewDecisionAction, ControlSelectedTaskReviewDecisionAdmissionDto>
+  >;
+
   let { selectedTask, onTaskCommandChanged }: Props = $props();
 
   const fallbackProjectId = "project:nucleus-local";
   const fallbackTaskId = "task:nucleus-local:bootstrap";
+  const reviewDecisionActions: SelectedTaskReviewDecisionAction[] = [
+    "accept_evidence",
+    "request_changes",
+    "reject_evidence",
+    "abandon_review",
+  ];
 
   let loading = $state(false);
   let result = $state<TaskWorkflowDrilldownQueryResult | null>(null);
   let workflowResult = $state<ProductWorkflowSummaryQueryResult | null>(null);
   let actionReadinessResult = $state<SelectedTaskActionReadinessQueryResult | null>(null);
   let operatorGateResult = $state<SelectedTaskOperatorActionGateQueryResult | null>(null);
+  let reviewNextResult = $state<SelectedTaskReviewNextQueryResult | null>(null);
+  let scmHandoffResult = $state<SelectedTaskScmHandoffQueryResult | null>(null);
   let failure = $state<string | null>(null);
   let commandPending = $state<string | null>(null);
   let blockReason = $state("");
@@ -54,6 +75,11 @@
   let lastAdmission = $state<ControlSelectedTaskCommandAdmissionDto | null>(null);
   let awaitingTaskRefresh = $state(false);
   let lastCommandRevision = $state<string | null>(null);
+  let reviewDecisionAdmissions = $state<ReviewDecisionAdmissionMap>({});
+  let reviewDecisionApplyResult = $state<ControlSelectedTaskReviewDecisionRecordDto | null>(null);
+  let reviewDecisionPending = $state<SelectedTaskReviewDecisionAction | null>(null);
+  let reviewDecisionReason = $state("");
+  let reviewDecisionFailure = $state<string | null>(null);
 
   const projectId = $derived(selectedTask?.project_id ?? fallbackProjectId);
   const taskId = $derived(selectedTask?.task_id ?? fallbackTaskId);
@@ -66,6 +92,12 @@
   );
   const operatorGate = $derived(
     operatorGateResult?.state === "record" ? operatorGateResult.gate : null,
+  );
+  const reviewNext = $derived(
+    reviewNextResult?.state === "record" ? reviewNextResult.reviewNext : null,
+  );
+  const scmHandoff = $derived(
+    scmHandoffResult?.state === "record" ? scmHandoffResult.handoff : null,
   );
   const allowedActions = $derived(
     actionReadiness?.actions.filter((action) => action.status === "allowed") ?? [],
@@ -117,27 +149,39 @@
   );
   const receiptTimelineRefs = $derived(drilldown?.timeline.entry_refs ?? []);
   const receiptTimelinePreview = $derived(receiptTimelineRefs.slice(0, 3));
+  const reviewDecisionEvidenceRefs = $derived(reviewNext?.review.evidence_refs ?? []);
 
   async function loadDrilldown() {
     loading = true;
     failure = null;
 
     try {
-      const [workflow, drilldownResult, actionReadiness, operatorGate] = await Promise.all([
+      const [workflow, drilldownResult, actionReadiness, operatorGate, reviewNext, scmHandoff] =
+        await Promise.all([
         queryProductWorkflowSummary(projectId),
         queryTaskWorkflowDrilldown(projectId, taskId),
         querySelectedTaskActionReadiness(projectId, taskId),
         querySelectedTaskOperatorActionGate(projectId, taskId),
+        querySelectedTaskReviewNext(projectId, taskId),
+        querySelectedTaskScmHandoff(projectId, taskId),
       ]);
       workflowResult = workflow;
       result = drilldownResult;
       actionReadinessResult = actionReadiness;
       operatorGateResult = operatorGate;
+      reviewNextResult = reviewNext;
+      scmHandoffResult = scmHandoff;
+      await refreshReviewDecisionAdmissions(reviewNext);
     } catch (error) {
       result = null;
       workflowResult = null;
       actionReadinessResult = null;
       operatorGateResult = null;
+      reviewNextResult = null;
+      scmHandoffResult = null;
+      reviewDecisionAdmissions = {};
+      reviewDecisionApplyResult = null;
+      reviewDecisionFailure = null;
       failure = error instanceof Error ? error.message : String(error);
     } finally {
       loading = false;
@@ -234,6 +278,93 @@
     }
   }
 
+  async function refreshReviewDecisionAdmissions(
+    nextResult: SelectedTaskReviewNextQueryResult | null = reviewNextResult,
+  ) {
+    const nextRecord = nextResult?.state === "record" ? nextResult.reviewNext : null;
+    reviewDecisionFailure = null;
+    reviewDecisionAdmissions = {};
+
+    if (!nextRecord) {
+      return;
+    }
+
+    const evidenceRefs = nextRecord.review.evidence_refs;
+    const expectedRevision = selectedTask?.revision_id ?? null;
+    const entries = await Promise.all(
+      reviewDecisionActions.map(async (action) => {
+        const reason = reviewDecisionReasonRequired(action)
+          ? reviewDecisionReason.trim() || null
+          : null;
+        const result = await querySelectedTaskReviewDecisionAdmission(
+          projectId,
+          taskId,
+          action,
+          expectedRevision,
+          reason,
+          evidenceRefs,
+          reviewDecisionIdempotencyKey("preview", action, expectedRevision),
+        );
+        return [action, result] as const;
+      }),
+    );
+
+    const admissions: ReviewDecisionAdmissionMap = {};
+    for (const [action, admissionResult] of entries) {
+      if (admissionResult.state === "record") {
+        admissions[action] = admissionResult.admission;
+      }
+    }
+    reviewDecisionAdmissions = admissions;
+  }
+
+  async function submitReviewDecision(action: SelectedTaskReviewDecisionAction) {
+    if (!selectedTask) {
+      reviewDecisionFailure = "Select a task before applying a review decision.";
+      return;
+    }
+
+    const reason = reviewDecisionReasonRequired(action) ? reviewDecisionReason.trim() : null;
+    if (reviewDecisionReasonRequired(action) && !reason) {
+      reviewDecisionFailure = "This review decision requires a reason.";
+      return;
+    }
+
+    const admission = reviewDecisionAdmissions[action];
+    if (!admission || admission.status !== "admitted" || !admission.command) {
+      reviewDecisionFailure =
+        admission?.refusal?.reason ?? "Preview an admitted review decision before apply.";
+      return;
+    }
+
+    reviewDecisionPending = action;
+    reviewDecisionFailure = null;
+
+    try {
+      const result = await querySelectedTaskReviewDecisionApply(
+        projectId,
+        taskId,
+        action,
+        selectedTask.revision_id,
+        reason,
+        reviewDecisionEvidenceRefs,
+        reviewDecisionIdempotencyKey("apply", action, selectedTask.revision_id),
+      );
+
+      if (result.state !== "record") {
+        reviewDecisionFailure = reviewDecisionFallbackMessage(result);
+        return;
+      }
+
+      reviewDecisionApplyResult = result.record;
+      await loadDrilldown();
+    } catch (error) {
+      reviewDecisionFailure = error instanceof Error ? error.message : String(error);
+    } finally {
+      reviewDecisionPending = null;
+    }
+  }
+
   $effect(() => {
     if (
       awaitingTaskRefresh &&
@@ -256,6 +387,76 @@
       ["agent scheduling", record.no_effects.agent_scheduling_performed],
       ["UI state change", record.no_effects.ui_effect_performed],
     ];
+  }
+
+  function reviewNextNoEffectFlags(): [string, boolean][] {
+    if (!reviewNext) {
+      return [];
+    }
+
+    return [
+      ["review mutation", reviewNext.no_effects.review_mutation_performed],
+      ["task mutation", reviewNext.no_effects.task_mutation_performed],
+      ["provider run", reviewNext.no_effects.provider_execution_performed],
+      ["SCM or forge change", reviewNext.no_effects.scm_or_forge_mutation_performed],
+      ["memory apply", reviewNext.no_effects.accepted_memory_apply_performed],
+      ["planning apply", reviewNext.no_effects.planning_apply_performed],
+      ["UI state change", reviewNext.no_effects.ui_effect_performed],
+    ];
+  }
+
+  function scmHandoffNoEffectFlags(): [string, boolean][] {
+    if (!scmHandoff) {
+      return [];
+    }
+
+    return [
+      ["SCM mutation", scmHandoff.no_effects.scm_mutation_performed],
+      ["forge mutation", scmHandoff.no_effects.forge_mutation_performed],
+      ["credential resolution", scmHandoff.no_effects.credential_resolution_performed],
+      ["task mutation", scmHandoff.no_effects.task_mutation_performed],
+      ["provider run", scmHandoff.no_effects.provider_execution_performed],
+      ["review mutation", scmHandoff.no_effects.review_mutation_performed],
+      ["memory apply", scmHandoff.no_effects.accepted_memory_apply_performed],
+      ["planning apply", scmHandoff.no_effects.planning_apply_performed],
+      ["projection write", scmHandoff.no_effects.projection_write_performed],
+      ["UI state change", scmHandoff.no_effects.ui_effect_performed],
+    ];
+  }
+
+  function reviewDecisionNoEffectFlags(
+    admission: ControlSelectedTaskReviewDecisionAdmissionDto,
+  ): [string, boolean][] {
+    return [
+      ["review mutation", admission.no_effects.review_mutation_performed],
+      ["task mutation", admission.no_effects.task_mutation_performed],
+      ["provider run", admission.no_effects.provider_execution_performed],
+      ["SCM or forge change", admission.no_effects.scm_or_forge_mutation_performed],
+      ["memory apply", admission.no_effects.accepted_memory_apply_performed],
+      ["planning apply", admission.no_effects.planning_apply_performed],
+      ["UI state change", admission.no_effects.ui_effect_performed],
+    ];
+  }
+
+  function reviewDecisionReasonRequired(action: SelectedTaskReviewDecisionAction) {
+    return action === "reject_evidence" || action === "request_changes" || action === "abandon_review";
+  }
+
+  function reviewDecisionLabel(action: SelectedTaskReviewDecisionAction) {
+    return action.replaceAll("_", " ");
+  }
+
+  function reviewDecisionCanApply(action: SelectedTaskReviewDecisionAction) {
+    const admission = reviewDecisionAdmissions[action];
+    return Boolean(selectedTask && admission?.status === "admitted" && admission.command);
+  }
+
+  function reviewDecisionIdempotencyKey(
+    mode: "preview" | "apply",
+    action: SelectedTaskReviewDecisionAction,
+    revision: string | null,
+  ) {
+    return `${mode}:desktop:${taskId}:${action}:${revision ?? "no-revision"}`;
   }
 
   function gapReason(gaps: ControlTaskWorkflowGapDto[], area: string) {
@@ -308,6 +509,21 @@
     switch (value.state) {
       case "empty":
         return "Selected task command admission returned no record.";
+      case "unsupported":
+        return value.reason;
+      case "error":
+        return `${value.kind}: ${value.reason}`;
+      case "unexpected":
+        return value.reason;
+    }
+  }
+
+  function reviewDecisionFallbackMessage(
+    value: Exclude<Awaited<ReturnType<typeof querySelectedTaskReviewDecisionApply>>, { state: "record" }>,
+  ) {
+    switch (value.state) {
+      case "empty":
+        return "Selected task review decision returned no record.";
       case "unsupported":
         return value.reason;
       case "error":
@@ -469,6 +685,326 @@
           </dl>
         </section>
       </div>
+
+      {#if reviewNext}
+        <div class="selected-task-review-next" aria-label="Selected task review next">
+          <section>
+            <h3>Review state</h3>
+            <p>{reviewNext.review.reason}</p>
+            <dl>
+              <div>
+                <dt>State</dt>
+                <dd>{reviewNext.review.state.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Reviewable work</dt>
+                <dd>{reviewNext.review.work_item_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Evidence refs</dt>
+                <dd>{reviewNext.review.evidence_refs.length}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Review evidence boundary</h3>
+            <dl>
+              <div>
+                <dt>Receipts</dt>
+                <dd>{reviewNext.evidence.receipt_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Checkpoints</dt>
+                <dd>{reviewNext.evidence.checkpoint_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Diffs</dt>
+                <dd>{reviewNext.evidence.diff_summary_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Validation</dt>
+                <dd>{reviewNext.evidence.validation_refs.length}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Pathway-backed next step</h3>
+            <p>{reviewNext.next.summary}</p>
+            <dl>
+              <div>
+                <dt>Category</dt>
+                <dd>{reviewNext.next.category.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Next ref</dt>
+                <dd>{reviewNext.next.next_ref ?? "none"}</dd>
+              </div>
+              <div>
+                <dt>Rationale refs</dt>
+                <dd>{reviewNext.next.rationale_refs.length}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Review gaps</h3>
+            {#if reviewNext.gaps.length > 0}
+              {#each reviewNext.gaps as gap}
+                <article>
+                  <strong>{gap.area.replaceAll("_", " ")}</strong>
+                  <span>{gap.reason}</span>
+                </article>
+              {/each}
+            {:else}
+              <p>No review-next gaps.</p>
+            {/if}
+          </section>
+        </div>
+
+        <div class="selected-task-review-next-counts" aria-label="Selected task review next counts">
+          <span>work {reviewNext.source_counts.work_items}</span>
+          <span>completed {reviewNext.source_counts.completed_work_items}</span>
+          <span>reviewable {reviewNext.source_counts.reviewable_work_items}</span>
+          <span>timeline refs {reviewNext.source_counts.timeline_refs}</span>
+          <span>review refs {reviewNext.source_counts.review_refs}</span>
+          <span>gaps {reviewNext.source_counts.gap_count}</span>
+        </div>
+
+        <div class="selected-task-review-next-no-effects" aria-label="Selected task review next no-effect flags">
+          {#each reviewNextNoEffectFlags() as [label, value]}
+            <span class:flagged={value}>{label}: {value ? "true" : "false"}</span>
+          {/each}
+        </div>
+
+        <div class="selected-task-review-decision" aria-label="Selected task review decision controls">
+          <section>
+            <h3>Review decision controls</h3>
+            <p>{reviewNext.review.reason}</p>
+            <div class="review-decision-reason-field">
+              <label for="selected-task-review-decision-reason">Decision reason</label>
+              <input
+                id="selected-task-review-decision-reason"
+                type="text"
+                bind:value={reviewDecisionReason}
+                placeholder="Required for changes, reject, abandon"
+                disabled={Boolean(reviewDecisionPending)}
+              />
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => void refreshReviewDecisionAdmissions()}
+              disabled={Boolean(reviewDecisionPending)}
+            >
+              Preview decisions
+            </Button>
+          </section>
+
+          {#each reviewDecisionActions as action}
+            {@const admission = reviewDecisionAdmissions[action]}
+            <section>
+              <h3>{reviewDecisionLabel(action)}</h3>
+              <p>{admission?.refusal?.reason ?? admission?.command?.outcome ?? "not previewed"}</p>
+              <dl>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{admission?.status ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Evidence refs</dt>
+                  <dd>{admission?.evidence_refs.length ?? reviewDecisionEvidenceRefs.length}</dd>
+                </div>
+                <div>
+                  <dt>Reason</dt>
+                  <dd>{reviewDecisionReasonRequired(action) ? "required" : "optional"}</dd>
+                </div>
+              </dl>
+              {#if admission}
+                <div class="selected-task-review-decision-no-effects" aria-label="Selected task review decision no-effect flags">
+                  {#each reviewDecisionNoEffectFlags(admission) as [label, value]}
+                    <span class:flagged={value}>{label}: {value ? "true" : "false"}</span>
+                  {/each}
+                </div>
+              {/if}
+              <Button
+                variant="secondary"
+                onClick={() => void submitReviewDecision(action)}
+                disabled={!reviewDecisionCanApply(action) ||
+                  Boolean(reviewDecisionPending) ||
+                  (reviewDecisionReasonRequired(action) && !reviewDecisionReason.trim())}
+              >
+                {reviewDecisionPending === action ? "Applying" : `Apply ${reviewDecisionLabel(action)}`}
+              </Button>
+            </section>
+          {/each}
+        </div>
+
+        {#if reviewDecisionFailure}
+          <div class="panel-message panel-message-error">
+            <Text tone="danger">{reviewDecisionFailure}</Text>
+          </div>
+        {/if}
+
+        {#if reviewDecisionApplyResult}
+          <div class="selected-task-review-decision-result" aria-label="Selected task review decision result">
+            <section>
+              <h3>Decision receipt</h3>
+              <dl>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{reviewDecisionApplyResult.status}</dd>
+                </div>
+                <div>
+                  <dt>Outcome</dt>
+                  <dd>{reviewDecisionApplyResult.outcome}</dd>
+                </div>
+                <div>
+                  <dt>Decision</dt>
+                  <dd>{reviewDecisionApplyResult.decision_id}</dd>
+                </div>
+              </dl>
+            </section>
+            <section>
+              <h3>Server blockers</h3>
+              {#if reviewDecisionApplyResult.blockers.length > 0}
+                {#each reviewDecisionApplyResult.blockers as blocker}
+                  <span>{blocker.replaceAll("_", " ")}</span>
+                {/each}
+              {:else}
+                <span>No blockers.</span>
+              {/if}
+            </section>
+            <section>
+              <h3>No-effect proof</h3>
+              <span>review mutation {reviewDecisionApplyResult.review_mutation_performed ? "true" : "false"}</span>
+              <span>task mutation {reviewDecisionApplyResult.task_lifecycle_mutation_performed ? "true" : "false"}</span>
+              <span>provider run {reviewDecisionApplyResult.provider_execution_performed ? "true" : "false"}</span>
+              <span>SCM change {reviewDecisionApplyResult.scm_or_forge_mutation_performed ? "true" : "false"}</span>
+            </section>
+          </div>
+        {/if}
+      {:else if reviewNextResult && reviewNextResult.state !== "record"}
+        <div class="panel-message">
+          <Text tone="muted">Review next-step state unavailable.</Text>
+        </div>
+      {/if}
+
+      {#if scmHandoff}
+        <div class="selected-task-scm-handoff" aria-label="Selected task SCM handoff readiness">
+          <section>
+            <h3>SCM handoff readiness</h3>
+            <p>{scmHandoff.readiness.reason}</p>
+            <dl>
+              <div>
+                <dt>State</dt>
+                <dd>{scmHandoff.readiness.state.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Handoff refs</dt>
+                <dd>{scmHandoff.readiness.handoff_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Blocker refs</dt>
+                <dd>{scmHandoff.readiness.blocker_refs.length}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Target shape</h3>
+            <p>{scmHandoff.target.shape.replaceAll("_", " ")}</p>
+            <dl>
+              <div>
+                <dt>Target refs</dt>
+                <dd>{scmHandoff.target.target_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Provider changes</dt>
+                <dd>{scmHandoff.evidence.provider_change_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Work sessions</dt>
+                <dd>{scmHandoff.evidence.scm_work_session_refs.length}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Handoff evidence boundary</h3>
+            <dl>
+              <div>
+                <dt>Checkpoints</dt>
+                <dd>{scmHandoff.evidence.checkpoint_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Diffs</dt>
+                <dd>{scmHandoff.evidence.diff_summary_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Receipts</dt>
+                <dd>{scmHandoff.evidence.runtime_receipt_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Preparation refs</dt>
+                <dd>{scmHandoff.evidence.change_request_prep_refs.length}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Handoff next step</h3>
+            <p>{scmHandoff.next.summary}</p>
+            <dl>
+              <div>
+                <dt>Category</dt>
+                <dd>{scmHandoff.next.category.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Next ref</dt>
+                <dd>{scmHandoff.next.next_ref ?? "none"}</dd>
+              </div>
+              <div>
+                <dt>Rationale refs</dt>
+                <dd>{scmHandoff.next.rationale_refs.length}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Handoff blockers</h3>
+            {#if scmHandoff.gaps.length > 0}
+              {#each scmHandoff.gaps as gap}
+                <article>
+                  <strong>{gap.area.replaceAll("_", " ")}</strong>
+                  <span>{gap.reason}</span>
+                </article>
+              {/each}
+            {:else}
+              <p>No SCM handoff blockers.</p>
+            {/if}
+          </section>
+        </div>
+
+        <div class="selected-task-scm-handoff-counts" aria-label="Selected task SCM handoff counts">
+          <span>work {scmHandoff.source_counts.work_items}</span>
+          <span>handoff refs {scmHandoff.source_counts.scm_handoff_refs}</span>
+          <span>work sessions {scmHandoff.source_counts.scm_work_session_refs}</span>
+          <span>provider changes {scmHandoff.source_counts.provider_change_refs}</span>
+          <span>prep refs {scmHandoff.source_counts.change_request_prep_refs}</span>
+          <span>gaps {scmHandoff.source_counts.gap_count}</span>
+        </div>
+
+        <div class="selected-task-scm-handoff-no-effects" aria-label="Selected task SCM handoff no-effect flags">
+          {#each scmHandoffNoEffectFlags() as [label, value]}
+            <span class:flagged={value}>{label}: {value ? "true" : "false"}</span>
+          {/each}
+        </div>
+      {:else if scmHandoffResult && scmHandoffResult.state !== "record"}
+        <div class="panel-message">
+          <Text tone="muted">SCM handoff readiness unavailable.</Text>
+        </div>
+      {/if}
 
       {#if actionReadiness}
         <div class="action-readiness" aria-label="Selected task action readiness">
@@ -813,6 +1349,10 @@
   .action-readiness,
   .operator-action-gate,
   .task-command-outcome-evidence,
+  .selected-task-review-next,
+  .selected-task-review-decision,
+  .selected-task-review-decision-result,
+  .selected-task-scm-handoff,
   .selected-task-context,
   .review-handoff-readiness {
     display: grid;
@@ -826,6 +1366,10 @@
   .action-readiness section,
   .operator-action-gate section,
   .task-command-outcome-evidence section,
+  .selected-task-review-next section,
+  .selected-task-review-decision section,
+  .selected-task-review-decision-result section,
+  .selected-task-scm-handoff section,
   .selected-task-context section,
   .review-handoff-readiness section,
   .work-items div {
@@ -845,6 +1389,10 @@
   .work-loop-guidance h3,
   .action-readiness h3,
   .operator-action-gate h3,
+  .selected-task-review-next h3,
+  .selected-task-review-decision h3,
+  .selected-task-review-decision-result h3,
+  .selected-task-scm-handoff h3,
   .selected-task-context h3,
   .review-handoff-readiness h3 {
     margin: 0 0 0.45rem;
@@ -864,6 +1412,24 @@
     font-size: 0.78rem;
   }
 
+  .selected-task-review-next p {
+    margin: 0 0 0.5rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.78rem;
+  }
+
+  .selected-task-review-decision p {
+    margin: 0 0 0.5rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.78rem;
+  }
+
+  .selected-task-scm-handoff p {
+    margin: 0 0 0.5rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.78rem;
+  }
+
   .action-readiness {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -874,6 +1440,22 @@
 
   .task-command-outcome-evidence {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .selected-task-review-next {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .selected-task-review-decision {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .selected-task-review-decision-result {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .selected-task-scm-handoff {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .action-readiness article {
@@ -892,6 +1474,28 @@
     gap: 0.2rem;
     padding: 0.5rem 0;
     border-top: 1px solid var(--poodle-color-border-subtle);
+  }
+
+  .selected-task-review-next article {
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.45rem 0;
+    border-top: 1px solid var(--poodle-color-border-subtle);
+  }
+
+  .selected-task-review-next article:first-of-type {
+    border-top: 0;
+  }
+
+  .selected-task-scm-handoff article {
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.45rem 0;
+    border-top: 1px solid var(--poodle-color-border-subtle);
+  }
+
+  .selected-task-scm-handoff article:first-of-type {
+    border-top: 0;
   }
 
   .operator-action-gate article:first-of-type {
@@ -914,6 +1518,22 @@
     white-space: nowrap;
   }
 
+  .selected-task-review-next strong {
+    overflow: hidden;
+    color: var(--poodle-color-text-primary);
+    font-size: 0.8rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .selected-task-scm-handoff strong {
+    overflow: hidden;
+    color: var(--poodle-color-text-primary);
+    font-size: 0.8rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .action-readiness span,
   .action-readiness p,
   .action-readiness small {
@@ -923,6 +1543,10 @@
   }
 
   .operator-action-gate span,
+  .selected-task-review-next span,
+  .selected-task-review-decision span,
+  .selected-task-review-decision-result span,
+  .selected-task-scm-handoff span,
   .operator-action-gate p,
   .operator-action-gate small,
   .task-command-outcome-evidence p,
@@ -943,6 +1567,26 @@
     display: grid;
     gap: 0.25rem;
     margin: 0 0 0.5rem;
+  }
+
+  .review-decision-reason-field {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0 0 0.5rem;
+  }
+
+  .review-decision-reason-field label {
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.75rem;
+  }
+
+  .review-decision-reason-field input {
+    min-width: 0;
+    padding: 0.45rem 0.5rem;
+    color: var(--poodle-color-text-primary);
+    border: 1px solid var(--poodle-color-border-subtle);
+    border-radius: var(--poodle-radius-control);
+    background: var(--poodle-color-background-surface);
   }
 
   .block-reason-field label {
@@ -1005,6 +1649,8 @@
 
   .work-loop-guidance dl,
   .task-command-outcome-evidence dl,
+  .selected-task-review-next dl,
+  .selected-task-scm-handoff dl,
   .selected-task-context dl,
   .review-handoff-readiness dl {
     display: grid;
@@ -1014,6 +1660,8 @@
 
   .work-loop-guidance dl div,
   .task-command-outcome-evidence dl div,
+  .selected-task-review-next dl div,
+  .selected-task-scm-handoff dl div,
   .review-handoff-readiness dl div,
   .drilldown-sections dl div {
     display: flex;
@@ -1031,6 +1679,10 @@
   .work-loop-guidance dd,
   .task-command-outcome-evidence dt,
   .task-command-outcome-evidence dd,
+  .selected-task-review-next dt,
+  .selected-task-review-next dd,
+  .selected-task-scm-handoff dt,
+  .selected-task-scm-handoff dd,
   .selected-task-context dt,
   .selected-task-context dd,
   .review-handoff-readiness dt,
@@ -1044,6 +1696,8 @@
 
   .work-loop-guidance dd,
   .task-command-outcome-evidence dd,
+  .selected-task-review-next dd,
+  .selected-task-scm-handoff dd,
   .selected-task-context dd,
   .review-handoff-readiness dd {
     overflow: hidden;
@@ -1085,6 +1739,16 @@
     gap: 0.35rem;
   }
 
+  .selected-task-review-next-counts,
+  .selected-task-review-next-no-effects,
+  .selected-task-review-decision-no-effects,
+  .selected-task-scm-handoff-counts,
+  .selected-task-scm-handoff-no-effects {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
   .selected-task-command-admission {
     display: flex;
     flex-wrap: wrap;
@@ -1092,7 +1756,12 @@
   }
 
   .operator-action-gate-counts span,
-  .selected-task-command-admission span {
+  .selected-task-command-admission span,
+  .selected-task-review-next-counts span,
+  .selected-task-review-next-no-effects span,
+  .selected-task-review-decision-no-effects span,
+  .selected-task-scm-handoff-counts span,
+  .selected-task-scm-handoff-no-effects span {
     padding: 0.25rem 0.45rem;
     color: var(--poodle-color-text-secondary);
     font-size: 0.72rem;
@@ -1159,6 +1828,21 @@
     border-color: var(--poodle-color-status-danger);
   }
 
+  .selected-task-review-next-no-effects span.flagged {
+    color: var(--poodle-color-status-danger);
+    border-color: var(--poodle-color-status-danger);
+  }
+
+  .selected-task-review-decision-no-effects span.flagged {
+    color: var(--poodle-color-status-danger);
+    border-color: var(--poodle-color-status-danger);
+  }
+
+  .selected-task-scm-handoff-no-effects span.flagged {
+    color: var(--poodle-color-status-danger);
+    border-color: var(--poodle-color-status-danger);
+  }
+
   @media (max-width: 980px) {
     .work-loop-guidance,
     .drilldown-identity,
@@ -1166,6 +1850,10 @@
     .action-readiness,
     .operator-action-gate,
     .task-command-outcome-evidence,
+    .selected-task-review-next,
+    .selected-task-review-decision,
+    .selected-task-review-decision-result,
+    .selected-task-scm-handoff,
     .selected-task-context,
     .review-handoff-readiness {
       grid-template-columns: repeat(2, minmax(0, 1fr));

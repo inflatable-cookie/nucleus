@@ -1,6 +1,6 @@
 # 009 Selected Task Review Next Step Presentation
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-07
 
@@ -32,9 +32,9 @@ step without accepting review evidence or completing tasks automatically.
 - [x] Keep review acceptance, task completion, provider execution, SCM/forge
   mutation, memory apply, planning apply, and final UI out of scope.
 - [x] Expose the read model through server control, `nucleusd`, and Effigy.
-- [ ] Present the evidence boundary and pathway-backed next step in the
+- [x] Present the evidence boundary and pathway-backed next step in the
   disposable desktop proof surface.
-- [ ] Validate the lane and choose the next product workflow lane from g04
+- [x] Validate the lane and choose the next product workflow lane from g04
   runway evidence.
 
 ## Execution Plan
@@ -42,24 +42,38 @@ step without accepting review evidence or completing tasks automatically.
 - [x] Batch 1: review/next-step presentation boundary.
 - [x] Batch 2: server read model and no-effect proof.
 - [x] Batch 3: CLI/Effigy inspection.
-- [ ] Batch 4: disposable desktop proof consumption.
-- [ ] Batch 5: validation and next lane selection.
+- [x] Batch 4: disposable desktop proof consumption.
+- [x] Batch 5: validation and next lane selection.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/043-selected-task-review-next-desktop-proof.md`
+None.
 
 Planned cards:
 
-- `batch-cards/044-selected-task-review-next-validation.md`
+- None.
 
 Completed cards:
 
 - `batch-cards/040-selected-task-review-next-boundary.md`
 - `batch-cards/041-selected-task-review-next-read-model.md`
 - `batch-cards/042-selected-task-review-next-cli-effigy.md`
+- `batch-cards/043-selected-task-review-next-desktop-proof.md`
+- `batch-cards/044-selected-task-review-next-validation.md`
+
+## Result
+
+The lane proves selected-task review readiness and pathway-backed next-step
+presentation across server read model, control DTOs, `nucleusd`, Effigy, and
+the disposable desktop proof. It remains read-only: no review decision, task
+completion, provider execution, SCM/forge mutation, memory apply, planning
+apply, or final UI authority was added.
+
+Next lane:
+
+- `010-selected-task-scm-handoff-readiness.md`
 
 ## Boundary
 

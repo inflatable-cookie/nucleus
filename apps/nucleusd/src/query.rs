@@ -80,7 +80,10 @@ pub(crate) fn print_query(
             | QueryDomain::SelectedTaskActionReadiness { .. }
             | QueryDomain::SelectedTaskOperatorActionGate { .. }
             | QueryDomain::SelectedTaskReviewNext { .. }
+            | QueryDomain::SelectedTaskScmHandoff { .. }
             | QueryDomain::SelectedTaskCommandAdmission { .. }
+            | QueryDomain::SelectedTaskReviewDecisionAdmission(_)
+            | QueryDomain::SelectedTaskReviewDecisionApply(_)
             | QueryDomain::ProjectAuthorityMap { .. }
     ) {
         let dto = ControlResponseEnvelopeDto::try_from(&response)

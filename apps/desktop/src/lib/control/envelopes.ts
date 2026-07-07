@@ -33,6 +33,12 @@ import type {
   ControlSelectedTaskOperatorActionGateDto,
   ControlTaskWorkflowDrilldownDto,
 } from "./taskWorkflow";
+import type { ControlSelectedTaskReviewNextDto } from "./selectedTaskReviewNext";
+import type {
+  ControlSelectedTaskReviewDecisionQueryDto,
+  ControlSelectedTaskReviewDecisionResponseBodyDto,
+} from "./selectedTaskReviewDecisionEnvelope";
+import type { ControlSelectedTaskScmHandoffDto } from "./selectedTaskScmHandoff";
 
 export type ControlQueryDto =
   | {
@@ -95,6 +101,20 @@ export type ControlQueryDto =
       task_id: string;
     }
   | {
+      kind: "selected_task_review_next";
+      query_id: string;
+      action: "review_next";
+      project_id: string;
+      task_id: string;
+    }
+  | {
+      kind: "selected_task_scm_handoff";
+      query_id: string;
+      action: "handoff";
+      project_id: string;
+      task_id: string;
+    }
+  | {
       kind: "selected_task_command_admission";
       query_id: string;
       action: "dry_run";
@@ -104,7 +124,8 @@ export type ControlQueryDto =
       expected_revision: string | null;
       reason: string | null;
       operator_ref: string;
-    };
+    }
+  | ControlSelectedTaskReviewDecisionQueryDto;
 
 export type ControlCommandDto = {
   kind: "task";
@@ -223,9 +244,18 @@ export type ControlResponseEnvelopeDto = {
         gate: ControlSelectedTaskOperatorActionGateDto;
       }
     | {
+        type: "selected_task_review_next";
+        review_next: ControlSelectedTaskReviewNextDto;
+      }
+    | {
+        type: "selected_task_scm_handoff";
+        handoff: ControlSelectedTaskScmHandoffDto;
+      }
+    | {
         type: "selected_task_command_admission";
         admission: ControlSelectedTaskCommandAdmissionDto;
       }
+    | ControlSelectedTaskReviewDecisionResponseBodyDto
     | { type: "state_records"; domain: string; records: unknown[] }
     | { type: "command_receipt"; command_id: string; status: string }
     | { type: "error"; kind: string; reason: string };

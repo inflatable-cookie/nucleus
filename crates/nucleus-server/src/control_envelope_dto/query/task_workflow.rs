@@ -6,7 +6,7 @@ use crate::control_api::{
     MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery, PlanningSessionsQuery,
     PlanningTaskSeedsQuery, ResearchRunBriefsQuery, SelectedTaskActionReadinessQuery,
     SelectedTaskCommandAdmissionQuery, SelectedTaskOperatorActionGateQuery,
-    SelectedTaskReviewNextQuery, ServerQueryKind, TaskReadinessQuery,
+    SelectedTaskReviewNextQuery, SelectedTaskScmHandoffQuery, ServerQueryKind, TaskReadinessQuery,
     TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::SelectedTaskActionFamily;
@@ -14,6 +14,7 @@ use crate::SelectedTaskActionFamily;
 use super::super::ControlApiCodecError;
 
 mod accepted_memory;
+mod selected_task_review_decision;
 pub(super) use accepted_memory::{
     accepted_memory_active_apply_diagnostics_query_from_action,
     accepted_memory_import_apply_review_diagnostics_query_from_action,
@@ -23,6 +24,11 @@ pub(super) use accepted_memory::{
     accepted_memory_projection_write_diagnostics_query_from_action,
     accepted_memory_query_from_action, accepted_memory_review_readiness_query_from_action,
     accepted_memory_review_receipt_storage_diagnostics_query_from_action,
+};
+pub(super) use selected_task_review_decision::{
+    selected_task_review_decision_action_label,
+    selected_task_review_decision_admission_query_from_action,
+    selected_task_review_decision_apply_query_from_action,
 };
 
 pub(super) fn task_timeline_query_from_action(
@@ -147,6 +153,29 @@ pub(super) fn selected_task_review_next_query_from_action(
         )),
         _ => Err(ControlApiCodecError::unsupported(format!(
             "unsupported selected task review next query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn selected_task_scm_handoff_query_from_action(
+    action: &str,
+    project_id: String,
+    task_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "handoff" if project_id.trim().is_empty() || task_id.trim().is_empty() => {
+            Err(ControlApiCodecError::unsupported(
+                "selected task SCM handoff query requires project and task ids",
+            ))
+        }
+        "handoff" => Ok(ServerQueryKind::SelectedTaskScmHandoff(
+            SelectedTaskScmHandoffQuery {
+                project_id: ProjectId(project_id),
+                task_id: TaskId(task_id),
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported selected task SCM handoff query action: {action}"
         ))),
     }
 }

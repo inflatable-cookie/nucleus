@@ -273,7 +273,11 @@ shape.
 - `g04/006-selected-task-operator-action-gate.md` - completed
 - `g04/007-selected-task-command-admission-controls.md` - completed
 - `g04/008-task-command-outcome-coherence.md` - completed
-- `g04/009-selected-task-review-next-step-presentation.md` - active
+- `g04/009-selected-task-review-next-step-presentation.md` - completed
+- `g04/010-selected-task-scm-handoff-readiness.md` - completed
+- `g04/011-product-workflow-closeout-and-next-phase-selection.md` - completed
+- `g04/012-selected-task-review-decision-controls.md` - completed
+- `g04/013-selected-task-review-outcome-routing.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -334,8 +338,10 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g04/009-selected-task-review-next-step-presentation.md`
+`docs/roadmaps/g04/013-selected-task-review-outcome-routing.md`
 with
-`docs/roadmaps/g04/batch-cards/043-selected-task-review-next-desktop-proof.md`.
-Show selected-task review readiness and pathway-backed next-step context in the
-disposable desktop proof without adding review or task mutation controls.
+`docs/roadmaps/g04/batch-cards/060-selected-task-review-outcome-boundary.md`.
+Define the post-review outcome-routing boundary so accepted, rejected,
+needs-changes, and abandoned review decisions point toward explicit
+server-owned next actions without mutating task lifecycle, provider, SCM,
+memory, planning, or final UI state.
