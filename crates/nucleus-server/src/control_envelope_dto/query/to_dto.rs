@@ -13,9 +13,10 @@ use crate::control_api::{
     ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
     SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
     SelectedTaskOperatorActionGateQuery, SelectedTaskReviewDecisionAdmissionQuery,
-    SelectedTaskReviewDecisionApplyQuery, SelectedTaskReviewNextQuery, SelectedTaskScmHandoffQuery,
-    ServerQuery, ServerQueryKind, StateRecordQuery, TaskReadinessQuery,
-    TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
+    SelectedTaskReviewDecisionApplyQuery, SelectedTaskReviewNextQuery,
+    SelectedTaskReviewOutcomeRouteQuery, SelectedTaskScmHandoffQuery, ServerQuery, ServerQueryKind,
+    StateRecordQuery, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    TaskWorkflowDrilldownQuery,
 };
 use crate::ids::ServerQueryId;
 
@@ -263,6 +264,17 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
             }) => Ok(Self::SelectedTaskReviewNext {
                 query_id: query.id.0.clone(),
                 action: "review_next".to_owned(),
+                project_id: project_id.0.clone(),
+                task_id: task_id.0.clone(),
+            }),
+            ServerQueryKind::SelectedTaskReviewOutcomeRoute(
+                SelectedTaskReviewOutcomeRouteQuery {
+                    project_id,
+                    task_id,
+                },
+            ) => Ok(Self::SelectedTaskReviewOutcomeRoute {
+                query_id: query.id.0.clone(),
+                action: "route".to_owned(),
                 project_id: project_id.0.clone(),
                 task_id: task_id.0.clone(),
             }),

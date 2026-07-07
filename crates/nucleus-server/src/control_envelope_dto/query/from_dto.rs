@@ -31,9 +31,11 @@ use super::task_workflow::{
     selected_task_operator_action_gate_query_from_action,
     selected_task_review_decision_admission_query_from_action,
     selected_task_review_decision_apply_query_from_action,
-    selected_task_review_next_query_from_action, selected_task_scm_handoff_query_from_action,
-    task_readiness_query_from_action, task_seed_promotion_diagnostics_query_from_action,
-    task_timeline_query_from_action, task_workflow_drilldown_query_from_action,
+    selected_task_review_next_query_from_action,
+    selected_task_review_outcome_route_query_from_action,
+    selected_task_scm_handoff_query_from_action, task_readiness_query_from_action,
+    task_seed_promotion_diagnostics_query_from_action, task_timeline_query_from_action,
+    task_workflow_drilldown_query_from_action,
 };
 use super::ControlQueryDto;
 use crate::control_envelope_dto::protocol::{
@@ -186,6 +188,12 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
                 task_id,
                 ..
             } => selected_task_review_next_query_from_action(&action, project_id, task_id),
+            ControlQueryDto::SelectedTaskReviewOutcomeRoute {
+                action,
+                project_id,
+                task_id,
+                ..
+            } => selected_task_review_outcome_route_query_from_action(&action, project_id, task_id),
             ControlQueryDto::SelectedTaskScmHandoff {
                 action,
                 project_id,

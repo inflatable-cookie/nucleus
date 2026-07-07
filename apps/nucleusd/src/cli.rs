@@ -107,6 +107,7 @@ pub(crate) fn print_help() {
     println!("  nucleusd [--state <path>] query selected-task-action-readiness --project <project-id> --task <task-id>");
     println!("  nucleusd [--state <path>] query selected-task-operator-action-gate --project <project-id> --task <task-id>");
     println!("  nucleusd [--state <path>] query selected-task-review-next --project <project-id> --task <task-id>");
+    println!("  nucleusd [--state <path>] query selected-task-review-outcome-route --project <project-id> --task <task-id>");
     println!("  nucleusd [--state <path>] query selected-task-scm-handoff --project <project-id> --task <task-id>");
     println!("  nucleusd [--state <path>] query selected-task-command-admission --project <project-id> --task <task-id> --family <action-family> [--expected-revision <revision-id>] [--reason <reason>] [--operator <operator-ref>]");
     println!("  nucleusd [--state <path>] query project-authority-map --project <project-id>");

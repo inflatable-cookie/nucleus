@@ -22,11 +22,13 @@ mod planning_task_seeds;
 mod product_workflow;
 mod provider;
 mod research_run_briefs;
+mod selected_task;
 mod selected_task_action_readiness;
 mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
 mod selected_task_review_decision;
 mod selected_task_review_next;
+mod selected_task_review_outcome_route;
 mod selected_task_scm_handoff;
 mod task_authority;
 mod task_readiness;
@@ -58,14 +60,23 @@ pub(super) use provider::{
     provider_read_intent_response_lines, provider_readiness_overview_response_lines,
 };
 pub(super) use research_run_briefs::research_run_briefs_response_lines;
+use selected_task::selected_task_response_lines;
+#[cfg(test)]
 pub(super) use selected_task_action_readiness::selected_task_action_readiness_response_lines;
+#[cfg(test)]
 pub(super) use selected_task_command_admission::selected_task_command_admission_response_lines;
+#[cfg(test)]
 pub(super) use selected_task_operator_action_gate::selected_task_operator_action_gate_response_lines;
+#[cfg(test)]
 pub(super) use selected_task_review_decision::{
     selected_task_review_decision_admission_response_lines,
     selected_task_review_decision_apply_response_lines,
 };
+#[cfg(test)]
 pub(super) use selected_task_review_next::selected_task_review_next_response_lines;
+#[cfg(test)]
+pub(super) use selected_task_review_outcome_route::selected_task_review_outcome_route_response_lines;
+#[cfg(test)]
 pub(super) use selected_task_scm_handoff::selected_task_scm_handoff_response_lines;
 pub(super) use task_authority::{
     project_authority_map_response_lines, task_timeline_response_lines,
@@ -80,6 +91,10 @@ pub(super) fn print_typed_dto_response(
 ) -> Result<(), String> {
     if dto.status != nucleus_server::ControlResponseStatusDto::Complete {
         return Err(format!("{label} query returned status {:?}", dto.status));
+    }
+
+    if let Some(lines) = selected_task_response_lines(label, &dto.body) {
+        return print_ok(lines);
     }
 
     match dto.body {
@@ -358,27 +373,6 @@ pub(super) fn print_typed_dto_response(
         }
         ControlResponseBodyDto::TaskWorkflowDrilldown { drilldown } => {
             print_ok(task_workflow_drilldown_response_lines(label, drilldown))
-        }
-        ControlResponseBodyDto::SelectedTaskActionReadiness { readiness } => print_ok(
-            selected_task_action_readiness_response_lines(label, readiness),
-        ),
-        ControlResponseBodyDto::SelectedTaskOperatorActionGate { gate } => print_ok(
-            selected_task_operator_action_gate_response_lines(label, gate),
-        ),
-        ControlResponseBodyDto::SelectedTaskCommandAdmission { admission } => print_ok(
-            selected_task_command_admission_response_lines(label, admission),
-        ),
-        ControlResponseBodyDto::SelectedTaskReviewDecisionAdmission { admission } => print_ok(
-            selected_task_review_decision_admission_response_lines(label, admission),
-        ),
-        ControlResponseBodyDto::SelectedTaskReviewDecisionApply { record } => print_ok(
-            selected_task_review_decision_apply_response_lines(label, record),
-        ),
-        ControlResponseBodyDto::SelectedTaskReviewNext { review_next } => {
-            print_ok(selected_task_review_next_response_lines(label, review_next))
-        }
-        ControlResponseBodyDto::SelectedTaskScmHandoff { handoff } => {
-            print_ok(selected_task_scm_handoff_response_lines(label, handoff))
         }
         ControlResponseBodyDto::ProjectAuthorityMap { record } => {
             print_ok(project_authority_map_response_lines(label, record))

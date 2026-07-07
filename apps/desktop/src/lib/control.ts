@@ -6,6 +6,7 @@ export * from "./control/responses";
 export * from "./control/selectedTaskReviewDecision";
 export * from "./control/selectedTaskReviewDecisionEnvelope";
 export * from "./control/selectedTaskReviewNext";
+export * from "./control/selectedTaskReviewOutcomeRoute";
 export * from "./control/selectedTaskScmHandoff";
 export * from "./control/taskCommandEnvelopes";
 export * from "./control/taskWorkflow";

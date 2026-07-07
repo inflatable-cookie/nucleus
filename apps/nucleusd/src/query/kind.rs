@@ -17,9 +17,10 @@ use nucleus_server::{
     SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
     SelectedTaskOperatorActionGateQuery, SelectedTaskReviewDecisionAction,
     SelectedTaskReviewDecisionAdmissionQuery, SelectedTaskReviewDecisionApplyQuery,
-    SelectedTaskReviewNextQuery, SelectedTaskScmHandoffQuery, ServerQueryKind, ServerStateDomain,
-    StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
-    TaskTimelineQuery, TaskWorkflowDrilldownQuery,
+    SelectedTaskReviewNextQuery, SelectedTaskReviewOutcomeRouteQuery, SelectedTaskScmHandoffQuery,
+    ServerQueryKind, ServerStateDomain, StateRecordQuery, StateRecordQueryScope,
+    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    TaskWorkflowDrilldownQuery,
 };
 use nucleus_tasks::TaskId;
 
@@ -203,6 +204,13 @@ pub(super) fn query_kind(query: &QueryDomain) -> ServerQueryKind {
             project_id,
             task_id,
         } => ServerQueryKind::SelectedTaskReviewNext(SelectedTaskReviewNextQuery {
+            project_id: ProjectId(project_id.clone()),
+            task_id: TaskId(task_id.clone()),
+        }),
+        QueryDomain::SelectedTaskReviewOutcomeRoute {
+            project_id,
+            task_id,
+        } => ServerQueryKind::SelectedTaskReviewOutcomeRoute(SelectedTaskReviewOutcomeRouteQuery {
             project_id: ProjectId(project_id.clone()),
             task_id: TaskId(task_id.clone()),
         }),

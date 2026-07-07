@@ -1,6 +1,7 @@
 use super::*;
 
 mod query;
+mod selected_task_review_outcome_route;
 mod selected_task_scm_handoff;
 
 #[test]

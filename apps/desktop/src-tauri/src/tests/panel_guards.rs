@@ -189,6 +189,7 @@ fn task_workflow_drilldown_proof_panel_allows_only_task_command_admission_contro
     assert!(component.contains("querySelectedTaskActionReadiness"));
     assert!(component.contains("querySelectedTaskOperatorActionGate"));
     assert!(component.contains("querySelectedTaskReviewNext"));
+    assert!(component.contains("querySelectedTaskReviewOutcomeRoute"));
     assert!(component.contains("querySelectedTaskReviewDecisionAdmission"));
     assert!(component.contains("querySelectedTaskReviewDecisionApply"));
     assert!(component.contains("querySelectedTaskScmHandoff"));
@@ -238,6 +239,17 @@ fn task_workflow_drilldown_proof_panel_allows_only_task_command_admission_contro
     assert!(component.contains("reviewDecisionApplyResult.task_lifecycle_mutation_performed"));
     assert!(component.contains("reviewDecisionApplyResult.provider_execution_performed"));
     assert!(component.contains("reviewDecisionApplyResult.scm_or_forge_mutation_performed"));
+    assert!(component.contains("Selected task review outcome route"));
+    assert!(component.contains("Review outcome route"));
+    assert!(component.contains("Route candidates"));
+    assert!(component.contains("Downstream hints"));
+    assert!(component.contains("Route blockers"));
+    assert!(component.contains("reviewOutcomeRoute.source_counts.decision_records"));
+    assert!(component.contains("reviewOutcomeRoute.source_counts.downstream_command_hints"));
+    assert!(component.contains("reviewOutcomeRoute.no_effects.task_lifecycle_mutation_performed"));
+    assert!(component.contains("reviewOutcomeRoute.no_effects.provider_execution_performed"));
+    assert!(component.contains("reviewOutcomeRoute.no_effects.scm_or_forge_mutation_performed"));
+    assert!(component.contains("reviewOutcomeRoute.no_effects.ui_effect_performed"));
     assert!(component.contains("Selected task SCM handoff readiness"));
     assert!(component.contains("SCM handoff readiness"));
     assert!(component.contains("Target shape"));

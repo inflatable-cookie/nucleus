@@ -38,6 +38,20 @@ where
     })
 }
 
+pub(super) fn parse_selected_task_review_outcome_route<I>(
+    iter: &mut I,
+) -> Result<QueryDomain, String>
+where
+    I: Iterator<Item = String>,
+{
+    parse_project_task(iter, "selected-task-review-outcome-route").map(|(project_id, task_id)| {
+        QueryDomain::SelectedTaskReviewOutcomeRoute {
+            project_id,
+            task_id,
+        }
+    })
+}
+
 pub(super) fn parse_selected_task_scm_handoff<I>(iter: &mut I) -> Result<QueryDomain, String>
 where
     I: Iterator<Item = String>,

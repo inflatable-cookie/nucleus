@@ -39,6 +39,7 @@ pub(super) fn query_domain_state_domain(domain: &QueryDomain) -> Option<ServerSt
         | QueryDomain::SelectedTaskActionReadiness { .. }
         | QueryDomain::SelectedTaskOperatorActionGate { .. }
         | QueryDomain::SelectedTaskReviewNext { .. }
+        | QueryDomain::SelectedTaskReviewOutcomeRoute { .. }
         | QueryDomain::SelectedTaskScmHandoff { .. }
         | QueryDomain::SelectedTaskCommandAdmission { .. }
         | QueryDomain::SelectedTaskReviewDecisionAdmission(_)

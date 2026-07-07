@@ -273,6 +273,7 @@ pub use super::selected_task_operator_action_gate::*;
 pub use super::selected_task_review_decision_admission::*;
 pub use super::selected_task_review_decision_records::*;
 pub use super::selected_task_review_next::*;
+pub use super::selected_task_review_outcome_route::*;
 pub use super::selected_task_scm_handoff::*;
 pub use super::server_read_only_spawn::*;
 pub use super::state::*;

@@ -62,6 +62,19 @@ export function buildSelectedTaskReviewNextQuery(
   });
 }
 
+export function buildSelectedTaskReviewOutcomeRouteQuery(
+  projectId: string,
+  taskId: string,
+): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "selected_task_review_outcome_route",
+    query_id: "",
+    action: "route",
+    project_id: projectId,
+    task_id: taskId,
+  });
+}
+
 export function buildSelectedTaskScmHandoffQuery(
   projectId: string,
   taskId: string,

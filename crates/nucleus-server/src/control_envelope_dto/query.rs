@@ -187,6 +187,12 @@ pub enum ControlQueryDto {
         project_id: String,
         task_id: String,
     },
+    SelectedTaskReviewOutcomeRoute {
+        query_id: String,
+        action: String,
+        project_id: String,
+        task_id: String,
+    },
     SelectedTaskScmHandoff {
         query_id: String,
         action: String,

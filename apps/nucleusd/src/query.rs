@@ -80,6 +80,7 @@ pub(crate) fn print_query(
             | QueryDomain::SelectedTaskActionReadiness { .. }
             | QueryDomain::SelectedTaskOperatorActionGate { .. }
             | QueryDomain::SelectedTaskReviewNext { .. }
+            | QueryDomain::SelectedTaskReviewOutcomeRoute { .. }
             | QueryDomain::SelectedTaskScmHandoff { .. }
             | QueryDomain::SelectedTaskCommandAdmission { .. }
             | QueryDomain::SelectedTaskReviewDecisionAdmission(_)

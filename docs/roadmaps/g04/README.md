@@ -99,6 +99,14 @@ Current checkpoint:
   place
 - selected-task review-decision controls are validated
 - the active path is selected-task review outcome routing
+- selected-task review outcome-routing boundary and pure read model are in
+  place
+- selected-task review outcome routing has control DTO, `nucleusd`, and Effigy
+  inspection
+- selected-task review outcome routing is visible in the disposable desktop
+  proof
+- selected-task review outcome routing is validated
+- the active path is selected-task route admission
 
 ## Roadmaps
 
@@ -114,20 +122,21 @@ Current checkpoint:
 - `010-selected-task-scm-handoff-readiness.md` - completed
 - `011-product-workflow-closeout-and-next-phase-selection.md` - completed
 - `012-selected-task-review-decision-controls.md` - completed
-- `013-selected-task-review-outcome-routing.md` - active
+- `013-selected-task-review-outcome-routing.md` - completed
+- `014-selected-task-route-admission.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/060-selected-task-review-outcome-boundary.md`
+- `batch-cards/065-selected-task-route-admission-boundary.md`
 
 Planned cards:
 
-- `batch-cards/061-selected-task-review-outcome-read-model.md`
-- `batch-cards/062-selected-task-review-outcome-cli-effigy.md`
-- `batch-cards/063-selected-task-review-outcome-desktop-proof.md`
-- `batch-cards/064-selected-task-review-outcome-validation.md`
+- `batch-cards/066-selected-task-completion-admission-read-model.md`
+- `batch-cards/067-selected-task-rework-delegation-admission-shape.md`
+- `batch-cards/068-selected-task-route-admission-surfaces.md`
+- `batch-cards/069-selected-task-route-admission-validation.md`
 
 Completed cards:
 
@@ -190,3 +199,8 @@ Completed cards:
 - `batch-cards/057-selected-task-review-decision-cli-effigy.md`
 - `batch-cards/058-selected-task-review-decision-desktop-proof.md`
 - `batch-cards/059-selected-task-review-decision-outcome-validation.md`
+- `batch-cards/060-selected-task-review-outcome-boundary.md`
+- `batch-cards/061-selected-task-review-outcome-read-model.md`
+- `batch-cards/062-selected-task-review-outcome-cli-effigy.md`
+- `batch-cards/063-selected-task-review-outcome-desktop-proof.md`
+- `batch-cards/064-selected-task-review-outcome-validation.md`

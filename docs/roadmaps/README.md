@@ -277,7 +277,8 @@ shape.
 - `g04/010-selected-task-scm-handoff-readiness.md` - completed
 - `g04/011-product-workflow-closeout-and-next-phase-selection.md` - completed
 - `g04/012-selected-task-review-decision-controls.md` - completed
-- `g04/013-selected-task-review-outcome-routing.md` - active
+- `g04/013-selected-task-review-outcome-routing.md` - completed
+- `g04/014-selected-task-route-admission.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -338,10 +339,8 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g04/013-selected-task-review-outcome-routing.md`
+`docs/roadmaps/g04/014-selected-task-route-admission.md`
 with
-`docs/roadmaps/g04/batch-cards/060-selected-task-review-outcome-boundary.md`.
-Define the post-review outcome-routing boundary so accepted, rejected,
-needs-changes, and abandoned review decisions point toward explicit
-server-owned next actions without mutating task lifecycle, provider, SCM,
-memory, planning, or final UI state.
+`docs/roadmaps/g04/batch-cards/065-selected-task-route-admission-boundary.md`.
+Define how selected-task review outcome routes enter explicit server-owned
+admission flows without mutating task lifecycle state.

@@ -29,6 +29,7 @@ mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
 mod selected_task_review_decision;
 mod selected_task_review_next;
+mod selected_task_review_outcome_route;
 mod selected_task_scm_handoff;
 mod task_readiness;
 mod task_seed_promotion;
@@ -167,6 +168,10 @@ pub use selected_task_review_next::{
     ControlSelectedTaskReviewNextDto, ControlSelectedTaskReviewNextNoEffectsDto,
     ControlSelectedTaskReviewNextSourceCountsDto, ControlSelectedTaskReviewNextStepDto,
     ControlSelectedTaskReviewSummaryDto,
+};
+pub use selected_task_review_outcome_route::{
+    ControlSelectedTaskReviewOutcomeRouteDto, ControlSelectedTaskReviewOutcomeRouteNoEffectsDto,
+    ControlSelectedTaskReviewOutcomeRouteSourceCountsDto,
 };
 pub use selected_task_scm_handoff::{
     ControlSelectedTaskScmHandoffDto, ControlSelectedTaskScmHandoffEvidenceDto,

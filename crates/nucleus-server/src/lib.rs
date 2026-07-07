@@ -308,6 +308,7 @@ pub mod selected_task_operator_action_gate;
 pub mod selected_task_review_decision_admission;
 pub mod selected_task_review_decision_records;
 pub mod selected_task_review_next;
+pub mod selected_task_review_outcome_route;
 pub mod selected_task_scm_handoff;
 pub mod server_read_only_spawn;
 pub mod state;

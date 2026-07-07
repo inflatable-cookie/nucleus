@@ -10,14 +10,14 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `060-selected-task-review-outcome-boundary.md`
+- `065-selected-task-route-admission-boundary.md`
 
 ## Planned Cards
 
-- `061-selected-task-review-outcome-read-model.md`
-- `062-selected-task-review-outcome-cli-effigy.md`
-- `063-selected-task-review-outcome-desktop-proof.md`
-- `064-selected-task-review-outcome-validation.md`
+- `066-selected-task-completion-admission-read-model.md`
+- `067-selected-task-rework-delegation-admission-shape.md`
+- `068-selected-task-route-admission-surfaces.md`
+- `069-selected-task-route-admission-validation.md`
 
 ## Completed Cards
 
@@ -80,3 +80,8 @@ Hold execution cards for `g04`.
 - `057-selected-task-review-decision-cli-effigy.md`
 - `058-selected-task-review-decision-desktop-proof.md`
 - `059-selected-task-review-decision-outcome-validation.md`
+- `060-selected-task-review-outcome-boundary.md`
+- `061-selected-task-review-outcome-read-model.md`
+- `062-selected-task-review-outcome-cli-effigy.md`
+- `063-selected-task-review-outcome-desktop-proof.md`
+- `064-selected-task-review-outcome-validation.md`

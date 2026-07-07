@@ -13,6 +13,7 @@
     querySelectedTaskReviewDecisionAdmission,
     querySelectedTaskReviewDecisionApply,
     querySelectedTaskReviewNext,
+    querySelectedTaskReviewOutcomeRoute,
     querySelectedTaskScmHandoff,
     queryTaskWorkflowDrilldown,
     submitControlEnvelope,
@@ -29,6 +30,7 @@
     type SelectedTaskOperatorActionGateQueryResult,
     type SelectedTaskReviewDecisionAction,
     type SelectedTaskReviewNextQueryResult,
+    type SelectedTaskReviewOutcomeRouteQueryResult,
     type SelectedTaskScmHandoffQueryResult,
     type TaskWorkflowDrilldownQueryResult,
   } from "./control";
@@ -67,6 +69,7 @@
   let actionReadinessResult = $state<SelectedTaskActionReadinessQueryResult | null>(null);
   let operatorGateResult = $state<SelectedTaskOperatorActionGateQueryResult | null>(null);
   let reviewNextResult = $state<SelectedTaskReviewNextQueryResult | null>(null);
+  let reviewOutcomeRouteResult = $state<SelectedTaskReviewOutcomeRouteQueryResult | null>(null);
   let scmHandoffResult = $state<SelectedTaskScmHandoffQueryResult | null>(null);
   let failure = $state<string | null>(null);
   let commandPending = $state<string | null>(null);
@@ -95,6 +98,9 @@
   );
   const reviewNext = $derived(
     reviewNextResult?.state === "record" ? reviewNextResult.reviewNext : null,
+  );
+  const reviewOutcomeRoute = $derived(
+    reviewOutcomeRouteResult?.state === "record" ? reviewOutcomeRouteResult.route : null,
   );
   const scmHandoff = $derived(
     scmHandoffResult?.state === "record" ? scmHandoffResult.handoff : null,
@@ -156,13 +162,21 @@
     failure = null;
 
     try {
-      const [workflow, drilldownResult, actionReadiness, operatorGate, reviewNext, scmHandoff] =
-        await Promise.all([
+      const [
+        workflow,
+        drilldownResult,
+        actionReadiness,
+        operatorGate,
+        reviewNext,
+        reviewOutcomeRoute,
+        scmHandoff,
+      ] = await Promise.all([
         queryProductWorkflowSummary(projectId),
         queryTaskWorkflowDrilldown(projectId, taskId),
         querySelectedTaskActionReadiness(projectId, taskId),
         querySelectedTaskOperatorActionGate(projectId, taskId),
         querySelectedTaskReviewNext(projectId, taskId),
+        querySelectedTaskReviewOutcomeRoute(projectId, taskId),
         querySelectedTaskScmHandoff(projectId, taskId),
       ]);
       workflowResult = workflow;
@@ -170,6 +184,7 @@
       actionReadinessResult = actionReadiness;
       operatorGateResult = operatorGate;
       reviewNextResult = reviewNext;
+      reviewOutcomeRouteResult = reviewOutcomeRoute;
       scmHandoffResult = scmHandoff;
       await refreshReviewDecisionAdmissions(reviewNext);
     } catch (error) {
@@ -178,6 +193,7 @@
       actionReadinessResult = null;
       operatorGateResult = null;
       reviewNextResult = null;
+      reviewOutcomeRouteResult = null;
       scmHandoffResult = null;
       reviewDecisionAdmissions = {};
       reviewDecisionApplyResult = null;
@@ -402,6 +418,25 @@
       ["memory apply", reviewNext.no_effects.accepted_memory_apply_performed],
       ["planning apply", reviewNext.no_effects.planning_apply_performed],
       ["UI state change", reviewNext.no_effects.ui_effect_performed],
+    ];
+  }
+
+  function reviewOutcomeRouteNoEffectFlags(): [string, boolean][] {
+    if (!reviewOutcomeRoute) {
+      return [];
+    }
+
+    return [
+      ["review mutation", reviewOutcomeRoute.no_effects.review_mutation_performed],
+      ["task mutation", reviewOutcomeRoute.no_effects.task_lifecycle_mutation_performed],
+      ["provider run", reviewOutcomeRoute.no_effects.provider_execution_performed],
+      ["provider write", reviewOutcomeRoute.no_effects.provider_write_performed],
+      ["SCM or forge change", reviewOutcomeRoute.no_effects.scm_or_forge_mutation_performed],
+      ["memory apply", reviewOutcomeRoute.no_effects.accepted_memory_apply_performed],
+      ["planning apply", reviewOutcomeRoute.no_effects.planning_apply_performed],
+      ["projection write", reviewOutcomeRoute.no_effects.projection_write_performed],
+      ["agent scheduling", reviewOutcomeRoute.no_effects.agent_scheduling_performed],
+      ["UI state change", reviewOutcomeRoute.no_effects.ui_effect_performed],
     ];
   }
 
@@ -890,6 +925,82 @@
         </div>
       {/if}
 
+      {#if reviewOutcomeRoute}
+        <div class="selected-task-review-outcome-route" aria-label="Selected task review outcome route">
+          <section>
+            <h3>Review outcome route</h3>
+            <p>{reviewOutcomeRoute.primary_route.replaceAll("_", " ")}</p>
+            <dl>
+              <div>
+                <dt>Status</dt>
+                <dd>{reviewOutcomeRoute.status.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Decision</dt>
+                <dd>{reviewOutcomeRoute.decision_ref ?? "none"}</dd>
+              </div>
+              <div>
+                <dt>Outcome</dt>
+                <dd>{reviewOutcomeRoute.decision_outcome?.replaceAll("_", " ") ?? "none"}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Route candidates</h3>
+            {#if reviewOutcomeRoute.candidates.length > 0}
+              {#each reviewOutcomeRoute.candidates as candidate}
+                <span>{candidate.replaceAll("_", " ")}</span>
+              {/each}
+            {:else}
+              <p>No route candidates.</p>
+            {/if}
+          </section>
+
+          <section>
+            <h3>Downstream hints</h3>
+            {#if reviewOutcomeRoute.downstream_command_hints.length > 0}
+              {#each reviewOutcomeRoute.downstream_command_hints as hint}
+                <span>{hint.replaceAll("_", " ")}</span>
+              {/each}
+            {:else}
+              <p>No downstream command hints.</p>
+            {/if}
+          </section>
+
+          <section>
+            <h3>Route blockers</h3>
+            {#if reviewOutcomeRoute.blockers.length > 0}
+              {#each reviewOutcomeRoute.blockers as blocker}
+                <span>{blocker.replaceAll("_", " ")}</span>
+              {/each}
+            {:else}
+              <p>No route blockers.</p>
+            {/if}
+          </section>
+        </div>
+
+        <div class="selected-task-review-outcome-route-counts" aria-label="Selected task review outcome route counts">
+          <span>decisions {reviewOutcomeRoute.source_counts.decision_records}</span>
+          <span>work refs {reviewOutcomeRoute.source_counts.work_item_refs}</span>
+          <span>evidence {reviewOutcomeRoute.source_counts.evidence_refs}</span>
+          <span>review gaps {reviewOutcomeRoute.source_counts.review_gap_count}</span>
+          <span>handoff refs {reviewOutcomeRoute.source_counts.scm_handoff_refs}</span>
+          <span>hints {reviewOutcomeRoute.source_counts.downstream_command_hints}</span>
+          <span>blockers {reviewOutcomeRoute.source_counts.blockers}</span>
+        </div>
+
+        <div class="selected-task-review-outcome-route-no-effects" aria-label="Selected task review outcome route no-effect flags">
+          {#each reviewOutcomeRouteNoEffectFlags() as [label, value]}
+            <span class:flagged={value}>{label}: {value ? "true" : "false"}</span>
+          {/each}
+        </div>
+      {:else if reviewOutcomeRouteResult && reviewOutcomeRouteResult.state !== "record"}
+        <div class="panel-message">
+          <Text tone="muted">Review outcome route unavailable.</Text>
+        </div>
+      {/if}
+
       {#if scmHandoff}
         <div class="selected-task-scm-handoff" aria-label="Selected task SCM handoff readiness">
           <section>
@@ -1350,6 +1461,7 @@
   .operator-action-gate,
   .task-command-outcome-evidence,
   .selected-task-review-next,
+  .selected-task-review-outcome-route,
   .selected-task-review-decision,
   .selected-task-review-decision-result,
   .selected-task-scm-handoff,
@@ -1367,6 +1479,7 @@
   .operator-action-gate section,
   .task-command-outcome-evidence section,
   .selected-task-review-next section,
+  .selected-task-review-outcome-route section,
   .selected-task-review-decision section,
   .selected-task-review-decision-result section,
   .selected-task-scm-handoff section,
@@ -1390,6 +1503,7 @@
   .action-readiness h3,
   .operator-action-gate h3,
   .selected-task-review-next h3,
+  .selected-task-review-outcome-route h3,
   .selected-task-review-decision h3,
   .selected-task-review-decision-result h3,
   .selected-task-scm-handoff h3,
@@ -1413,6 +1527,12 @@
   }
 
   .selected-task-review-next p {
+    margin: 0 0 0.5rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.78rem;
+  }
+
+  .selected-task-review-outcome-route p {
     margin: 0 0 0.5rem;
     color: var(--poodle-color-text-secondary);
     font-size: 0.78rem;
@@ -1443,6 +1563,10 @@
   }
 
   .selected-task-review-next {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .selected-task-review-outcome-route {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
@@ -1544,6 +1668,7 @@
 
   .operator-action-gate span,
   .selected-task-review-next span,
+  .selected-task-review-outcome-route span,
   .selected-task-review-decision span,
   .selected-task-review-decision-result span,
   .selected-task-scm-handoff span,
@@ -1650,6 +1775,7 @@
   .work-loop-guidance dl,
   .task-command-outcome-evidence dl,
   .selected-task-review-next dl,
+  .selected-task-review-outcome-route dl,
   .selected-task-scm-handoff dl,
   .selected-task-context dl,
   .review-handoff-readiness dl {
@@ -1661,6 +1787,7 @@
   .work-loop-guidance dl div,
   .task-command-outcome-evidence dl div,
   .selected-task-review-next dl div,
+  .selected-task-review-outcome-route dl div,
   .selected-task-scm-handoff dl div,
   .review-handoff-readiness dl div,
   .drilldown-sections dl div {
@@ -1681,6 +1808,8 @@
   .task-command-outcome-evidence dd,
   .selected-task-review-next dt,
   .selected-task-review-next dd,
+  .selected-task-review-outcome-route dt,
+  .selected-task-review-outcome-route dd,
   .selected-task-scm-handoff dt,
   .selected-task-scm-handoff dd,
   .selected-task-context dt,
@@ -1697,6 +1826,7 @@
   .work-loop-guidance dd,
   .task-command-outcome-evidence dd,
   .selected-task-review-next dd,
+  .selected-task-review-outcome-route dd,
   .selected-task-scm-handoff dd,
   .selected-task-context dd,
   .review-handoff-readiness dd {
@@ -1741,6 +1871,8 @@
 
   .selected-task-review-next-counts,
   .selected-task-review-next-no-effects,
+  .selected-task-review-outcome-route-counts,
+  .selected-task-review-outcome-route-no-effects,
   .selected-task-review-decision-no-effects,
   .selected-task-scm-handoff-counts,
   .selected-task-scm-handoff-no-effects {
@@ -1759,6 +1891,8 @@
   .selected-task-command-admission span,
   .selected-task-review-next-counts span,
   .selected-task-review-next-no-effects span,
+  .selected-task-review-outcome-route-counts span,
+  .selected-task-review-outcome-route-no-effects span,
   .selected-task-review-decision-no-effects span,
   .selected-task-scm-handoff-counts span,
   .selected-task-scm-handoff-no-effects span {
@@ -1833,6 +1967,11 @@
     border-color: var(--poodle-color-status-danger);
   }
 
+  .selected-task-review-outcome-route-no-effects span.flagged {
+    color: var(--poodle-color-status-danger);
+    border-color: var(--poodle-color-status-danger);
+  }
+
   .selected-task-review-decision-no-effects span.flagged {
     color: var(--poodle-color-status-danger);
     border-color: var(--poodle-color-status-danger);
@@ -1851,6 +1990,7 @@
     .operator-action-gate,
     .task-command-outcome-evidence,
     .selected-task-review-next,
+    .selected-task-review-outcome-route,
     .selected-task-review-decision,
     .selected-task-review-decision-result,
     .selected-task-scm-handoff,
