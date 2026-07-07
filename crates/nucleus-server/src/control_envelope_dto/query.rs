@@ -181,6 +181,16 @@ pub enum ControlQueryDto {
         project_id: String,
         task_id: String,
     },
+    SelectedTaskCommandAdmission {
+        query_id: String,
+        action: String,
+        project_id: String,
+        task_id: String,
+        family: String,
+        expected_revision: Option<String>,
+        reason: Option<String>,
+        operator_ref: String,
+    },
     ProjectAuthorityMap {
         query_id: String,
         action: String,

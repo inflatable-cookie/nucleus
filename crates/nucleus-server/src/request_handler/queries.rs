@@ -73,6 +73,7 @@ mod provider_readiness_overview;
 mod research_run_briefs;
 mod runtime_metadata;
 mod selected_task_action_readiness;
+mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
 mod state_records;
 mod task_readiness;
@@ -209,6 +210,9 @@ where
             selected_task_operator_action_gate::selected_task_operator_action_gate_query(
                 handler, query,
             )
+        }
+        ServerQueryKind::SelectedTaskCommandAdmission(query) => {
+            selected_task_command_admission::selected_task_command_admission_query(handler, query)
         }
         ServerQueryKind::ProjectAuthorityMap(query) => {
             authority_map::project_authority_map_query(query)

@@ -28,6 +28,7 @@ import type {
 } from "./planningResearch";
 import type { ControlProductWorkflowSummaryDto } from "./productWorkflow";
 import type {
+  ControlSelectedTaskCommandAdmissionDto,
   ControlSelectedTaskActionReadinessDto,
   ControlSelectedTaskOperatorActionGateDto,
   ControlTaskWorkflowDrilldownDto,
@@ -92,6 +93,17 @@ export type ControlQueryDto =
       action: "gate";
       project_id: string;
       task_id: string;
+    }
+  | {
+      kind: "selected_task_command_admission";
+      query_id: string;
+      action: "dry_run";
+      project_id: string;
+      task_id: string;
+      family: string;
+      expected_revision: string | null;
+      reason: string | null;
+      operator_ref: string;
     };
 
 export type ControlCommandDto = {
@@ -210,12 +222,16 @@ export type ControlResponseEnvelopeDto = {
         type: "selected_task_operator_action_gate";
         gate: ControlSelectedTaskOperatorActionGateDto;
       }
+    | {
+        type: "selected_task_command_admission";
+        admission: ControlSelectedTaskCommandAdmissionDto;
+      }
     | { type: "state_records"; domain: string; records: unknown[] }
     | { type: "command_receipt"; command_id: string; status: string }
     | { type: "error"; kind: string; reason: string };
 };
 
-function buildControlQueryEnvelope(query: ControlQueryDto): ControlRequestEnvelopeDto {
+export function buildControlQueryEnvelope(query: ControlQueryDto): ControlRequestEnvelopeDto {
   const suffix = crypto.randomUUID();
 
   return {
@@ -233,7 +249,7 @@ function buildControlQueryEnvelope(query: ControlQueryDto): ControlRequestEnvelo
   };
 }
 
-function buildControlCommandEnvelope(command: ControlCommandDto): ControlRequestEnvelopeDto {
+export function buildControlCommandEnvelope(command: ControlCommandDto): ControlRequestEnvelopeDto {
   const suffix = crypto.randomUUID();
   const commandId = command.command_id || `command:desktop:${suffix}`;
 
@@ -345,77 +361,4 @@ export function buildProductWorkflowSummaryQuery(projectId: string): ControlRequ
     action: "summary",
     project_id: projectId,
   });
-}
-
-export function buildTaskWorkflowDrilldownQuery(
-  projectId: string,
-  taskId: string,
-): ControlRequestEnvelopeDto {
-  return buildControlQueryEnvelope({
-    kind: "task_workflow_drilldown",
-    query_id: "",
-    action: "drilldown",
-    project_id: projectId,
-    task_id: taskId,
-  });
-}
-
-export function buildSelectedTaskActionReadinessQuery(
-  projectId: string,
-  taskId: string,
-): ControlRequestEnvelopeDto {
-  return buildControlQueryEnvelope({
-    kind: "selected_task_action_readiness",
-    query_id: "",
-    action: "readiness",
-    project_id: projectId,
-    task_id: taskId,
-  });
-}
-
-export function buildSelectedTaskOperatorActionGateQuery(
-  projectId: string,
-  taskId: string,
-): ControlRequestEnvelopeDto {
-  return buildControlQueryEnvelope({
-    kind: "selected_task_operator_action_gate",
-    query_id: "",
-    action: "gate",
-    project_id: projectId,
-    task_id: taskId,
-  });
-}
-
-export function buildTaskTransitionCommand(
-  task: ControlTaskRecordDto,
-  action: ControlTaskTransitionAction,
-  reason: string | null = null,
-): ControlRequestEnvelopeDto {
-  return buildControlCommandEnvelope({
-    kind: "task",
-    command_id: "",
-    action,
-    task_id: task.task_id,
-    expected_revision: task.revision_id,
-    reason,
-  });
-}
-
-export function buildStartTaskCommand(task: ControlTaskRecordDto): ControlRequestEnvelopeDto {
-  return buildTaskTransitionCommand(task, "start");
-}
-
-export function buildBlockTaskCommand(
-  task: ControlTaskRecordDto,
-  reason: string,
-): ControlRequestEnvelopeDto {
-  return buildTaskTransitionCommand(task, "block", reason);
-}
-
-export function buildCompleteTaskCommand(task: ControlTaskRecordDto): ControlRequestEnvelopeDto {
-  return buildTaskTransitionCommand(task, "complete");
-}
-
-export function buildArchiveTaskCommand(task: ControlTaskRecordDto): ControlRequestEnvelopeDto {
-  return buildTaskTransitionCommand(task, "archive");
 }

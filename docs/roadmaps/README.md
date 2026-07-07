@@ -270,7 +270,9 @@ shape.
 - `g04/003-task-workflow-drilldown-and-handoff-readiness.md` - completed
 - `g04/004-selected-task-work-loop-composition.md` - completed
 - `g04/005-selected-task-action-readiness.md` - completed
-- `g04/006-selected-task-operator-action-gate.md` - active
+- `g04/006-selected-task-operator-action-gate.md` - completed
+- `g04/007-selected-task-command-admission-controls.md` - completed
+- `g04/008-task-command-outcome-coherence.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -331,7 +333,7 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g04/006-selected-task-operator-action-gate.md`
+`docs/roadmaps/g04/008-task-command-outcome-coherence.md`
 with
-`docs/roadmaps/g04/batch-cards/030-selected-task-operator-action-validation-next-lane.md`.
-Validate the selected-task operator action gate lane and choose the next product lane.
+`docs/roadmaps/g04/batch-cards/037-task-command-desktop-refresh-loop.md`.
+Refresh task workflow proof state after task-only command receipts.

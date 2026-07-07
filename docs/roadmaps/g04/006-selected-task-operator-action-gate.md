@@ -1,6 +1,6 @@
 # 006 Selected Task Operator Action Gate
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-06
 
@@ -33,7 +33,7 @@ client become the state authority.
 - [x] Expose the gate through CLI/Effigy for inspection.
 - [x] Add disposable desktop proof consumption only after the server gate is
   stable.
-- [ ] Choose the next product lane from evidence.
+- [x] Choose the next product lane from evidence.
 
 ## Execution Plan
 
@@ -41,13 +41,13 @@ client become the state authority.
 - [x] Batch 2: server-owned action gate/read model.
 - [x] Batch 3: CLI/Effigy inspection.
 - [x] Batch 4: disposable desktop proof consumption.
-- [ ] Batch 5: validation and next lane selection.
+- [x] Batch 5: validation and next lane selection.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/030-selected-task-operator-action-validation-next-lane.md`
+- None.
 
 Planned cards:
 
@@ -59,6 +59,22 @@ Completed cards:
 - `batch-cards/027-selected-task-operator-action-gate-read-model.md`
 - `batch-cards/028-selected-task-operator-action-cli-effigy.md`
 - `batch-cards/029-selected-task-operator-action-desktop-proof.md`
+- `batch-cards/030-selected-task-operator-action-validation-next-lane.md`
+
+## Result
+
+The lane now provides:
+
+- selected-task action readiness
+- server-owned operator action gate
+- CLI and Effigy inspection
+- disposable desktop proof consumption
+- strict no-effect posture for provider, delegation, SCM/forge, review
+  acceptance, active apply, and final UI
+
+Next lane:
+
+- `007-selected-task-command-admission-controls.md`
 
 ## Boundary
 

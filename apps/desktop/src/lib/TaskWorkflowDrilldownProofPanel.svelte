@@ -2,11 +2,18 @@
   import { Button, StatusIndicator, Surface, Text } from "@poodle/svelte";
   import { refreshCw } from "@poodle/icons-lucide";
   import {
+    buildArchiveTaskCommand,
+    buildBlockTaskCommand,
+    buildCompleteTaskCommand,
+    buildStartTaskCommand,
     queryProductWorkflowSummary,
     querySelectedTaskActionReadiness,
+    querySelectedTaskCommandAdmission,
     querySelectedTaskOperatorActionGate,
     queryTaskWorkflowDrilldown,
+    submitControlEnvelope,
     type ControlSelectedTaskActionDto,
+    type ControlSelectedTaskCommandAdmissionDto,
     type ControlSelectedTaskOperatorActionCandidateDto,
     type ControlTaskRecordDto,
     type ControlTaskWorkflowDrilldownDto,
@@ -19,9 +26,10 @@
 
   type Props = {
     selectedTask: ControlTaskRecordDto | null;
+    onTaskCommandChanged?: () => void;
   };
 
-  let { selectedTask }: Props = $props();
+  let { selectedTask, onTaskCommandChanged }: Props = $props();
 
   const fallbackProjectId = "project:nucleus-local";
   const fallbackTaskId = "task:nucleus-local:bootstrap";
@@ -32,6 +40,10 @@
   let actionReadinessResult = $state<SelectedTaskActionReadinessQueryResult | null>(null);
   let operatorGateResult = $state<SelectedTaskOperatorActionGateQueryResult | null>(null);
   let failure = $state<string | null>(null);
+  let commandPending = $state<string | null>(null);
+  let blockReason = $state("");
+  let commandMessage = $state<string | null>(null);
+  let lastAdmission = $state<ControlSelectedTaskCommandAdmissionDto | null>(null);
 
   const projectId = $derived(selectedTask?.project_id ?? fallbackProjectId);
   const taskId = $derived(selectedTask?.task_id ?? fallbackTaskId);
@@ -112,6 +124,80 @@
     }
   }
 
+  async function submitSelectedTaskCommand(candidate: ControlSelectedTaskOperatorActionCandidateDto) {
+    if (!selectedTask || !candidate.task_command) {
+      return;
+    }
+
+    const action = candidate.task_command.action;
+    const reason = candidate.reason_required ? blockReason.trim() : null;
+    if (candidate.reason_required && !reason) {
+      failure = "Block requires a reason.";
+      return;
+    }
+
+    commandPending = candidate.family;
+    commandMessage = null;
+    failure = null;
+    lastAdmission = null;
+
+    try {
+      const admissionResult = await querySelectedTaskCommandAdmission(
+        projectId,
+        taskId,
+        candidate.family,
+        selectedTask.revision_id,
+        reason,
+      );
+
+      if (admissionResult.state !== "record") {
+        failure = admissionFallbackMessage(admissionResult);
+        return;
+      }
+
+      lastAdmission = admissionResult.admission;
+      if (admissionResult.admission.status !== "admitted" || !admissionResult.admission.command) {
+        failure =
+          admissionResult.admission.refusal?.reason ??
+          "Selected task command admission was refused.";
+        return;
+      }
+
+      const request =
+        action === "start"
+          ? buildStartTaskCommand(selectedTask)
+          : action === "block"
+            ? buildBlockTaskCommand(selectedTask, reason ?? "")
+            : action === "complete"
+              ? buildCompleteTaskCommand(selectedTask)
+              : action === "archive"
+                ? buildArchiveTaskCommand(selectedTask)
+                : null;
+
+      if (!request) {
+        failure = `Unsupported task command action: ${action}`;
+        return;
+      }
+
+      const response = await submitControlEnvelope(request);
+      if (response.body.type === "command_receipt") {
+        commandMessage = `${response.body.command_id}: ${response.body.status}`;
+        if (response.body.status !== "rejected") {
+          onTaskCommandChanged?.();
+          await loadDrilldown();
+        }
+      } else if (response.body.type === "error") {
+        failure = `${response.body.kind}: ${response.body.reason}`;
+      } else {
+        failure = `Unexpected command response: ${response.body.type}`;
+      }
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    } finally {
+      commandPending = null;
+    }
+  }
+
   function noEffectFlags(record: ControlTaskWorkflowDrilldownDto): [string, boolean][] {
     return [
       ["task mutation", record.no_effects.task_mutation_performed],
@@ -172,6 +258,19 @@
     }
   }
 
+  function admissionFallbackMessage(value: Exclude<Awaited<ReturnType<typeof querySelectedTaskCommandAdmission>>, { state: "record" }>) {
+    switch (value.state) {
+      case "empty":
+        return "Selected task command admission returned no record.";
+      case "unsupported":
+        return value.reason;
+      case "error":
+        return `${value.kind}: ${value.reason}`;
+      case "unexpected":
+        return value.reason;
+    }
+  }
+
   $effect(() => {
     void projectId;
     void taskId;
@@ -184,7 +283,7 @@
     <div class="panel-head">
       <div class="panel-copy">
         <h2>Task workflow</h2>
-        <Text tone="muted">Read-only selected task drilldown.</Text>
+        <Text tone="muted">Selected task proof controls.</Text>
       </div>
       <StatusIndicator status={statusTone} label={statusLabel} />
     </div>
@@ -392,6 +491,16 @@
           <section>
             <h3>Task command candidates</h3>
             {#if taskCommandCandidates.length > 0}
+              <div class="block-reason-field">
+                <label for="selected-task-block-reason">Block reason</label>
+                <input
+                  id="selected-task-block-reason"
+                  type="text"
+                  bind:value={blockReason}
+                  placeholder="Required before block"
+                  disabled={Boolean(commandPending)}
+                />
+              </div>
               {#each taskCommandCandidates as candidate}
                 <article>
                   <strong>{gateCandidateLabel(candidate)}</strong>
@@ -401,6 +510,17 @@
                     {candidate.expected_revision_required ? "required" : "not required"},
                     reason {candidate.reason_required ? "required" : "not required"}
                   </small>
+                  <Button
+                    variant="secondary"
+                    onClick={() => void submitSelectedTaskCommand(candidate)}
+                    disabled={!selectedTask ||
+                      Boolean(commandPending) ||
+                      (candidate.reason_required && !blockReason.trim())}
+                  >
+                    {commandPending === candidate.family
+                      ? "Submitting"
+                      : `${gateCommandLabel(candidate)} task`}
+                  </Button>
                 </article>
               {/each}
             {:else}
@@ -446,6 +566,21 @@
           <span>deferred {operatorGate.source_counts.deferred_actions}</span>
           <span>gate effects {operatorGate.no_effects.task_mutation_performed ? "check" : "none"}</span>
         </div>
+
+        {#if lastAdmission}
+          <div class="selected-task-command-admission" aria-label="Selected task command admission">
+            <span>admission {lastAdmission.status}</span>
+            <span>family {lastAdmission.family}</span>
+            <span>command {lastAdmission.command?.action ?? "none"}</span>
+            <span>task mutation proof {lastAdmission.no_effects.task_mutation_performed ? "check" : "none"}</span>
+          </div>
+        {/if}
+
+        {#if commandMessage}
+          <div class="panel-message">
+            <Text tone="muted">{commandMessage}</Text>
+          </div>
+        {/if}
       {:else if operatorGateResult && operatorGateResult.state !== "record"}
         <div class="panel-message">
           <Text tone="muted">Operator action gate unavailable.</Text>
@@ -669,6 +804,26 @@
     font-size: 0.75rem;
   }
 
+  .block-reason-field {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0 0 0.5rem;
+  }
+
+  .block-reason-field label {
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.75rem;
+  }
+
+  .block-reason-field input {
+    min-width: 0;
+    padding: 0.45rem 0.5rem;
+    color: var(--poodle-color-text-primary);
+    border: 1px solid var(--poodle-color-border-subtle);
+    border-radius: var(--poodle-radius-control);
+    background: var(--poodle-color-background-surface);
+  }
+
   .work-loop-guidance small {
     color: var(--poodle-color-text-secondary);
     font-size: 0.75rem;
@@ -790,7 +945,14 @@
     gap: 0.35rem;
   }
 
-  .operator-action-gate-counts span {
+  .selected-task-command-admission {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .operator-action-gate-counts span,
+  .selected-task-command-admission span {
     padding: 0.25rem 0.45rem;
     color: var(--poodle-color-text-secondary);
     font-size: 0.72rem;

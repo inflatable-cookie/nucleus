@@ -268,6 +268,7 @@ pub use super::sandbox_backend::*;
 pub use super::scheduler::*;
 pub use super::secret_store::*;
 pub use super::selected_task_action_readiness::*;
+pub use super::selected_task_command_admission::*;
 pub use super::selected_task_operator_action_gate::*;
 pub use super::server_read_only_spawn::*;
 pub use super::state::*;

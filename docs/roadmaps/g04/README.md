@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-06
+Updated: 2026-07-07
 
 ## Purpose
 
@@ -64,6 +64,14 @@ Current checkpoint:
 - selected-task operator task-action boundary and read-only gate are in place
 - selected-task operator action gate has CLI and Effigy inspection
 - selected-task operator action gate is visible in the disposable desktop proof
+- selected-task operator action gate is validated
+- the active path is selected-task task-command admission controls
+- selected-task command admission boundary and server proof are in place
+- selected-task command admission has CLI and Effigy dry-run inspection
+- selected-task command admission has disposable desktop proof controls
+- selected-task command admission is validated
+- the active path is task-command outcome coherence
+- task-command shell refresh boundary is in place
 
 ## Roadmaps
 
@@ -72,17 +80,20 @@ Current checkpoint:
 - `003-task-workflow-drilldown-and-handoff-readiness.md` - completed
 - `004-selected-task-work-loop-composition.md` - completed
 - `005-selected-task-action-readiness.md` - completed
-- `006-selected-task-operator-action-gate.md` - active
+- `006-selected-task-operator-action-gate.md` - completed
+- `007-selected-task-command-admission-controls.md` - completed
+- `008-task-command-outcome-coherence.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/030-selected-task-operator-action-validation-next-lane.md`
+- `batch-cards/037-task-command-desktop-refresh-loop.md`
 
 Planned cards:
 
-- None.
+- `batch-cards/038-task-command-receipt-timeline-presentation.md`
+- `batch-cards/039-task-command-outcome-validation-next-lane.md`
 
 Completed cards:
 
@@ -115,3 +126,10 @@ Completed cards:
 - `batch-cards/027-selected-task-operator-action-gate-read-model.md`
 - `batch-cards/028-selected-task-operator-action-cli-effigy.md`
 - `batch-cards/029-selected-task-operator-action-desktop-proof.md`
+- `batch-cards/030-selected-task-operator-action-validation-next-lane.md`
+- `batch-cards/031-selected-task-command-admission-boundary.md`
+- `batch-cards/032-selected-task-command-admission-proof.md`
+- `batch-cards/033-selected-task-command-cli-effigy.md`
+- `batch-cards/034-selected-task-command-desktop-proof-controls.md`
+- `batch-cards/035-selected-task-command-validation-next-lane.md`
+- `batch-cards/036-task-command-refresh-boundary.md`

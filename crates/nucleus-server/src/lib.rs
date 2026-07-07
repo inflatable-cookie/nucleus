@@ -303,6 +303,7 @@ pub mod sandbox_backend;
 pub mod scheduler;
 pub mod secret_store;
 pub mod selected_task_action_readiness;
+pub mod selected_task_command_admission;
 pub mod selected_task_operator_action_gate;
 pub mod server_read_only_spawn;
 pub mod state;

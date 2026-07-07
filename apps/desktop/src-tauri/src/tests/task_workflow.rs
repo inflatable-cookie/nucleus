@@ -58,6 +58,54 @@ fn desktop_state_routes_task_workflow_drilldown_query_to_typed_dto() {
     let _ = std::fs::remove_file(database_path);
 }
 
+#[test]
+fn desktop_state_routes_selected_task_command_admission_query_to_typed_dto() {
+    let database_path = std::env::temp_dir().join(format!(
+        "nucleus-desktop-selected-task-command-admission-test-{}.sqlite",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&database_path);
+    let state = DesktopState::new(SqliteBackend::new(database_path.clone()));
+
+    let response = state
+        .submit_control_envelope(ControlRequestEnvelopeDto {
+            protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),
+            protocol_version: CONTROL_API_PROTOCOL_VERSION_V1,
+            request_id: "desktop-request-selected-task-command-admission".to_owned(),
+            client_id: "desktop-client".to_owned(),
+            body: ControlRequestBodyDto::Query {
+                query: ControlQueryDto::SelectedTaskCommandAdmission {
+                    query_id: "desktop-query-selected-task-command-admission".to_owned(),
+                    action: "dry_run".to_owned(),
+                    project_id: "project:nucleus-local".to_owned(),
+                    task_id: "task:nucleus-local:bootstrap".to_owned(),
+                    family: "start_selected_task".to_owned(),
+                    expected_revision: Some("rev:nucleus-local:bootstrap".to_owned()),
+                    reason: None,
+                    operator_ref: "desktop-client".to_owned(),
+                },
+            },
+        })
+        .expect("desktop selected task command admission should route through the server adapter");
+    let json = serde_json::to_string(&response).expect("response json");
+
+    assert!(matches!(
+        response.body,
+        nucleus_server::ControlResponseBodyDto::SelectedTaskCommandAdmission { admission }
+            if admission.project_id == "project:nucleus-local"
+                && admission.task_id == "task:nucleus-local:bootstrap"
+                && admission.family == "start_selected_task"
+                && admission.status == "admitted"
+                && admission.command.as_ref().is_some_and(|command| command.action == "start")
+                && !admission.no_effects.task_mutation_performed
+                && !admission.no_effects.provider_execution_performed
+                && !admission.no_effects.scm_or_forge_mutation_performed
+    ));
+    assert_task_workflow_response_is_sanitized(&json);
+
+    let _ = std::fs::remove_file(database_path);
+}
+
 fn assert_task_workflow_response_is_sanitized(json: &str) {
     for forbidden in [
         "access_token",

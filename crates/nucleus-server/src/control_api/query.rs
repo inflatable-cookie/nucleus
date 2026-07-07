@@ -1,5 +1,5 @@
 use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId};
-use nucleus_core::PersistenceRecordId;
+use nucleus_core::{PersistenceRecordId, RevisionId};
 use nucleus_projects::{ProjectId, RepoMembershipId};
 use nucleus_tasks::TaskId;
 use nucleus_workspaces::WorkspaceLayoutId;
@@ -9,6 +9,7 @@ use crate::runtime_effect_storage::{
     RuntimeEffectStorageQuery, RuntimeEffectStorageRecordId, RuntimeEffectStorageRef,
 };
 use crate::state::ServerStateDomain;
+use crate::SelectedTaskActionFamily;
 
 use super::{
     AcceptedMemoryActiveApplyDiagnosticsQuery, AcceptedMemoryImportApplyReviewDiagnosticsQuery,
@@ -70,6 +71,7 @@ pub enum ServerQueryKind {
     TaskWorkflowDrilldown(TaskWorkflowDrilldownQuery),
     SelectedTaskActionReadiness(SelectedTaskActionReadinessQuery),
     SelectedTaskOperatorActionGate(SelectedTaskOperatorActionGateQuery),
+    SelectedTaskCommandAdmission(SelectedTaskCommandAdmissionQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
 
@@ -203,6 +205,17 @@ pub struct SelectedTaskActionReadinessQuery {
 pub struct SelectedTaskOperatorActionGateQuery {
     pub project_id: ProjectId,
     pub task_id: TaskId,
+}
+
+/// Selected task command admission dry-run query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedTaskCommandAdmissionQuery {
+    pub project_id: ProjectId,
+    pub task_id: TaskId,
+    pub family: SelectedTaskActionFamily,
+    pub expected_revision: Option<RevisionId>,
+    pub reason: Option<String>,
+    pub operator_ref: String,
 }
 
 /// Project authority-map query shape.

@@ -7,15 +7,18 @@ import {
   buildProductWorkflowSummaryQuery,
   buildProviderReadIntentQuery,
   buildProviderReadinessOverviewQuery,
-  buildSelectedTaskActionReadinessQuery,
-  buildSelectedTaskOperatorActionGateQuery,
   buildResearchRunBriefsQuery,
   buildRuntimeReadinessQuery,
-  buildTaskWorkflowDrilldownQuery,
   buildTaskWorkProgressQuery,
   type ControlRequestEnvelopeDto,
   type ControlResponseEnvelopeDto,
 } from "./envelopes";
+import {
+  buildSelectedTaskActionReadinessQuery,
+  buildSelectedTaskCommandAdmissionQuery,
+  buildSelectedTaskOperatorActionGateQuery,
+  buildTaskWorkflowDrilldownQuery,
+} from "./taskCommandEnvelopes";
 import {
   commandHistoryFromResponse,
   diagnosticsFromResponse,
@@ -36,9 +39,11 @@ import {
 } from "./productWorkflow";
 import {
   selectedTaskActionReadinessFromResponse,
+  selectedTaskCommandAdmissionFromResponse,
   selectedTaskOperatorActionGateFromResponse,
   taskWorkflowDrilldownFromResponse,
   type SelectedTaskActionReadinessQueryResult,
+  type SelectedTaskCommandAdmissionQueryResult,
   type SelectedTaskOperatorActionGateQueryResult,
   type TaskWorkflowDrilldownQueryResult,
 } from "./taskWorkflow";
@@ -146,4 +151,23 @@ export async function querySelectedTaskOperatorActionGate(
     buildSelectedTaskOperatorActionGateQuery(projectId, taskId),
   );
   return selectedTaskOperatorActionGateFromResponse(response);
+}
+
+export async function querySelectedTaskCommandAdmission(
+  projectId: string,
+  taskId: string,
+  family: string,
+  expectedRevision: string | null,
+  reason: string | null,
+): Promise<SelectedTaskCommandAdmissionQueryResult> {
+  const response = await submitControlEnvelope(
+    buildSelectedTaskCommandAdmissionQuery(
+      projectId,
+      taskId,
+      family,
+      expectedRevision,
+      reason,
+    ),
+  );
+  return selectedTaskCommandAdmissionFromResponse(response);
 }

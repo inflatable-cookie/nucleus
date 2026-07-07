@@ -11,13 +11,15 @@ use crate::control_api::{
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
     ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
-    SelectedTaskActionReadinessQuery, SelectedTaskOperatorActionGateQuery, ServerQuery,
-    ServerQueryKind, StateRecordQuery, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
-    TaskTimelineQuery, TaskWorkflowDrilldownQuery,
+    SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
+    SelectedTaskOperatorActionGateQuery, ServerQuery, ServerQueryKind, StateRecordQuery,
+    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    TaskWorkflowDrilldownQuery,
 };
 use crate::ids::ServerQueryId;
 
 use super::authority_domains::authority_domain_dto;
+use super::task_workflow::selected_task_action_family_label;
 use super::{ControlQueryDto, ControlQueryScopeDto, ControlStateDomainDto};
 use crate::control_envelope_dto::protocol::{diagnostics_domain_dto, runtime_metadata_action};
 use crate::control_envelope_dto::ControlApiCodecError;
@@ -251,6 +253,25 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                 action: "gate".to_owned(),
                 project_id: project_id.0.clone(),
                 task_id: task_id.0.clone(),
+            }),
+            ServerQueryKind::SelectedTaskCommandAdmission(SelectedTaskCommandAdmissionQuery {
+                project_id,
+                task_id,
+                family,
+                expected_revision,
+                reason,
+                operator_ref,
+            }) => Ok(Self::SelectedTaskCommandAdmission {
+                query_id: query.id.0.clone(),
+                action: "dry_run".to_owned(),
+                project_id: project_id.0.clone(),
+                task_id: task_id.0.clone(),
+                family: selected_task_action_family_label(*family).to_owned(),
+                expected_revision: expected_revision
+                    .as_ref()
+                    .map(|revision| revision.0.clone()),
+                reason: reason.clone(),
+                operator_ref: operator_ref.clone(),
             }),
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
                 project_id,

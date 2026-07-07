@@ -1,5 +1,13 @@
 use nucleus_server::ServerStateDomain;
 
+mod labels;
+mod selected_task_command_admission;
+mod state_domain;
+
+use labels::query_domain_label;
+use selected_task_command_admission::parse_selected_task_command_admission;
+use state_domain::query_domain_state_domain;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum QueryDomain {
     Projects,
@@ -10,33 +18,98 @@ pub(crate) enum QueryDomain {
     ProviderReadinessOverview,
     ProviderLiveReadExecutor,
     ProviderLiveReadSmokeEvidence,
-    TaskTimeline { task_id: String },
-    TaskReadiness { project_id: String },
-    PlanningTaskSeeds { project_id: String },
-    PlanningSessions { project_id: String },
-    AcceptedMemory { project_id: String },
-    AcceptedMemoryProjection { project_id: String },
-    AcceptedMemoryProjectionWrites { project_id: String },
-    AcceptedMemoryProjectionImport { project_id: String },
-    AcceptedMemoryProjectionImportApply { project_id: String },
-    AcceptedMemoryImportApplyReviewDiagnostics { project_id: String },
-    AcceptedMemoryReviewReceiptStorageDiagnostics { project_id: String },
-    AcceptedMemoryActiveApplyDiagnostics { project_id: String },
-    AcceptedMemoryReviewReadiness { project_id: String },
-    MemoryProposals { project_id: String },
-    MemoryProposalReviewDiagnostics { project_id: String },
-    ResearchRunBriefs { project_id: String },
-    TaskSeedPromotionDiagnostics { project_id: String },
-    PlanningProjectionFileWriteDiagnostics { project_id: String },
-    PlanningProjectionImportDiagnostics { project_id: String },
-    PlanningProjectionImportApplyDiagnostics { project_id: String },
-    PlanningProjectionImportActiveApplyDiagnostics { project_id: String },
-    PlanningCapturePublicationDiagnostics { project_id: String },
-    ProductWorkflowSummary { project_id: String },
-    TaskWorkflowDrilldown { project_id: String, task_id: String },
-    SelectedTaskActionReadiness { project_id: String, task_id: String },
-    SelectedTaskOperatorActionGate { project_id: String, task_id: String },
-    ProjectAuthorityMap { project_id: String },
+    TaskTimeline {
+        task_id: String,
+    },
+    TaskReadiness {
+        project_id: String,
+    },
+    PlanningTaskSeeds {
+        project_id: String,
+    },
+    PlanningSessions {
+        project_id: String,
+    },
+    AcceptedMemory {
+        project_id: String,
+    },
+    AcceptedMemoryProjection {
+        project_id: String,
+    },
+    AcceptedMemoryProjectionWrites {
+        project_id: String,
+    },
+    AcceptedMemoryProjectionImport {
+        project_id: String,
+    },
+    AcceptedMemoryProjectionImportApply {
+        project_id: String,
+    },
+    AcceptedMemoryImportApplyReviewDiagnostics {
+        project_id: String,
+    },
+    AcceptedMemoryReviewReceiptStorageDiagnostics {
+        project_id: String,
+    },
+    AcceptedMemoryActiveApplyDiagnostics {
+        project_id: String,
+    },
+    AcceptedMemoryReviewReadiness {
+        project_id: String,
+    },
+    MemoryProposals {
+        project_id: String,
+    },
+    MemoryProposalReviewDiagnostics {
+        project_id: String,
+    },
+    ResearchRunBriefs {
+        project_id: String,
+    },
+    TaskSeedPromotionDiagnostics {
+        project_id: String,
+    },
+    PlanningProjectionFileWriteDiagnostics {
+        project_id: String,
+    },
+    PlanningProjectionImportDiagnostics {
+        project_id: String,
+    },
+    PlanningProjectionImportApplyDiagnostics {
+        project_id: String,
+    },
+    PlanningProjectionImportActiveApplyDiagnostics {
+        project_id: String,
+    },
+    PlanningCapturePublicationDiagnostics {
+        project_id: String,
+    },
+    ProductWorkflowSummary {
+        project_id: String,
+    },
+    TaskWorkflowDrilldown {
+        project_id: String,
+        task_id: String,
+    },
+    SelectedTaskActionReadiness {
+        project_id: String,
+        task_id: String,
+    },
+    SelectedTaskOperatorActionGate {
+        project_id: String,
+        task_id: String,
+    },
+    SelectedTaskCommandAdmission {
+        project_id: String,
+        task_id: String,
+        family: String,
+        expected_revision: Option<String>,
+        reason: Option<String>,
+        operator_ref: String,
+    },
+    ProjectAuthorityMap {
+        project_id: String,
+    },
 }
 
 impl QueryDomain {
@@ -289,6 +362,7 @@ impl QueryDomain {
                     })?,
                 })
             }
+            "selected-task-command-admission" => parse_selected_task_command_admission(iter),
             "project-authority-map" => {
                 expect_flag(iter, "--project")?;
                 Ok(Self::ProjectAuthorityMap {
@@ -302,105 +376,15 @@ impl QueryDomain {
     }
 
     pub(crate) fn label(&self) -> &'static str {
-        match self {
-            Self::Projects => "projects",
-            Self::Tasks => "tasks",
-            Self::Workspaces => "workspaces",
-            Self::CommandEvidence => "command-evidence",
-            Self::ProviderReadIntent => "provider-read-intent",
-            Self::ProviderReadinessOverview => "provider-readiness-overview",
-            Self::ProviderLiveReadExecutor => "provider-live-read-executor",
-            Self::ProviderLiveReadSmokeEvidence => "provider-live-read-smoke-evidence",
-            Self::TaskTimeline { .. } => "task-timeline",
-            Self::TaskReadiness { .. } => "task-readiness",
-            Self::PlanningTaskSeeds { .. } => "planning-task-seeds",
-            Self::PlanningSessions { .. } => "planning-sessions",
-            Self::AcceptedMemory { .. } => "accepted-memory",
-            Self::AcceptedMemoryProjection { .. } => "accepted-memory-projection",
-            Self::AcceptedMemoryProjectionWrites { .. } => "accepted-memory-projection-writes",
-            Self::AcceptedMemoryProjectionImport { .. } => "accepted-memory-projection-import",
-            Self::AcceptedMemoryProjectionImportApply { .. } => {
-                "accepted-memory-projection-import-apply"
-            }
-            Self::AcceptedMemoryImportApplyReviewDiagnostics { .. } => {
-                "accepted-memory-import-apply-review-diagnostics"
-            }
-            Self::AcceptedMemoryReviewReceiptStorageDiagnostics { .. } => {
-                "accepted-memory-review-receipt-storage-diagnostics"
-            }
-            Self::AcceptedMemoryActiveApplyDiagnostics { .. } => {
-                "accepted-memory-active-apply-diagnostics"
-            }
-            Self::AcceptedMemoryReviewReadiness { .. } => "accepted-memory-review-readiness",
-            Self::MemoryProposals { .. } => "memory-proposals",
-            Self::MemoryProposalReviewDiagnostics { .. } => "memory-proposal-review-diagnostics",
-            Self::ResearchRunBriefs { .. } => "research-run-briefs",
-            Self::TaskSeedPromotionDiagnostics { .. } => "task-seed-promotion-diagnostics",
-            Self::PlanningProjectionFileWriteDiagnostics { .. } => {
-                "planning-projection-file-write-diagnostics"
-            }
-            Self::PlanningProjectionImportDiagnostics { .. } => {
-                "planning-projection-import-diagnostics"
-            }
-            Self::PlanningProjectionImportApplyDiagnostics { .. } => {
-                "planning-projection-import-apply-diagnostics"
-            }
-            Self::PlanningProjectionImportActiveApplyDiagnostics { .. } => {
-                "planning-projection-import-active-apply-diagnostics"
-            }
-            Self::PlanningCapturePublicationDiagnostics { .. } => {
-                "planning-capture-publication-diagnostics"
-            }
-            Self::ProductWorkflowSummary { .. } => "product-workflow-summary",
-            Self::TaskWorkflowDrilldown { .. } => "task-workflow-drilldown",
-            Self::SelectedTaskActionReadiness { .. } => "selected-task-action-readiness",
-            Self::SelectedTaskOperatorActionGate { .. } => "selected-task-operator-action-gate",
-            Self::ProjectAuthorityMap { .. } => "project-authority-map",
-        }
+        query_domain_label(self)
     }
 
     pub(crate) fn state_domain(&self) -> Option<ServerStateDomain> {
-        match self {
-            Self::Projects => Some(ServerStateDomain::Projects),
-            Self::Tasks => Some(ServerStateDomain::Tasks),
-            Self::Workspaces => Some(ServerStateDomain::Workspaces),
-            Self::CommandEvidence => Some(ServerStateDomain::CommandEvidence),
-            Self::ProviderReadIntent
-            | Self::ProviderReadinessOverview
-            | Self::ProviderLiveReadExecutor
-            | Self::ProviderLiveReadSmokeEvidence
-            | Self::TaskTimeline { .. }
-            | Self::TaskReadiness { .. }
-            | Self::PlanningTaskSeeds { .. }
-            | Self::PlanningSessions { .. }
-            | Self::AcceptedMemory { .. }
-            | Self::AcceptedMemoryProjection { .. }
-            | Self::AcceptedMemoryProjectionWrites { .. }
-            | Self::AcceptedMemoryProjectionImport { .. }
-            | Self::AcceptedMemoryProjectionImportApply { .. }
-            | Self::AcceptedMemoryImportApplyReviewDiagnostics { .. }
-            | Self::AcceptedMemoryReviewReceiptStorageDiagnostics { .. }
-            | Self::AcceptedMemoryActiveApplyDiagnostics { .. }
-            | Self::AcceptedMemoryReviewReadiness { .. }
-            | Self::MemoryProposals { .. }
-            | Self::MemoryProposalReviewDiagnostics { .. }
-            | Self::ResearchRunBriefs { .. }
-            | Self::TaskSeedPromotionDiagnostics { .. }
-            | Self::PlanningProjectionFileWriteDiagnostics { .. }
-            | Self::PlanningProjectionImportDiagnostics { .. }
-            | Self::PlanningProjectionImportApplyDiagnostics { .. }
-            | Self::PlanningProjectionImportActiveApplyDiagnostics { .. }
-            | Self::PlanningCapturePublicationDiagnostics { .. }
-            | Self::ProductWorkflowSummary { .. }
-            | Self::TaskWorkflowDrilldown { .. }
-            | Self::SelectedTaskActionReadiness { .. }
-            | Self::SelectedTaskOperatorActionGate { .. }
-            | Self::ProjectAuthorityMap { .. } => None,
-        }
+        query_domain_state_domain(self)
     }
 }
 
-fn expect_flag<I>(iter: &mut I, expected: &str) -> Result<(), String>
+pub(super) fn expect_flag<I>(iter: &mut I, expected: &str) -> Result<(), String>
 where
     I: Iterator<Item = String>,
 {

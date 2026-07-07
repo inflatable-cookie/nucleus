@@ -10,9 +10,10 @@ use crate::control_api::{
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
     ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
-    SelectedTaskActionReadinessQuery, SelectedTaskOperatorActionGateQuery, ServerControlRequest,
-    ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
-    StateRecordQueryScope, TaskReadinessQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
+    SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
+    SelectedTaskOperatorActionGateQuery, ServerControlRequest, ServerControlRequestKind,
+    ServerQuery, ServerQueryKind, StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery,
+    TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::control_envelope_dto::*;
 use crate::control_serialization_readiness::ControlApiCodecFailure;
@@ -51,6 +52,7 @@ mod provider_readiness_overview;
 mod research_run_briefs;
 mod runtime;
 mod selected_task_action_readiness;
+mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
 mod state;
 mod task_seed_promotion;

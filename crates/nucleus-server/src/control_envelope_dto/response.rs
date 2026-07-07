@@ -103,9 +103,11 @@ pub use records::{
 pub use records::{
     ControlSelectedTaskActionBlockerDto, ControlSelectedTaskActionDto,
     ControlSelectedTaskActionNoEffectsDto, ControlSelectedTaskActionReadinessDto,
-    ControlSelectedTaskActionSourceCountsDto, ControlSelectedTaskOperatorActionBlockerDto,
-    ControlSelectedTaskOperatorActionCandidateDto, ControlSelectedTaskOperatorActionGateDto,
-    ControlSelectedTaskOperatorActionGateSourceCountsDto,
+    ControlSelectedTaskActionSourceCountsDto, ControlSelectedTaskCommandAdmissionCandidateDto,
+    ControlSelectedTaskCommandAdmissionCommandDto, ControlSelectedTaskCommandAdmissionDto,
+    ControlSelectedTaskCommandAdmissionNoEffectsDto, ControlSelectedTaskCommandAdmissionRefusalDto,
+    ControlSelectedTaskOperatorActionBlockerDto, ControlSelectedTaskOperatorActionCandidateDto,
+    ControlSelectedTaskOperatorActionGateDto, ControlSelectedTaskOperatorActionGateSourceCountsDto,
     ControlSelectedTaskOperatorActionNoEffectsDto,
     ControlSelectedTaskOperatorTaskCommandCandidateDto,
 };

@@ -20,10 +20,11 @@ use super::records::{
     ControlPlanningTaskSeedSourceCountsDto, ControlPlanningTaskSeedStatusCountDto,
     ControlProductWorkflowSummaryDto, ControlProjectAuthorityMapDto,
     ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
-    ControlSelectedTaskActionReadinessDto, ControlSelectedTaskOperatorActionGateDto,
-    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
-    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
-    ControlTaskTimelineEntryDto, ControlTaskWorkflowDrilldownDto,
+    ControlSelectedTaskActionReadinessDto, ControlSelectedTaskCommandAdmissionDto,
+    ControlSelectedTaskOperatorActionGateDto, ControlTaskReadinessCandidateDto,
+    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
+    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
+    ControlTaskWorkflowDrilldownDto,
 };
 use super::research_run_briefs::research_run_briefs_body_dto;
 use crate::control_api::{ServerControlResponseBody, ServerQueryResult};
@@ -226,6 +227,11 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 ServerQueryResult::SelectedTaskOperatorActionGate(gate),
             ) => Ok(Self::SelectedTaskOperatorActionGate {
                 gate: ControlSelectedTaskOperatorActionGateDto::from(gate),
+            }),
+            ServerControlResponseBody::Query(ServerQueryResult::SelectedTaskCommandAdmission(
+                admission,
+            )) => Ok(Self::SelectedTaskCommandAdmission {
+                admission: ControlSelectedTaskCommandAdmissionDto::from(admission),
             }),
             ServerControlResponseBody::Query(ServerQueryResult::ProjectAuthorityMap(record)) => {
                 Ok(Self::ProjectAuthorityMap {

@@ -40,6 +40,7 @@ mod planning_sessions;
 mod product_workflow;
 mod research_run_briefs;
 mod selected_task_action_readiness;
+mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
 mod task_workflow_drilldown;
 

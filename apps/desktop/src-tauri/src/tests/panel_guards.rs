@@ -154,21 +154,16 @@ fn product_workflow_proof_panel_has_no_forbidden_mutation_controls() {
 }
 
 #[test]
-fn task_workflow_drilldown_proof_panel_has_no_forbidden_mutation_controls() {
+fn task_workflow_drilldown_proof_panel_allows_only_task_command_admission_controls() {
     let component = include_str!("../../../src/lib/TaskWorkflowDrilldownProofPanel.svelte");
 
     for forbidden in [
-        "buildStartTaskCommand",
-        "buildBlockTaskCommand",
-        "buildCompleteTaskCommand",
-        "buildArchiveTaskCommand",
-        "submitControlEnvelope",
         "approve button",
-        "execute task command",
         "run task command",
         "run provider",
         "execute provider",
         "schedule delegation",
+        "delegate task",
         "create task",
         "browser automation",
         "source retrieval",
@@ -176,6 +171,8 @@ fn task_workflow_drilldown_proof_panel_has_no_forbidden_mutation_controls() {
         "commit button",
         "push button",
         "pull request",
+        "review acceptance",
+        "active apply",
         "final design",
     ] {
         assert!(
@@ -187,9 +184,15 @@ fn task_workflow_drilldown_proof_panel_has_no_forbidden_mutation_controls() {
     assert!(component.contains("queryProductWorkflowSummary"));
     assert!(component.contains("querySelectedTaskActionReadiness"));
     assert!(component.contains("querySelectedTaskOperatorActionGate"));
+    assert!(component.contains("querySelectedTaskCommandAdmission"));
+    assert!(component.contains("submitSelectedTaskCommand"));
+    assert!(component.contains("onTaskCommandChanged?.()"));
+    assert!(!component.contains("selectedTask.activity ="));
+    assert!(!component.contains("selectedTask.revision_id ="));
     assert!(component.contains("Work-loop guidance"));
     assert!(component.contains("Selected task action readiness"));
     assert!(component.contains("Selected task operator action gate"));
+    assert!(component.contains("Selected task command admission"));
     assert!(component.contains("Task command candidates"));
     assert!(component.contains("Deferred and read-only actions"));
     assert!(component.contains("Allowed action affordances"));
@@ -197,5 +200,22 @@ fn task_workflow_drilldown_proof_panel_has_no_forbidden_mutation_controls() {
     assert!(component.contains("Guidance missing evidence"));
     assert!(component.contains("Review readiness"));
     assert!(component.contains("Handoff readiness"));
-    assert!(component.contains("Read-only selected task drilldown."));
+    assert!(component.contains("Block reason"));
+    assert!(component.contains("buildStartTaskCommand"));
+    assert!(component.contains("buildBlockTaskCommand"));
+    assert!(component.contains("buildCompleteTaskCommand"));
+    assert!(component.contains("buildArchiveTaskCommand"));
+}
+
+#[test]
+fn app_shell_routes_task_command_refresh_to_task_list_token() {
+    let component = include_str!("../../../src/App.svelte");
+
+    assert!(component.contains("let taskRefreshToken = $state(0);"));
+    assert!(component.contains("<TaskListPanel"));
+    assert!(component.contains("{taskRefreshToken}"));
+    assert!(component.contains("onTaskCommandChanged"));
+    assert!(component.contains("taskRefreshToken += 1"));
+    assert!(!component.contains("selectedTask = {"));
+    assert!(!component.contains("selectedTask.activity ="));
 }

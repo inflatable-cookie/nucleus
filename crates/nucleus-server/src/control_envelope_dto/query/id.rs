@@ -36,6 +36,7 @@ impl ControlQueryDto {
             | Self::TaskWorkflowDrilldown { query_id, .. }
             | Self::SelectedTaskActionReadiness { query_id, .. }
             | Self::SelectedTaskOperatorActionGate { query_id, .. }
+            | Self::SelectedTaskCommandAdmission { query_id, .. }
             | Self::ProjectAuthorityMap { query_id, .. } => query_id.clone(),
         }
     }

@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-06
+Updated: 2026-07-07
 
 ## Purpose
 
@@ -10,11 +10,12 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `030-selected-task-operator-action-validation-next-lane.md`
+- `037-task-command-desktop-refresh-loop.md`
 
 ## Planned Cards
 
-- None.
+- `038-task-command-receipt-timeline-presentation.md`
+- `039-task-command-outcome-validation-next-lane.md`
 
 ## Completed Cards
 
@@ -47,3 +48,10 @@ Hold execution cards for `g04`.
 - `027-selected-task-operator-action-gate-read-model.md`
 - `028-selected-task-operator-action-cli-effigy.md`
 - `029-selected-task-operator-action-desktop-proof.md`
+- `030-selected-task-operator-action-validation-next-lane.md`
+- `031-selected-task-command-admission-boundary.md`
+- `032-selected-task-command-admission-proof.md`
+- `033-selected-task-command-cli-effigy.md`
+- `034-selected-task-command-desktop-proof-controls.md`
+- `035-selected-task-command-validation-next-lane.md`
+- `036-task-command-refresh-boundary.md`

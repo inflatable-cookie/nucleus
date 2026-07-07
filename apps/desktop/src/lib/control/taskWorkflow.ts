@@ -180,6 +180,44 @@ export type ControlSelectedTaskOperatorActionGateDto = {
   no_effects: ControlTaskWorkflowNoEffectsDto;
 };
 
+export type ControlSelectedTaskCommandAdmissionCommandDto = {
+  action: "start" | "block" | "complete" | "archive" | string;
+  task_id: string;
+  expected_revision: string | null;
+  reason: string | null;
+};
+
+export type ControlSelectedTaskCommandAdmissionCandidateDto = {
+  family: string;
+  readiness_status: "allowed" | "blocked" | "not_applicable" | "different_lane" | string;
+  disposition: "task_command_candidate" | "blocked" | "read_only" | "deferred" | string;
+  label: string;
+  reason: string;
+  evidence_refs: string[];
+  blocker_refs: string[];
+  expected_revision_required: boolean;
+  reason_required: boolean;
+};
+
+export type ControlSelectedTaskCommandAdmissionRefusalDto = {
+  kind: string;
+  reason: string;
+};
+
+export type ControlSelectedTaskCommandAdmissionDto = {
+  admission_id: string;
+  project_id: string;
+  task_id: string;
+  family: string;
+  status: "admitted" | "refused" | string;
+  command: ControlSelectedTaskCommandAdmissionCommandDto | null;
+  candidate: ControlSelectedTaskCommandAdmissionCandidateDto | null;
+  refusal: ControlSelectedTaskCommandAdmissionRefusalDto | null;
+  operator_ref: string;
+  evidence_refs: string[];
+  no_effects: ControlTaskWorkflowNoEffectsDto;
+};
+
 export type TaskWorkflowDrilldownQueryResult =
   | {
       state: "record";
@@ -198,6 +236,13 @@ export type SelectedTaskOperatorActionGateQueryResult =
   | {
       state: "record";
       gate: ControlSelectedTaskOperatorActionGateDto;
+    }
+  | QueryFallback;
+
+export type SelectedTaskCommandAdmissionQueryResult =
+  | {
+      state: "record";
+      admission: ControlSelectedTaskCommandAdmissionDto;
     }
   | QueryFallback;
 
@@ -284,6 +329,33 @@ export function selectedTaskOperatorActionGateFromResponse(
       return {
         state: "unexpected",
         reason: `unexpected selected task operator action gate response: ${response.body.type}`,
+      };
+  }
+}
+
+export function selectedTaskCommandAdmissionFromResponse(
+  response: ControlResponseEnvelopeDto,
+): SelectedTaskCommandAdmissionQueryResult {
+  switch (response.body.type) {
+    case "selected_task_command_admission":
+      return {
+        state: "record",
+        admission: response.body.admission,
+      };
+    case "query_empty":
+      return { state: "empty" };
+    case "query_unsupported":
+      return { state: "unsupported", reason: response.body.reason };
+    case "error":
+      return {
+        state: "error",
+        kind: response.body.kind,
+        reason: response.body.reason,
+      };
+    default:
+      return {
+        state: "unexpected",
+        reason: `unexpected selected task command admission response: ${response.body.type}`,
       };
   }
 }

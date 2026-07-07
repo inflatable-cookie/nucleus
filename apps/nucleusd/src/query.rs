@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use nucleus_core::RevisionId;
 use nucleus_local_store::{LocalStoreRecord, SqliteBackend};
 use nucleus_projects::ProjectId;
 use nucleus_server::{
@@ -15,11 +16,12 @@ use nucleus_server::{
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
     ProjectAuthorityDomain, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
     ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
-    ResearchRunBriefsQuery, SelectedTaskActionReadinessQuery, SelectedTaskOperatorActionGateQuery,
-    ServerControlRequest, ServerControlRequestKind, ServerControlResponseBody,
-    ServerControlResponseStatus, ServerQuery, ServerQueryId, ServerQueryKind, ServerStateDomain,
-    StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
-    TaskTimelineQuery, TaskWorkflowDrilldownQuery,
+    ResearchRunBriefsQuery, SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
+    SelectedTaskOperatorActionGateQuery, ServerControlRequest, ServerControlRequestKind,
+    ServerControlResponseBody, ServerControlResponseStatus, ServerQuery, ServerQueryId,
+    ServerQueryKind, ServerStateDomain, StateRecordQuery, StateRecordQueryScope,
+    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    TaskWorkflowDrilldownQuery,
 };
 use nucleus_tasks::TaskId;
 
@@ -92,6 +94,7 @@ pub(crate) fn print_query(
             | QueryDomain::TaskWorkflowDrilldown { .. }
             | QueryDomain::SelectedTaskActionReadiness { .. }
             | QueryDomain::SelectedTaskOperatorActionGate { .. }
+            | QueryDomain::SelectedTaskCommandAdmission { .. }
             | QueryDomain::ProjectAuthorityMap { .. }
     ) {
         let dto = ControlResponseEnvelopeDto::try_from(&response)
@@ -331,6 +334,23 @@ fn query_kind(query: &QueryDomain) -> ServerQueryKind {
             project_id: ProjectId(project_id.clone()),
             task_id: TaskId(task_id.clone()),
         }),
+        QueryDomain::SelectedTaskCommandAdmission {
+            project_id,
+            task_id,
+            family,
+            expected_revision,
+            reason,
+            operator_ref,
+        } => ServerQueryKind::SelectedTaskCommandAdmission(SelectedTaskCommandAdmissionQuery {
+            project_id: ProjectId(project_id.clone()),
+            task_id: TaskId(task_id.clone()),
+            family: selected_task_action_family(family),
+            expected_revision: expected_revision
+                .as_ref()
+                .map(|revision| RevisionId(revision.clone())),
+            reason: reason.clone(),
+            operator_ref: operator_ref.clone(),
+        }),
         QueryDomain::ProjectAuthorityMap { project_id } => {
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
                 project_id: ProjectId(project_id.clone()),
@@ -368,6 +388,23 @@ fn default_authority_domains() -> Vec<ProjectAuthorityDomain> {
         ProjectAuthorityDomain::ScmForge,
         ProjectAuthorityDomain::Projection,
     ]
+}
+
+fn selected_task_action_family(family: &str) -> nucleus_server::SelectedTaskActionFamily {
+    match family {
+        "plan_selected_task" => nucleus_server::SelectedTaskActionFamily::PlanSelectedTask,
+        "start_selected_task" => nucleus_server::SelectedTaskActionFamily::StartSelectedTask,
+        "block_selected_task" => nucleus_server::SelectedTaskActionFamily::BlockSelectedTask,
+        "complete_selected_task" => nucleus_server::SelectedTaskActionFamily::CompleteSelectedTask,
+        "archive_selected_task" => nucleus_server::SelectedTaskActionFamily::ArchiveSelectedTask,
+        "prepare_delegation" => nucleus_server::SelectedTaskActionFamily::PrepareDelegation,
+        "inspect_runtime_evidence" => {
+            nucleus_server::SelectedTaskActionFamily::InspectRuntimeEvidence
+        }
+        "review_work_evidence" => nucleus_server::SelectedTaskActionFamily::ReviewWorkEvidence,
+        "prepare_scm_handoff" => nucleus_server::SelectedTaskActionFamily::PrepareScmHandoff,
+        _ => nucleus_server::SelectedTaskActionFamily::StartSelectedTask,
+    }
 }
 
 fn state_query(domain: ServerStateDomain) -> StateRecordQuery {

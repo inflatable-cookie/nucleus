@@ -55,7 +55,12 @@
       />
       <RuntimeReadinessPanel />
       <TaskWorkProgressPanel />
-      <TaskWorkflowDrilldownProofPanel {selectedTask} />
+      <TaskWorkflowDrilldownProofPanel
+        {selectedTask}
+        onTaskCommandChanged={() => {
+          taskRefreshToken += 1;
+        }}
+      />
       <ProductWorkflowProofPanel {selectedProjectId} />
       <PlanningResearchProofPanel />
       <ProviderReadinessOverviewPanel />
