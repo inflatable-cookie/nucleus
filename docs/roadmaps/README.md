@@ -278,7 +278,8 @@ shape.
 - `g04/011-product-workflow-closeout-and-next-phase-selection.md` - completed
 - `g04/012-selected-task-review-decision-controls.md` - completed
 - `g04/013-selected-task-review-outcome-routing.md` - completed
-- `g04/014-selected-task-route-admission.md` - active
+- `g04/014-selected-task-route-admission.md` - completed
+- `g04/015-selected-task-completion-from-route-admission.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -339,8 +340,9 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g04/014-selected-task-route-admission.md`
+`docs/roadmaps/g04/015-selected-task-completion-from-route-admission.md`
 with
-`docs/roadmaps/g04/batch-cards/065-selected-task-route-admission-boundary.md`.
-Define how selected-task review outcome routes enter explicit server-owned
-admission flows without mutating task lifecycle state.
+`docs/roadmaps/g04/batch-cards/072-selected-task-completion-route-control-surfaces.md`.
+Expose completion-from-route state through server control DTOs, `nucleusd`, and
+Effigy while keeping the actual task mutation behind an explicit later command
+boundary.

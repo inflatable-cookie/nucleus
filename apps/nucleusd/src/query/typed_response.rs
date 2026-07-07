@@ -29,6 +29,7 @@ mod selected_task_operator_action_gate;
 mod selected_task_review_decision;
 mod selected_task_review_next;
 mod selected_task_review_outcome_route;
+mod selected_task_route_admission;
 mod selected_task_scm_handoff;
 mod task_authority;
 mod task_readiness;
@@ -76,6 +77,8 @@ pub(super) use selected_task_review_decision::{
 pub(super) use selected_task_review_next::selected_task_review_next_response_lines;
 #[cfg(test)]
 pub(super) use selected_task_review_outcome_route::selected_task_review_outcome_route_response_lines;
+#[cfg(test)]
+pub(super) use selected_task_route_admission::selected_task_route_admission_response_lines;
 #[cfg(test)]
 pub(super) use selected_task_scm_handoff::selected_task_scm_handoff_response_lines;
 pub(super) use task_authority::{

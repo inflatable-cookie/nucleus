@@ -6,8 +6,9 @@ use crate::control_api::{
     MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery, PlanningSessionsQuery,
     PlanningTaskSeedsQuery, ResearchRunBriefsQuery, SelectedTaskActionReadinessQuery,
     SelectedTaskCommandAdmissionQuery, SelectedTaskOperatorActionGateQuery,
-    SelectedTaskReviewNextQuery, SelectedTaskReviewOutcomeRouteQuery, SelectedTaskScmHandoffQuery,
-    ServerQueryKind, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    SelectedTaskReviewNextQuery, SelectedTaskReviewOutcomeRouteQuery,
+    SelectedTaskRouteAdmissionQuery, SelectedTaskScmHandoffQuery, ServerQueryKind,
+    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
     TaskWorkflowDrilldownQuery,
 };
 use crate::SelectedTaskActionFamily;
@@ -177,6 +178,37 @@ pub(super) fn selected_task_review_outcome_route_query_from_action(
         )),
         _ => Err(ControlApiCodecError::unsupported(format!(
             "unsupported selected task review outcome route query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn selected_task_route_admission_query_from_action(
+    action: &str,
+    project_id: String,
+    task_id: String,
+    expected_revision: Option<String>,
+    operator_ref: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "admission"
+            if project_id.trim().is_empty()
+                || task_id.trim().is_empty()
+                || operator_ref.trim().is_empty() =>
+        {
+            Err(ControlApiCodecError::unsupported(
+                "selected task route admission query requires project id, task id, and operator ref",
+            ))
+        }
+        "admission" => Ok(ServerQueryKind::SelectedTaskRouteAdmission(
+            SelectedTaskRouteAdmissionQuery {
+                project_id: ProjectId(project_id),
+                task_id: TaskId(task_id),
+                expected_revision: expected_revision.map(RevisionId),
+                operator_ref,
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported selected task route admission query action: {action}"
         ))),
     }
 }

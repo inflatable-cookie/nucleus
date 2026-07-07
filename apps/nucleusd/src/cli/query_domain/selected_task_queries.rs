@@ -52,6 +52,43 @@ where
     })
 }
 
+pub(super) fn parse_selected_task_route_admission<I>(iter: &mut I) -> Result<QueryDomain, String>
+where
+    I: Iterator<Item = String>,
+{
+    let (project_id, task_id) = parse_project_task(iter, "selected-task-route-admission")?;
+    let mut expected_revision = None;
+    let mut operator_ref = "operator:nucleusd".to_owned();
+
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--expected-revision" => {
+                expected_revision = Some(iter.next().ok_or_else(|| {
+                    "selected-task-route-admission requires a value after --expected-revision"
+                        .to_owned()
+                })?);
+            }
+            "--operator" => {
+                operator_ref = iter.next().ok_or_else(|| {
+                    "selected-task-route-admission requires a value after --operator".to_owned()
+                })?;
+            }
+            other => {
+                return Err(format!(
+                    "unsupported selected-task-route-admission flag: {other}"
+                ));
+            }
+        }
+    }
+
+    Ok(QueryDomain::SelectedTaskRouteAdmission {
+        project_id,
+        task_id,
+        expected_revision,
+        operator_ref,
+    })
+}
+
 pub(super) fn parse_selected_task_scm_handoff<I>(iter: &mut I) -> Result<QueryDomain, String>
 where
     I: Iterator<Item = String>,

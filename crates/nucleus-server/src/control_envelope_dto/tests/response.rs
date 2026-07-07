@@ -30,6 +30,7 @@ mod selected_task_operator_action_gate;
 mod selected_task_review_decision;
 mod selected_task_review_next;
 mod selected_task_review_outcome_route;
+mod selected_task_route_admission;
 mod selected_task_scm_handoff;
 mod state_records;
 mod task_workflow_drilldown;

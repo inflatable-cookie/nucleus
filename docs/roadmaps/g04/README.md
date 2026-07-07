@@ -107,6 +107,17 @@ Current checkpoint:
   proof
 - selected-task review outcome routing is validated
 - the active path is selected-task route admission
+- selected-task route-admission boundary and stop conditions are defined
+- selected-task accepted-review completion route admission read model is in
+  place
+- selected-task rework and delegation route-admission preview shape is in
+  place
+- selected-task route admission has control DTOs, `nucleusd`, Effigy, and
+  disposable desktop proof inspection
+- selected-task route admission is validated
+- the active path is selected-task completion from route admission
+- selected-task completion-from-route boundary and pure composition model are
+  in place
 
 ## Roadmaps
 
@@ -123,20 +134,19 @@ Current checkpoint:
 - `011-product-workflow-closeout-and-next-phase-selection.md` - completed
 - `012-selected-task-review-decision-controls.md` - completed
 - `013-selected-task-review-outcome-routing.md` - completed
-- `014-selected-task-route-admission.md` - active
+- `014-selected-task-route-admission.md` - completed
+- `015-selected-task-completion-from-route-admission.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/065-selected-task-route-admission-boundary.md`
+- `batch-cards/072-selected-task-completion-route-control-surfaces.md`
 
 Planned cards:
 
-- `batch-cards/066-selected-task-completion-admission-read-model.md`
-- `batch-cards/067-selected-task-rework-delegation-admission-shape.md`
-- `batch-cards/068-selected-task-route-admission-surfaces.md`
-- `batch-cards/069-selected-task-route-admission-validation.md`
+- `batch-cards/073-selected-task-completion-route-desktop-proof.md`
+- `batch-cards/074-selected-task-completion-route-validation.md`
 
 Completed cards:
 
@@ -204,3 +214,10 @@ Completed cards:
 - `batch-cards/062-selected-task-review-outcome-cli-effigy.md`
 - `batch-cards/063-selected-task-review-outcome-desktop-proof.md`
 - `batch-cards/064-selected-task-review-outcome-validation.md`
+- `batch-cards/065-selected-task-route-admission-boundary.md`
+- `batch-cards/066-selected-task-completion-admission-read-model.md`
+- `batch-cards/067-selected-task-rework-delegation-admission-shape.md`
+- `batch-cards/068-selected-task-route-admission-surfaces.md`
+- `batch-cards/069-selected-task-route-admission-validation.md`
+- `batch-cards/070-selected-task-completion-route-apply-boundary.md`
+- `batch-cards/071-selected-task-completion-route-command-composition.md`

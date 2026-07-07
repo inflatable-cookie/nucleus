@@ -73,6 +73,7 @@ pub enum ServerQueryKind {
     SelectedTaskOperatorActionGate(SelectedTaskOperatorActionGateQuery),
     SelectedTaskReviewNext(SelectedTaskReviewNextQuery),
     SelectedTaskReviewOutcomeRoute(SelectedTaskReviewOutcomeRouteQuery),
+    SelectedTaskRouteAdmission(SelectedTaskRouteAdmissionQuery),
     SelectedTaskScmHandoff(SelectedTaskScmHandoffQuery),
     SelectedTaskCommandAdmission(SelectedTaskCommandAdmissionQuery),
     SelectedTaskReviewDecisionAdmission(SelectedTaskReviewDecisionAdmissionQuery),
@@ -224,6 +225,15 @@ pub struct SelectedTaskReviewNextQuery {
 pub struct SelectedTaskReviewOutcomeRouteQuery {
     pub project_id: ProjectId,
     pub task_id: TaskId,
+}
+
+/// Selected task route admission preview query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedTaskRouteAdmissionQuery {
+    pub project_id: ProjectId,
+    pub task_id: TaskId,
+    pub expected_revision: Option<RevisionId>,
+    pub operator_ref: String,
 }
 
 /// Selected task SCM handoff readiness query shape.

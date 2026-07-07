@@ -56,6 +56,7 @@ pub(super) fn query_domain_label(domain: &QueryDomain) -> &'static str {
         QueryDomain::SelectedTaskOperatorActionGate { .. } => "selected-task-operator-action-gate",
         QueryDomain::SelectedTaskReviewNext { .. } => "selected-task-review-next",
         QueryDomain::SelectedTaskReviewOutcomeRoute { .. } => "selected-task-review-outcome-route",
+        QueryDomain::SelectedTaskRouteAdmission { .. } => "selected-task-route-admission",
         QueryDomain::SelectedTaskScmHandoff { .. } => "selected-task-scm-handoff",
         QueryDomain::SelectedTaskCommandAdmission { .. } => "selected-task-command-admission",
         QueryDomain::SelectedTaskReviewDecisionAdmission(_) => {

@@ -21,6 +21,7 @@ import {
   buildSelectedTaskReviewDecisionApplyQuery,
   buildSelectedTaskReviewNextQuery,
   buildSelectedTaskReviewOutcomeRouteQuery,
+  buildSelectedTaskRouteAdmissionQuery,
   buildSelectedTaskScmHandoffQuery,
   buildTaskWorkflowDrilldownQuery,
 } from "./taskCommandEnvelopes";
@@ -60,6 +61,10 @@ import {
   selectedTaskReviewOutcomeRouteFromResponse,
   type SelectedTaskReviewOutcomeRouteQueryResult,
 } from "./selectedTaskReviewOutcomeRoute";
+import {
+  selectedTaskRouteAdmissionFromResponse,
+  type SelectedTaskRouteAdmissionQueryResult,
+} from "./selectedTaskRouteAdmission";
 import {
   selectedTaskReviewDecisionAdmissionFromResponse,
   selectedTaskReviewDecisionApplyFromResponse,
@@ -195,6 +200,17 @@ export async function querySelectedTaskReviewOutcomeRoute(
     buildSelectedTaskReviewOutcomeRouteQuery(projectId, taskId),
   );
   return selectedTaskReviewOutcomeRouteFromResponse(response);
+}
+
+export async function querySelectedTaskRouteAdmission(
+  projectId: string,
+  taskId: string,
+  expectedRevision: string | null,
+): Promise<SelectedTaskRouteAdmissionQueryResult> {
+  const response = await submitControlEnvelope(
+    buildSelectedTaskRouteAdmissionQuery(projectId, taskId, expectedRevision),
+  );
+  return selectedTaskRouteAdmissionFromResponse(response);
 }
 
 export async function querySelectedTaskScmHandoff(

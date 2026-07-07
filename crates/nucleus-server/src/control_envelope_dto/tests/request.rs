@@ -13,9 +13,10 @@ use crate::control_api::{
     SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
     SelectedTaskOperatorActionGateQuery, SelectedTaskReviewDecisionAdmissionQuery,
     SelectedTaskReviewDecisionApplyQuery, SelectedTaskReviewNextQuery,
-    SelectedTaskReviewOutcomeRouteQuery, SelectedTaskScmHandoffQuery, ServerControlRequest,
-    ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
-    StateRecordQueryScope, TaskReadinessQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
+    SelectedTaskReviewOutcomeRouteQuery, SelectedTaskRouteAdmissionQuery,
+    SelectedTaskScmHandoffQuery, ServerControlRequest, ServerControlRequestKind, ServerQuery,
+    ServerQueryKind, StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery,
+    TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::control_envelope_dto::*;
 use crate::control_serialization_readiness::ControlApiCodecFailure;
@@ -59,6 +60,7 @@ mod selected_task_operator_action_gate;
 mod selected_task_review_decision;
 mod selected_task_review_next;
 mod selected_task_review_outcome_route;
+mod selected_task_route_admission;
 mod selected_task_scm_handoff;
 mod state;
 mod task_seed_promotion;

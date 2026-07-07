@@ -10,20 +10,14 @@ use crate::control_api::{
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
-    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
-    SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
-    SelectedTaskOperatorActionGateQuery, SelectedTaskReviewDecisionAdmissionQuery,
-    SelectedTaskReviewDecisionApplyQuery, SelectedTaskReviewNextQuery,
-    SelectedTaskReviewOutcomeRouteQuery, SelectedTaskScmHandoffQuery, ServerQuery, ServerQueryKind,
-    StateRecordQuery, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
-    TaskWorkflowDrilldownQuery,
+    ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery, ServerQuery,
+    ServerQueryKind, StateRecordQuery, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
+    TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::ids::ServerQueryId;
 
 use super::authority_domains::authority_domain_dto;
-use super::task_workflow::{
-    selected_task_action_family_label, selected_task_review_decision_action_label,
-};
+use super::selected_task_to_dto::selected_task_query_dto;
 use super::{ControlQueryDto, ControlQueryScopeDto, ControlStateDomainDto};
 use crate::control_envelope_dto::protocol::{diagnostics_domain_dto, runtime_metadata_action};
 use crate::control_envelope_dto::ControlApiCodecError;
@@ -32,6 +26,10 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
     type Error = ControlApiCodecError;
 
     fn try_from(query: &ServerQuery) -> Result<Self, Self::Error> {
+        if let Some(dto) = selected_task_query_dto(&query.id, &query.kind)? {
+            return Ok(dto);
+        }
+
         match &query.kind {
             ServerQueryKind::Project(state_query)
             | ServerQueryKind::Task(state_query)
@@ -237,128 +235,6 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                 action: "drilldown".to_owned(),
                 project_id: project_id.0.clone(),
                 task_id: task_id.0.clone(),
-            }),
-            ServerQueryKind::SelectedTaskActionReadiness(SelectedTaskActionReadinessQuery {
-                project_id,
-                task_id,
-            }) => Ok(Self::SelectedTaskActionReadiness {
-                query_id: query.id.0.clone(),
-                action: "readiness".to_owned(),
-                project_id: project_id.0.clone(),
-                task_id: task_id.0.clone(),
-            }),
-            ServerQueryKind::SelectedTaskOperatorActionGate(
-                SelectedTaskOperatorActionGateQuery {
-                    project_id,
-                    task_id,
-                },
-            ) => Ok(Self::SelectedTaskOperatorActionGate {
-                query_id: query.id.0.clone(),
-                action: "gate".to_owned(),
-                project_id: project_id.0.clone(),
-                task_id: task_id.0.clone(),
-            }),
-            ServerQueryKind::SelectedTaskReviewNext(SelectedTaskReviewNextQuery {
-                project_id,
-                task_id,
-            }) => Ok(Self::SelectedTaskReviewNext {
-                query_id: query.id.0.clone(),
-                action: "review_next".to_owned(),
-                project_id: project_id.0.clone(),
-                task_id: task_id.0.clone(),
-            }),
-            ServerQueryKind::SelectedTaskReviewOutcomeRoute(
-                SelectedTaskReviewOutcomeRouteQuery {
-                    project_id,
-                    task_id,
-                },
-            ) => Ok(Self::SelectedTaskReviewOutcomeRoute {
-                query_id: query.id.0.clone(),
-                action: "route".to_owned(),
-                project_id: project_id.0.clone(),
-                task_id: task_id.0.clone(),
-            }),
-            ServerQueryKind::SelectedTaskScmHandoff(SelectedTaskScmHandoffQuery {
-                project_id,
-                task_id,
-            }) => Ok(Self::SelectedTaskScmHandoff {
-                query_id: query.id.0.clone(),
-                action: "handoff".to_owned(),
-                project_id: project_id.0.clone(),
-                task_id: task_id.0.clone(),
-            }),
-            ServerQueryKind::SelectedTaskCommandAdmission(SelectedTaskCommandAdmissionQuery {
-                project_id,
-                task_id,
-                family,
-                expected_revision,
-                reason,
-                operator_ref,
-            }) => Ok(Self::SelectedTaskCommandAdmission {
-                query_id: query.id.0.clone(),
-                action: "dry_run".to_owned(),
-                project_id: project_id.0.clone(),
-                task_id: task_id.0.clone(),
-                family: selected_task_action_family_label(*family).to_owned(),
-                expected_revision: expected_revision
-                    .as_ref()
-                    .map(|revision| revision.0.clone()),
-                reason: reason.clone(),
-                operator_ref: operator_ref.clone(),
-            }),
-            ServerQueryKind::SelectedTaskReviewDecisionAdmission(
-                SelectedTaskReviewDecisionAdmissionQuery {
-                    project_id,
-                    task_id,
-                    action,
-                    expected_revision,
-                    current_revision,
-                    reason,
-                    operator_ref,
-                    reviewed_evidence_refs,
-                    idempotency_key,
-                },
-            ) => Ok(Self::SelectedTaskReviewDecisionAdmission {
-                query_id: query.id.0.clone(),
-                action: "dry_run".to_owned(),
-                project_id: project_id.0.clone(),
-                task_id: task_id.0.clone(),
-                decision_action: selected_task_review_decision_action_label(*action).to_owned(),
-                expected_revision: expected_revision
-                    .as_ref()
-                    .map(|revision| revision.0.clone()),
-                current_revision: current_revision.as_ref().map(|revision| revision.0.clone()),
-                reason: reason.clone(),
-                operator_ref: operator_ref.clone(),
-                reviewed_evidence_refs: reviewed_evidence_refs.clone(),
-                idempotency_key: idempotency_key.clone(),
-            }),
-            ServerQueryKind::SelectedTaskReviewDecisionApply(
-                SelectedTaskReviewDecisionApplyQuery {
-                    project_id,
-                    task_id,
-                    action,
-                    expected_revision,
-                    current_revision,
-                    reason,
-                    operator_ref,
-                    reviewed_evidence_refs,
-                    idempotency_key,
-                },
-            ) => Ok(Self::SelectedTaskReviewDecisionApply {
-                query_id: query.id.0.clone(),
-                action: "apply".to_owned(),
-                project_id: project_id.0.clone(),
-                task_id: task_id.0.clone(),
-                decision_action: selected_task_review_decision_action_label(*action).to_owned(),
-                expected_revision: expected_revision
-                    .as_ref()
-                    .map(|revision| revision.0.clone()),
-                current_revision: current_revision.as_ref().map(|revision| revision.0.clone()),
-                reason: reason.clone(),
-                operator_ref: operator_ref.clone(),
-                reviewed_evidence_refs: reviewed_evidence_refs.clone(),
-                idempotency_key: idempotency_key.clone(),
             }),
             ServerQueryKind::ProjectAuthorityMap(ProjectAuthorityMapQuery {
                 project_id,

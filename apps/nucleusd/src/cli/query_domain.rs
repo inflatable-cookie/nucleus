@@ -11,7 +11,7 @@ use selected_task_command_admission::parse_selected_task_command_admission;
 use selected_task_queries::{
     parse_selected_task_action_readiness, parse_selected_task_operator_action_gate,
     parse_selected_task_review_next, parse_selected_task_review_outcome_route,
-    parse_selected_task_scm_handoff,
+    parse_selected_task_route_admission, parse_selected_task_scm_handoff,
 };
 use selected_task_review_decision::{
     parse_selected_task_review_decision_admission, parse_selected_task_review_decision_apply,
@@ -117,6 +117,12 @@ pub(crate) enum QueryDomain {
     SelectedTaskReviewOutcomeRoute {
         project_id: String,
         task_id: String,
+    },
+    SelectedTaskRouteAdmission {
+        project_id: String,
+        task_id: String,
+        expected_revision: Option<String>,
+        operator_ref: String,
     },
     SelectedTaskScmHandoff {
         project_id: String,
@@ -365,6 +371,7 @@ impl QueryDomain {
             "selected-task-operator-action-gate" => parse_selected_task_operator_action_gate(iter),
             "selected-task-review-next" => parse_selected_task_review_next(iter),
             "selected-task-review-outcome-route" => parse_selected_task_review_outcome_route(iter),
+            "selected-task-route-admission" => parse_selected_task_route_admission(iter),
             "selected-task-scm-handoff" => parse_selected_task_scm_handoff(iter),
             "selected-task-command-admission" => parse_selected_task_command_admission(iter),
             "selected-task-review-decision-admission" => {

@@ -75,6 +75,22 @@ export function buildSelectedTaskReviewOutcomeRouteQuery(
   });
 }
 
+export function buildSelectedTaskRouteAdmissionQuery(
+  projectId: string,
+  taskId: string,
+  expectedRevision: string | null,
+): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "selected_task_route_admission",
+    query_id: "",
+    action: "admission",
+    project_id: projectId,
+    task_id: taskId,
+    expected_revision: expectedRevision,
+    operator_ref: CONTROL_CLIENT_ID,
+  });
+}
+
 export function buildSelectedTaskScmHandoffQuery(
   projectId: string,
   taskId: string,

@@ -8,6 +8,7 @@ mod id;
 mod planning_projection;
 mod project_authority;
 mod provider;
+mod selected_task_to_dto;
 mod state;
 mod task_workflow;
 mod to_dto;
@@ -192,6 +193,14 @@ pub enum ControlQueryDto {
         action: String,
         project_id: String,
         task_id: String,
+    },
+    SelectedTaskRouteAdmission {
+        query_id: String,
+        action: String,
+        project_id: String,
+        task_id: String,
+        expected_revision: Option<String>,
+        operator_ref: String,
     },
     SelectedTaskScmHandoff {
         query_id: String,

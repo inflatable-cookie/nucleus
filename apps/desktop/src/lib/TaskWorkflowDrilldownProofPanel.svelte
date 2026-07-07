@@ -14,6 +14,7 @@
     querySelectedTaskReviewDecisionApply,
     querySelectedTaskReviewNext,
     querySelectedTaskReviewOutcomeRoute,
+    querySelectedTaskRouteAdmission,
     querySelectedTaskScmHandoff,
     queryTaskWorkflowDrilldown,
     submitControlEnvelope,
@@ -31,6 +32,7 @@
     type SelectedTaskReviewDecisionAction,
     type SelectedTaskReviewNextQueryResult,
     type SelectedTaskReviewOutcomeRouteQueryResult,
+    type SelectedTaskRouteAdmissionQueryResult,
     type SelectedTaskScmHandoffQueryResult,
     type TaskWorkflowDrilldownQueryResult,
   } from "./control";
@@ -70,6 +72,7 @@
   let operatorGateResult = $state<SelectedTaskOperatorActionGateQueryResult | null>(null);
   let reviewNextResult = $state<SelectedTaskReviewNextQueryResult | null>(null);
   let reviewOutcomeRouteResult = $state<SelectedTaskReviewOutcomeRouteQueryResult | null>(null);
+  let routeAdmissionResult = $state<SelectedTaskRouteAdmissionQueryResult | null>(null);
   let scmHandoffResult = $state<SelectedTaskScmHandoffQueryResult | null>(null);
   let failure = $state<string | null>(null);
   let commandPending = $state<string | null>(null);
@@ -101,6 +104,9 @@
   );
   const reviewOutcomeRoute = $derived(
     reviewOutcomeRouteResult?.state === "record" ? reviewOutcomeRouteResult.route : null,
+  );
+  const routeAdmission = $derived(
+    routeAdmissionResult?.state === "record" ? routeAdmissionResult.admission : null,
   );
   const scmHandoff = $derived(
     scmHandoffResult?.state === "record" ? scmHandoffResult.handoff : null,
@@ -169,6 +175,7 @@
         operatorGate,
         reviewNext,
         reviewOutcomeRoute,
+        routeAdmission,
         scmHandoff,
       ] = await Promise.all([
         queryProductWorkflowSummary(projectId),
@@ -177,6 +184,7 @@
         querySelectedTaskOperatorActionGate(projectId, taskId),
         querySelectedTaskReviewNext(projectId, taskId),
         querySelectedTaskReviewOutcomeRoute(projectId, taskId),
+        querySelectedTaskRouteAdmission(projectId, taskId, selectedTask?.revision_id ?? null),
         querySelectedTaskScmHandoff(projectId, taskId),
       ]);
       workflowResult = workflow;
@@ -185,6 +193,7 @@
       operatorGateResult = operatorGate;
       reviewNextResult = reviewNext;
       reviewOutcomeRouteResult = reviewOutcomeRoute;
+      routeAdmissionResult = routeAdmission;
       scmHandoffResult = scmHandoff;
       await refreshReviewDecisionAdmissions(reviewNext);
     } catch (error) {
@@ -194,6 +203,7 @@
       operatorGateResult = null;
       reviewNextResult = null;
       reviewOutcomeRouteResult = null;
+      routeAdmissionResult = null;
       scmHandoffResult = null;
       reviewDecisionAdmissions = {};
       reviewDecisionApplyResult = null;
@@ -437,6 +447,25 @@
       ["projection write", reviewOutcomeRoute.no_effects.projection_write_performed],
       ["agent scheduling", reviewOutcomeRoute.no_effects.agent_scheduling_performed],
       ["UI state change", reviewOutcomeRoute.no_effects.ui_effect_performed],
+    ];
+  }
+
+  function routeAdmissionNoEffectFlags(): [string, boolean][] {
+    if (!routeAdmission) {
+      return [];
+    }
+
+    return [
+      ["review mutation", routeAdmission.no_effects.review_mutation_performed],
+      ["task mutation", routeAdmission.no_effects.task_lifecycle_mutation_performed],
+      ["provider run", routeAdmission.no_effects.provider_execution_performed],
+      ["provider write", routeAdmission.no_effects.provider_write_performed],
+      ["SCM or forge change", routeAdmission.no_effects.scm_or_forge_mutation_performed],
+      ["memory apply", routeAdmission.no_effects.accepted_memory_apply_performed],
+      ["planning apply", routeAdmission.no_effects.planning_apply_performed],
+      ["projection write", routeAdmission.no_effects.projection_write_performed],
+      ["agent scheduling", routeAdmission.no_effects.agent_scheduling_performed],
+      ["UI state change", routeAdmission.no_effects.ui_effect_performed],
     ];
   }
 
@@ -1001,6 +1030,85 @@
         </div>
       {/if}
 
+      {#if routeAdmission}
+        <div class="selected-task-route-admission" aria-label="Selected task route admission">
+          <section>
+            <h3>Completion admission preview</h3>
+            <p>
+              {routeAdmission.completion.refusal?.reason ??
+                routeAdmission.completion.command_admission?.command?.action ??
+                "no completion command"}
+            </p>
+            <dl>
+              <div>
+                <dt>Status</dt>
+                <dd>{routeAdmission.completion.status.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Route</dt>
+                <dd>{routeAdmission.completion.route_candidate.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Decision</dt>
+                <dd>{routeAdmission.completion.decision_ref ?? "none"}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Rework and delegation previews</h3>
+            <p>
+              {routeAdmission.rework_delegation.refusal?.reason ??
+                routeAdmission.rework_delegation.rework_preview?.summary ??
+                routeAdmission.rework_delegation.delegation_preview?.summary ??
+                "no rework or delegation preview"}
+            </p>
+            <dl>
+              <div>
+                <dt>Status</dt>
+                <dd>{routeAdmission.rework_delegation.status.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Rework</dt>
+                <dd>{routeAdmission.rework_delegation.rework_preview?.family.replaceAll("_", " ") ?? "none"}</dd>
+              </div>
+              <div>
+                <dt>Delegation</dt>
+                <dd>{routeAdmission.rework_delegation.delegation_preview?.family.replaceAll("_", " ") ?? "none"}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Admission evidence</h3>
+            <dl>
+              <div>
+                <dt>Completion refs</dt>
+                <dd>{routeAdmission.completion.evidence_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Rework refs</dt>
+                <dd>{routeAdmission.rework_delegation.evidence_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Work refs</dt>
+                <dd>{routeAdmission.rework_delegation.work_item_refs.length}</dd>
+              </div>
+            </dl>
+          </section>
+        </div>
+
+        <div class="selected-task-route-admission-no-effects" aria-label="Selected task route admission no-effect flags">
+          {#each routeAdmissionNoEffectFlags() as [label, value]}
+            <span class:flagged={value}>{label}: {value ? "true" : "false"}</span>
+          {/each}
+        </div>
+      {:else if routeAdmissionResult && routeAdmissionResult.state !== "record"}
+        <div class="panel-message">
+          <Text tone="muted">Selected task route admission unavailable.</Text>
+        </div>
+      {/if}
+
       {#if scmHandoff}
         <div class="selected-task-scm-handoff" aria-label="Selected task SCM handoff readiness">
           <section>
@@ -1462,6 +1570,7 @@
   .task-command-outcome-evidence,
   .selected-task-review-next,
   .selected-task-review-outcome-route,
+  .selected-task-route-admission,
   .selected-task-review-decision,
   .selected-task-review-decision-result,
   .selected-task-scm-handoff,
@@ -1480,6 +1589,7 @@
   .task-command-outcome-evidence section,
   .selected-task-review-next section,
   .selected-task-review-outcome-route section,
+  .selected-task-route-admission section,
   .selected-task-review-decision section,
   .selected-task-review-decision-result section,
   .selected-task-scm-handoff section,
@@ -1504,6 +1614,7 @@
   .operator-action-gate h3,
   .selected-task-review-next h3,
   .selected-task-review-outcome-route h3,
+  .selected-task-route-admission h3,
   .selected-task-review-decision h3,
   .selected-task-review-decision-result h3,
   .selected-task-scm-handoff h3,
@@ -1533,6 +1644,12 @@
   }
 
   .selected-task-review-outcome-route p {
+    margin: 0 0 0.5rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.78rem;
+  }
+
+  .selected-task-route-admission p {
     margin: 0 0 0.5rem;
     color: var(--poodle-color-text-secondary);
     font-size: 0.78rem;
@@ -1568,6 +1685,10 @@
 
   .selected-task-review-outcome-route {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .selected-task-route-admission {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .selected-task-review-decision {
@@ -1776,6 +1897,7 @@
   .task-command-outcome-evidence dl,
   .selected-task-review-next dl,
   .selected-task-review-outcome-route dl,
+  .selected-task-route-admission dl,
   .selected-task-scm-handoff dl,
   .selected-task-context dl,
   .review-handoff-readiness dl {
@@ -1788,6 +1910,7 @@
   .task-command-outcome-evidence dl div,
   .selected-task-review-next dl div,
   .selected-task-review-outcome-route dl div,
+  .selected-task-route-admission dl div,
   .selected-task-scm-handoff dl div,
   .review-handoff-readiness dl div,
   .drilldown-sections dl div {
@@ -1810,6 +1933,8 @@
   .selected-task-review-next dd,
   .selected-task-review-outcome-route dt,
   .selected-task-review-outcome-route dd,
+  .selected-task-route-admission dt,
+  .selected-task-route-admission dd,
   .selected-task-scm-handoff dt,
   .selected-task-scm-handoff dd,
   .selected-task-context dt,
@@ -1827,6 +1952,7 @@
   .task-command-outcome-evidence dd,
   .selected-task-review-next dd,
   .selected-task-review-outcome-route dd,
+  .selected-task-route-admission dd,
   .selected-task-scm-handoff dd,
   .selected-task-context dd,
   .review-handoff-readiness dd {
@@ -1873,6 +1999,7 @@
   .selected-task-review-next-no-effects,
   .selected-task-review-outcome-route-counts,
   .selected-task-review-outcome-route-no-effects,
+  .selected-task-route-admission-no-effects,
   .selected-task-review-decision-no-effects,
   .selected-task-scm-handoff-counts,
   .selected-task-scm-handoff-no-effects {
@@ -1893,6 +2020,7 @@
   .selected-task-review-next-no-effects span,
   .selected-task-review-outcome-route-counts span,
   .selected-task-review-outcome-route-no-effects span,
+  .selected-task-route-admission-no-effects span,
   .selected-task-review-decision-no-effects span,
   .selected-task-scm-handoff-counts span,
   .selected-task-scm-handoff-no-effects span {
@@ -1972,6 +2100,11 @@
     border-color: var(--poodle-color-status-danger);
   }
 
+  .selected-task-route-admission-no-effects span.flagged {
+    color: var(--poodle-color-status-danger);
+    border-color: var(--poodle-color-status-danger);
+  }
+
   .selected-task-review-decision-no-effects span.flagged {
     color: var(--poodle-color-status-danger);
     border-color: var(--poodle-color-status-danger);
@@ -1991,6 +2124,7 @@
     .task-command-outcome-evidence,
     .selected-task-review-next,
     .selected-task-review-outcome-route,
+    .selected-task-route-admission,
     .selected-task-review-decision,
     .selected-task-review-decision-result,
     .selected-task-scm-handoff,

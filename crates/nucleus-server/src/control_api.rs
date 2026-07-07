@@ -168,6 +168,7 @@ pub enum ServerQueryResult {
     SelectedTaskOperatorActionGate(crate::SelectedTaskOperatorActionGate),
     SelectedTaskReviewNext(crate::SelectedTaskReviewNext),
     SelectedTaskReviewOutcomeRoute(crate::SelectedTaskReviewOutcomeRoute),
+    SelectedTaskRouteAdmission(crate::SelectedTaskRouteAdmission),
     SelectedTaskScmHandoff(crate::SelectedTaskScmHandoffReadiness),
     SelectedTaskCommandAdmission(crate::SelectedTaskCommandAdmission),
     SelectedTaskReviewDecisionAdmission(crate::SelectedTaskReviewDecisionAdmission),

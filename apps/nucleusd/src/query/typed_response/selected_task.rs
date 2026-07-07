@@ -9,6 +9,7 @@ use super::selected_task_review_decision::{
 };
 use super::selected_task_review_next::selected_task_review_next_response_lines;
 use super::selected_task_review_outcome_route::selected_task_review_outcome_route_response_lines;
+use super::selected_task_route_admission::selected_task_route_admission_response_lines;
 use super::selected_task_scm_handoff::selected_task_scm_handoff_response_lines;
 
 pub(super) fn selected_task_response_lines(
@@ -36,6 +37,9 @@ pub(super) fn selected_task_response_lines(
         ),
         ControlResponseBodyDto::SelectedTaskReviewOutcomeRoute { route } => Some(
             selected_task_review_outcome_route_response_lines(label, route.clone()),
+        ),
+        ControlResponseBodyDto::SelectedTaskRouteAdmission { admission } => Some(
+            selected_task_route_admission_response_lines(label, admission.clone()),
         ),
         ControlResponseBodyDto::SelectedTaskScmHandoff { handoff } => Some(
             selected_task_scm_handoff_response_lines(label, handoff.clone()),

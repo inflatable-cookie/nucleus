@@ -42,10 +42,10 @@ use super::records::{
     ControlSelectedTaskCommandAdmissionDto, ControlSelectedTaskOperatorActionGateDto,
     ControlSelectedTaskReviewDecisionAdmissionDto, ControlSelectedTaskReviewDecisionRecordDto,
     ControlSelectedTaskReviewNextDto, ControlSelectedTaskReviewOutcomeRouteDto,
-    ControlSelectedTaskScmHandoffDto, ControlTaskReadinessCandidateDto,
-    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
-    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
-    ControlTaskWorkflowDrilldownDto,
+    ControlSelectedTaskRouteAdmissionDto, ControlSelectedTaskScmHandoffDto,
+    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
+    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
+    ControlTaskTimelineEntryDto, ControlTaskWorkflowDrilldownDto,
 };
 use crate::control_envelope_dto::{
     ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -221,6 +221,9 @@ pub enum ControlResponseBodyDto {
     },
     SelectedTaskReviewOutcomeRoute {
         route: ControlSelectedTaskReviewOutcomeRouteDto,
+    },
+    SelectedTaskRouteAdmission {
+        admission: ControlSelectedTaskRouteAdmissionDto,
     },
     SelectedTaskScmHandoff {
         handoff: ControlSelectedTaskScmHandoffDto,

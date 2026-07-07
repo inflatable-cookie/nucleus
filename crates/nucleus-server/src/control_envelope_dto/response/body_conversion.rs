@@ -23,10 +23,11 @@ use super::records::{
     ControlSelectedTaskActionReadinessDto, ControlSelectedTaskCommandAdmissionDto,
     ControlSelectedTaskOperatorActionGateDto, ControlSelectedTaskReviewDecisionAdmissionDto,
     ControlSelectedTaskReviewDecisionRecordDto, ControlSelectedTaskReviewNextDto,
-    ControlSelectedTaskReviewOutcomeRouteDto, ControlSelectedTaskScmHandoffDto,
-    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
-    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
-    ControlTaskTimelineEntryDto, ControlTaskWorkflowDrilldownDto,
+    ControlSelectedTaskReviewOutcomeRouteDto, ControlSelectedTaskRouteAdmissionDto,
+    ControlSelectedTaskScmHandoffDto, ControlTaskReadinessCandidateDto,
+    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
+    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
+    ControlTaskWorkflowDrilldownDto,
 };
 use super::research_run_briefs::research_run_briefs_body_dto;
 use crate::control_api::{ServerControlResponseBody, ServerQueryResult};
@@ -239,6 +240,11 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 ServerQueryResult::SelectedTaskReviewOutcomeRoute(route),
             ) => Ok(Self::SelectedTaskReviewOutcomeRoute {
                 route: ControlSelectedTaskReviewOutcomeRouteDto::from(route),
+            }),
+            ServerControlResponseBody::Query(ServerQueryResult::SelectedTaskRouteAdmission(
+                admission,
+            )) => Ok(Self::SelectedTaskRouteAdmission {
+                admission: ControlSelectedTaskRouteAdmissionDto::from(admission),
             }),
             ServerControlResponseBody::Query(ServerQueryResult::SelectedTaskScmHandoff(
                 handoff,

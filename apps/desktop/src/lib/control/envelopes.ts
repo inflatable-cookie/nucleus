@@ -35,6 +35,7 @@ import type {
 } from "./taskWorkflow";
 import type { ControlSelectedTaskReviewNextDto } from "./selectedTaskReviewNext";
 import type { ControlSelectedTaskReviewOutcomeRouteDto } from "./selectedTaskReviewOutcomeRoute";
+import type { ControlSelectedTaskRouteAdmissionDto } from "./selectedTaskRouteAdmission";
 import type {
   ControlSelectedTaskReviewDecisionQueryDto,
   ControlSelectedTaskReviewDecisionResponseBodyDto,
@@ -114,6 +115,15 @@ export type ControlQueryDto =
       action: "route";
       project_id: string;
       task_id: string;
+    }
+  | {
+      kind: "selected_task_route_admission";
+      query_id: string;
+      action: "admission";
+      project_id: string;
+      task_id: string;
+      expected_revision: string | null;
+      operator_ref: string;
     }
   | {
       kind: "selected_task_scm_handoff";
@@ -258,6 +268,10 @@ export type ControlResponseEnvelopeDto = {
     | {
         type: "selected_task_review_outcome_route";
         route: ControlSelectedTaskReviewOutcomeRouteDto;
+      }
+    | {
+        type: "selected_task_route_admission";
+        admission: ControlSelectedTaskRouteAdmissionDto;
       }
     | {
         type: "selected_task_scm_handoff";

@@ -78,6 +78,7 @@ mod selected_task_operator_action_gate;
 mod selected_task_review_decision;
 mod selected_task_review_next;
 mod selected_task_review_outcome_route;
+mod selected_task_route_admission;
 mod selected_task_scm_handoff;
 mod state_records;
 mod task_readiness;
@@ -222,6 +223,9 @@ where
             selected_task_review_outcome_route::selected_task_review_outcome_route_query(
                 handler, query,
             )
+        }
+        ServerQueryKind::SelectedTaskRouteAdmission(query) => {
+            selected_task_route_admission::selected_task_route_admission_query(handler, query)
         }
         ServerQueryKind::SelectedTaskScmHandoff(query) => {
             selected_task_scm_handoff::selected_task_scm_handoff_query(handler, query)
