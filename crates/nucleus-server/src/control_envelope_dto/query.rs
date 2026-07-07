@@ -181,6 +181,12 @@ pub enum ControlQueryDto {
         project_id: String,
         task_id: String,
     },
+    SelectedTaskReviewNext {
+        query_id: String,
+        action: String,
+        project_id: String,
+        task_id: String,
+    },
     SelectedTaskCommandAdmission {
         query_id: String,
         action: String,

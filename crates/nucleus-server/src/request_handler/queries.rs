@@ -75,6 +75,7 @@ mod runtime_metadata;
 mod selected_task_action_readiness;
 mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
+mod selected_task_review_next;
 mod state_records;
 mod task_readiness;
 mod task_seed_promotion_diagnostics;
@@ -210,6 +211,9 @@ where
             selected_task_operator_action_gate::selected_task_operator_action_gate_query(
                 handler, query,
             )
+        }
+        ServerQueryKind::SelectedTaskReviewNext(query) => {
+            selected_task_review_next::selected_task_review_next_query(handler, query)
         }
         ServerQueryKind::SelectedTaskCommandAdmission(query) => {
             selected_task_command_admission::selected_task_command_admission_query(handler, query)

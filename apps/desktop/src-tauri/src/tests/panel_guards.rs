@@ -174,6 +174,10 @@ fn task_workflow_drilldown_proof_panel_allows_only_task_command_admission_contro
         "review acceptance",
         "active apply",
         "final design",
+        "raw_request_body",
+        "raw_response_body",
+        "provider payload",
+        "provider output",
     ] {
         assert!(
             !component.to_lowercase().contains(&forbidden.to_lowercase()),
@@ -187,8 +191,22 @@ fn task_workflow_drilldown_proof_panel_allows_only_task_command_admission_contro
     assert!(component.contains("querySelectedTaskCommandAdmission"));
     assert!(component.contains("submitSelectedTaskCommand"));
     assert!(component.contains("onTaskCommandChanged?.()"));
+    assert!(component.contains("awaitingTaskRefresh = true"));
+    assert!(component.contains("lastCommandRevision = submittedRevision"));
+    assert!(component.contains("selectedTask.revision_id !== lastCommandRevision"));
+    assert!(component.contains("waitingForServerTaskRecord"));
+    assert!(component.contains("blockReason = \"\""));
+    assert!(component.contains("type CommandReceiptSummary"));
+    assert!(component.contains("commandReceipt = {"));
+    assert!(component.contains("Task command outcome evidence"));
+    assert!(component.contains("Command receipt"));
+    assert!(component.contains("Refreshed timeline evidence"));
+    assert!(component.contains("Task command timeline refs"));
+    assert!(component.contains("drilldown?.timeline.entry_refs"));
+    assert!(component.contains("drilldown.source_counts.timeline_entry_refs"));
     assert!(!component.contains("selectedTask.activity ="));
-    assert!(!component.contains("selectedTask.revision_id ="));
+    assert!(!component.contains("selectedTask.revision_id = \""));
+    assert!(!component.contains("selectedTask.revision_id = null"));
     assert!(component.contains("Work-loop guidance"));
     assert!(component.contains("Selected task action readiness"));
     assert!(component.contains("Selected task operator action gate"));

@@ -71,6 +71,7 @@ pub enum ServerQueryKind {
     TaskWorkflowDrilldown(TaskWorkflowDrilldownQuery),
     SelectedTaskActionReadiness(SelectedTaskActionReadinessQuery),
     SelectedTaskOperatorActionGate(SelectedTaskOperatorActionGateQuery),
+    SelectedTaskReviewNext(SelectedTaskReviewNextQuery),
     SelectedTaskCommandAdmission(SelectedTaskCommandAdmissionQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
 }
@@ -203,6 +204,13 @@ pub struct SelectedTaskActionReadinessQuery {
 /// Selected task operator action gate query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SelectedTaskOperatorActionGateQuery {
+    pub project_id: ProjectId,
+    pub task_id: TaskId,
+}
+
+/// Selected task review and next-step presentation query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedTaskReviewNextQuery {
     pub project_id: ProjectId,
     pub task_id: TaskId,
 }

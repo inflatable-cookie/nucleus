@@ -54,6 +54,7 @@ pub(super) fn query_domain_label(domain: &QueryDomain) -> &'static str {
         QueryDomain::TaskWorkflowDrilldown { .. } => "task-workflow-drilldown",
         QueryDomain::SelectedTaskActionReadiness { .. } => "selected-task-action-readiness",
         QueryDomain::SelectedTaskOperatorActionGate { .. } => "selected-task-operator-action-gate",
+        QueryDomain::SelectedTaskReviewNext { .. } => "selected-task-review-next",
         QueryDomain::SelectedTaskCommandAdmission { .. } => "selected-task-command-admission",
         QueryDomain::ProjectAuthorityMap { .. } => "project-authority-map",
     }

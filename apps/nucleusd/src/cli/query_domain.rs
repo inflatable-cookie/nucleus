@@ -99,6 +99,10 @@ pub(crate) enum QueryDomain {
         project_id: String,
         task_id: String,
     },
+    SelectedTaskReviewNext {
+        project_id: String,
+        task_id: String,
+    },
     SelectedTaskCommandAdmission {
         project_id: String,
         task_id: String,
@@ -359,6 +363,19 @@ impl QueryDomain {
                     project_id,
                     task_id: iter.next().ok_or_else(|| {
                         "selected-task-operator-action-gate requires --task <task-id>".to_owned()
+                    })?,
+                })
+            }
+            "selected-task-review-next" => {
+                expect_flag(iter, "--project")?;
+                let project_id = iter.next().ok_or_else(|| {
+                    "selected-task-review-next requires --project <project-id>".to_owned()
+                })?;
+                expect_flag(iter, "--task")?;
+                Ok(Self::SelectedTaskReviewNext {
+                    project_id,
+                    task_id: iter.next().ok_or_else(|| {
+                        "selected-task-review-next requires --task <task-id>".to_owned()
                     })?,
                 })
             }

@@ -72,6 +72,12 @@ Current checkpoint:
 - selected-task command admission is validated
 - the active path is task-command outcome coherence
 - task-command shell refresh boundary is in place
+- task-command desktop refresh loop is in place
+- task-command receipt and timeline presentation is in place
+- task-command outcome coherence is validated
+- the active path is selected-task review and next-step presentation
+- selected-task review/next boundary and server read model are in place
+- selected-task review/next has control DTOs, CLI, and Effigy inspection
 
 ## Roadmaps
 
@@ -82,18 +88,18 @@ Current checkpoint:
 - `005-selected-task-action-readiness.md` - completed
 - `006-selected-task-operator-action-gate.md` - completed
 - `007-selected-task-command-admission-controls.md` - completed
-- `008-task-command-outcome-coherence.md` - active
+- `008-task-command-outcome-coherence.md` - completed
+- `009-selected-task-review-next-step-presentation.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/037-task-command-desktop-refresh-loop.md`
+- `batch-cards/043-selected-task-review-next-desktop-proof.md`
 
 Planned cards:
 
-- `batch-cards/038-task-command-receipt-timeline-presentation.md`
-- `batch-cards/039-task-command-outcome-validation-next-lane.md`
+- `batch-cards/044-selected-task-review-next-validation.md`
 
 Completed cards:
 
@@ -133,3 +139,9 @@ Completed cards:
 - `batch-cards/034-selected-task-command-desktop-proof-controls.md`
 - `batch-cards/035-selected-task-command-validation-next-lane.md`
 - `batch-cards/036-task-command-refresh-boundary.md`
+- `batch-cards/037-task-command-desktop-refresh-loop.md`
+- `batch-cards/038-task-command-receipt-timeline-presentation.md`
+- `batch-cards/039-task-command-outcome-validation-next-lane.md`
+- `batch-cards/040-selected-task-review-next-boundary.md`
+- `batch-cards/041-selected-task-review-next-read-model.md`
+- `batch-cards/042-selected-task-review-next-cli-effigy.md`

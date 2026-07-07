@@ -29,6 +29,14 @@
     onTaskCommandChanged?: () => void;
   };
 
+  type CommandReceiptSummary = {
+    commandId: string;
+    status: string;
+    family: string;
+    action: string;
+    submittedRevision: string;
+  };
+
   let { selectedTask, onTaskCommandChanged }: Props = $props();
 
   const fallbackProjectId = "project:nucleus-local";
@@ -42,8 +50,10 @@
   let failure = $state<string | null>(null);
   let commandPending = $state<string | null>(null);
   let blockReason = $state("");
-  let commandMessage = $state<string | null>(null);
+  let commandReceipt = $state<CommandReceiptSummary | null>(null);
   let lastAdmission = $state<ControlSelectedTaskCommandAdmissionDto | null>(null);
+  let awaitingTaskRefresh = $state(false);
+  let lastCommandRevision = $state<string | null>(null);
 
   const projectId = $derived(selectedTask?.project_id ?? fallbackProjectId);
   const taskId = $derived(selectedTask?.task_id ?? fallbackTaskId);
@@ -97,6 +107,16 @@
   const statusTone = $derived(
     loading ? "pending" : failure ? "danger" : noEffects ? "success" : "info",
   );
+  const waitingForServerTaskRecord = $derived(
+    Boolean(
+      awaitingTaskRefresh &&
+        selectedTask &&
+        lastCommandRevision &&
+        selectedTask.revision_id === lastCommandRevision,
+    ),
+  );
+  const receiptTimelineRefs = $derived(drilldown?.timeline.entry_refs ?? []);
+  const receiptTimelinePreview = $derived(receiptTimelineRefs.slice(0, 3));
 
   async function loadDrilldown() {
     loading = true;
@@ -129,6 +149,11 @@
       return;
     }
 
+    if (waitingForServerTaskRecord) {
+      failure = "Waiting for refreshed server task state.";
+      return;
+    }
+
     const action = candidate.task_command.action;
     const reason = candidate.reason_required ? blockReason.trim() : null;
     if (candidate.reason_required && !reason) {
@@ -137,9 +162,9 @@
     }
 
     commandPending = candidate.family;
-    commandMessage = null;
     failure = null;
     lastAdmission = null;
+    const submittedRevision = selectedTask.revision_id;
 
     try {
       const admissionResult = await querySelectedTaskCommandAdmission(
@@ -181,8 +206,19 @@
 
       const response = await submitControlEnvelope(request);
       if (response.body.type === "command_receipt") {
-        commandMessage = `${response.body.command_id}: ${response.body.status}`;
+        commandReceipt = {
+          commandId: response.body.command_id,
+          status: response.body.status,
+          family: candidate.family,
+          action,
+          submittedRevision,
+        };
         if (response.body.status !== "rejected") {
+          awaitingTaskRefresh = true;
+          lastCommandRevision = submittedRevision;
+          if (action === "block") {
+            blockReason = "";
+          }
           onTaskCommandChanged?.();
           await loadDrilldown();
         }
@@ -197,6 +233,16 @@
       commandPending = null;
     }
   }
+
+  $effect(() => {
+    if (
+      awaitingTaskRefresh &&
+      (!selectedTask || selectedTask.revision_id !== lastCommandRevision)
+    ) {
+      awaitingTaskRefresh = false;
+      lastCommandRevision = null;
+    }
+  });
 
   function noEffectFlags(record: ControlTaskWorkflowDrilldownDto): [string, boolean][] {
     return [
@@ -498,7 +544,7 @@
                   type="text"
                   bind:value={blockReason}
                   placeholder="Required before block"
-                  disabled={Boolean(commandPending)}
+                  disabled={Boolean(commandPending) || waitingForServerTaskRecord}
                 />
               </div>
               {#each taskCommandCandidates as candidate}
@@ -515,9 +561,12 @@
                     onClick={() => void submitSelectedTaskCommand(candidate)}
                     disabled={!selectedTask ||
                       Boolean(commandPending) ||
+                      waitingForServerTaskRecord ||
                       (candidate.reason_required && !blockReason.trim())}
                   >
-                    {commandPending === candidate.family
+                    {waitingForServerTaskRecord
+                      ? "Refreshing"
+                      : commandPending === candidate.family
                       ? "Submitting"
                       : `${gateCommandLabel(candidate)} task`}
                   </Button>
@@ -576,9 +625,80 @@
           </div>
         {/if}
 
-        {#if commandMessage}
+        {#if commandReceipt}
+          <div class="task-command-outcome-evidence" aria-label="Task command outcome evidence">
+            <section>
+              <h3>Command receipt</h3>
+              <dl>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{commandReceipt.status}</dd>
+                </div>
+                <div>
+                  <dt>Command</dt>
+                  <dd>{commandReceipt.commandId}</dd>
+                </div>
+                <div>
+                  <dt>Action</dt>
+                  <dd>{commandReceipt.action}</dd>
+                </div>
+                <div>
+                  <dt>Submitted revision</dt>
+                  <dd>{commandReceipt.submittedRevision}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section>
+              <h3>Refreshed timeline evidence</h3>
+              <p>{drilldown.source_counts.timeline_entry_refs} entries</p>
+              <dl>
+                <div>
+                  <dt>Timeline refs</dt>
+                  <dd>{receiptTimelineRefs.length}</dd>
+                </div>
+                <div>
+                  <dt>Task activity</dt>
+                  <dd>{drilldown.task?.activity ?? "unknown"}</dd>
+                </div>
+              </dl>
+              {#if receiptTimelinePreview.length > 0}
+                <div class="timeline-ref-list" aria-label="Task command timeline refs">
+                  {#each receiptTimelinePreview as ref}
+                    <span>{ref}</span>
+                  {/each}
+                  {#if receiptTimelineRefs.length > receiptTimelinePreview.length}
+                    <span>{receiptTimelineRefs.length - receiptTimelinePreview.length} more</span>
+                  {/if}
+                </div>
+              {:else}
+                <small>{gapReason(drilldown.gaps, "timeline")}</small>
+              {/if}
+            </section>
+
+            <section>
+              <h3>Workflow evidence</h3>
+              <dl>
+                <div>
+                  <dt>Guidance refs</dt>
+                  <dd>{drilldown.guidance.evidence_refs.length}</dd>
+                </div>
+                <div>
+                  <dt>Command refs</dt>
+                  <dd>{drilldown.runtime.command_evidence_refs.length}</dd>
+                </div>
+                <div>
+                  <dt>Receipt family</dt>
+                  <dd>{commandReceipt.family}</dd>
+                </div>
+              </dl>
+            </section>
+          </div>
+        {/if}
+
+        {#if waitingForServerTaskRecord}
           <div class="panel-message">
-            <Text tone="muted">{commandMessage}</Text>
+            <Text tone="muted">Waiting for refreshed server task state.</Text>
           </div>
         {/if}
       {:else if operatorGateResult && operatorGateResult.state !== "record"}
@@ -692,6 +812,7 @@
   .drilldown-sections,
   .action-readiness,
   .operator-action-gate,
+  .task-command-outcome-evidence,
   .selected-task-context,
   .review-handoff-readiness {
     display: grid;
@@ -704,6 +825,7 @@
   .drilldown-sections section,
   .action-readiness section,
   .operator-action-gate section,
+  .task-command-outcome-evidence section,
   .selected-task-context section,
   .review-handoff-readiness section,
   .work-items div {
@@ -747,6 +869,10 @@
   }
 
   .operator-action-gate {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .task-command-outcome-evidence {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -798,10 +924,19 @@
 
   .operator-action-gate span,
   .operator-action-gate p,
-  .operator-action-gate small {
+  .operator-action-gate small,
+  .task-command-outcome-evidence p,
+  .task-command-outcome-evidence small {
     margin: 0;
     color: var(--poodle-color-text-secondary);
     font-size: 0.75rem;
+  }
+
+  .task-command-outcome-evidence h3 {
+    margin: 0 0 0.45rem;
+    color: var(--poodle-color-text-primary);
+    font-size: 0.8125rem;
+    letter-spacing: 0;
   }
 
   .block-reason-field {
@@ -869,6 +1004,7 @@
   }
 
   .work-loop-guidance dl,
+  .task-command-outcome-evidence dl,
   .selected-task-context dl,
   .review-handoff-readiness dl {
     display: grid;
@@ -877,6 +1013,7 @@
   }
 
   .work-loop-guidance dl div,
+  .task-command-outcome-evidence dl div,
   .review-handoff-readiness dl div,
   .drilldown-sections dl div {
     display: flex;
@@ -892,6 +1029,8 @@
 
   .work-loop-guidance dt,
   .work-loop-guidance dd,
+  .task-command-outcome-evidence dt,
+  .task-command-outcome-evidence dd,
   .selected-task-context dt,
   .selected-task-context dd,
   .review-handoff-readiness dt,
@@ -904,6 +1043,7 @@
   }
 
   .work-loop-guidance dd,
+  .task-command-outcome-evidence dd,
   .selected-task-context dd,
   .review-handoff-readiness dd {
     overflow: hidden;
@@ -976,6 +1116,13 @@
     gap: 0.35rem;
   }
 
+  .timeline-ref-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.5rem;
+  }
+
   .guidance-missing span {
     padding: 0.25rem 0.45rem;
     color: var(--poodle-color-text-secondary);
@@ -994,6 +1141,19 @@
     background: var(--poodle-color-background-canvas);
   }
 
+  .timeline-ref-list span {
+    max-width: 100%;
+    overflow: hidden;
+    padding: 0.25rem 0.45rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.72rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border: 1px solid var(--poodle-color-border-subtle);
+    border-radius: var(--poodle-radius-control);
+    background: var(--poodle-color-background-canvas);
+  }
+
   .drilldown-no-effects span.flagged {
     color: var(--poodle-color-status-danger);
     border-color: var(--poodle-color-status-danger);
@@ -1005,6 +1165,7 @@
     .drilldown-sections,
     .action-readiness,
     .operator-action-gate,
+    .task-command-outcome-evidence,
     .selected-task-context,
     .review-handoff-readiness {
       grid-template-columns: repeat(2, minmax(0, 1fr));

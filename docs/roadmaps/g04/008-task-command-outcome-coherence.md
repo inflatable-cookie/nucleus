@@ -1,6 +1,6 @@
 # 008 Task Command Outcome Coherence
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-07
 
@@ -26,33 +26,45 @@ guessing.
 ## Goals
 
 - [x] Refresh selected task records after task-only command receipts.
-- [ ] Refresh task workflow drilldown and action gates after command receipts.
-- [ ] Surface command receipt and task timeline evidence together.
-- [ ] Keep next-step context server-owned and refreshed after mutation.
-- [ ] Keep provider, SCM/forge, delegation, review, memory, and planning apply
+- [x] Refresh task workflow drilldown and action gates after command receipts.
+- [x] Surface command receipt and task timeline evidence together.
+- [x] Keep next-step context server-owned and refreshed after mutation.
+- [x] Keep provider, SCM/forge, delegation, review, memory, and planning apply
   controls out of this lane.
 
 ## Execution Plan
 
 - [x] Batch 1: shell refresh boundary for task command outcomes.
-- [ ] Batch 2: desktop task-command refresh loop.
-- [ ] Batch 3: receipt and timeline presentation.
-- [ ] Batch 4: guard validation and next lane selection.
+- [x] Batch 2: desktop task-command refresh loop.
+- [x] Batch 3: receipt and timeline presentation.
+- [x] Batch 4: guard validation and next lane selection.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/037-task-command-desktop-refresh-loop.md`
+None.
 
 Planned cards:
 
-- `batch-cards/038-task-command-receipt-timeline-presentation.md`
-- `batch-cards/039-task-command-outcome-validation-next-lane.md`
+None.
 
 Completed cards:
 
 - `batch-cards/036-task-command-refresh-boundary.md`
+- `batch-cards/037-task-command-desktop-refresh-loop.md`
+- `batch-cards/038-task-command-receipt-timeline-presentation.md`
+- `batch-cards/039-task-command-outcome-validation-next-lane.md`
+
+## Result
+
+The lane proves that an operator-triggered task-only command can be admitted,
+submitted, observed through a command receipt, and followed by refreshed
+server-owned task/workflow/timeline evidence in the disposable proof surface.
+
+Next lane:
+
+- `009-selected-task-review-next-step-presentation.md`
 
 ## Boundary
 

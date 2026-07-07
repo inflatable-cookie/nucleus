@@ -38,6 +38,7 @@ pub(super) fn query_domain_state_domain(domain: &QueryDomain) -> Option<ServerSt
         | QueryDomain::TaskWorkflowDrilldown { .. }
         | QueryDomain::SelectedTaskActionReadiness { .. }
         | QueryDomain::SelectedTaskOperatorActionGate { .. }
+        | QueryDomain::SelectedTaskReviewNext { .. }
         | QueryDomain::SelectedTaskCommandAdmission { .. }
         | QueryDomain::ProjectAuthorityMap { .. } => None,
     }

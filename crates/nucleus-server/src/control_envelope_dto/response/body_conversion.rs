@@ -21,10 +21,10 @@ use super::records::{
     ControlProductWorkflowSummaryDto, ControlProjectAuthorityMapDto,
     ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
     ControlSelectedTaskActionReadinessDto, ControlSelectedTaskCommandAdmissionDto,
-    ControlSelectedTaskOperatorActionGateDto, ControlTaskReadinessCandidateDto,
-    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
-    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
-    ControlTaskWorkflowDrilldownDto,
+    ControlSelectedTaskOperatorActionGateDto, ControlSelectedTaskReviewNextDto,
+    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
+    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
+    ControlTaskTimelineEntryDto, ControlTaskWorkflowDrilldownDto,
 };
 use super::research_run_briefs::research_run_briefs_body_dto;
 use crate::control_api::{ServerControlResponseBody, ServerQueryResult};
@@ -227,6 +227,11 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 ServerQueryResult::SelectedTaskOperatorActionGate(gate),
             ) => Ok(Self::SelectedTaskOperatorActionGate {
                 gate: ControlSelectedTaskOperatorActionGateDto::from(gate),
+            }),
+            ServerControlResponseBody::Query(ServerQueryResult::SelectedTaskReviewNext(
+                review_next,
+            )) => Ok(Self::SelectedTaskReviewNext {
+                review_next: ControlSelectedTaskReviewNextDto::from(review_next),
             }),
             ServerControlResponseBody::Query(ServerQueryResult::SelectedTaskCommandAdmission(
                 admission,

@@ -109,5 +109,8 @@ pub use records::{
     ControlSelectedTaskOperatorActionBlockerDto, ControlSelectedTaskOperatorActionCandidateDto,
     ControlSelectedTaskOperatorActionGateDto, ControlSelectedTaskOperatorActionGateSourceCountsDto,
     ControlSelectedTaskOperatorActionNoEffectsDto,
-    ControlSelectedTaskOperatorTaskCommandCandidateDto,
+    ControlSelectedTaskOperatorTaskCommandCandidateDto, ControlSelectedTaskReviewEvidenceDto,
+    ControlSelectedTaskReviewGapDto, ControlSelectedTaskReviewNextDto,
+    ControlSelectedTaskReviewNextNoEffectsDto, ControlSelectedTaskReviewNextSourceCountsDto,
+    ControlSelectedTaskReviewNextStepDto, ControlSelectedTaskReviewSummaryDto,
 };

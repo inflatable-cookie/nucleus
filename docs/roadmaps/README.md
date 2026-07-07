@@ -272,7 +272,8 @@ shape.
 - `g04/005-selected-task-action-readiness.md` - completed
 - `g04/006-selected-task-operator-action-gate.md` - completed
 - `g04/007-selected-task-command-admission-controls.md` - completed
-- `g04/008-task-command-outcome-coherence.md` - active
+- `g04/008-task-command-outcome-coherence.md` - completed
+- `g04/009-selected-task-review-next-step-presentation.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -333,7 +334,8 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g04/008-task-command-outcome-coherence.md`
+`docs/roadmaps/g04/009-selected-task-review-next-step-presentation.md`
 with
-`docs/roadmaps/g04/batch-cards/037-task-command-desktop-refresh-loop.md`.
-Refresh task workflow proof state after task-only command receipts.
+`docs/roadmaps/g04/batch-cards/043-selected-task-review-next-desktop-proof.md`.
+Show selected-task review readiness and pathway-backed next-step context in the
+disposable desktop proof without adding review or task mutation controls.

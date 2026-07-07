@@ -5,9 +5,9 @@ use nucleus_tasks::TaskId;
 use crate::control_api::{
     MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery, PlanningSessionsQuery,
     PlanningTaskSeedsQuery, ResearchRunBriefsQuery, SelectedTaskActionReadinessQuery,
-    SelectedTaskCommandAdmissionQuery, SelectedTaskOperatorActionGateQuery, ServerQueryKind,
-    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
-    TaskWorkflowDrilldownQuery,
+    SelectedTaskCommandAdmissionQuery, SelectedTaskOperatorActionGateQuery,
+    SelectedTaskReviewNextQuery, ServerQueryKind, TaskReadinessQuery,
+    TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::SelectedTaskActionFamily;
 
@@ -124,6 +124,29 @@ pub(super) fn selected_task_operator_action_gate_query_from_action(
         )),
         _ => Err(ControlApiCodecError::unsupported(format!(
             "unsupported selected task operator action gate query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn selected_task_review_next_query_from_action(
+    action: &str,
+    project_id: String,
+    task_id: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "review_next" if project_id.trim().is_empty() || task_id.trim().is_empty() => {
+            Err(ControlApiCodecError::unsupported(
+                "selected task review next query requires project and task ids",
+            ))
+        }
+        "review_next" => Ok(ServerQueryKind::SelectedTaskReviewNext(
+            SelectedTaskReviewNextQuery {
+                project_id: ProjectId(project_id),
+                task_id: TaskId(task_id),
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported selected task review next query action: {action}"
         ))),
     }
 }

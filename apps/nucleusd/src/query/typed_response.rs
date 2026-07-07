@@ -25,6 +25,7 @@ mod research_run_briefs;
 mod selected_task_action_readiness;
 mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
+mod selected_task_review_next;
 mod task_authority;
 mod task_readiness;
 mod task_seed_promotion;
@@ -58,6 +59,7 @@ pub(super) use research_run_briefs::research_run_briefs_response_lines;
 pub(super) use selected_task_action_readiness::selected_task_action_readiness_response_lines;
 pub(super) use selected_task_command_admission::selected_task_command_admission_response_lines;
 pub(super) use selected_task_operator_action_gate::selected_task_operator_action_gate_response_lines;
+pub(super) use selected_task_review_next::selected_task_review_next_response_lines;
 pub(super) use task_authority::{
     project_authority_map_response_lines, task_timeline_response_lines,
 };
@@ -359,6 +361,9 @@ pub(super) fn print_typed_dto_response(
         ControlResponseBodyDto::SelectedTaskCommandAdmission { admission } => print_ok(
             selected_task_command_admission_response_lines(label, admission),
         ),
+        ControlResponseBodyDto::SelectedTaskReviewNext { review_next } => {
+            print_ok(selected_task_review_next_response_lines(label, review_next))
+        }
         ControlResponseBodyDto::ProjectAuthorityMap { record } => {
             print_ok(project_authority_map_response_lines(label, record))
         }

@@ -10,12 +10,11 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `037-task-command-desktop-refresh-loop.md`
+- `043-selected-task-review-next-desktop-proof.md`
 
 ## Planned Cards
 
-- `038-task-command-receipt-timeline-presentation.md`
-- `039-task-command-outcome-validation-next-lane.md`
+- `044-selected-task-review-next-validation.md`
 
 ## Completed Cards
 
@@ -55,3 +54,9 @@ Hold execution cards for `g04`.
 - `034-selected-task-command-desktop-proof-controls.md`
 - `035-selected-task-command-validation-next-lane.md`
 - `036-task-command-refresh-boundary.md`
+- `037-task-command-desktop-refresh-loop.md`
+- `038-task-command-receipt-timeline-presentation.md`
+- `039-task-command-outcome-validation-next-lane.md`
+- `040-selected-task-review-next-boundary.md`
+- `041-selected-task-review-next-read-model.md`
+- `042-selected-task-review-next-cli-effigy.md`

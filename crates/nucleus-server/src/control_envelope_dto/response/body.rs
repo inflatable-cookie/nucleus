@@ -40,9 +40,10 @@ use super::records::{
     ControlResearchSynthesisKindCountDto, ControlRuntimeReadinessDiagnosticDto,
     ControlRuntimeReceiptRecordDto, ControlSelectedTaskActionReadinessDto,
     ControlSelectedTaskCommandAdmissionDto, ControlSelectedTaskOperatorActionGateDto,
-    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
-    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
-    ControlTaskTimelineEntryDto, ControlTaskWorkflowDrilldownDto,
+    ControlSelectedTaskReviewNextDto, ControlTaskReadinessCandidateDto,
+    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
+    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
+    ControlTaskWorkflowDrilldownDto,
 };
 use crate::control_envelope_dto::{
     ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -212,6 +213,9 @@ pub enum ControlResponseBodyDto {
     },
     SelectedTaskOperatorActionGate {
         gate: ControlSelectedTaskOperatorActionGateDto,
+    },
+    SelectedTaskReviewNext {
+        review_next: ControlSelectedTaskReviewNextDto,
     },
     SelectedTaskCommandAdmission {
         admission: ControlSelectedTaskCommandAdmissionDto,

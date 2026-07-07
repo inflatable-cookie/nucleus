@@ -27,5 +27,6 @@ mod runtime;
 mod selected_task_action_readiness;
 mod selected_task_command_admission;
 mod selected_task_operator_action_gate;
+mod selected_task_review_next;
 mod state_records;
 mod task_workflow_drilldown;

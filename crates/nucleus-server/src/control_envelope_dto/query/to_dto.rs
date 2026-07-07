@@ -12,8 +12,8 @@ use crate::control_api::{
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
     ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
     SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
-    SelectedTaskOperatorActionGateQuery, ServerQuery, ServerQueryKind, StateRecordQuery,
-    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
+    SelectedTaskOperatorActionGateQuery, SelectedTaskReviewNextQuery, ServerQuery, ServerQueryKind,
+    StateRecordQuery, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
     TaskWorkflowDrilldownQuery,
 };
 use crate::ids::ServerQueryId;
@@ -251,6 +251,15 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
             ) => Ok(Self::SelectedTaskOperatorActionGate {
                 query_id: query.id.0.clone(),
                 action: "gate".to_owned(),
+                project_id: project_id.0.clone(),
+                task_id: task_id.0.clone(),
+            }),
+            ServerQueryKind::SelectedTaskReviewNext(SelectedTaskReviewNextQuery {
+                project_id,
+                task_id,
+            }) => Ok(Self::SelectedTaskReviewNext {
+                query_id: query.id.0.clone(),
+                action: "review_next".to_owned(),
                 project_id: project_id.0.clone(),
                 task_id: task_id.0.clone(),
             }),

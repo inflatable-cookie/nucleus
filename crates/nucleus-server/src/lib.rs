@@ -305,6 +305,7 @@ pub mod secret_store;
 pub mod selected_task_action_readiness;
 pub mod selected_task_command_admission;
 pub mod selected_task_operator_action_gate;
+pub mod selected_task_review_next;
 pub mod server_read_only_spawn;
 pub mod state;
 pub mod task_agent_work_unit_state;
