@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 
@@ -25,19 +25,23 @@ use nucleus_server::{
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
-    ForgeStatusCheckRefreshScope, LocalControlRequestHandler, LocalMemoryProposalSeed,
+    ForgeStatusCheckRefreshScope, LocalCodexChatReply, LocalCodexChatRequest,
+    LocalCodexChatService, LocalControlRequestHandler, LocalMemoryProposalSeed,
     LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed,
-    TauriIpcControlCommandAdapter,
+    ServerStateService, TauriIpcControlCommandAdapter,
 };
 
 mod workspace_ui;
 
 struct DesktopState {
     adapter: Mutex<TauriIpcControlCommandAdapter<SqliteBackend>>,
+    chat: Arc<Mutex<LocalCodexChatService>>,
+    server_state: ServerStateService<SqliteBackend>,
 }
 
 impl DesktopState {
     fn new(backend: SqliteBackend) -> Self {
+        let server_state = ServerStateService::new(backend.clone());
         let handler = LocalControlRequestHandler::new(backend, None);
         seed_local_project(handler.state(), LocalProjectSeed::nucleus_local())
             .expect("local desktop project seed should be writable");
@@ -66,6 +70,8 @@ impl DesktopState {
 
         Self {
             adapter: Mutex::new(adapter),
+            chat: Arc::new(Mutex::new(LocalCodexChatService::default())),
+            server_state,
         }
     }
 
@@ -80,6 +86,24 @@ impl DesktopState {
 
         adapter.submit_control_envelope(request)
     }
+}
+
+#[tauri::command]
+async fn send_agent_chat_message(
+    state: tauri::State<'_, DesktopState>,
+    request: LocalCodexChatRequest,
+) -> Result<LocalCodexChatReply, String> {
+    let chat = Arc::clone(&state.chat);
+    let server_state = state.server_state.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut chat = chat
+            .lock()
+            .map_err(|_| "agent chat runtime lock is poisoned".to_owned())?;
+        chat.send_message(&server_state, request)
+    })
+    .await
+    .map_err(|error| format!("agent chat worker failed: {error}"))?
 }
 
 fn seed_local_command_evidence(
@@ -331,6 +355,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             submit_control_envelope,
+            send_agent_chat_message,
             load_workspace_ui_config,
             save_workspace_ui_config
         ])

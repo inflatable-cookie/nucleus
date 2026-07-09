@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use nucleus_command_policy::{
     CommandEvidence, CommandEvidenceId, CommandExecutionStatus, CommandOutputRetention,
@@ -8,8 +8,8 @@ use nucleus_core::RevisionId;
 use nucleus_local_store::{RevisionExpectation, SqliteBackend};
 use nucleus_server::{
     write_command_evidence, ControlQueryDto, ControlRequestBodyDto, ControlRequestEnvelopeDto,
-    LocalControlRequestHandler, TauriIpcControlCommandAdapter, CONTROL_API_PROTOCOL_FAMILY,
-    CONTROL_API_PROTOCOL_VERSION_V1,
+    LocalCodexChatService, LocalControlRequestHandler, ServerStateService,
+    TauriIpcControlCommandAdapter, CONTROL_API_PROTOCOL_FAMILY, CONTROL_API_PROTOCOL_VERSION_V1,
 };
 
 use crate::DesktopState;
@@ -56,7 +56,8 @@ fn desktop_command_history_uses_sanitized_dto_not_storage_payloads() {
         std::process::id()
     ));
     let _ = std::fs::remove_file(&database_path);
-    let handler = LocalControlRequestHandler::new(SqliteBackend::new(database_path.clone()), None);
+    let backend = SqliteBackend::new(database_path.clone());
+    let handler = LocalControlRequestHandler::new(backend.clone(), None);
     write_command_evidence(
         handler.state(),
         &CommandEvidence {
@@ -75,6 +76,8 @@ fn desktop_command_history_uses_sanitized_dto_not_storage_payloads() {
     .expect("write command evidence");
     let state = DesktopState {
         adapter: Mutex::new(TauriIpcControlCommandAdapter::fixture_backed(handler)),
+        chat: Arc::new(Mutex::new(LocalCodexChatService::default())),
+        server_state: ServerStateService::new(backend),
     };
 
     let response = state

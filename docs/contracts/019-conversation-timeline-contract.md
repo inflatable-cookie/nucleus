@@ -221,3 +221,20 @@ policy.
 - `021-checkpoint-diff-contract.md` owns change boundaries.
 - `023-task-backed-agent-workflow-contract.md` owns task-backed work-item
   lifecycle sequencing and Codex task binding rules.
+
+## Initial Product Chat Bring-Up
+
+The first product Agent Chat slice retains a live provider process and thread
+inside the server runtime while the desktop is open. Its client message list is
+temporary presentation state, not the canonical Nucleus conversation timeline.
+
+Until durable session, turn, and message records are added:
+
+- restart recovery is not available
+- client-retained messages must not be treated as authoritative records
+- provider thread ids remain external refs
+- task linkage, approvals, and structured user input remain outside the slice
+
+This exception is limited to interaction bring-up. Follow-on conversation
+continuity must project provider events into the canonical entities defined by
+this contract.

@@ -10,7 +10,7 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `116-product-workflow-ui-design-review.md`
+- `124-agent-chat-product-design-review.md`
 
 ## Planned Cards
 
@@ -33,6 +33,8 @@ Hold execution cards for `g04`.
 
 ## Completed Cards
 
+- `123-local-agent-chat-vertical-slice.md`
+- `116-product-workflow-ui-design-review.md`
 - `111-product-shell-design-review-checkpoint.md`
 - `112-product-shell-design-direction-promotion.md`
 - `113-local-workspace-ui-config-boundary.md`

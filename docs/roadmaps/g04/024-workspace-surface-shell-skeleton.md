@@ -1,6 +1,6 @@
 # 024 Workspace Surface Shell Skeleton
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-09
 
@@ -46,7 +46,7 @@ This lane must not:
 
 Ready cards:
 
-- `batch-cards/116-product-workflow-ui-design-review.md`
+- None.
 
 Planned cards:
 
@@ -54,6 +54,7 @@ Planned cards:
 
 Completed cards:
 
+- `batch-cards/116-product-workflow-ui-design-review.md`
 - `batch-cards/113-local-workspace-ui-config-boundary.md`
 - `batch-cards/114-desktop-surface-tabs-and-regions.md`
 - `batch-cards/115-workspace-surface-shell-validation.md`

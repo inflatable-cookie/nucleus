@@ -181,12 +181,6 @@
                 </Popover>
               </div>
             </div>
-            <div class="titlebar-badges" aria-label="Project status">
-              <span class="status-badge">{selectedProject?.status ?? "idle"}</span>
-              {#if selectedProject}
-                <span class="status-badge">importance {selectedProject.importance_level}</span>
-              {/if}
-            </div>
           </div>
 
           <div class="titlebar-drag-lane" aria-hidden="true" data-tauri-drag-region>
@@ -221,7 +215,7 @@
 
         <div class="product-shell">
           <section class="workspace-stage" aria-label="Workspace">
-            <ProjectWorkspaceStage />
+            <ProjectWorkspaceStage {selectedProject} />
           </section>
         </div>
       </div>
@@ -429,27 +423,6 @@
     color: var(--poodle-color-text-secondary);
     font-size: 0.8125rem;
     line-height: 1.3;
-  }
-
-  .titlebar-badges {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    min-width: 0;
-  }
-
-  .status-badge {
-    max-width: 10rem;
-    padding: 0.1875rem 0.5rem;
-    overflow: hidden;
-    color: var(--poodle-color-text-secondary);
-    font-size: 0.6875rem;
-    line-height: 1;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    border: 1px solid var(--poodle-color-border-subtle);
-    border-radius: var(--poodle-radius-control);
-    background: var(--poodle-color-background-surface);
   }
 
   .titlebar-drag-lane {

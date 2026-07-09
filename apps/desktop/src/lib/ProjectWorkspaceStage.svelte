@@ -12,6 +12,8 @@
     type TabItem,
   } from "@poodle/svelte";
   import { pencil, plus } from "@poodle/icons-lucide";
+  import AgentChatPanel from "./AgentChatPanel.svelte";
+  import type { ControlProjectRecordDto } from "./control";
   import {
     createWorkspaceSurface,
     createWorkspacePanel,
@@ -23,6 +25,8 @@
     type WorkspaceSurfaceDto,
     type WorkspaceUiConfigDto,
   } from "./workspaceUi";
+
+  let { selectedProject }: { selectedProject: ControlProjectRecordDto | null } = $props();
 
   let config = $state<WorkspaceUiConfigDto | null>(null);
   let loading = $state(true);
@@ -161,7 +165,17 @@
 
   function handleRegionDragOver(event: DragEvent, targetRegion: RegionKey): void {
     const panelId = currentDraggedPanelId(event);
-    if (!panelId || !canDropPanelInRegion(panelId, targetRegion)) {
+    if (!panelId) {
+      return;
+    }
+
+    if (!canDropPanelInRegion(panelId, targetRegion)) {
+      if (isCrossRegionPanelDrag(panelId, targetRegion)) {
+        event.stopPropagation();
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = "none";
+        }
+      }
       return;
     }
 
@@ -187,7 +201,15 @@
 
   function handleRegionDrop(event: DragEvent, targetRegion: RegionKey): void {
     const panelId = currentDraggedPanelId(event);
-    if (!panelId || !canDropPanelInRegion(panelId, targetRegion)) {
+    if (!panelId) {
+      return;
+    }
+
+    if (!canDropPanelInRegion(panelId, targetRegion)) {
+      if (isCrossRegionPanelDrag(panelId, targetRegion)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       clearPanelDragState();
       return;
     }
@@ -420,6 +442,11 @@
     );
   }
 
+  function isCrossRegionPanelDrag(panelId: string, targetRegion: RegionKey): boolean {
+    const sourceRegion = findPanelRegion(panelId);
+    return Boolean(sourceRegion && sourceRegion !== targetRegion);
+  }
+
   function movePanelToRegion(panelId: string, targetRegion: RegionKey): void {
     if (!config || !activeSurface || !canMovePanelToRegion(panelId, targetRegion)) {
       return;
@@ -633,42 +660,59 @@
 {#snippet MainRegions(surface: WorkspaceSurfaceDto)}
   {@const centerVisible = visibleRegions.center_top || visibleRegions.center_bottom}
   {@const rightVisible = visibleRegions.right}
-  {#if centerVisible && rightVisible}
-    <SplitView
-      orientation="horizontal"
-      ratio={surface.layout.center_right_ratio}
-      minPrimarySize={260}
-      minSecondarySize={180}
-      ariaLabel="Center and right workspace regions"
-      onRatioChange={(ratio) =>
-        updateActiveSurfaceLayout({ center_right_ratio: ratio })}
-    >
-      {#snippet primary()}
-        {@render CenterRegions(surface)}
-      {/snippet}
-
-      {#snippet secondary()}
-        {@render RegionShell("right", "right", surface, "right")}
-      {/snippet}
-    </SplitView>
-  {:else if centerVisible}
-    {@render CenterRegions(surface)}
-  {:else if rightVisible}
-    {@render RegionShell("right", "right", surface, "right")}
-  {:else}
+  {#if !centerVisible && !rightVisible}
     <Surface tone="canvas" border="none" padding="md" asRole="region" label="Empty workspace">
       <Text tone="muted">No panels open</Text>
     </Surface>
+  {:else}
+    <div
+      class="center-right-frame"
+      class:center-right-frame--single={!centerVisible || !rightVisible}
+    >
+      <SplitView
+        orientation="horizontal"
+        ratio={surface.layout.center_right_ratio}
+        primaryCollapsed={!centerVisible}
+        secondaryCollapsed={!rightVisible}
+        primaryCollapsedSize={0}
+        secondaryCollapsedSize={0}
+        collapsePrimaryBelowSize={0}
+        collapseSecondaryBelowSize={0}
+        minPrimarySize={260}
+        minSecondarySize={180}
+        ariaLabel="Center and right workspace regions"
+        onRatioChange={(ratio) =>
+          updateActiveSurfaceLayout({ center_right_ratio: ratio })}
+      >
+        {#snippet primary()}
+          {@render CenterRegions(surface)}
+        {/snippet}
+
+        {#snippet secondary()}
+          {@render RegionShell("right", "right", surface, "right")}
+        {/snippet}
+      </SplitView>
+    </div>
   {/if}
 {/snippet}
 
 {#snippet CenterRegions(surface: WorkspaceSurfaceDto)}
   {@const topVisible = visibleRegions.center_top}
   {@const bottomVisible = visibleRegions.center_bottom}
-  {#if topVisible && bottomVisible}
+  {#if topVisible || bottomVisible}
+    <div
+      class="center-stack-frame"
+      class:center-stack-frame--single={!topVisible || !bottomVisible}
+    >
     <SplitView
       orientation="vertical"
       ratio={surface.layout.center_stack_ratio}
+      primaryCollapsed={!topVisible}
+      secondaryCollapsed={!bottomVisible}
+      primaryCollapsedSize={0}
+      secondaryCollapsedSize={0}
+      collapsePrimaryBelowSize={0}
+      collapseSecondaryBelowSize={0}
       minPrimarySize={180}
       minSecondarySize={120}
       ariaLabel="Center top and center bottom workspace regions"
@@ -682,10 +726,7 @@
         {@render RegionShell("centerBottom", "bottom", surface, "center_bottom")}
       {/snippet}
     </SplitView>
-  {:else if topVisible}
-    {@render RegionShell("centerTop", "top", surface, "center_top")}
-  {:else if bottomVisible}
-    {@render RegionShell("centerBottom", "bottom", surface, "center_bottom")}
+    </div>
   {/if}
 {/snippet}
 
@@ -726,16 +767,23 @@
 {/snippet}
 
 {#snippet PanelPlaceholder(panel: WorkspacePanelDto | null)}
-  <Surface tone="canvas" border="none" padding="md" asRole="region" label={panel?.title ?? "Empty panel"}>
-    <div class="panel-placeholder">
-      {#if panel}
+  {#if panel?.kind === "agentChat"}
+    <AgentChatPanel
+      conversationId={`${selectedProject?.project_id ?? "unselected"}:${panel.id}`}
+      projectId={selectedProject?.project_id ?? null}
+    />
+  {:else}
+    <Surface tone="canvas" border="none" padding="md" asRole="region" label={panel?.title ?? "Empty panel"}>
+      <div class="panel-placeholder">
+        {#if panel}
         <Text weight="semibold">{panel.title}</Text>
         <Text tone="muted">{panel.kind}{panel.closeable ? "" : " · system"}</Text>
-      {:else}
-        <Text tone="muted">Empty</Text>
-      {/if}
-    </div>
-  </Surface>
+        {:else}
+          <Text tone="muted">Empty</Text>
+        {/if}
+      </div>
+    </Surface>
+  {/if}
 {/snippet}
 
 <style>
@@ -769,6 +817,19 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .center-right-frame,
+  .center-stack-frame {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .center-right-frame--single :global(.poodle-split-view__divider),
+  .center-stack-frame--single :global(.poodle-split-view__divider) {
+    display: none;
   }
 
   .region-cell--drop-target::after {

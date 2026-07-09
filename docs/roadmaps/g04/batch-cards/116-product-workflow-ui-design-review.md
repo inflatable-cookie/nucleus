@@ -1,6 +1,6 @@
 # 116 Product Workflow UI Design Review
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-07-09
 Milestone: `../024-workspace-surface-shell-skeleton.md`
@@ -11,13 +11,20 @@ Review the running surface shell before adding real workflow panels.
 
 ## Work
 
-- [ ] Run the desktop app.
-- [ ] Confirm surface create/rename/remove behavior.
-- [ ] Confirm the four-region layout feels like the right base.
-- [ ] Decide the first real panel workflow: agent chat shell, panel tabs,
+- [x] Run the desktop app.
+- [x] Confirm surface create/rename/remove behavior.
+- [x] Confirm the four-region layout feels like the right base.
+- [x] Decide the first real panel workflow: agent chat shell, panel tabs,
   task system tab behavior, terminal/editor placeholder, or settings.
 
 ## Acceptance Criteria
 
-- [ ] The next UI lane is selected by operator design direction.
-- [ ] The next lane does not add speculative workflow noise.
+- [x] The next UI lane is selected by operator design direction.
+- [x] The next lane does not add speculative workflow noise.
+
+## Decision
+
+Keep the approved surface shell and panel placement behavior intact.
+
+Implement the first real workflow inside the existing `Agent Chat` panel.
+Tasks remain a separate follow-on after the chat interaction is usable.

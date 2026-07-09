@@ -128,8 +128,9 @@ function allowedRegionsForKind(kind: string): RegionKey[] {
     case "terminal":
     case "browser":
     case "editor":
-    case "diff":
       return ["center_top", "center_bottom"];
+    case "diff":
+      return ["center_top", "center_bottom", "right"];
     case "context":
       return ["right"];
     case "activity":

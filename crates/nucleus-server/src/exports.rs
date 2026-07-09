@@ -46,6 +46,7 @@ pub use super::host_authority::*;
 pub use super::host_spawn_readiness::*;
 pub use super::ids::*;
 pub use super::local_artifact_store_backend::*;
+pub use super::local_codex_chat::*;
 pub use super::local_command_runner::*;
 pub use super::local_event_transport_backend::*;
 pub use super::local_host_runtime_discovery::*;

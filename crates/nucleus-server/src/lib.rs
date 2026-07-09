@@ -81,6 +81,7 @@ pub mod host_authority;
 pub mod host_spawn_readiness;
 pub mod ids;
 pub mod local_artifact_store_backend;
+pub mod local_codex_chat;
 pub mod local_command_runner;
 pub mod local_event_transport_backend;
 pub mod local_host_runtime_discovery;

@@ -269,3 +269,28 @@ The canonical behavioral contract is
 - Exact `nucleus-workspaces` port shape for Echo windowing and UI layout
   concepts.
 - Which Poodle components need extension before building the workflow shell.
+
+## Initial Agent Chat Slice
+
+Operator direction keeps the approved workspace surface shell intact. The
+first real workflow is implemented inside the existing Agent Chat panel.
+
+The first slice uses a server-owned local Codex app-server process and retains
+one provider thread per Agent Chat panel while the desktop is open. The server
+resolves the project working directory from project state. The client sends a
+project id, panel conversation id, and message; it does not select an arbitrary
+working directory.
+
+This bring-up slice is intentionally narrower than the canonical conversation
+target:
+
+- user and assistant messages are retained in client memory for panel remounts
+- Nucleus session, turn, and message records are not durable yet
+- provider thread restart recovery is not claimed
+- provider callbacks, approvals, structured user input, and task linkage are
+  deferred
+- the provider runs with read-only workspace access and no approval escalation
+
+The next product decision follows visual and workflow review of the live chat.
+Durable timeline projection, streaming presentation, and task context must not
+be added together by default.

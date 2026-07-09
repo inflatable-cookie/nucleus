@@ -1,5 +1,8 @@
 use super::*;
-use nucleus_projects::{ProjectStorageImportanceLevel, ProjectStorageRecord, ProjectStorageStatus};
+use nucleus_projects::{
+    ProjectStorageImportanceLevel, ProjectStorageLocationStatus, ProjectStorageRecord,
+    ProjectStorageStatus,
+};
 use nucleus_tasks::{
     TaskStorageAcceptanceCriterion, TaskStorageActionType, TaskStorageActivityState,
     TaskStorageImportance, TaskStorageRecord,
@@ -66,6 +69,9 @@ fn management_projection_export_plan_contains_only_shared_project_task_state() {
         display_name: "Nucleus".to_owned(),
         status: ProjectStorageStatus::Active,
         importance_level: ProjectStorageImportanceLevel::High,
+        repo_count: 0,
+        primary_location: None,
+        location_status: ProjectStorageLocationStatus::NotRecorded,
     };
     let task = TaskStorageRecord {
         task_id: "task:projection".to_owned(),
@@ -155,6 +161,9 @@ fn management_projection_file_document_round_trips_project_and_task_entries() {
         display_name: "Nucleus".to_owned(),
         status: ProjectStorageStatus::Active,
         importance_level: ProjectStorageImportanceLevel::High,
+        repo_count: 0,
+        primary_location: None,
+        location_status: ProjectStorageLocationStatus::NotRecorded,
     };
     let task = TaskStorageRecord {
         task_id: "task:projection".to_owned(),

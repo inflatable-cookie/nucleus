@@ -130,8 +130,10 @@ fn normalize_workspace_ui_config(mut config: WorkspaceUiConfigDto) -> WorkspaceU
 
 fn normalize_panels(panels: &mut Vec<WorkspacePanelDto>) {
     for panel in panels {
-        if panel.allowed_regions.is_empty() {
-            panel.allowed_regions = allowed_regions_for_kind(&panel.kind);
+        if let Some(canonical_regions) = canonical_allowed_regions_for_kind(&panel.kind) {
+            panel.allowed_regions = canonical_regions;
+        } else if panel.allowed_regions.is_empty() {
+            panel.allowed_regions = all_region_ids();
         }
     }
 }
@@ -205,16 +207,28 @@ fn panel(id: &str, kind: &str, title: &str, closeable: bool, movable: bool) -> W
 }
 
 fn allowed_regions_for_kind(kind: &str) -> Vec<String> {
+    canonical_allowed_regions_for_kind(kind).unwrap_or_else(all_region_ids)
+}
+
+fn canonical_allowed_regions_for_kind(kind: &str) -> Option<Vec<String>> {
     let regions = match kind {
-        "agentChat" | "tasks" | "terminal" | "browser" | "editor" | "diff" => {
+        "agentChat" | "tasks" | "terminal" | "browser" | "editor" => {
             vec!["center_top", "center_bottom"]
         }
+        "diff" => vec!["center_top", "center_bottom", "right"],
         "context" => vec!["right"],
         "activity" | "projectActivity" => vec!["left"],
-        _ => vec!["left", "right", "center_top", "center_bottom"],
+        _ => return None,
     };
 
-    regions.into_iter().map(str::to_owned).collect()
+    Some(regions.into_iter().map(str::to_owned).collect())
+}
+
+fn all_region_ids() -> Vec<String> {
+    vec!["left", "right", "center_top", "center_bottom"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
 }
 
 #[cfg(test)]
@@ -275,5 +289,50 @@ mod tests {
         assert_eq!(normalized.schema_version, 1);
         assert_eq!(normalized.active_surface_id, "surface:main");
         assert_eq!(normalized.surfaces.len(), 1);
+    }
+
+    #[test]
+    fn diff_panels_can_move_to_right_region() {
+        assert_eq!(
+            super::allowed_regions_for_kind("diff"),
+            vec![
+                "center_top".to_string(),
+                "center_bottom".to_string(),
+                "right".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_repairs_stale_diff_allowed_regions() {
+        let mut config = default_workspace_ui_config();
+        config.surfaces[0]
+            .regions
+            .center_top
+            .push(super::WorkspacePanelDto {
+                id: "panel:diff".to_owned(),
+                kind: "diff".to_owned(),
+                title: "Diff".to_owned(),
+                closeable: true,
+                movable: true,
+                allowed_regions: vec!["center_top".to_owned(), "center_bottom".to_owned()],
+            });
+
+        let normalized = normalize_workspace_ui_config(config);
+        let panel = normalized.surfaces[0]
+            .regions
+            .center_top
+            .iter()
+            .find(|panel| panel.kind == "diff")
+            .expect("diff panel should remain in center top");
+
+        assert_eq!(
+            panel.allowed_regions,
+            vec![
+                "center_top".to_string(),
+                "center_bottom".to_string(),
+                "right".to_string()
+            ]
+        );
     }
 }

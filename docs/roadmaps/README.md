@@ -288,7 +288,8 @@ shape.
 - `g04/021-product-shell-project-rail.md` - completed
 - `g04/022-selected-task-aggregate-product-shell-placement.md` - superseded
 - `g04/023-product-shell-design-checkpoint.md` - completed
-- `g04/024-workspace-surface-shell-skeleton.md` - active
+- `g04/024-workspace-surface-shell-skeleton.md` - completed
+- `g04/025-initial-agent-chat-vertical-slice.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -349,7 +350,7 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g04/024-workspace-surface-shell-skeleton.md`
+`docs/roadmaps/g04/025-initial-agent-chat-vertical-slice.md`
 with
-`docs/roadmaps/g04/batch-cards/116-product-workflow-ui-design-review.md`.
-Review the Poodle-based surface shell before adding workflow content.
+`docs/roadmaps/g04/batch-cards/124-agent-chat-product-design-review.md`.
+Review the live Agent Chat panel before adding timeline depth or task context.

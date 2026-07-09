@@ -215,6 +215,11 @@ in `centerTop` or `centerBottom`. Logs, output, evidence summaries, and
 contextual details should appear inside the owning workspace panel or in the
 `right` region when they are contextual rather than primary work.
 
+SCM diff panels are allowed in `centerTop`, `centerBottom`, or `right`.
+They often behave like primary review furniture, but the right region is also a
+natural place for focused diff/review context beside an active chat, editor, or
+terminal.
+
 The initial region set is:
 
 - `left`: project/activity navigation and active-work awareness
