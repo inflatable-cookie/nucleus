@@ -82,6 +82,9 @@ pub(crate) fn print_query(
             | QueryDomain::SelectedTaskReviewNext { .. }
             | QueryDomain::SelectedTaskReviewOutcomeRoute { .. }
             | QueryDomain::SelectedTaskRouteAdmission { .. }
+            | QueryDomain::SelectedTaskCompletionRouteApply { .. }
+            | QueryDomain::SelectedTaskReworkPreparation { .. }
+            | QueryDomain::SelectedTaskProductAggregate { .. }
             | QueryDomain::SelectedTaskScmHandoff { .. }
             | QueryDomain::SelectedTaskCommandAdmission { .. }
             | QueryDomain::SelectedTaskReviewDecisionAdmission(_)

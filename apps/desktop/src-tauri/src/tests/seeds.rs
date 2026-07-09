@@ -64,11 +64,16 @@ fn desktop_state_seeds_local_project_for_project_queries() {
         })
         .expect("desktop project list should route through the server adapter");
 
-    assert!(matches!(
-        response.body,
-        nucleus_server::ControlResponseBodyDto::ProjectRecords { records }
-            if records.len() == 1 && records[0].display_name == "Nucleus Local"
-    ));
+    match response.body {
+        nucleus_server::ControlResponseBodyDto::ProjectRecords { records } => {
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].display_name, "Nucleus Local");
+            assert_eq!(records[0].repo_count, 1);
+            assert!(records[0].primary_location.is_some());
+            assert_eq!(records[0].location_status, "present");
+        }
+        other => panic!("expected project records, got {other:?}"),
+    }
 
     let _ = std::fs::remove_file(database_path);
 }

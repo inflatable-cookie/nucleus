@@ -13,8 +13,6 @@ import {
   type ControlTaskRecordDto,
   type ControlTaskTransitionAction,
   type DiagnosticsDomain,
-  type ProviderReadIntentAction,
-  type ProviderReadinessOverviewAction,
   type RuntimeMetadataAction,
 } from "./types";
 import type {
@@ -36,114 +34,14 @@ import type {
 import type { ControlSelectedTaskReviewNextDto } from "./selectedTaskReviewNext";
 import type { ControlSelectedTaskReviewOutcomeRouteDto } from "./selectedTaskReviewOutcomeRoute";
 import type { ControlSelectedTaskRouteAdmissionDto } from "./selectedTaskRouteAdmission";
-import type {
-  ControlSelectedTaskReviewDecisionQueryDto,
-  ControlSelectedTaskReviewDecisionResponseBodyDto,
-} from "./selectedTaskReviewDecisionEnvelope";
+import type { ControlSelectedTaskCompletionRouteApplyDto } from "./selectedTaskCompletionRouteApply";
+import type { ControlSelectedTaskProductAggregateDto } from "./selectedTaskProductAggregate";
+import type { ControlSelectedTaskReworkPreparationDto } from "./selectedTaskReworkPreparation";
+import type { ControlSelectedTaskReviewDecisionResponseBodyDto } from "./selectedTaskReviewDecisionEnvelope";
 import type { ControlSelectedTaskScmHandoffDto } from "./selectedTaskScmHandoff";
+import type { ControlQueryDto } from "./queryEnvelopeTypes";
 
-export type ControlQueryDto =
-  | {
-      kind: "runtime_metadata";
-      query_id: string;
-      action: RuntimeMetadataAction;
-    }
-  | {
-      kind: "state";
-      query_id: string;
-      domain: ControlStateDomain;
-      scope: { type: "list" };
-    }
-  | {
-      kind: "diagnostics";
-      query_id: string;
-      domain: DiagnosticsDomain;
-    }
-  | {
-      kind: "provider_read_intent";
-      query_id: string;
-      action: ProviderReadIntentAction;
-    }
-  | {
-      kind: "provider_readiness_overview";
-      query_id: string;
-      action: ProviderReadinessOverviewAction;
-    }
-  | {
-      kind: "planning_sessions" | "memory_proposals" | "research_run_briefs";
-      query_id: string;
-      action: "sessions" | "proposals" | "runs";
-      project_id: string;
-    }
-  | {
-      kind: "product_workflow_summary";
-      query_id: string;
-      action: "summary";
-      project_id: string;
-    }
-  | {
-      kind: "task_workflow_drilldown";
-      query_id: string;
-      action: "drilldown";
-      project_id: string;
-      task_id: string;
-    }
-  | {
-      kind: "selected_task_action_readiness";
-      query_id: string;
-      action: "readiness";
-      project_id: string;
-      task_id: string;
-    }
-  | {
-      kind: "selected_task_operator_action_gate";
-      query_id: string;
-      action: "gate";
-      project_id: string;
-      task_id: string;
-    }
-  | {
-      kind: "selected_task_review_next";
-      query_id: string;
-      action: "review_next";
-      project_id: string;
-      task_id: string;
-    }
-  | {
-      kind: "selected_task_review_outcome_route";
-      query_id: string;
-      action: "route";
-      project_id: string;
-      task_id: string;
-    }
-  | {
-      kind: "selected_task_route_admission";
-      query_id: string;
-      action: "admission";
-      project_id: string;
-      task_id: string;
-      expected_revision: string | null;
-      operator_ref: string;
-    }
-  | {
-      kind: "selected_task_scm_handoff";
-      query_id: string;
-      action: "handoff";
-      project_id: string;
-      task_id: string;
-    }
-  | {
-      kind: "selected_task_command_admission";
-      query_id: string;
-      action: "dry_run";
-      project_id: string;
-      task_id: string;
-      family: string;
-      expected_revision: string | null;
-      reason: string | null;
-      operator_ref: string;
-    }
-  | ControlSelectedTaskReviewDecisionQueryDto;
+export type { ControlQueryDto } from "./queryEnvelopeTypes";
 
 export type ControlCommandDto = {
   kind: "task";
@@ -272,6 +170,18 @@ export type ControlResponseEnvelopeDto = {
     | {
         type: "selected_task_route_admission";
         admission: ControlSelectedTaskRouteAdmissionDto;
+      }
+    | {
+        type: "selected_task_completion_route_apply";
+        apply: ControlSelectedTaskCompletionRouteApplyDto;
+      }
+    | {
+        type: "selected_task_rework_preparation";
+        preparation: ControlSelectedTaskReworkPreparationDto;
+      }
+    | {
+        type: "selected_task_product_aggregate";
+        aggregate: ControlSelectedTaskProductAggregateDto;
       }
     | {
         type: "selected_task_scm_handoff";

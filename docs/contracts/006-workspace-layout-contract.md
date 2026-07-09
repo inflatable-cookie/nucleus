@@ -16,14 +16,15 @@ Workspace layout state is local client state. It is not committed to the
 project repository like tasks, project metadata, planning docs, or other
 shared management files.
 
-The first persistence target should be local client profile storage, likely
-the client-side SQLite database if the app already maintains one. Global
-display/window/surface records should be keyed by client profile. Per-project
-panel layout records should be keyed by client profile, project id, and panel
-layout id.
+The first desktop bring-up persistence target is
+`~/.nucleus/config/ui.json`. Global display/window/surface records should be
+keyed by client profile. Per-project panel layout records should be keyed by
+client profile, project id, and panel layout id.
 
-A JSON export can be useful for diagnostics or backup, but JSON files should
-not be the default authority if SQLite is already present.
+This JSON file is local client state, not project state. It is acceptable as
+the first authority while the desktop shell is still proving the surface model.
+If the client state store moves to SQLite later, this file should become an
+import/export or migration source rather than competing authority.
 
 Future sync of layout preferences may exist, but it must be explicit user
 preference sync. It must not become part of the default project-management
@@ -200,18 +201,112 @@ projects.
 The initial Nucleus dev-environment shell should plan for:
 
 - left project/activity sidebar
-- flexible main stage
-- dynamic split views inside the main stage
-- drag-and-drop tabs
-- optional right sidebar
-- optional bottom bar or panel strip
+- right context/actions/review region
+- centerTop primary workspace region
+- centerBottom secondary workspace region
 
 Panel layout may differ from Loophole's DAW-oriented defaults. The reusable
 part is the display/window/surface hosting layer and the distinction between
 surface tabs, regions, and panel tabs.
 
+The first panel model must not add a generic bottom region. Terminals, editors,
+browsers, agent chats, task views, and other primary workspace furniture belong
+in `centerTop` or `centerBottom`. Logs, output, evidence summaries, and
+contextual details should appear inside the owning workspace panel or in the
+`right` region when they are contextual rather than primary work.
+
+The initial region set is:
+
+- `left`: project/activity navigation and active-work awareness
+- `right`: contextual inspector, actions, review, logs, and output when tied
+  to the selected work
+- `centerTop`: primary workspace panels and the default task panel dock
+- `centerBottom`: secondary workspace panels and the only alternate task panel
+  dock
+
+Arbitrary VS Code-style split trees are not the first default. They may exist
+later as a power-user feature, but the first model should be semantic and
+workflow-led so users are not forced to manage layout before the product flow is
+clear.
+
 Panel layout records are local UI preference/state records scoped by project.
 They should not be written into the project repository by default.
+
+The full-height project rail is global client shell state, not per-project
+panel layout. Its width may be user-resizable and persisted locally by the
+client, but it must not be committed into project repositories.
+
+Panel definitions must carry placement policy, not just current placement. This
+mirrors Loophole's `PanelDefinition.allowedRegions` model:
+
+- each panel has a default region
+- each panel has an explicit allowed-region list
+- same-region tab reorder preserves the panel's region
+- cross-region drag is accepted only when the target region is allowed
+- cross-region drag should show visible drop targets for every currently
+  allowed target region
+- empty regions should collapse out of the normal layout and reappear during a
+  drag only when they are valid drop targets
+- rejected drops must not mutate local layout state
+- closeability, movability, and system-panel status are separate flags
+
+The first desktop shell persists this as `allowed_regions` on local panel
+records in `~/.nucleus/config/ui.json`. This is a bring-up representation of
+the same policy shape, not the final server API.
+
+Closeable panels must have a recovery path. In the first product shell, the
+header `+` menu creates fresh panel instances for known panel kinds such as
+agent chat, terminal, browser, editor, diff, and context. This is not yet a
+workspace preset manager; it only prevents closed tool panels from becoming
+unreachable during UI bring-up.
+
+Region sizing is local UI state. The first desktop shell stores split ratios on
+each surface record:
+
+- `left_center_ratio`
+- `center_right_ratio`
+- `center_stack_ratio`
+
+These ratios are client-local preferences below `~/.nucleus/config/ui.json`.
+They must not be committed into project repositories by default.
+
+## Chat-Led Task Model
+
+Nucleus is chat-led and task-backed, not task-screen-led.
+
+The primary interaction path is an AI agent conversation. A user can talk
+through a problem with an agent, and the agent can create, refine, update, and
+dispatch tasks through server-authorized tools or skills. The task list is the
+structured work ledger behind that conversation, not necessarily the screen
+where work starts.
+
+It must be valid for a user to complete a planning-to-dispatch flow without
+opening the task panel. The task panel exists for explicit inspection and
+manual control when wanted.
+
+Task panel rules:
+
+- the task panel is a system panel, not an ordinary closeable tab
+- it is uncloseable in normal operation
+- it may be collapsed or hidden by the current surface mode, but it is not
+  destroyed
+- its default dock is `centerTop`
+- its only alternate dock in the initial model is `centerBottom`
+- it is project-scoped
+- it must not become the primary interaction model by default
+
+Agent chat rules:
+
+- agent chat is a primary workspace panel
+- agent chat may create, update, attach to, or dispatch tasks
+- agent chat should keep task context visible enough to make task-backed work
+  understandable without forcing the task panel open
+- active task/thread state should be visible through project/activity surfaces
+  even when the task panel is not open
+
+Closeable and movable workspace tabs include terminal, browser, editor, diff,
+research, logs, and similar resource views. These are ordinary workspace
+resources. The task panel is not.
 
 ## Workspace Identity
 
@@ -362,8 +457,27 @@ they do not own display placement.
 `nucleus-workspaces` now contains the first draft of:
 
 - `WorkspaceLayoutId`
+- `ProjectPanelLayoutId`
+- `ClientProfileId`
+- `DisplayId`
+- `WindowId`
+- `WindowInstanceId`
+- `HostWindowId`
+- `DisplayArrangementSignature`
 - `PanelId`
+- `PanelKey`
 - `SurfaceId`
+- display inventory, availability, bounds, arrangement, and scale hints
+- workspace window placement records
+- runtime host window instance records
+- pure window planning and display fallback helpers
+- hosted surface records
+- window-scoped hosted surface order and active-surface state
+- hosted-surface close/reorder/active fallback helpers
+- Nucleus region ids
+- per-project panel placement rules
+- selected-task shell seed rules
+- local-only global shell layout and per-project panel layout record families
 - `WorkspaceLayout`
 - `WorkspaceLayoutStatus`
 - `ClientScope`
@@ -376,26 +490,22 @@ they do not own display placement.
 - `SurfaceKind`
 - `SurfaceAttachmentState`
 
-These are descriptive domain types only. Rendering, layout migration, terminal
-process control, browser control, editor implementation, language-server
-integration, plugin execution, SCM mutation, and client synchronization remain
-out of scope.
+These are domain types and pure planning helpers only. Rendering, layout
+migration, local SQLite codecs, terminal process control, browser control,
+editor implementation, language-server integration, plugin execution, SCM
+mutation, and client synchronization remain out of scope.
 
-The current Rust surface does not yet include display inventory, window
-configuration, hosted-surface lifecycle commands, or region/panel hierarchy
-below surfaces. Those should be added before serious workspace panel
-implementation begins.
-
-The current Rust surface also does not yet distinguish shared project
-management projection files from local client layout database records, or
-global shell layout records from per-project panel layout records. Those
-distinctions must be added before workspace layout persistence is implemented.
+The current Rust surface now distinguishes shared project management
+projection files from local client layout records, and separates global shell
+layout records from per-project panel layout records at the type boundary.
+Actual local storage backend integration, schema migration, conflict handling,
+and UI configuration remain future work.
 
 ## Research Gaps
 
-- Exact panel tree validation rules.
-- Whether to port Loophole `echo-windowing` directly, recreate its concepts in
-  a Nucleus crate, or extract a shared dependency later.
+- Exact panel tree validation rules beyond selected-task shell seed rules.
+- Whether to extract a shared windowing dependency later if Loophole and
+  Nucleus both need one maintained implementation.
 - How canonical display ids are minted and repaired across Tauri, web, and
   remote clients.
 - How window records degrade on web and mobile control planes.
@@ -414,8 +524,9 @@ distinctions must be added before workspace layout persistence is implemented.
 - How layouts degrade on mobile or CLI control planes.
 - How workspace state interacts with live agent sessions.
 - Whether layout changes need revision ids or conflict handling.
-- Exact local client profile storage location and schema for global shell
-  layout and per-project panel layout state, likely SQLite-backed.
+- Exact local client profile storage backend schema, codecs, migration rules,
+  and conflict behavior for global shell layout and per-project panel layout
+  state, likely SQLite-backed.
 - Whether per-project hosted surfaces are ever worth supporting, and which
   configuration rules would prevent that from becoming confusing.
 - Whether optional cross-device layout preference sync is needed later.

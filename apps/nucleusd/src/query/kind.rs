@@ -13,18 +13,22 @@ use nucleus_server::{
     PlanningSessionsQuery, PlanningTaskSeedsQuery, ProductWorkflowSummaryQuery,
     ProjectAuthorityDomain, ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery,
     ProviderLiveReadSmokeEvidenceQuery, ProviderReadIntentQuery, ProviderReadinessOverviewQuery,
-    ResearchRunBriefsQuery, RuntimeMetadataQuery, SelectedTaskActionFamily,
-    SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
-    SelectedTaskOperatorActionGateQuery, SelectedTaskReviewDecisionAction,
+    ResearchRunBriefsQuery, RuntimeMetadataQuery, SelectedTaskActionReadinessQuery,
+    SelectedTaskCommandAdmissionQuery, SelectedTaskCompletionRouteApplyQuery,
+    SelectedTaskOperatorActionGateQuery, SelectedTaskProductAggregateQuery,
     SelectedTaskReviewDecisionAdmissionQuery, SelectedTaskReviewDecisionApplyQuery,
     SelectedTaskReviewNextQuery, SelectedTaskReviewOutcomeRouteQuery,
-    SelectedTaskRouteAdmissionQuery, SelectedTaskScmHandoffQuery, ServerQueryKind,
-    ServerStateDomain, StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery,
-    TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
+    SelectedTaskReworkPreparationQuery, SelectedTaskRouteAdmissionQuery,
+    SelectedTaskScmHandoffQuery, ServerQueryKind, ServerStateDomain, StateRecordQuery,
+    StateRecordQueryScope, TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery,
+    TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use nucleus_tasks::TaskId;
 
 use crate::cli::QueryDomain;
+
+mod selected_task_labels;
+use selected_task_labels::{selected_task_action_family, selected_task_review_decision_action};
 
 pub(super) fn query_kind(query: &QueryDomain) -> ServerQueryKind {
     match query {
@@ -227,6 +231,65 @@ pub(super) fn query_kind(query: &QueryDomain) -> ServerQueryKind {
                 .map(|revision| RevisionId(revision.clone())),
             operator_ref: operator_ref.clone(),
         }),
+        QueryDomain::SelectedTaskCompletionRouteApply {
+            project_id,
+            task_id,
+            expected_revision,
+            operator_ref,
+            route_admission_id,
+            review_decision_ref,
+            evidence_refs,
+        } => ServerQueryKind::SelectedTaskCompletionRouteApply(
+            SelectedTaskCompletionRouteApplyQuery {
+                project_id: ProjectId(project_id.clone()),
+                task_id: TaskId(task_id.clone()),
+                expected_revision: expected_revision
+                    .as_ref()
+                    .map(|revision| RevisionId(revision.clone())),
+                operator_ref: operator_ref.clone(),
+                route_admission_id: route_admission_id.clone(),
+                review_decision_ref: review_decision_ref.clone(),
+                evidence_refs: evidence_refs.clone(),
+            },
+        ),
+        QueryDomain::SelectedTaskReworkPreparation {
+            project_id,
+            task_id,
+            operator_ref,
+            route_admission_id,
+            review_decision_ref,
+            reviewed_work_item_refs,
+            reviewed_evidence_refs,
+            expected_task_revision,
+            expected_work_item_revision,
+        } => ServerQueryKind::SelectedTaskReworkPreparation(SelectedTaskReworkPreparationQuery {
+            project_id: ProjectId(project_id.clone()),
+            task_id: TaskId(task_id.clone()),
+            operator_ref: operator_ref.clone(),
+            route_admission_id: route_admission_id.clone(),
+            review_decision_ref: review_decision_ref.clone(),
+            reviewed_work_item_refs: reviewed_work_item_refs.clone(),
+            reviewed_evidence_refs: reviewed_evidence_refs.clone(),
+            expected_task_revision: expected_task_revision
+                .as_ref()
+                .map(|revision| RevisionId(revision.clone())),
+            expected_work_item_revision: expected_work_item_revision
+                .as_ref()
+                .map(|revision| RevisionId(revision.clone())),
+        }),
+        QueryDomain::SelectedTaskProductAggregate {
+            project_id,
+            task_id,
+            expected_revision,
+            operator_ref,
+        } => ServerQueryKind::SelectedTaskProductAggregate(SelectedTaskProductAggregateQuery {
+            project_id: ProjectId(project_id.clone()),
+            task_id: TaskId(task_id.clone()),
+            expected_revision: expected_revision
+                .as_ref()
+                .map(|revision| RevisionId(revision.clone())),
+            operator_ref: operator_ref.clone(),
+        }),
         QueryDomain::SelectedTaskScmHandoff {
             project_id,
             task_id,
@@ -326,31 +389,6 @@ fn default_authority_domains() -> Vec<ProjectAuthorityDomain> {
         ProjectAuthorityDomain::ScmForge,
         ProjectAuthorityDomain::Projection,
     ]
-}
-
-fn selected_task_action_family(family: &str) -> SelectedTaskActionFamily {
-    match family {
-        "plan_selected_task" => SelectedTaskActionFamily::PlanSelectedTask,
-        "start_selected_task" => SelectedTaskActionFamily::StartSelectedTask,
-        "block_selected_task" => SelectedTaskActionFamily::BlockSelectedTask,
-        "complete_selected_task" => SelectedTaskActionFamily::CompleteSelectedTask,
-        "archive_selected_task" => SelectedTaskActionFamily::ArchiveSelectedTask,
-        "prepare_delegation" => SelectedTaskActionFamily::PrepareDelegation,
-        "inspect_runtime_evidence" => SelectedTaskActionFamily::InspectRuntimeEvidence,
-        "review_work_evidence" => SelectedTaskActionFamily::ReviewWorkEvidence,
-        "prepare_scm_handoff" => SelectedTaskActionFamily::PrepareScmHandoff,
-        _ => SelectedTaskActionFamily::StartSelectedTask,
-    }
-}
-
-fn selected_task_review_decision_action(action: &str) -> SelectedTaskReviewDecisionAction {
-    match action {
-        "accept_evidence" => SelectedTaskReviewDecisionAction::AcceptEvidence,
-        "reject_evidence" => SelectedTaskReviewDecisionAction::RejectEvidence,
-        "request_changes" => SelectedTaskReviewDecisionAction::RequestChanges,
-        "abandon_review" => SelectedTaskReviewDecisionAction::AbandonReview,
-        _ => SelectedTaskReviewDecisionAction::AcceptEvidence,
-    }
 }
 
 fn state_query(domain: ServerStateDomain) -> StateRecordQuery {

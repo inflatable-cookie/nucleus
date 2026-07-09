@@ -39,6 +39,9 @@ impl ControlQueryDto {
             | Self::SelectedTaskReviewNext { query_id, .. }
             | Self::SelectedTaskReviewOutcomeRoute { query_id, .. }
             | Self::SelectedTaskRouteAdmission { query_id, .. }
+            | Self::SelectedTaskCompletionRouteApply { query_id, .. }
+            | Self::SelectedTaskReworkPreparation { query_id, .. }
+            | Self::SelectedTaskProductAggregate { query_id, .. }
             | Self::SelectedTaskScmHandoff { query_id, .. }
             | Self::SelectedTaskCommandAdmission { query_id, .. }
             | Self::SelectedTaskReviewDecisionAdmission { query_id, .. }

@@ -19,6 +19,7 @@ Architecture records the system shape once planning starts to settle.
 - `planning-task-seed-storage-codec-selection.md`
 - `planning-management-projection-shape.md`
 - `task-seed-promotion-admission.md`
+- `product-workflow-ui-architecture.md`
 
 ## Open Questions
 

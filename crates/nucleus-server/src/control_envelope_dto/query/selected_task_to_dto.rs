@@ -1,9 +1,10 @@
 use crate::control_api::{
     SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
-    SelectedTaskOperatorActionGateQuery, SelectedTaskReviewDecisionAdmissionQuery,
+    SelectedTaskCompletionRouteApplyQuery, SelectedTaskOperatorActionGateQuery,
+    SelectedTaskProductAggregateQuery, SelectedTaskReviewDecisionAdmissionQuery,
     SelectedTaskReviewDecisionApplyQuery, SelectedTaskReviewNextQuery,
-    SelectedTaskReviewOutcomeRouteQuery, SelectedTaskRouteAdmissionQuery,
-    SelectedTaskScmHandoffQuery, ServerQueryKind,
+    SelectedTaskReviewOutcomeRouteQuery, SelectedTaskReworkPreparationQuery,
+    SelectedTaskRouteAdmissionQuery, SelectedTaskScmHandoffQuery, ServerQueryKind,
 };
 use crate::control_envelope_dto::ControlApiCodecError;
 use crate::ids::ServerQueryId;
@@ -62,6 +63,71 @@ pub(super) fn selected_task_query_dto(
         }) => ControlQueryDto::SelectedTaskRouteAdmission {
             query_id: query_id.0.clone(),
             action: "admission".to_owned(),
+            project_id: project_id.0.clone(),
+            task_id: task_id.0.clone(),
+            expected_revision: expected_revision
+                .as_ref()
+                .map(|revision| revision.0.clone()),
+            operator_ref: operator_ref.clone(),
+        },
+        ServerQueryKind::SelectedTaskCompletionRouteApply(
+            SelectedTaskCompletionRouteApplyQuery {
+                project_id,
+                task_id,
+                expected_revision,
+                operator_ref,
+                route_admission_id,
+                review_decision_ref,
+                evidence_refs,
+            },
+        ) => ControlQueryDto::SelectedTaskCompletionRouteApply {
+            query_id: query_id.0.clone(),
+            action: "preview".to_owned(),
+            project_id: project_id.0.clone(),
+            task_id: task_id.0.clone(),
+            expected_revision: expected_revision
+                .as_ref()
+                .map(|revision| revision.0.clone()),
+            operator_ref: operator_ref.clone(),
+            route_admission_id: route_admission_id.clone(),
+            review_decision_ref: review_decision_ref.clone(),
+            evidence_refs: evidence_refs.clone(),
+        },
+        ServerQueryKind::SelectedTaskReworkPreparation(SelectedTaskReworkPreparationQuery {
+            project_id,
+            task_id,
+            operator_ref,
+            route_admission_id,
+            review_decision_ref,
+            reviewed_work_item_refs,
+            reviewed_evidence_refs,
+            expected_task_revision,
+            expected_work_item_revision,
+        }) => ControlQueryDto::SelectedTaskReworkPreparation {
+            query_id: query_id.0.clone(),
+            action: "preview".to_owned(),
+            project_id: project_id.0.clone(),
+            task_id: task_id.0.clone(),
+            operator_ref: operator_ref.clone(),
+            route_admission_id: route_admission_id.clone(),
+            review_decision_ref: review_decision_ref.clone(),
+            reviewed_work_item_refs: reviewed_work_item_refs.clone(),
+            reviewed_evidence_refs: reviewed_evidence_refs.clone(),
+            expected_task_revision: expected_task_revision
+                .as_ref()
+                .map(|revision| revision.0.clone()),
+            expected_work_item_revision: expected_work_item_revision
+                .as_ref()
+                .map(|revision| revision.0.clone()),
+        },
+        ServerQueryKind::SelectedTaskProductAggregate(SelectedTaskProductAggregateQuery {
+            project_id,
+            task_id,
+            expected_revision,
+            operator_ref,
+        }) => ControlQueryDto::SelectedTaskProductAggregate {
+            query_id: query_id.0.clone(),
+            action: "aggregate".to_owned(),
             project_id: project_id.0.clone(),
             task_id: task_id.0.clone(),
             expected_revision: expected_revision

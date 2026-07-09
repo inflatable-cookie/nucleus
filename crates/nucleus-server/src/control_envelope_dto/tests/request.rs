@@ -11,12 +11,12 @@ use crate::control_api::{
     ProjectAuthorityMapQuery, ProviderLiveReadExecutorQuery, ProviderLiveReadSmokeEvidenceQuery,
     ProviderReadIntentQuery, ProviderReadinessOverviewQuery, ResearchRunBriefsQuery,
     SelectedTaskActionReadinessQuery, SelectedTaskCommandAdmissionQuery,
-    SelectedTaskOperatorActionGateQuery, SelectedTaskReviewDecisionAdmissionQuery,
-    SelectedTaskReviewDecisionApplyQuery, SelectedTaskReviewNextQuery,
-    SelectedTaskReviewOutcomeRouteQuery, SelectedTaskRouteAdmissionQuery,
-    SelectedTaskScmHandoffQuery, ServerControlRequest, ServerControlRequestKind, ServerQuery,
-    ServerQueryKind, StateRecordQuery, StateRecordQueryScope, TaskReadinessQuery,
-    TaskTimelineQuery, TaskWorkflowDrilldownQuery,
+    SelectedTaskCompletionRouteApplyQuery, SelectedTaskOperatorActionGateQuery,
+    SelectedTaskReviewDecisionAdmissionQuery, SelectedTaskReviewDecisionApplyQuery,
+    SelectedTaskReviewNextQuery, SelectedTaskReviewOutcomeRouteQuery,
+    SelectedTaskRouteAdmissionQuery, SelectedTaskScmHandoffQuery, ServerControlRequest,
+    ServerControlRequestKind, ServerQuery, ServerQueryKind, StateRecordQuery,
+    StateRecordQueryScope, TaskReadinessQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::control_envelope_dto::*;
 use crate::control_serialization_readiness::ControlApiCodecFailure;
@@ -56,10 +56,13 @@ mod research_run_briefs;
 mod runtime;
 mod selected_task_action_readiness;
 mod selected_task_command_admission;
+mod selected_task_completion_route_apply;
 mod selected_task_operator_action_gate;
+mod selected_task_product_aggregate;
 mod selected_task_review_decision;
 mod selected_task_review_next;
 mod selected_task_review_outcome_route;
+mod selected_task_rework_preparation;
 mod selected_task_route_admission;
 mod selected_task_scm_handoff;
 mod state;

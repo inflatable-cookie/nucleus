@@ -60,10 +60,15 @@ fn response_envelope_dto_serializes_status_error_and_state_records() {
     let decoded: ControlResponseEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
 
     assert_eq!(decoded.status, ControlResponseStatusDto::Complete);
-    assert!(matches!(
-        decoded.body,
-        ControlResponseBodyDto::ProjectRecords { records } if records.len() == 1
-    ));
+    match decoded.body {
+        ControlResponseBodyDto::ProjectRecords { records } => {
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].repo_count, 0);
+            assert_eq!(records[0].primary_location, None);
+            assert_eq!(records[0].location_status, "not_recorded");
+        }
+        other => panic!("expected project records, got {other:?}"),
+    }
 }
 
 #[test]

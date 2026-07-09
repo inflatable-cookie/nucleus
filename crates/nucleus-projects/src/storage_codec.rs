@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ImportanceLevel, Project, ProjectStatus};
+use crate::{ImportanceLevel, Project, ProjectStatus, RepoLocationStatus};
 
 /// Display-ready project record stored as server-owned JSON payload.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -11,6 +11,12 @@ pub struct ProjectStorageRecord {
     pub display_name: String,
     pub status: ProjectStorageStatus,
     pub importance_level: ProjectStorageImportanceLevel,
+    #[serde(default)]
+    pub repo_count: usize,
+    #[serde(default)]
+    pub primary_location: Option<String>,
+    #[serde(default = "default_location_status")]
+    pub location_status: ProjectStorageLocationStatus,
 }
 
 /// Serializable project lifecycle state.
@@ -32,6 +38,18 @@ pub enum ProjectStorageImportanceLevel {
     Critical,
 }
 
+/// Serializable summary of repository location state.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectStorageLocationStatus {
+    NotRecorded,
+    Present,
+    Missing,
+    MovedCandidate,
+    RepairRequired,
+    Mixed,
+}
+
 /// Project record codec error.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectRecordCodecError {
@@ -47,6 +65,13 @@ impl From<&Project> for ProjectStorageRecord {
             importance_level: ProjectStorageImportanceLevel::from(
                 &project.importance_baseline.level,
             ),
+            repo_count: project.repos.len(),
+            primary_location: project
+                .repos
+                .iter()
+                .find_map(|repo| repo.current_path.as_ref())
+                .map(|path| path.to_string_lossy().into_owned()),
+            location_status: project_location_status(project),
         }
     }
 }
@@ -70,6 +95,32 @@ impl From<&ImportanceLevel> for ProjectStorageImportanceLevel {
             ImportanceLevel::Critical => Self::Critical,
         }
     }
+}
+
+fn project_location_status(project: &Project) -> ProjectStorageLocationStatus {
+    if project.repos.is_empty() {
+        return ProjectStorageLocationStatus::NotRecorded;
+    }
+
+    let mut location_statuses = project.repos.iter().map(|repo| &repo.location_status);
+    let Some(first) = location_statuses.next() else {
+        return ProjectStorageLocationStatus::NotRecorded;
+    };
+
+    if location_statuses.any(|status| status != first) {
+        return ProjectStorageLocationStatus::Mixed;
+    }
+
+    match first {
+        RepoLocationStatus::Present => ProjectStorageLocationStatus::Present,
+        RepoLocationStatus::Missing => ProjectStorageLocationStatus::Missing,
+        RepoLocationStatus::MovedCandidate(_) => ProjectStorageLocationStatus::MovedCandidate,
+        RepoLocationStatus::RepairRequired => ProjectStorageLocationStatus::RepairRequired,
+    }
+}
+
+fn default_location_status() -> ProjectStorageLocationStatus {
+    ProjectStorageLocationStatus::NotRecorded
 }
 
 /// Encode a project into the first JSON storage payload.
@@ -103,6 +154,7 @@ fn codec_error(error: serde_json::Error) -> ProjectRecordCodecError {
 mod tests {
     use crate::{
         ImportanceBaseline, ImportanceLevel, Project, ProjectActivity, ProjectId, ProjectStatus,
+        RepoLocationStatus, RepoMembership, RepoMembershipId,
     };
 
     use super::*;
@@ -137,6 +189,53 @@ mod tests {
         assert_eq!(
             decoded.importance_level,
             ProjectStorageImportanceLevel::High
+        );
+        assert_eq!(decoded.repo_count, 0);
+        assert_eq!(decoded.primary_location, None);
+        assert_eq!(
+            decoded.location_status,
+            ProjectStorageLocationStatus::NotRecorded
+        );
+    }
+
+    #[test]
+    fn project_storage_codec_summarizes_repo_location() {
+        let project = Project {
+            id: ProjectId("project:nucleus".to_owned()),
+            display_name: "Nucleus".to_owned(),
+            status: ProjectStatus::Active,
+            importance_baseline: ImportanceBaseline {
+                level: ImportanceLevel::High,
+                notes: None,
+            },
+            repos: vec![RepoMembership {
+                id: RepoMembershipId("repo:nucleus".to_owned()),
+                project_id: ProjectId("project:nucleus".to_owned()),
+                current_path: Some(std::path::PathBuf::from("/tmp/nucleus")),
+                path_history: Vec::new(),
+                git: None,
+                default_branch: None,
+                location_status: RepoLocationStatus::Present,
+                repair_notes: Vec::new(),
+            }],
+            task_ids: Vec::new(),
+            workspace_layout_refs: Vec::new(),
+            activity: ProjectActivity {
+                created_at: None,
+                last_focused_at: None,
+                last_agent_activity_at: None,
+                last_task_activity_at: None,
+            },
+        };
+
+        let bytes = encode_project_storage_record(&project).expect("encode project");
+        let decoded = decode_project_storage_record(&bytes).expect("decode project");
+
+        assert_eq!(decoded.repo_count, 1);
+        assert_eq!(decoded.primary_location.as_deref(), Some("/tmp/nucleus"));
+        assert_eq!(
+            decoded.location_status,
+            ProjectStorageLocationStatus::Present
         );
     }
 }

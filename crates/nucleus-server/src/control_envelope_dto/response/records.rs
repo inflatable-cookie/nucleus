@@ -26,10 +26,13 @@ mod research_run_briefs;
 mod runtime;
 mod selected_task_action_readiness;
 mod selected_task_command_admission;
+mod selected_task_completion_route_apply;
 mod selected_task_operator_action_gate;
+mod selected_task_product_aggregate;
 mod selected_task_review_decision;
 mod selected_task_review_next;
 mod selected_task_review_outcome_route;
+mod selected_task_rework_preparation;
 mod selected_task_route_admission;
 mod selected_task_scm_handoff;
 mod task_readiness;
@@ -154,12 +157,16 @@ pub use selected_task_command_admission::{
     ControlSelectedTaskCommandAdmissionDto, ControlSelectedTaskCommandAdmissionNoEffectsDto,
     ControlSelectedTaskCommandAdmissionRefusalDto,
 };
+pub use selected_task_completion_route_apply::{
+    ControlSelectedTaskCompletionRouteApplyDto, ControlSelectedTaskCompletionRouteApplyRefusalDto,
+};
 pub use selected_task_operator_action_gate::{
     ControlSelectedTaskOperatorActionBlockerDto, ControlSelectedTaskOperatorActionCandidateDto,
     ControlSelectedTaskOperatorActionGateDto, ControlSelectedTaskOperatorActionGateSourceCountsDto,
     ControlSelectedTaskOperatorActionNoEffectsDto,
     ControlSelectedTaskOperatorTaskCommandCandidateDto,
 };
+pub use selected_task_product_aggregate::ControlSelectedTaskProductAggregateDto;
 pub use selected_task_review_decision::{
     ControlSelectedTaskReviewDecisionAdmissionDto, ControlSelectedTaskReviewDecisionNoEffectsDto,
     ControlSelectedTaskReviewDecisionRecordDto,
@@ -173,6 +180,11 @@ pub use selected_task_review_next::{
 pub use selected_task_review_outcome_route::{
     ControlSelectedTaskReviewOutcomeRouteDto, ControlSelectedTaskReviewOutcomeRouteNoEffectsDto,
     ControlSelectedTaskReviewOutcomeRouteSourceCountsDto,
+};
+#[allow(unused_imports)]
+pub use selected_task_rework_preparation::{
+    ControlSelectedTaskReworkPreparationDto, ControlSelectedTaskReworkPreparationNoEffectsDto,
+    ControlSelectedTaskReworkPreparationRefusalDto,
 };
 pub use selected_task_route_admission::{
     ControlSelectedTaskCompletionRouteAdmissionDto,

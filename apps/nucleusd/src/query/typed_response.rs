@@ -25,10 +25,13 @@ mod research_run_briefs;
 mod selected_task;
 mod selected_task_action_readiness;
 mod selected_task_command_admission;
+mod selected_task_completion_route_apply;
 mod selected_task_operator_action_gate;
+mod selected_task_product_aggregate;
 mod selected_task_review_decision;
 mod selected_task_review_next;
 mod selected_task_review_outcome_route;
+mod selected_task_rework_preparation;
 mod selected_task_route_admission;
 mod selected_task_scm_handoff;
 mod task_authority;
@@ -67,7 +70,11 @@ pub(super) use selected_task_action_readiness::selected_task_action_readiness_re
 #[cfg(test)]
 pub(super) use selected_task_command_admission::selected_task_command_admission_response_lines;
 #[cfg(test)]
+pub(super) use selected_task_completion_route_apply::selected_task_completion_route_apply_response_lines;
+#[cfg(test)]
 pub(super) use selected_task_operator_action_gate::selected_task_operator_action_gate_response_lines;
+#[cfg(test)]
+pub(super) use selected_task_product_aggregate::selected_task_product_aggregate_response_lines;
 #[cfg(test)]
 pub(super) use selected_task_review_decision::{
     selected_task_review_decision_admission_response_lines,
@@ -77,6 +84,8 @@ pub(super) use selected_task_review_decision::{
 pub(super) use selected_task_review_next::selected_task_review_next_response_lines;
 #[cfg(test)]
 pub(super) use selected_task_review_outcome_route::selected_task_review_outcome_route_response_lines;
+#[cfg(test)]
+pub(super) use selected_task_rework_preparation::selected_task_rework_preparation_response_lines;
 #[cfg(test)]
 pub(super) use selected_task_route_admission::selected_task_route_admission_response_lines;
 #[cfg(test)]

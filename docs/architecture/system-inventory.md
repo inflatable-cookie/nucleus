@@ -172,15 +172,15 @@ Updated: 2026-06-16
   secret-bearing files. Read-only inspection is now available through server
   query/control DTO, `nucleusd query research-run-briefs`, and Effigy, returning
   sanitized counts and refs only.
-- `nucleus-workspaces`: first draft modular workspace layout, panel, and
-  surface types. The workspace contract now requires a stronger
-  Loophole-inspired display/window/surface/region/panel hierarchy before real
-  panel work begins. The current crate does not yet model display inventory,
-  window targeting, hosted-surface lifecycle, active-surface fallback, or
-  region hierarchy. It also does not yet distinguish local client layout
-  persistence, likely SQLite-backed client profile records, from committable
-  project-management projection files. It must also separate global
-  display/window/surface config from per-project panel layout rules.
+- `nucleus-workspaces`: first draft modular workspace layout and local
+  workspace hosting types. It now models the Loophole-inspired
+  display/window/surface/region/panel hierarchy at the Rust type and pure
+  helper level: display inventory, window placement, display fallback
+  planning, hosted surfaces, active-surface fallback, Nucleus regions,
+  per-project panel rules, selected-task shell seed rules, and local-only
+  global shell / project panel layout record families. Rendering, local SQLite
+  codecs, migrations, terminal/browser/editor/SCM resource execution, sync,
+  and Aura-style configuration UI remain out of scope.
 - `nucleus-server`: current crate name for host API/runtime boundary types.
   The name is historical after the engine-first correction: the crate remains
   useful for sidecar daemon, remote host, and embedded IPC/control surfaces,

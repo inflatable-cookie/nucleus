@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use tauri::Manager;
+
 use nucleus_command_policy::{
     CommandEvidence, CommandEvidenceId, CommandExecutionStatus, CommandOutputRetention,
     CommandRequestId,
@@ -11,7 +13,9 @@ use nucleus_server::{
     forge_credential_status_refresh, forge_pull_request_refresh, forge_repository_metadata_refresh,
     forge_status_check_refresh, persist_forge_credential_status_refreshes,
     persist_forge_pull_request_refreshes, persist_forge_repository_metadata_refreshes,
-    persist_forge_status_check_refreshes, seed_local_memory_proposal, seed_local_planning_session,
+    persist_forge_status_check_refreshes, read_forge_credential_status_refreshes,
+    read_forge_pull_request_refreshes, read_forge_repository_metadata_refreshes,
+    read_forge_status_check_refreshes, seed_local_memory_proposal, seed_local_planning_session,
     seed_local_project, seed_local_research_run_brief, seed_local_task, write_command_evidence,
     ControlApiCodecError, ControlRequestEnvelopeDto, ControlResponseEnvelopeDto,
     ForgeCredentialStatusRefreshInput, ForgeCredentialStatusRefreshPersistenceInput,
@@ -25,6 +29,8 @@ use nucleus_server::{
     LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed,
     TauriIpcControlCommandAdapter,
 };
+
+mod workspace_ui;
 
 struct DesktopState {
     adapter: Mutex<TauriIpcControlCommandAdapter<SqliteBackend>>,
@@ -99,6 +105,23 @@ fn seed_local_command_evidence(
 fn seed_local_provider_readiness_evidence(
     state: &nucleus_server::ServerStateService<SqliteBackend>,
 ) -> nucleus_local_store::LocalStoreResult<()> {
+    let existing_credential_refresh_ids = read_forge_credential_status_refreshes(state)?
+        .into_iter()
+        .map(|record| record.persisted_refresh_id)
+        .collect::<Vec<_>>();
+    let existing_repository_refresh_ids = read_forge_repository_metadata_refreshes(state)?
+        .into_iter()
+        .map(|record| record.persisted_refresh_id)
+        .collect::<Vec<_>>();
+    let existing_pull_request_refresh_ids = read_forge_pull_request_refreshes(state)?
+        .into_iter()
+        .map(|record| record.persisted_refresh_id)
+        .collect::<Vec<_>>();
+    let existing_status_check_refresh_ids = read_forge_status_check_refreshes(state)?
+        .into_iter()
+        .map(|record| record.persisted_refresh_id)
+        .collect::<Vec<_>>();
+
     let credential_refresh_set =
         forge_credential_status_refresh(ForgeCredentialStatusRefreshInput {
             credential_refs: vec![ForgeNetworkExecutionCredentialRef {
@@ -131,7 +154,7 @@ fn seed_local_provider_readiness_evidence(
         ForgeCredentialStatusRefreshPersistenceInput {
             refresh_set: credential_refresh_set,
             evidence_refs: vec!["evidence:nucleus-local:credential-status".to_owned()],
-            existing_persisted_refresh_ids: Vec::new(),
+            existing_persisted_refresh_ids: existing_credential_refresh_ids,
             credential_material_present: false,
             provider_payload_present: false,
             raw_provider_payload_retention_requested: false,
@@ -172,7 +195,7 @@ fn seed_local_provider_readiness_evidence(
         ForgeRepositoryMetadataRefreshPersistenceInput {
             refresh_set: repository_refresh_set,
             evidence_refs: vec!["evidence:nucleus-local:repository-metadata".to_owned()],
-            existing_persisted_refresh_ids: Vec::new(),
+            existing_persisted_refresh_ids: existing_repository_refresh_ids,
             credential_material_present: false,
             provider_payload_present: false,
             raw_provider_payload_retention_requested: false,
@@ -214,7 +237,7 @@ fn seed_local_provider_readiness_evidence(
         ForgePullRequestRefreshPersistenceInput {
             refresh_set: pull_request_refresh_set,
             evidence_refs: vec!["evidence:nucleus-local:pull-request-refresh".to_owned()],
-            existing_persisted_refresh_ids: Vec::new(),
+            existing_persisted_refresh_ids: existing_pull_request_refresh_ids,
             credential_material_present: false,
             provider_payload_present: false,
             raw_provider_payload_retention_requested: false,
@@ -258,7 +281,7 @@ fn seed_local_provider_readiness_evidence(
         ForgeStatusCheckRefreshPersistenceInput {
             refresh_set: status_check_refresh_set,
             evidence_refs: vec!["evidence:nucleus-local:status-check-refresh".to_owned()],
-            existing_persisted_refresh_ids: Vec::new(),
+            existing_persisted_refresh_ids: existing_status_check_refresh_ids,
             credential_material_present: false,
             provider_payload_present: false,
             raw_provider_payload_retention_requested: false,
@@ -282,12 +305,35 @@ fn submit_control_envelope(
     state.submit_control_envelope(request)
 }
 
+#[tauri::command]
+fn load_workspace_ui_config() -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
+    workspace_ui::load_workspace_ui_config()
+}
+
+#[tauri::command]
+fn save_workspace_ui_config(
+    config: workspace_ui::WorkspaceUiConfigDto,
+) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
+    workspace_ui::save_workspace_ui_config(config)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(DesktopState::new(SqliteBackend::new(
             desktop_database_path(),
         )))
-        .invoke_handler(tauri::generate_handler![submit_control_envelope])
+        .setup(|app| {
+            app.set_theme(Some(tauri::Theme::Dark));
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_theme(Some(tauri::Theme::Dark))?;
+            }
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            submit_control_envelope,
+            load_workspace_ui_config,
+            save_workspace_ui_config
+        ])
         .run(tauri::generate_context!())
         .expect("failed to run nucleus desktop");
 }

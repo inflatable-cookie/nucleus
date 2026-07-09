@@ -12,13 +12,37 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Nucleus",
         "width": 1280,
         "height": 820,
         "minWidth": 900,
-        "minHeight": 620
+        "minHeight": 620,
+        "resizable": true,
+        "dragDropEnabled": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 18.0,
+          "y": 25.0
+        },
+        "theme": "Dark"
       }
-    ]
+    ],
+    "security": {
+      "csp": null,
+      "capabilities": [
+        {
+          "identifier": "main-window",
+          "windows": ["main"],
+          "permissions": [
+            "core:default",
+            "core:window:allow-start-dragging",
+            "core:window:allow-set-theme"
+          ]
+        }
+      ]
+    }
   },
   "bundle": {
     "active": false,

@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-07
+Updated: 2026-07-09
 
 ## Purpose
 
@@ -10,15 +10,40 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `072-selected-task-completion-route-control-surfaces.md`
+- `116-product-workflow-ui-design-review.md`
 
 ## Planned Cards
 
-- `073-selected-task-completion-route-desktop-proof.md`
-- `074-selected-task-completion-route-validation.md`
+- None.
+
+## Paused Cards
+
+- `081-selected-task-delegation-work-item-admission.md`
+- `082-selected-task-delegation-control-surfaces.md`
+- `083-selected-task-delegation-desktop-proof.md`
+- `084-selected-task-delegation-validation-next-lane.md`
+
+## Superseded Cards
+
+- `105-product-shell-task-list-placement.md`
+- `107-selected-task-aggregate-shell-placement-boundary.md`
+- `108-selected-task-aggregate-workspace-panel.md`
+- `109-selected-task-aggregate-shell-state-hardening.md`
+- `110-selected-task-aggregate-shell-validation-next-lane.md`
 
 ## Completed Cards
 
+- `111-product-shell-design-review-checkpoint.md`
+- `112-product-shell-design-direction-promotion.md`
+- `113-local-workspace-ui-config-boundary.md`
+- `114-desktop-surface-tabs-and-regions.md`
+- `115-workspace-surface-shell-validation.md`
+- `117-surface-panel-placement-policy-feedback.md`
+- `118-surface-panel-placement-validation.md`
+- `119-panel-recovery-menu-and-resizable-regions.md`
+- `120-panel-cross-region-drag-drop-hardening.md`
+- `121-empty-region-collapse-and-drop-target-reveal.md`
+- `122-project-rail-resizable-shell-split.md`
 - `001-product-workflow-lane-boundary.md`
 - `002-product-workflow-read-model.md`
 - `003-product-workflow-cli-effigy-inspection.md`
@@ -90,3 +115,33 @@ Hold execution cards for `g04`.
 - `069-selected-task-route-admission-validation.md`
 - `070-selected-task-completion-route-apply-boundary.md`
 - `071-selected-task-completion-route-command-composition.md`
+- `072-selected-task-completion-route-control-surfaces.md`
+- `073-selected-task-completion-route-desktop-proof.md`
+- `074-selected-task-completion-route-validation.md`
+- `075-selected-task-rework-route-apply-boundary.md`
+- `076-selected-task-rework-work-item-composition.md`
+- `077-selected-task-rework-control-surfaces.md`
+- `078-selected-task-rework-desktop-proof.md`
+- `079-selected-task-rework-validation-next-lane.md`
+- `080-selected-task-delegation-scheduling-boundary.md`
+- `085-proof-ui-freeze-and-product-workflow-boundary.md`
+- `086-selected-task-workflow-shell-architecture.md`
+- `087-selected-task-server-surface-fit.md`
+- `088-product-workflow-implementation-runway-reset.md`
+- `089-ui-refocus-validation-next-lane.md`
+- `090-echo-windowing-port-map.md`
+- `091-workspace-display-window-types.md`
+- `092-window-planning-fallback-helpers.md`
+- `093-hosted-surface-lifecycle-model.md`
+- `094-region-panel-project-adaptation-boundary.md`
+- `095-local-layout-persistence-boundary.md`
+- `096-workspace-hosting-validation-next-lane.md`
+- `097-selected-task-aggregate-contract.md`
+- `098-selected-task-aggregate-read-model.md`
+- `099-selected-task-aggregate-control-dto.md`
+- `100-selected-task-aggregate-cli-effigy.md`
+- `101-selected-task-aggregate-product-client-adapter.md`
+- `102-selected-task-aggregate-validation-next-lane.md`
+- `103-product-shell-project-rail-list.md`
+- `104-active-project-workspace-stage.md`
+- `106-product-shell-validation-next-lane.md`

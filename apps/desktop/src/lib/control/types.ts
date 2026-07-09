@@ -25,6 +25,9 @@ export type ControlProjectRecordDto = {
   status: string;
   importance_level: string;
   revision_id: string;
+  repo_count: number;
+  primary_location: string | null;
+  location_status: string;
 };
 
 export type ControlTaskRecordDto = {

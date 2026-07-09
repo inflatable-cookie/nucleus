@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-07
+Updated: 2026-07-09
 
 ## Purpose
 
@@ -118,6 +118,49 @@ Current checkpoint:
 - the active path is selected-task completion from route admission
 - selected-task completion-from-route boundary and pure composition model are
   in place
+- selected-task completion-from-route has control DTOs, `nucleusd`, and Effigy
+  read-only preview inspection
+- selected-task completion-from-route is visible in the disposable desktop
+  proof as a disabled read-only apply preview
+- the selected-task workflow proof is isolated behind a top-level desktop modal
+  launcher so the main UI can be replaced cleanly later
+- selected-task completion-from-route is validated
+- the active path is selected-task rework from review outcome
+- selected-task rework-from-review boundary and authority map are defined
+- selected-task rework preparation pure server model is in place
+- selected-task rework preparation has read-only control, CLI, and Effigy
+  inspection
+- selected-task rework preparation renders in the disposable desktop proof
+  modal without enabling work-item creation or scheduling
+- selected-task rework-from-review is validated
+- the active path is selected-task delegation scheduling admission
+- selected-task delegation scheduling boundary and authority map are defined
+- selected-task delegation scheduling implementation is paused until the real
+  product workflow UI architecture is defined
+- the active path is product workflow UI architecture refocus
+- disposable task workflow proof is frozen as diagnostic-only
+- product workflow UI architecture refocus is complete
+- the active path is workspace hosting model extraction before final product
+  shell implementation
+- workspace hosting model extraction is complete at the Rust type/pure-helper
+  level
+- selected-task product aggregate query is paused until the first product shell
+  project rail/stage exists
+- the active path is product shell project rail
+- the active project workspace stage is in place without moving proof widgets
+  into the product shell
+- read-only product task navigation was tried inside the active project
+  workspace stage, then rolled back from the normal workspace
+- product shell project rail is validated and complete
+- the active path is selected-task product aggregate query
+- selected-task aggregate contract and source map are defined
+- selected-task aggregate pure server read model is in place
+- selected-task aggregate has control DTOs, `nucleusd`, and Effigy inspection
+- selected-task product aggregate query is validated and complete
+- the active path is selected-task aggregate product shell placement
+- selected-task aggregate product shell placement was superseded and rolled
+  back from the normal workspace
+- the active path is product shell design checkpoint
 
 ## Roadmaps
 
@@ -135,21 +178,49 @@ Current checkpoint:
 - `012-selected-task-review-decision-controls.md` - completed
 - `013-selected-task-review-outcome-routing.md` - completed
 - `014-selected-task-route-admission.md` - completed
-- `015-selected-task-completion-from-route-admission.md` - active
+- `015-selected-task-completion-from-route-admission.md` - completed
+- `016-selected-task-rework-from-review-outcome.md` - completed
+- `017-selected-task-delegation-scheduling-admission.md` - paused
+- `018-product-workflow-ui-architecture-refocus.md` - completed
+- `019-workspace-hosting-model-extraction.md` - completed
+- `020-selected-task-product-aggregate-query.md` - completed
+- `021-product-shell-project-rail.md` - completed
+- `022-selected-task-aggregate-product-shell-placement.md` - superseded
+- `023-product-shell-design-checkpoint.md` - completed
+- `024-workspace-surface-shell-skeleton.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/072-selected-task-completion-route-control-surfaces.md`
+- `batch-cards/116-product-workflow-ui-design-review.md`
 
 Planned cards:
 
-- `batch-cards/073-selected-task-completion-route-desktop-proof.md`
-- `batch-cards/074-selected-task-completion-route-validation.md`
+- None.
+
+Paused cards:
+
+- `batch-cards/081-selected-task-delegation-work-item-admission.md`
+- `batch-cards/082-selected-task-delegation-control-surfaces.md`
+- `batch-cards/083-selected-task-delegation-desktop-proof.md`
+- `batch-cards/084-selected-task-delegation-validation-next-lane.md`
+
+Superseded cards:
+
+- `batch-cards/105-product-shell-task-list-placement.md`
+- `batch-cards/107-selected-task-aggregate-shell-placement-boundary.md`
+- `batch-cards/108-selected-task-aggregate-workspace-panel.md`
+- `batch-cards/109-selected-task-aggregate-shell-state-hardening.md`
+- `batch-cards/110-selected-task-aggregate-shell-validation-next-lane.md`
 
 Completed cards:
 
+- `batch-cards/111-product-shell-design-review-checkpoint.md`
+- `batch-cards/112-product-shell-design-direction-promotion.md`
+- `batch-cards/113-local-workspace-ui-config-boundary.md`
+- `batch-cards/114-desktop-surface-tabs-and-regions.md`
+- `batch-cards/115-workspace-surface-shell-validation.md`
 - `batch-cards/001-product-workflow-lane-boundary.md`
 - `batch-cards/002-product-workflow-read-model.md`
 - `batch-cards/003-product-workflow-cli-effigy-inspection.md`
@@ -221,3 +292,33 @@ Completed cards:
 - `batch-cards/069-selected-task-route-admission-validation.md`
 - `batch-cards/070-selected-task-completion-route-apply-boundary.md`
 - `batch-cards/071-selected-task-completion-route-command-composition.md`
+- `batch-cards/072-selected-task-completion-route-control-surfaces.md`
+- `batch-cards/073-selected-task-completion-route-desktop-proof.md`
+- `batch-cards/074-selected-task-completion-route-validation.md`
+- `batch-cards/075-selected-task-rework-route-apply-boundary.md`
+- `batch-cards/076-selected-task-rework-work-item-composition.md`
+- `batch-cards/077-selected-task-rework-control-surfaces.md`
+- `batch-cards/078-selected-task-rework-desktop-proof.md`
+- `batch-cards/079-selected-task-rework-validation-next-lane.md`
+- `batch-cards/080-selected-task-delegation-scheduling-boundary.md`
+- `batch-cards/086-selected-task-workflow-shell-architecture.md`
+- `batch-cards/087-selected-task-server-surface-fit.md`
+- `batch-cards/088-product-workflow-implementation-runway-reset.md`
+- `batch-cards/089-ui-refocus-validation-next-lane.md`
+- `batch-cards/090-echo-windowing-port-map.md`
+- `batch-cards/091-workspace-display-window-types.md`
+- `batch-cards/092-window-planning-fallback-helpers.md`
+- `batch-cards/093-hosted-surface-lifecycle-model.md`
+- `batch-cards/094-region-panel-project-adaptation-boundary.md`
+- `batch-cards/095-local-layout-persistence-boundary.md`
+- `batch-cards/096-workspace-hosting-validation-next-lane.md`
+- `batch-cards/097-selected-task-aggregate-contract.md`
+- `batch-cards/098-selected-task-aggregate-read-model.md`
+- `batch-cards/099-selected-task-aggregate-control-dto.md`
+- `batch-cards/100-selected-task-aggregate-cli-effigy.md`
+- `batch-cards/101-selected-task-aggregate-product-client-adapter.md`
+- `batch-cards/102-selected-task-aggregate-validation-next-lane.md`
+- `batch-cards/103-product-shell-project-rail-list.md`
+- `batch-cards/104-active-project-workspace-stage.md`
+- `batch-cards/106-product-shell-validation-next-lane.md`
+- `batch-cards/085-proof-ui-freeze-and-product-workflow-boundary.md`

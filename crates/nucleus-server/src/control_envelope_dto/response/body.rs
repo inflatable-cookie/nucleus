@@ -39,13 +39,15 @@ use super::records::{
     ControlResearchRunBriefSummaryDto, ControlResearchSourceKindCountDto,
     ControlResearchSynthesisKindCountDto, ControlRuntimeReadinessDiagnosticDto,
     ControlRuntimeReceiptRecordDto, ControlSelectedTaskActionReadinessDto,
-    ControlSelectedTaskCommandAdmissionDto, ControlSelectedTaskOperatorActionGateDto,
+    ControlSelectedTaskCommandAdmissionDto, ControlSelectedTaskCompletionRouteApplyDto,
+    ControlSelectedTaskOperatorActionGateDto, ControlSelectedTaskProductAggregateDto,
     ControlSelectedTaskReviewDecisionAdmissionDto, ControlSelectedTaskReviewDecisionRecordDto,
     ControlSelectedTaskReviewNextDto, ControlSelectedTaskReviewOutcomeRouteDto,
-    ControlSelectedTaskRouteAdmissionDto, ControlSelectedTaskScmHandoffDto,
-    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
-    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
-    ControlTaskTimelineEntryDto, ControlTaskWorkflowDrilldownDto,
+    ControlSelectedTaskReworkPreparationDto, ControlSelectedTaskRouteAdmissionDto,
+    ControlSelectedTaskScmHandoffDto, ControlTaskReadinessCandidateDto,
+    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
+    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
+    ControlTaskWorkflowDrilldownDto,
 };
 use crate::control_envelope_dto::{
     ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
@@ -224,6 +226,15 @@ pub enum ControlResponseBodyDto {
     },
     SelectedTaskRouteAdmission {
         admission: ControlSelectedTaskRouteAdmissionDto,
+    },
+    SelectedTaskCompletionRouteApply {
+        apply: ControlSelectedTaskCompletionRouteApplyDto,
+    },
+    SelectedTaskReworkPreparation {
+        preparation: ControlSelectedTaskReworkPreparationDto,
+    },
+    SelectedTaskProductAggregate {
+        aggregate: ControlSelectedTaskProductAggregateDto,
     },
     SelectedTaskScmHandoff {
         handoff: ControlSelectedTaskScmHandoffDto,

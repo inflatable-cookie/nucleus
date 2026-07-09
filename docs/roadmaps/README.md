@@ -279,7 +279,16 @@ shape.
 - `g04/012-selected-task-review-decision-controls.md` - completed
 - `g04/013-selected-task-review-outcome-routing.md` - completed
 - `g04/014-selected-task-route-admission.md` - completed
-- `g04/015-selected-task-completion-from-route-admission.md` - active
+- `g04/015-selected-task-completion-from-route-admission.md` - completed
+- `g04/016-selected-task-rework-from-review-outcome.md` - completed
+- `g04/017-selected-task-delegation-scheduling-admission.md` - paused
+- `g04/018-product-workflow-ui-architecture-refocus.md` - completed
+- `g04/019-workspace-hosting-model-extraction.md` - completed
+- `g04/020-selected-task-product-aggregate-query.md` - completed
+- `g04/021-product-shell-project-rail.md` - completed
+- `g04/022-selected-task-aggregate-product-shell-placement.md` - superseded
+- `g04/023-product-shell-design-checkpoint.md` - completed
+- `g04/024-workspace-surface-shell-skeleton.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -340,9 +349,7 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g04/015-selected-task-completion-from-route-admission.md`
+`docs/roadmaps/g04/024-workspace-surface-shell-skeleton.md`
 with
-`docs/roadmaps/g04/batch-cards/072-selected-task-completion-route-control-surfaces.md`.
-Expose completion-from-route state through server control DTOs, `nucleusd`, and
-Effigy while keeping the actual task mutation behind an explicit later command
-boundary.
+`docs/roadmaps/g04/batch-cards/116-product-workflow-ui-design-review.md`.
+Review the Poodle-based surface shell before adding workflow content.

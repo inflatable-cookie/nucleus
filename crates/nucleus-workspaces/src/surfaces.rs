@@ -2,7 +2,9 @@
 
 use crate::ids::SurfaceId;
 
-/// Open surface attached to a workspace panel.
+/// Open surface descriptor used by project panel layout records.
+///
+/// Window-owned hosting state lives in `hosted_surfaces`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Surface {
     pub id: SurfaceId,

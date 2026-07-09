@@ -1,13 +1,16 @@
 //! Server-owned local project seed path.
 
+use std::path::{Path, PathBuf};
+
 use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
 use nucleus_local_store::{
     LocalStoreBackend, LocalStoreError, LocalStoreRecord, LocalStoreRecordPayload,
     LocalStoreResult, RevisionExpectation,
 };
 use nucleus_projects::{
-    encode_project_storage_record, ImportanceBaseline, ImportanceLevel, Project, ProjectActivity,
-    ProjectId, ProjectStatus,
+    decode_project_storage_record, encode_project_storage_record, ImportanceBaseline,
+    ImportanceLevel, Project, ProjectActivity, ProjectId, ProjectStatus, RepoLocationStatus,
+    RepoMembership, RepoMembershipId,
 };
 
 use crate::state::ServerStateService;
@@ -41,27 +44,13 @@ where
 {
     let record_id = PersistenceRecordId(seed.project_id.clone());
     if let Some(existing) = state.projects().get(&record_id)? {
+        if let Some(repaired) = repair_existing_local_project_seed(state, &seed, &existing)? {
+            return Ok(repaired);
+        }
         return Ok(existing);
     }
 
-    let project = Project {
-        id: ProjectId(seed.project_id.clone()),
-        display_name: seed.display_name,
-        status: ProjectStatus::Active,
-        importance_baseline: ImportanceBaseline {
-            level: seed.importance_level,
-            notes: Some("local seed".to_owned()),
-        },
-        repos: Vec::new(),
-        task_ids: Vec::new(),
-        workspace_layout_refs: Vec::new(),
-        activity: ProjectActivity {
-            created_at: None,
-            last_focused_at: None,
-            last_agent_activity_at: None,
-            last_task_activity_at: None,
-        },
-    };
+    let project = project_from_seed(&seed);
     let payload = encode_project_storage_record(&project).map_err(|error| {
         LocalStoreError::InvalidRecord {
             reason: error.reason,
@@ -83,9 +72,109 @@ where
         .put(record, RevisionExpectation::MustNotExist)
 }
 
+fn project_from_seed(seed: &LocalProjectSeed) -> Project {
+    Project {
+        id: ProjectId(seed.project_id.clone()),
+        display_name: seed.display_name.clone(),
+        status: ProjectStatus::Active,
+        importance_baseline: ImportanceBaseline {
+            level: seed.importance_level.clone(),
+            notes: Some("local seed".to_owned()),
+        },
+        repos: local_seed_repos(&seed.project_id),
+        task_ids: Vec::new(),
+        workspace_layout_refs: Vec::new(),
+        activity: ProjectActivity {
+            created_at: None,
+            last_focused_at: None,
+            last_agent_activity_at: None,
+            last_task_activity_at: None,
+        },
+    }
+}
+
+fn repair_existing_local_project_seed<B>(
+    state: &ServerStateService<B>,
+    seed: &LocalProjectSeed,
+    existing: &LocalStoreRecord,
+) -> LocalStoreResult<Option<LocalStoreRecord>>
+where
+    B: LocalStoreBackend,
+{
+    if seed.project_id != LocalProjectSeed::nucleus_local().project_id {
+        return Ok(None);
+    }
+
+    let Ok(decoded) = decode_project_storage_record(&existing.payload.bytes) else {
+        return Ok(None);
+    };
+    if decoded.repo_count > 0 || decoded.primary_location.is_some() {
+        return Ok(None);
+    }
+
+    let mut record = existing.clone();
+    let project = project_from_seed(seed);
+    let payload = encode_project_storage_record(&project).map_err(|error| {
+        LocalStoreError::InvalidRecord {
+            reason: error.reason,
+        }
+    })?;
+    record.revision_id = RevisionId("rev:seed:repo-location:1".to_owned());
+    record.payload = LocalStoreRecordPayload {
+        media_type: Some("application/json".to_owned()),
+        bytes: payload,
+    };
+
+    state
+        .projects()
+        .put(record, RevisionExpectation::Any)
+        .map(Some)
+}
+
+fn local_seed_repos(project_id: &str) -> Vec<RepoMembership> {
+    if project_id != "project:nucleus-local" {
+        return Vec::new();
+    }
+
+    let Some(path) = infer_local_repo_root() else {
+        return Vec::new();
+    };
+
+    vec![RepoMembership {
+        id: RepoMembershipId("repo:nucleus-local".to_owned()),
+        project_id: ProjectId(project_id.to_owned()),
+        current_path: Some(path.clone()),
+        path_history: vec![nucleus_projects::RepoPathRecord {
+            path,
+            observed_at: None,
+            note: Some("local bootstrap seed".to_owned()),
+        }],
+        git: None,
+        default_branch: Some("main".to_owned()),
+        location_status: RepoLocationStatus::Present,
+        repair_notes: Vec::new(),
+    }]
+}
+
+fn infer_local_repo_root() -> Option<PathBuf> {
+    let current = std::env::current_dir().ok()?;
+    current
+        .ancestors()
+        .find(|path| looks_like_nucleus_repo_root(path))
+        .map(Path::to_path_buf)
+        .or(Some(current))
+}
+
+fn looks_like_nucleus_repo_root(path: &Path) -> bool {
+    path.join("AGENTS.md").is_file()
+        && path.join("effigy.toml").is_file()
+        && path.join("apps/desktop").is_dir()
+}
+
 #[cfg(test)]
 mod tests {
     use nucleus_local_store::SqliteBackend;
+    use nucleus_projects::decode_project_storage_record;
 
     use super::*;
     use crate::control_api::{
@@ -141,5 +230,68 @@ mod tests {
             ServerControlResponseBody::Query(ServerQueryResult::StateRecords(records))
                 if records.records.len() == 1
         ));
+    }
+
+    #[test]
+    fn nucleus_local_project_seed_records_repo_location() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let backend = SqliteBackend::new(temp_dir.path().join("nucleus.sqlite"));
+        let handler = LocalControlRequestHandler::new(backend, None);
+
+        let seeded =
+            seed_local_project(handler.state(), LocalProjectSeed::nucleus_local()).expect("seed");
+        let decoded = decode_project_storage_record(&seeded.payload.bytes).expect("project");
+
+        assert_eq!(decoded.repo_count, 1);
+        assert!(decoded.primary_location.is_some());
+    }
+
+    #[test]
+    fn nucleus_local_project_seed_repairs_existing_missing_repo_location() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let backend = SqliteBackend::new(temp_dir.path().join("nucleus.sqlite"));
+        let handler = LocalControlRequestHandler::new(backend, None);
+
+        let old_project = Project {
+            id: ProjectId("project:nucleus-local".to_owned()),
+            display_name: "Nucleus Local".to_owned(),
+            status: ProjectStatus::Active,
+            importance_baseline: ImportanceBaseline {
+                level: ImportanceLevel::Normal,
+                notes: Some("old seed".to_owned()),
+            },
+            repos: Vec::new(),
+            task_ids: Vec::new(),
+            workspace_layout_refs: Vec::new(),
+            activity: ProjectActivity {
+                created_at: None,
+                last_focused_at: None,
+                last_agent_activity_at: None,
+                last_task_activity_at: None,
+            },
+        };
+        let old_record = LocalStoreRecord {
+            id: PersistenceRecordId("project:nucleus-local".to_owned()),
+            domain: PersistenceDomain::Projects,
+            kind: PersistenceRecordKind::Project,
+            revision_id: RevisionId("rev:old".to_owned()),
+            payload: LocalStoreRecordPayload {
+                media_type: Some("application/json".to_owned()),
+                bytes: encode_project_storage_record(&old_project).expect("old project"),
+            },
+        };
+        handler
+            .state()
+            .projects()
+            .put(old_record, RevisionExpectation::MustNotExist)
+            .expect("old project put");
+
+        let repaired =
+            seed_local_project(handler.state(), LocalProjectSeed::nucleus_local()).expect("repair");
+        let decoded = decode_project_storage_record(&repaired.payload.bytes).expect("project");
+
+        assert_eq!(repaired.revision_id.0, "rev:seed:repo-location:1");
+        assert_eq!(decoded.repo_count, 1);
+        assert!(decoded.primary_location.is_some());
     }
 }

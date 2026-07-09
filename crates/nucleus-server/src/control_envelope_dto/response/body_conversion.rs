@@ -21,13 +21,14 @@ use super::records::{
     ControlProductWorkflowSummaryDto, ControlProjectAuthorityMapDto,
     ControlRuntimeReadinessDiagnosticDto, ControlRuntimeReceiptRecordDto,
     ControlSelectedTaskActionReadinessDto, ControlSelectedTaskCommandAdmissionDto,
-    ControlSelectedTaskOperatorActionGateDto, ControlSelectedTaskReviewDecisionAdmissionDto,
+    ControlSelectedTaskCompletionRouteApplyDto, ControlSelectedTaskOperatorActionGateDto,
+    ControlSelectedTaskProductAggregateDto, ControlSelectedTaskReviewDecisionAdmissionDto,
     ControlSelectedTaskReviewDecisionRecordDto, ControlSelectedTaskReviewNextDto,
-    ControlSelectedTaskReviewOutcomeRouteDto, ControlSelectedTaskRouteAdmissionDto,
-    ControlSelectedTaskScmHandoffDto, ControlTaskReadinessCandidateDto,
-    ControlTaskReadinessSourceCountsDto, ControlTaskReadinessStatusCountDto,
-    ControlTaskSeedPromotionDiagnosticsDto, ControlTaskTimelineEntryDto,
-    ControlTaskWorkflowDrilldownDto,
+    ControlSelectedTaskReviewOutcomeRouteDto, ControlSelectedTaskReworkPreparationDto,
+    ControlSelectedTaskRouteAdmissionDto, ControlSelectedTaskScmHandoffDto,
+    ControlTaskReadinessCandidateDto, ControlTaskReadinessSourceCountsDto,
+    ControlTaskReadinessStatusCountDto, ControlTaskSeedPromotionDiagnosticsDto,
+    ControlTaskTimelineEntryDto, ControlTaskWorkflowDrilldownDto,
 };
 use super::research_run_briefs::research_run_briefs_body_dto;
 use crate::control_api::{ServerControlResponseBody, ServerQueryResult};
@@ -245,6 +246,21 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 admission,
             )) => Ok(Self::SelectedTaskRouteAdmission {
                 admission: ControlSelectedTaskRouteAdmissionDto::from(admission),
+            }),
+            ServerControlResponseBody::Query(
+                ServerQueryResult::SelectedTaskCompletionRouteApply(apply),
+            ) => Ok(Self::SelectedTaskCompletionRouteApply {
+                apply: ControlSelectedTaskCompletionRouteApplyDto::from(apply),
+            }),
+            ServerControlResponseBody::Query(ServerQueryResult::SelectedTaskReworkPreparation(
+                preparation,
+            )) => Ok(Self::SelectedTaskReworkPreparation {
+                preparation: ControlSelectedTaskReworkPreparationDto::from(preparation),
+            }),
+            ServerControlResponseBody::Query(ServerQueryResult::SelectedTaskProductAggregate(
+                aggregate,
+            )) => Ok(Self::SelectedTaskProductAggregate {
+                aggregate: ControlSelectedTaskProductAggregateDto::from(aggregate),
             }),
             ServerControlResponseBody::Query(ServerQueryResult::SelectedTaskScmHandoff(
                 handoff,

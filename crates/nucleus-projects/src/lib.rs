@@ -12,8 +12,8 @@ pub mod storage_codec;
 pub use projection::{ProjectProjectionRecord, RepoMembershipProjectionRecord};
 pub use storage_codec::{
     decode_project_storage_record, encode_project_storage_payload, encode_project_storage_record,
-    ProjectRecordCodecError, ProjectStorageImportanceLevel, ProjectStorageRecord,
-    ProjectStorageStatus,
+    ProjectRecordCodecError, ProjectStorageImportanceLevel, ProjectStorageLocationStatus,
+    ProjectStorageRecord, ProjectStorageStatus,
 };
 
 /// Stable nucleus project id.

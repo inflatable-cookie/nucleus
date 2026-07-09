@@ -57,6 +57,11 @@ pub(super) fn query_domain_label(domain: &QueryDomain) -> &'static str {
         QueryDomain::SelectedTaskReviewNext { .. } => "selected-task-review-next",
         QueryDomain::SelectedTaskReviewOutcomeRoute { .. } => "selected-task-review-outcome-route",
         QueryDomain::SelectedTaskRouteAdmission { .. } => "selected-task-route-admission",
+        QueryDomain::SelectedTaskCompletionRouteApply { .. } => {
+            "selected-task-completion-route-apply"
+        }
+        QueryDomain::SelectedTaskReworkPreparation { .. } => "selected-task-rework-preparation",
+        QueryDomain::SelectedTaskProductAggregate { .. } => "selected-task-product-aggregate",
         QueryDomain::SelectedTaskScmHandoff { .. } => "selected-task-scm-handoff",
         QueryDomain::SelectedTaskCommandAdmission { .. } => "selected-task-command-admission",
         QueryDomain::SelectedTaskReviewDecisionAdmission(_) => {

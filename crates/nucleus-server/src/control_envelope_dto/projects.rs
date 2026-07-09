@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use nucleus_core::{PersistenceDomain, PersistenceRecordKind};
 use nucleus_local_store::LocalStoreRecord;
 use nucleus_projects::{
-    decode_project_storage_record, ProjectStorageImportanceLevel, ProjectStorageStatus,
+    decode_project_storage_record, ProjectStorageImportanceLevel, ProjectStorageLocationStatus,
+    ProjectStorageStatus,
 };
 
 use super::ControlApiCodecError;
@@ -16,6 +17,9 @@ pub struct ControlProjectRecordDto {
     pub status: String,
     pub importance_level: String,
     pub revision_id: String,
+    pub repo_count: usize,
+    pub primary_location: Option<String>,
+    pub location_status: String,
 }
 
 impl TryFrom<&LocalStoreRecord> for ControlProjectRecordDto {
@@ -43,6 +47,9 @@ impl TryFrom<&LocalStoreRecord> for ControlProjectRecordDto {
             status: project_status_dto(&decoded.status),
             importance_level: project_importance_dto(&decoded.importance_level),
             revision_id: record.revision_id.0.clone(),
+            repo_count: decoded.repo_count,
+            primary_location: decoded.primary_location,
+            location_status: project_location_status_dto(&decoded.location_status),
         })
     }
 }
@@ -52,6 +59,18 @@ fn project_status_dto(status: &ProjectStorageStatus) -> String {
         ProjectStorageStatus::Active => "active",
         ProjectStorageStatus::Parked => "parked",
         ProjectStorageStatus::Archived => "archived",
+    }
+    .to_owned()
+}
+
+fn project_location_status_dto(status: &ProjectStorageLocationStatus) -> String {
+    match status {
+        ProjectStorageLocationStatus::NotRecorded => "not_recorded",
+        ProjectStorageLocationStatus::Present => "present",
+        ProjectStorageLocationStatus::Missing => "missing",
+        ProjectStorageLocationStatus::MovedCandidate => "moved_candidate",
+        ProjectStorageLocationStatus::RepairRequired => "repair_required",
+        ProjectStorageLocationStatus::Mixed => "mixed",
     }
     .to_owned()
 }

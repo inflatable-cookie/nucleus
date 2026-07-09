@@ -308,6 +308,19 @@ The first Rust policy surface is
 `ResearchSynthesis` are committable by default. `Custom` record kinds are
 local-only until a contract explicitly promotes them.
 
+Workspace layout local-only type boundary:
+
+- `GlobalShellLayoutRecord` is local client profile state for display
+  inventory, workspace windows, hosted surfaces, and window-scoped surface
+  ordering.
+- `ProjectPanelLayoutRecord` is local client profile state linked to a project
+  id, but it is not repo-backed project management state.
+- `LocalLayoutRecord::is_repo_projection_allowed()` is false for both record
+  families.
+
+The first workspace layout implementation does not add SQLite codecs,
+migrations, sync, or projection export. Those require a later local-store lane.
+
 ## Projection Migration Rule
 
 Projection migrations are explicit policy actions.

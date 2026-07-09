@@ -63,6 +63,49 @@ fn desktop_state_routes_provider_readiness_overview_query_to_typed_dto() {
 }
 
 #[test]
+fn desktop_state_provider_readiness_seed_is_idempotent_for_existing_database() {
+    let database_path = std::env::temp_dir().join(format!(
+        "nucleus-desktop-provider-readiness-idempotent-test-{}.sqlite",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&database_path);
+
+    let first = DesktopState::new(SqliteBackend::new(database_path.clone()));
+    drop(first);
+
+    let second = DesktopState::new(SqliteBackend::new(database_path.clone()));
+    let response = second
+        .submit_control_envelope(ControlRequestEnvelopeDto {
+            protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),
+            protocol_version: CONTROL_API_PROTOCOL_VERSION_V1,
+            request_id: "desktop-request-provider-readiness-idempotent".to_owned(),
+            client_id: "desktop-client".to_owned(),
+            body: ControlRequestBodyDto::Query {
+                query: ControlQueryDto::ProviderReadinessOverview {
+                    query_id: "desktop-query-provider-readiness-idempotent".to_owned(),
+                    action: "overview".to_owned(),
+                },
+            },
+        })
+        .expect("desktop provider readiness overview should survive repeated startup seed");
+
+    assert!(matches!(
+        response.body,
+        nucleus_server::ControlResponseBodyDto::ProviderReadinessOverview { overview }
+            if overview.total_read_intent_count == 4
+                && overview.ready_count == 4
+                && overview.represented_read_families == vec![
+                    "credential_status".to_owned(),
+                    "repository_metadata".to_owned(),
+                    "pull_request".to_owned(),
+                    "status_check".to_owned(),
+                ]
+    ));
+
+    let _ = std::fs::remove_file(database_path);
+}
+
+#[test]
 fn desktop_state_routes_provider_readiness_drilldown_query_to_typed_dto() {
     let database_path = std::env::temp_dir().join(format!(
         "nucleus-desktop-provider-readiness-drilldown-test-{}.sqlite",

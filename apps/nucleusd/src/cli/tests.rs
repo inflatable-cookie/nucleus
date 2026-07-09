@@ -1,7 +1,10 @@
 use super::*;
 
 mod query;
+mod selected_task_completion_route_apply;
+mod selected_task_product_aggregate;
 mod selected_task_review_outcome_route;
+mod selected_task_rework_preparation;
 mod selected_task_route_admission;
 mod selected_task_scm_handoff;
 

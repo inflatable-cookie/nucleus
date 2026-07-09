@@ -18,9 +18,11 @@ The repo uses:
 
 ## Current Lane
 
-`g04` product workflow vertical slice. Current pointer: project/task/planning/
-runtime evidence/review/SCM readiness workflow rebaseline after g03's
-effect-gated backend proof run.
+`g04` product workflow vertical slice. Current pointer: selected-task product
+aggregate query after the first product shell pass. The selected-task proof is
+diagnostic-only; the next implementation work should define one read-only
+product-facing aggregate so the normal shell does not inherit proof-modal query
+composition.
 
 Current planning artifacts:
 

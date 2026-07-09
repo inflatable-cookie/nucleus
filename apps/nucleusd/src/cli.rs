@@ -109,6 +109,8 @@ pub(crate) fn print_help() {
     println!("  nucleusd [--state <path>] query selected-task-review-next --project <project-id> --task <task-id>");
     println!("  nucleusd [--state <path>] query selected-task-review-outcome-route --project <project-id> --task <task-id>");
     println!("  nucleusd [--state <path>] query selected-task-route-admission --project <project-id> --task <task-id> [--expected-revision <revision-id>] [--operator <operator-ref>]");
+    println!("  nucleusd [--state <path>] query selected-task-completion-route-apply --project <project-id> --task <task-id> [--expected-revision <revision-id>] [--operator <operator-ref>] [--route-admission <admission-id>] [--review-decision <decision-id>] [--evidence-ref <ref>...]");
+    println!("  nucleusd [--state <path>] query selected-task-product-aggregate --project <project-id> --task <task-id> [--expected-revision <revision-id>] [--operator <operator-ref>]");
     println!("  nucleusd [--state <path>] query selected-task-scm-handoff --project <project-id> --task <task-id>");
     println!("  nucleusd [--state <path>] query selected-task-command-admission --project <project-id> --task <task-id> --family <action-family> [--expected-revision <revision-id>] [--reason <reason>] [--operator <operator-ref>]");
     println!("  nucleusd [--state <path>] query project-authority-map --project <project-id>");

@@ -16,7 +16,9 @@ import {
 import {
   buildSelectedTaskActionReadinessQuery,
   buildSelectedTaskCommandAdmissionQuery,
+  buildSelectedTaskCompletionRouteApplyQuery,
   buildSelectedTaskOperatorActionGateQuery,
+  buildSelectedTaskReworkPreparationQuery,
   buildSelectedTaskReviewDecisionAdmissionQuery,
   buildSelectedTaskReviewDecisionApplyQuery,
   buildSelectedTaskReviewNextQuery,
@@ -65,6 +67,19 @@ import {
   selectedTaskRouteAdmissionFromResponse,
   type SelectedTaskRouteAdmissionQueryResult,
 } from "./selectedTaskRouteAdmission";
+import {
+  selectedTaskCompletionRouteApplyFromResponse,
+  type SelectedTaskCompletionRouteApplyQueryResult,
+} from "./selectedTaskCompletionRouteApply";
+import {
+  selectedTaskReworkPreparationFromResponse,
+  type SelectedTaskReworkPreparationQueryResult,
+} from "./selectedTaskReworkPreparation";
+import {
+  buildSelectedTaskProductAggregateQuery,
+  selectedTaskProductAggregateFromResponse,
+  type SelectedTaskProductAggregateQueryResult,
+} from "./selectedTaskProductAggregate";
 import {
   selectedTaskReviewDecisionAdmissionFromResponse,
   selectedTaskReviewDecisionApplyFromResponse,
@@ -211,6 +226,63 @@ export async function querySelectedTaskRouteAdmission(
     buildSelectedTaskRouteAdmissionQuery(projectId, taskId, expectedRevision),
   );
   return selectedTaskRouteAdmissionFromResponse(response);
+}
+
+export async function querySelectedTaskCompletionRouteApply(
+  projectId: string,
+  taskId: string,
+  expectedRevision: string | null,
+  routeAdmissionId: string | null = null,
+  reviewDecisionRef: string | null = null,
+  evidenceRefs: string[] = [],
+): Promise<SelectedTaskCompletionRouteApplyQueryResult> {
+  const response = await submitControlEnvelope(
+    buildSelectedTaskCompletionRouteApplyQuery(
+      projectId,
+      taskId,
+      expectedRevision,
+      routeAdmissionId,
+      reviewDecisionRef,
+      evidenceRefs,
+    ),
+  );
+  return selectedTaskCompletionRouteApplyFromResponse(response);
+}
+
+export async function querySelectedTaskReworkPreparation(
+  projectId: string,
+  taskId: string,
+  expectedTaskRevision: string | null,
+  routeAdmissionId: string | null = null,
+  reviewDecisionRef: string | null = null,
+  reviewedWorkItemRefs: string[] = [],
+  reviewedEvidenceRefs: string[] = [],
+  expectedWorkItemRevision: string | null = null,
+): Promise<SelectedTaskReworkPreparationQueryResult> {
+  const response = await submitControlEnvelope(
+    buildSelectedTaskReworkPreparationQuery(
+      projectId,
+      taskId,
+      expectedTaskRevision,
+      routeAdmissionId,
+      reviewDecisionRef,
+      reviewedWorkItemRefs,
+      reviewedEvidenceRefs,
+      expectedWorkItemRevision,
+    ),
+  );
+  return selectedTaskReworkPreparationFromResponse(response);
+}
+
+export async function querySelectedTaskProductAggregate(
+  projectId: string,
+  taskId: string,
+  expectedRevision: string | null,
+): Promise<SelectedTaskProductAggregateQueryResult> {
+  const response = await submitControlEnvelope(
+    buildSelectedTaskProductAggregateQuery(projectId, taskId, expectedRevision),
+  );
+  return selectedTaskProductAggregateFromResponse(response);
 }
 
 export async function querySelectedTaskScmHandoff(

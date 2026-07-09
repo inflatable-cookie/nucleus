@@ -2,13 +2,16 @@ use nucleus_server::ControlResponseBodyDto;
 
 use super::selected_task_action_readiness::selected_task_action_readiness_response_lines;
 use super::selected_task_command_admission::selected_task_command_admission_response_lines;
+use super::selected_task_completion_route_apply::selected_task_completion_route_apply_response_lines;
 use super::selected_task_operator_action_gate::selected_task_operator_action_gate_response_lines;
+use super::selected_task_product_aggregate::selected_task_product_aggregate_response_lines;
 use super::selected_task_review_decision::{
     selected_task_review_decision_admission_response_lines,
     selected_task_review_decision_apply_response_lines,
 };
 use super::selected_task_review_next::selected_task_review_next_response_lines;
 use super::selected_task_review_outcome_route::selected_task_review_outcome_route_response_lines;
+use super::selected_task_rework_preparation::selected_task_rework_preparation_response_lines;
 use super::selected_task_route_admission::selected_task_route_admission_response_lines;
 use super::selected_task_scm_handoff::selected_task_scm_handoff_response_lines;
 
@@ -40,6 +43,15 @@ pub(super) fn selected_task_response_lines(
         ),
         ControlResponseBodyDto::SelectedTaskRouteAdmission { admission } => Some(
             selected_task_route_admission_response_lines(label, admission.clone()),
+        ),
+        ControlResponseBodyDto::SelectedTaskCompletionRouteApply { apply } => Some(
+            selected_task_completion_route_apply_response_lines(label, apply.clone()),
+        ),
+        ControlResponseBodyDto::SelectedTaskReworkPreparation { preparation } => Some(
+            selected_task_rework_preparation_response_lines(label, preparation.clone()),
+        ),
+        ControlResponseBodyDto::SelectedTaskProductAggregate { aggregate } => Some(
+            selected_task_product_aggregate_response_lines(label, aggregate.clone()),
         ),
         ControlResponseBodyDto::SelectedTaskScmHandoff { handoff } => Some(
             selected_task_scm_handoff_response_lines(label, handoff.clone()),

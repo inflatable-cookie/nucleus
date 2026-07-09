@@ -1,6 +1,6 @@
 # 015 Selected Task Completion From Route Admission
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-07
 
@@ -32,33 +32,35 @@ receipt evidence, timeline refresh, and stale-client protection.
   lifecycle authority.
 - [x] Add server-visible evidence that the completion came from a reviewed,
   admitted route.
-- [ ] Expose the route-backed completion path through control surfaces.
-- [ ] Keep rework, delegation, SCM handoff review, provider execution, memory
+- [x] Expose the route-backed completion path through control surfaces.
+- [x] Keep rework, delegation, SCM handoff review, provider execution, memory
   apply, and planning apply out of scope.
 
 ## Execution Plan
 
 - [x] Batch 1: completion-from-route boundary and stop conditions.
 - [x] Batch 2: server command/admission composition.
-- [ ] Batch 3: control, CLI, and Effigy inspection.
-- [ ] Batch 4: disposable desktop proof control.
-- [ ] Batch 5: validation and next-lane selection.
+- [x] Batch 3: control, CLI, and Effigy inspection.
+- [x] Batch 4: disposable desktop proof control.
+- [x] Batch 5: validation and next-lane selection.
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/072-selected-task-completion-route-control-surfaces.md`
+None.
 
 Planned cards:
 
-- `batch-cards/073-selected-task-completion-route-desktop-proof.md`
-- `batch-cards/074-selected-task-completion-route-validation.md`
+None.
 
 Completed cards:
 
 - `batch-cards/070-selected-task-completion-route-apply-boundary.md`
 - `batch-cards/071-selected-task-completion-route-command-composition.md`
+- `batch-cards/072-selected-task-completion-route-control-surfaces.md`
+- `batch-cards/073-selected-task-completion-route-desktop-proof.md`
+- `batch-cards/074-selected-task-completion-route-validation.md`
 
 ## Composition Model
 
@@ -80,6 +82,14 @@ It admits only when:
 - the admitted command is `TaskCommand::Complete`
 
 It refuses without executing anything when any of those checks fail.
+
+The server control surface exposes this as a read-only preview query. Clients
+can inspect the command that would be eligible after an admitted route, the
+matching route/review/evidence refs, and refusal/no-effect fields, but the query
+does not execute the command or complete the task.
+
+The disposable desktop proof consumes that same preview and keeps the apply
+control disabled until a later explicit server command boundary exists.
 
 ## Boundary
 
@@ -109,6 +119,7 @@ This lane must not:
 Completion-from-route is the next smallest product step after route admission.
 It closes the accepted-review happy path while leaving harder branches deferred.
 
-Rework creation, delegation scheduling, and SCM handoff review remain important
-but have wider authority and runtime surfaces. They should resume only after the
-completion path proves the route-admission apply pattern.
+Rework creation is selected as the next lane. Delegation scheduling and SCM
+handoff review remain important but have wider authority and runtime surfaces.
+They should resume only after rework preparation can preserve prior review and
+work-item provenance without scheduling an agent or mutating SCM.

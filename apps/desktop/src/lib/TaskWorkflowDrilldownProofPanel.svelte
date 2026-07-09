@@ -9,17 +9,20 @@
     queryProductWorkflowSummary,
     querySelectedTaskActionReadiness,
     querySelectedTaskCommandAdmission,
+    querySelectedTaskCompletionRouteApply,
     querySelectedTaskOperatorActionGate,
     querySelectedTaskReviewDecisionAdmission,
     querySelectedTaskReviewDecisionApply,
     querySelectedTaskReviewNext,
     querySelectedTaskReviewOutcomeRoute,
+    querySelectedTaskReworkPreparation,
     querySelectedTaskRouteAdmission,
     querySelectedTaskScmHandoff,
     queryTaskWorkflowDrilldown,
     submitControlEnvelope,
     type ControlSelectedTaskActionDto,
     type ControlSelectedTaskCommandAdmissionDto,
+    type ControlSelectedTaskCompletionRouteApplyDto,
     type ControlSelectedTaskReviewDecisionAdmissionDto,
     type ControlSelectedTaskReviewDecisionRecordDto,
     type ControlSelectedTaskOperatorActionCandidateDto,
@@ -28,10 +31,12 @@
     type ControlTaskWorkflowGapDto,
     type ProductWorkflowSummaryQueryResult,
     type SelectedTaskActionReadinessQueryResult,
+    type SelectedTaskCompletionRouteApplyQueryResult,
     type SelectedTaskOperatorActionGateQueryResult,
     type SelectedTaskReviewDecisionAction,
     type SelectedTaskReviewNextQueryResult,
     type SelectedTaskReviewOutcomeRouteQueryResult,
+    type SelectedTaskReworkPreparationQueryResult,
     type SelectedTaskRouteAdmissionQueryResult,
     type SelectedTaskScmHandoffQueryResult,
     type TaskWorkflowDrilldownQueryResult,
@@ -73,6 +78,10 @@
   let reviewNextResult = $state<SelectedTaskReviewNextQueryResult | null>(null);
   let reviewOutcomeRouteResult = $state<SelectedTaskReviewOutcomeRouteQueryResult | null>(null);
   let routeAdmissionResult = $state<SelectedTaskRouteAdmissionQueryResult | null>(null);
+  let completionRouteApplyResult =
+    $state<SelectedTaskCompletionRouteApplyQueryResult | null>(null);
+  let reworkPreparationResult =
+    $state<SelectedTaskReworkPreparationQueryResult | null>(null);
   let scmHandoffResult = $state<SelectedTaskScmHandoffQueryResult | null>(null);
   let failure = $state<string | null>(null);
   let commandPending = $state<string | null>(null);
@@ -107,6 +116,12 @@
   );
   const routeAdmission = $derived(
     routeAdmissionResult?.state === "record" ? routeAdmissionResult.admission : null,
+  );
+  const completionRouteApply = $derived(
+    completionRouteApplyResult?.state === "record" ? completionRouteApplyResult.apply : null,
+  );
+  const reworkPreparation = $derived(
+    reworkPreparationResult?.state === "record" ? reworkPreparationResult.preparation : null,
   );
   const scmHandoff = $derived(
     scmHandoffResult?.state === "record" ? scmHandoffResult.handoff : null,
@@ -176,6 +191,8 @@
         reviewNext,
         reviewOutcomeRoute,
         routeAdmission,
+        completionRouteApply,
+        reworkPreparation,
         scmHandoff,
       ] = await Promise.all([
         queryProductWorkflowSummary(projectId),
@@ -185,6 +202,8 @@
         querySelectedTaskReviewNext(projectId, taskId),
         querySelectedTaskReviewOutcomeRoute(projectId, taskId),
         querySelectedTaskRouteAdmission(projectId, taskId, selectedTask?.revision_id ?? null),
+        querySelectedTaskCompletionRouteApply(projectId, taskId, selectedTask?.revision_id ?? null),
+        querySelectedTaskReworkPreparation(projectId, taskId, selectedTask?.revision_id ?? null),
         querySelectedTaskScmHandoff(projectId, taskId),
       ]);
       workflowResult = workflow;
@@ -194,6 +213,8 @@
       reviewNextResult = reviewNext;
       reviewOutcomeRouteResult = reviewOutcomeRoute;
       routeAdmissionResult = routeAdmission;
+      completionRouteApplyResult = completionRouteApply;
+      reworkPreparationResult = reworkPreparation;
       scmHandoffResult = scmHandoff;
       await refreshReviewDecisionAdmissions(reviewNext);
     } catch (error) {
@@ -204,6 +225,8 @@
       reviewNextResult = null;
       reviewOutcomeRouteResult = null;
       routeAdmissionResult = null;
+      completionRouteApplyResult = null;
+      reworkPreparationResult = null;
       scmHandoffResult = null;
       reviewDecisionAdmissions = {};
       reviewDecisionApplyResult = null;
@@ -469,6 +492,53 @@
     ];
   }
 
+  function completionRouteApplyNoEffectFlags(): [string, boolean][] {
+    if (!completionRouteApply) {
+      return [];
+    }
+
+    return [
+      ["review mutation", completionRouteApply.no_effects.review_mutation_performed],
+      ["task mutation", completionRouteApply.no_effects.task_lifecycle_mutation_performed],
+      ["provider run", completionRouteApply.no_effects.provider_execution_performed],
+      ["provider write", completionRouteApply.no_effects.provider_write_performed],
+      ["SCM or forge change", completionRouteApply.no_effects.scm_or_forge_mutation_performed],
+      ["memory apply", completionRouteApply.no_effects.accepted_memory_apply_performed],
+      ["planning apply", completionRouteApply.no_effects.planning_apply_performed],
+      ["projection write", completionRouteApply.no_effects.projection_write_performed],
+      ["agent scheduling", completionRouteApply.no_effects.agent_scheduling_performed],
+      ["UI state change", completionRouteApply.no_effects.ui_effect_performed],
+    ];
+  }
+
+  function completionRouteApplyCanMutate(apply: ControlSelectedTaskCompletionRouteApplyDto) {
+    return false && apply.status === "admitted" && Boolean(apply.command);
+  }
+
+  function reworkPreparationNoEffectFlags(): [string, boolean][] {
+    if (!reworkPreparation) {
+      return [];
+    }
+
+    return [
+      ["review mutation", reworkPreparation.no_effects.review_mutation_performed],
+      ["task mutation", reworkPreparation.no_effects.task_lifecycle_mutation_performed],
+      ["work item creation", reworkPreparation.no_effects.work_item_creation_performed],
+      ["provider run", reworkPreparation.no_effects.provider_execution_performed],
+      ["provider write", reworkPreparation.no_effects.provider_write_performed],
+      ["SCM or forge change", reworkPreparation.no_effects.scm_or_forge_mutation_performed],
+      ["memory apply", reworkPreparation.no_effects.accepted_memory_apply_performed],
+      ["planning apply", reworkPreparation.no_effects.planning_apply_performed],
+      ["projection write", reworkPreparation.no_effects.projection_write_performed],
+      ["agent scheduling", reworkPreparation.no_effects.agent_scheduling_performed],
+      ["UI state change", reworkPreparation.no_effects.ui_effect_performed],
+    ];
+  }
+
+  function reworkPreparationCanCreateWorkItem() {
+    return false;
+  }
+
   function scmHandoffNoEffectFlags(): [string, boolean][] {
     if (!scmHandoff) {
       return [];
@@ -588,6 +658,36 @@
     switch (value.state) {
       case "empty":
         return "Selected task review decision returned no record.";
+      case "unsupported":
+        return value.reason;
+      case "error":
+        return `${value.kind}: ${value.reason}`;
+      case "unexpected":
+        return value.reason;
+    }
+  }
+
+  function completionRouteApplyFallbackMessage(
+    value: Exclude<SelectedTaskCompletionRouteApplyQueryResult, { state: "record" }>,
+  ) {
+    switch (value.state) {
+      case "empty":
+        return "Selected task completion route apply returned no record.";
+      case "unsupported":
+        return value.reason;
+      case "error":
+        return `${value.kind}: ${value.reason}`;
+      case "unexpected":
+        return value.reason;
+    }
+  }
+
+  function reworkPreparationFallbackMessage(
+    value: Exclude<SelectedTaskReworkPreparationQueryResult, { state: "record" }>,
+  ) {
+    switch (value.state) {
+      case "empty":
+        return "Selected task rework preparation returned no record.";
       case "unsupported":
         return value.reason;
       case "error":
@@ -1109,6 +1209,144 @@
         </div>
       {/if}
 
+      {#if reworkPreparation}
+        <div class="selected-task-rework-preparation" aria-label="Selected task rework preparation preview">
+          <section>
+            <h3>Rework preparation preview</h3>
+            <p>
+              {reworkPreparation.refusal?.reason ??
+                reworkPreparation.rework_summary ??
+                "no rework preparation"}
+            </p>
+            <dl>
+              <div>
+                <dt>Status</dt>
+                <dd>{reworkPreparation.status.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Route admission</dt>
+                <dd>{reworkPreparation.route_admission_id}</dd>
+              </div>
+              <div>
+                <dt>Review decision</dt>
+                <dd>{reworkPreparation.review_decision_ref ?? "none"}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Reviewed provenance</h3>
+            <p>{reworkPreparation.operator_ref}</p>
+            <dl>
+              <div>
+                <dt>Work refs</dt>
+                <dd>{reworkPreparation.reviewed_work_item_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Evidence refs</dt>
+                <dd>{reworkPreparation.reviewed_evidence_refs.length}</dd>
+              </div>
+              <div>
+                <dt>Expected task revision</dt>
+                <dd>{reworkPreparation.expected_task_revision ?? selectedTask?.revision_id ?? "none"}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Rework controls</h3>
+            <p>Read-only preview. Work-item creation and agent scheduling are not available in this proof.</p>
+            <Button
+              variant="secondary"
+              disabled={!reworkPreparationCanCreateWorkItem()}
+            >
+              Create rework item
+            </Button>
+          </section>
+        </div>
+
+        <div class="selected-task-rework-preparation-no-effects" aria-label="Selected task rework preparation no-effect flags">
+          {#each reworkPreparationNoEffectFlags() as [label, value]}
+            <span class:flagged={value}>{label}: {value ? "true" : "false"}</span>
+          {/each}
+        </div>
+      {:else if reworkPreparationResult && reworkPreparationResult.state !== "record"}
+        <div class="panel-message">
+          <Text tone="muted">{reworkPreparationFallbackMessage(reworkPreparationResult)}</Text>
+        </div>
+      {/if}
+
+      {#if completionRouteApply}
+        <div class="selected-task-completion-route-apply" aria-label="Selected task completion route apply preview">
+          <section>
+            <h3>Completion route apply preview</h3>
+            <p>
+              {completionRouteApply.refusal?.reason ??
+                completionRouteApply.command?.action ??
+                "no completion command"}
+            </p>
+            <dl>
+              <div>
+                <dt>Status</dt>
+                <dd>{completionRouteApply.status.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Route admission</dt>
+                <dd>{completionRouteApply.route_admission_id}</dd>
+              </div>
+              <div>
+                <dt>Review decision</dt>
+                <dd>{completionRouteApply.review_decision_ref ?? "none"}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Command boundary</h3>
+            <p>
+              {completionRouteApply.command_admission?.refusal?.reason ??
+                completionRouteApply.command?.action ??
+                "command not admitted"}
+            </p>
+            <dl>
+              <div>
+                <dt>Command</dt>
+                <dd>{completionRouteApply.command?.action ?? "none"}</dd>
+              </div>
+              <div>
+                <dt>Expected revision</dt>
+                <dd>{completionRouteApply.command?.expected_revision ?? selectedTask?.revision_id ?? "none"}</dd>
+              </div>
+              <div>
+                <dt>Evidence refs</dt>
+                <dd>{completionRouteApply.evidence_refs.length}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>Apply gate</h3>
+            <p>{completionRouteApply.operator_ref}</p>
+            <Button
+              variant="secondary"
+              disabled={!completionRouteApplyCanMutate(completionRouteApply)}
+            >
+              Apply route completion
+            </Button>
+          </section>
+        </div>
+
+        <div class="selected-task-completion-route-apply-no-effects" aria-label="Selected task completion route apply no-effect flags">
+          {#each completionRouteApplyNoEffectFlags() as [label, value]}
+            <span class:flagged={value}>{label}: {value ? "true" : "false"}</span>
+          {/each}
+        </div>
+      {:else if completionRouteApplyResult && completionRouteApplyResult.state !== "record"}
+        <div class="panel-message">
+          <Text tone="muted">{completionRouteApplyFallbackMessage(completionRouteApplyResult)}</Text>
+        </div>
+      {/if}
+
       {#if scmHandoff}
         <div class="selected-task-scm-handoff" aria-label="Selected task SCM handoff readiness">
           <section>
@@ -1571,6 +1809,8 @@
   .selected-task-review-next,
   .selected-task-review-outcome-route,
   .selected-task-route-admission,
+  .selected-task-rework-preparation,
+  .selected-task-completion-route-apply,
   .selected-task-review-decision,
   .selected-task-review-decision-result,
   .selected-task-scm-handoff,
@@ -1590,6 +1830,8 @@
   .selected-task-review-next section,
   .selected-task-review-outcome-route section,
   .selected-task-route-admission section,
+  .selected-task-rework-preparation section,
+  .selected-task-completion-route-apply section,
   .selected-task-review-decision section,
   .selected-task-review-decision-result section,
   .selected-task-scm-handoff section,
@@ -1615,6 +1857,8 @@
   .selected-task-review-next h3,
   .selected-task-review-outcome-route h3,
   .selected-task-route-admission h3,
+  .selected-task-rework-preparation h3,
+  .selected-task-completion-route-apply h3,
   .selected-task-review-decision h3,
   .selected-task-review-decision-result h3,
   .selected-task-scm-handoff h3,
@@ -1655,6 +1899,18 @@
     font-size: 0.78rem;
   }
 
+  .selected-task-rework-preparation p {
+    margin: 0 0 0.5rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.78rem;
+  }
+
+  .selected-task-completion-route-apply p {
+    margin: 0 0 0.5rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.78rem;
+  }
+
   .selected-task-review-decision p {
     margin: 0 0 0.5rem;
     color: var(--poodle-color-text-secondary);
@@ -1688,6 +1944,10 @@
   }
 
   .selected-task-route-admission {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .selected-task-completion-route-apply {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -1898,6 +2158,8 @@
   .selected-task-review-next dl,
   .selected-task-review-outcome-route dl,
   .selected-task-route-admission dl,
+  .selected-task-rework-preparation dl,
+  .selected-task-completion-route-apply dl,
   .selected-task-scm-handoff dl,
   .selected-task-context dl,
   .review-handoff-readiness dl {
@@ -1911,6 +2173,8 @@
   .selected-task-review-next dl div,
   .selected-task-review-outcome-route dl div,
   .selected-task-route-admission dl div,
+  .selected-task-rework-preparation dl div,
+  .selected-task-completion-route-apply dl div,
   .selected-task-scm-handoff dl div,
   .review-handoff-readiness dl div,
   .drilldown-sections dl div {
@@ -1935,6 +2199,10 @@
   .selected-task-review-outcome-route dd,
   .selected-task-route-admission dt,
   .selected-task-route-admission dd,
+  .selected-task-rework-preparation dt,
+  .selected-task-rework-preparation dd,
+  .selected-task-completion-route-apply dt,
+  .selected-task-completion-route-apply dd,
   .selected-task-scm-handoff dt,
   .selected-task-scm-handoff dd,
   .selected-task-context dt,
@@ -1953,6 +2221,8 @@
   .selected-task-review-next dd,
   .selected-task-review-outcome-route dd,
   .selected-task-route-admission dd,
+  .selected-task-rework-preparation dd,
+  .selected-task-completion-route-apply dd,
   .selected-task-scm-handoff dd,
   .selected-task-context dd,
   .review-handoff-readiness dd {
@@ -2000,6 +2270,8 @@
   .selected-task-review-outcome-route-counts,
   .selected-task-review-outcome-route-no-effects,
   .selected-task-route-admission-no-effects,
+  .selected-task-rework-preparation-no-effects,
+  .selected-task-completion-route-apply-no-effects,
   .selected-task-review-decision-no-effects,
   .selected-task-scm-handoff-counts,
   .selected-task-scm-handoff-no-effects {
@@ -2021,6 +2293,8 @@
   .selected-task-review-outcome-route-counts span,
   .selected-task-review-outcome-route-no-effects span,
   .selected-task-route-admission-no-effects span,
+  .selected-task-rework-preparation-no-effects span,
+  .selected-task-completion-route-apply-no-effects span,
   .selected-task-review-decision-no-effects span,
   .selected-task-scm-handoff-counts span,
   .selected-task-scm-handoff-no-effects span {
@@ -2105,6 +2379,16 @@
     border-color: var(--poodle-color-status-danger);
   }
 
+  .selected-task-rework-preparation-no-effects span.flagged {
+    color: var(--poodle-color-status-danger);
+    border-color: var(--poodle-color-status-danger);
+  }
+
+  .selected-task-completion-route-apply-no-effects span.flagged {
+    color: var(--poodle-color-status-danger);
+    border-color: var(--poodle-color-status-danger);
+  }
+
   .selected-task-review-decision-no-effects span.flagged {
     color: var(--poodle-color-status-danger);
     border-color: var(--poodle-color-status-danger);
@@ -2125,6 +2409,8 @@
     .selected-task-review-next,
     .selected-task-review-outcome-route,
     .selected-task-route-admission,
+    .selected-task-rework-preparation,
+    .selected-task-completion-route-apply,
     .selected-task-review-decision,
     .selected-task-review-decision-result,
     .selected-task-scm-handoff,

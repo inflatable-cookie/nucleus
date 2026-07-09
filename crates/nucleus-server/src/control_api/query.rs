@@ -74,6 +74,9 @@ pub enum ServerQueryKind {
     SelectedTaskReviewNext(SelectedTaskReviewNextQuery),
     SelectedTaskReviewOutcomeRoute(SelectedTaskReviewOutcomeRouteQuery),
     SelectedTaskRouteAdmission(SelectedTaskRouteAdmissionQuery),
+    SelectedTaskCompletionRouteApply(SelectedTaskCompletionRouteApplyQuery),
+    SelectedTaskReworkPreparation(SelectedTaskReworkPreparationQuery),
+    SelectedTaskProductAggregate(SelectedTaskProductAggregateQuery),
     SelectedTaskScmHandoff(SelectedTaskScmHandoffQuery),
     SelectedTaskCommandAdmission(SelectedTaskCommandAdmissionQuery),
     SelectedTaskReviewDecisionAdmission(SelectedTaskReviewDecisionAdmissionQuery),
@@ -230,6 +233,41 @@ pub struct SelectedTaskReviewOutcomeRouteQuery {
 /// Selected task route admission preview query shape.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SelectedTaskRouteAdmissionQuery {
+    pub project_id: ProjectId,
+    pub task_id: TaskId,
+    pub expected_revision: Option<RevisionId>,
+    pub operator_ref: String,
+}
+
+/// Selected task completion-from-route apply preview query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedTaskCompletionRouteApplyQuery {
+    pub project_id: ProjectId,
+    pub task_id: TaskId,
+    pub expected_revision: Option<RevisionId>,
+    pub operator_ref: String,
+    pub route_admission_id: Option<String>,
+    pub review_decision_ref: Option<String>,
+    pub evidence_refs: Vec<String>,
+}
+
+/// Selected task rework preparation preview query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedTaskReworkPreparationQuery {
+    pub project_id: ProjectId,
+    pub task_id: TaskId,
+    pub operator_ref: String,
+    pub route_admission_id: Option<String>,
+    pub review_decision_ref: Option<String>,
+    pub reviewed_work_item_refs: Vec<String>,
+    pub reviewed_evidence_refs: Vec<String>,
+    pub expected_task_revision: Option<RevisionId>,
+    pub expected_work_item_revision: Option<RevisionId>,
+}
+
+/// Selected task product aggregate query shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedTaskProductAggregateQuery {
     pub project_id: ProjectId,
     pub task_id: TaskId,
     pub expected_revision: Option<RevisionId>,

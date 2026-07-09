@@ -91,6 +91,54 @@ export function buildSelectedTaskRouteAdmissionQuery(
   });
 }
 
+export function buildSelectedTaskCompletionRouteApplyQuery(
+  projectId: string,
+  taskId: string,
+  expectedRevision: string | null,
+  routeAdmissionId: string | null = null,
+  reviewDecisionRef: string | null = null,
+  evidenceRefs: string[] = [],
+): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "selected_task_completion_route_apply",
+    query_id: "",
+    action: "preview",
+    project_id: projectId,
+    task_id: taskId,
+    expected_revision: expectedRevision,
+    operator_ref: CONTROL_CLIENT_ID,
+    route_admission_id: routeAdmissionId,
+    review_decision_ref: reviewDecisionRef,
+    evidence_refs: evidenceRefs,
+  });
+}
+
+export function buildSelectedTaskReworkPreparationQuery(
+  projectId: string,
+  taskId: string,
+  expectedTaskRevision: string | null,
+  routeAdmissionId: string | null = null,
+  reviewDecisionRef: string | null = null,
+  reviewedWorkItemRefs: string[] = [],
+  reviewedEvidenceRefs: string[] = [],
+  expectedWorkItemRevision: string | null = null,
+): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "selected_task_rework_preparation",
+    query_id: "",
+    action: "preview",
+    project_id: projectId,
+    task_id: taskId,
+    operator_ref: CONTROL_CLIENT_ID,
+    route_admission_id: routeAdmissionId,
+    review_decision_ref: reviewDecisionRef,
+    reviewed_work_item_refs: reviewedWorkItemRefs,
+    reviewed_evidence_refs: reviewedEvidenceRefs,
+    expected_task_revision: expectedTaskRevision,
+    expected_work_item_revision: expectedWorkItemRevision,
+  });
+}
+
 export function buildSelectedTaskScmHandoffQuery(
   projectId: string,
   taskId: string,

@@ -6,17 +6,19 @@ use crate::control_api::{
     MemoryProposalReviewDiagnosticsQuery, MemoryProposalsQuery, PlanningSessionsQuery,
     PlanningTaskSeedsQuery, ResearchRunBriefsQuery, SelectedTaskActionReadinessQuery,
     SelectedTaskCommandAdmissionQuery, SelectedTaskOperatorActionGateQuery,
-    SelectedTaskReviewNextQuery, SelectedTaskReviewOutcomeRouteQuery,
-    SelectedTaskRouteAdmissionQuery, SelectedTaskScmHandoffQuery, ServerQueryKind,
-    TaskReadinessQuery, TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery,
-    TaskWorkflowDrilldownQuery,
+    SelectedTaskProductAggregateQuery, SelectedTaskReviewNextQuery,
+    SelectedTaskReviewOutcomeRouteQuery, SelectedTaskRouteAdmissionQuery,
+    SelectedTaskScmHandoffQuery, ServerQueryKind, TaskReadinessQuery,
+    TaskSeedPromotionDiagnosticsQuery, TaskTimelineQuery, TaskWorkflowDrilldownQuery,
 };
 use crate::SelectedTaskActionFamily;
 
 use super::super::ControlApiCodecError;
 
 mod accepted_memory;
+mod selected_task_completion_route_apply;
 mod selected_task_review_decision;
+mod selected_task_rework_preparation;
 pub(super) use accepted_memory::{
     accepted_memory_active_apply_diagnostics_query_from_action,
     accepted_memory_import_apply_review_diagnostics_query_from_action,
@@ -27,11 +29,13 @@ pub(super) use accepted_memory::{
     accepted_memory_query_from_action, accepted_memory_review_readiness_query_from_action,
     accepted_memory_review_receipt_storage_diagnostics_query_from_action,
 };
+pub(super) use selected_task_completion_route_apply::selected_task_completion_route_apply_query_from_action;
 pub(super) use selected_task_review_decision::{
     selected_task_review_decision_action_label,
     selected_task_review_decision_admission_query_from_action,
     selected_task_review_decision_apply_query_from_action,
 };
+pub(super) use selected_task_rework_preparation::selected_task_rework_preparation_query_from_action;
 
 pub(super) fn task_timeline_query_from_action(
     action: &str,
@@ -232,6 +236,37 @@ pub(super) fn selected_task_scm_handoff_query_from_action(
         )),
         _ => Err(ControlApiCodecError::unsupported(format!(
             "unsupported selected task SCM handoff query action: {action}"
+        ))),
+    }
+}
+
+pub(super) fn selected_task_product_aggregate_query_from_action(
+    action: &str,
+    project_id: String,
+    task_id: String,
+    expected_revision: Option<String>,
+    operator_ref: String,
+) -> Result<ServerQueryKind, ControlApiCodecError> {
+    match action {
+        "aggregate"
+            if project_id.trim().is_empty()
+                || task_id.trim().is_empty()
+                || operator_ref.trim().is_empty() =>
+        {
+            Err(ControlApiCodecError::unsupported(
+                "selected task product aggregate query requires project id, task id, and operator ref",
+            ))
+        }
+        "aggregate" => Ok(ServerQueryKind::SelectedTaskProductAggregate(
+            SelectedTaskProductAggregateQuery {
+                project_id: ProjectId(project_id),
+                task_id: TaskId(task_id),
+                expected_revision: expected_revision.map(RevisionId),
+                operator_ref,
+            },
+        )),
+        _ => Err(ControlApiCodecError::unsupported(format!(
+            "unsupported selected task product aggregate query action: {action}"
         ))),
     }
 }

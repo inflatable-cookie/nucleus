@@ -247,6 +247,123 @@ This closes the proof-only in-memory progress path. It does not authorize live
 provider writes, provider callbacks, provider-reaching cancellation, resume, or
 automatic task mutation.
 
+## Selected-Task Product Aggregate Rule
+
+The selected-task product aggregate is a read-only server-owned view for the
+normal product shell.
+
+It exists because the proof modal validated many narrow surfaces separately.
+The product shell needs one coherent workflow model, not a pile of proof query
+calls or raw DTO dumps.
+
+The aggregate must:
+
+- name the selected project and task
+- expose one primary next action with a reason
+- expose blockers, unavailable actions, and missing evidence
+- summarize current work items and evidence refs
+- summarize review, rework, completion, and SCM handoff readiness
+- identify source records or source-query refs for each group
+- report missing source data as gaps, not silent success
+
+The aggregate must not:
+
+- mutate task, work-item, review, SCM, provider, memory, planning, or forge
+  state
+- start delegation scheduling or provider execution
+- apply task commands, route commands, review decisions, completion commands,
+  rework commands, or SCM commands
+- copy raw provider transcripts, raw terminal streams, stdout/stderr, raw tool
+  payloads, secrets, or credential material
+- grow the diagnostic proof modal as the product workflow surface
+- pretend all actions are equivalent when capability, authority, or evidence
+  differs
+
+### Aggregate Request Identity
+
+A selected-task aggregate request must name:
+
+- project id
+- task id
+- optional expected task revision when the caller has one
+
+The response identity should be stable and derive from the selected task, for
+example `selected-task-product-aggregate:{task_id}`. Source refs are part of
+the response contract so clients can display confidence and stale/missing
+states without becoming authorities.
+
+### Product Field Groups
+
+Product-included groups:
+
+- identity: project id, project display name, task id, task title, task state,
+  and task revision when available
+- workflow position: primary next action, reason, current phase, and summary
+  status
+- readiness: blockers, missing prerequisites, unavailable actions, and blocked
+  action reasons
+- command previews: admitted command previews and no-effect state, where an
+  existing admission surface already owns them
+- work and evidence: active/completed work items, sanitized evidence refs,
+  validation refs, checkpoint refs, diff summary refs, and timeline refs
+- review: review state, next review step, available review decisions, and
+  outcome-route preview
+- rework: rework preparation summary and required provenance
+- completion: completion readiness and route-apply preview
+- SCM handoff: capture/change-request readiness, required evidence, and handoff
+  blockers
+
+Summarized groups:
+
+- provider/session refs become confidence and evidence summaries
+- command admission details become action labels, disabled reasons, and preview
+  summaries
+- route internals become next-step and blocked-route summaries
+- source counts become source-health summaries
+
+Diagnostic-only groups:
+
+- raw control-envelope payload shape
+- no-effect flag dumps
+- individual proof-query fallback messages
+- per-source count chips
+- command admission debug receipts
+- raw route refusal internals
+- unsupported-provider observation payloads
+
+### Source Map
+
+The aggregate may compose only read-only server surfaces or authoritative
+source records. First-pass sources are:
+
+- task and project records for identity and task state
+- task workflow drilldown for broad workflow context
+- selected-task work-loop guidance for current work and next-step framing
+- selected-task action readiness for readiness and blockers
+- selected-task operator action gate for action availability
+- selected-task command admission for task command previews
+- selected-task review next-step for review state
+- selected-task review outcome routing for route previews
+- selected-task route admission for accepted-review route options
+- selected-task completion route apply preview for completion readiness
+- selected-task rework preparation for rework readiness
+- selected-task SCM handoff readiness for SCM capture and change-request state
+- task timeline, work progress, receipt, checkpoint, and diff-summary records
+  for evidence refs
+
+If one source is unavailable, the aggregate should still return a partial
+response with an explicit source gap unless the missing source makes the
+selected task itself unknowable. That lets the UI render a bounded workflow
+state without inventing fields.
+
+### Product And Proof Boundary
+
+The normal product shell consumes the aggregate.
+
+The proof modal remains diagnostic-only and may continue to call narrow
+queries directly for smoke checks. It must not become the authority for
+aggregate field shape, product copy, final layout, or action sequencing.
+
 ## Relationship To Other Contracts
 
 - `002-harness-adapter-contract.md` owns adapter capability differences.
