@@ -6,6 +6,7 @@
 
 mod error;
 mod exploration;
+mod goals;
 mod planning;
 mod refs;
 
@@ -22,6 +23,10 @@ pub use exploration::{
     ExplorationSessionStorageStatus, ExplorationStorageConfidence, ExplorationStorageMode,
     ExplorationStoragePriority, ExplorationTradeoffStoragePosture,
     ExplorationTradeoffStorageRecord,
+};
+pub use goals::{
+    decode_goal_storage_record, encode_goal_storage_payload, encode_goal_storage_record,
+    goal_from_storage_record, GoalStorageRecord, GoalStorageStatus,
 };
 pub use planning::{
     decode_planning_session_storage_record, encode_planning_session_storage_payload,

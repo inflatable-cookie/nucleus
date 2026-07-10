@@ -1970,7 +1970,9 @@ dependencies = [
 name = "nucleus-planning"
 version = "0.0.0"
 dependencies = [
+ "nucleus-core",
  "nucleus-projects",
+ "nucleus-tasks",
  "serde",
  "serde_json",
 ]

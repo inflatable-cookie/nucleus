@@ -3,6 +3,7 @@
 use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId, ModelRoute};
 use nucleus_core::RevisionId;
 use nucleus_native_harness::NativeStewardCommandRequest;
+use nucleus_planning::{GoalStatus, PlanningGoalId};
 use nucleus_projects::{Project, ProjectId, RepoMembershipId, RepoRepairAction};
 use nucleus_tasks::{
     AcceptanceCriterion, AgentReadiness, TaskActionType, TaskActivityState, TaskId, TaskImportance,
@@ -25,12 +26,59 @@ pub struct ServerCommand {
 pub enum ServerCommandKind {
     Project(ProjectCommand),
     Task(TaskCommand),
+    Goal(GoalCommand),
     Workspace(WorkspaceCommand),
     AgentSession(AgentSessionCommand),
     Steward(NativeStewardCommandRequest),
     MemoryProposalReview(MemoryProposalReviewCommand),
     ReadOnlyCommand(ReadOnlyCommand),
     ConfigureModelRoute(ModelRoute),
+}
+
+/// Goal authoring commands. Lifecycle execution is intentionally absent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GoalCommand {
+    Create(GoalCreateCommand),
+    Update(GoalUpdateCommand),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GoalCreateCommand {
+    pub project_id: ProjectId,
+    pub title: String,
+    pub desired_outcome: String,
+    pub scope: String,
+    pub status: GoalStatus,
+    pub owner_refs: Vec<String>,
+    pub ordered_task_refs: Vec<TaskId>,
+    pub planning_artifact_refs: Vec<String>,
+    pub provenance_refs: Vec<String>,
+    pub stop_conditions: Vec<String>,
+    pub evidence_refs: Vec<String>,
+    pub current_next_task_ref: Option<TaskId>,
+    pub next_action: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GoalUpdateCommand {
+    pub goal_id: PlanningGoalId,
+    pub expected_revision: RevisionId,
+    pub changes: GoalUpdateChanges,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct GoalUpdateChanges {
+    pub title: Option<String>,
+    pub desired_outcome: Option<String>,
+    pub scope: Option<String>,
+    pub owner_refs: Option<Vec<String>>,
+    pub ordered_task_refs: Option<Vec<TaskId>>,
+    pub planning_artifact_refs: Option<Vec<String>>,
+    pub provenance_refs: Option<Vec<String>>,
+    pub stop_conditions: Option<Vec<String>>,
+    pub evidence_refs: Option<Vec<String>>,
+    pub current_next_task_ref: Option<Option<TaskId>>,
+    pub next_action: Option<Option<String>>,
 }
 
 /// Narrow local read-only command execution request.

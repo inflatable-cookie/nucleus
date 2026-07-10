@@ -29,6 +29,14 @@ where
         });
     }
 
+    if query.domain == ServerStateDomain::Goals {
+        let mut records = read_state_records(handler.state.goals(), query.scope)?;
+        records
+            .records
+            .retain(|record| record.kind == nucleus_core::PersistenceRecordKind::Goal);
+        return Ok(records);
+    }
+
     read_engine_state_records(&handler.state, query.domain, query.scope)
 }
 

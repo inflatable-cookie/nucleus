@@ -16,7 +16,7 @@ export type DiagnosticsDomain =
   | "all";
 export type ProviderReadinessOverviewAction = "overview";
 export type ProviderReadIntentAction = "projection";
-export type ControlStateDomain = "projects" | "tasks" | "workspaces";
+export type ControlStateDomain = "projects" | "tasks" | "goals" | "workspaces";
 export type ControlTaskTransitionAction = "start" | "block" | "complete" | "archive";
 
 export type ControlProjectRecordDto = {
@@ -35,12 +35,45 @@ export type ControlTaskRecordDto = {
   project_id: string;
   title: string;
   description: string | null;
+  acceptance_criteria: ControlTaskAcceptanceCriterionDto[];
   importance: string;
   action_type: string;
   activity: string;
   assignment_intent: string | null;
   agent_ready: boolean;
+  required_context_refs: string[];
+  allowed_actions: string[];
+  stop_conditions: string[];
+  validation_commands: string[];
+  blocked_reason: string | null;
   revision_id: string;
+};
+
+export type ControlTaskAcceptanceCriterionDto = {
+  text: string;
+  required: boolean;
+};
+
+export type ControlGoalRecordDto = {
+  goal_id: string;
+  project_id: string;
+  title: string;
+  desired_outcome: string;
+  scope: string;
+  status: string;
+  blocked_reason: string | null;
+  owner_refs: string[];
+  ordered_task_refs: string[];
+  planning_artifact_refs: string[];
+  provenance_refs: string[];
+  stop_conditions: string[];
+  evidence_refs: string[];
+  current_next_task_ref: string | null;
+  next_action: string | null;
+  revision_id: string;
+  created_at_epoch_seconds: number | null;
+  updated_at_epoch_seconds: number | null;
+  achieved_at_epoch_seconds: number | null;
 };
 
 export type ControlCommandEvidenceRecordDto = {

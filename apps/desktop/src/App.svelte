@@ -16,13 +16,19 @@
   import TaskListPanel from "./lib/TaskListPanel.svelte";
   import TaskWorkflowDrilldownProofPanel from "./lib/TaskWorkflowDrilldownProofPanel.svelte";
   import TaskWorkProgressPanel from "./lib/TaskWorkProgressPanel.svelte";
-  import type { ControlProjectRecordDto, ControlTaskRecordDto } from "./lib/control";
+  import type {
+    ControlGoalRecordDto,
+    ControlProjectRecordDto,
+    ControlTaskRecordDto,
+  } from "./lib/control";
   import { beginWindowDrag } from "./lib/windowChrome";
 
   let selectedProjectId = $state<string | null>(null);
   let selectedProject = $state<ControlProjectRecordDto | null>(null);
   let selectedTaskId = $state<string | null>(null);
   let selectedTask = $state<ControlTaskRecordDto | null>(null);
+  let selectedGoalId = $state<string | null>(null);
+  let selectedGoal = $state<ControlGoalRecordDto | null>(null);
   let taskRefreshToken = $state(0);
   let proofHarnessOpen = $state(false);
   let projectRailRatio = $state(0.18);
@@ -246,6 +252,8 @@
           <TaskListPanel
             {selectedProjectId}
             {taskRefreshToken}
+            bind:selectedGoalId
+            bind:selectedGoal
             bind:selectedTaskId
             bind:selectedTask
           />

@@ -1,6 +1,6 @@
 # 083 Selected Task Delegation Desktop Proof
 
-Status: planned
+Status: superseded
 Owner: Tom
 Updated: 2026-07-07
 Milestone: `../017-selected-task-delegation-scheduling-admission.md`
@@ -24,3 +24,8 @@ workflow proof modal.
 - [ ] The proof stays inside the top-level modal launcher.
 - [ ] The UI cannot start provider execution or mutate SCM/forge state.
 - [ ] `effigy desktop:check` passes.
+
+## Superseded By
+
+`142-task-workflow-portal-receipts-and-live-validation.md`. The disposable proof
+modal will not receive the product run workflow.

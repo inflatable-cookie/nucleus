@@ -1,6 +1,6 @@
 # 084 Selected Task Delegation Validation Next Lane
 
-Status: planned
+Status: superseded
 Owner: Tom
 Updated: 2026-07-07
 Milestone: `../017-selected-task-delegation-scheduling-admission.md`
@@ -23,3 +23,7 @@ bounded product workflow step.
 - [ ] Delegation scheduling admission is validated across exposed surfaces.
 - [ ] Any failures are recorded with remediation.
 - [ ] The root Next Task points to a ready card or planning checkpoint.
+
+## Superseded By
+
+`142-task-workflow-portal-receipts-and-live-validation.md`.

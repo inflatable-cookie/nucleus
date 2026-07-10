@@ -5,6 +5,7 @@
 
 mod commands;
 mod error;
+mod goals;
 mod projects;
 mod protocol;
 mod query;
@@ -15,6 +16,7 @@ mod tasks;
 
 pub use commands::ControlCommandDto;
 pub use error::ControlApiCodecError;
+pub use goals::ControlGoalRecordDto;
 pub use projects::ControlProjectRecordDto;
 pub use query::{ControlQueryDto, ControlQueryScopeDto, ControlStateDomainDto};
 pub use records::ControlStateRecordDto;
@@ -117,7 +119,7 @@ pub use response::{
     ControlTaskWorkflowSourceCountsDto, ControlTaskWorkflowTaskDto, ControlTaskWorkflowTimelineDto,
     ControlTaskWorkflowWorkItemDto, ControlTaskWorkflowWorkProgressDto,
 };
-pub use tasks::ControlTaskRecordDto;
+pub use tasks::{ControlTaskAcceptanceCriterionDto, ControlTaskRecordDto};
 
 #[cfg(test)]
 pub(crate) use crate::control_serialization_readiness::{

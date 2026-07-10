@@ -30,6 +30,7 @@ use super::{
 pub enum ServerQueryKind {
     Project(StateRecordQuery),
     Task(StateRecordQuery),
+    Goal(StateRecordQuery),
     Workspace(StateRecordQuery),
     AdapterSession(AdapterSessionQuery),
     ModelRoute(ModelRouteQuery),

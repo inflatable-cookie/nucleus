@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-17
+Updated: 2026-07-09
 
 ## Purpose
 
@@ -222,19 +222,63 @@ policy.
 - `023-task-backed-agent-workflow-contract.md` owns task-backed work-item
   lifecycle sequencing and Codex task binding rules.
 
-## Initial Product Chat Bring-Up
+## Initial Product Chat Continuity
 
-The first product Agent Chat slice retains a live provider process and thread
-inside the server runtime while the desktop is open. Its client message list is
-temporary presentation state, not the canonical Nucleus conversation timeline.
+The product Agent Chat slice persists server-owned session, turn, and ordered
+user/assistant message records in the agent-session persistence domain.
+Provider thread ids remain external refs attached to the Nucleus session.
 
-Until durable session, turn, and message records are added:
+On local runtime restart, Nucleus reloads the canonical display history and
+requests provider-thread resume. An unexplained replacement provider thread
+must not be presented as the same conversation.
 
-- restart recovery is not available
-- client-retained messages must not be treated as authoritative records
-- provider thread ids remain external refs
-- task linkage, approvals, and structured user input remain outside the slice
+Codex dynamic tools are selected at thread start and cannot be added by thread
+resume. When a persisted session predates the current Nucleus chat toolset,
+Nucleus performs an explicit capability migration: it keeps the canonical
+conversation and bounded transcript context, starts a tool-enabled provider
+thread, then replaces the external provider-thread ref. The session toolset
+version makes this migration one-time and auditable.
 
-This exception is limited to interaction bring-up. Follow-on conversation
-continuity must project provider events into the canonical entities defined by
-this contract.
+The task-linked slice exposes one provider portal tool, `task_ledger`, with
+typed `inspect`, `create`, and `update` actions. Nucleus validates action
+arguments, requires current revisions for updates, routes writes through its
+task command boundary, and retains conversation and provider-turn refs on the
+task. The provider does not read or write task storage directly.
+
+Agent-facing tools must not mirror each task query or command as a separate
+tool. Internal inspection, creation, and update handlers remain separate server
+boundaries behind the portal.
+
+Successful calls attach a structured task-authoring receipt to the assistant
+message. All successful authoring calls in one turn are consolidated into one
+receipt. It survives restart with conversation history and does not replace the
+task record or task history.
+
+Task creation and update do not dispatch work or change lifecycle state.
+Unsupported callbacks, approvals, and tool names continue to fail closed.
+Structured user input, partial streaming deltas, and broader tool activity
+projection remain later additions.
+
+An Agent Chat turn may carry one optional active task id from the local
+workspace selection. The server must resolve the current task record and
+confirm that it belongs to the request project before adding bounded context
+to the provider turn. Client-supplied task fields are not authoritative.
+
+Active-task context is focus, not instruction or authority. It does not imply
+mutation, assignment, lifecycle change, or dispatch. The canonical user
+message remains the operator-authored text; provider-only context enrichment
+must not be persisted as if the operator wrote it. The first slice keeps the
+selection local and removable rather than creating a durable
+conversation-to-task binding.
+
+An explicit operator message may also source a bounded task-workflow mandate.
+That mandate is a separate canonical record linked to the conversation, user
+message, provider turn, scoped goal id and revision or single task id and
+revision, snapshotted task membership, resulting work-item ids, receipts, and
+terminal or revocation reason. It stores the cited execution excerpt and scope;
+it does not replace or rewrite the user message.
+
+Assistant messages, inferred task readiness, selected-task focus, and task
+creation receipts cannot create a mandate. One goal mandate covers its
+snapshotted ordered tasks, so contained tasks do not require per-task operator
+messages.

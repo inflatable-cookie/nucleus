@@ -11,6 +11,7 @@ use nucleus_core::PersistenceRecordId;
 pub enum ControlStateDomainDto {
     Projects,
     Tasks,
+    Goals,
     Workspaces,
 }
 
@@ -19,6 +20,7 @@ impl From<&ServerStateDomain> for ControlStateDomainDto {
         match domain {
             ServerStateDomain::Projects => Self::Projects,
             ServerStateDomain::Tasks => Self::Tasks,
+            ServerStateDomain::Goals => Self::Goals,
             ServerStateDomain::Workspaces => Self::Workspaces,
             _ => Self::Projects,
         }
@@ -30,6 +32,7 @@ impl From<ControlStateDomainDto> for ServerStateDomain {
         match domain {
             ControlStateDomainDto::Projects => Self::Projects,
             ControlStateDomainDto::Tasks => Self::Tasks,
+            ControlStateDomainDto::Goals => Self::Goals,
             ControlStateDomainDto::Workspaces => Self::Workspaces,
         }
     }

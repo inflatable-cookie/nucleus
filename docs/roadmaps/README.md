@@ -289,7 +289,9 @@ shape.
 - `g04/022-selected-task-aggregate-product-shell-placement.md` - superseded
 - `g04/023-product-shell-design-checkpoint.md` - completed
 - `g04/024-workspace-surface-shell-skeleton.md` - completed
-- `g04/025-initial-agent-chat-vertical-slice.md` - active
+- `g04/025-initial-agent-chat-vertical-slice.md` - completed
+- `g04/026-agent-chat-task-context.md` - completed
+- `g04/027-agent-chat-task-workflow-run.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -350,7 +352,8 @@ shape.
 ## Next Task
 
 Continue
-`docs/roadmaps/g04/025-initial-agent-chat-vertical-slice.md`
+`docs/roadmaps/g04/027-agent-chat-task-workflow-run.md`
 with
-`docs/roadmaps/g04/batch-cards/124-agent-chat-product-design-review.md`.
-Review the live Agent Chat panel before adding timeline depth or task context.
+`docs/roadmaps/g04/batch-cards/147-goal-run-inspection-and-admission.md`.
+Compose Goal workflow inspection and an admitted serial run plan without
+provider effects.

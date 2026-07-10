@@ -34,3 +34,33 @@ fn request_envelope_dto_serializes_supported_state_query() {
         })
     ));
 }
+
+#[test]
+fn request_envelope_dto_round_trips_goal_state_query() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:goals".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Query(ServerQuery {
+            id: ServerQueryId("query:dto:goals".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerQueryKind::Goal(StateRecordQuery {
+                domain: ServerStateDomain::Goals,
+                scope: StateRecordQueryScope::List,
+            }),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("goal request dto");
+    let restored = ServerControlRequest::try_from(dto).expect("restored goal request");
+
+    assert!(matches!(
+        restored.kind,
+        ServerControlRequestKind::Query(ServerQuery {
+            kind: ServerQueryKind::Goal(StateRecordQuery {
+                domain: ServerStateDomain::Goals,
+                scope: StateRecordQueryScope::List,
+            }),
+            ..
+        })
+    ));
+}

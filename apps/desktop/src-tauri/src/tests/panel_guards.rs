@@ -289,3 +289,41 @@ fn app_shell_routes_task_command_refresh_to_task_list_token() {
     assert!(!component.contains("selectedTask = {"));
     assert!(!component.contains("selectedTask.activity ="));
 }
+
+#[test]
+fn product_workspace_mounts_tasks_and_routes_chat_receipts_to_it() {
+    let workspace = include_str!("../../../src/lib/ProjectWorkspaceStage.svelte");
+    let chat = include_str!("../../../src/lib/AgentChatPanel.svelte");
+
+    assert!(workspace.contains("import TaskListPanel"));
+    assert!(workspace.contains("panel?.kind === \"tasks\""));
+    assert!(workspace.contains("<TaskListPanel"));
+    assert!(workspace.contains("nucleus:open-task"));
+    assert!(workspace.contains("nucleus:open-goal"));
+    assert!(workspace.contains("focusPanelKind(\"tasks\")"));
+    assert!(workspace.contains("bind:selectedTask"));
+    assert!(workspace.contains("bind:selectedGoal"));
+    assert!(workspace.contains("activeTask={selectedTask}"));
+    assert!(workspace.contains("activeGoal={selectedGoal}"));
+    assert!(chat.contains("nucleus:open-task"));
+    assert!(chat.contains("nucleus:open-goal"));
+    assert!(chat.contains("TaskCreationReceipt"));
+    assert!(chat.contains("active_task_id: activeTask?.task_id ?? null"));
+    assert!(chat.contains("active_goal_id: activeGoal?.goal_id ?? null"));
+    assert!(chat.contains("Clear active task context"));
+    assert!(chat.contains("Clear active goal context"));
+}
+
+#[test]
+fn proper_tasks_panel_groups_canonical_goal_membership_without_run_controls() {
+    let component = include_str!("../../../src/lib/TaskListPanel.svelte");
+
+    assert!(component.contains("buildStateListQuery(\"goals\")"));
+    assert!(component.contains("goal.ordered_task_refs"));
+    assert!(component.contains("Ungrouped"));
+    assert!(component.contains("selectedGoalId"));
+    assert!(!component.contains("task_workflow"));
+    assert!(!component.contains("start_task"));
+    assert!(!component.contains("run_goal"));
+    assert!(!component.contains("execute_goal"));
+}

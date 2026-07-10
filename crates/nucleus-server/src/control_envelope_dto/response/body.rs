@@ -53,6 +53,7 @@ use crate::control_envelope_dto::{
     ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
 };
 use crate::diagnostics_read_models::TaskAgentWorkUnitDiagnosticDto;
+use crate::ControlGoalRecordDto;
 
 /// Serializable response body DTO.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -71,6 +72,9 @@ pub enum ControlResponseBodyDto {
     },
     TaskRecords {
         records: Vec<ControlTaskRecordDto>,
+    },
+    GoalRecords {
+        records: Vec<ControlGoalRecordDto>,
     },
     CommandEvidenceRecords {
         records: Vec<ControlCommandEvidenceRecordDto>,

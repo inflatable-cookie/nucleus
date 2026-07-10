@@ -11,6 +11,7 @@ pub(super) fn kind_to_text(kind: &PersistenceRecordKind) -> Option<&'static str>
         PersistenceRecordKind::SharedMemoryRecord => Some("shared_memory_record"),
         PersistenceRecordKind::SharedMemoryReviewReceipt => Some("shared_memory_review_receipt"),
         PersistenceRecordKind::PlanningSession => Some("planning_session"),
+        PersistenceRecordKind::Goal => Some("goal"),
         PersistenceRecordKind::PlanningArtifact => Some("planning_artifact"),
         PersistenceRecordKind::PlanningImportApplyPlan => Some("planning_import_apply_plan"),
         PersistenceRecordKind::PlanningImportActiveApplyAdmission => {
@@ -39,6 +40,7 @@ pub(super) fn kind_from_text(value: &str) -> LocalStoreResult<PersistenceRecordK
         "shared_memory_record" => Ok(PersistenceRecordKind::SharedMemoryRecord),
         "shared_memory_review_receipt" => Ok(PersistenceRecordKind::SharedMemoryReviewReceipt),
         "planning_session" => Ok(PersistenceRecordKind::PlanningSession),
+        "goal" => Ok(PersistenceRecordKind::Goal),
         "planning_artifact" => Ok(PersistenceRecordKind::PlanningArtifact),
         "planning_import_apply_plan" => Ok(PersistenceRecordKind::PlanningImportApplyPlan),
         "planning_import_active_apply_admission" => {

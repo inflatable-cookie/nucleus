@@ -3,55 +3,113 @@
     id: string;
     role: "user" | "assistant";
     text: string;
+    taskReceipts: import("./control/agentChat").TaskAuthoringReceipt[];
   };
 
   const retainedMessages = new Map<string, ChatMessage[]>();
   const retainedModels = new Map<string, string>();
+  const retainedReasoningEfforts = new Map<string, string>();
 </script>
 
 <script lang="ts">
   import { tick } from "svelte";
   import { Button, Icon, Text } from "@poodle/svelte";
   import { messageSquareText, send } from "@poodle/icons-lucide";
-  import { sendAgentChatMessage } from "./control/agentChat";
+  import TaskCreationReceipt from "./TaskCreationReceipt.svelte";
+  import type { ControlGoalRecordDto, ControlTaskRecordDto } from "./control";
+  import type { TaskAuthoringReceipt } from "./control/agentChat";
+  import { loadAgentChatHistory, sendAgentChatMessage } from "./control/agentChat";
 
   let {
     conversationId,
     projectId,
+    activeGoal,
+    activeTask,
+    onClearActiveGoal,
+    onClearActiveTask,
   }: {
     conversationId: string;
     projectId: string | null;
+    activeGoal: ControlGoalRecordDto | null;
+    activeTask: ControlTaskRecordDto | null;
+    onClearActiveGoal: () => void;
+    onClearActiveTask: () => void;
   } = $props();
 
   let activeConversationId = $state("");
   let messages = $state<ChatMessage[]>([]);
   let draft = $state("");
   let pending = $state(false);
+  let loadingHistory = $state(false);
   let failure = $state<string | null>(null);
   let model = $state<string | null>(null);
+  let reasoningEffort = $state<string | null>(null);
   let timeline = $state<HTMLElement | null>(null);
+  let hydrationVersion = 0;
 
   $effect(() => {
     if (activeConversationId !== conversationId) {
       activeConversationId = conversationId;
       messages = retainedMessages.get(conversationId) ?? [];
       model = retainedModels.get(conversationId) ?? null;
+      reasoningEffort = retainedReasoningEfforts.get(conversationId) ?? null;
+      if (projectId) {
+        void hydrateHistory(projectId, conversationId);
+      }
     }
   });
 
+  async function hydrateHistory(nextProjectId: string, nextConversationId: string): Promise<void> {
+    const version = ++hydrationVersion;
+    loadingHistory = true;
+    failure = null;
+    try {
+      const history = await loadAgentChatHistory(nextProjectId, nextConversationId);
+      if (version !== hydrationVersion || nextConversationId !== conversationId) {
+        return;
+      }
+      messages = history.messages.map((message) => ({
+        id: message.message_id,
+        role: message.role,
+        text: message.text,
+        taskReceipts: message.task_receipts,
+      }));
+      retainedMessages.set(nextConversationId, messages);
+      model = history.model;
+      reasoningEffort = history.reasoning_effort;
+      if (history.model) {
+        retainedModels.set(nextConversationId, history.model);
+      }
+      if (history.reasoning_effort) {
+        retainedReasoningEfforts.set(nextConversationId, history.reasoning_effort);
+      }
+      await scrollToLatest();
+    } catch (caught) {
+      if (version === hydrationVersion) {
+        failure = caught instanceof Error ? caught.message : String(caught);
+      }
+    } finally {
+      if (version === hydrationVersion) {
+        loadingHistory = false;
+      }
+    }
+  }
+
   async function submit(): Promise<void> {
     const message = draft.trim();
-    if (!projectId || !message || pending) {
+    if (!projectId || !message || pending || loadingHistory) {
       return;
     }
 
     failure = null;
     pending = true;
     draft = "";
+    const optimisticMessageId = `user:${crypto.randomUUID()}`;
     appendMessage({
-      id: `user:${crypto.randomUUID()}`,
+      id: optimisticMessageId,
       role: "user",
       text: message,
+      taskReceipts: [],
     });
 
     try {
@@ -59,15 +117,29 @@
         conversation_id: conversationId,
         project_id: projectId,
         message,
+        active_goal_id: activeGoal?.goal_id ?? null,
+        active_task_id: activeTask?.task_id ?? null,
       });
       model = reply.model;
       retainedModels.set(conversationId, reply.model);
+      reasoningEffort = reply.reasoning_effort;
+      if (reply.reasoning_effort) {
+        retainedReasoningEfforts.set(conversationId, reply.reasoning_effort);
+      }
       appendMessage({
         id: reply.turn_id,
         role: "assistant",
         text: reply.assistant_message,
+        taskReceipts: reply.task_receipts,
       });
+      if (reply.task_receipts.length > 0) {
+        window.dispatchEvent(
+          new CustomEvent("nucleus:tasks-changed", { detail: { projectId } }),
+        );
+      }
     } catch (caught) {
+      messages = messages.filter((message) => message.id !== optimisticMessageId);
+      retainedMessages.set(conversationId, messages);
       failure = caught instanceof Error ? caught.message : String(caught);
     } finally {
       pending = false;
@@ -79,6 +151,34 @@
     messages = [...messages, message];
     retainedMessages.set(conversationId, messages);
     void scrollToLatest();
+  }
+
+  function openTaskReceipt(receipt: TaskAuthoringReceipt): void {
+    if (!projectId) {
+      return;
+    }
+    const affectedTasks = [...receipt.created, ...receipt.updated];
+    const affectedGoals = [...receipt.goals_created, ...receipt.goals_updated];
+    if (affectedGoals.length > 0) {
+      window.dispatchEvent(
+        new CustomEvent("nucleus:open-goal", {
+          detail: {
+            projectId,
+            goalId: affectedGoals.length === 1 ? affectedGoals[0].goal_id : null,
+            taskId: affectedTasks.length === 1 ? affectedTasks[0].task_id : null,
+          },
+        }),
+      );
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent("nucleus:open-task", {
+        detail: {
+          projectId,
+          taskId: affectedTasks.length === 1 ? affectedTasks[0].task_id : null,
+        },
+      }),
+    );
   }
 
   async function scrollToLatest(): Promise<void> {
@@ -96,12 +196,14 @@
 
 <section class="agent-chat" aria-label="Agent chat">
   <div class="chat-timeline" bind:this={timeline} aria-live="polite">
-    {#if messages.length === 0}
+    {#if loadingHistory && messages.length === 0}
+      <div class="chat-empty"><Text tone="muted">Loading conversation…</Text></div>
+    {:else if messages.length === 0}
       <div class="chat-empty">
         <span class="chat-empty-icon"><Icon icon={messageSquareText} size="md" /></span>
         <Text weight="semibold">Start a conversation</Text>
         <Text tone="muted">
-          Chat with Codex in this project. Task controls will be added after the conversation flow is settled.
+          Chat with Codex in this project. Shape goals and tasks here; details stay in the Tasks panel.
         </Text>
       </div>
     {:else}
@@ -110,6 +212,9 @@
           <article class:message-user={message.role === "user"} class="chat-message">
             <Text size="sm" tone="muted">{message.role === "user" ? "You" : "Codex"}</Text>
             <div class="message-copy">{message.text}</div>
+            {#each message.taskReceipts ?? [] as receipt}
+              <TaskCreationReceipt {receipt} onOpen={() => openTaskReceipt(receipt)} />
+            {/each}
           </article>
         {/each}
         {#if pending}
@@ -129,6 +234,18 @@
     {#if !projectId}
       <Text tone="muted">Select a project to start a conversation.</Text>
     {/if}
+    {#if activeGoal}
+      <div class="active-context">
+        <span><strong>Goal</strong> · {activeGoal.title}</span>
+        <button type="button" aria-label="Clear active goal context" onclick={onClearActiveGoal}>×</button>
+      </div>
+    {/if}
+    {#if activeTask}
+      <div class="active-context">
+        <span><strong>Task</strong> · {activeTask.title}</span>
+        <button type="button" aria-label="Clear active task context" onclick={onClearActiveTask}>×</button>
+      </div>
+    {/if}
     <div class="composer-row">
       <textarea
         bind:value={draft}
@@ -136,19 +253,19 @@
         placeholder={projectId ? "Message Codex" : "Select a project first"}
         aria-label="Message Codex"
         rows="1"
-        disabled={!projectId || pending}
+        disabled={!projectId || pending || loadingHistory}
       ></textarea>
       <Button
         variant="primary"
         leadingIcon={send}
         onClick={submit}
-        disabled={!projectId || !draft.trim() || pending}
+        disabled={!projectId || !draft.trim() || pending || loadingHistory}
       >
         Send
       </Button>
     </div>
     <Text size="xs" tone="muted">
-      {model ? `Codex · ${model} · ` : ""}Enter to send · Shift+Enter for a new line · read-only workspace access
+      {model ? `Codex · ${model}${reasoningEffort ? ` · ${reasoningEffort}` : ""} · ` : ""}Enter to send · Shift+Enter for a new line · read-only workspace access
     </Text>
   </footer>
 </section>
@@ -257,6 +374,46 @@
     display: flex;
     align-items: end;
     gap: 0.6rem;
+  }
+
+  .active-context {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    width: fit-content;
+    max-width: 100%;
+    padding: 0.25rem 0.35rem 0.25rem 0.5rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.75rem;
+    border: 1px solid var(--poodle-color-border-subtle);
+    border-radius: var(--poodle-radius-control);
+    background: var(--poodle-color-background-surface);
+  }
+
+  .active-context span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .active-context button {
+    display: grid;
+    place-items: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .active-context button:hover {
+    color: var(--poodle-color-text-primary);
+    background: var(--poodle-color-background-canvas);
   }
 
   textarea {

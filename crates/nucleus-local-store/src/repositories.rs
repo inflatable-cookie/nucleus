@@ -123,7 +123,7 @@ impl RepositoryBoundary {
     pub fn planning() -> Self {
         Self {
             domain: PersistenceDomain::Planning,
-            description: "planning sessions, artifacts, and task seed records",
+            description: "planning sessions, goals, artifacts, and task seed records",
         }
     }
 

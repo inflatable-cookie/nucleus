@@ -73,6 +73,50 @@ stronger action metadata because models are not assumed to know Effigy.
 If a harness cannot expose a dynamic action catalogue, Nucleus should project a
 small stable portal plus concise instructions or use sidecar execution.
 
+## Product Agent Portal Set
+
+The product agent surface should converge on four stable Nucleus portal tools:
+
+- `task_ledger`: inspect, create, and refine goals, task membership, and durable
+  task intent
+- `task_workflow`: admit and perform task lifecycle, assignment, dispatch,
+  interruption, recovery, and review actions
+- `project_context`: inspect and manage bounded project memory, planning, and
+  research context
+- `work_evidence`: inspect progress, validation, artifacts, receipts, and work
+  outcomes
+
+These are agent-facing capability domains, not direct mirrors of Rust commands,
+control DTOs, UI buttons, or lifecycle verbs. New server actions must extend a
+coherent portal action catalogue unless they introduce a genuinely separate
+authority domain.
+
+Portal consolidation does not collapse internal authority. Each action still
+uses its owning server query or command boundary, revision checks, admission
+policy, provenance, receipts, and effect restrictions. A single portal may
+contain read and write actions while the server keeps their authorization and
+side effects distinct.
+
+The active Agent Chat slice exposes only `task_ledger`. The other three names
+reserve the intended topology; they must not be registered until they have a
+bounded, implemented action set.
+
+Goal records do not add another top-level tool. `task_ledger` gains typed goal
+record and goal-membership operations behind its existing inspect, create, and
+update actions. An agent may create one goal and its initial task runway through
+that portal without per-task confirmation when conversation intent is clear.
+
+The first `task_workflow` projection exposes only `inspect` and `run`.
+`inspect` returns product-shaped workflow position, readiness, active work, and
+blockers. `run` is an end-to-end execution intent. Adapter selection,
+assignment, delegation, scheduling, dispatch admission, provider start, runtime
+transitions, and receipt persistence remain internal steps, not portal actions.
+
+The portal must not expose stage-shaped actions such as `select_adapter`,
+`delegate_task`, `schedule_task`, `start_task`, or `mark_active`. If the server
+cannot complete the admitted execution chain, `run` fails or reports a blocker;
+it must not return an inert scheduling record as if execution started.
+
 ## Effigy Portal Tool Rule
 
 Effigy must not become a large bundle of unrelated top-level tools.

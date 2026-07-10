@@ -2,6 +2,7 @@ use nucleus_local_store::LocalStoreBackend;
 
 use super::command_admission::{admit_state_command, CommandAdmissionOutcome};
 use super::command_events::append_command_admitted_event;
+use super::goal_commands::handle_goal_command;
 use super::handler::LocalControlRequestHandler;
 use super::steward_commands::handle_steward_command;
 use super::task_commands::handle_task_command;
@@ -61,6 +62,9 @@ where
         }
         ServerCommandKind::Task(task_command) => {
             handle_task_command(handler, &command_id.0, task_command)
+        }
+        ServerCommandKind::Goal(goal_command) => {
+            handle_goal_command(handler, &command_id.0, goal_command)
         }
         ServerCommandKind::AgentSession(AgentSessionCommand::RegisterAdapter(_)) => {
             ServerCommandReceiptStatus::AcceptedForStateMutation

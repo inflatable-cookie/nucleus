@@ -17,24 +17,25 @@ use nucleus_server::{
     read_forge_pull_request_refreshes, read_forge_repository_metadata_refreshes,
     read_forge_status_check_refreshes, seed_local_memory_proposal, seed_local_planning_session,
     seed_local_project, seed_local_research_run_brief, seed_local_task, write_command_evidence,
-    ControlApiCodecError, ControlRequestEnvelopeDto, ControlResponseEnvelopeDto,
-    ForgeCredentialStatusRefreshInput, ForgeCredentialStatusRefreshPersistenceInput,
-    ForgeNetworkCredentialKind, ForgeNetworkCredentialResolutionBoundary,
-    ForgeNetworkCredentialStatus, ForgeNetworkExecutionCredentialRef,
-    ForgeNetworkExecutionOperationFamily, ForgePullRequestProvider, ForgePullRequestRefreshInput,
+    ControlApiCodecError, ControlRequestEnvelopeDto, ControlResponseBodyDto,
+    ControlResponseEnvelopeDto, ForgeCredentialStatusRefreshInput,
+    ForgeCredentialStatusRefreshPersistenceInput, ForgeNetworkCredentialKind,
+    ForgeNetworkCredentialResolutionBoundary, ForgeNetworkCredentialStatus,
+    ForgeNetworkExecutionCredentialRef, ForgeNetworkExecutionOperationFamily,
+    ForgePullRequestProvider, ForgePullRequestRefreshInput,
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
-    ForgeStatusCheckRefreshScope, LocalCodexChatReply, LocalCodexChatRequest,
-    LocalCodexChatService, LocalControlRequestHandler, LocalMemoryProposalSeed,
-    LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed,
-    ServerStateService, TauriIpcControlCommandAdapter,
+    ForgeStatusCheckRefreshScope, LocalCodexChatHistory, LocalCodexChatReply,
+    LocalCodexChatRequest, LocalCodexChatService, LocalControlRequestHandler,
+    LocalMemoryProposalSeed, LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed,
+    LocalTaskSeed, ServerStateService, TauriIpcControlCommandAdapter,
 };
 
 mod workspace_ui;
 
 struct DesktopState {
-    adapter: Mutex<TauriIpcControlCommandAdapter<SqliteBackend>>,
+    adapter: Arc<Mutex<TauriIpcControlCommandAdapter<SqliteBackend>>>,
     chat: Arc<Mutex<LocalCodexChatService>>,
     server_state: ServerStateService<SqliteBackend>,
 }
@@ -69,7 +70,7 @@ impl DesktopState {
         let adapter = TauriIpcControlCommandAdapter::fixture_backed(handler);
 
         Self {
-            adapter: Mutex::new(adapter),
+            adapter: Arc::new(Mutex::new(adapter)),
             chat: Arc::new(Mutex::new(LocalCodexChatService::default())),
             server_state,
         }
@@ -94,16 +95,50 @@ async fn send_agent_chat_message(
     request: LocalCodexChatRequest,
 ) -> Result<LocalCodexChatReply, String> {
     let chat = Arc::clone(&state.chat);
+    let adapter = Arc::clone(&state.adapter);
     let server_state = state.server_state.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
         let mut chat = chat
             .lock()
             .map_err(|_| "agent chat runtime lock is poisoned".to_owned())?;
-        chat.send_message(&server_state, request)
+        chat.send_message_with_task_authoring(&server_state, request, &mut |control_request| {
+            let envelope = ControlRequestEnvelopeDto::try_from(&control_request)
+                .map_err(|error| error.reason)?;
+            let response = adapter
+                .lock()
+                .map_err(|_| "desktop command adapter lock is poisoned".to_owned())?
+                .submit_control_envelope(envelope)
+                .map_err(|error| error.reason)?;
+            match response.body {
+                ControlResponseBodyDto::CommandReceipt { status, .. }
+                    if status == "accepted_for_state_mutation" =>
+                {
+                    Ok(())
+                }
+                ControlResponseBodyDto::CommandReceipt { status, .. } => {
+                    Err(format!("task creation was not accepted: {status}"))
+                }
+                ControlResponseBodyDto::Error { reason, .. } => Err(reason),
+                _ => Err("task creation returned an unexpected response".to_owned()),
+            }
+        })
     })
     .await
     .map_err(|error| format!("agent chat worker failed: {error}"))?
+}
+
+#[tauri::command]
+fn load_agent_chat_history(
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+    conversation_id: String,
+) -> Result<LocalCodexChatHistory, String> {
+    let chat = state
+        .chat
+        .lock()
+        .map_err(|_| "agent chat runtime lock is poisoned".to_owned())?;
+    chat.history(&state.server_state, &project_id, &conversation_id)
 }
 
 fn seed_local_command_evidence(
@@ -356,6 +391,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             submit_control_envelope,
             send_agent_chat_message,
+            load_agent_chat_history,
             load_workspace_ui_config,
             save_workspace_ui_config
         ])
@@ -364,7 +400,13 @@ pub fn run() {
 }
 
 fn desktop_database_path() -> PathBuf {
-    std::env::temp_dir().join("nucleus-desktop.sqlite")
+    let data_dir = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .expect("HOME is required for local desktop state")
+        .join(".nucleus")
+        .join("state");
+    std::fs::create_dir_all(&data_dir).expect("local desktop state directory should be writable");
+    data_dir.join("nucleus.sqlite")
 }
 
 #[cfg(test)]

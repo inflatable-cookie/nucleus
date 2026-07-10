@@ -13,7 +13,12 @@
   } from "@poodle/svelte";
   import { pencil, plus } from "@poodle/icons-lucide";
   import AgentChatPanel from "./AgentChatPanel.svelte";
-  import type { ControlProjectRecordDto } from "./control";
+  import TaskListPanel from "./TaskListPanel.svelte";
+  import type {
+    ControlGoalRecordDto,
+    ControlProjectRecordDto,
+    ControlTaskRecordDto,
+  } from "./control";
   import {
     createWorkspaceSurface,
     createWorkspacePanel,
@@ -40,6 +45,10 @@
     center_top: null,
     center_bottom: null,
   });
+  let selectedTaskId = $state<string | null>(null);
+  let selectedTask = $state<ControlTaskRecordDto | null>(null);
+  let selectedGoalId = $state<string | null>(null);
+  let selectedGoal = $state<ControlGoalRecordDto | null>(null);
 
   const activeSurface = $derived(
     config?.surfaces.find((surface) => surface.id === config?.active_surface_id) ??
@@ -75,10 +84,34 @@
   onMount(() => {
     void loadConfig();
     window.addEventListener("nucleus:create-workspace-panel", handleCreateWorkspacePanel);
+    window.addEventListener("nucleus:open-task", handleOpenTask);
+    window.addEventListener("nucleus:open-goal", handleOpenGoal);
 
     return () => {
       window.removeEventListener("nucleus:create-workspace-panel", handleCreateWorkspacePanel);
+      window.removeEventListener("nucleus:open-task", handleOpenTask);
+      window.removeEventListener("nucleus:open-goal", handleOpenGoal);
     };
+  });
+
+  $effect(() => {
+    selectedProject?.project_id;
+    selectedTaskId = null;
+    selectedTask = null;
+    selectedGoalId = null;
+    selectedGoal = null;
+  });
+
+  $effect(() => {
+    if (!selectedTaskId) {
+      selectedTask = null;
+    }
+  });
+
+  $effect(() => {
+    if (!selectedGoalId) {
+      selectedGoal = null;
+    }
   });
 
   onDestroy(() => {
@@ -137,6 +170,36 @@
     }
 
     addPanel(kind);
+  }
+
+  function handleOpenTask(event: Event): void {
+    if (!(event instanceof CustomEvent) || event.detail?.projectId !== selectedProject?.project_id) {
+      return;
+    }
+    selectedTaskId = typeof event.detail.taskId === "string" ? event.detail.taskId : null;
+    focusPanelKind("tasks");
+  }
+
+  function handleOpenGoal(event: Event): void {
+    if (!(event instanceof CustomEvent) || event.detail?.projectId !== selectedProject?.project_id) {
+      return;
+    }
+    selectedGoalId = typeof event.detail.goalId === "string" ? event.detail.goalId : null;
+    selectedTaskId = typeof event.detail.taskId === "string" ? event.detail.taskId : null;
+    focusPanelKind("tasks");
+  }
+
+  function focusPanelKind(kind: string): void {
+    if (!activeSurface) {
+      return;
+    }
+    for (const region of regionKeys()) {
+      const panel = activeSurface.regions[region].find((candidate) => candidate.kind === kind);
+      if (panel) {
+        activePanels = { ...activePanels, [region]: panel.id };
+        return;
+      }
+    }
   }
 
   function handlePanelDragStart(event: DragEvent, sourceRegion: RegionKey): void {
@@ -771,6 +834,18 @@
     <AgentChatPanel
       conversationId={`${selectedProject?.project_id ?? "unselected"}:${panel.id}`}
       projectId={selectedProject?.project_id ?? null}
+      activeTask={selectedTask}
+      activeGoal={selectedGoal}
+      onClearActiveTask={() => (selectedTaskId = null)}
+      onClearActiveGoal={() => (selectedGoalId = null)}
+    />
+  {:else if panel?.kind === "tasks"}
+    <TaskListPanel
+      selectedProjectId={selectedProject?.project_id ?? null}
+      bind:selectedGoalId
+      bind:selectedGoal
+      bind:selectedTaskId
+      bind:selectedTask
     />
   {:else}
     <Surface tone="canvas" border="none" padding="md" asRole="region" label={panel?.title ?? "Empty panel"}>

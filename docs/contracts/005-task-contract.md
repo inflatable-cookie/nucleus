@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-07-09
 
 ## Purpose
 
@@ -518,6 +518,56 @@ Task authoring must not accept:
 Create and update commands should return read-after-write task records through
 the typed task DTO boundary. The server may add task history summaries for
 create or update, but clients do not submit task history directly.
+
+## Agent-Authored Tasks
+
+Agents may create and refine tasks without per-task operator confirmation when
+the conversation has established clear intent and scope. This is the normal
+path for turning a shaped project into a useful runway.
+
+A standalone task may remain ungrouped. A multi-task runway should be created
+under or linked to one durable Goal so ordering, continuity, stop conditions,
+and later execution authority do not depend on an arbitrary project-wide list.
+
+Agent task authoring must:
+
+- use a Nucleus-owned tool and the existing server task command boundary
+- fill every field that can be supported by conversation and project context
+- retain conversation, turn, and known dependency refs as provenance
+- create proposed tasks when readiness is incomplete
+- mark a task ready only when context and acceptance criteria support later
+  delegation
+- return one compact receipt for a single task or batch
+
+Agent refinement of existing tasks must first read the server-owned task
+record, submit its current revision, and fail on stale state. The agent may
+replace editable intent and readiness fields but must not use the authoring
+tool to start, block, complete, archive, delegate, or dispatch a task.
+
+Agent updates retain conversation and provider-turn provenance. Multiple
+updates in one turn consolidate into one compact receipt and refresh the task
+panel from server state.
+
+Task creation is not task dispatch. Agent-authored tasks remain unassigned and
+must not start provider work, validation, SCM, or forge effects as a side
+effect.
+
+An explicit conversation mandate may authorize `task_workflow run` for one
+task or one goal's snapshotted ordered tasks without per-task confirmation. The
+mandate is execution authority for that bounded scope; task creation,
+agent-readiness, selection, importance, and assignment hints are not.
+
+The first runway executes serially and stops on a blocker, failure,
+cancellation, recovery requirement, or task stop condition. Tasks outside the
+admission snapshot require a later mandate.
+
+Goal membership and ordering are owned by the goal contract. Task read models
+should expose derived goal refs for grouping and navigation, but task mutation
+must not independently rewrite goal membership.
+
+Clear work may be authored directly. A proposal/confirmation interaction is
+reserved for materially ambiguous intent, scope, or authority. Dismissal of a
+proposal does not delete existing task records.
 
 ## Planning And Memory Links
 

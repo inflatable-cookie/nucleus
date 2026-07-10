@@ -36,6 +36,7 @@ pub enum PersistenceRecordKind {
     SharedMemoryRecord,
     SharedMemoryReviewReceipt,
     PlanningSession,
+    Goal,
     PlanningArtifact,
     PlanningImportApplyPlan,
     PlanningImportActiveApplyAdmission,

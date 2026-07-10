@@ -11,6 +11,7 @@ mod command_events;
 pub mod command_projection;
 mod commands;
 mod event_store;
+mod goal_commands;
 mod handler;
 mod queries;
 mod steward_commands;

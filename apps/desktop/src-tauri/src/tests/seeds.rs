@@ -115,6 +115,39 @@ fn desktop_state_seeds_local_task_for_task_queries() {
 }
 
 #[test]
+fn desktop_state_routes_goal_list_to_typed_goal_records() {
+    let database_path = std::env::temp_dir().join(format!(
+        "nucleus-desktop-goal-query-test-{}.sqlite",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&database_path);
+    let state = DesktopState::new(SqliteBackend::new(database_path.clone()));
+
+    let response = state
+        .submit_control_envelope(ControlRequestEnvelopeDto {
+            protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),
+            protocol_version: CONTROL_API_PROTOCOL_VERSION_V1,
+            request_id: "desktop-request-goals".to_owned(),
+            client_id: "desktop-client".to_owned(),
+            body: ControlRequestBodyDto::Query {
+                query: ControlQueryDto::State {
+                    query_id: "desktop-query-goals".to_owned(),
+                    domain: nucleus_server::ControlStateDomainDto::Goals,
+                    scope: nucleus_server::ControlQueryScopeDto::List,
+                },
+            },
+        })
+        .expect("desktop goal list should route through the server adapter");
+
+    assert!(matches!(
+        response.body,
+        nucleus_server::ControlResponseBodyDto::GoalRecords { records } if records.is_empty()
+    ));
+
+    let _ = std::fs::remove_file(database_path);
+}
+
+#[test]
 fn desktop_state_seeds_planning_memory_and_research_for_proof_queries() {
     let database_path = std::env::temp_dir().join(format!(
         "nucleus-desktop-planning-proof-seed-test-{}.sqlite",

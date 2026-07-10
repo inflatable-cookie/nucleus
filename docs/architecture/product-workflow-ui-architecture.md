@@ -281,16 +281,90 @@ resolves the project working directory from project state. The client sends a
 project id, panel conversation id, and message; it does not select an arbitrary
 working directory.
 
-This bring-up slice is intentionally narrower than the canonical conversation
-target:
+The accepted chat interaction now has first-pass durable continuity:
 
-- user and assistant messages are retained in client memory for panel remounts
-- Nucleus session, turn, and message records are not durable yet
-- provider thread restart recovery is not claimed
-- provider callbacks, approvals, structured user input, and task linkage are
-  deferred
+- Nucleus session, turn, and ordered user/assistant message records persist in
+  server-owned local state
+- the panel hydrates from server history after remount or desktop restart
+- the provider thread id is retained as an external ref and resumed after
+  local service restart
+- a mismatched replacement provider thread fails instead of silently changing
+  conversation identity
+- unsupported callbacks, approvals, and structured user input remain deferred
 - the provider runs with read-only workspace access and no approval escalation
 
-The next product decision follows visual and workflow review of the live chat.
-Durable timeline projection, streaming presentation, and task context must not
-be added together by default.
+The first task interaction inside Agent Chat is agent-authored task creation.
+The agent may create one standalone task or a Goal with a longer task runway
+when intent is clear, using a server-authorized dynamic tool. A tool call
+produces one compact durable receipt and refreshes the task panel. Detailed
+inspection and manual control stay in the task panel.
+
+Task proposal cards remain useful when conversation intent or scope is
+materially ambiguous. They are not the default admission step for every task.
+Creating a task never dispatches it. Streaming presentation remains deferred.
+
+## Initial Tasks Panel
+
+The system Tasks tab in the approved workspace shell hosts the first proper
+task UI. It uses the existing server task-record query rather than the proof
+harness composition.
+
+The first layout is deliberately narrow:
+
+- a project-filtered task list with title, activity, action type, and readiness
+- one selected-task detail view with description and acceptance criteria
+- importance, assignment, and readiness as compact facts
+- context refs, allowed actions, stop conditions, validation, and task id under
+  one Advanced disclosure
+- no proof diagnostics, workflow source counts, or execution controls
+
+Chat task receipts may focus this tab. A single-task receipt also selects the
+created task; a batch receipt opens the list without choosing one task. The
+panel refreshes from server-owned state and does not become task authority.
+
+Agent Chat exposes one server-owned `task_ledger` portal with inspect, create,
+and update actions. Inspection reads the same task DTO; updates remain
+revision-checked commands. Inspection adds no visible card. Successful writes
+use the existing compact receipt treatment and refresh the Tasks panel.
+Lifecycle transitions and dispatch stay outside this portal.
+
+The current Tasks-panel selection may also focus Agent Chat. The chat composer
+shows one compact removable task label, sends only its task id, and leaves the
+normal no-task chat path unchanged. The server resolves the current task DTO
+for every enriched turn and supplies it as provider-only context. This focus is
+local workspace state: it does not create durable task linkage, imply a task
+mutation, or expose the larger selected-task workflow aggregate inside chat.
+
+## Initial Task Workflow Portal
+
+The second Agent Chat portal is `task_workflow`, initially with `inspect` and
+`run` actions. `run` consumes one explicit conversation mandate and may cover a
+single task or one goal's snapshotted ordered tasks. The user does not confirm
+every task in that admitted goal scope.
+
+The normal chat path gains no persistent autonomy toggle or workflow control
+stack. A successful run shows one compact started receipt; a runway receipt
+shows scope and current position. Confirmation-required, blocked, stopped, and
+recovery states use the same compact treatment and may focus the Tasks panel.
+Adapter ids, provider refs, work-item ids, revisions, mandate provenance, and
+advanced recovery controls remain in task detail or disclosures.
+
+The portal is not exposed until `run` reaches provider dispatch. Intermediate
+delegation or scheduling proof records must not be presented as started work.
+
+## Goals In The Task Surface
+
+Goals are the normal grouping and continuity layer above tasks. The Tasks panel
+should present goal groups with their ordered tasks instead of one unlimited
+flat project list. Ungrouped tasks remain available in a final compact group.
+
+The normal view shows goal title, status, progress summary, and contained task
+rows. Goal outcome, scope, stop conditions, evidence, revision, and membership
+editing remain behind detail or disclosures. Selecting a goal may focus Agent
+Chat with one compact removable goal context label, parallel to selected-task
+context.
+
+Agents manage goals and task membership through `task_ledger`; Goals do not add
+a fifth top-level agent tool. A compact goal-creation receipt may focus the
+goal group. Granting `task_workflow run` authority to a goal remains a separate
+conversation mandate and is never implied by creating or selecting it.

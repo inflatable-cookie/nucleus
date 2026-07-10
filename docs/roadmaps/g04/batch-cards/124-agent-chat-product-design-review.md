@@ -1,6 +1,6 @@
 # 124 Agent Chat Product Design Review
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-07-09
 Milestone: `../025-initial-agent-chat-vertical-slice.md`
@@ -23,3 +23,12 @@ durable timelines, streaming presentation, tools, approvals, or task context.
 - the chat interaction direction is accepted or corrected by the operator
 - the next lane is based on observed workflow pressure
 - shell and panel placement behavior remain unchanged
+
+## Decision
+
+The operator accepted the initial chat interaction after completed-message
+assembly and resolved-model presentation were corrected.
+
+Durable conversation state is the next lane. Streaming remains deferred until
+session, turn, and message identity survive restart and can support later task
+linkage.

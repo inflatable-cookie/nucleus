@@ -363,6 +363,7 @@ fn state_query_from_dto(
     Ok(match domain {
         ServerStateDomain::Projects => ServerQueryKind::Project(query),
         ServerStateDomain::Tasks => ServerQueryKind::Task(query),
+        ServerStateDomain::Goals => ServerQueryKind::Goal(query),
         ServerStateDomain::Workspaces => ServerQueryKind::Workspace(query),
         _ => {
             return Err(ControlApiCodecError::unsupported(

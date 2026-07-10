@@ -33,6 +33,7 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
         match &query.kind {
             ServerQueryKind::Project(state_query)
             | ServerQueryKind::Task(state_query)
+            | ServerQueryKind::Goal(state_query)
             | ServerQueryKind::Workspace(state_query) => state_query_dto(&query.id, state_query),
             ServerQueryKind::RuntimeMetadata(runtime_query) => Ok(Self::RuntimeMetadata {
                 query_id: query.id.0.clone(),

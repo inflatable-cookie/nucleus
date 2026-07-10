@@ -115,12 +115,17 @@ Initial persisted domains:
 - Effigy integration records
 - workspaces
 - agent sessions
+- conversation turns and sanitized user/assistant messages
 - model routes
 - server config
 - event journal
 - client auth records
 
 These domains must be recoverable after server restart.
+
+The embedded desktop stores its first durable local server database at
+`~/.nucleus/state/nucleus.sqlite`. Local workspace layout remains separate at
+`~/.nucleus/config/ui.json`.
 
 ## Backend Adapter Rule
 
@@ -885,3 +890,19 @@ Already promoted from earlier research gaps:
 - secret material, rotation, redaction, and revocation vocabulary
 - command runner readiness storage rule
 - command artifact metadata storage rule
+
+## Product Chat Capability Migration
+
+Durable product-chat sessions record the provider thread ref and the Nucleus
+chat toolset version used to start it. Missing toolset versions decode as the
+legacy version.
+
+When a provider cannot attach newly required tools during thread resume,
+Nucleus may start a replacement provider thread while preserving the canonical
+Nucleus session, turns, messages, and receipts. It supplies a bounded sanitized
+conversation transcript as migration context and persists the replacement
+provider thread ref after the next completed turn.
+
+This migration grants only the declared Nucleus tool capability. It does not
+widen repository sandbox, task dispatch, provider-write, SCM, or forge
+authority.

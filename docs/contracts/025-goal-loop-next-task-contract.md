@@ -20,6 +20,7 @@ Goal:
 - may span many tasks
 - may be exploratory or long lived
 - can be active before actionable work is fully decomposed
+- groups and orders the tasks that project toward one desired outcome
 
 Task:
 
@@ -59,12 +60,48 @@ A goal record should include:
 - current status
 - related task refs
 - related planning artifact refs
+- conversation and provider-turn provenance refs
 - stop conditions
 - evidence refs
 - current next task ref or next action statement
+- ordered task refs
+- current revision and timestamps
+
+Initial goal statuses are:
+
+- proposed
+- ready
+- active
+- blocked
+- achieved
+- abandoned
 
 Goals may guide task creation, task ordering, loop continuation, and steward
 suggestions. Goals do not replace tasks.
+
+The goal record's ordered task refs are the canonical membership and ordering
+for the first implementation. A task may appear in more than one goal only when
+each goal explicitly links it. Task queries may derive goal refs from those
+records; clients must not maintain a second independent membership list.
+
+Tasks without a goal remain valid and appear as ungrouped work. Goal-based
+execution never sweeps arbitrary ungrouped ready tasks into its scope.
+
+## Goal Execution Authority
+
+An explicit conversation mandate may authorize execution of one goal. The
+mandate cites the current goal id and revision. At admission, Nucleus snapshots
+the goal's ordered task ids and each task revision; later membership changes do
+not expand the active run.
+
+Goal readiness is not execution authority. Goal creation, task creation,
+selected-goal focus, and agent suggestions cannot grant a mandate.
+
+The first goal run executes serially in goal order subject to task dependencies
+and stops on goal or task stop conditions, blocker, failure, cancellation,
+recovery requirement, or operator revocation. A goal mandate does not imply
+review acceptance, task completion, goal achievement, SCM publication, or
+permission for unrelated tasks.
 
 ## Loop Rule
 
@@ -176,7 +213,6 @@ or suggest a goal.
 ## Out Of Scope
 
 - Implementing autonomous loops.
-- Implementing goal records in code.
 - Building UI for pathway visualization.
 - Replacing Northstar roadmaps.
 - Allowing hidden agents to mutate project state.

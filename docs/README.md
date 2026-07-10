@@ -18,11 +18,15 @@ The repo uses:
 
 ## Current Lane
 
-`g04` product workflow vertical slice. Current pointer: selected-task product
-aggregate query after the first product shell pass. The selected-task proof is
-diagnostic-only; the next implementation work should define one read-only
-product-facing aggregate so the normal shell does not inherit proof-modal query
-composition.
+`g04` product workflow vertical slice. The workspace shell, durable Agent Chat,
+server-authorized task creation/refinement, and the first proper Tasks panel are
+in place. Agent Chat can now focus the task selected in the Tasks panel without
+gaining lifecycle or dispatch authority. Its task capabilities now use one
+`task_ledger` portal rather than atomic query and mutation tools. Current
+operator turns now persist before provider tool activity, and explicit Goal
+mandates freeze the selected Goal revision and ordered task revisions. Current
+pointer: compose Goal inspection and serial run admission without provider
+effects.
 
 Current planning artifacts:
 

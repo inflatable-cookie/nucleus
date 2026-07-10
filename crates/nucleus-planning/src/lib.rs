@@ -6,6 +6,7 @@
 
 pub mod artifacts;
 pub mod exploration;
+pub mod goals;
 pub mod ids;
 pub mod refs;
 pub mod sessions;
@@ -22,6 +23,11 @@ pub use exploration::{
     ExplorationSessionStatus, ExplorationSessionTimestamps, ExplorationTradeoff,
     ExplorationTradeoffPosture,
 };
+pub use goals::{
+    apply_goal_membership_change, validate_goal, validate_goal_status_transition, Goal,
+    GoalMembershipChange, GoalStatus, GoalTaskCandidate, GoalTimestamps, GoalValidationError,
+    MAX_GOAL_TASKS,
+};
 pub use ids::{
     ExplorationAssumptionId, ExplorationNoteId, ExplorationOptionId, ExplorationQuestionId,
     ExplorationSessionId, MemoryProposalId, PlanningArtifactId, PlanningDecisionId, PlanningGoalId,
@@ -35,17 +41,20 @@ pub use sessions::{
     PlanningSession, PlanningSessionKind, PlanningSessionStatus, PlanningSessionTimestamps,
 };
 pub use storage_shape::{
-    decode_exploration_session_storage_record, decode_planning_session_storage_record,
-    encode_exploration_session_storage_payload, encode_exploration_session_storage_record,
-    encode_planning_session_storage_payload, encode_planning_session_storage_record,
+    decode_exploration_session_storage_record, decode_goal_storage_record,
+    decode_planning_session_storage_record, encode_exploration_session_storage_payload,
+    encode_exploration_session_storage_record, encode_goal_storage_payload,
+    encode_goal_storage_record, encode_planning_session_storage_payload,
+    encode_planning_session_storage_record, goal_from_storage_record,
     ExplorationAssumptionStorageRecord, ExplorationNoteStorageKind, ExplorationNoteStorageRecord,
     ExplorationOptionStorageRecord, ExplorationOptionStorageStatus,
     ExplorationPromotionStorageRefs, ExplorationQuestionStorageRecord,
     ExplorationQuestionStorageStatus, ExplorationSessionStorageRecord,
     ExplorationSessionStorageStatus, ExplorationStorageConfidence, ExplorationStorageMode,
     ExplorationStoragePriority, ExplorationTradeoffStoragePosture,
-    ExplorationTradeoffStorageRecord, PlanningOutputStorageRefs, PlanningParticipantStorageRef,
-    PlanningParticipantStorageRole, PlanningRecordCodecError, PlanningSessionStorageKind,
-    PlanningSessionStorageRecord, PlanningSessionStorageStatus, PlanningSourceStorageKind,
-    PlanningSourceStorageRef, PLANNING_STORAGE_SCHEMA_VERSION,
+    ExplorationTradeoffStorageRecord, GoalStorageRecord, GoalStorageStatus,
+    PlanningOutputStorageRefs, PlanningParticipantStorageRef, PlanningParticipantStorageRole,
+    PlanningRecordCodecError, PlanningSessionStorageKind, PlanningSessionStorageRecord,
+    PlanningSessionStorageStatus, PlanningSourceStorageKind, PlanningSourceStorageRef,
+    PLANNING_STORAGE_SCHEMA_VERSION,
 };

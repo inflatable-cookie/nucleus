@@ -1,6 +1,6 @@
 # 025 Initial Agent Chat Vertical Slice
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-09
 
@@ -35,8 +35,10 @@ This lane must not:
 
 Ready cards:
 
-- `batch-cards/124-agent-chat-product-design-review.md`
+- None.
 
 Completed cards:
 
 - `batch-cards/123-local-agent-chat-vertical-slice.md`
+- `batch-cards/124-agent-chat-product-design-review.md`
+- `batch-cards/125-durable-agent-chat-continuity.md`

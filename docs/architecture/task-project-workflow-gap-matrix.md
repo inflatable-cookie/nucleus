@@ -303,7 +303,8 @@ Candidate record:
 ## Planning Gaps
 
 - final scoring/priority policy belongs in a future contract delta
-- goal records are not implemented
+- goal domain and storage records are implemented; query, command, portal, and
+  UI surfaces remain pending
 - structured planning artifact refs are not implemented in task records
 - work-item persistence is partial and should be treated as optional evidence
   for the first projection

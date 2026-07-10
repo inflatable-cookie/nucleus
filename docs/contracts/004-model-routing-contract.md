@@ -189,6 +189,7 @@ Allowed first-pass override fields:
 
 - endpoint
 - model id
+- reasoning effort or equivalent harness-supported reasoning control
 - auth source
 - billing/account source
 - enabled state
@@ -210,6 +211,12 @@ Overrides may affect selection or runtime config:
 The selected adapter instance remains the authority for harness identity.
 Resolved route state must retain base route id and applied override ids for
 audit and recovery.
+
+The initial product Agent Chat slice applies a temporary session override of
+`gpt-5.4-mini` with `low` reasoning effort. Provider model fallback is disabled
+so an unavailable override fails visibly instead of silently using the adapter
+default. The desktop displays the model and reasoning effort resolved by the
+provider response.
 
 ## Current Rust Surface
 

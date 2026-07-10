@@ -7,6 +7,7 @@ import {
   type ControlProviderReadIntentQueryResultDto,
   type ControlProviderReadinessOverviewDto,
   type ControlProjectRecordDto,
+  type ControlGoalRecordDto,
   type ControlRuntimeReadinessDiagnosticDto,
   type ControlStateDomain,
   type TaskAgentWorkUnitDiagnosticDto,
@@ -81,8 +82,12 @@ export type ControlResponseEnvelopeDto = {
         records: ControlProjectRecordDto[];
       }
     | {
-        type: "task_records";
-        records: ControlTaskRecordDto[];
+      type: "task_records";
+      records: ControlTaskRecordDto[];
+    }
+    | {
+        type: "goal_records";
+        records: ControlGoalRecordDto[];
       }
     | {
         type: "command_evidence_records";

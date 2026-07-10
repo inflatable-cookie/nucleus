@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-09
+Updated: 2026-07-10
 
 ## Purpose
 
@@ -10,21 +10,28 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `124-agent-chat-product-design-review.md`
+- `147-goal-run-inspection-and-admission.md`
 
 ## Planned Cards
 
-- None.
+- `148-goal-run-provider-dispatch-bridge.md`
+- `149-task-workflow-portal-receipts-and-live-validation.md`
 
 ## Paused Cards
 
+- None.
+
+## Superseded Cards
+
+- `138-conversation-mandate-turn-start-boundary.md`
+- `139-task-workflow-inspection-and-run-readiness.md`
+- `140-task-run-admission-composition.md`
+- `141-task-run-provider-dispatch-bridge.md`
+- `142-task-workflow-portal-receipts-and-live-validation.md`
 - `081-selected-task-delegation-work-item-admission.md`
 - `082-selected-task-delegation-control-surfaces.md`
 - `083-selected-task-delegation-desktop-proof.md`
 - `084-selected-task-delegation-validation-next-lane.md`
-
-## Superseded Cards
-
 - `105-product-shell-task-list-placement.md`
 - `107-selected-task-aggregate-shell-placement-boundary.md`
 - `108-selected-task-aggregate-workspace-panel.md`
@@ -33,6 +40,24 @@ Hold execution cards for `g04`.
 
 ## Completed Cards
 
+- `146-goal-mandate-turn-start-boundary.md`
+- `145-goal-grouped-task-panel-and-chat-context.md`
+- `144-task-ledger-goal-authoring.md`
+- `143-goal-domain-and-task-membership.md`
+- `137-task-workflow-portal-design-review.md`
+- `136-task-ledger-portal-consolidation.md`
+- `135-agent-chat-task-context-closeout.md`
+- `134-active-task-conversation-context.md`
+- `133-agent-task-workflow-direction-checkpoint.md`
+- `132-agent-task-inspection-and-update.md`
+- `131-proper-task-panel-foundation.md`
+- `130-agent-task-workflow-checkpoint.md`
+- `129-live-agent-task-authoring-validation.md`
+- `128-agent-task-creation-receipts.md`
+- `127-agent-task-authoring-tool.md`
+- `126-chat-task-context-design-review.md`
+- `125-durable-agent-chat-continuity.md`
+- `124-agent-chat-product-design-review.md`
 - `123-local-agent-chat-vertical-slice.md`
 - `116-product-workflow-ui-design-review.md`
 - `111-product-shell-design-review-checkpoint.md`

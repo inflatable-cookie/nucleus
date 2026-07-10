@@ -129,6 +129,10 @@ where
             state_records::state_record_query(handler, query, ServerStateDomain::Tasks)
                 .map(ServerQueryResult::StateRecords)
         }
+        ServerQueryKind::Goal(query) => {
+            state_records::state_record_query(handler, query, ServerStateDomain::Goals)
+                .map(ServerQueryResult::StateRecords)
+        }
         ServerQueryKind::Workspace(query) => {
             state_records::state_record_query(handler, query, ServerStateDomain::Workspaces)
                 .map(ServerQueryResult::StateRecords)

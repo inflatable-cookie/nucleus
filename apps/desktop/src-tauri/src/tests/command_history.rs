@@ -75,7 +75,9 @@ fn desktop_command_history_uses_sanitized_dto_not_storage_payloads() {
     )
     .expect("write command evidence");
     let state = DesktopState {
-        adapter: Mutex::new(TauriIpcControlCommandAdapter::fixture_backed(handler)),
+        adapter: Arc::new(Mutex::new(TauriIpcControlCommandAdapter::fixture_backed(
+            handler,
+        ))),
         chat: Arc::new(Mutex::new(LocalCodexChatService::default())),
         server_state: ServerStateService::new(backend),
     };

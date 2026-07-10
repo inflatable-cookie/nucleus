@@ -38,6 +38,11 @@ fn sqlite_supported_domains() -> Vec<(PersistenceDomain, PersistenceRecordKind, 
         ),
         (
             PersistenceDomain::Planning,
+            PersistenceRecordKind::Goal,
+            "goal:1",
+        ),
+        (
+            PersistenceDomain::Planning,
             PersistenceRecordKind::PlanningArtifact,
             "planning:artifact:1",
         ),

@@ -21,6 +21,45 @@ request work or report observations. They must not mark a work item accepted,
 complete a task, publish SCM changes, or mutate shared management state without
 an admitted command.
 
+## Conversation Mandate Run Rule
+
+The first product `task_workflow run` authority is an explicit conversation
+mandate. Task readiness alone is not execution authority.
+
+A run request must cite:
+
+- the current canonical operator message id and conversation id
+- an exact non-empty excerpt from that operator message expressing execution
+  intent
+- scope kind: one goal or one explicit task
+- current goal revision or task revision
+- an idempotency key
+
+The server verifies that the cited message is the current user message in the
+same conversation and that the excerpt occurs in it. Active-task context may
+resolve phrases such as "this task," but assistant messages cannot grant run
+authority.
+
+For goal scope, the first slice snapshots the goal's ordered task membership
+and current task revisions at admission, up to 50 tasks, then executes serially.
+Tasks linked, created, or made ready later are outside scope. Arbitrary task
+sets and project-wide ready-task sweeps are not valid run scope. The mandate
+cannot expand through agent interpretation or follow-up tool calls.
+
+The mandate expires when all scoped tasks reach a terminal or reviewable
+outcome, the current task blocks or fails, the operator cancels or revokes the
+mandate, or Nucleus enters recovery-required state. Resuming or widening work
+requires a new explicit operator instruction.
+
+`run` must compose readiness, dependency ordering, revision checks, route and
+adapter resolution, idempotency, work-item admission, provider dispatch, and
+runtime receipt linkage. A scheduled work item without provider handoff is an
+intermediate server state, not a successful `run` outcome.
+
+Provider completion does not grant review acceptance or task completion.
+Lifecycle state changes follow admitted workflow events; the agent does not
+receive separate lifecycle-verb tools.
+
 ## Lifecycle States
 
 Generic work-item runtime states:

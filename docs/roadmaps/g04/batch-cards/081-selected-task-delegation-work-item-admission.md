@@ -1,6 +1,6 @@
 # 081 Selected Task Delegation Work Item Admission
 
-Status: planned
+Status: superseded
 Owner: Tom
 Updated: 2026-07-07
 Milestone: `../017-selected-task-delegation-scheduling-admission.md`
@@ -26,3 +26,9 @@ Add the pure server model for selected-task delegation scheduling admission.
 - [ ] Refusals fail closed and preserve clear reasons.
 - [ ] Tests cover missing refs, stale revision, missing operator/idempotency,
   unsupported route, conflicting active work, and no-effect guarantees.
+
+## Superseded By
+
+`138-conversation-mandate-turn-start-boundary.md` through
+`142-task-workflow-portal-receipts-and-live-validation.md`. The product lane
+requires one end-to-end `run` intent, not a schedule-only proof surface.

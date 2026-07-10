@@ -11,7 +11,8 @@ use crate::state::ServerStateDomain;
 use super::body::ControlResponseBodyDto;
 use super::records::ControlCommandEvidenceRecordDto;
 use crate::control_envelope_dto::{
-    ControlApiCodecError, ControlProjectRecordDto, ControlStateRecordDto, ControlTaskRecordDto,
+    ControlApiCodecError, ControlGoalRecordDto, ControlProjectRecordDto, ControlStateRecordDto,
+    ControlTaskRecordDto,
 };
 
 pub(super) fn runtime_surface_dto(surface: &RuntimeReadinessSurface) -> String {
@@ -211,6 +212,16 @@ pub(super) fn state_record_set_dto(
                 .records
                 .iter()
                 .map(ControlTaskRecordDto::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+        });
+    }
+
+    if records.domain == ServerStateDomain::Goals {
+        return Ok(ControlResponseBodyDto::GoalRecords {
+            records: records
+                .records
+                .iter()
+                .map(ControlGoalRecordDto::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
         });
     }

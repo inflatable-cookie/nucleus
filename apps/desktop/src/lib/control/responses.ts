@@ -4,6 +4,7 @@ import type {
   ControlProviderReadIntentQueryResultDto,
   ControlProviderReadinessOverviewDto,
   ControlProjectRecordDto,
+  ControlGoalRecordDto,
   ControlRuntimeReadinessDiagnosticDto,
   TaskAgentWorkUnitDiagnosticDto,
   ControlTaskRecordDto,
@@ -154,6 +155,12 @@ export function taskRecordsFromResponse(
   response: ControlResponseEnvelopeDto,
 ): ControlTaskRecordDto[] {
   return response.body.type === "task_records" ? response.body.records : [];
+}
+
+export function goalRecordsFromResponse(
+  response: ControlResponseEnvelopeDto,
+): ControlGoalRecordDto[] {
+  return response.body.type === "goal_records" ? response.body.records : [];
 }
 
 export function commandHistoryFromResponse(

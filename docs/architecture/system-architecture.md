@@ -605,6 +605,17 @@ that planning is blocked instead of inventing work.
 This is governed by
 `docs/contracts/025-goal-loop-next-task-contract.md`.
 
+The first realized Goal foundation lives in `nucleus-planning::goals`, reusing
+`PlanningGoalId`. Goal records own ordered task membership, lifecycle status,
+outcome, scope, stop conditions, evidence refs, next-task guidance, and
+timestamps. JSON storage uses the Planning domain with the `Goal` persistence
+record kind. Membership replacement requires the current record revision and
+revalidates task existence, project ownership, uniqueness, ordering, and the
+50-task first-slice bound.
+
+Server commands, control DTOs, `task_ledger` projection, and desktop grouping
+remain later product layers over this domain foundation.
+
 ## Workspace Model
 
 Workspace layout belongs to the project and persists across clients where

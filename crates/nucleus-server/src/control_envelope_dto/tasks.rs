@@ -16,12 +16,25 @@ pub struct ControlTaskRecordDto {
     pub project_id: String,
     pub title: String,
     pub description: Option<String>,
+    pub acceptance_criteria: Vec<ControlTaskAcceptanceCriterionDto>,
     pub importance: String,
     pub action_type: String,
     pub activity: String,
     pub assignment_intent: Option<String>,
     pub agent_ready: bool,
+    pub required_context_refs: Vec<String>,
+    pub allowed_actions: Vec<String>,
+    pub stop_conditions: Vec<String>,
+    pub validation_commands: Vec<String>,
+    pub blocked_reason: Option<String>,
     pub revision_id: String,
+}
+
+/// Display-ready task acceptance criterion.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ControlTaskAcceptanceCriterionDto {
+    pub text: String,
+    pub required: bool,
 }
 
 impl TryFrom<&LocalStoreRecord> for ControlTaskRecordDto {
@@ -46,11 +59,31 @@ impl TryFrom<&LocalStoreRecord> for ControlTaskRecordDto {
             project_id: decoded.project_id,
             title: decoded.title,
             description: decoded.description,
+            acceptance_criteria: decoded
+                .acceptance_criteria
+                .into_iter()
+                .map(|criterion| ControlTaskAcceptanceCriterionDto {
+                    text: criterion.text,
+                    required: criterion.required,
+                })
+                .collect(),
             importance: task_importance_dto(&decoded.importance),
             action_type: task_action_type_dto(&decoded.action_type),
             activity: task_activity_dto(&decoded.activity),
             assignment_intent: decoded.assignment_intent,
             agent_ready: decoded.agent_ready,
+            required_context_refs: decoded.required_context_refs,
+            allowed_actions: decoded
+                .allowed_actions
+                .iter()
+                .map(task_action_type_dto)
+                .collect(),
+            stop_conditions: decoded.stop_conditions,
+            validation_commands: decoded.validation_commands,
+            blocked_reason: match decoded.activity {
+                TaskStorageActivityState::Blocked { reason } => Some(reason),
+                _ => None,
+            },
             revision_id: record.revision_id.0.clone(),
         })
     }
