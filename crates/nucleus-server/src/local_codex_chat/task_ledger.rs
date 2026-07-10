@@ -175,7 +175,6 @@ where
                 || input.goals.is_some()
                 || input.goal_updates.is_some()
                 || input.goal_ids.is_some()
-                || input.include_closed.is_some()
                 || input.goal_id.is_some()
                 || input.expected_goal_revision.is_some()
             {
@@ -198,7 +197,6 @@ where
                 || input.goals.is_some()
                 || input.goal_updates.is_some()
                 || input.task_ids.is_some()
-                || input.include_archived.is_some()
                 || input.goal_id.is_some()
                 || input.expected_goal_revision.is_some()
             {
@@ -387,14 +385,36 @@ mod tests {
             "conversation:test",
             "turn:test",
             "call:test",
-            json!({ "action": "inspect", "entity": "tasks" }),
+            json!({
+                "action": "inspect",
+                "entity": "tasks",
+                "include_archived": false,
+                "include_closed": false
+            }),
             &mut command,
         )
         .expect("inspect");
 
+        let goals = execute(
+            &state,
+            "project:nucleus-local",
+            "conversation:test",
+            "turn:test",
+            "call:goals",
+            json!({
+                "action": "inspect",
+                "entity": "goals",
+                "include_archived": false,
+                "include_closed": false
+            }),
+            &mut command,
+        )
+        .expect("inspect goals");
+
         assert_eq!(dynamic_tool_spec()["name"], "task_ledger");
         assert!(outcome.text.contains("task:nucleus-local:bootstrap"));
         assert!(outcome.receipt.is_none());
+        assert_eq!(goals.text, "[]");
     }
 
     #[test]
@@ -434,6 +454,10 @@ mod tests {
         seed_local_project(&state, LocalProjectSeed::nucleus_local()).expect("project");
         let mut handler = LocalControlRequestHandler::new(backend, None);
         let mut command = |request| {
+            let envelope = crate::ControlRequestEnvelopeDto::try_from(&request)
+                .expect("command must cross the desktop control envelope");
+            let request = crate::ServerControlRequest::try_from(envelope)
+                .expect("command must decode after desktop transport");
             let response = handler.handle(request);
             if response.status == ServerControlResponseStatus::Accepted {
                 Ok(())

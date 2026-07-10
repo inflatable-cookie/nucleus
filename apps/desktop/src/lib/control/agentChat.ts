@@ -16,6 +16,7 @@ export type AgentChatReply = {
   reasoning_effort: string | null;
   assistant_message: string;
   task_receipts: TaskAuthoringReceipt[];
+  workflow_receipts: TaskWorkflowReceipt[];
 };
 
 export type TaskCreationReceipt = {
@@ -38,6 +39,23 @@ export type GoalCreationReceipt = {
   revision_id: string;
 };
 
+export type TaskWorkflowReceipt = {
+  status: "review_ready" | "blocked" | "stopped" | "recovery_required";
+  scope_kind: "task" | "goal";
+  project_id: string;
+  goal_id: string | null;
+  task_id: string | null;
+  title: string;
+  current_task_id: string | null;
+  current_position: number;
+  total_tasks: number;
+  summary: string;
+  mandate_id: string;
+  plan_id: string | null;
+  work_item_refs: string[];
+  runtime_receipt_refs: string[];
+};
+
 export type AgentChatHistoryMessage = {
   message_id: string;
   conversation_id: string;
@@ -46,6 +64,7 @@ export type AgentChatHistoryMessage = {
   text: string;
   sequence: number;
   task_receipts: TaskAuthoringReceipt[];
+  workflow_receipts: TaskWorkflowReceipt[];
 };
 
 export type AgentChatHistory = {

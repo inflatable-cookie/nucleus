@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-07-07
+Updated: 2026-07-10
 
 ## Purpose
 
@@ -368,3 +368,32 @@ Agents manage goals and task membership through `task_ledger`; Goals do not add
 a fifth top-level agent tool. A compact goal-creation receipt may focus the
 goal group. Granting `task_workflow run` authority to a goal remains a separate
 conversation mandate and is never implied by creating or selecting it.
+
+## Initial Code Editor Surface
+
+The existing Editor panel becomes the first real file workspace after Agent
+Chat and Tasks. It uses CodeMirror 6 as a client editing substrate and remains
+visually subordinate to the current panel shell.
+
+The normal editor view contains:
+
+- one active host-authorized file buffer
+- a compact project-relative path and dirty indicator
+- the editor itself
+- Save and a small overflow menu
+- quick open through a popover or command, not a permanent explorer sidebar
+
+The first slice supports open, edit, undo/redo, search, syntax presentation,
+keyboard save, revision-checked save, reload, and explicit conflict state. It
+does not add editor-internal file tabs, a minimap, breadcrumbs stack, persistent
+outline, language-server features, formatter controls, VS Code extensions,
+plugin UI, or automatic save.
+
+CodeMirror state is disposable client interaction state. The Rust host returns
+the current file snapshot and opaque revision, validates project scope and
+write policy, rejects stale saves, and returns the new accepted snapshot. The
+client must never silently overwrite an externally changed file.
+
+Later diagnostics, completion, hover, formatting, rename, and code actions map
+from server-owned language-server sessions into CodeMirror extensions. They do
+not move language-server process authority into Svelte.

@@ -4,6 +4,7 @@
     role: "user" | "assistant";
     text: string;
     taskReceipts: import("./control/agentChat").TaskAuthoringReceipt[];
+    workflowReceipts: import("./control/agentChat").TaskWorkflowReceipt[];
   };
 
   const retainedMessages = new Map<string, ChatMessage[]>();
@@ -16,8 +17,9 @@
   import { Button, Icon, Text } from "@poodle/svelte";
   import { messageSquareText, send } from "@poodle/icons-lucide";
   import TaskCreationReceipt from "./TaskCreationReceipt.svelte";
+  import TaskWorkflowReceipt from "./TaskWorkflowReceipt.svelte";
   import type { ControlGoalRecordDto, ControlTaskRecordDto } from "./control";
-  import type { TaskAuthoringReceipt } from "./control/agentChat";
+  import type { TaskAuthoringReceipt, TaskWorkflowReceipt as WorkflowReceipt } from "./control/agentChat";
   import { loadAgentChatHistory, sendAgentChatMessage } from "./control/agentChat";
 
   let {
@@ -73,6 +75,7 @@
         role: message.role,
         text: message.text,
         taskReceipts: message.task_receipts,
+        workflowReceipts: message.workflow_receipts,
       }));
       retainedMessages.set(nextConversationId, messages);
       model = history.model;
@@ -110,6 +113,7 @@
       role: "user",
       text: message,
       taskReceipts: [],
+      workflowReceipts: [],
     });
 
     try {
@@ -131,8 +135,9 @@
         role: "assistant",
         text: reply.assistant_message,
         taskReceipts: reply.task_receipts,
+        workflowReceipts: reply.workflow_receipts,
       });
-      if (reply.task_receipts.length > 0) {
+      if (reply.task_receipts.length > 0 || reply.workflow_receipts.length > 0) {
         window.dispatchEvent(
           new CustomEvent("nucleus:tasks-changed", { detail: { projectId } }),
         );
@@ -181,6 +186,29 @@
     );
   }
 
+  function openWorkflowReceipt(receipt: WorkflowReceipt): void {
+    if (!projectId) {
+      return;
+    }
+    if (receipt.goal_id) {
+      window.dispatchEvent(
+        new CustomEvent("nucleus:open-goal", {
+          detail: {
+            projectId,
+            goalId: receipt.goal_id,
+            taskId: receipt.current_task_id,
+          },
+        }),
+      );
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent("nucleus:open-task", {
+        detail: { projectId, taskId: receipt.task_id ?? receipt.current_task_id },
+      }),
+    );
+  }
+
   async function scrollToLatest(): Promise<void> {
     await tick();
     timeline?.scrollTo({ top: timeline.scrollHeight, behavior: "smooth" });
@@ -214,6 +242,9 @@
             <div class="message-copy">{message.text}</div>
             {#each message.taskReceipts ?? [] as receipt}
               <TaskCreationReceipt {receipt} onOpen={() => openTaskReceipt(receipt)} />
+            {/each}
+            {#each message.workflowReceipts ?? [] as receipt}
+              <TaskWorkflowReceipt {receipt} onOpen={() => openWorkflowReceipt(receipt)} />
             {/each}
           </article>
         {/each}

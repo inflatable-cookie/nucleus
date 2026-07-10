@@ -25,10 +25,23 @@ gaining lifecycle or dispatch authority. Its task capabilities now use one
 `task_ledger` portal rather than atomic query and mutation tools. Current
 operator turns now persist before provider tool activity, and explicit Goal
 mandates freeze the selected Goal revision and ordered task revisions. Current
-pointer: compose Goal inspection and serial run admission without provider
-effects.
+Goal inspection now resolves blockers and the current chat route, while serial
+run admission persists one mandate-bound plan and one scheduled first work
+item without provider effects. Admitted runs now execute their frozen snapshot
+through real serial local Codex turns and stop at reviewable evidence or the
+first stop condition. Agent Chat now exposes only the `task_ledger` and
+`task_workflow` portals; compact workflow receipts persist, refresh Tasks, and
+focus the affected Goal or task. The next product lane is now the first
+host-authorized CodeMirror 6 editor vertical slice. Quick open, lazy language
+support, token styling, dirty switching, and stale-conflict controls are now in
+place. Current pointer: full editor validation and the operator next-lane
+checkpoint.
 
 Current planning artifacts:
+
+- `research/translation-memos/editor-substrate-selection.md`
+- `specs/006-initial-code-editor-vertical-slice.md`
+- `roadmaps/g04/028-initial-code-editor-vertical-slice.md`
 
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`

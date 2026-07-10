@@ -1,6 +1,6 @@
 # 027 Agent Chat Goal Workflow Run
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-10
 
@@ -44,15 +44,17 @@ workflow behavior to the agent.
 
 Ready:
 
-- `batch-cards/147-goal-run-inspection-and-admission.md`
+- None.
 
 Planned:
 
-- `batch-cards/148-goal-run-provider-dispatch-bridge.md`
-- `batch-cards/149-task-workflow-portal-receipts-and-live-validation.md`
+- None.
 
 Completed:
 
+- `batch-cards/149-task-workflow-portal-receipts-and-live-validation.md`
+- `batch-cards/148-goal-run-provider-dispatch-bridge.md`
+- `batch-cards/147-goal-run-inspection-and-admission.md`
 - `batch-cards/146-goal-mandate-turn-start-boundary.md`
 - `batch-cards/143-goal-domain-and-task-membership.md`
 - `batch-cards/144-task-ledger-goal-authoring.md`

@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-07-10
 
 ## Active Research
 
@@ -20,4 +20,5 @@ Updated: 2026-06-15
 | Kimi runtime boundary | `specimen-dossiers/kimi-runtime-boundary.md` | promoted-first-pass |
 | Pi runtime boundary | `specimen-dossiers/pi-runtime-boundary.md` | promoted-implementation-ready |
 | Harness adapter contract translation | `translation-memos/harness-adapter-contract-first-pass.md` | promoted-first-pass |
+| Editor substrate selection | `translation-memos/editor-substrate-selection.md` | promoted-first-pass |
 | Provider implementation readiness | `../specs/001-provider-implementation-readiness.md` | active |

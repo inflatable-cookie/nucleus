@@ -11,12 +11,16 @@ mod tool_calls;
 use super::persistence::StoredChatSession;
 use super::task_authoring::{TaskAuthoringReceipt, TaskToolOutcome};
 use super::task_ledger::dynamic_tool_spec as task_ledger_spec;
-use super::{LocalCodexChatReply, CHAT_MODEL, CHAT_REASONING_EFFORT, CHAT_TASK_TOOLSET_VERSION};
+use super::task_workflow::{dynamic_tool_spec as task_workflow_spec, TaskWorkflowReceipt};
+use super::{
+    LocalCodexChatReply, CHAT_ADAPTER_ID, CHAT_MODEL, CHAT_PROVIDER_INSTANCE_ID,
+    CHAT_REASONING_EFFORT, CHAT_TASK_TOOLSET_VERSION,
+};
 use tool_calls::{consolidate_task_receipts, prepare_tool_call_response};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
-const TASK_TOOL_INSTRUCTIONS: &str = "You are operating inside Nucleus. The task_ledger portal inspects, creates, and updates durable task records through typed actions; it is independent of the read-only repository sandbox. Use its inspect action before reviewing or revising existing tasks. When the user clearly asks to create or refine tasks, call task_ledger directly and fill every inferable field. Do not claim that read-only filesystem access prevents task access. This portal never dispatches work or changes task lifecycle state.";
+const TASK_TOOL_INSTRUCTIONS: &str = "You are operating inside Nucleus. You have exactly two Nucleus portals. task_ledger inspects, creates, and updates durable Goals and tasks; use inspect before updates and fill every inferable field. task_workflow inspects or runs exactly one task or one Goal snapshot. Call task_workflow run only when the current operator message explicitly authorizes execution; copy an exact authorizing excerpt, cite the current scope revision, and supply a stable idempotency key. Selection and readiness are not authority. Never invent task arrays, project sweeps, lifecycle transitions, delegation stages, or dispatch stages. Provider completion does not accept review, complete tasks, achieve Goals, or publish SCM changes. The portals are independent of the chat thread's read-only repository sandbox.";
 
 pub(super) struct LocalCodexChatSession {
     session_id: String,
@@ -41,6 +45,8 @@ impl LocalCodexChatSession {
             provider_thread_id: self.thread_id.clone(),
             model: self.model.clone(),
             reasoning_effort: self.reasoning_effort.clone(),
+            adapter_id: CHAT_ADAPTER_ID.to_owned(),
+            provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
             turn_count,
             task_toolset_version: CHAT_TASK_TOOLSET_VERSION,
         }
@@ -101,7 +107,7 @@ impl LocalCodexChatSession {
                     "developerInstructions": developer_instructions,
                     "approvalPolicy": "never",
                     "sandbox": "read-only",
-                    "dynamicTools": [task_ledger_spec()]
+                    "dynamicTools": dynamic_tool_specs()
                 }),
                 REQUEST_TIMEOUT,
             )?
@@ -117,7 +123,7 @@ impl LocalCodexChatSession {
                     "approvalPolicy": "never",
                     "sandbox": "read-only",
                     "ephemeral": false,
-                    "dynamicTools": [task_ledger_spec()]
+                    "dynamicTools": dynamic_tool_specs()
                 }),
                 REQUEST_TIMEOUT,
             )?
@@ -180,7 +186,7 @@ impl LocalCodexChatSession {
             .and_then(Value::as_str)
             .ok_or_else(|| "Codex turn/start response did not include a turn id".to_owned())?
             .to_owned();
-        let (assistant_message, task_receipts) =
+        let (assistant_message, task_receipts, workflow_receipts) =
             self.rpc.wait_for_turn(&turn_id, TURN_TIMEOUT, task_tool)?;
 
         Ok(LocalCodexChatReply {
@@ -191,7 +197,26 @@ impl LocalCodexChatSession {
             reasoning_effort: self.reasoning_effort.clone(),
             assistant_message,
             task_receipts,
+            workflow_receipts,
         })
+    }
+}
+
+fn dynamic_tool_specs() -> Vec<Value> {
+    vec![task_ledger_spec(), task_workflow_spec()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_projects_exactly_the_two_nucleus_portals() {
+        let names = dynamic_tool_specs()
+            .into_iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_owned))
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["task_ledger", "task_workflow"]);
     }
 }
 
@@ -282,7 +307,7 @@ impl CodexAppServerRpc {
         turn_id: &str,
         timeout: Duration,
         task_tool: &mut F,
-    ) -> Result<(String, Vec<TaskAuthoringReceipt>), String>
+    ) -> Result<(String, Vec<TaskAuthoringReceipt>, Vec<TaskWorkflowReceipt>), String>
     where
         F: FnMut(&str, &str, &str, Value) -> Result<TaskToolOutcome, String>,
     {
@@ -290,9 +315,16 @@ impl CodexAppServerRpc {
         let mut assistant_message = String::new();
         let mut completed_assistant_message = None;
         let mut task_receipts = Vec::new();
+        let mut workflow_receipts = Vec::new();
         loop {
             let value = self.read_until(deadline, "Codex turn completion")?;
-            if self.handle_turn_server_message(&value, turn_id, task_tool, &mut task_receipts)? {
+            if self.handle_turn_server_message(
+                &value,
+                turn_id,
+                task_tool,
+                &mut task_receipts,
+                &mut workflow_receipts,
+            )? {
                 continue;
             }
             match value.get("method").and_then(Value::as_str) {
@@ -335,7 +367,7 @@ impl CodexAppServerRpc {
                         Err("Codex completed the turn without an assistant message".to_owned())
                     } else {
                         let task_receipts = consolidate_task_receipts(task_receipts);
-                        Ok((message, task_receipts))
+                        Ok((message, task_receipts, workflow_receipts))
                     };
                 }
                 _ => {}
@@ -349,6 +381,7 @@ impl CodexAppServerRpc {
         active_turn_id: &str,
         task_tool: &mut F,
         task_receipts: &mut Vec<TaskAuthoringReceipt>,
+        workflow_receipts: &mut Vec<TaskWorkflowReceipt>,
     ) -> Result<bool, String>
     where
         F: FnMut(&str, &str, &str, Value) -> Result<TaskToolOutcome, String>,
@@ -357,6 +390,9 @@ impl CodexAppServerRpc {
             let outcome = outcome?;
             if let Some(receipt) = outcome.receipt {
                 task_receipts.push(receipt);
+            }
+            if let Some(receipt) = outcome.workflow_receipt {
+                workflow_receipts.push(receipt);
             }
             self.write(&outcome.response)?;
             return Ok(true);

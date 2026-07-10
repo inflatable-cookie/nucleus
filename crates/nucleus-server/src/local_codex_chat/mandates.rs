@@ -15,27 +15,39 @@ const MANDATE_PREFIX: &str = "conversation-goal-mandate:";
 const MAX_GOAL_TASKS: usize = 50;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct GoalMandateAdmission {
+pub struct WorkflowMandateAdmission {
     pub mandate_id: String,
     pub conversation_id: String,
     pub operator_message_id: String,
     pub operator_message_excerpt: String,
     pub project_id: String,
-    pub goal_id: String,
-    pub goal_revision: String,
+    pub scope: WorkflowMandateScope,
     pub idempotency_key: String,
     pub expires_at_epoch_seconds: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct GoalMandateTaskSnapshot {
+pub struct WorkflowMandateTaskSnapshot {
     pub task_id: String,
     pub revision_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkflowMandateScope {
+    Goal {
+        goal_id: String,
+        goal_revision: String,
+    },
+    Task {
+        task_id: String,
+        task_revision: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GoalMandateStatus {
+pub enum WorkflowMandateStatus {
     Active,
     Cancelled,
     Revoked,
@@ -43,18 +55,17 @@ pub enum GoalMandateStatus {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct GoalMandate {
+pub struct WorkflowMandate {
     pub mandate_id: String,
     pub conversation_id: String,
     pub source_turn_id: String,
     pub operator_message_id: String,
     pub operator_message_excerpt: String,
     pub project_id: String,
-    pub goal_id: String,
-    pub goal_revision: String,
-    pub ordered_task_snapshot: Vec<GoalMandateTaskSnapshot>,
+    pub scope: WorkflowMandateScope,
+    pub ordered_task_snapshot: Vec<WorkflowMandateTaskSnapshot>,
     pub idempotency_key: String,
-    pub status: GoalMandateStatus,
+    pub status: WorkflowMandateStatus,
     pub created_at_epoch_seconds: u64,
     pub expires_at_epoch_seconds: u64,
     pub terminal_reason: Option<String>,
@@ -62,10 +73,10 @@ pub struct GoalMandate {
     pub revision_id: String,
 }
 
-pub fn create_goal_mandate<B>(
+pub fn create_workflow_mandate<B>(
     state: &ServerStateService<B>,
-    admission: GoalMandateAdmission,
-) -> Result<GoalMandate, String>
+    admission: WorkflowMandateAdmission,
+) -> Result<WorkflowMandate, String>
 where
     B: LocalStoreBackend,
 {
@@ -87,9 +98,6 @@ where
     if turn.status != "started" {
         return Err("goal mandate source must be the current in-progress operator turn".to_owned());
     }
-    if turn.selected_goal_id.as_deref() != Some(admission.goal_id.as_str()) {
-        return Err("goal mandate must cite the Goal selected for the current turn".to_owned());
-    }
     let message = read_message(state, &admission.operator_message_id)?;
     if message.conversation_id != admission.conversation_id
         || message.turn_id != turn.turn_id
@@ -103,38 +111,58 @@ where
         );
     }
 
-    let goal = goal_record(state, &admission.project_id, &admission.goal_id)?;
-    if goal.revision_id != admission.goal_revision {
-        return Err("goal mandate cites a stale Goal revision".to_owned());
-    }
-    if goal.ordered_task_refs.len() > MAX_GOAL_TASKS {
-        return Err(format!(
-            "goal mandate accepts at most {MAX_GOAL_TASKS} ordered tasks"
-        ));
-    }
-    let ordered_task_snapshot = goal
-        .ordered_task_refs
-        .iter()
-        .map(|task_id| {
-            active_task(state, &admission.project_id, task_id).map(|task| GoalMandateTaskSnapshot {
+    let ordered_task_snapshot = match &admission.scope {
+        WorkflowMandateScope::Goal {
+            goal_id,
+            goal_revision,
+        } => {
+            let goal = goal_record(state, &admission.project_id, goal_id)?;
+            if goal.revision_id != *goal_revision {
+                return Err("goal mandate cites a stale Goal revision".to_owned());
+            }
+            if goal.ordered_task_refs.len() > MAX_GOAL_TASKS {
+                return Err(format!(
+                    "goal mandate accepts at most {MAX_GOAL_TASKS} ordered tasks"
+                ));
+            }
+            goal.ordered_task_refs
+                .iter()
+                .map(|task_id| {
+                    active_task(state, &admission.project_id, task_id).map(|task| {
+                        WorkflowMandateTaskSnapshot {
+                            task_id: task.task_id,
+                            revision_id: task.revision_id,
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        WorkflowMandateScope::Task {
+            task_id,
+            task_revision,
+        } => {
+            let task = active_task(state, &admission.project_id, task_id)?;
+            if task.revision_id != *task_revision {
+                return Err("task mandate cites a stale task revision".to_owned());
+            }
+            vec![WorkflowMandateTaskSnapshot {
                 task_id: task.task_id,
                 revision_id: task.revision_id,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+            }]
+        }
+    };
     let revision_id = format!("rev:{}:active", admission.mandate_id);
-    let mandate = GoalMandate {
+    let mandate = WorkflowMandate {
         mandate_id: admission.mandate_id,
         conversation_id: admission.conversation_id,
         source_turn_id: turn.turn_id,
         operator_message_id: admission.operator_message_id,
         operator_message_excerpt: excerpt.to_owned(),
         project_id: admission.project_id,
-        goal_id: admission.goal_id,
-        goal_revision: admission.goal_revision,
+        scope: admission.scope,
         ordered_task_snapshot,
         idempotency_key: admission.idempotency_key,
-        status: GoalMandateStatus::Active,
+        status: WorkflowMandateStatus::Active,
         created_at_epoch_seconds: now,
         expires_at_epoch_seconds: admission.expires_at_epoch_seconds,
         terminal_reason: None,
@@ -145,27 +173,40 @@ where
     Ok(mandate)
 }
 
-pub fn read_goal_mandate<B>(
+pub fn read_workflow_mandate<B>(
     state: &ServerStateService<B>,
     mandate_id: &str,
-) -> Result<GoalMandate, String>
+) -> Result<WorkflowMandate, String>
 where
     B: LocalStoreBackend,
 {
-    let record = state
+    find_workflow_mandate(state, mandate_id)?
+        .ok_or_else(|| format!("workflow mandate not found: {mandate_id}"))
+}
+
+pub(crate) fn find_workflow_mandate<B>(
+    state: &ServerStateService<B>,
+    mandate_id: &str,
+) -> Result<Option<WorkflowMandate>, String>
+where
+    B: LocalStoreBackend,
+{
+    state
         .agent_sessions()
         .get(&record_id(mandate_id))
         .map_err(storage_error)?
-        .ok_or_else(|| format!("goal mandate not found: {mandate_id}"))?;
-    serde_json::from_slice(&record.payload.bytes).map_err(|error| error.to_string())
+        .map(|record| {
+            serde_json::from_slice(&record.payload.bytes).map_err(|error| error.to_string())
+        })
+        .transpose()
 }
 
-pub fn cancel_goal_mandate<B>(
+pub fn cancel_workflow_mandate<B>(
     state: &ServerStateService<B>,
     mandate_id: &str,
     expected_revision: &str,
     reason: &str,
-) -> Result<GoalMandate, String>
+) -> Result<WorkflowMandate, String>
 where
     B: LocalStoreBackend,
 {
@@ -174,17 +215,18 @@ where
         mandate_id,
         expected_revision,
         reason,
-        GoalMandateStatus::Cancelled,
+        WorkflowMandateStatus::Cancelled,
         "cancelled",
+        Vec::new(),
     )
 }
 
-pub fn revoke_goal_mandate<B>(
+pub fn revoke_workflow_mandate<B>(
     state: &ServerStateService<B>,
     mandate_id: &str,
     expected_revision: &str,
     reason: &str,
-) -> Result<GoalMandate, String>
+) -> Result<WorkflowMandate, String>
 where
     B: LocalStoreBackend,
 {
@@ -193,8 +235,30 @@ where
         mandate_id,
         expected_revision,
         reason,
-        GoalMandateStatus::Revoked,
+        WorkflowMandateStatus::Revoked,
         "revoked",
+        Vec::new(),
+    )
+}
+
+pub(crate) fn expire_workflow_mandate<B>(
+    state: &ServerStateService<B>,
+    mandate_id: &str,
+    expected_revision: &str,
+    reason: &str,
+    outcome_refs: Vec<String>,
+) -> Result<WorkflowMandate, String>
+where
+    B: LocalStoreBackend,
+{
+    close_mandate(
+        state,
+        mandate_id,
+        expected_revision,
+        reason,
+        WorkflowMandateStatus::Expired,
+        "expired",
+        outcome_refs,
     )
 }
 
@@ -203,22 +267,24 @@ fn close_mandate<B>(
     mandate_id: &str,
     expected_revision: &str,
     reason: &str,
-    status: GoalMandateStatus,
+    status: WorkflowMandateStatus,
     suffix: &str,
-) -> Result<GoalMandate, String>
+    outcome_refs: Vec<String>,
+) -> Result<WorkflowMandate, String>
 where
     B: LocalStoreBackend,
 {
     require_nonempty("terminal reason", reason.trim())?;
-    let mut mandate = read_goal_mandate(state, mandate_id)?;
+    let mut mandate = read_workflow_mandate(state, mandate_id)?;
     if mandate.revision_id != expected_revision {
         return Err("goal mandate revision conflict".to_owned());
     }
-    if mandate.status != GoalMandateStatus::Active {
-        return Err("only an active goal mandate can be closed".to_owned());
+    if mandate.status != WorkflowMandateStatus::Active {
+        return Err("only an active workflow mandate can be closed".to_owned());
     }
     mandate.status = status;
     mandate.terminal_reason = Some(reason.trim().to_owned());
+    mandate.outcome_refs = outcome_refs;
     let previous_revision = RevisionId(mandate.revision_id.clone());
     mandate.revision_id = format!("rev:{mandate_id}:{suffix}");
     put_mandate(
@@ -231,7 +297,7 @@ where
 
 fn put_mandate<B>(
     state: &ServerStateService<B>,
-    mandate: &GoalMandate,
+    mandate: &WorkflowMandate,
     expectation: RevisionExpectation,
 ) -> Result<(), String>
 where
@@ -311,16 +377,18 @@ mod tests {
         )
         .expect("turn start");
 
-        let mandate = create_goal_mandate(
+        let mandate = create_workflow_mandate(
             &state,
-            GoalMandateAdmission {
+            WorkflowMandateAdmission {
                 mandate_id: "mandate:1".to_owned(),
                 conversation_id: conversation.to_owned(),
                 operator_message_id: operator_message_id(turn_id),
                 operator_message_excerpt: "execute this goal".to_owned(),
                 project_id: "project:nucleus-local".to_owned(),
-                goal_id,
-                goal_revision,
+                scope: WorkflowMandateScope::Goal {
+                    goal_id,
+                    goal_revision,
+                },
                 idempotency_key: "run:1".to_owned(),
                 expires_at_epoch_seconds: now_epoch_seconds().expect("clock") + 300,
             },
@@ -341,8 +409,16 @@ mod tests {
                 client_id: ClientId("client:test".to_owned()),
                 kind: ServerCommandKind::Goal(crate::commands::GoalCommand::Update(
                     crate::commands::GoalUpdateCommand {
-                        goal_id: PlanningGoalId(mandate.goal_id.clone()),
-                        expected_revision: RevisionId(mandate.goal_revision.clone()),
+                        goal_id: PlanningGoalId(match &mandate.scope {
+                            WorkflowMandateScope::Goal { goal_id, .. } => goal_id.clone(),
+                            WorkflowMandateScope::Task { .. } => panic!("expected Goal scope"),
+                        }),
+                        expected_revision: RevisionId(match &mandate.scope {
+                            WorkflowMandateScope::Goal { goal_revision, .. } => {
+                                goal_revision.clone()
+                            }
+                            WorkflowMandateScope::Task { .. } => panic!("expected Goal scope"),
+                        }),
                         changes: crate::commands::GoalUpdateChanges {
                             ordered_task_refs: Some(vec![
                                 TaskId("task:nucleus-local:bootstrap".to_owned()),
@@ -359,25 +435,25 @@ mod tests {
             crate::control_api::ServerControlResponseStatus::Accepted
         );
         assert_eq!(
-            read_goal_mandate(&state, &mandate.mandate_id)
+            read_workflow_mandate(&state, &mandate.mandate_id)
                 .expect("frozen mandate")
                 .ordered_task_snapshot,
             mandate.ordered_task_snapshot
         );
         assert!(state.runtime_effects().list().expect("effects").is_empty());
-        let cancelled = cancel_goal_mandate(
+        let cancelled = cancel_workflow_mandate(
             &state,
             &mandate.mandate_id,
             &mandate.revision_id,
             "operator stopped the run",
         )
         .expect("cancel");
-        assert_eq!(cancelled.status, GoalMandateStatus::Cancelled);
+        assert_eq!(cancelled.status, WorkflowMandateStatus::Cancelled);
         assert!(state.runtime_effects().list().expect("effects").is_empty());
     }
 
     #[test]
-    fn mandate_rejects_noncurrent_message_excerpt_and_unselected_goal() {
+    fn mandate_rejects_excerpt_missing_from_current_operator_message() {
         let (state, _backend, goal_id, goal_revision) = setup_goal();
         let conversation = "conversation:reject";
         persist_turn_start(
@@ -388,22 +464,72 @@ mod tests {
             None,
         )
         .expect("turn start");
-        let error = create_goal_mandate(
+        let error = create_workflow_mandate(
             &state,
-            GoalMandateAdmission {
+            WorkflowMandateAdmission {
                 mandate_id: "mandate:reject".to_owned(),
                 conversation_id: conversation.to_owned(),
                 operator_message_id: operator_message_id("turn:reject:1"),
                 operator_message_excerpt: "execute".to_owned(),
                 project_id: "project:nucleus-local".to_owned(),
-                goal_id,
-                goal_revision,
+                scope: WorkflowMandateScope::Goal {
+                    goal_id,
+                    goal_revision,
+                },
                 idempotency_key: "run:reject".to_owned(),
                 expires_at_epoch_seconds: now_epoch_seconds().expect("clock") + 300,
             },
         )
-        .expect_err("unselected goal must fail");
-        assert!(error.contains("selected"));
+        .expect_err("missing excerpt must fail");
+        assert!(error.contains("does not occur exactly"));
+    }
+
+    #[test]
+    fn single_task_mandate_freezes_only_the_explicit_task_revision() {
+        let (state, _backend, _goal_id, _goal_revision) = setup_goal();
+        let conversation = "conversation:single-task";
+        let turn_id = "turn:single-task:1";
+        persist_turn_start(
+            &state,
+            chat_session(conversation),
+            turn_id,
+            "Run the bootstrap task now.",
+            None,
+        )
+        .expect("turn start");
+        let task = active_task(
+            &state,
+            "project:nucleus-local",
+            "task:nucleus-local:bootstrap",
+        )
+        .expect("task");
+
+        let mandate = create_workflow_mandate(
+            &state,
+            WorkflowMandateAdmission {
+                mandate_id: "mandate:single-task".to_owned(),
+                conversation_id: conversation.to_owned(),
+                operator_message_id: operator_message_id(turn_id),
+                operator_message_excerpt: "Run the bootstrap task".to_owned(),
+                project_id: "project:nucleus-local".to_owned(),
+                scope: WorkflowMandateScope::Task {
+                    task_id: task.task_id.clone(),
+                    task_revision: task.revision_id.clone(),
+                },
+                idempotency_key: "run:single-task".to_owned(),
+                expires_at_epoch_seconds: now_epoch_seconds().expect("clock") + 300,
+            },
+        )
+        .expect("single-task mandate");
+
+        assert_eq!(
+            mandate.ordered_task_snapshot,
+            vec![WorkflowMandateTaskSnapshot {
+                task_id: task.task_id,
+                revision_id: task.revision_id,
+            }]
+        );
+        assert!(matches!(mandate.scope, WorkflowMandateScope::Task { .. }));
     }
 
     fn setup_goal() -> (
@@ -475,6 +601,8 @@ mod tests {
             provider_thread_id: "thread:test".to_owned(),
             model: "gpt-5.4-mini".to_owned(),
             reasoning_effort: Some("low".to_owned()),
+            adapter_id: "codex-app-server".to_owned(),
+            provider_instance_id: "codex:local-default".to_owned(),
             turn_count: 1,
             task_toolset_version: 4,
         }

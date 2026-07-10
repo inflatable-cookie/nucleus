@@ -291,7 +291,8 @@ shape.
 - `g04/024-workspace-surface-shell-skeleton.md` - completed
 - `g04/025-initial-agent-chat-vertical-slice.md` - completed
 - `g04/026-agent-chat-task-context.md` - completed
-- `g04/027-agent-chat-task-workflow-run.md` - active
+- `g04/027-agent-chat-task-workflow-run.md` - completed
+- `g04/028-initial-code-editor-vertical-slice.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -351,9 +352,6 @@ shape.
 
 ## Next Task
 
-Continue
-`docs/roadmaps/g04/027-agent-chat-task-workflow-run.md`
-with
-`docs/roadmaps/g04/batch-cards/147-goal-run-inspection-and-admission.md`.
-Compose Goal workflow inspection and an admitted serial run plan without
-provider effects.
+Execute
+`docs/roadmaps/g04/batch-cards/153-editor-validation-and-next-lane-checkpoint.md`
+for full editor validation and the operator next-lane checkpoint.

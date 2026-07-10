@@ -1,15 +1,19 @@
 //! Local Codex-backed product chat with durable Nucleus timeline records.
 
 mod goal_authoring;
+mod goal_execution;
 mod goal_inspection;
+mod goal_run;
 mod goal_update;
 mod mandates;
 mod persistence;
 mod runtime;
 mod task_authoring;
+mod task_execution;
 mod task_inspection;
 mod task_ledger;
 mod task_update;
+mod task_workflow;
 
 use std::collections::HashMap;
 
@@ -18,9 +22,19 @@ use nucleus_local_store::LocalStoreBackend;
 use nucleus_projects::decode_project_storage_record;
 use serde::{Deserialize, Serialize};
 
+pub use goal_execution::{
+    execute_goal_run, GoalRunExecutionRecord, GoalRunExecutionRequest, GoalRunExecutionStatus,
+    GoalTaskExecutionRecord,
+};
+pub use goal_run::{
+    admit_goal_run, inspect_goal_run, read_goal_run_plan, GoalRunAdmissionRequest, GoalRunBlocker,
+    GoalRunInspection, GoalRunOutcome, GoalRunPlan, GoalRunPlanTask, GoalRunRoute,
+    GoalRunTaskInspection,
+};
 pub use mandates::{
-    cancel_goal_mandate, create_goal_mandate, read_goal_mandate, revoke_goal_mandate, GoalMandate,
-    GoalMandateAdmission,
+    cancel_workflow_mandate, create_workflow_mandate, read_workflow_mandate,
+    revoke_workflow_mandate, WorkflowMandate, WorkflowMandateAdmission, WorkflowMandateScope,
+    WorkflowMandateStatus,
 };
 use persistence::{
     canonical_turn_id, persist_turn_completion, persist_turn_failure, persist_turn_start,
@@ -31,12 +45,15 @@ use runtime::LocalCodexChatSession;
 use task_ledger::execute as execute_task_ledger;
 
 pub use task_authoring::{GoalCreationReceipt, TaskAuthoringReceipt, TaskCreationReceipt};
+pub use task_workflow::{TaskWorkflowReceipt, TaskWorkflowReceiptStatus};
 
 use crate::ServerStateService;
 
 const CHAT_MODEL: &str = "gpt-5.4-mini";
 const CHAT_REASONING_EFFORT: &str = "low";
-const CHAT_TASK_TOOLSET_VERSION: u32 = 4;
+const CHAT_ADAPTER_ID: &str = "codex-app-server";
+const CHAT_PROVIDER_INSTANCE_ID: &str = "codex:local-default";
+const CHAT_TASK_TOOLSET_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LocalCodexChatRequest {
@@ -58,6 +75,7 @@ pub struct LocalCodexChatReply {
     pub reasoning_effort: Option<String>,
     pub assistant_message: String,
     pub task_receipts: Vec<TaskAuthoringReceipt>,
+    pub workflow_receipts: Vec<TaskWorkflowReceipt>,
 }
 
 #[derive(Default)]
@@ -149,6 +167,9 @@ impl LocalCodexChatService {
                 arguments,
                 execute,
             ),
+            "task_workflow" => {
+                task_workflow::execute(state, &project_id, &conversation_id, arguments)
+            }
             _ => Err(format!("unsupported dynamic tool: {tool}")),
         };
         let turn_count = stored.map_or(1, |stored| stored.turn_count + 1);
@@ -177,6 +198,7 @@ impl LocalCodexChatService {
             &reply.turn_id,
             &reply.assistant_message,
             &reply.task_receipts,
+            &reply.workflow_receipts,
         )?;
 
         Ok(reply)
@@ -266,7 +288,10 @@ where
     Ok(context)
 }
 
-fn project_root<B>(state: &ServerStateService<B>, project_id: &str) -> Result<String, String>
+pub(super) fn project_root<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+) -> Result<String, String>
 where
     B: LocalStoreBackend,
 {

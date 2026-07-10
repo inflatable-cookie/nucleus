@@ -12,4 +12,4 @@ roadmaps depend on it.
 
 ## Current Focus
 
-SCM and forge implementation readiness.
+Initial CodeMirror editor substrate and host-authorized file-buffer boundary.

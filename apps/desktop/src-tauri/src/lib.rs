@@ -18,11 +18,11 @@ use nucleus_server::{
     read_forge_status_check_refreshes, seed_local_memory_proposal, seed_local_planning_session,
     seed_local_project, seed_local_research_run_brief, seed_local_task, write_command_evidence,
     ControlApiCodecError, ControlRequestEnvelopeDto, ControlResponseBodyDto,
-    ControlResponseEnvelopeDto, ForgeCredentialStatusRefreshInput,
-    ForgeCredentialStatusRefreshPersistenceInput, ForgeNetworkCredentialKind,
-    ForgeNetworkCredentialResolutionBoundary, ForgeNetworkCredentialStatus,
-    ForgeNetworkExecutionCredentialRef, ForgeNetworkExecutionOperationFamily,
-    ForgePullRequestProvider, ForgePullRequestRefreshInput,
+    ControlResponseEnvelopeDto, EditorFileEntry, EditorFileSaveRequest, EditorFileSnapshot,
+    ForgeCredentialStatusRefreshInput, ForgeCredentialStatusRefreshPersistenceInput,
+    ForgeNetworkCredentialKind, ForgeNetworkCredentialResolutionBoundary,
+    ForgeNetworkCredentialStatus, ForgeNetworkExecutionCredentialRef,
+    ForgeNetworkExecutionOperationFamily, ForgePullRequestProvider, ForgePullRequestRefreshInput,
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
@@ -38,6 +38,31 @@ struct DesktopState {
     adapter: Arc<Mutex<TauriIpcControlCommandAdapter<SqliteBackend>>>,
     chat: Arc<Mutex<LocalCodexChatService>>,
     server_state: ServerStateService<SqliteBackend>,
+}
+
+#[tauri::command]
+fn list_editor_files(
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+) -> Result<Vec<EditorFileEntry>, String> {
+    nucleus_server::list_editor_files(&state.server_state, &project_id)
+}
+
+#[tauri::command]
+fn read_editor_file(
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+    file_ref: String,
+) -> Result<EditorFileSnapshot, String> {
+    nucleus_server::read_editor_file(&state.server_state, &project_id, &file_ref)
+}
+
+#[tauri::command]
+fn save_editor_file(
+    state: tauri::State<'_, DesktopState>,
+    request: EditorFileSaveRequest,
+) -> Result<EditorFileSnapshot, String> {
+    nucleus_server::save_editor_file(&state.server_state, &request)
 }
 
 impl DesktopState {
@@ -117,10 +142,10 @@ async fn send_agent_chat_message(
                     Ok(())
                 }
                 ControlResponseBodyDto::CommandReceipt { status, .. } => {
-                    Err(format!("task creation was not accepted: {status}"))
+                    Err(format!("task ledger command was not accepted: {status}"))
                 }
                 ControlResponseBodyDto::Error { reason, .. } => Err(reason),
-                _ => Err("task creation returned an unexpected response".to_owned()),
+                _ => Err("task ledger command returned an unexpected response".to_owned()),
             }
         })
     })
@@ -393,7 +418,10 @@ pub fn run() {
             send_agent_chat_message,
             load_agent_chat_history,
             load_workspace_ui_config,
-            save_workspace_ui_config
+            save_workspace_ui_config,
+            list_editor_files,
+            read_editor_file,
+            save_editor_file
         ])
         .run(tauri::generate_context!())
         .expect("failed to run nucleus desktop");

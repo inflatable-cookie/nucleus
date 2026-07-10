@@ -1,6 +1,6 @@
 # 148 Goal Run Provider Dispatch Bridge
 
-Status: planned
+Status: completed
 Owner: Codex
 Updated: 2026-07-10
 Milestone: `../027-agent-chat-task-workflow-run.md`
@@ -28,3 +28,16 @@ time.
 - serial advancement follows snapshotted goal membership
 - provider completion does not accept review, complete tasks, or achieve goals
 - authenticated single-task and two-task goal smokes pass
+
+## Outcome
+
+- admitted Goal runs now execute their frozen task snapshot through real local
+  Codex app-server turns, one task at a time
+- durable selection, admission, preflight, invocation, source transition, and
+  runtime receipt refs preserve the provider chain without raw provider output
+- continuation rechecks mandate, Goal, task revision, readiness, and dependency
+  state before every task
+- completion stops at reviewable evidence; failure, cancellation, interactive
+  wait, revocation, and recovery requirements stop serial advancement
+- authenticated one-task workspace-write and two-task serial provider smokes
+  pass

@@ -13,6 +13,7 @@
   } from "@poodle/svelte";
   import { pencil, plus } from "@poodle/icons-lucide";
   import AgentChatPanel from "./AgentChatPanel.svelte";
+  import EditorPanel from "./EditorPanel.svelte";
   import TaskListPanel from "./TaskListPanel.svelte";
   import type {
     ControlGoalRecordDto,
@@ -847,6 +848,8 @@
       bind:selectedTaskId
       bind:selectedTask
     />
+  {:else if panel?.kind === "editor"}
+    <EditorPanel projectId={selectedProject?.project_id ?? null} />
   {:else}
     <Surface tone="canvas" border="none" padding="md" asRole="region" label={panel?.title ?? "Empty panel"}>
       <div class="panel-placeholder">

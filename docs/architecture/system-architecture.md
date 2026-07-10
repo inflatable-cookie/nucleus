@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-16
+Updated: 2026-07-10
 Vision refs: `docs/vision/001-nucleus-product-vision.md`
 
 ## Top-Level Stack
@@ -205,6 +205,13 @@ Terminal and browser panels attach to host-managed runtime resources. Text and
 code editor panels attach to host-authorized file and language-service state.
 SCM changes, diff, and commit panels attach to the authoritative SCM host,
 command authority, and review workflow state.
+
+The first code editor uses CodeMirror 6 through official ESM packages inside a
+thin Nucleus-owned Svelte adapter. CodeMirror owns responsive client editing
+state only. Rust host APIs own project-scoped file discovery, opaque file
+identity, content snapshots, write capability, revision-checked save, conflict
+responses, and future language-server process lifecycle. Monaco and a VS Code
+workbench are not part of the first editor surface.
 
 Command diagnostics panels are client-rendered read-only surfaces over the
 host command history DTO. They render evidence rows, evidence detail, sanitized

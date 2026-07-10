@@ -4,7 +4,7 @@ use nucleus_local_store::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::TaskAuthoringReceipt;
+use super::{TaskAuthoringReceipt, TaskWorkflowReceipt};
 use crate::ServerStateService;
 
 const SESSION_PREFIX: &str = "product-chat-session:";
@@ -19,6 +19,10 @@ pub struct StoredChatSession {
     pub provider_thread_id: String,
     pub model: String,
     pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub adapter_id: String,
+    #[serde(default)]
+    pub provider_instance_id: String,
     pub turn_count: u64,
     #[serde(default)]
     pub task_toolset_version: u32,
@@ -49,6 +53,8 @@ pub struct StoredChatMessage {
     pub sequence: u64,
     #[serde(default)]
     pub task_receipts: Vec<TaskAuthoringReceipt>,
+    #[serde(default)]
+    pub workflow_receipts: Vec<TaskWorkflowReceipt>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -177,6 +183,7 @@ where
             text: user_message.to_owned(),
             sequence: first_sequence,
             task_receipts: Vec::new(),
+            workflow_receipts: Vec::new(),
         },
     )
 }
@@ -187,6 +194,7 @@ pub fn persist_turn_completion<B>(
     provider_turn_id: &str,
     assistant_message: &str,
     task_receipts: &[TaskAuthoringReceipt],
+    workflow_receipts: &[TaskWorkflowReceipt],
 ) -> Result<(), String>
 where
     B: LocalStoreBackend,
@@ -215,6 +223,7 @@ where
             text: assistant_message.to_owned(),
             sequence: first_sequence + 1,
             task_receipts: task_receipts.to_vec(),
+            workflow_receipts: workflow_receipts.to_vec(),
         },
     )
 }
@@ -374,13 +383,37 @@ mod tests {
             provider_thread_id: "thread:1".to_owned(),
             model: "gpt-5.4-mini".to_owned(),
             reasoning_effort: Some("low".to_owned()),
+            adapter_id: "codex-app-server".to_owned(),
+            provider_instance_id: "codex:local-default".to_owned(),
             turn_count: 1,
             task_toolset_version: 1,
         };
 
         persist_turn_start(&state, session, "turn:1", "Hello", None).expect("start");
-        persist_turn_completion(&state, "turn:1", "provider-turn:1", "Hi there", &[])
-            .expect("complete");
+        persist_turn_completion(
+            &state,
+            "turn:1",
+            "provider-turn:1",
+            "Hi there",
+            &[],
+            &[TaskWorkflowReceipt {
+                status: super::super::TaskWorkflowReceiptStatus::ReviewReady,
+                scope_kind: "task".to_owned(),
+                project_id: "project:1".to_owned(),
+                goal_id: None,
+                task_id: Some("task:1".to_owned()),
+                title: "Task 1".to_owned(),
+                current_task_id: Some("task:1".to_owned()),
+                current_position: 1,
+                total_tasks: 1,
+                summary: "Ready for review".to_owned(),
+                mandate_id: "mandate:1".to_owned(),
+                plan_id: Some("plan:1".to_owned()),
+                work_item_refs: vec!["work:1".to_owned()],
+                runtime_receipt_refs: vec!["receipt:1".to_owned()],
+            }],
+        )
+        .expect("complete");
         let reopened = ServerStateService::new(SqliteBackend::new(path));
         let history =
             read_history(&reopened, "project:1", "project:1:panel:chat").expect("read history");
@@ -388,6 +421,11 @@ mod tests {
         assert_eq!(history.messages.len(), 2);
         assert_eq!(history.messages[0].role, ChatMessageRole::User);
         assert_eq!(history.messages[1].text, "Hi there");
+        assert_eq!(history.messages[1].workflow_receipts.len(), 1);
+        assert_eq!(
+            history.messages[1].workflow_receipts[0].task_id.as_deref(),
+            Some("task:1")
+        );
         assert_eq!(history.thread_id.as_deref(), Some("thread:1"));
     }
 
@@ -402,6 +440,8 @@ mod tests {
             provider_thread_id: "thread:1".to_owned(),
             model: "model".to_owned(),
             reasoning_effort: None,
+            adapter_id: "codex-app-server".to_owned(),
+            provider_instance_id: "codex:local-default".to_owned(),
             turn_count: 1,
             task_toolset_version: 4,
         };

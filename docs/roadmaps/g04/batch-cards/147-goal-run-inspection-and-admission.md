@@ -1,6 +1,6 @@
 # 147 Goal Run Inspection And Admission
 
-Status: ready
+Status: completed
 Owner: Codex
 Updated: 2026-07-10
 Milestone: `../027-agent-chat-task-workflow-run.md`

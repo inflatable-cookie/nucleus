@@ -135,6 +135,75 @@ fn request_envelope_dto_serializes_task_create_command() {
 }
 
 #[test]
+fn request_envelope_dto_serializes_goal_create_command_with_existing_tasks() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:goal-create".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Command(crate::commands::ServerCommand {
+            id: ServerCommandId("command:dto:goal-create".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: crate::commands::ServerCommandKind::Goal(crate::commands::GoalCommand::Create(
+                crate::commands::GoalCreateCommand {
+                    project_id: ProjectId("project:nucleus-local".to_owned()),
+                    title: "Group existing tasks".to_owned(),
+                    desired_outcome: "The existing tasks form one runway.".to_owned(),
+                    scope: "Task workflow demo".to_owned(),
+                    status: nucleus_planning::GoalStatus::Ready,
+                    owner_refs: vec!["client:desktop".to_owned()],
+                    ordered_task_refs: vec![
+                        nucleus_tasks::TaskId("task:one".to_owned()),
+                        nucleus_tasks::TaskId("task:two".to_owned()),
+                    ],
+                    planning_artifact_refs: Vec::new(),
+                    provenance_refs: vec!["conversation:test".to_owned()],
+                    stop_conditions: vec!["Stop if either task is missing".to_owned()],
+                    evidence_refs: Vec::new(),
+                    current_next_task_ref: Some(nucleus_tasks::TaskId("task:one".to_owned())),
+                    next_action: Some("Start with task one".to_owned()),
+                },
+            )),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert_eq!(restored, request);
+}
+
+#[test]
+fn request_envelope_dto_preserves_goal_update_clear_patches() {
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:goal-update".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Command(crate::commands::ServerCommand {
+            id: ServerCommandId("command:dto:goal-update".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: crate::commands::ServerCommandKind::Goal(crate::commands::GoalCommand::Update(
+                crate::commands::GoalUpdateCommand {
+                    goal_id: nucleus_planning::PlanningGoalId("goal:dto".to_owned()),
+                    expected_revision: RevisionId("rev:goal:dto".to_owned()),
+                    changes: crate::commands::GoalUpdateChanges {
+                        current_next_task_ref: Some(None),
+                        next_action: Some(None),
+                        ..crate::commands::GoalUpdateChanges::default()
+                    },
+                },
+            )),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert_eq!(restored, request);
+}
+
+#[test]
 fn request_envelope_dto_serializes_task_seed_promotion_command() {
     let request = ServerControlRequest {
         id: ServerControlRequestId("request:dto:promote-seed".to_owned()),

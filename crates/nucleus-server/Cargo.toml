@@ -20,9 +20,11 @@ nucleus-research = { path = "../nucleus-research" }
 nucleus-scm-forge = { path = "../nucleus-scm-forge" }
 nucleus-tasks = { path = "../nucleus-tasks" }
 nucleus-workspaces = { path = "../nucleus-workspaces" }
+blake3 = "1"
+ignore = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tempfile = "3"
 toml = "0.8"
 
 [dev-dependencies]
-tempfile = "3"

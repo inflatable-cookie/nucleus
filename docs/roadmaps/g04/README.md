@@ -161,6 +161,16 @@ Current checkpoint:
 - selected-task aggregate product shell placement was superseded and rolled
   back from the normal workspace
 - the active path is product shell design checkpoint
+- the approved workspace shell and first proper Agent Chat and Tasks panels are
+  in place
+- durable Goals now group ordered task runways without removing ungrouped tasks
+- Agent Chat exposes the low-cardinality `task_ledger` and `task_workflow`
+  portals
+- one explicit operator message can run one task or one frozen Goal snapshot
+  through real serial local Codex execution
+- the Agent Chat Goal workflow run is complete
+- CodeMirror 6 is selected as the first client editor substrate
+- the active path is the host-authorized one-buffer editor vertical slice
 
 ## Roadmaps
 
@@ -187,13 +197,17 @@ Current checkpoint:
 - `021-product-shell-project-rail.md` - completed
 - `022-selected-task-aggregate-product-shell-placement.md` - superseded
 - `023-product-shell-design-checkpoint.md` - completed
-- `024-workspace-surface-shell-skeleton.md` - active
+- `024-workspace-surface-shell-skeleton.md` - completed
+- `025-initial-agent-chat-vertical-slice.md` - completed
+- `026-agent-chat-task-context.md` - completed
+- `027-agent-chat-task-workflow-run.md` - completed
+- `028-initial-code-editor-vertical-slice.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/116-product-workflow-ui-design-review.md`
+- `batch-cards/153-editor-validation-and-next-lane-checkpoint.md`
 
 Planned cards:
 
@@ -216,6 +230,38 @@ Superseded cards:
 
 Completed cards:
 
+- `batch-cards/152-editor-quick-open-language-theme-and-conflicts.md`
+- `batch-cards/151-codemirror-editor-panel-vertical-slice.md`
+- `batch-cards/150-editor-file-authority-and-control-boundary.md`
+- `batch-cards/149-task-workflow-portal-receipts-and-live-validation.md`
+- `batch-cards/148-goal-run-provider-dispatch-bridge.md`
+- `batch-cards/147-goal-run-inspection-and-admission.md`
+- `batch-cards/146-goal-mandate-turn-start-boundary.md`
+- `batch-cards/145-goal-grouped-task-panel-and-chat-context.md`
+- `batch-cards/144-task-ledger-goal-authoring.md`
+- `batch-cards/143-goal-domain-and-task-membership.md`
+- `batch-cards/137-task-workflow-portal-design-review.md`
+- `batch-cards/136-task-ledger-portal-consolidation.md`
+- `batch-cards/135-agent-chat-task-context-closeout.md`
+- `batch-cards/134-active-task-conversation-context.md`
+- `batch-cards/133-agent-task-workflow-direction-checkpoint.md`
+- `batch-cards/132-agent-task-inspection-and-update.md`
+- `batch-cards/131-proper-task-panel-foundation.md`
+- `batch-cards/130-agent-task-workflow-checkpoint.md`
+- `batch-cards/129-live-agent-task-authoring-validation.md`
+- `batch-cards/128-agent-task-creation-receipts.md`
+- `batch-cards/127-agent-task-authoring-tool.md`
+- `batch-cards/126-chat-task-context-design-review.md`
+- `batch-cards/125-durable-agent-chat-continuity.md`
+- `batch-cards/124-agent-chat-product-design-review.md`
+- `batch-cards/123-local-agent-chat-vertical-slice.md`
+- `batch-cards/122-project-rail-resizable-shell-split.md`
+- `batch-cards/121-empty-region-collapse-and-drop-target-reveal.md`
+- `batch-cards/120-panel-cross-region-drag-drop-hardening.md`
+- `batch-cards/119-panel-recovery-menu-and-resizable-regions.md`
+- `batch-cards/118-surface-panel-placement-validation.md`
+- `batch-cards/117-surface-panel-placement-policy-feedback.md`
+- `batch-cards/116-product-workflow-ui-design-review.md`
 - `batch-cards/111-product-shell-design-review-checkpoint.md`
 - `batch-cards/112-product-shell-design-direction-promotion.md`
 - `batch-cards/113-local-workspace-ui-config-boundary.md`

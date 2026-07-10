@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-06-17
+Updated: 2026-07-10
 
 ## Purpose
 
@@ -404,6 +404,57 @@ authorization, save/apply command authority, and workspace attachment state.
 The client may render editor buffers and local interaction state for
 responsiveness.
 
+## Initial Editor Buffer And Save Boundary
+
+CodeMirror 6 is the first client code-editor substrate. Nucleus integrates the
+official packages through a thin Nucleus-owned Svelte adapter. A community
+framework wrapper, CodeMirror document state, or a browser path string must not
+become file or save authority.
+
+The first host-authorized file snapshot exposes:
+
+- project id
+- opaque file ref
+- safe project-relative display path
+- full text content
+- language hint
+- byte size
+- writable flag
+- opaque content revision
+
+The client may keep the active CodeMirror buffer, selection, undo history,
+scroll position, and dirty state locally. Dirty state is derived from the
+buffer versus the most recent accepted host snapshot. It is not durable project
+state in the first slice.
+
+File discovery is a separate project-scoped host query. It must respect ignore
+rules, hard exclusions, file-size limits, text/binary classification, and host
+authorization. Results expose safe relative paths and opaque file refs only.
+The first UI consumes this query through quick open rather than adding a
+permanent file explorer.
+
+Save is a host command containing:
+
+- project id
+- opaque file ref
+- expected content revision
+- replacement text content
+
+The host must re-resolve the file inside the authoritative project root,
+confirm write policy, compare the current content revision, reject stale or
+out-of-scope writes, perform a safe replacement, and return the new accepted
+snapshot. A stale save is an explicit conflict. The client must preserve the
+dirty buffer and offer reload or keep-editing choices; it must not silently
+overwrite or silently reload.
+
+The first slice supports one active buffer per Editor panel. Editor-internal
+buffer tabs, autosave, hot-exit recovery, durable cursor state, and file
+watchers remain later work. Opening another file while dirty requires an
+explicit discard or cancel choice unless the current buffer is saved first.
+
+CodeMirror themes derive from Nucleus/Poodle tokens. VS Code theme import is a
+later translation boundary and is not implied by choosing CodeMirror.
+
 Code editor surfaces should plan for:
 
 - syntax colorization
@@ -419,8 +470,8 @@ ships. It does need a clean boundary so early editor implementation does not
 block later language-server, theme, extension, and richer editor features.
 
 Plugin execution may need both TypeScript and Rust host surfaces. TypeScript is
-the natural fit for client-side editor extensions, theme parsing, and
-Monaco/CodeMirror-like integration. Rust is the authority boundary for server
+the natural fit for client-side editor extensions and theme parsing. Rust is
+the authority boundary for server
 state, filesystem access, command authority, language-server process
 lifecycle, secret access, SCM actions, and durable audit. Plugin APIs must not
 let client-side code bypass server command, file, SCM, or credential policy.
@@ -517,12 +568,13 @@ and UI configuration remain future work.
 - How hosted-surface lifecycle commands are represented in engine commands and
   control API DTOs.
 - How terminal and browser resources are bound to server-managed runtime ids.
-- How editor buffers, file identity, dirty state, save authority, and file
-  watchers are represented.
-- Which editor substrate should be used first and how VS Code-compatible themes
-  are imported.
-- How language-server lifecycle is split between client rendering and
-  server-owned process authority.
+- Exact file-watcher and hot-exit recovery behavior after the first explicit
+  revision-conflict flow.
+- How VS Code-compatible themes translate into Nucleus/Poodle and CodeMirror
+  theme tokens.
+- Exact language-server transport and capability mapping between server-owned
+  processes and CodeMirror diagnostics, completion, hover, formatting, rename,
+  and code-action extensions.
 - Plugin host split between TypeScript client plugins, Rust server plugins, and
   policy-gated cross-boundary APIs.
 - How SCM diff and commit controls degrade on web, mobile, and CLI clients.

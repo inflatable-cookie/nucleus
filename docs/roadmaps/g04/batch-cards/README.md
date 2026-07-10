@@ -10,12 +10,11 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `147-goal-run-inspection-and-admission.md`
+- `153-editor-validation-and-next-lane-checkpoint.md`
 
 ## Planned Cards
 
-- `148-goal-run-provider-dispatch-bridge.md`
-- `149-task-workflow-portal-receipts-and-live-validation.md`
+- None.
 
 ## Paused Cards
 
@@ -40,6 +39,12 @@ Hold execution cards for `g04`.
 
 ## Completed Cards
 
+- `152-editor-quick-open-language-theme-and-conflicts.md`
+- `151-codemirror-editor-panel-vertical-slice.md`
+- `150-editor-file-authority-and-control-boundary.md`
+- `149-task-workflow-portal-receipts-and-live-validation.md`
+- `148-goal-run-provider-dispatch-bridge.md`
+- `147-goal-run-inspection-and-admission.md`
 - `146-goal-mandate-turn-start-boundary.md`
 - `145-goal-grouped-task-panel-and-chat-context.md`
 - `144-task-ledger-goal-authoring.md`

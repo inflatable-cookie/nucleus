@@ -69,6 +69,11 @@ pub mod command_artifacts;
 pub mod command_evidence_state;
 pub mod command_runtime_readiness;
 pub mod commands;
+mod editor_files;
+pub use editor_files::{
+    list_editor_files, read_editor_file, save_editor_file, EditorFileEntry, EditorFileSaveRequest,
+    EditorFileSnapshot,
+};
 pub mod control_api;
 pub mod control_api_planning_queries;
 pub mod control_envelope_dto;

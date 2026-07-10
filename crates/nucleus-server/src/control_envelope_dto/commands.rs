@@ -10,10 +10,12 @@ use nucleus_tasks::TaskId;
 
 use super::ControlApiCodecError;
 
+mod goal_authoring;
 mod memory_proposal_review;
 mod read_only;
 mod task_authoring;
 
+use goal_authoring::{goal_command_dto, goal_create_kind, goal_update_kind};
 use memory_proposal_review::{
     memory_proposal_review_action, memory_proposal_review_dto, ControlMemoryProposalReviewActionDto,
 };
@@ -70,6 +72,46 @@ pub enum ControlCommandDto {
         stop_conditions: Option<Vec<String>>,
         validation_commands: Option<Vec<String>>,
     },
+    GoalCreate {
+        command_id: String,
+        project_id: String,
+        title: String,
+        desired_outcome: String,
+        scope: String,
+        status: String,
+        #[serde(default)]
+        owner_refs: Vec<String>,
+        #[serde(default)]
+        ordered_task_refs: Vec<String>,
+        #[serde(default)]
+        planning_artifact_refs: Vec<String>,
+        #[serde(default)]
+        provenance_refs: Vec<String>,
+        #[serde(default)]
+        stop_conditions: Vec<String>,
+        #[serde(default)]
+        evidence_refs: Vec<String>,
+        current_next_task_ref: Option<String>,
+        next_action: Option<String>,
+    },
+    GoalUpdate {
+        command_id: String,
+        goal_id: String,
+        expected_revision: String,
+        title: Option<String>,
+        desired_outcome: Option<String>,
+        scope: Option<String>,
+        owner_refs: Option<Vec<String>>,
+        ordered_task_refs: Option<Vec<String>>,
+        planning_artifact_refs: Option<Vec<String>>,
+        provenance_refs: Option<Vec<String>>,
+        stop_conditions: Option<Vec<String>>,
+        evidence_refs: Option<Vec<String>>,
+        current_next_task_ref: Option<String>,
+        clear_current_next_task_ref: bool,
+        next_action: Option<String>,
+        clear_next_action: bool,
+    },
     TaskSeedPromotion {
         command_id: String,
         project_id: String,
@@ -116,6 +158,7 @@ impl TryFrom<&ServerCommand> for ControlCommandDto {
     fn try_from(command: &ServerCommand) -> Result<Self, Self::Error> {
         match &command.kind {
             ServerCommandKind::Task(task_command) => task_command_dto(&command.id, task_command),
+            ServerCommandKind::Goal(goal_command) => goal_command_dto(&command.id, goal_command),
             ServerCommandKind::ReadOnlyCommand(read_only_command) => {
                 Ok(read_only_command_dto(&command.id, read_only_command))
             }
@@ -200,6 +243,72 @@ impl ControlCommandDto {
                 allowed_actions,
                 stop_conditions,
                 validation_commands,
+            ),
+            Self::GoalCreate {
+                command_id,
+                project_id,
+                title,
+                desired_outcome,
+                scope,
+                status,
+                owner_refs,
+                ordered_task_refs,
+                planning_artifact_refs,
+                provenance_refs,
+                stop_conditions,
+                evidence_refs,
+                current_next_task_ref,
+                next_action,
+            } => goal_create_kind(
+                command_id,
+                project_id,
+                title,
+                desired_outcome,
+                scope,
+                status,
+                owner_refs,
+                ordered_task_refs,
+                planning_artifact_refs,
+                provenance_refs,
+                stop_conditions,
+                evidence_refs,
+                current_next_task_ref,
+                next_action,
+            ),
+            Self::GoalUpdate {
+                command_id,
+                goal_id,
+                expected_revision,
+                title,
+                desired_outcome,
+                scope,
+                owner_refs,
+                ordered_task_refs,
+                planning_artifact_refs,
+                provenance_refs,
+                stop_conditions,
+                evidence_refs,
+                current_next_task_ref,
+                clear_current_next_task_ref,
+                next_action,
+                clear_next_action,
+            } => goal_update_kind(
+                command_id,
+                goal_id,
+                expected_revision,
+                title,
+                desired_outcome,
+                scope,
+                owner_refs,
+                ordered_task_refs,
+                planning_artifact_refs,
+                provenance_refs,
+                stop_conditions,
+                evidence_refs,
+                current_next_task_ref,
+                clear_current_next_task_ref,
+                next_action,
+                clear_next_action,
             ),
             Self::TaskSeedPromotion {
                 command_id,

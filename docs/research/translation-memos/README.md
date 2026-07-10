@@ -10,4 +10,5 @@ contracts.
 ## Active Memos
 
 - `convergence-scm-shape.md`
+- `editor-substrate-selection.md`
 - `harness-runtime-target-selection.md`

@@ -5,7 +5,8 @@ use crate::{
     seed_local_project, seed_local_task, LocalControlRequestHandler, LocalProjectSeed,
     LocalTaskSeed,
 };
-use nucleus_local_store::SqliteBackend;
+use nucleus_core::{PersistenceRecordId, RevisionId};
+use nucleus_local_store::{LocalStoreRecordPayload, RevisionExpectation, SqliteBackend};
 use nucleus_planning::{decode_goal_storage_record, goal_from_storage_record, GoalStatus};
 use nucleus_projects::ProjectId;
 use nucleus_tasks::decode_task_storage_record;
@@ -341,6 +342,86 @@ fn live_chat_authors_and_refines_a_goal_backed_runway_without_dispatching_work()
     assert!(state.runtime_effects().list().expect("effects").is_empty());
 }
 
+#[test]
+#[ignore = "requires a locally authenticated Codex app-server"]
+fn live_chat_creates_and_runs_a_two_task_goal_through_two_portals() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let workspace = tempfile::tempdir().expect("workspace");
+    let path = temp_dir.path().join("nucleus.sqlite");
+    let backend = SqliteBackend::new(path.clone());
+    let state = ServerStateService::new(backend.clone());
+    seed_local_project(&state, LocalProjectSeed::nucleus_local()).expect("seed project");
+    redirect_project_root(&state, workspace.path());
+    let mut handler = LocalControlRequestHandler::new(backend, None);
+    let mut service = LocalCodexChatService::default();
+    let conversation = "workflow-live-smoke";
+    let created = service
+        .send_message_with_task_authoring(
+            &state,
+            request(
+                conversation,
+                "Use task_ledger to create one ready Goal titled 'Portal execution smoke' and exactly two ordered ready execute tasks under it. Task one must create first.txt containing first. Task two must create second.txt containing second. Give each clear acceptance criteria, stop conditions, and validation commands. Do not run them yet.",
+            ),
+            &mut |request| accepted(&mut handler, request),
+        )
+        .expect("create Goal runway");
+    let goal = created.task_receipts[0]
+        .goals_updated
+        .last()
+        .or_else(|| created.task_receipts[0].goals_created.last())
+        .expect("Goal receipt")
+        .clone();
+
+    let executed = service
+        .send_message_with_task_authoring(
+            &state,
+            LocalCodexChatRequest {
+                conversation_id: format!("project:nucleus-local:panel:{conversation}"),
+                project_id: "project:nucleus-local".to_owned(),
+                message: "Inspect this Goal with task_workflow, then run this Goal now. Use the exact excerpt 'run this Goal now' as the mandate authority and a stable idempotency key. Do not accept review or complete the tasks.".to_owned(),
+                active_task_id: None,
+                active_goal_id: Some(goal.goal_id.clone()),
+            },
+            &mut |request| accepted(&mut handler, request),
+        )
+        .expect("execute Goal runway");
+
+    assert_eq!(executed.workflow_receipts.len(), 1);
+    assert_eq!(
+        executed.workflow_receipts[0].status,
+        TaskWorkflowReceiptStatus::ReviewReady
+    );
+    assert_eq!(executed.workflow_receipts[0].total_tasks, 2);
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("first.txt"))
+            .expect("first file")
+            .trim(),
+        "first"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("second.txt"))
+            .expect("second file")
+            .trim(),
+        "second"
+    );
+    drop(service);
+    let reopened = ServerStateService::new(SqliteBackend::new(path));
+    let history = read_history(
+        &reopened,
+        "project:nucleus-local",
+        &format!("project:nucleus-local:panel:{conversation}"),
+    )
+    .expect("restart-safe history");
+    assert_eq!(
+        history
+            .messages
+            .iter()
+            .flat_map(|message| &message.workflow_receipts)
+            .count(),
+        1
+    );
+}
+
 fn request(conversation: &str, message: &str) -> LocalCodexChatRequest {
     LocalCodexChatRequest {
         conversation_id: format!("project:nucleus-local:panel:{conversation}"),
@@ -367,6 +448,8 @@ fn persist_legacy_session(
             provider_thread_id: format!("thread:{conversation}"),
             model: CHAT_MODEL.to_owned(),
             reasoning_effort: Some(CHAT_REASONING_EFFORT.to_owned()),
+            adapter_id: CHAT_ADAPTER_ID.to_owned(),
+            provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
             turn_count: 1,
             task_toolset_version: toolset_version,
         },
@@ -381,8 +464,33 @@ fn persist_legacy_session(
         &format!("provider-turn:{conversation}"),
         "It can manage projects and conversations.",
         &[],
+        &[],
     )
     .expect("persist legacy chat completion");
+}
+
+fn redirect_project_root(state: &ServerStateService<SqliteBackend>, root: &std::path::Path) {
+    let id = PersistenceRecordId("project:nucleus-local".to_owned());
+    let mut record = state
+        .projects()
+        .get(&id)
+        .expect("project lookup")
+        .expect("project");
+    let previous = record.revision_id.clone();
+    let mut project =
+        nucleus_projects::decode_project_storage_record(&record.payload.bytes).expect("decode");
+    project.repo_count = 1;
+    project.primary_location = Some(root.to_string_lossy().into_owned());
+    project.location_status = nucleus_projects::ProjectStorageLocationStatus::Present;
+    record.revision_id = RevisionId("rev:project:workflow-live-smoke".to_owned());
+    record.payload = LocalStoreRecordPayload {
+        media_type: Some("application/json".to_owned()),
+        bytes: nucleus_projects::encode_project_storage_payload(&project).expect("encode"),
+    };
+    state
+        .projects()
+        .put(record, RevisionExpectation::Exact(previous))
+        .expect("redirect project");
 }
 
 fn accepted(

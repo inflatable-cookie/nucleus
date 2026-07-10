@@ -39,6 +39,7 @@ pub struct TaskAuthoringReceipt {
 pub(super) struct TaskToolOutcome {
     pub text: String,
     pub receipt: Option<TaskAuthoringReceipt>,
+    pub workflow_receipt: Option<super::task_workflow::TaskWorkflowReceipt>,
 }
 
 impl TaskToolOutcome {
@@ -47,6 +48,7 @@ impl TaskToolOutcome {
             text: serde_json::to_string(&receipt)
                 .map_err(|error| format!("failed to encode task receipt: {error}"))?,
             receipt: Some(receipt),
+            workflow_receipt: None,
         })
     }
 
@@ -54,7 +56,19 @@ impl TaskToolOutcome {
         Self {
             text,
             receipt: None,
+            workflow_receipt: None,
         }
+    }
+
+    pub(super) fn from_workflow_receipt(
+        receipt: super::task_workflow::TaskWorkflowReceipt,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            text: serde_json::to_string(&receipt)
+                .map_err(|error| format!("failed to encode workflow receipt: {error}"))?,
+            receipt: None,
+            workflow_receipt: Some(receipt),
+        })
     }
 }
 

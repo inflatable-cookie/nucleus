@@ -1,10 +1,12 @@
 use serde_json::{json, Value};
 
 use super::super::task_authoring::{TaskAuthoringReceipt, TaskToolOutcome};
+use super::super::task_workflow::TaskWorkflowReceipt;
 
 pub(super) struct ToolCallResponse {
     pub response: Value,
     pub receipt: Option<TaskAuthoringReceipt>,
+    pub workflow_receipt: Option<TaskWorkflowReceipt>,
 }
 
 pub(super) fn prepare_tool_call_response<F>(
@@ -55,6 +57,7 @@ where
                 }
             }),
             receipt: outcome.receipt,
+            workflow_receipt: outcome.workflow_receipt,
         }),
         Err(error) => Ok(ToolCallResponse {
             response: json!({
@@ -65,6 +68,7 @@ where
                 }
             }),
             receipt: None,
+            workflow_receipt: None,
         }),
     })
 }
