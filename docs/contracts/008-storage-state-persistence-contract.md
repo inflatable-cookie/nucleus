@@ -653,6 +653,42 @@ or redactor state must block full-output resolution.
 Compaction may preserve sanitized summaries and refs after payload expiry, but
 it must not pretend the raw payload remains available.
 
+## Task Review Source Snapshot Storage Rule
+
+Task review source snapshots are a dedicated host-local payload boundary, not
+command output artifacts, task records, event payloads, or repo-backed
+management projection.
+
+The snapshot store may retain:
+
+- immutable snapshot manifests keyed by opaque checkpoint refs
+- safe project-relative paths
+- exact content hashes, sizes, classifications, and coverage states
+- deduplicated content-addressed blobs for policy-admitted UTF-8 text
+- task work-item, project, baseline/target, creation, and retention refs
+
+It must not retain through this first boundary:
+
+- absolute project paths inside client-visible manifests
+- ignored or hard-excluded files
+- binary or oversized file bytes
+- credentials or provider payloads acquired outside admitted project files
+- source bytes in SQLite, event journals, task history, chat, or management
+  projection
+
+Snapshot directories and blobs use owner-only filesystem permissions and live
+outside the project repository. They are local review evidence and must not be
+synced or uploaded by default. Their resolvability is independent from the
+durable checkpoint/diff summary: active and awaiting-review work keeps both
+boundaries resolvable; terminal review starts a seven-day cleanup grace;
+missing, expired, partial, and cleanup-pending payload states remain explicit
+after detailed content is unavailable.
+
+Content addressing is a storage optimization, not shared identity or access
+authority. Blob refs and backend paths never enter normal client DTOs. A host
+may serve bounded transient patches derived from two authorized snapshots, but
+it must not expose arbitrary blob resolution or filesystem traversal.
+
 ## Storage Backend Boundary
 
 Backend selection is deliberately open.

@@ -10,7 +10,7 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `153-editor-validation-and-next-lane-checkpoint.md`
+- `158-task-diff-review-validation-and-closeout.md`
 
 ## Planned Cards
 
@@ -39,6 +39,11 @@ Hold execution cards for `g04`.
 
 ## Completed Cards
 
+- `157-compact-task-diff-review-panel.md`
+- `156-task-diff-read-api-and-tauri-boundary.md`
+- `155-task-run-checkpoint-diff-integration.md`
+- `154-task-review-source-snapshot-backend.md`
+- `153-editor-validation-and-next-lane-checkpoint.md`
 - `152-editor-quick-open-language-theme-and-conflicts.md`
 - `151-codemirror-editor-panel-vertical-slice.md`
 - `150-editor-file-authority-and-control-boundary.md`

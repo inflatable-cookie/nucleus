@@ -2,7 +2,7 @@
 
 Date: 2026-07-10
 Lane: G04 initial code editor vertical slice
-Cards: 150-152
+Cards: 150-153
 
 ## Outcome
 
@@ -31,10 +31,12 @@ Cards: 150-152
 - four focused editor-support tests cover quick-open filtering, dirty-switch
   admission, language fallback, and conflict recognition
 - shared browser preview and macOS app automation could not capture the Tauri
-  debug window, so normal/constrained visual evidence remains card 153
-- the full Effigy test run was stopped after its two Tauri Rust test artifacts
-  remained idle during compilation for more than five minutes; focused editor
-  authority tests from card 150 remain green
+  debug window; the operator reviewed the live panel and accepted its current
+  shape
+- the first full Effigy test attempt was stopped during a slow Tauri compile;
+  the clean retry completed with 2,128 tests passed and 10 skipped
+- Rust check, desktop type checking/build, formatting, docs QA, and diff hygiene
+  pass
 
 ## Realized Transport
 
@@ -45,6 +47,6 @@ and pretending otherwise would weaken the save contract.
 
 ## Next
 
-Card 153: complete the real Tauri interaction and visual smoke, rerun the full
-validation surface without the stalled compiler state, then stop for operator
-selection of the next editor/review lane.
+Stop for operator selection between editor-to-diff/review, multiple buffers,
+file watching/recovery, or server-owned language services. No follow-on lane is
+implied by this closeout.

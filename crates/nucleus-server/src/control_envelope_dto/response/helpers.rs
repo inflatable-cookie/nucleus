@@ -176,6 +176,8 @@ pub(super) fn checkpoint_ref_dto(checkpoint_ref: &nucleus_engine::EngineCheckpoi
     match checkpoint_ref {
         nucleus_engine::EngineCheckpointRef::ProjectId(value)
         | nucleus_engine::EngineCheckpointRef::TaskId(value)
+        | nucleus_engine::EngineCheckpointRef::WorkItemId(value)
+        | nucleus_engine::EngineCheckpointRef::CheckpointId(value)
         | nucleus_engine::EngineCheckpointRef::AgentSessionId(value)
         | nucleus_engine::EngineCheckpointRef::ThreadId(value)
         | nucleus_engine::EngineCheckpointRef::TurnId(value)

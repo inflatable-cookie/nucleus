@@ -1,6 +1,6 @@
 # 153 Editor Validation And Next Lane Checkpoint
 
-Status: ready
+Status: completed
 Owner: Codex
 Updated: 2026-07-10
 Milestone: `../028-initial-code-editor-vertical-slice.md`
@@ -78,3 +78,22 @@ honestly, and stop for operator selection of the next editor/review lane.
 
 Stop for operator review and next-lane selection. Do not infer LSP, multi-buffer,
 watcher/recovery, or diff/review priority from editor completion.
+
+## Outcome
+
+- the complete Rust workspace test surface passes: 2,128 tests passed and 10
+  intentionally skipped
+- Rust check, desktop type checking/build, focused editor-support tests,
+  formatting, docs QA, and diff hygiene pass
+- the operator reviewed the live panel and accepted its current visual shape,
+  including its compact normal presentation
+- Rust authority tests prove ignored, binary, oversized, escaped, invented,
+  accepted-save, and stale-conflict behavior; focused client tests prove
+  quick-open filtering, dirty-switch admission, language fallback, and
+  conflict recognition
+- the client remains a renderer and intent source over typed Tauri commands;
+  it has no filesystem traversal or direct write path
+- no explorer, editor tabs, minimap, LSP, plugin, SCM, merge, autosave, or
+  recovery system entered the first slice
+- shared automation could not record the native Tauri window, so the visual
+  closeout uses explicit operator acceptance rather than an automated capture

@@ -124,6 +124,74 @@ The first control API exposes read-only list queries for checkpoint and diff
 summary records. It does not expose raw patches, terminal streams, provider
 payloads, or SCM credentials.
 
+## Task Review Source Snapshot Boundary
+
+The first task-attributed source review uses two immutable host-owned source
+snapshots:
+
+- a baseline captured after task run admission and before provider dispatch
+- a target captured when runtime work has completed and before awaiting review
+
+Both checkpoints name the task work item as their primary workflow owner. This
+is task-window attribution, not forensic actor attribution. Writes by another
+local actor during the execution window are included and the review surface
+must disclose that limitation.
+
+The first source-snapshot backend is host-local and SCM-neutral. It stores an
+immutable manifest outside the project repository and repo-backed management
+projection. Manifest entries contain a safe project-relative path, exact
+content hash, size, text/binary classification, content availability, and
+coverage state. Eligible text bytes are deduplicated behind content-addressed
+blob refs with owner-only filesystem permissions. Binary and oversized content
+is represented by hash and size only.
+
+The initial policy reuses editor containment, ignore, hard-exclusion, UTF-8,
+and 2 MiB per-text-file rules. A capture admits at most 5,000 paths and 256 MiB
+of retained text. Exceeding a hard limit or losing project containment makes
+capture unavailable; it must not silently produce a partial baseline for a
+write-capable task run.
+
+Snapshot refs remain resolvable while their work item is active or awaiting
+review. Terminal review starts a seven-day cleanup grace. Missing, expired,
+partial, unsupported, and cleanup-pending states remain explicit in durable
+summary records even after detailed blobs are unavailable.
+
+This boundary does not invoke Git, create SCM objects, change refs or indexes,
+copy snapshots into the project, or make source snapshots shared project state.
+
+## Transient Patch Query Boundary
+
+Detailed patch content is a bounded read view resolved from one accepted diff
+ref and its exact baseline and target snapshots. Patch bytes are not added to
+`EngineDiffSummaryRecord` and are not durable task, timeline, command-evidence,
+chat, or management-projection fields.
+
+The read request contains:
+
+- project id
+- task work-item id
+- diff ref
+- optional opaque changed-file ref
+
+The response may contain:
+
+- baseline and target checkpoint refs
+- safe project-relative display path and opaque file ref
+- added, modified, deleted, or metadata-only change kind
+- bounded unified text patch
+- additions and deletions when exact
+- binary, oversized, truncated, unavailable, expired, or partial state
+- coverage and concurrent-write attribution notice
+
+The first response is capped at 2 MiB per text file and 4 MiB total. The host
+may return a smaller explicit truncation result. Absolute project paths,
+snapshot storage paths, blob paths, credentials, terminal output, and provider
+payloads must never enter the response.
+
+Patch generation is read-only. It must not mutate source files, snapshots, SCM
+state, task state, or review state. Patch content is not sent to an agent or
+model unless a later explicit, separately admitted context action allows it.
+
 ## SCM Work Item Linkage
 
 SCM evidence linkage is an engine-owned reference record.

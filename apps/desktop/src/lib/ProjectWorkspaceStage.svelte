@@ -13,6 +13,7 @@
   } from "@poodle/svelte";
   import { pencil, plus } from "@poodle/icons-lucide";
   import AgentChatPanel from "./AgentChatPanel.svelte";
+  import DiffPanel from "./DiffPanel.svelte";
   import EditorPanel from "./EditorPanel.svelte";
   import TaskListPanel from "./TaskListPanel.svelte";
   import type {
@@ -50,6 +51,7 @@
   let selectedTask = $state<ControlTaskRecordDto | null>(null);
   let selectedGoalId = $state<string | null>(null);
   let selectedGoal = $state<ControlGoalRecordDto | null>(null);
+  let editorFileRef = $state<string | null>(null);
 
   const activeSurface = $derived(
     config?.surfaces.find((surface) => surface.id === config?.active_surface_id) ??
@@ -200,6 +202,18 @@
         activePanels = { ...activePanels, [region]: panel.id };
         return;
       }
+    }
+  }
+
+  function openFileInEditor(fileRef: string): void {
+    editorFileRef = fileRef;
+    const hasEditor = regionKeys().some((region) =>
+      activeSurface?.regions[region].some((panel) => panel.kind === "editor"),
+    );
+    if (hasEditor) {
+      focusPanelKind("editor");
+    } else {
+      addPanel("editor");
     }
   }
 
@@ -849,7 +863,14 @@
       bind:selectedTask
     />
   {:else if panel?.kind === "editor"}
-    <EditorPanel projectId={selectedProject?.project_id ?? null} />
+    <EditorPanel projectId={selectedProject?.project_id ?? null} requestedFileRef={editorFileRef} />
+  {:else if panel?.kind === "diff"}
+    <DiffPanel
+      projectId={selectedProject?.project_id ?? null}
+      task={selectedTask}
+      onOpenEditor={openFileInEditor}
+      onReviewed={() => focusPanelKind("diff")}
+    />
   {:else}
     <Surface tone="canvas" border="none" padding="md" asRole="region" label={panel?.title ?? "Empty panel"}>
       <div class="panel-placeholder">

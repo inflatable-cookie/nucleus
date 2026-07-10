@@ -371,7 +371,7 @@ conversation mandate and is never implied by creating or selecting it.
 
 ## Initial Code Editor Surface
 
-The existing Editor panel becomes the first real file workspace after Agent
+The existing Editor panel is now the first real file workspace after Agent
 Chat and Tasks. It uses CodeMirror 6 as a client editing substrate and remains
 visually subordinate to the current panel shell.
 
@@ -397,3 +397,25 @@ client must never silently overwrite an externally changed file.
 Later diagnostics, completion, hover, formatting, rename, and code actions map
 from server-owned language-server sessions into CodeMirror extensions. They do
 not move language-server process authority into Svelte.
+
+## Task Attributed Diff Review Surface
+
+The existing Diff panel becomes the next real workspace surface. It reviews
+one selected task work item's source-change window between an immutable
+pre-dispatch checkpoint and immutable post-runtime checkpoint. It must not
+present the entire current working copy as agent-authored work.
+
+The normal view contains one compact review summary, one changed-file quick
+open, one read-only unified file diff, and a small review menu. There is no
+permanent source-control sidebar, tree, staged/unstaged split, commit box, hunk
+toolbar, or merge editor.
+
+Accept and Needs changes remain server-admitted task review decisions. Open in
+Editor routes the selected safe file ref into the existing Editor panel. Patch
+content is a transient host read and is not retained as durable client state or
+persisted in task records, chat, or management projection.
+
+Task attribution names the work-item execution window, not a forensic actor.
+Concurrent host writes are disclosed. Unsupported, binary, oversized,
+truncated, missing, expired, or partial evidence stays visible through compact
+states rather than being treated as clean or accepted.

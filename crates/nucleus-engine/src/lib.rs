@@ -38,7 +38,8 @@ pub use checkpoint_diff::{
     decode_checkpoint_record, decode_diff_summary_record, encode_checkpoint_record,
     encode_diff_summary_record, CheckpointDiffCodecError, EngineCheckpointFamily,
     EngineCheckpointRecord, EngineCheckpointRecordId, EngineCheckpointRecoveryState,
-    EngineCheckpointRef, EngineDiffSummaryConfidence, EngineDiffSummaryKind,
+    EngineCheckpointRef, EngineDiffCoverageState, EngineDiffPathChange, EngineDiffPathChangeKind,
+    EngineDiffSummaryConfidence, EngineDiffSummaryCounts, EngineDiffSummaryKind,
     EngineDiffSummaryRecord, EngineDiffSummaryRecordId,
 };
 pub use codex_runtime_receipts::runtime_receipt_from_codex_fixture;

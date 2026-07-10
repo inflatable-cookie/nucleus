@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-09
+Updated: 2026-07-10
 
 ## Purpose
 
@@ -170,7 +170,18 @@ Current checkpoint:
   through real serial local Codex execution
 - the Agent Chat Goal workflow run is complete
 - CodeMirror 6 is selected as the first client editor substrate
-- the active path is the host-authorized one-buffer editor vertical slice
+- the host-authorized one-buffer editor vertical slice is complete
+- editor-to-diff/review is selected as the next product lane
+- task-attributed checkpoint review is selected over generic working-copy
+  review
+- source snapshot, transient patch, and compact Diff panel rules are promoted
+- the task-attributed review roadmap and five-card runway are ready
+- the host-local task review snapshot backend is complete
+- task-run checkpoint and diff integration is complete
+- the task diff read API and Tauri boundary are complete
+- the compact selected-task Diff review panel is complete
+- the typed task diff read and Tauri boundary is complete
+- the active path is the compact task Diff review panel
 
 ## Roadmaps
 
@@ -201,13 +212,15 @@ Current checkpoint:
 - `025-initial-agent-chat-vertical-slice.md` - completed
 - `026-agent-chat-task-context.md` - completed
 - `027-agent-chat-task-workflow-run.md` - completed
-- `028-initial-code-editor-vertical-slice.md` - active
+- `028-initial-code-editor-vertical-slice.md` - completed
+- `029-task-attributed-diff-review.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/153-editor-validation-and-next-lane-checkpoint.md`
+- `batch-cards/157-compact-task-diff-review-panel.md`
+- `batch-cards/158-task-diff-review-validation-and-closeout.md`
 
 Planned cards:
 
@@ -230,6 +243,10 @@ Superseded cards:
 
 Completed cards:
 
+- `batch-cards/156-task-diff-read-api-and-tauri-boundary.md`
+- `batch-cards/155-task-run-checkpoint-diff-integration.md`
+- `batch-cards/154-task-review-source-snapshot-backend.md`
+- `batch-cards/153-editor-validation-and-next-lane-checkpoint.md`
 - `batch-cards/152-editor-quick-open-language-theme-and-conflicts.md`
 - `batch-cards/151-codemirror-editor-panel-vertical-slice.md`
 - `batch-cards/150-editor-file-authority-and-control-boundary.md`

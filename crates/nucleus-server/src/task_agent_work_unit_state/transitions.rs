@@ -58,6 +58,9 @@ fn validate_runtime_transition(
             EngineTaskAgentWorkUnitRuntimeStatus::Scheduled,
             EngineTaskAgentWorkUnitRuntimeStatus::Running
         ) | (
+            EngineTaskAgentWorkUnitRuntimeStatus::Scheduled,
+            EngineTaskAgentWorkUnitRuntimeStatus::Failed(_)
+        ) | (
             EngineTaskAgentWorkUnitRuntimeStatus::Running,
             EngineTaskAgentWorkUnitRuntimeStatus::WaitingForApproval
         ) | (

@@ -3,12 +3,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use nucleus_agent_protocol::{AgentSessionId, AgentTurnId};
 use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
 use nucleus_engine::{
-    admit_task_agent_work_unit, EngineRuntimeReceiptEffectFamily, EngineRuntimeReceiptRecord,
-    EngineRuntimeReceiptRecordId, EngineRuntimeReceiptRef, EngineRuntimeReceiptStatus,
-    EngineTaskAgentWorkUnitReviewStatus, EngineTaskAgentWorkUnitRuntimeStatus,
-    EngineTaskAgentWorkUnitSourceId, EngineTaskWorkItemAssignment, EngineTaskWorkItemId,
-    EngineTaskWorkItemRecord, EngineTaskWorkItemRefs, EngineTaskWorkItemReviewState,
-    EngineTaskWorkItemRuntimeState,
+    admit_task_agent_work_unit, EngineCheckpointRecordId, EngineDiffSummaryRecordId,
+    EngineRuntimeReceiptEffectFamily, EngineRuntimeReceiptRecord, EngineRuntimeReceiptRecordId,
+    EngineRuntimeReceiptRef, EngineRuntimeReceiptStatus, EngineTaskAgentWorkUnitReviewStatus,
+    EngineTaskAgentWorkUnitRuntimeStatus, EngineTaskAgentWorkUnitSourceId,
+    EngineTaskWorkItemAssignment, EngineTaskWorkItemId, EngineTaskWorkItemRecord,
+    EngineTaskWorkItemRefs, EngineTaskWorkItemReviewState, EngineTaskWorkItemRuntimeState,
 };
 use nucleus_local_store::{
     LocalStoreBackend, LocalStoreRecord, LocalStoreRecordPayload, RevisionExpectation,
@@ -21,6 +21,9 @@ use super::goal_inspection::goal_record;
 use super::goal_run::{read_goal_run_plan, GoalRunPlan, GoalRunPlanTask, GoalRunRoute};
 use super::mandates::{expire_workflow_mandate, read_workflow_mandate, WorkflowMandateStatus};
 use super::project_root;
+use super::review_evidence::{
+    capture_baseline, capture_completed, CompletedReviewEvidence, TaskReviewEvidenceInput,
+};
 use super::task_execution::{
     run_task, TaskExecutionLinkage, TaskExecutionOutcome, TaskExecutionRequest,
 };
@@ -38,7 +41,7 @@ use crate::{
     DurableProviderExecutorCommandInput, DurableProviderExecutorDispatchAdmissionInput,
     DurableProviderExecutorDispatchAdmissionStatus, DurableProviderExecutorDispatchSelectionInput,
     DurableProviderExecutorDispatchSelectionStatus, DurableProviderExecutorLane,
-    DurableProviderExecutorMethod, ServerStateService,
+    DurableProviderExecutorMethod, ServerStateService, TaskReviewSnapshotStore,
 };
 
 const EXECUTION_PREFIX: &str = "goal-run-execution:";
@@ -81,6 +84,12 @@ pub struct GoalTaskExecutionRecord {
     pub provider_thread_id: Option<String>,
     pub provider_turn_id: Option<String>,
     pub runtime_receipt_id: Option<String>,
+    #[serde(default)]
+    pub baseline_checkpoint_id: Option<String>,
+    #[serde(default)]
+    pub target_checkpoint_id: Option<String>,
+    #[serde(default)]
+    pub diff_summary_id: Option<String>,
     pub summary: String,
 }
 
@@ -105,12 +114,13 @@ pub struct GoalRunExecutionRecord {
 
 pub fn execute_goal_run<B>(
     state: &ServerStateService<B>,
+    snapshot_store: Option<&TaskReviewSnapshotStore>,
     request: GoalRunExecutionRequest,
 ) -> Result<GoalRunExecutionRecord, String>
 where
     B: LocalStoreBackend,
 {
-    execute_goal_run_with(state, request, &mut |input, on_started| {
+    execute_goal_run_with(state, snapshot_store, request, &mut |input, on_started| {
         run_task(
             TaskExecutionRequest {
                 project_root: &input.project_root,
@@ -130,6 +140,7 @@ struct GoalTaskRunInput {
 
 fn execute_goal_run_with<B, F>(
     state: &ServerStateService<B>,
+    snapshot_store: Option<&TaskReviewSnapshotStore>,
     request: GoalRunExecutionRequest,
     runner: &mut F,
 ) -> Result<GoalRunExecutionRecord, String>
@@ -213,8 +224,53 @@ where
             provider_thread_id: None,
             provider_turn_id: None,
             runtime_receipt_id: None,
+            baseline_checkpoint_id: None,
+            target_checkpoint_id: None,
+            diff_summary_id: None,
             summary: "Task work is scheduled; provider handoff has not started.".to_owned(),
         };
+        let review_input = TaskReviewEvidenceInput {
+            project_id: plan.project_id.clone(),
+            task_id: plan_task.task_id.clone(),
+            work_item_id: task_record.work_item_id.clone(),
+            command_id: task_record.dispatch.command_id.clone(),
+            actor_ref: scheduled.actor_ref.clone(),
+        };
+        let baseline = match capture_baseline(state, snapshot_store, &review_input) {
+            Ok(baseline) => baseline,
+            Err(reason) => {
+                record_pre_dispatch_recovery(
+                    state,
+                    &plan,
+                    ordinal,
+                    &mut execution,
+                    &mut task_record,
+                    &scheduled,
+                    reason,
+                )?;
+                upsert_task_execution(&mut execution, task_record);
+                update_execution(state, &mut execution)?;
+                expire_for_execution(state, &plan, &execution)?;
+                return Ok(execution);
+            }
+        };
+        task_record.baseline_checkpoint_id = Some(baseline.checkpoint_id.0.clone());
+        task_record.summary = "Baseline captured; provider handoff has not started.".to_owned();
+        let baseline_source = transition_source(
+            state,
+            &scheduled,
+            ordinal,
+            1,
+            EngineTaskAgentWorkUnitRuntimeStatus::Scheduled,
+            EngineTaskAgentWorkUnitReviewStatus::NotReady,
+            None,
+            None,
+            std::slice::from_ref(&baseline.checkpoint_id),
+            &[],
+            "Task review baseline captured before provider dispatch.",
+        )?;
+        upsert_task_execution(&mut execution, task_record.clone());
+        update_execution(state, &mut execution)?;
         let mut running_source = None;
         let outcome = runner(
             GoalTaskRunInput {
@@ -225,13 +281,15 @@ where
             &mut |linkage| {
                 let running = transition_source(
                     state,
-                    &scheduled,
+                    &baseline_source,
                     ordinal,
-                    1,
+                    2,
                     EngineTaskAgentWorkUnitRuntimeStatus::Running,
                     EngineTaskAgentWorkUnitReviewStatus::NotReady,
                     Some(linkage),
                     None,
+                    &[],
+                    &[],
                     "Provider task turn started.",
                 )?;
                 running_source = Some(running);
@@ -252,6 +310,34 @@ where
                 reason: error,
             },
         };
+        let mut completed_evidence = None;
+        let outcome = match outcome {
+            TaskExecutionOutcome::Completed(linkage) if running_source.is_some() => {
+                match capture_completed(
+                    state,
+                    snapshot_store.expect("baseline requires configured snapshot store"),
+                    &review_input,
+                    &baseline,
+                ) {
+                    Ok(evidence) => {
+                        task_record.target_checkpoint_id =
+                            Some(evidence.target_checkpoint_id.0.clone());
+                        task_record.diff_summary_id = Some(evidence.diff_summary_id.0.clone());
+                        completed_evidence = Some(evidence);
+                        TaskExecutionOutcome::Completed(linkage)
+                    }
+                    Err(reason) => TaskExecutionOutcome::RecoveryRequired {
+                        linkage: Some(linkage),
+                        reason,
+                    },
+                }
+            }
+            TaskExecutionOutcome::Completed(linkage) => TaskExecutionOutcome::RecoveryRequired {
+                linkage: Some(linkage),
+                reason: "provider completed without a persisted running transition".to_owned(),
+            },
+            outcome => outcome,
+        };
         let should_continue = apply_outcome(
             state,
             &plan,
@@ -259,6 +345,7 @@ where
             &mut execution,
             &mut task_record,
             running_source.as_ref(),
+            completed_evidence.as_ref(),
             outcome,
         )?;
         upsert_task_execution(&mut execution, task_record);
@@ -379,6 +466,66 @@ where
     Ok(source)
 }
 
+fn record_pre_dispatch_recovery<B>(
+    state: &ServerStateService<B>,
+    plan: &GoalRunPlan,
+    ordinal: usize,
+    execution: &mut GoalRunExecutionRecord,
+    task_record: &mut GoalTaskExecutionRecord,
+    scheduled: &nucleus_engine::EngineTaskAgentWorkUnitSourceRecord,
+    reason: String,
+) -> Result<(), String>
+where
+    B: LocalStoreBackend,
+{
+    let receipt = runtime_receipt(
+        plan,
+        task_record,
+        EngineRuntimeReceiptStatus::RecoveryRequired,
+        None,
+        &reason,
+    );
+    write_runtime_receipt(
+        state,
+        &receipt,
+        RevisionId(format!("rev:{}", receipt.receipt_id.0)),
+        RevisionExpectation::MustNotExist,
+    )
+    .map_err(|error| format!("failed to persist Goal task recovery receipt: {error:?}"))?;
+    let failed = transition_source(
+        state,
+        scheduled,
+        ordinal,
+        1,
+        EngineTaskAgentWorkUnitRuntimeStatus::Failed(reason.clone()),
+        EngineTaskAgentWorkUnitReviewStatus::NotReady,
+        None,
+        Some(&receipt.receipt_id),
+        &[],
+        &[],
+        &reason,
+    )?;
+    transition_source(
+        state,
+        &failed,
+        ordinal,
+        2,
+        EngineTaskAgentWorkUnitRuntimeStatus::RecoveryRequired(reason.clone()),
+        EngineTaskAgentWorkUnitReviewStatus::NotReady,
+        None,
+        Some(&receipt.receipt_id),
+        &[],
+        &[],
+        &reason,
+    )?;
+    task_record.status = "recovery_required".to_owned();
+    task_record.runtime_receipt_id = Some(receipt.receipt_id.0);
+    task_record.summary = reason.clone();
+    execution.status = GoalRunExecutionStatus::RecoveryRequired;
+    execution.terminal_reason = Some(reason);
+    Ok(())
+}
+
 fn apply_outcome<B>(
     state: &ServerStateService<B>,
     plan: &GoalRunPlan,
@@ -386,6 +533,7 @@ fn apply_outcome<B>(
     execution: &mut GoalRunExecutionRecord,
     task_record: &mut GoalTaskExecutionRecord,
     running: Option<&nucleus_engine::EngineTaskAgentWorkUnitSourceRecord>,
+    completed_evidence: Option<&CompletedReviewEvidence>,
     outcome: TaskExecutionOutcome,
 ) -> Result<bool, String>
 where
@@ -469,11 +617,17 @@ where
         state,
         running,
         ordinal,
-        2,
+        3,
         terminal_runtime,
         review,
         linkage.as_ref(),
         Some(&receipt.receipt_id),
+        completed_evidence
+            .map(|evidence| std::slice::from_ref(&evidence.target_checkpoint_id))
+            .unwrap_or(&[]),
+        completed_evidence
+            .map(|evidence| std::slice::from_ref(&evidence.diff_summary_id))
+            .unwrap_or(&[]),
         &reason,
     )?;
     if status == "recovery_required" {
@@ -481,11 +635,13 @@ where
             state,
             &terminal,
             ordinal,
-            3,
+            4,
             EngineTaskAgentWorkUnitRuntimeStatus::RecoveryRequired(reason.clone()),
             EngineTaskAgentWorkUnitReviewStatus::NotReady,
             linkage.as_ref(),
             Some(&receipt.receipt_id),
+            &[],
+            &[],
             &reason,
         )?;
     }
@@ -494,26 +650,30 @@ where
             state,
             &terminal,
             ordinal,
-            3,
+            4,
             EngineTaskAgentWorkUnitRuntimeStatus::Failed(
                 "Interactive provider session could not remain attached.".to_owned(),
             ),
             EngineTaskAgentWorkUnitReviewStatus::NotReady,
             linkage.as_ref(),
             Some(&receipt.receipt_id),
+            &[],
+            &[],
             "Interactive wait requires recovery.",
         )?;
         transition_source(
             state,
             &failed,
             ordinal,
-            4,
+            5,
             EngineTaskAgentWorkUnitRuntimeStatus::RecoveryRequired(
                 "Interactive wait requires a new admitted continuation.".to_owned(),
             ),
             EngineTaskAgentWorkUnitReviewStatus::NotReady,
             linkage.as_ref(),
             Some(&receipt.receipt_id),
+            &[],
+            &[],
             "Interactive wait requires recovery.",
         )?;
     }
@@ -549,6 +709,8 @@ fn transition_source<B>(
     review: EngineTaskAgentWorkUnitReviewStatus,
     linkage: Option<&TaskExecutionLinkage>,
     receipt_id: Option<&EngineRuntimeReceiptRecordId>,
+    checkpoint_ids: &[EngineCheckpointRecordId],
+    diff_summary_ids: &[EngineDiffSummaryRecordId],
     summary: &str,
 ) -> Result<nucleus_engine::EngineTaskAgentWorkUnitSourceRecord, String>
 where
@@ -564,6 +726,16 @@ where
     if let Some(receipt_id) = receipt_id {
         if !refs.receipt_ids.contains(receipt_id) {
             refs.receipt_ids.push(receipt_id.clone());
+        }
+    }
+    for checkpoint_id in checkpoint_ids {
+        if !refs.checkpoint_ids.contains(checkpoint_id) {
+            refs.checkpoint_ids.push(checkpoint_id.clone());
+        }
+    }
+    for diff_summary_id in diff_summary_ids {
+        if !refs.diff_summary_ids.contains(diff_summary_id) {
+            refs.diff_summary_ids.push(diff_summary_id.clone());
         }
     }
     let source_id =
@@ -997,21 +1169,41 @@ mod tests {
     use crate::local_codex_chat::goal_run::tests::{fixture, run_request};
     use crate::local_codex_chat::{admit_goal_run, GoalRunOutcome};
     use crate::runtime_receipt_state::read_runtime_receipts;
+    use crate::{read_checkpoint_records, read_diff_summary_records};
+    use nucleus_engine::EngineDiffPathChangeKind;
     use nucleus_local_store::{LocalStoreRecordPayload, RevisionExpectation};
 
     #[test]
     fn two_task_goal_executes_serially_and_stops_at_reviewable_results() {
         let fixture = fixture(true);
+        let snapshots = snapshot_runtime(&fixture.state);
         let plan = admitted_plan(&fixture.state, &fixture.mandate, "execute:two");
         let mut calls = 0;
         let execution = execute_goal_run_with(
             &fixture.state,
+            Some(&snapshots.store),
             GoalRunExecutionRequest {
                 plan_id: plan.plan_id.clone(),
                 expected_plan_revision: plan.revision_id.clone(),
             },
             &mut |_, on_started| {
                 calls += 1;
+                let persisted = read_execution(&fixture.state, &plan.plan_id)
+                    .expect("execution lookup")
+                    .expect("persisted execution");
+                if calls == 1 {
+                    assert!(!persisted.provider_execution_started);
+                }
+                assert_eq!(persisted.task_executions.len(), calls);
+                assert!(persisted.task_executions[calls - 1]
+                    .baseline_checkpoint_id
+                    .is_some());
+                assert_eq!(
+                    read_checkpoint_records(&fixture.state)
+                        .expect("baseline checkpoints")
+                        .len(),
+                    calls * 2 - 1
+                );
                 let linkage = linkage(calls);
                 on_started(&linkage)?;
                 Ok(TaskExecutionOutcome::Completed(linkage))
@@ -1030,6 +1222,34 @@ mod tests {
             .task_executions
             .iter()
             .all(|task| !task.dispatch.invocation_request_id.is_empty()));
+        assert!(execution.task_executions.iter().all(|task| {
+            task.baseline_checkpoint_id.is_some()
+                && task.target_checkpoint_id.is_some()
+                && task.diff_summary_id.is_some()
+        }));
+        assert_eq!(
+            read_checkpoint_records(&fixture.state)
+                .expect("all checkpoints")
+                .len(),
+            4
+        );
+        assert_eq!(
+            read_diff_summary_records(&fixture.state)
+                .expect("all diffs")
+                .len(),
+            2
+        );
+        for task in &execution.task_executions {
+            let latest = latest_source(&fixture.state, &task.work_item_id)
+                .expect("latest source")
+                .expect("work source");
+            assert_eq!(latest.refs.checkpoint_ids.len(), 2);
+            assert_eq!(latest.refs.diff_summary_ids.len(), 1);
+            assert_eq!(
+                latest.review,
+                EngineTaskAgentWorkUnitReviewStatus::AwaitingReview
+            );
+        }
         assert_eq!(
             read_runtime_receipts(&fixture.state)
                 .expect("runtime receipts")
@@ -1040,7 +1260,7 @@ mod tests {
             read_task_agent_work_unit_source_records(&fixture.state)
                 .expect("work sources")
                 .len(),
-            6
+            8
         );
         let tasks = fixture.state.tasks().list().expect("tasks");
         assert_eq!(tasks.len(), 2);
@@ -1062,10 +1282,12 @@ mod tests {
     #[test]
     fn failure_stops_before_scheduling_the_next_goal_task() {
         let fixture = fixture(true);
+        let snapshots = snapshot_runtime(&fixture.state);
         let plan = admitted_plan(&fixture.state, &fixture.mandate, "execute:failure");
         let mut calls = 0;
         let execution = execute_goal_run_with(
             &fixture.state,
+            Some(&snapshots.store),
             GoalRunExecutionRequest {
                 plan_id: plan.plan_id.clone(),
                 expected_plan_revision: plan.revision_id,
@@ -1090,16 +1312,18 @@ mod tests {
             read_task_agent_work_unit_source_records(&fixture.state)
                 .expect("work sources")
                 .len(),
-            3
+            4
         );
     }
 
     #[test]
     fn interactive_wait_is_recorded_then_closed_as_recovery_required() {
         let fixture = fixture(true);
+        let snapshots = snapshot_runtime(&fixture.state);
         let plan = admitted_plan(&fixture.state, &fixture.mandate, "execute:wait");
         let execution = execute_goal_run_with(
             &fixture.state,
+            Some(&snapshots.store),
             GoalRunExecutionRequest {
                 plan_id: plan.plan_id.clone(),
                 expected_plan_revision: plan.revision_id,
@@ -1132,10 +1356,12 @@ mod tests {
     #[test]
     fn mandate_revocation_stops_before_the_next_serial_task() {
         let fixture = fixture(true);
+        let snapshots = snapshot_runtime(&fixture.state);
         let plan = admitted_plan(&fixture.state, &fixture.mandate, "execute:revoke");
         let mut calls = 0;
         let execution = execute_goal_run_with(
             &fixture.state,
+            Some(&snapshots.store),
             GoalRunExecutionRequest {
                 plan_id: plan.plan_id,
                 expected_plan_revision: plan.revision_id,
@@ -1166,29 +1392,192 @@ mod tests {
     #[test]
     fn repeated_execution_returns_the_terminal_record_without_provider_replay() {
         let fixture = fixture(true);
+        let snapshots = snapshot_runtime(&fixture.state);
         let plan = admitted_plan(&fixture.state, &fixture.mandate, "execute:idem");
         let request = GoalRunExecutionRequest {
             plan_id: plan.plan_id,
             expected_plan_revision: plan.revision_id,
         };
-        let first = execute_goal_run_with(&fixture.state, request.clone(), &mut |_, on_started| {
-            let linkage = linkage(1);
-            on_started(&linkage)?;
-            Ok(TaskExecutionOutcome::Failed {
-                linkage: Some(linkage),
-                reason: "stop".to_owned(),
-            })
-        })
+        let first = execute_goal_run_with(
+            &fixture.state,
+            Some(&snapshots.store),
+            request.clone(),
+            &mut |_, on_started| {
+                let linkage = linkage(1);
+                on_started(&linkage)?;
+                Ok(TaskExecutionOutcome::Failed {
+                    linkage: Some(linkage),
+                    reason: "stop".to_owned(),
+                })
+            },
+        )
         .expect("first execution");
         let mut replay_calls = 0;
-        let repeated = execute_goal_run_with(&fixture.state, request, &mut |_, _| {
-            replay_calls += 1;
-            Err("must not replay".to_owned())
-        })
+        let repeated = execute_goal_run_with(
+            &fixture.state,
+            Some(&snapshots.store),
+            request,
+            &mut |_, _| {
+                replay_calls += 1;
+                Err("must not replay".to_owned())
+            },
+        )
         .expect("repeat execution");
 
         assert_eq!(replay_calls, 0);
         assert_eq!(repeated, first);
+    }
+
+    #[test]
+    fn missing_snapshot_backend_fails_before_provider_start() {
+        let fixture = fixture(true);
+        let workspace = tempfile::tempdir().expect("workspace");
+        redirect_project_root(&fixture.state, workspace.path());
+        let plan = admitted_plan(&fixture.state, &fixture.mandate, "execute:no-snapshots");
+        let mut calls = 0;
+        let execution = execute_goal_run_with(
+            &fixture.state,
+            None,
+            GoalRunExecutionRequest {
+                plan_id: plan.plan_id,
+                expected_plan_revision: plan.revision_id,
+            },
+            &mut |_, _| {
+                calls += 1;
+                Err("provider must not start".to_owned())
+            },
+        )
+        .expect("fail closed");
+
+        assert_eq!(calls, 0);
+        assert!(!execution.provider_execution_started);
+        assert_eq!(execution.status, GoalRunExecutionStatus::RecoveryRequired);
+        assert_eq!(execution.task_executions[0].status, "recovery_required");
+        assert!(read_checkpoint_records(&fixture.state)
+            .expect("checkpoints")
+            .is_empty());
+        let sources =
+            read_task_agent_work_unit_source_records(&fixture.state).expect("work sources");
+        assert!(sources.iter().any(|source| matches!(
+            source.runtime,
+            EngineTaskAgentWorkUnitRuntimeStatus::RecoveryRequired(_)
+        )));
+    }
+
+    #[test]
+    fn serial_tasks_receive_non_overlapping_source_windows() {
+        let fixture = fixture(true);
+        let snapshots = snapshot_runtime(&fixture.state);
+        std::fs::write(
+            snapshots.workspace.path().join("preexisting.txt"),
+            "stable\n",
+        )
+        .expect("preexisting");
+        std::fs::write(snapshots.workspace.path().join("modified.txt"), "before\n")
+            .expect("modified fixture");
+        std::fs::write(snapshots.workspace.path().join("deleted.txt"), "delete\n")
+            .expect("deleted fixture");
+        let plan = admitted_plan(&fixture.state, &fixture.mandate, "execute:windows");
+        let mut calls = 0;
+        let execution = execute_goal_run_with(
+            &fixture.state,
+            Some(&snapshots.store),
+            GoalRunExecutionRequest {
+                plan_id: plan.plan_id,
+                expected_plan_revision: plan.revision_id,
+            },
+            &mut |_, on_started| {
+                calls += 1;
+                let linkage = linkage(calls);
+                on_started(&linkage)?;
+                std::fs::write(
+                    snapshots.workspace.path().join(format!("task-{calls}.txt")),
+                    format!("task {calls}\n"),
+                )
+                .map_err(|error| error.to_string())?;
+                if calls == 1 {
+                    std::fs::write(snapshots.workspace.path().join("modified.txt"), "after\n")
+                        .map_err(|error| error.to_string())?;
+                    std::fs::remove_file(snapshots.workspace.path().join("deleted.txt"))
+                        .map_err(|error| error.to_string())?;
+                    std::fs::write(snapshots.workspace.path().join("binary.bin"), b"a\0b")
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(TaskExecutionOutcome::Completed(linkage))
+            },
+        )
+        .expect("serial windows");
+
+        assert_eq!(execution.status, GoalRunExecutionStatus::Completed);
+        let mut diffs = read_diff_summary_records(&fixture.state).expect("diffs");
+        diffs.sort_by(|left, right| left.diff_id.0.cmp(&right.diff_id.0));
+        assert_eq!(diffs.len(), 2);
+        assert_eq!(
+            diffs[0].changed_paths,
+            vec!["binary.bin", "deleted.txt", "modified.txt", "task-1.txt"]
+        );
+        assert_eq!(diffs[1].changed_paths, vec!["task-2.txt"]);
+        assert_eq!(diffs[0].counts.added, 1);
+        assert_eq!(diffs[0].counts.modified, 1);
+        assert_eq!(diffs[0].counts.deleted, 1);
+        assert_eq!(diffs[0].counts.metadata_only, 1);
+        assert!(diffs[0]
+            .path_changes
+            .iter()
+            .any(|change| change.kind == EngineDiffPathChangeKind::MetadataOnly));
+        assert_eq!(diffs[1].counts.added, 1);
+        assert_eq!(
+            diffs[1].path_changes[0].kind,
+            EngineDiffPathChangeKind::Added
+        );
+        assert!(diffs.iter().all(|diff| !diff
+            .changed_paths
+            .iter()
+            .any(|path| path == "preexisting.txt")));
+    }
+
+    #[test]
+    fn target_capture_failure_never_becomes_review_ready() {
+        let fixture = fixture(true);
+        let snapshots = snapshot_runtime(&fixture.state);
+        let plan = admitted_plan(&fixture.state, &fixture.mandate, "execute:target-failure");
+        let execution = execute_goal_run_with(
+            &fixture.state,
+            Some(&snapshots.store),
+            GoalRunExecutionRequest {
+                plan_id: plan.plan_id,
+                expected_plan_revision: plan.revision_id,
+            },
+            &mut |_, on_started| {
+                let linkage = linkage(1);
+                on_started(&linkage)?;
+                for index in 0..=crate::project_file_policy::MAX_ADMITTED_PROJECT_FILES {
+                    std::fs::write(
+                        snapshots.workspace.path().join(format!("{index:04}.txt")),
+                        "",
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+                Ok(TaskExecutionOutcome::Completed(linkage))
+            },
+        )
+        .expect("target recovery");
+
+        assert_eq!(execution.status, GoalRunExecutionStatus::RecoveryRequired);
+        assert_eq!(execution.task_executions[0].status, "recovery_required");
+        assert!(execution.task_executions[0].target_checkpoint_id.is_none());
+        assert!(execution.task_executions[0].diff_summary_id.is_none());
+        assert!(read_diff_summary_records(&fixture.state)
+            .expect("diffs")
+            .is_empty());
+        let latest = latest_source(&fixture.state, &execution.task_executions[0].work_item_id)
+            .expect("latest source")
+            .expect("source");
+        assert!(matches!(
+            latest.runtime,
+            EngineTaskAgentWorkUnitRuntimeStatus::RecoveryRequired(_)
+        ));
+        assert_eq!(latest.review, EngineTaskAgentWorkUnitReviewStatus::NotReady);
     }
 
     #[test]
@@ -1230,10 +1619,14 @@ mod tests {
     fn authenticated_two_task_goal_reaches_two_serial_provider_turns() {
         let fixture = fixture(true);
         let workspace = tempfile::tempdir().expect("workspace");
+        let snapshot_backend = tempfile::tempdir().expect("snapshot backend");
+        let snapshot_store =
+            TaskReviewSnapshotStore::new(snapshot_backend.path()).expect("snapshot store");
         redirect_project_root(&fixture.state, workspace.path());
         let plan = admitted_plan(&fixture.state, &fixture.mandate, "execute:live-two");
         let execution = execute_goal_run(
             &fixture.state,
+            Some(&snapshot_store),
             GoalRunExecutionRequest {
                 plan_id: plan.plan_id,
                 expected_plan_revision: plan.revision_id,
@@ -1257,6 +1650,26 @@ mod tests {
         match admit_goal_run(state, run_request(mandate, key)).expect("admit Goal") {
             GoalRunOutcome::Admitted { plan } => plan,
             other => panic!("expected plan, got {other:?}"),
+        }
+    }
+
+    struct SnapshotRuntime {
+        workspace: tempfile::TempDir,
+        _backend: tempfile::TempDir,
+        store: TaskReviewSnapshotStore,
+    }
+
+    fn snapshot_runtime(
+        state: &ServerStateService<nucleus_local_store::SqliteBackend>,
+    ) -> SnapshotRuntime {
+        let workspace = tempfile::tempdir().expect("workspace");
+        redirect_project_root(state, workspace.path());
+        let backend = tempfile::tempdir().expect("snapshot backend");
+        let store = TaskReviewSnapshotStore::new(backend.path().join("snapshots")).expect("store");
+        SnapshotRuntime {
+            workspace,
+            _backend: backend,
+            store,
         }
     }
 

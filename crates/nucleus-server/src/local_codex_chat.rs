@@ -7,6 +7,7 @@ mod goal_run;
 mod goal_update;
 mod mandates;
 mod persistence;
+mod review_evidence;
 mod runtime;
 mod task_authoring;
 mod task_execution;
@@ -78,12 +79,27 @@ pub struct LocalCodexChatReply {
     pub workflow_receipts: Vec<TaskWorkflowReceipt>,
 }
 
-#[derive(Default)]
 pub struct LocalCodexChatService {
     sessions: HashMap<String, LocalCodexChatSession>,
+    task_review_snapshot_store: Option<crate::TaskReviewSnapshotStore>,
+}
+
+impl Default for LocalCodexChatService {
+    fn default() -> Self {
+        Self {
+            sessions: HashMap::new(),
+            task_review_snapshot_store: None,
+        }
+    }
 }
 
 impl LocalCodexChatService {
+    pub fn with_task_review_snapshot_store(store: crate::TaskReviewSnapshotStore) -> Self {
+        Self {
+            sessions: HashMap::new(),
+            task_review_snapshot_store: Some(store),
+        }
+    }
     pub fn history<B>(
         &self,
         state: &ServerStateService<B>,
@@ -157,6 +173,7 @@ impl LocalCodexChatService {
         };
         let project_id = request.project_id.clone();
         let conversation_id = request.conversation_id.clone();
+        let snapshot_store = self.task_review_snapshot_store.as_ref();
         let mut task_tool = |tool: &str, turn_id: &str, call_id: &str, arguments| match tool {
             "task_ledger" => execute_task_ledger(
                 state,
@@ -167,9 +184,13 @@ impl LocalCodexChatService {
                 arguments,
                 execute,
             ),
-            "task_workflow" => {
-                task_workflow::execute(state, &project_id, &conversation_id, arguments)
-            }
+            "task_workflow" => task_workflow::execute(
+                state,
+                snapshot_store,
+                &project_id,
+                &conversation_id,
+                arguments,
+            ),
             _ => Err(format!("unsupported dynamic tool: {tool}")),
         };
         let turn_count = stored.map_or(1, |stored| stored.turn_count + 1);

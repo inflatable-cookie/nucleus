@@ -18,7 +18,7 @@ use super::persistence::{current_turn, operator_message_id};
 use super::task_authoring::{safe_ref, TaskToolOutcome};
 use super::task_inspection::active_task;
 use crate::task_agent_work_unit_state::read_task_agent_work_unit_source_records;
-use crate::ServerStateService;
+use crate::{ServerStateService, TaskReviewSnapshotStore};
 
 const MANDATE_TTL_SECONDS: u64 = 60 * 60;
 
@@ -90,6 +90,7 @@ pub(super) fn dynamic_tool_spec() -> Value {
 
 pub(super) fn execute<B>(
     state: &ServerStateService<B>,
+    snapshot_store: Option<&TaskReviewSnapshotStore>,
     project_id: &str,
     conversation_id: &str,
     arguments: Value,
@@ -102,7 +103,7 @@ where
     validate_scope_fields(&input)?;
     match input.action.as_str() {
         "inspect" => inspect(state, project_id, input),
-        "run" => run(state, project_id, conversation_id, input),
+        "run" => run(state, snapshot_store, project_id, conversation_id, input),
         action => Err(format!("unsupported task_workflow action: {action}")),
     }
 }
@@ -203,6 +204,7 @@ where
 
 fn run<B>(
     state: &ServerStateService<B>,
+    snapshot_store: Option<&TaskReviewSnapshotStore>,
     project_id: &str,
     conversation_id: &str,
     input: TaskWorkflowInput,
@@ -303,6 +305,7 @@ where
     };
     let execution = execute_goal_run(
         state,
+        snapshot_store,
         GoalRunExecutionRequest {
             plan_id: plan.plan_id.clone(),
             expected_plan_revision: plan.revision_id.clone(),
@@ -502,6 +505,7 @@ mod tests {
         let fixture = fixture(true);
         let outcome = execute(
             &fixture.state,
+            None,
             "project:nucleus-local",
             "conversation:goal-run",
             json!({
@@ -529,6 +533,7 @@ mod tests {
         };
         let outcome = execute(
             &fixture.state,
+            None,
             "project:nucleus-local",
             "conversation:goal-run",
             json!({

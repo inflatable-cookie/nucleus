@@ -469,6 +469,34 @@ Nucleus does not need to become a full IDE before the first editor surface
 ships. It does need a clean boundary so early editor implementation does not
 block later language-server, theme, extension, and richer editor features.
 
+## Initial Task Diff Review Surface
+
+The existing Diff panel is the first task-attributed source review surface. It
+consumes server-owned checkpoint, diff-summary, changed-file, and transient
+patch read models. It does not inspect the filesystem, snapshot store, Git
+repository, or provider state directly.
+
+Normal presentation stays compact:
+
+- one task/work-item review summary
+- one changed-file trigger with filtering in a popover
+- one read-only unified file diff
+- one small review menu
+
+Binary, oversized, truncated, unavailable, expired, and partial evidence must
+remain explicit without adding permanent diagnostic chrome. Advanced metadata,
+coverage notices, and recovery detail belong in the changed-file popover or
+review menu.
+
+Accept and Needs changes reuse server-owned task review admission and cite the
+exact work-item revision plus checkpoint/diff evidence refs. These actions do
+not edit source, complete the task, publish SCM state, or imply merge. Open in
+Editor may focus or create the existing Editor panel for the selected safe file
+ref; it must not introduce editor-internal tabs or a permanent file explorer.
+
+The first Diff panel does not stage, revert, apply hunks, resolve merge
+conflicts, commit, push, publish, or send patch content to an agent/model.
+
 Plugin execution may need both TypeScript and Rust host surfaces. TypeScript is
 the natural fit for client-side editor extensions and theme parsing. Rust is
 the authority boundary for server
@@ -546,10 +574,13 @@ they do not own display placement.
 - `SurfaceKind`
 - `SurfaceAttachmentState`
 
-These are domain types and pure planning helpers only. Rendering, layout
-migration, local SQLite codecs, terminal process control, browser control,
-editor implementation, language-server integration, plugin execution, SCM
-mutation, and client synchronization remain out of scope.
+The workspace-model types above are domain types and pure planning helpers;
+they do not themselves implement rendering, layout migration, local SQLite
+codecs, resource control, or client synchronization. The first editor is now
+realized separately through a Rust host file boundary and a client CodeMirror
+adapter. Terminal process control, browser control, language-server
+integration, plugin execution, and SCM mutation remain outside this contract's
+realized workspace-model surface.
 
 The current Rust surface now distinguishes shared project management
 projection files from local client layout records, and separates global shell

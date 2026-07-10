@@ -60,6 +60,29 @@ Provider completion does not grant review acceptance or task completion.
 Lifecycle state changes follow admitted workflow events; the agent does not
 receive separate lifecycle-verb tools.
 
+## Task Review Checkpoint Rule
+
+A write-capable task run must capture a source baseline after run admission and
+before provider dispatch. Baseline capture failure blocks dispatch rather than
+allowing later review to claim that pre-existing working-copy changes belong to
+the task window.
+
+When runtime work completes, the host captures a target boundary and composes a
+diff summary before the work item enters awaiting review. Target failure moves
+review evidence to recovery required; it must not become an empty diff or
+implicit no-change result.
+
+The work item links both checkpoint ids and the resulting diff summary id.
+These refs remain distinct from provider session refs, provider change refs,
+SCM work-session refs, and review decisions. Task-window attribution means the
+changes occurred between the two host boundaries. It does not prove which
+local actor wrote each change, so concurrent operator or process writes must be
+disclosed in the review read model.
+
+Read-only or genuinely no-change work may use explicit no-change evidence under
+the existing review rule. It must not fabricate source checkpoints merely to
+advance lifecycle state.
+
 ## Lifecycle States
 
 Generic work-item runtime states:
@@ -225,6 +248,11 @@ To accept, reject, request changes, or abandon, the reviewer command must name:
 - outcome
 - evidence refs
 - note or reason when the outcome is reject, needs changes, or abandon
+
+For a source-changing work item, the command also cites the exact baseline,
+target, and diff evidence refs shown to the reviewer. A client may request a
+bounded transient patch for those refs, but patch content is not itself review
+authority and must not be copied into the durable decision record.
 
 Rework creates a new work item or a repaired work item with provenance back to
 the prior one. It must not overwrite prior runtime or review evidence.

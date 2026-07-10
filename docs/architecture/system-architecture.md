@@ -213,6 +213,13 @@ identity, content snapshots, write capability, revision-checked save, conflict
 responses, and future language-server process lifecycle. Monaco and a VS Code
 workbench are not part of the first editor surface.
 
+Task-attributed source review uses a host-local content-addressed snapshot
+backend. The task runtime captures an immutable baseline before provider
+dispatch and an immutable target before awaiting review. Durable checkpoint
+and diff records retain refs and summaries; bounded patch content is generated
+on demand and remains transient. The client never receives snapshot storage
+paths and never becomes source, snapshot, SCM, or review authority.
+
 Command diagnostics panels are client-rendered read-only surfaces over the
 host command history DTO. They render evidence rows, evidence detail, sanitized
 summary, status, retention, and artifact refs. They do not decode storage

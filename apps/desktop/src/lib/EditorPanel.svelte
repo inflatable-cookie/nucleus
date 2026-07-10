@@ -15,7 +15,10 @@
     type EditorFileSnapshot,
   } from "./control/editorFiles";
 
-  let { projectId }: { projectId: string | null } = $props();
+  let {
+    projectId,
+    requestedFileRef = null,
+  }: { projectId: string | null; requestedFileRef?: string | null } = $props();
   let files = $state<EditorFileEntry[]>([]);
   let snapshot = $state<EditorFileSnapshot | null>(null);
   let buffer = $state("");
@@ -33,6 +36,11 @@
   $effect(() => {
     projectId;
     void loadFiles();
+  });
+
+  $effect(() => {
+    const fileRef = requestedFileRef;
+    if (fileRef && files.some((file) => file.file_ref === fileRef)) requestOpen(fileRef);
   });
 
   async function loadFiles(): Promise<void> {

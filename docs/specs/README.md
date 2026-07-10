@@ -13,6 +13,7 @@ architecture, contracts, and roadmaps.
 - `004-display-window-surface-layout.md`
 - `005-task-workflow-portal.md`
 - `006-initial-code-editor-vertical-slice.md`
+- `007-task-attributed-diff-review.md`
 - `templates/`
 
 Batch cards live under the active roadmap lane:

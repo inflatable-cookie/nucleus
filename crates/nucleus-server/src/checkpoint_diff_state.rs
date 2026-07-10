@@ -157,6 +157,14 @@ mod tests {
             confidence: EngineDiffSummaryConfidence::Partial,
             summary: "one path changed".to_owned(),
             changed_paths: vec!["src/lib.rs".to_owned()],
+            path_changes: Vec::new(),
+            counts: nucleus_engine::EngineDiffSummaryCounts {
+                modified: 1,
+                ..nucleus_engine::EngineDiffSummaryCounts::default()
+            },
+            coverage: nucleus_engine::EngineDiffCoverageState::Complete,
+            truncated: false,
+            attribution_notice: None,
             evidence_refs: Vec::new(),
             artifact_refs: Vec::new(),
         };

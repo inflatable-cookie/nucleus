@@ -1,6 +1,6 @@
 # 028 Initial Code Editor Vertical Slice
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-10
 
@@ -28,15 +28,15 @@ boundary needed by later evidence, diff, review, and language-service work.
 
 ## Goals
 
-- [ ] Prove project-scoped file discovery, snapshot read, and revision-checked
+- [x] Prove project-scoped file discovery, snapshot read, and revision-checked
   save through Rust authority.
-- [ ] Embed official CodeMirror 6 packages through a thin Nucleus Svelte
+- [x] Embed official CodeMirror 6 packages through a thin Nucleus Svelte
   adapter.
-- [ ] Deliver a simple one-buffer open-edit-save workflow in the existing
+- [x] Deliver a simple one-buffer open-edit-save workflow in the existing
   Editor panel.
-- [ ] Add quick open, initial language presentation, token-based styling, and
+- [x] Add quick open, initial language presentation, token-based styling, and
   explicit dirty/reload/conflict handling.
-- [ ] Validate the real Tauri workflow and select the next editor/review lane.
+- [x] Validate the real Tauri workflow and stop for next-lane selection.
 
 ## Boundary
 
@@ -68,21 +68,21 @@ This lane must not:
   integration.
 - [x] Batch 3: quick open, language registry, Poodle-token theme, dirty switch,
   reload, and conflict-state completion.
-- [ ] Batch 4: end-to-end validation, evidence closeout, and next-lane
+- [x] Batch 4: end-to-end validation, evidence closeout, and next-lane
   checkpoint.
 
 ## Acceptance Criteria
 
-- [ ] A repository text file can be found, opened, edited, saved, and reopened
+- [x] A repository text file can be found, opened, edited, saved, and reopened
   through the proper interface.
-- [ ] Out-of-project, ignored, binary, oversized, read-only, and stale write
+- [x] Out-of-project, ignored, binary, oversized, read-only, and stale write
   cases fail explicitly through Rust policy.
-- [ ] A rejected save preserves the dirty client buffer.
-- [ ] The editor mounts, resizes, closes, and reopens without leaked state or
+- [x] A rejected save preserves the dirty client buffer.
+- [x] The editor mounts, resizes, closes, and reopens without leaked state or
   duplicate handlers.
-- [ ] Normal presentation remains one quiet editor surface with advanced
+- [x] Normal presentation remains one quiet editor surface with advanced
   behavior absent or behind compact controls.
-- [ ] Rust, desktop, documentation, interaction, and conflict smokes pass.
+- [x] Rust, desktop, documentation, interaction, and conflict smokes pass.
 
 ## Planning Gaps Beyond This Lane
 
@@ -98,7 +98,7 @@ These gaps do not block the first explicit one-buffer workflow.
 
 Ready:
 
-- `batch-cards/153-editor-validation-and-next-lane-checkpoint.md`
+- None.
 
 Planned:
 
@@ -109,9 +109,10 @@ Completed:
 - `batch-cards/150-editor-file-authority-and-control-boundary.md`
 - `batch-cards/151-codemirror-editor-panel-vertical-slice.md`
 - `batch-cards/152-editor-quick-open-language-theme-and-conflicts.md`
+- `batch-cards/153-editor-validation-and-next-lane-checkpoint.md`
 
 ## Checkpoint
 
-After card 153, stop for operator review of the working editor and select
-between diff/review integration, multiple buffers, file watching/recovery, or
-the first server-owned language-service lane.
+The first editor lane is complete. Stop for operator selection between
+diff/review integration, multiple buffers, file watching/recovery, or the first
+server-owned language-service lane.

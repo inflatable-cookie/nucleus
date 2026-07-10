@@ -17,3 +17,7 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-03-stocktake.md`
 - `2026-07-03-structured-planning-closeout.md`
 - `2026-07-10-initial-editor-authority-and-panel.md`
+- `2026-07-10-task-review-snapshot-backend.md`
+- `2026-07-10-task-run-checkpoint-diff-integration.md`
+- `2026-07-10-task-diff-read-boundary.md`
+- `2026-07-10-compact-task-diff-review-panel.md`

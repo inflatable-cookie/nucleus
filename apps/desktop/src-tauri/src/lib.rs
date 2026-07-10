@@ -29,7 +29,9 @@ use nucleus_server::{
     ForgeStatusCheckRefreshScope, LocalCodexChatHistory, LocalCodexChatReply,
     LocalCodexChatRequest, LocalCodexChatService, LocalControlRequestHandler,
     LocalMemoryProposalSeed, LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed,
-    LocalTaskSeed, ServerStateService, TauriIpcControlCommandAdapter,
+    LocalTaskSeed, ServerStateService, TaskDiffFilePatchRequest, TaskDiffFilePatchResponse,
+    TaskDiffOverviewRequest, TaskDiffOverviewResponse, TaskReviewSnapshotStore,
+    TauriIpcControlCommandAdapter,
 };
 
 mod workspace_ui;
@@ -38,6 +40,7 @@ struct DesktopState {
     adapter: Arc<Mutex<TauriIpcControlCommandAdapter<SqliteBackend>>>,
     chat: Arc<Mutex<LocalCodexChatService>>,
     server_state: ServerStateService<SqliteBackend>,
+    task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
 }
 
 #[tauri::command]
@@ -66,7 +69,26 @@ fn save_editor_file(
 }
 
 impl DesktopState {
+    #[cfg(test)]
     fn new(backend: SqliteBackend) -> Self {
+        Self::with_chat(backend, LocalCodexChatService::default(), None)
+    }
+
+    fn new_with_snapshot_store(backend: SqliteBackend, snapshot_root: PathBuf) -> Self {
+        let snapshot_store = TaskReviewSnapshotStore::new(snapshot_root)
+            .expect("local task review snapshot store should be writable");
+        Self::with_chat(
+            backend,
+            LocalCodexChatService::with_task_review_snapshot_store(snapshot_store.clone()),
+            Some(snapshot_store),
+        )
+    }
+
+    fn with_chat(
+        backend: SqliteBackend,
+        chat: LocalCodexChatService,
+        task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
+    ) -> Self {
         let server_state = ServerStateService::new(backend.clone());
         let handler = LocalControlRequestHandler::new(backend, None);
         seed_local_project(handler.state(), LocalProjectSeed::nucleus_local())
@@ -96,8 +118,9 @@ impl DesktopState {
 
         Self {
             adapter: Arc::new(Mutex::new(adapter)),
-            chat: Arc::new(Mutex::new(LocalCodexChatService::default())),
+            chat: Arc::new(Mutex::new(chat)),
             server_state,
+            task_review_snapshot_store,
         }
     }
 
@@ -112,6 +135,26 @@ impl DesktopState {
 
         adapter.submit_control_envelope(request)
     }
+}
+
+#[tauri::command]
+fn read_task_diff_overview(
+    state: tauri::State<'_, DesktopState>,
+    request: TaskDiffOverviewRequest,
+) -> Result<TaskDiffOverviewResponse, String> {
+    nucleus_server::read_task_diff_overview(&state.server_state, &request)
+}
+
+#[tauri::command]
+fn read_task_diff_file_patch(
+    state: tauri::State<'_, DesktopState>,
+    request: TaskDiffFilePatchRequest,
+) -> Result<TaskDiffFilePatchResponse, String> {
+    let store = state
+        .task_review_snapshot_store
+        .as_ref()
+        .ok_or_else(|| "task review snapshot backend is not configured".to_owned())?;
+    nucleus_server::read_task_diff_file_patch(&state.server_state, store, &request)
 }
 
 #[tauri::command]
@@ -403,9 +446,10 @@ fn save_workspace_ui_config(
 
 pub fn run() {
     tauri::Builder::default()
-        .manage(DesktopState::new(SqliteBackend::new(
-            desktop_database_path(),
-        )))
+        .manage(DesktopState::new_with_snapshot_store(
+            SqliteBackend::new(desktop_database_path()),
+            desktop_snapshot_path(),
+        ))
         .setup(|app| {
             app.set_theme(Some(tauri::Theme::Dark));
             if let Some(window) = app.get_webview_window("main") {
@@ -421,7 +465,9 @@ pub fn run() {
             save_workspace_ui_config,
             list_editor_files,
             read_editor_file,
-            save_editor_file
+            save_editor_file,
+            read_task_diff_overview,
+            read_task_diff_file_patch
         ])
         .run(tauri::generate_context!())
         .expect("failed to run nucleus desktop");
@@ -435,6 +481,15 @@ fn desktop_database_path() -> PathBuf {
         .join("state");
     std::fs::create_dir_all(&data_dir).expect("local desktop state directory should be writable");
     data_dir.join("nucleus.sqlite")
+}
+
+fn desktop_snapshot_path() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .expect("HOME is required for local desktop state")
+        .join(".nucleus")
+        .join("state")
+        .join("task-review-snapshots")
 }
 
 #[cfg(test)]

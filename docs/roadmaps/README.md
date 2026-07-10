@@ -353,5 +353,5 @@ shape.
 ## Next Task
 
 Execute
-`docs/roadmaps/g04/batch-cards/153-editor-validation-and-next-lane-checkpoint.md`
-for full editor validation and the operator next-lane checkpoint.
+`docs/roadmaps/g04/batch-cards/158-task-diff-review-validation-and-closeout.md`,
+then stop for operator review and next-lane selection.

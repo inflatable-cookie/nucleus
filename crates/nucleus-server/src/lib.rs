@@ -111,6 +111,7 @@ pub mod process_interruption;
 pub mod process_supervision_events;
 pub mod process_supervisor;
 pub mod product_workflow_summary;
+mod project_file_policy;
 pub mod project_seed;
 pub mod provider_backpressure_summary;
 pub mod provider_command_persistence;
@@ -323,6 +324,14 @@ pub mod selected_task_scm_handoff;
 pub mod server_read_only_spawn;
 pub mod state;
 pub mod task_agent_work_unit_state;
+pub mod task_diff_read;
+pub use task_diff_read::{
+    read_task_diff_file_patch, read_task_diff_overview, TaskDiffFilePatchRequest,
+    TaskDiffFilePatchResponse, TaskDiffOverviewRequest, TaskDiffOverviewResponse,
+};
+mod task_review_diff;
+pub mod task_review_snapshots;
+pub use task_review_snapshots::TaskReviewSnapshotStore;
 pub mod task_seed;
 pub mod task_workflow_drilldown;
 pub mod tauri_ipc_command;

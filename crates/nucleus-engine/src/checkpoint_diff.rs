@@ -38,6 +38,8 @@ pub enum EngineCheckpointRecoveryState {
 pub enum EngineCheckpointRef {
     ProjectId(String),
     TaskId(String),
+    WorkItemId(String),
+    CheckpointId(String),
     AgentSessionId(String),
     ThreadId(String),
     TurnId(String),
@@ -95,6 +97,46 @@ pub enum EngineDiffSummaryConfidence {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineDiffPathChangeKind {
+    Added,
+    Modified,
+    Deleted,
+    MetadataOnly,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EngineDiffPathChange {
+    pub file_ref: String,
+    pub display_path: String,
+    pub kind: EngineDiffPathChangeKind,
+    pub baseline_file_ref: Option<String>,
+    pub target_file_ref: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EngineDiffSummaryCounts {
+    pub added: usize,
+    pub modified: usize,
+    pub deleted: usize,
+    pub metadata_only: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineDiffCoverageState {
+    Complete,
+    Partial,
+    Unavailable,
+}
+
+impl Default for EngineDiffCoverageState {
+    fn default() -> Self {
+        Self::Unavailable
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EngineDiffSummaryRecord {
     pub diff_id: EngineDiffSummaryRecordId,
     pub kind: EngineDiffSummaryKind,
@@ -106,6 +148,16 @@ pub struct EngineDiffSummaryRecord {
     pub confidence: EngineDiffSummaryConfidence,
     pub summary: String,
     pub changed_paths: Vec<String>,
+    #[serde(default)]
+    pub path_changes: Vec<EngineDiffPathChange>,
+    #[serde(default)]
+    pub counts: EngineDiffSummaryCounts,
+    #[serde(default)]
+    pub coverage: EngineDiffCoverageState,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub attribution_notice: Option<String>,
     pub evidence_refs: Vec<EngineCheckpointRef>,
     pub artifact_refs: Vec<EngineCheckpointRef>,
 }
@@ -195,6 +247,20 @@ mod tests {
             confidence: EngineDiffSummaryConfidence::Partial,
             summary: "2 paths changed".to_owned(),
             changed_paths: vec!["src/lib.rs".to_owned(), "README.md".to_owned()],
+            path_changes: vec![EngineDiffPathChange {
+                file_ref: "project-file:src-lib".to_owned(),
+                display_path: "src/lib.rs".to_owned(),
+                kind: EngineDiffPathChangeKind::Modified,
+                baseline_file_ref: Some("project-file:src-lib".to_owned()),
+                target_file_ref: Some("project-file:src-lib".to_owned()),
+            }],
+            counts: EngineDiffSummaryCounts {
+                modified: 1,
+                ..EngineDiffSummaryCounts::default()
+            },
+            coverage: EngineDiffCoverageState::Complete,
+            truncated: false,
+            attribution_notice: Some("task-window attribution".to_owned()),
             evidence_refs: vec![EngineCheckpointRef::ReceiptId("receipt:1".to_owned())],
             artifact_refs: Vec::new(),
         };

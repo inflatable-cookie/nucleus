@@ -31,17 +31,24 @@ item without provider effects. Admitted runs now execute their frozen snapshot
 through real serial local Codex turns and stop at reviewable evidence or the
 first stop condition. Agent Chat now exposes only the `task_ledger` and
 `task_workflow` portals; compact workflow receipts persist, refresh Tasks, and
-focus the affected Goal or task. The next product lane is now the first
-host-authorized CodeMirror 6 editor vertical slice. Quick open, lazy language
-support, token styling, dirty switching, and stale-conflict controls are now in
-place. Current pointer: full editor validation and the operator next-lane
-checkpoint.
+focus the affected Goal or task. The first host-authorized CodeMirror 6 editor
+vertical slice is complete. Editor-to-diff/review is selected next.
+Task-attributed checkpoint review, transient patch delivery, and the compact
+Diff panel shape are now promoted. The implementation roadmap and five-card
+runway are ready. The host-local snapshot backend now preserves bounded exact
+source boundaries outside projects and SQLite. Write-capable task runs now
+persist exact baseline, target, and task-window diff evidence before review
+readiness. Dedicated lineage-validated overview and bounded patch reads now
+reach the TypeScript client without entering durable control envelopes. Current
+pointer: compact task Diff review panel.
 
 Current planning artifacts:
 
 - `research/translation-memos/editor-substrate-selection.md`
 - `specs/006-initial-code-editor-vertical-slice.md`
+- `specs/007-task-attributed-diff-review.md`
 - `roadmaps/g04/028-initial-code-editor-vertical-slice.md`
+- `roadmaps/g04/029-task-attributed-diff-review.md`
 
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`
