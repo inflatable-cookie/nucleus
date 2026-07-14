@@ -97,14 +97,6 @@ nav a:hover {
   gap: var(--poodle-space-inline-lg);
 }
 
-.panel-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
-  gap: var(--poodle-space-stack-md);
-  min-width: 0;
-  overflow: auto;
-}
-
 .diagnostics-panel {
   display: grid;
   gap: var(--poodle-space-stack-md);
@@ -428,10 +420,6 @@ nav a:hover {
     display: flex;
     min-width: 0;
     overflow-x: auto;
-  }
-
-  .panel-grid {
-    grid-template-columns: 1fr;
   }
 
   .panel-head,

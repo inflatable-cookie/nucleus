@@ -9,30 +9,45 @@ export type WorkspacePanelDto = {
   allowed_regions: RegionKey[];
 };
 
-export type RegionKey = "left" | "right" | "center_top" | "center_bottom";
+export type RegionKey =
+  | "left"
+  | "center_top"
+  | "center_bottom"
+  | "right_top"
+  | "right_bottom";
 
 export type WorkspaceRegionsDto = {
   [key in RegionKey]: WorkspacePanelDto[];
 };
 
-export type WorkspaceSurfaceDto = {
+export type WorkspaceWindowDto = {
   id: string;
-  title: string;
-  kind: string;
-  layout: WorkspaceSurfaceLayoutDto;
+  placement: WorkspaceWindowPlacementDto;
+  layout: WorkspaceLayoutDto;
   regions: WorkspaceRegionsDto;
 };
 
-export type WorkspaceSurfaceLayoutDto = {
+export type WorkspaceWindowPlacementDto = {
+  display_id?: string;
+  normal_bounds?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  maximized: boolean;
+};
+
+export type WorkspaceLayoutDto = {
   left_center_ratio: number;
   center_right_ratio: number;
   center_stack_ratio: number;
+  right_stack_ratio: number;
 };
 
 export type WorkspaceUiConfigDto = {
   schema_version: number;
-  active_surface_id: string;
-  surfaces: WorkspaceSurfaceDto[];
+  window: WorkspaceWindowDto;
 };
 
 export async function loadWorkspaceUiConfig(): Promise<WorkspaceUiConfigDto> {
@@ -45,35 +60,14 @@ export async function saveWorkspaceUiConfig(
   return invoke<WorkspaceUiConfigDto>("save_workspace_ui_config", { config });
 }
 
-export function createWorkspaceSurface(index: number): WorkspaceSurfaceDto {
-  const safeIndex = Math.max(1, index);
-  const id = `surface:user:${Date.now()}`;
-
-  return {
-    id,
-    title: `Surface ${safeIndex}`,
-    kind: "workspace",
-    layout: defaultWorkspaceSurfaceLayout(),
-    regions: {
-      left: [],
-      right: [panel(`${id}:panel:context`, "context", "Context", true, true)],
-      center_top: [
-        panel(`${id}:panel:agentChat`, "agentChat", "Agent Chat", true, true),
-        panel(`${id}:panel:tasks`, "tasks", "Tasks", false, true),
-      ],
-      center_bottom: [panel(`${id}:panel:terminal`, "terminal", "Terminal", true, true)],
-    },
-  };
-}
-
 export function createWorkspacePanel(
-  surfaceId: string,
+  windowId: string,
   kind: string,
   index: number,
 ): WorkspacePanelDto {
   const label = panelLabelForKind(kind);
   const safeIndex = Math.max(1, index);
-  const uniqueId = `${surfaceId}:panel:${kind}:${Date.now()}:${safeIndex}`;
+  const uniqueId = `${windowId}:panel:${kind}:${Date.now()}:${safeIndex}`;
 
   return panel(
     uniqueId,
@@ -87,7 +81,7 @@ export function createWorkspacePanel(
 export function defaultRegionForPanelKind(kind: string): RegionKey {
   switch (kind) {
     case "context":
-      return "right";
+      return "right_top";
     case "activity":
     case "projectActivity":
       return "left";
@@ -96,11 +90,12 @@ export function defaultRegionForPanelKind(kind: string): RegionKey {
   }
 }
 
-export function defaultWorkspaceSurfaceLayout(): WorkspaceSurfaceLayoutDto {
+export function defaultWorkspaceLayout(): WorkspaceLayoutDto {
   return {
     left_center_ratio: 0.2,
     center_right_ratio: 0.74,
     center_stack_ratio: 0.74,
+    right_stack_ratio: 0.74,
   };
 }
 
@@ -123,21 +118,11 @@ function panel(
 
 function allowedRegionsForKind(kind: string): RegionKey[] {
   switch (kind) {
-    case "agentChat":
-    case "tasks":
-    case "terminal":
-    case "browser":
-    case "editor":
-      return ["center_top", "center_bottom"];
-    case "diff":
-      return ["center_top", "center_bottom", "right"];
-    case "context":
-      return ["right"];
     case "activity":
     case "projectActivity":
       return ["left"];
     default:
-      return ["left", "right", "center_top", "center_bottom"];
+      return ["center_top", "center_bottom", "right_top", "right_bottom"];
   }
 }
 
@@ -145,6 +130,8 @@ function panelLabelForKind(kind: string): string {
   switch (kind) {
     case "agentChat":
       return "Agent Chat";
+    case "tasks":
+      return "Tasks";
     case "terminal":
       return "Terminal";
     case "browser":

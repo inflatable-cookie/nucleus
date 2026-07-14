@@ -998,8 +998,18 @@ fn task_prompt(plan: &GoalRunPlan, ordinal: usize, task: &crate::ControlTaskReco
         .map(|criterion| format!("- {}", criterion.text))
         .collect::<Vec<_>>()
         .join("\n");
+    let rework = plan.ordered_tasks.get(ordinal).and_then(|plan_task| {
+        plan_task.rework_decision_ref.as_ref().map(|decision_ref| {
+            format!(
+                "\n\nRework this reviewed result.\nReview decision: {decision_ref}\nReview note: {}\nReviewed work items: {}\nReviewed evidence: {}\nAddress the review note while preserving unrelated existing work. Do not treat these opaque refs as file paths or patch content.",
+                plan_task.rework_reason.as_deref().unwrap_or("No review note supplied."),
+                plan_task.reviewed_work_item_refs.join(", "),
+                plan_task.reviewed_evidence_refs.join(", ")
+            )
+        })
+    }).unwrap_or_default();
     format!(
-        "Execute this Nucleus task as position {} in {}.\n\nTitle: {}\nDescription: {}\nAction: {}\nAcceptance criteria:\n{}\nValidation commands:\n{}\nTask stop conditions:\n{}\n\nMake the required workspace changes and run proportionate validation. Do not complete or otherwise mutate the Nucleus task record. End with a concise result summary.",
+        "Execute this Nucleus task as position {} in {}.\n\nTitle: {}\nDescription: {}\nAction: {}\nAcceptance criteria:\n{}\nValidation commands:\n{}\nTask stop conditions:\n{}{}\n\nMake the required workspace changes and run proportionate validation. Do not complete or otherwise mutate the Nucleus task record. End with a concise result summary.",
         ordinal + 1,
         plan.goal_id
             .as_deref()
@@ -1010,7 +1020,8 @@ fn task_prompt(plan: &GoalRunPlan, ordinal: usize, task: &crate::ControlTaskReco
         task.action_type,
         criteria,
         task.validation_commands.join("\n"),
-        task.stop_conditions.join("\n")
+        task.stop_conditions.join("\n"),
+        rework
     )
 }
 
@@ -1172,6 +1183,27 @@ mod tests {
     use crate::{read_checkpoint_records, read_diff_summary_records};
     use nucleus_engine::EngineDiffPathChangeKind;
     use nucleus_local_store::{LocalStoreRecordPayload, RevisionExpectation};
+
+    #[test]
+    fn rework_prompt_includes_durable_note_and_refs_without_patch_content() {
+        let fixture = fixture(true);
+        let mut plan = admitted_plan(&fixture.state, &fixture.mandate, "prompt:rework");
+        let plan_task = &mut plan.ordered_tasks[0];
+        plan_task.rework_decision_ref = Some("review:decision:1".to_owned());
+        plan_task.rework_reason = Some("Keep the heading and fix the example.".to_owned());
+        plan_task.reviewed_work_item_refs = vec!["work:previous".to_owned()];
+        plan_task.reviewed_evidence_refs = vec!["diff:previous".to_owned()];
+        let task =
+            active_task(&fixture.state, &plan.project_id, &plan_task.task_id).expect("active task");
+
+        let prompt = task_prompt(&plan, 0, &task);
+
+        assert!(prompt.contains("Keep the heading and fix the example."));
+        assert!(prompt.contains("review:decision:1"));
+        assert!(prompt.contains("work:previous"));
+        assert!(prompt.contains("diff:previous"));
+        assert!(!prompt.contains("@@"));
+    }
 
     #[test]
     fn two_task_goal_executes_serially_and_stops_at_reviewable_results() {

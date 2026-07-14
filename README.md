@@ -31,3 +31,9 @@ The Rust workspace is intentionally modular. Current crates cover first draft
 protocol, agent session lifecycle, adapter registry, project, task, workspace,
 engine, orchestration, server boundary, and persistence surfaces; app behavior
 remains out of scope until contracts settle.
+
+## Diff review test
+
+This section exists to verify that a README diff can be isolated cleanly.
+
+This section exists to verify a second clean README diff.

@@ -18,29 +18,14 @@ The repo uses:
 
 ## Current Lane
 
-`g04` product workflow vertical slice. The workspace shell, durable Agent Chat,
-server-authorized task creation/refinement, and the first proper Tasks panel are
-in place. Agent Chat can now focus the task selected in the Tasks panel without
-gaining lifecycle or dispatch authority. Its task capabilities now use one
-`task_ledger` portal rather than atomic query and mutation tools. Current
-operator turns now persist before provider tool activity, and explicit Goal
-mandates freeze the selected Goal revision and ordered task revisions. Current
-Goal inspection now resolves blockers and the current chat route, while serial
-run admission persists one mandate-bound plan and one scheduled first work
-item without provider effects. Admitted runs now execute their frozen snapshot
-through real serial local Codex turns and stop at reviewable evidence or the
-first stop condition. Agent Chat now exposes only the `task_ledger` and
-`task_workflow` portals; compact workflow receipts persist, refresh Tasks, and
-focus the affected Goal or task. The first host-authorized CodeMirror 6 editor
-vertical slice is complete. Editor-to-diff/review is selected next.
-Task-attributed checkpoint review, transient patch delivery, and the compact
-Diff panel shape are now promoted. The implementation roadmap and five-card
-runway are ready. The host-local snapshot backend now preserves bounded exact
-source boundaries outside projects and SQLite. Write-capable task runs now
-persist exact baseline, target, and task-window diff evidence before review
-readiness. Dedicated lineage-validated overview and bounded patch reads now
-reach the TypeScript client without entering durable control envelopes. Current
-pointer: compact task Diff review panel.
+`g04` product workflow vertical slice. Durable Agent Chat, low-cardinality
+`task_ledger` and `task_workflow` portals, Goals, Tasks, CodeMirror editing,
+task-attributed Diff review, persisted review notes, and review-guided rework
+are in place. Product use disproved the inherited hosted-Surface layer. The
+workspace hierarchy is now `display -> window -> region -> panel`; the working
+panel workflow and multi-window foundation remain. Native primary-window
+geometry persistence is confirmed. The floating Agent Chat composer is the
+active bounded design lane.
 
 Current planning artifacts:
 
@@ -49,6 +34,11 @@ Current planning artifacts:
 - `specs/007-task-attributed-diff-review.md`
 - `roadmaps/g04/028-initial-code-editor-vertical-slice.md`
 - `roadmaps/g04/029-task-attributed-diff-review.md`
+- `roadmaps/g04/030-review-guided-rework-execution.md`
+- `roadmaps/g04/031-window-region-panel-simplification.md`
+- `roadmaps/g04/032-native-window-geometry-persistence.md`
+- `specs/010-floating-agent-chat-composer.md`
+- `roadmaps/g04/033-floating-agent-chat-composer.md`
 
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`
@@ -178,7 +168,6 @@ Current planning artifacts:
 - `roadmaps/g03/109-task-timeline-authority-map-control-parity.md`
 - `roadmaps/g03/110-task-project-workflow-depth.md`
 - `roadmaps/g03/111-planning-artifact-task-seed-promotion.md`
-- `specs/004-display-window-surface-layout.md`
 - `architecture/t3-code-comparison.md`
 - `architecture/architecture-gap-index.md`
 - `architecture/implementation-gap-index.md`

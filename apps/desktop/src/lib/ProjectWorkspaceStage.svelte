@@ -2,16 +2,12 @@
   import { onDestroy, onMount } from "svelte";
   import {
     DockRegion,
-    IconButton,
     Surface,
     SplitView,
-    Tabs,
     Text,
     type DockEdge,
     type PanelTabItem,
-    type TabItem,
   } from "@poodle/svelte";
-  import { pencil, plus } from "@poodle/icons-lucide";
   import AgentChatPanel from "./AgentChatPanel.svelte";
   import DiffPanel from "./DiffPanel.svelte";
   import EditorPanel from "./EditorPanel.svelte";
@@ -22,30 +18,37 @@
     ControlTaskRecordDto,
   } from "./control";
   import {
-    createWorkspaceSurface,
     createWorkspacePanel,
     defaultRegionForPanelKind,
     loadWorkspaceUiConfig,
     saveWorkspaceUiConfig,
     type RegionKey,
     type WorkspacePanelDto,
-    type WorkspaceSurfaceDto,
+    type WorkspaceWindowDto,
     type WorkspaceUiConfigDto,
   } from "./workspaceUi";
 
-  let { selectedProject }: { selectedProject: ControlProjectRecordDto | null } = $props();
+  let {
+    selectedProject,
+    onOpenPanelKindsChange,
+  }: {
+    selectedProject: ControlProjectRecordDto | null;
+    onOpenPanelKindsChange?: (kinds: string[]) => void;
+  } = $props();
 
   let config = $state<WorkspaceUiConfigDto | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let draggedPanelId = $state<string | null>(null);
+  let panelDropTargetsVisible = $state(false);
   let dropTargetRegion = $state<RegionKey | null>(null);
   let activePanels = $state<Record<RegionKey, string | null>>({
     left: null,
-    right: null,
     center_top: null,
     center_bottom: null,
+    right_top: null,
+    right_bottom: null,
   });
   let selectedTaskId = $state<string | null>(null);
   let selectedTask = $state<ControlTaskRecordDto | null>(null);
@@ -53,22 +56,10 @@
   let selectedGoal = $state<ControlGoalRecordDto | null>(null);
   let editorFileRef = $state<string | null>(null);
 
-  const activeSurface = $derived(
-    config?.surfaces.find((surface) => surface.id === config?.active_surface_id) ??
-      config?.surfaces[0] ??
-      null,
-  );
-  const surfaceTabs = $derived<TabItem[]>(
-    config?.surfaces.map((surface) => ({
-      value: surface.id,
-      label: surface.title,
-      icon: "layout-panel-top",
-      closable: (config?.surfaces.length ?? 0) > 1,
-    })) ?? [],
-  );
+  const workspaceWindow = $derived(config?.window ?? null);
   const panelDropTargetRegions = $derived.by<Set<RegionKey>>(() => {
     const panelId = draggedPanelId;
-    if (!panelId) {
+    if (!panelId || !panelDropTargetsVisible) {
       return new Set();
     }
 
@@ -78,11 +69,19 @@
   });
   const visibleRegions = $derived.by<Record<RegionKey, boolean>>(() => ({
     left: regionShouldRender("left"),
-    right: regionShouldRender("right"),
     center_top: regionShouldRender("center_top"),
     center_bottom: regionShouldRender("center_bottom"),
+    right_top: regionShouldRender("right_top"),
+    right_bottom: regionShouldRender("right_bottom"),
   }));
   const hasLeftRegion = $derived(visibleRegions.left);
+  const openPanelKinds = $derived.by<string[]>(() =>
+    workspaceWindow
+      ? [...new Set(regionKeys().flatMap((region) =>
+          workspaceWindow.regions[region].map((panel) => panel.kind),
+        ))]
+      : [],
+  );
 
   onMount(() => {
     void loadConfig();
@@ -103,6 +102,10 @@
     selectedTask = null;
     selectedGoalId = null;
     selectedGoal = null;
+  });
+
+  $effect(() => {
+    onOpenPanelKindsChange?.(openPanelKinds);
   });
 
   $effect(() => {
@@ -193,11 +196,11 @@
   }
 
   function focusPanelKind(kind: string): void {
-    if (!activeSurface) {
+    if (!workspaceWindow) {
       return;
     }
     for (const region of regionKeys()) {
-      const panel = activeSurface.regions[region].find((candidate) => candidate.kind === kind);
+      const panel = workspaceWindow.regions[region].find((candidate) => candidate.kind === kind);
       if (panel) {
         activePanels = { ...activePanels, [region]: panel.id };
         return;
@@ -208,7 +211,7 @@
   function openFileInEditor(fileRef: string): void {
     editorFileRef = fileRef;
     const hasEditor = regionKeys().some((region) =>
-      activeSurface?.regions[region].some((panel) => panel.kind === "editor"),
+      workspaceWindow?.regions[region].some((panel) => panel.kind === "editor"),
     );
     if (hasEditor) {
       focusPanelKind("editor");
@@ -218,13 +221,13 @@
   }
 
   function handlePanelDragStart(event: DragEvent, sourceRegion: RegionKey): void {
-    if (!event.dataTransfer || !activeSurface) {
+    if (!event.dataTransfer || !workspaceWindow) {
       return;
     }
 
     const tab = (event.target as HTMLElement | null)?.closest?.("[role='tab']");
     const panel = tab
-      ? activeSurface.regions[sourceRegion].find((candidate) =>
+      ? workspaceWindow.regions[sourceRegion].find((candidate) =>
           tab.id.endsWith(`-${candidate.id}`),
         )
       : null;
@@ -233,12 +236,14 @@
       return;
     }
 
-    draggedPanelId = panel.id;
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData(
       "application/x-nucleus-workspace-panel-drag",
       JSON.stringify({ panelId: panel.id, sourceRegion }),
     );
+    queueMicrotask(() => {
+      draggedPanelId = panel.id;
+    });
   }
 
   function handleRegionDragOver(event: DragEvent, targetRegion: RegionKey): void {
@@ -246,6 +251,11 @@
     if (!panelId) {
       return;
     }
+
+    // WebKit can cancel a native drag if revealing a zero-width split pane
+    // resizes the source during dragstart. The first dragover proves that the
+    // native drag is established, so collapsed targets can safely open now.
+    panelDropTargetsVisible = true;
 
     if (!canDropPanelInRegion(panelId, targetRegion)) {
       if (isCrossRegionPanelDrag(panelId, targetRegion)) {
@@ -300,43 +310,25 @@
 
   function clearPanelDragState(): void {
     draggedPanelId = null;
+    panelDropTargetsVisible = false;
     dropTargetRegion = null;
   }
 
-  function setActiveSurface(surfaceId: string): void {
-    if (!config || config.active_surface_id === surfaceId) {
-      return;
-    }
-
-    void persist({
-      ...config,
-      active_surface_id: surfaceId,
-    });
-  }
-
-  function addSurface(): void {
-    if (!config) {
-      return;
-    }
-
-    const nextSurface = createWorkspaceSurface(config.surfaces.length + 1);
-    void persist({
-      ...config,
-      active_surface_id: nextSurface.id,
-      surfaces: [...config.surfaces, nextSurface],
-    });
-  }
-
   function addPanel(kind: string): void {
-    if (!config || !activeSurface) {
+    if (!config || !workspaceWindow) {
+      return;
+    }
+
+    if (kind === "tasks" && openPanelKinds.includes("tasks")) {
+      focusPanelKind("tasks");
       return;
     }
 
     const targetRegion = defaultRegionForPanelKind(kind);
     const existingCount = regionKeys()
-      .flatMap((region) => activeSurface.regions[region])
+      .flatMap((region) => workspaceWindow.regions[region])
       .filter((panel) => panel.kind === kind).length;
-    const panel = createWorkspacePanel(activeSurface.id, kind, existingCount + 1);
+    const panel = createWorkspacePanel(workspaceWindow.id, kind, existingCount + 1);
 
     activePanels = {
       ...activePanels,
@@ -345,83 +337,18 @@
 
     void persist({
       ...config,
-      surfaces: config.surfaces.map((surface) =>
-        surface.id === activeSurface.id
-          ? {
-              ...surface,
-              regions: {
-                ...surface.regions,
-                [targetRegion]: [...surface.regions[targetRegion], panel],
-              },
-            }
-          : surface,
-      ),
+      window: {
+        ...workspaceWindow,
+        regions: {
+          ...workspaceWindow.regions,
+          [targetRegion]: [...workspaceWindow.regions[targetRegion], panel],
+        },
+      },
     });
   }
 
-  function promptRenameActiveSurface(): void {
-    if (!activeSurface) {
-      return;
-    }
-
-    const nextTitle = window.prompt("Rename surface", activeSurface.title);
-    if (nextTitle === null) {
-      return;
-    }
-
-    renameActiveSurface(nextTitle);
-  }
-
-  function renameActiveSurface(nextTitle: string): void {
-    if (!config || !activeSurface) {
-      return;
-    }
-
-    const title = nextTitle.trim() || "Untitled";
-    void persist({
-      ...config,
-      surfaces: config.surfaces.map((surface) =>
-        surface.id === activeSurface.id ? { ...surface, title } : surface,
-      ),
-    });
-  }
-
-  function removeSurface(surfaceId: string): void {
-    if (!config || config.surfaces.length <= 1) {
-      return;
-    }
-
-    const surfaces = config.surfaces.filter((surface) => surface.id !== surfaceId);
-    void persist({
-      ...config,
-      active_surface_id:
-        config.active_surface_id === surfaceId ? surfaces[0].id : config.active_surface_id,
-      surfaces,
-    });
-  }
-
-  function reorderSurfaces(order: string[]): void {
-    if (!config) {
-      return;
-    }
-
-    const surfacesById = new Map(config.surfaces.map((surface) => [surface.id, surface]));
-    const surfaces = order
-      .map((surfaceId) => surfacesById.get(surfaceId))
-      .filter((surface): surface is WorkspaceSurfaceDto => Boolean(surface));
-
-    if (surfaces.length !== config.surfaces.length) {
-      return;
-    }
-
-    void persist({
-      ...config,
-      surfaces,
-    });
-  }
-
-  function panelsFor(surface: WorkspaceSurfaceDto, region: RegionKey): WorkspacePanelDto[] {
-    return surface.regions[region];
+  function panelsFor(window: WorkspaceWindowDto, region: RegionKey): WorkspacePanelDto[] {
+    return window.regions[region];
   }
 
   function panelTabsFor(panels: WorkspacePanelDto[]): PanelTabItem[] {
@@ -446,11 +373,11 @@
   }
 
   function closePanel(region: RegionKey, panelId: string): void {
-    if (!config || !activeSurface) {
+    if (!config || !workspaceWindow) {
       return;
     }
 
-    const panels = panelsFor(activeSurface, region);
+    const panels = panelsFor(workspaceWindow, region);
     const panel = panels.find((candidate) => candidate.id === panelId);
     if (!panel?.closeable) {
       return;
@@ -458,26 +385,22 @@
 
     void persist({
       ...config,
-      surfaces: config.surfaces.map((surface) =>
-        surface.id === activeSurface.id
-          ? {
-              ...surface,
-              regions: {
-                ...surface.regions,
-                [region]: panels.filter((candidate) => candidate.id !== panelId),
-              },
-            }
-          : surface,
-      ),
+      window: {
+        ...workspaceWindow,
+        regions: {
+          ...workspaceWindow.regions,
+          [region]: panels.filter((candidate) => candidate.id !== panelId),
+        },
+      },
     });
   }
 
   function reorderPanels(region: RegionKey, order: string[]): void {
-    if (!config || !activeSurface) {
+    if (!config || !workspaceWindow) {
       return;
     }
 
-    const panels = panelsFor(activeSurface, region);
+    const panels = panelsFor(workspaceWindow, region);
     const panelsById = new Map(panels.map((panel) => [panel.id, panel]));
     const reorderedPanels = order
       .map((panelId) => panelsById.get(panelId))
@@ -489,17 +412,13 @@
 
     void persist({
       ...config,
-      surfaces: config.surfaces.map((surface) =>
-        surface.id === activeSurface.id
-          ? {
-              ...surface,
-              regions: {
-                ...surface.regions,
-                [region]: reorderedPanels,
-              },
-            }
-          : surface,
-      ),
+      window: {
+        ...workspaceWindow,
+        regions: {
+          ...workspaceWindow.regions,
+          [region]: reorderedPanels,
+        },
+      },
     });
   }
 
@@ -526,7 +445,7 @@
   }
 
   function movePanelToRegion(panelId: string, targetRegion: RegionKey): void {
-    if (!config || !activeSurface || !canMovePanelToRegion(panelId, targetRegion)) {
+    if (!config || !workspaceWindow || !canMovePanelToRegion(panelId, targetRegion)) {
       return;
     }
 
@@ -535,7 +454,7 @@
       return;
     }
 
-    const panel = activeSurface.regions[sourceRegion].find(
+    const panel = workspaceWindow.regions[sourceRegion].find(
       (candidate) => candidate.id === panelId,
     );
     if (!panel) {
@@ -543,11 +462,11 @@
     }
 
     const nextRegions = {
-      ...activeSurface.regions,
-      [sourceRegion]: activeSurface.regions[sourceRegion].filter(
+      ...workspaceWindow.regions,
+      [sourceRegion]: workspaceWindow.regions[sourceRegion].filter(
         (candidate) => candidate.id !== panelId,
       ),
-      [targetRegion]: [...activeSurface.regions[targetRegion], panel],
+      [targetRegion]: [...workspaceWindow.regions[targetRegion], panel],
     };
 
     activePanels = {
@@ -558,53 +477,45 @@
 
     void persist({
       ...config,
-      surfaces: config.surfaces.map((surface) =>
-        surface.id === activeSurface.id ? { ...surface, regions: nextRegions } : surface,
-      ),
+      window: { ...workspaceWindow, regions: nextRegions },
     });
   }
 
-  function updateActiveSurfaceLayout(
-    patch: Partial<WorkspaceSurfaceDto["layout"]>,
-  ): void {
-    if (!config || !activeSurface) {
+  function updateWindowLayout(patch: Partial<WorkspaceWindowDto["layout"]>): void {
+    if (!config || !workspaceWindow) {
       return;
     }
 
     persistLayout({
       ...config,
-      surfaces: config.surfaces.map((surface) =>
-        surface.id === activeSurface.id
-          ? {
-              ...surface,
-              layout: {
-                ...surface.layout,
-                ...patch,
-              },
-            }
-          : surface,
-      ),
+      window: {
+        ...workspaceWindow,
+        layout: {
+          ...workspaceWindow.layout,
+          ...patch,
+        },
+      },
     });
   }
 
   function findPanel(panelId: string): WorkspacePanelDto | null {
-    if (!activeSurface) {
+    if (!workspaceWindow) {
       return null;
     }
 
     const region = findPanelRegion(panelId);
     return region
-      ? activeSurface.regions[region].find((panel) => panel.id === panelId) ?? null
+      ? workspaceWindow.regions[region].find((panel) => panel.id === panelId) ?? null
       : null;
   }
 
   function findPanelRegion(panelId: string): RegionKey | null {
-    if (!activeSurface) {
+    if (!workspaceWindow) {
       return null;
     }
 
     for (const region of regionKeys()) {
-      if (activeSurface.regions[region].some((panel) => panel.id === panelId)) {
+      if (workspaceWindow.regions[region].some((panel) => panel.id === panelId)) {
         return region;
       }
     }
@@ -613,12 +524,12 @@
   }
 
   function regionKeys(): RegionKey[] {
-    return ["left", "right", "center_top", "center_bottom"];
+    return ["left", "center_top", "center_bottom", "right_top", "right_bottom"];
   }
 
   function regionShouldRender(region: RegionKey): boolean {
     return (
-      (activeSurface?.regions[region].length ?? 0) > 0 ||
+      (workspaceWindow?.regions[region].length ?? 0) > 0 ||
       panelDropTargetRegions.has(region)
     );
   }
@@ -670,121 +581,123 @@
     <Surface tone="canvas" border="none" padding="md" asRole="region" label="Workspace loading">
       <Text tone="muted">Loading workspace</Text>
     </Surface>
-  {:else if !config || !activeSurface}
+  {:else if !config || !workspaceWindow}
     <Surface tone="canvas" border="none" padding="md" asRole="region" label="Workspace unavailable">
       <Text tone="muted">Workspace unavailable</Text>
     </Surface>
   {:else}
-    <div class="surface-tabs-shell">
-      <Tabs
-        items={surfaceTabs}
-        value={activeSurface.id}
-        variant="block"
-        reorderable
-        ariaLabel="Workspace surfaces"
-        onValueChange={setActiveSurface}
-        onClose={removeSurface}
-        onReorder={reorderSurfaces}
+    <div class="window-body">
+      {#if error}
+        <div class="layout-error"><Text size="xs" tone="danger">{error}</Text></div>
+      {/if}
+      <div
+        class="left-main-frame"
+        class:left-main-frame--single={!hasLeftRegion}
       >
-        {#snippet actions()}
-          {#if error}
-            <Text as="span" size="xs" tone="danger">{error}</Text>
-          {/if}
-          <IconButton
-            variant="ghost"
-            size="xs"
-            icon={pencil}
-            ariaLabel="Rename active surface"
-            tooltip="Rename surface"
-            onClick={promptRenameActiveSurface}
-          />
-          <IconButton
-            variant="secondary"
-            size="xs"
-            icon={plus}
-            ariaLabel="Create surface"
-            tooltip="Create surface"
-            onClick={addSurface}
-          />
-        {/snippet}
-      </Tabs>
-    </div>
-
-    <div class="surface-body">
-      {#if hasLeftRegion}
         <SplitView
           orientation="horizontal"
-          ratio={activeSurface.layout.left_center_ratio}
+          ratio={workspaceWindow.layout.left_center_ratio}
+          primaryCollapsed={!hasLeftRegion}
+          primaryCollapsedSize={0}
+          collapsePrimaryBelowSize={0}
           minPrimarySize={140}
           minSecondarySize={240}
           ariaLabel="Left and main workspace regions"
           onRatioChange={(ratio) =>
-            updateActiveSurfaceLayout({ left_center_ratio: ratio })}
+            updateWindowLayout({ left_center_ratio: ratio })}
         >
           {#snippet primary()}
-            {@render RegionShell("left", "left", activeSurface, "left")}
+            {@render RegionShell("left", "left", workspaceWindow, "left")}
           {/snippet}
           {#snippet secondary()}
-            {@render MainRegions(activeSurface)}
+            {@render MainRegions(workspaceWindow)}
           {/snippet}
         </SplitView>
-      {:else}
-        {@render MainRegions(activeSurface)}
+      </div>
+      {#if !hasLeftRegion && !visibleRegions.center_top && !visibleRegions.center_bottom && !visibleRegions.right_top && !visibleRegions.right_bottom}
+        <Surface tone="canvas" border="none" padding="md" asRole="region" label="Empty workspace">
+          <Text tone="muted">No panels open</Text>
+        </Surface>
       {/if}
     </div>
   {/if}
 </section>
 
-{#snippet MainRegions(surface: WorkspaceSurfaceDto)}
+{#snippet MainRegions(window: WorkspaceWindowDto)}
   {@const centerVisible = visibleRegions.center_top || visibleRegions.center_bottom}
-  {@const rightVisible = visibleRegions.right}
-  {#if !centerVisible && !rightVisible}
-    <Surface tone="canvas" border="none" padding="md" asRole="region" label="Empty workspace">
-      <Text tone="muted">No panels open</Text>
-    </Surface>
-  {:else}
-    <div
-      class="center-right-frame"
-      class:center-right-frame--single={!centerVisible || !rightVisible}
+  {@const rightVisible = visibleRegions.right_top || visibleRegions.right_bottom}
+  <div
+    class="center-right-frame"
+    class:center-right-frame--single={!centerVisible || !rightVisible}
+  >
+    <SplitView
+      orientation="horizontal"
+      ratio={window.layout.center_right_ratio}
+      primaryCollapsed={!centerVisible}
+      secondaryCollapsed={!rightVisible}
+      primaryCollapsedSize={0}
+      secondaryCollapsedSize={0}
+      collapsePrimaryBelowSize={0}
+      collapseSecondaryBelowSize={0}
+      minPrimarySize={260}
+      minSecondarySize={180}
+      ariaLabel="Center and right workspace regions"
+      onRatioChange={(ratio) =>
+        updateWindowLayout({ center_right_ratio: ratio })}
     >
-      <SplitView
-        orientation="horizontal"
-        ratio={surface.layout.center_right_ratio}
-        primaryCollapsed={!centerVisible}
-        secondaryCollapsed={!rightVisible}
-        primaryCollapsedSize={0}
-        secondaryCollapsedSize={0}
-        collapsePrimaryBelowSize={0}
-        collapseSecondaryBelowSize={0}
-        minPrimarySize={260}
-        minSecondarySize={180}
-        ariaLabel="Center and right workspace regions"
-        onRatioChange={(ratio) =>
-          updateActiveSurfaceLayout({ center_right_ratio: ratio })}
-      >
-        {#snippet primary()}
-          {@render CenterRegions(surface)}
-        {/snippet}
+      {#snippet primary()}
+        {@render CenterRegions(window)}
+      {/snippet}
 
-        {#snippet secondary()}
-          {@render RegionShell("right", "right", surface, "right")}
-        {/snippet}
-      </SplitView>
-    </div>
-  {/if}
+      {#snippet secondary()}
+        {@render RightRegions(window)}
+      {/snippet}
+    </SplitView>
+  </div>
 {/snippet}
 
-{#snippet CenterRegions(surface: WorkspaceSurfaceDto)}
-  {@const topVisible = visibleRegions.center_top}
-  {@const bottomVisible = visibleRegions.center_bottom}
-  {#if topVisible || bottomVisible}
-    <div
-      class="center-stack-frame"
-      class:center-stack-frame--single={!topVisible || !bottomVisible}
-    >
+{#snippet RightRegions(window: WorkspaceWindowDto)}
+  {@const topVisible = visibleRegions.right_top}
+  {@const bottomVisible = visibleRegions.right_bottom}
+  <div
+    class="right-stack-frame"
+    class:right-stack-frame--single={!topVisible || !bottomVisible}
+  >
     <SplitView
       orientation="vertical"
-      ratio={surface.layout.center_stack_ratio}
+      ratio={window.layout.right_stack_ratio}
+      primaryCollapsed={!topVisible}
+      secondaryCollapsed={!bottomVisible}
+      primaryCollapsedSize={0}
+      secondaryCollapsedSize={0}
+      collapsePrimaryBelowSize={0}
+      collapseSecondaryBelowSize={0}
+      minPrimarySize={180}
+      minSecondarySize={120}
+      ariaLabel="Right top and right bottom workspace regions"
+      onRatioChange={(ratio) =>
+        updateWindowLayout({ right_stack_ratio: ratio })}
+    >
+      {#snippet primary()}
+        {@render RegionShell("rightTop", "top", window, "right_top")}
+      {/snippet}
+      {#snippet secondary()}
+        {@render RegionShell("rightBottom", "bottom", window, "right_bottom")}
+      {/snippet}
+    </SplitView>
+  </div>
+{/snippet}
+
+{#snippet CenterRegions(window: WorkspaceWindowDto)}
+  {@const topVisible = visibleRegions.center_top}
+  {@const bottomVisible = visibleRegions.center_bottom}
+  <div
+    class="center-stack-frame"
+    class:center-stack-frame--single={!topVisible || !bottomVisible}
+  >
+    <SplitView
+      orientation="vertical"
+      ratio={window.layout.center_stack_ratio}
       primaryCollapsed={!topVisible}
       secondaryCollapsed={!bottomVisible}
       primaryCollapsedSize={0}
@@ -795,21 +708,20 @@
       minSecondarySize={120}
       ariaLabel="Center top and center bottom workspace regions"
       onRatioChange={(ratio) =>
-        updateActiveSurfaceLayout({ center_stack_ratio: ratio })}
+        updateWindowLayout({ center_stack_ratio: ratio })}
     >
       {#snippet primary()}
-        {@render RegionShell("centerTop", "top", surface, "center_top")}
+        {@render RegionShell("centerTop", "top", window, "center_top")}
       {/snippet}
       {#snippet secondary()}
-        {@render RegionShell("centerBottom", "bottom", surface, "center_bottom")}
+        {@render RegionShell("centerBottom", "bottom", window, "center_bottom")}
       {/snippet}
     </SplitView>
-    </div>
-  {/if}
+  </div>
 {/snippet}
 
-{#snippet RegionShell(label: string, edge: DockEdge, surface: WorkspaceSurfaceDto, region: RegionKey)}
-  {@const panels = panelsFor(surface, region)}
+{#snippet RegionShell(label: string, edge: DockEdge, window: WorkspaceWindowDto, region: RegionKey)}
+  {@const panels = panelsFor(window, region)}
   {@const items = panelTabsFor(panels)}
   <section
     class="region-cell"
@@ -828,6 +740,7 @@
       emphasis="quiet"
       size="xs"
       density="compact"
+      tabVariant="block"
       items={items}
       value={activePanelValue(region, items)}
       ariaLabel={`${label} panels`}
@@ -887,8 +800,7 @@
 
 <style>
   .workspace-stage-shell {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    display: block;
     width: 100%;
     height: 100%;
     min-width: 0;
@@ -897,17 +809,20 @@
     background: var(--poodle-color-background-canvas);
   }
 
-  .surface-tabs-shell {
-    min-width: 0;
-    border-bottom: 1px solid var(--poodle-color-border-subtle);
-  }
-
-  .surface-body {
+  .window-body {
+    position: relative;
     display: block;
     height: 100%;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .layout-error {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.5rem;
+    z-index: 5;
   }
 
   .region-cell {
@@ -918,16 +833,20 @@
     overflow: hidden;
   }
 
+  .left-main-frame,
   .center-right-frame,
-  .center-stack-frame {
+  .center-stack-frame,
+  .right-stack-frame {
     width: 100%;
     height: 100%;
     min-width: 0;
     min-height: 0;
   }
 
-  .center-right-frame--single :global(.poodle-split-view__divider),
-  .center-stack-frame--single :global(.poodle-split-view__divider) {
+  .left-main-frame--single > :global(.poodle-split-view) > :global(.poodle-split-view__divider),
+  .center-right-frame--single > :global(.poodle-split-view) > :global(.poodle-split-view__divider),
+  .center-stack-frame--single > :global(.poodle-split-view) > :global(.poodle-split-view__divider),
+  .right-stack-frame--single > :global(.poodle-split-view) > :global(.poodle-split-view__divider) {
     display: none;
   }
 
@@ -1001,21 +920,15 @@
     height: 100%;
   }
 
-  .region-cell :global(.poodle-tabs[data-variant="strip"]) {
-    --poodle-tabs-control-height: 1.75rem !important;
-    --poodle-tabs-strip-inline-padding: 0 !important;
-    --poodle-tabs-strip-tab-x: 0.5rem !important;
+  .region-cell :global(.poodle-tabs[data-variant="block"]) {
+    --poodle-tabs-control-height: 1.75rem;
     height: 100%;
   }
 
-  .region-cell :global(.poodle-tabs[data-variant="strip"] .poodle-tabs__list) {
+  .region-cell :global(.poodle-tabs[data-variant="block"] .poodle-tabs__list) {
     height: 100%;
-    padding: 0 !important;
+    padding: 0;
     border-bottom: 0 !important;
-  }
-
-  .region-cell :global(.poodle-tabs[data-variant="strip"] .poodle-tabs__tab) {
-    min-height: 1.75rem !important;
   }
 
   .panel-placeholder {
@@ -1027,7 +940,7 @@
   }
 
   @media (max-width: 1040px) {
-    .surface-body {
+    .window-body {
       overflow: auto;
     }
 

@@ -8,6 +8,10 @@
     queryTaskWorkflowDrilldown,
   } from "./control/client";
   import {
+    readTaskReviewDecisions,
+    type ControlSelectedTaskReviewDecisionRecordDto,
+  } from "./control/selectedTaskReviewDecision";
+  import {
     readTaskDiffFilePatch,
     readTaskDiffOverview,
     type TaskDiffFile,
@@ -34,6 +38,7 @@
   let selectedFile = $state<TaskDiffFile | null>(null);
   let patch = $state<TaskDiffFilePatch | null>(null);
   let reviewEvidenceRefs = $state<string[]>([]);
+  let currentReview = $state<ControlSelectedTaskReviewDecisionRecordDto | null>(null);
   let loading = $state(false);
   let patchLoading = $state(false);
   let reviewing = $state(false);
@@ -62,6 +67,7 @@
     selectedFile = null;
     patch = null;
     reviewEvidenceRefs = [];
+    currentReview = null;
     error = null;
     notice = null;
     if (!projectId || !task) return;
@@ -88,6 +94,11 @@
       }
 
       reviewEvidenceRefs = reviewResult.reviewNext.review.evidence_refs;
+      const reviewRefs = new Set(reviewResult.reviewNext.evidence.review_refs);
+      const decisions = await readTaskReviewDecisions(projectId, task.task_id);
+      currentReview = decisions
+        .filter((decision) => reviewRefs.has(decision.decision_id))
+        .at(-1) ?? null;
       request = {
         project_id: projectId,
         task_id: task.task_id,
@@ -262,6 +273,12 @@
 
     {#if error}<div class="notice error" role="alert">{error}</div>{/if}
     {#if notice}<div class="notice" role="status">{notice}</div>{/if}
+    {#if currentReview}
+      <div class="review-outcome" role="status">
+        <strong>{currentReview.outcome === "needs_changes" ? "Needs changes" : "Accepted"}</strong>
+        {#if currentReview.reason_summary}<span>{currentReview.reason_summary}</span>{/if}
+      </div>
+    {/if}
     {#if overview?.attribution_notice}<div class="notice">{overview.attribution_notice}</div>{/if}
     {#if overview && (overview.coverage !== "complete" || overview.truncated)}
       <div class="notice">Evidence coverage: {overview.coverage}{overview.truncated ? " · summary truncated" : ""}</div>
@@ -304,6 +321,8 @@
   .menu-actions { display: flex; justify-content: flex-end; gap: .4rem; }
   .notice { padding: .35rem .6rem; color: var(--poodle-color-text-secondary); font-size: .78rem; border-bottom: 1px solid var(--poodle-color-border-subtle); }
   .notice.error { color: var(--poodle-color-text-danger); }
+  .review-outcome { display: flex; gap: .45rem; align-items: baseline; padding: .45rem .6rem; font-size: .8rem; border-bottom: 1px solid var(--poodle-color-border-subtle); background: var(--poodle-color-background-surface); }
+  .review-outcome span { color: var(--poodle-color-text-secondary); overflow-wrap: anywhere; }
   .diff-body { flex: 1; min-height: 0; overflow: auto; background: var(--poodle-color-background-canvas); }
   pre { min-width: max-content; margin: 0; padding: .5rem 0; font: .78rem/1.5 var(--poodle-typography-font-family-mono); tab-size: 2; }
   .line { display: block; min-height: 1.5em; padding: 0 .75rem; white-space: pre; }

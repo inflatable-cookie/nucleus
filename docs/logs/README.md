@@ -21,3 +21,7 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-10-task-run-checkpoint-diff-integration.md`
 - `2026-07-10-task-diff-read-boundary.md`
 - `2026-07-10-compact-task-diff-review-panel.md`
+- `2026-07-11-review-guided-rework-execution.md`
+- `2026-07-13-window-region-panel-simplification.md`
+- `2026-07-13-native-window-geometry.md`
+- `2026-07-14-floating-agent-chat-composer.md`

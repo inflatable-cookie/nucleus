@@ -8,6 +8,7 @@ mod goal_update;
 mod mandates;
 mod persistence;
 mod review_evidence;
+mod rework_context;
 mod runtime;
 mod task_authoring;
 mod task_execution;
@@ -38,11 +39,11 @@ pub use mandates::{
     WorkflowMandateStatus,
 };
 use persistence::{
-    canonical_turn_id, persist_turn_completion, persist_turn_failure, persist_turn_start,
-    read_history, read_session,
+    canonical_turn_id, persist_session, persist_turn_completion, persist_turn_failure,
+    persist_turn_start, read_history, read_session,
 };
 pub use persistence::{ChatMessageRole, LocalCodexChatHistory, StoredChatMessage};
-use runtime::LocalCodexChatSession;
+use runtime::{available_models, LocalCodexChatSession};
 use task_ledger::execute as execute_task_ledger;
 
 pub use task_authoring::{GoalCreationReceipt, TaskAuthoringReceipt, TaskCreationReceipt};
@@ -65,6 +66,25 @@ pub struct LocalCodexChatRequest {
     pub active_task_id: Option<String>,
     #[serde(default)]
     pub active_goal_id: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalCodexChatModelOption {
+    pub model: String,
+    pub display_name: String,
+    pub description: String,
+    pub default_reasoning_effort: String,
+    pub supported_reasoning_efforts: Vec<LocalCodexChatReasoningOption>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalCodexChatReasoningOption {
+    pub reasoning_effort: String,
+    pub description: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -94,6 +114,10 @@ impl Default for LocalCodexChatService {
 }
 
 impl LocalCodexChatService {
+    pub fn available_models() -> Result<Vec<LocalCodexChatModelOption>, String> {
+        available_models()
+    }
+
     pub fn with_task_review_snapshot_store(store: crate::TaskReviewSnapshotStore) -> Self {
         Self {
             sessions: HashMap::new(),
@@ -155,6 +179,8 @@ impl LocalCodexChatService {
         {
             return Err("chat conversation belongs to another project".to_owned());
         }
+        let (selected_model, selected_reasoning_effort) =
+            selected_route(&request, stored.as_ref())?;
         let migration_context = stored
             .as_ref()
             .filter(|session| session.task_toolset_version < CHAT_TASK_TOOLSET_VERSION)
@@ -168,6 +194,8 @@ impl LocalCodexChatService {
                     &project_root,
                     stored.as_ref(),
                     migration_context.as_deref(),
+                    &selected_model,
+                    &selected_reasoning_effort,
                 )?)
             }
         };
@@ -206,13 +234,26 @@ impl LocalCodexChatService {
             message,
             request.active_goal_id.clone(),
         )?;
-        let reply = match session.send_turn(&provider_message, &mut task_tool) {
+        let reply = match session.send_turn(
+            &provider_message,
+            &selected_model,
+            &selected_reasoning_effort,
+            &mut task_tool,
+        ) {
             Ok(reply) => reply,
             Err(error) => {
                 persist_turn_failure(state, &canonical_turn_id, &error)?;
                 return Err(error);
             }
         };
+        persist_session(
+            state,
+            &session.stored_session(
+                request.conversation_id.clone(),
+                request.project_id.clone(),
+                turn_count,
+            ),
+        )?;
         persist_turn_completion(
             state,
             &canonical_turn_id,
@@ -224,6 +265,38 @@ impl LocalCodexChatService {
 
         Ok(reply)
     }
+}
+
+fn selected_route(
+    request: &LocalCodexChatRequest,
+    stored: Option<&persistence::StoredChatSession>,
+) -> Result<(String, String), String> {
+    let model = normalize_route_value(request.model.as_deref(), "chat model")?
+        .or_else(|| stored.map(|session| session.model.clone()))
+        .unwrap_or_else(|| CHAT_MODEL.to_owned());
+    let reasoning_effort =
+        normalize_route_value(request.reasoning_effort.as_deref(), "chat reasoning effort")?
+            .or_else(|| stored.and_then(|session| session.reasoning_effort.clone()))
+            .unwrap_or_else(|| CHAT_REASONING_EFFORT.to_owned());
+
+    Ok((model, reasoning_effort))
+}
+
+fn normalize_route_value(value: Option<&str>, label: &str) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() || value.len() > 128 {
+        return Err(format!("{label} must contain between 1 and 128 characters"));
+    }
+    if !value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+    {
+        return Err(format!("{label} contains unsupported characters"));
+    }
+    Ok(Some(value.to_owned()))
 }
 
 fn focused_context_message<B>(

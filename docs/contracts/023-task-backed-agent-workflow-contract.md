@@ -204,6 +204,20 @@ proposal; it must not import projection files as live task-agent state.
 
 Codex app-server integration is one runtime binding, not the generic model.
 
+Agent Chat may select model and reasoning effort at the turn boundary. These
+are provider-route inputs, not renderer claims:
+
+- the local provider catalog supplies visible model and supported-effort options
+- the client submits one selected model and reasoning effort with the message
+- the server normalizes the route and forwards it to `turn/start`
+- a successful override remains sticky for subsequent turns on that provider
+  thread
+- the effective route is returned and persisted with the durable chat session
+- unsupported provider values fail explicitly; the UI must not imply they ran
+
+The first slice keeps approval policy and read-only sandbox fixed. Route
+selection does not grant filesystem, task execution, or lifecycle authority.
+
 Codex-specific refs may include:
 
 - provider instance id

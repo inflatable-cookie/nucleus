@@ -1,6 +1,6 @@
 # 029 Task Attributed Diff Review
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-10
 
@@ -36,7 +36,7 @@ or IDE chrome.
 - [x] Compose task-owned diff summaries and bounded transient unified patches.
 - [x] Replace the Diff placeholder with one compact review panel linked to the
   Editor and existing review-decision authority.
-- [ ] Validate attribution, failure recovery, UI simplicity, and non-mutation
+- [x] Validate attribution, failure recovery, UI simplicity, and non-mutation
   boundaries end to end.
 
 ## Boundary
@@ -72,25 +72,25 @@ This lane must not:
   persistence, and work-item linkage.
 - [x] Batch 3: transient patch read API, Tauri DTOs, compact Diff panel, Editor
   navigation, and existing review-decision controls.
-- [ ] Batch 4: full task-run attribution, recovery, interaction, visual, and
+- [x] Batch 4: full task-run attribution, recovery, interaction, visual, and
   regression validation.
 
 ## Acceptance Criteria
 
-- [ ] Pre-existing source state exists in both boundaries and is absent from
+- [x] Pre-existing source state exists in both boundaries and is absent from
   the task-window diff.
-- [ ] Provider dispatch cannot start when the baseline capture fails.
-- [ ] Runtime completion cannot become reviewable when target capture or diff
+- [x] Provider dispatch cannot start when the baseline capture fails.
+- [x] Runtime completion cannot become reviewable when target capture or diff
   persistence fails.
-- [ ] Snapshot bytes stay outside the project and durable record payloads with
+- [x] Snapshot bytes stay outside the project and durable record payloads with
   owner-only permissions and bounded retention.
-- [ ] Patch queries validate task/work-item/diff lineage and expose no absolute
+- [x] Patch queries validate task/work-item/diff lineage and expose no absolute
   or backend paths.
-- [ ] Diff review shows partial, binary, oversized, truncated, missing, and
+- [x] Diff review shows partial, binary, oversized, truncated, missing, and
   expired states honestly.
-- [ ] Accept and Needs changes cite the exact reviewed evidence through existing
+- [x] Accept and Needs changes cite the exact reviewed evidence through existing
   server authority and do not complete the task.
-- [ ] The normal panel remains one quiet changed-file review surface.
+- [x] The normal panel remains one quiet changed-file review surface.
 
 ## Planning Gaps Beyond This Lane
 
@@ -107,7 +107,7 @@ These gaps do not block an exact local task-window review.
 
 Ready:
 
-- `batch-cards/158-task-diff-review-validation-and-closeout.md`
+- None.
 
 Planned:
 
@@ -115,6 +115,7 @@ Planned:
 
 Completed:
 
+- `batch-cards/158-task-diff-review-validation-and-closeout.md`
 - `batch-cards/157-compact-task-diff-review-panel.md`
 - `batch-cards/156-task-diff-read-api-and-tauri-boundary.md`
 - `batch-cards/155-task-run-checkpoint-diff-integration.md`

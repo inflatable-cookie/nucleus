@@ -9,6 +9,7 @@ use nucleus_command_policy::{
 };
 use nucleus_core::RevisionId;
 use nucleus_local_store::{RevisionExpectation, SqliteBackend};
+use nucleus_server::control_envelope_dto::ControlSelectedTaskReviewDecisionRecordDto;
 use nucleus_server::{
     forge_credential_status_refresh, forge_pull_request_refresh, forge_repository_metadata_refresh,
     forge_status_check_refresh, persist_forge_credential_status_refreshes,
@@ -26,14 +27,15 @@ use nucleus_server::{
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
-    ForgeStatusCheckRefreshScope, LocalCodexChatHistory, LocalCodexChatReply,
-    LocalCodexChatRequest, LocalCodexChatService, LocalControlRequestHandler,
+    ForgeStatusCheckRefreshScope, LocalCodexChatHistory, LocalCodexChatModelOption,
+    LocalCodexChatReply, LocalCodexChatRequest, LocalCodexChatService, LocalControlRequestHandler,
     LocalMemoryProposalSeed, LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed,
     LocalTaskSeed, ServerStateService, TaskDiffFilePatchRequest, TaskDiffFilePatchResponse,
     TaskDiffOverviewRequest, TaskDiffOverviewResponse, TaskReviewSnapshotStore,
     TauriIpcControlCommandAdapter,
 };
 
+mod window_geometry;
 mod workspace_ui;
 
 struct DesktopState {
@@ -158,6 +160,25 @@ fn read_task_diff_file_patch(
 }
 
 #[tauri::command]
+fn read_task_review_decisions(
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+    task_id: String,
+) -> Result<Vec<ControlSelectedTaskReviewDecisionRecordDto>, String> {
+    nucleus_server::selected_task_review_decision_records::read_selected_task_review_decisions(
+        &state.server_state,
+    )
+    .map_err(|error| format!("task review decision read failed: {error:?}"))
+    .map(|records| {
+        records
+            .iter()
+            .filter(|record| record.project_id == project_id && record.task_id == task_id)
+            .map(ControlSelectedTaskReviewDecisionRecordDto::from)
+            .collect()
+    })
+}
+
+#[tauri::command]
 async fn send_agent_chat_message(
     state: tauri::State<'_, DesktopState>,
     request: LocalCodexChatRequest,
@@ -197,16 +218,29 @@ async fn send_agent_chat_message(
 }
 
 #[tauri::command]
-fn load_agent_chat_history(
+async fn load_agent_chat_history(
     state: tauri::State<'_, DesktopState>,
     project_id: String,
     conversation_id: String,
 ) -> Result<LocalCodexChatHistory, String> {
-    let chat = state
-        .chat
-        .lock()
-        .map_err(|_| "agent chat runtime lock is poisoned".to_owned())?;
-    chat.history(&state.server_state, &project_id, &conversation_id)
+    let chat = Arc::clone(&state.chat);
+    let server_state = state.server_state.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let chat = chat
+            .lock()
+            .map_err(|_| "agent chat runtime lock is poisoned".to_owned())?;
+        chat.history(&server_state, &project_id, &conversation_id)
+    })
+    .await
+    .map_err(|error| format!("agent chat history worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn list_agent_chat_models() -> Result<Vec<LocalCodexChatModelOption>, String> {
+    tauri::async_runtime::spawn_blocking(LocalCodexChatService::available_models)
+        .await
+        .map_err(|error| format!("agent chat model worker failed: {error}"))?
 }
 
 fn seed_local_command_evidence(
@@ -454,6 +488,10 @@ pub fn run() {
             app.set_theme(Some(tauri::Theme::Dark));
             if let Some(window) = app.get_webview_window("main") {
                 window.set_theme(Some(tauri::Theme::Dark))?;
+                if let Err(error) = window_geometry::restore_and_track(&window) {
+                    eprintln!("restore native window placement failed: {error}");
+                }
+                window.show()?;
             }
             Ok(())
         })
@@ -461,13 +499,15 @@ pub fn run() {
             submit_control_envelope,
             send_agent_chat_message,
             load_agent_chat_history,
+            list_agent_chat_models,
             load_workspace_ui_config,
             save_workspace_ui_config,
             list_editor_files,
             read_editor_file,
             save_editor_file,
             read_task_diff_overview,
-            read_task_diff_file_patch
+            read_task_diff_file_patch,
+            read_task_review_decisions
         ])
         .run(tauri::generate_context!())
         .expect("failed to run nucleus desktop");

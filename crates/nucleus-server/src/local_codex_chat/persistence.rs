@@ -145,17 +145,7 @@ where
     B: LocalStoreBackend,
 {
     let ordinal = session.turn_count;
-    put_json(
-        state,
-        session_record_id(&session.conversation_id),
-        &session,
-        RevisionId(format!(
-            "rev:{}:{}",
-            session_record_id(&session.conversation_id).0,
-            session.turn_count
-        )),
-        RevisionExpectation::Any,
-    )?;
+    persist_session(state, &session)?;
     put_json(
         state,
         PersistenceRecordId(format!("{TURN_PREFIX}{turn_id}")),
@@ -185,6 +175,26 @@ where
             task_receipts: Vec::new(),
             workflow_receipts: Vec::new(),
         },
+    )
+}
+
+pub fn persist_session<B>(
+    state: &ServerStateService<B>,
+    session: &StoredChatSession,
+) -> Result<(), String>
+where
+    B: LocalStoreBackend,
+{
+    put_json(
+        state,
+        session_record_id(&session.conversation_id),
+        session,
+        RevisionId(format!(
+            "rev:{}:{}",
+            session_record_id(&session.conversation_id).0,
+            session.turn_count
+        )),
+        RevisionExpectation::Any,
     )
 }
 

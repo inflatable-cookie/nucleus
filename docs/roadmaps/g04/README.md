@@ -182,6 +182,16 @@ Current checkpoint:
 - the compact selected-task Diff review panel is complete
 - the typed task diff read and Tauri boundary is complete
 - the active path is the compact task Diff review panel
+- review-guided rework execution is complete
+- the hosted-Surface metaphor was reassessed from product use and removed
+- desktop config now persists direct window regions and migrates the former
+  active Surface from schema v1
+- `nucleus-workspaces` now models display/window/region/panel without hosted
+  Surface identity or lifecycle
+- the window/region/panel simplification lane is complete
+- native primary-window geometry persistence is confirmed and complete
+- the floating Agent Chat composer with functional route controls is accepted
+- the active path is the four-main-region workspace grid
 
 ## Roadmaps
 
@@ -213,14 +223,18 @@ Current checkpoint:
 - `026-agent-chat-task-context.md` - completed
 - `027-agent-chat-task-workflow-run.md` - completed
 - `028-initial-code-editor-vertical-slice.md` - completed
-- `029-task-attributed-diff-review.md` - active
+- `029-task-attributed-diff-review.md` - completed
+- `030-review-guided-rework-execution.md` - completed
+- `031-window-region-panel-simplification.md` - completed
+- `032-native-window-geometry-persistence.md` - completed
+- `033-floating-agent-chat-composer.md` - completed
+- `034-four-main-region-workspace-grid.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/157-compact-task-diff-review-panel.md`
-- `batch-cards/158-task-diff-review-validation-and-closeout.md`
+- `batch-cards/176-four-main-region-validation-checkpoint.md`
 
 Planned cards:
 

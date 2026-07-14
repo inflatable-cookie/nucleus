@@ -13,14 +13,14 @@ use super::task_authoring::{TaskAuthoringReceipt, TaskToolOutcome};
 use super::task_ledger::dynamic_tool_spec as task_ledger_spec;
 use super::task_workflow::{dynamic_tool_spec as task_workflow_spec, TaskWorkflowReceipt};
 use super::{
-    LocalCodexChatReply, CHAT_ADAPTER_ID, CHAT_MODEL, CHAT_PROVIDER_INSTANCE_ID,
-    CHAT_REASONING_EFFORT, CHAT_TASK_TOOLSET_VERSION,
+    LocalCodexChatModelOption, LocalCodexChatReasoningOption, LocalCodexChatReply, CHAT_ADAPTER_ID,
+    CHAT_PROVIDER_INSTANCE_ID, CHAT_TASK_TOOLSET_VERSION,
 };
 use tool_calls::{consolidate_task_receipts, prepare_tool_call_response};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
-const TASK_TOOL_INSTRUCTIONS: &str = "You are operating inside Nucleus. You have exactly two Nucleus portals. task_ledger inspects, creates, and updates durable Goals and tasks; use inspect before updates and fill every inferable field. task_workflow inspects or runs exactly one task or one Goal snapshot. Call task_workflow run only when the current operator message explicitly authorizes execution; copy an exact authorizing excerpt, cite the current scope revision, and supply a stable idempotency key. Selection and readiness are not authority. Never invent task arrays, project sweeps, lifecycle transitions, delegation stages, or dispatch stages. Provider completion does not accept review, complete tasks, achieve Goals, or publish SCM changes. The portals are independent of the chat thread's read-only repository sandbox.";
+const TASK_TOOL_INSTRUCTIONS: &str = "You are operating inside Nucleus. You have exactly two Nucleus portals. task_ledger inspects, creates, and updates durable Goals and tasks; use inspect before updates and fill every inferable field. task_workflow inspects or runs exactly one task or one Goal snapshot. Task inspection returns current review context; when it reports rework_ready, a newly authorized task run creates a fresh work item carrying that durable review note and its provenance. Call task_workflow run only when the current operator message explicitly authorizes execution; copy an exact authorizing excerpt, cite the current scope revision, and supply a stable idempotency key. Selection, readiness, and a review decision are not execution authority. Never invent task arrays, project sweeps, lifecycle transitions, delegation stages, or dispatch stages. Provider completion does not accept review, complete tasks, achieve Goals, or publish SCM changes. The portals are independent of the chat thread's read-only repository sandbox.";
 
 pub(super) struct LocalCodexChatSession {
     session_id: String,
@@ -57,33 +57,10 @@ impl LocalCodexChatSession {
         project_root: &str,
         stored: Option<&StoredChatSession>,
         migration_context: Option<&str>,
+        model: &str,
+        reasoning_effort: &str,
     ) -> Result<Self, String> {
-        let mut child = Command::new("codex")
-            .arg("app-server")
-            .arg("--stdio")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("failed to start Codex app-server: {error}"))?;
-        let mut rpc = CodexAppServerRpc::from_child(&mut child)?;
-
-        rpc.request(
-            "initialize",
-            json!({
-                "clientInfo": {
-                    "name": "nucleus-desktop",
-                    "title": "Nucleus Desktop",
-                    "version": "0.0.0"
-                },
-                "capabilities": {
-                    "experimentalApi": true,
-                    "optOutNotificationMethods": null
-                }
-            }),
-            REQUEST_TIMEOUT,
-        )?;
-        rpc.notify("initialized", None)?;
+        let (child, mut rpc) = initialized_app_server()?;
 
         let developer_instructions = migration_context.map_or_else(
             || TASK_TOOL_INSTRUCTIONS.to_owned(),
@@ -102,8 +79,8 @@ impl LocalCodexChatSession {
                 json!({
                     "threadId": stored.provider_thread_id,
                     "cwd": project_root,
-                    "model": CHAT_MODEL,
-                    "config": { "model_reasoning_effort": CHAT_REASONING_EFFORT },
+                    "model": model,
+                    "config": { "model_reasoning_effort": reasoning_effort },
                     "developerInstructions": developer_instructions,
                     "approvalPolicy": "never",
                     "sandbox": "read-only",
@@ -116,8 +93,8 @@ impl LocalCodexChatSession {
                 "thread/start",
                 json!({
                     "cwd": project_root,
-                    "model": CHAT_MODEL,
-                    "config": { "model_reasoning_effort": CHAT_REASONING_EFFORT },
+                    "model": model,
+                    "config": { "model_reasoning_effort": reasoning_effort },
                     "developerInstructions": developer_instructions,
                     "allowProviderModelFallback": false,
                     "approvalPolicy": "never",
@@ -165,6 +142,8 @@ impl LocalCodexChatSession {
     pub(super) fn send_turn<F>(
         &mut self,
         message: &str,
+        model: &str,
+        reasoning_effort: &str,
         task_tool: &mut F,
     ) -> Result<LocalCodexChatReply, String>
     where
@@ -172,12 +151,7 @@ impl LocalCodexChatSession {
     {
         let response = self.rpc.request(
             "turn/start",
-            json!({
-                "threadId": self.thread_id,
-                "approvalPolicy": "never",
-                "sandboxPolicy": { "type": "readOnly" },
-                "input": [{ "type": "text", "text": message }]
-            }),
+            turn_start_params(&self.thread_id, message, model, reasoning_effort),
             REQUEST_TIMEOUT,
         )?;
         let turn_id = response
@@ -188,6 +162,8 @@ impl LocalCodexChatSession {
             .to_owned();
         let (assistant_message, task_receipts, workflow_receipts) =
             self.rpc.wait_for_turn(&turn_id, TURN_TIMEOUT, task_tool)?;
+        self.model = model.to_owned();
+        self.reasoning_effort = Some(reasoning_effort.to_owned());
 
         Ok(LocalCodexChatReply {
             session_id: self.session_id.clone(),
@@ -200,6 +176,119 @@ impl LocalCodexChatSession {
             workflow_receipts,
         })
     }
+}
+
+fn turn_start_params(thread_id: &str, message: &str, model: &str, reasoning_effort: &str) -> Value {
+    json!({
+        "threadId": thread_id,
+        "model": model,
+        "effort": reasoning_effort,
+        "approvalPolicy": "never",
+        "sandboxPolicy": { "type": "readOnly" },
+        "input": [{ "type": "text", "text": message }]
+    })
+}
+
+pub(super) fn available_models() -> Result<Vec<LocalCodexChatModelOption>, String> {
+    let (mut child, mut rpc) = initialized_app_server()?;
+    let response = rpc.request(
+        "model/list",
+        json!({ "limit": 100, "includeHidden": false }),
+        REQUEST_TIMEOUT,
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+    parse_model_catalog(&response?)
+}
+
+fn initialized_app_server() -> Result<(Child, CodexAppServerRpc), String> {
+    let mut child = Command::new("codex")
+        .arg("app-server")
+        .arg("--stdio")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("failed to start Codex app-server: {error}"))?;
+    let mut rpc = CodexAppServerRpc::from_child(&mut child)?;
+
+    rpc.request(
+        "initialize",
+        json!({
+            "clientInfo": {
+                "name": "nucleus-desktop",
+                "title": "Nucleus Desktop",
+                "version": "0.0.0"
+            },
+            "capabilities": {
+                "experimentalApi": true,
+                "optOutNotificationMethods": null
+            }
+        }),
+        REQUEST_TIMEOUT,
+    )?;
+    rpc.notify("initialized", None)?;
+    Ok((child, rpc))
+}
+
+fn parse_model_catalog(value: &Value) -> Result<Vec<LocalCodexChatModelOption>, String> {
+    let data = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Codex model/list response did not include model data".to_owned())?;
+
+    let models = data
+        .iter()
+        .filter(|model| {
+            !model
+                .get("hidden")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter_map(|model| {
+            let model_id = model.get("model")?.as_str()?.to_owned();
+            let supported_reasoning_efforts = model
+                .get("supportedReasoningEfforts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|effort| {
+                    Some(LocalCodexChatReasoningOption {
+                        reasoning_effort: effort.get("reasoningEffort")?.as_str()?.to_owned(),
+                        description: effort
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    })
+                })
+                .collect();
+            Some(LocalCodexChatModelOption {
+                model: model_id.clone(),
+                display_name: model
+                    .get("displayName")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&model_id)
+                    .to_owned(),
+                description: model
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                default_reasoning_effort: model
+                    .get("defaultReasoningEffort")
+                    .and_then(Value::as_str)
+                    .unwrap_or("low")
+                    .to_owned(),
+                supported_reasoning_efforts,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if models.is_empty() {
+        return Err("Codex model/list response did not include visible models".to_owned());
+    }
+    Ok(models)
 }
 
 fn dynamic_tool_specs() -> Vec<Value> {
@@ -217,6 +306,38 @@ mod tests {
             .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_owned))
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["task_ledger", "task_workflow"]);
+    }
+
+    #[test]
+    fn model_catalog_keeps_provider_labels_and_reasoning_options() {
+        let models = parse_model_catalog(&json!({
+            "data": [{
+                "model": "gpt-5.4-mini",
+                "displayName": "GPT-5.4 mini",
+                "description": "Fast coding model",
+                "hidden": false,
+                "defaultReasoningEffort": "low",
+                "supportedReasoningEfforts": [
+                    {"reasoningEffort": "low", "description": "Fast"},
+                    {"reasoningEffort": "medium", "description": "Balanced"}
+                ]
+            }]
+        }))
+        .expect("catalog");
+
+        assert_eq!(models[0].model, "gpt-5.4-mini");
+        assert_eq!(models[0].display_name, "GPT-5.4 mini");
+        assert_eq!(models[0].supported_reasoning_efforts.len(), 2);
+    }
+
+    #[test]
+    fn turn_start_carries_selected_route_without_changing_sandbox_policy() {
+        let params = turn_start_params("thread:test", "hello", "gpt-5.4", "medium");
+
+        assert_eq!(params["model"], "gpt-5.4");
+        assert_eq!(params["effort"], "medium");
+        assert_eq!(params["sandboxPolicy"]["type"], "readOnly");
+        assert_eq!(params["approvalPolicy"], "never");
     }
 }
 

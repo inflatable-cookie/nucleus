@@ -57,6 +57,7 @@
             },
             ".cm-scroller": {
               overflow: "auto",
+              minHeight: "0",
               fontFamily: "var(--poodle-typography-code-family, monospace)",
               lineHeight: "1.55",
             },

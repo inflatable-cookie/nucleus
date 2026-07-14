@@ -2,20 +2,22 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-07-10
+Updated: 2026-07-14
 
 ## Purpose
 
 Define the first real product workflow UI direction before more server surfaces
 are added to disposable proof panels.
 
-The disposable desktop proof has served its integration role. It should remain
-available as a diagnostic harness, but it must stop growing into a catch-all UI
-surface.
+The disposable desktop proof served its integration role and was removed once
+the product shell covered project selection, chat, tasks, editing, diffs, and
+review. Diagnostics now belong in targeted development tooling, not a parallel
+application UI.
 
 ## Decision
 
-Freeze the current `TaskWorkflowDrilldownProofPanel` as diagnostic-only.
+Retire the proof harness and its proof-only panels. Do not recreate a parallel
+diagnostic application inside the product shell.
 
 The next UI work should design a chat-led, task-backed workflow. The primary
 interface is AI agent conversation. Tasks are the structured work ledger behind
@@ -42,25 +44,13 @@ The real product workflow should match how users will move through Nucleus:
 The UI should consume server-owned state. It must not become authority for
 task, work-item, provider, memory, planning, SCM, or forge state.
 
-## Current Proof UI Boundary
+## Retired Proof UI Boundary
 
-The proof modal may remain as:
-
-- integration diagnostics
-- DTO smoke-test surface
-- read-only server state inspector
-- temporary manual verification tool
-
-The proof modal must not:
-
-- absorb new product controls by default
-- become the primary selected-task workflow
-- define final layout, navigation, information hierarchy, or interaction copy
-- hide missing workflow design by stacking more cards
-- duplicate server logic in Svelte
-
-Any new proof-only addition now needs a clear reason. The default should be to
-shape the real workflow surface first.
+The desktop no longer ships the proof modal, launcher, or proof-only Svelte
+panels. Narrow query surfaces may remain at the server boundary for tests and
+CLI diagnostics, but they do not require permanent renderer views. New product
+work should extend the real panel set; temporary diagnostics should be bounded
+and removed after use.
 
 ## First Product Workflow Surface
 
@@ -73,12 +63,11 @@ Primary regions:
 
 - project rail: project switching, activity, server/host context
 - centerTop: primary agent chat and primary workspace panels
-- centerBottom: secondary workspace panels, including terminal/browser/editor
-  panels or the task panel when the user moves it down
-- right: contextual inspector, action affordances, review, logs, output, and
-  evidence details tied to the active work
-- task panel: uncloseable system tab, defaulted to centerTop and only movable
-  to centerBottom in the first model
+- centerBottom: secondary workspace panels
+- rightTop: contextual panels by default, or any moved workspace tab
+- rightBottom: secondary side workspace panels
+- task panel: uncloseable system tab, defaulted to centerTop and movable across
+  all four main workspace regions
 
 Initial interaction order:
 
@@ -96,56 +85,43 @@ Initial interaction order:
 10. Review/rework/completion actions become available only through server
    admission.
 
-## Workspace Hosting Prerequisite
+## Workspace Hosting Model
 
-The selected-task workflow shell should not become a one-window-only layout
-model. Before serious product shell implementation, Nucleus should promote the
-already-recorded Loophole-inspired hosting hierarchy into
-`nucleus-workspaces`:
+Product use disproved the inherited hosted-Surface layer. Nucleus uses:
 
 ```text
-display -> window -> surface -> region -> panel
+display -> window -> region -> panel
 ```
 
-The transferable part from Loophole is the hosting model, not the DAW panel
-defaults. Nucleus needs:
+The useful transferable Loophole concepts are stable display identity, window
+placement, and deterministic display fallback. A second top-level tab hierarchy
+inside each window is not useful for the Nucleus workflow:
 
-- global local client profile records for displays, windows, hosted surfaces,
-  surface ordering, and active-surface fallback
-- per-project local panel rules that adapt into the global shell
+- the project rail switches project context
+- semantic regions define the window layout
+- panel tabs hold chat, task, editor, diff, terminal, browser, and context tools
+- a Surface tab strip duplicates panel navigation and obscures workflow state
+
+Nucleus therefore needs:
+
+- global local client profile records for displays and windows
+- window-owned region sizing and panel placement
+- per-project local panel rules that adapt into available windows
 - renderer-owned transient drag, hover, focus, and measurement only
-- server-owned resource refs for terminals, browsers, agent sessions, editor
-  buffers, SCM state, evidence, review, and task state
+- server-owned resource refs attached to panels for terminals, browsers, agent
+  sessions, editor buffers, SCM state, evidence, review, and task state
 
-This means the first real selected-task UI should be designed as a panel set
-that can live inside a hosted surface, not as the whole workspace authority.
-Desktop can start with one native window and one hosted surface, but the model
-must leave room for multiple windows and surfaces without rewriting identity or
-persistence later.
+The desktop may start with one native window. Stable window identity leaves
+room for multi-display and multi-window placement without adding another
+container layer.
 
-Hosted surfaces use the Loophole-style surface tab strip at window level.
-Surfaces are global client-profile containers and must support multi-display
-and multi-window placement with deterministic fallback to primary windows when
-displays are unavailable.
+The first desktop implementation persists local window layout at
+`~/.nucleus/config/ui.json`. This is local UI state, never project projection.
 
-The first desktop implementation persists the local surface shell at
-`~/.nucleus/config/ui.json`. This is a pragmatic bring-up file for local UI
-state. It must not be projected into project repositories, and it can be
-migrated into a richer local client store later.
-
-Within a surface, the initial region vocabulary is fixed to `left`, `right`,
-`centerTop`, and `centerBottom`. There is no generic bottom region. Terminals,
-browsers, editors, diffs, chats, and task views are primary workspace furniture
-and belong in `centerTop` or `centerBottom`. Contextual logs/output belong
-inside their owning panel or in `right`.
-
-Implementation should inspect Loophole's current Echo crates before coding:
-
-- `../loophole/echo/crates/echo-windowing`
-- `../loophole/echo/crates/echo-ui-layout`
-
-The initial Nucleus implementation should port or recreate the Rust model in
-small `nucleus-workspaces` modules before porting any Aura configuration UI.
+The initial region vocabulary is fixed to `left`, `centerTop`, `centerBottom`,
+`rightTop`, and `rightBottom`. The four main regions form a semantic two-column
+by two-row grid. Every workspace tab may move between those four regions. The
+left project/activity region remains outside that general placement policy.
 
 ## Server Surface Fit
 
@@ -162,23 +138,12 @@ more product controls are built, the UI lane should decide:
 The UI should prefer product-shaped aggregate queries over many small proof
 queries when the same screen always needs them together.
 
-## Disposable Proof Debt
+## Retired Proof Debt
 
-Known proof debt:
-
-- `TaskWorkflowDrilldownProofPanel.svelte` is too large.
-- It mixes workflow overview, review, route, rework, SCM readiness, command
-  admission, task command execution, and evidence display.
-- It is useful for smoke checks but not a maintainable product component.
-- It should not receive delegation scheduling UI unless a very narrow
-  diagnostic reason exists.
-
-Required cleanup before final UI:
-
-- split proof-only DTO helpers from product client helpers where useful
-- move final UI components into separate product workflow modules
-- keep proof routes/modal optional and isolated
-- prevent proof CSS from becoming product design precedent
+The proof modal, its proof-only panels, and their source-inspection guards were
+removed after the product paths became usable. Historical roadmap cards retain
+the validation record. Product-facing DTO cleanup remains demand-driven rather
+than preserving unused renderer consumers.
 
 ## Proof Versus Product Classification
 
@@ -212,9 +177,9 @@ exists.
 
 ## Product Surface Fit Decision
 
-The proof modal currently composes many narrow queries because each proof lane
+The retired proof modal composed many narrow queries because each proof lane
 validated one boundary at a time. That was useful for server confidence, but it
-is the wrong client shape for the product shell.
+was the wrong client shape for the product shell.
 
 Product-facing selected-task UI should consume a selected-task workflow
 aggregate that gives the shell one coherent read model:
@@ -264,6 +229,24 @@ It should not be proof-shaped:
 The canonical behavioral contract is
 `docs/contracts/023-task-backed-agent-workflow-contract.md`.
 
+## Native Window Placement
+
+The desktop Rust host restores and captures native window geometry. The
+renderer receives placement in the workspace UI DTO only so normal config
+round trips preserve it; it does not query monitors or position the window.
+
+One schema-v4 `ui.json` remains authority for primary-window placement, region
+composition, and split ratios. Geometry-only writes reload and merge against
+current config under one process lock. This prevents asynchronous resize
+persistence from reverting panel changes. The workspace save command ignores
+renderer placement changes and preserves the latest host-owned geometry.
+Schema v4 migrates the former full-height `right` region to `rightTop`, creates
+an empty `rightBottom`, and adds its independent vertical split ratio.
+
+The first monitor key is best-effort native metadata, not durable hardware
+identity. Restore validates every placement against current work areas and
+uses the contract fallback order when the recorded display is gone.
+
 ## Open Decisions
 
 - Exact `nucleus-workspaces` port shape for Echo windowing and UI layout
@@ -272,7 +255,7 @@ The canonical behavioral contract is
 
 ## Initial Agent Chat Slice
 
-Operator direction keeps the approved workspace surface shell intact. The
+Operator direction keeps the approved workspace window shell intact. The
 first real workflow is implemented inside the existing Agent Chat panel.
 
 The first slice uses a server-owned local Codex app-server process and retains
@@ -302,6 +285,13 @@ inspection and manual control stay in the task panel.
 Task proposal cards remain useful when conversation intent or scope is
 materially ambiguous. They are not the default admission step for every task.
 Creating a task never dispatches it. Streaming presentation remains deferred.
+
+The first composer redesign remains inside `AgentChatPanel.svelte`. It uses a
+floating bottom surface rather than adding another shell region or global
+toolbar. The local Codex app-server model catalog feeds compact model and
+reasoning selectors; selected values cross the existing Tauri chat command and
+become turn-level provider overrides. Effective route data continues through
+the existing durable chat-session record.
 
 ## Initial Tasks Panel
 

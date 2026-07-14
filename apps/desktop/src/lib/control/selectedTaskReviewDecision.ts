@@ -1,5 +1,6 @@
 import type { ControlResponseEnvelopeDto } from "./envelopes";
 import type { ControlTaskWorkflowNoEffectsDto } from "./taskWorkflow";
+import { invoke } from "@tauri-apps/api/core";
 
 export type SelectedTaskReviewDecisionAction =
   | "accept_evidence"
@@ -95,6 +96,16 @@ export type SelectedTaskReviewDecisionApplyQueryResult =
       record: ControlSelectedTaskReviewDecisionRecordDto;
     }
   | QueryFallback;
+
+export function readTaskReviewDecisions(
+  projectId: string,
+  taskId: string,
+): Promise<ControlSelectedTaskReviewDecisionRecordDto[]> {
+  return invoke<ControlSelectedTaskReviewDecisionRecordDto[]>("read_task_review_decisions", {
+    projectId,
+    taskId,
+  });
+}
 
 export function selectedTaskReviewDecisionAdmissionFromResponse(
   response: ControlResponseEnvelopeDto,

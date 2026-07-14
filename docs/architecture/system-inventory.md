@@ -173,12 +173,11 @@ Updated: 2026-06-16
   query/control DTO, `nucleusd query research-run-briefs`, and Effigy, returning
   sanitized counts and refs only.
 - `nucleus-workspaces`: first draft modular workspace layout and local
-  workspace hosting types. It now models the Loophole-inspired
-  display/window/surface/region/panel hierarchy at the Rust type and pure
-  helper level: display inventory, window placement, display fallback
-  planning, hosted surfaces, active-surface fallback, Nucleus regions,
-  per-project panel rules, selected-task shell seed rules, and local-only
-  global shell / project panel layout record families. Rendering, local SQLite
+  workspace hosting types. It models the simplified
+  display/window/region/panel hierarchy at the Rust type and pure helper level:
+  display inventory, window placement, display fallback planning, Nucleus
+  regions, per-project window panel rules, selected-task shell seed rules, and
+  local-only global shell / project panel layout record families. Rendering, local SQLite
   codecs, migrations, terminal/browser/editor/SCM resource execution, sync,
   and Aura-style configuration UI remain out of scope.
 - `nucleus-server`: current crate name for host API/runtime boundary types.

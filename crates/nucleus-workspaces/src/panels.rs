@@ -1,14 +1,14 @@
 //! Workspace panel tree types.
 
-use crate::ids::{PanelId, SurfaceId};
+use crate::ids::PanelId;
 
 /// Durable panel container in a workspace layout.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Panel {
     pub id: PanelId,
     pub kind: PanelKind,
-    pub tab_ids: Vec<SurfaceId>,
-    pub active_tab_id: Option<SurfaceId>,
+    pub tab_ids: Vec<PanelId>,
+    pub active_tab_id: Option<PanelId>,
     pub split_direction: Option<SplitDirection>,
     pub size_hint: Option<PanelSizeHint>,
     pub child_panel_ids: Vec<PanelId>,

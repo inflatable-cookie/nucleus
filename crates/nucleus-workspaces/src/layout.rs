@@ -4,9 +4,8 @@ use std::time::SystemTime;
 
 use nucleus_projects::ProjectId;
 
-use crate::ids::{PanelId, SurfaceId, WorkspaceLayoutId};
+use crate::ids::{PanelId, WorkspaceLayoutId};
 use crate::panels::Panel;
-use crate::surfaces::Surface;
 
 /// Persisted workspace layout attached to a project.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,8 +16,6 @@ pub struct WorkspaceLayout {
     pub status: WorkspaceLayoutStatus,
     pub panels: Vec<Panel>,
     pub focused_panel_id: Option<PanelId>,
-    pub open_surfaces: Vec<Surface>,
-    pub selected_surface_id: Option<SurfaceId>,
     pub client_scope: ClientScope,
     pub timestamps: WorkspaceTimestamps,
 }

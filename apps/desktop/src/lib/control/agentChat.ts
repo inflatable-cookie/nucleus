@@ -6,6 +6,21 @@ export type AgentChatRequest = {
   message: string;
   active_task_id: string | null;
   active_goal_id: string | null;
+  model: string;
+  reasoning_effort: string;
+};
+
+export type AgentChatModelOption = {
+  model: string;
+  display_name: string;
+  description: string;
+  default_reasoning_effort: string;
+  supported_reasoning_efforts: AgentChatReasoningOption[];
+};
+
+export type AgentChatReasoningOption = {
+  reasoning_effort: string;
+  description: string;
 };
 
 export type AgentChatReply = {
@@ -89,4 +104,8 @@ export function loadAgentChatHistory(
     projectId,
     conversationId,
   });
+}
+
+export function listAgentChatModels(): Promise<AgentChatModelOption[]> {
+  return invoke<AgentChatModelOption[]>("list_agent_chat_models");
 }

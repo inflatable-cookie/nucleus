@@ -3,7 +3,6 @@
 use nucleus_projects::ProjectId;
 
 use crate::displays::DisplayInventory;
-use crate::hosted_surfaces::{HostedSurface, WindowHostedSurfaces};
 use crate::ids::ClientProfileId;
 use crate::project_panels::ProjectPanelLayoutRules;
 use crate::windows::WorkspaceWindowConfig;
@@ -21,14 +20,12 @@ pub enum LocalLayoutPersistenceScope {
     LocalClientProfile { client_profile_id: ClientProfileId },
 }
 
-/// Global display/window/surface shell state for one local client profile.
+/// Global display/window shell state for one local client profile.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GlobalShellLayoutRecord {
     pub client_profile_id: ClientProfileId,
     pub display_inventory: DisplayInventory,
     pub windows: Vec<WorkspaceWindowConfig>,
-    pub hosted_surfaces: Vec<HostedSurface>,
-    pub window_surfaces: Vec<WindowHostedSurfaces>,
 }
 
 /// Per-project panel layout state for one local client profile.
@@ -78,7 +75,7 @@ mod tests {
     };
     use crate::displays::DisplayInventory;
     use crate::ids::{
-        ClientProfileId, DisplayArrangementSignature, ProjectPanelLayoutId, SurfaceId,
+        ClientProfileId, DisplayArrangementSignature, ProjectPanelLayoutId, WindowId,
     };
     use crate::project_panels::ProjectPanelLayoutRules;
     use nucleus_projects::ProjectId;
@@ -96,8 +93,6 @@ mod tests {
                 displays: Vec::new(),
             },
             windows: Vec::new(),
-            hosted_surfaces: Vec::new(),
-            window_surfaces: Vec::new(),
         });
 
         assert_eq!(record.kind(), LocalLayoutRecordKind::GlobalShellLayout);
@@ -119,7 +114,7 @@ mod tests {
             rules: ProjectPanelLayoutRules::chat_led_shell(
                 ProjectPanelLayoutId("layout:chat-led".to_string()),
                 project_id,
-                SurfaceId("surface:main".to_string()),
+                WindowId("window:primary".to_string()),
             ),
         });
 

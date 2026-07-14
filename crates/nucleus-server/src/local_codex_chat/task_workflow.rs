@@ -15,6 +15,7 @@ use super::mandates::{
     WorkflowMandateAdmission, WorkflowMandateScope, WorkflowMandateStatus,
 };
 use super::persistence::{current_turn, operator_message_id};
+use super::rework_context::current_task_review_context;
 use super::task_authoring::{safe_ref, TaskToolOutcome};
 use super::task_inspection::active_task;
 use crate::task_agent_work_unit_state::read_task_agent_work_unit_source_records;
@@ -70,7 +71,7 @@ pub(super) fn dynamic_tool_spec() -> Value {
     json!({
         "type": "function",
         "name": "task_workflow",
-        "description": "Inspect or run one durable Nucleus task or one Goal's ordered task snapshot. Run requires an exact excerpt from the current operator message, the current scope revision, and an idempotency key. It performs the complete provider handoff; it does not accept review, complete tasks, achieve Goals, or publish SCM changes.",
+        "description": "Inspect or run one durable Nucleus task or one Goal's ordered task snapshot. Task inspection includes the current durable review context. A fresh task run after rejected or needs-changes review carries that note and prior evidence refs into a new work item. Run requires an exact excerpt from the current operator message, the current scope revision, and an idempotency key. It performs the complete provider handoff; it does not accept review, complete tasks, achieve Goals, or publish SCM changes.",
         "inputSchema": {
             "type": "object",
             "required": ["action", "scope"],
@@ -121,6 +122,7 @@ where
         "task" => {
             let task_id = input.task_id.as_deref().expect("validated task scope");
             let task = active_task(state, project_id, task_id)?;
+            let review = current_task_review_context(state, project_id, task_id)?;
             let mut blockers = task_blockers(state, project_id, &task)?;
             for dependency_id in task
                 .required_context_refs
@@ -138,6 +140,7 @@ where
             json!({
                 "scope": "task",
                 "task": task,
+                "review": review,
                 "ready_to_run": blockers.is_empty(),
                 "blockers": blockers,
                 "available_outcomes": if blockers.is_empty() { vec!["run"] } else { vec!["blocked"] }
@@ -218,6 +221,18 @@ where
         "operator_message_excerpt",
     )?;
     let idempotency_key = required(input.idempotency_key.as_deref(), "idempotency_key")?;
+    let review = match input.scope.as_str() {
+        "task" => current_task_review_context(
+            state,
+            project_id,
+            input.task_id.as_deref().expect("validated task scope"),
+        )?,
+        "goal" => None,
+        _ => unreachable!("validated scope"),
+    };
+    if review.as_ref().is_some_and(|review| !review.rework_ready) {
+        return Err("current task review outcome does not admit rework execution".to_owned());
+    }
     let scope = match input.scope.as_str() {
         "task" => WorkflowMandateScope::Task {
             task_id: input.task_id.clone().expect("validated task scope"),
@@ -251,6 +266,16 @@ where
                 expected_mandate_revision: mandate.revision_id.clone(),
                 idempotency_key: idempotency_key.to_owned(),
                 now_epoch_seconds: now_epoch_seconds()?,
+                rework_decision_ref: review.as_ref().map(|review| review.decision_ref.clone()),
+                rework_reason: review.as_ref().and_then(|review| review.reason.clone()),
+                reviewed_work_item_refs: review
+                    .as_ref()
+                    .map(|review| review.reviewed_work_item_refs.clone())
+                    .unwrap_or_default(),
+                reviewed_evidence_refs: review
+                    .as_ref()
+                    .map(|review| review.reviewed_evidence_refs.clone())
+                    .unwrap_or_default(),
             },
         )?
     } else {
@@ -591,6 +616,10 @@ mod tests {
                 expected_mandate_revision: mandate.revision_id,
                 idempotency_key: "portal-single".to_owned(),
                 now_epoch_seconds: mandate.created_at_epoch_seconds,
+                rework_decision_ref: None,
+                rework_reason: None,
+                reviewed_work_item_refs: Vec::new(),
+                reviewed_evidence_refs: Vec::new(),
             },
         )
         .expect("task admission");

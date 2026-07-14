@@ -19,6 +19,7 @@ use super::mandates::{
     read_workflow_mandate, WorkflowMandate, WorkflowMandateScope, WorkflowMandateStatus,
 };
 use super::persistence::{read_session, StoredChatSession};
+use super::rework_context::current_task_review_context;
 use super::task_inspection::active_task;
 use crate::task_agent_work_unit_state::{
     read_task_agent_work_unit_source_records, write_task_agent_work_unit_source_record,
@@ -34,6 +35,14 @@ pub struct GoalRunAdmissionRequest {
     pub expected_mandate_revision: String,
     pub idempotency_key: String,
     pub now_epoch_seconds: u64,
+    #[serde(default)]
+    pub rework_decision_ref: Option<String>,
+    #[serde(default)]
+    pub rework_reason: Option<String>,
+    #[serde(default)]
+    pub reviewed_work_item_refs: Vec<String>,
+    #[serde(default)]
+    pub reviewed_evidence_refs: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -87,6 +96,10 @@ pub struct GoalRunPlanTask {
     pub task_id: String,
     pub revision_id: String,
     pub disposition: String,
+    pub rework_decision_ref: Option<String>,
+    pub rework_reason: Option<String>,
+    pub reviewed_work_item_refs: Vec<String>,
+    pub reviewed_evidence_refs: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -277,6 +290,7 @@ where
     if !inspection.blockers.is_empty() {
         return Ok(GoalRunOutcome::Blocked { inspection });
     }
+    validate_rework_context(state, &inspection, &request)?;
     let route = inspection
         .route
         .clone()
@@ -289,6 +303,16 @@ where
     let first = &inspection.ordered_tasks[first_index];
     let work_item_id = format!("work-item:goal-run:{plan_id}:{}", first.task_id);
     let command_id = format!("command:{plan_id}");
+    let mut refs = EngineTaskWorkItemRefs::default();
+    if let Some(decision_ref) = request.rework_decision_ref.as_ref() {
+        refs.artifact_refs.push(decision_ref.clone());
+        refs.artifact_refs
+            .extend(request.reviewed_work_item_refs.clone());
+        refs.artifact_refs
+            .extend(request.reviewed_evidence_refs.clone());
+        refs.artifact_refs.sort();
+        refs.artifact_refs.dedup();
+    }
     let work_item = EngineTaskWorkItemRecord {
         work_item_id: EngineTaskWorkItemId(work_item_id.clone()),
         task_id: TaskId(first.task_id.clone()),
@@ -303,7 +327,7 @@ where
         },
         runtime: EngineTaskWorkItemRuntimeState::Scheduled,
         review: EngineTaskWorkItemReviewState::NotReady,
-        refs: EngineTaskWorkItemRefs::default(),
+        refs,
         summary: Some(format!(
             "Goal run admitted from mandate {}; provider execution deferred",
             inspection.mandate_id
@@ -347,6 +371,22 @@ where
                 } else {
                     task.disposition.clone()
                 },
+                rework_decision_ref: (ordinal == first_index)
+                    .then(|| request.rework_decision_ref.clone())
+                    .flatten(),
+                rework_reason: (ordinal == first_index)
+                    .then(|| request.rework_reason.clone())
+                    .flatten(),
+                reviewed_work_item_refs: if ordinal == first_index {
+                    request.reviewed_work_item_refs.clone()
+                } else {
+                    Vec::new()
+                },
+                reviewed_evidence_refs: if ordinal == first_index {
+                    request.reviewed_evidence_refs.clone()
+                } else {
+                    Vec::new()
+                },
             })
             .collect(),
         current_task_index: first_index,
@@ -370,6 +410,49 @@ where
         return Err(plan_error);
     }
     Ok(GoalRunOutcome::Admitted { plan })
+}
+
+fn validate_rework_context<B>(
+    state: &ServerStateService<B>,
+    inspection: &GoalRunInspection,
+    request: &GoalRunAdmissionRequest,
+) -> Result<(), String>
+where
+    B: LocalStoreBackend,
+{
+    if inspection.scope_kind != "task" {
+        if request.rework_decision_ref.is_some()
+            || request.rework_reason.is_some()
+            || !request.reviewed_work_item_refs.is_empty()
+            || !request.reviewed_evidence_refs.is_empty()
+        {
+            return Err("Goal runs cannot carry task rework context".to_owned());
+        }
+        return Ok(());
+    }
+
+    let task_id = &inspection
+        .ordered_tasks
+        .first()
+        .ok_or_else(|| "task run inspection has no task".to_owned())?
+        .task_id;
+    let current = current_task_review_context(state, &inspection.project_id, task_id)?;
+    match current {
+        None if request.rework_decision_ref.is_none() => Ok(()),
+        None => Err("rework request has no current durable review decision".to_owned()),
+        Some(context) if !context.rework_ready => {
+            Err("current task review outcome does not admit rework execution".to_owned())
+        }
+        Some(context)
+            if request.rework_decision_ref.as_deref() == Some(&context.decision_ref)
+                && request.rework_reason == context.reason
+                && request.reviewed_work_item_refs == context.reviewed_work_item_refs
+                && request.reviewed_evidence_refs == context.reviewed_evidence_refs =>
+        {
+            Ok(())
+        }
+        Some(_) => Err("rework request does not match current durable review context".to_owned()),
+    }
 }
 
 fn validate_goal_run_authority<B>(
@@ -776,6 +859,10 @@ pub(super) mod tests {
             expected_mandate_revision: mandate.revision_id.clone(),
             idempotency_key: key.to_owned(),
             now_epoch_seconds: mandate.created_at_epoch_seconds,
+            rework_decision_ref: None,
+            rework_reason: None,
+            reviewed_work_item_refs: Vec::new(),
+            reviewed_evidence_refs: Vec::new(),
         }
     }
 

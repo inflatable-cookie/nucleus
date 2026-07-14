@@ -296,7 +296,7 @@ Default local-only records and state:
 - live agent sessions
 - terminal and browser state
 - local caches and local indexes
-- global display/window/surface layout
+- global display/window layout
 - per-project panel layout
 - raw validation output
 - secrets and credential material
@@ -316,8 +316,7 @@ local-only until a contract explicitly promotes them.
 Workspace layout local-only type boundary:
 
 - `GlobalShellLayoutRecord` is local client profile state for display
-  inventory, workspace windows, hosted surfaces, and window-scoped surface
-  ordering.
+  inventory and workspace windows.
 - `ProjectPanelLayoutRecord` is local client profile state linked to a project
   id, but it is not repo-backed project management state.
 - `LocalLayoutRecord::is_repo_projection_allowed()` is false for both record

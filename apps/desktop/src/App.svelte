@@ -1,48 +1,28 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Icon, IconButton, Menu, Popover, SplitView, Text, type MenuItem } from "@poodle/svelte";
-  import { info, plus, testTube } from "@poodle/icons-lucide";
-  import CommandDiagnosticsPanel from "./lib/CommandDiagnosticsPanel.svelte";
-  import ControlDiagnosticsPanel from "./lib/ControlDiagnosticsPanel.svelte";
-  import DiagnosticsProofPanel from "./lib/DiagnosticsProofPanel.svelte";
-  import ProductWorkflowProofPanel from "./lib/ProductWorkflowProofPanel.svelte";
-  import ProviderReadinessOverviewPanel from "./lib/ProviderReadinessOverviewPanel.svelte";
-  import PlanningResearchProofPanel from "./lib/PlanningResearchProofPanel.svelte";
+  import { Icon, IconButton, Menu, Popover, SplitView, type MenuItem } from "@poodle/svelte";
+  import { info, plus } from "@poodle/icons-lucide";
   import ProjectRail from "./lib/ProjectRail.svelte";
-  import ProjectSwitcherPanel from "./lib/ProjectSwitcherPanel.svelte";
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
-  import RuntimeReadinessPanel from "./lib/RuntimeReadinessPanel.svelte";
-  import TaskDetailPanel from "./lib/TaskDetailPanel.svelte";
-  import TaskListPanel from "./lib/TaskListPanel.svelte";
-  import TaskWorkflowDrilldownProofPanel from "./lib/TaskWorkflowDrilldownProofPanel.svelte";
-  import TaskWorkProgressPanel from "./lib/TaskWorkProgressPanel.svelte";
-  import type {
-    ControlGoalRecordDto,
-    ControlProjectRecordDto,
-    ControlTaskRecordDto,
-  } from "./lib/control";
+  import type { ControlProjectRecordDto } from "./lib/control";
   import { beginWindowDrag } from "./lib/windowChrome";
 
   let selectedProjectId = $state<string | null>(null);
   let selectedProject = $state<ControlProjectRecordDto | null>(null);
-  let selectedTaskId = $state<string | null>(null);
-  let selectedTask = $state<ControlTaskRecordDto | null>(null);
-  let selectedGoalId = $state<string | null>(null);
-  let selectedGoal = $state<ControlGoalRecordDto | null>(null);
-  let taskRefreshToken = $state(0);
-  let proofHarnessOpen = $state(false);
   let projectRailRatio = $state(0.18);
   let projectRailPrimaryCollapsed = $state(false);
   let projectRailSecondaryCollapsed = $state(false);
+  let openPanelKinds = $state<string[]>([]);
   const projectRailRatioStorageKey = "nucleus:desktop:project-rail-ratio";
-  const newPanelItems: MenuItem[] = [
-    { value: "agentChat", label: "New chat" },
-    { value: "terminal", label: "New terminal" },
-    { value: "browser", label: "New browser" },
-    { value: "editor", label: "New editor" },
-    { value: "diff", label: "New diff" },
-    { value: "context", label: "New context panel" },
-  ];
+  const newPanelItems = $derived<MenuItem[]>([
+    { value: "agentChat", label: "Agent Chat" },
+    { value: "tasks", label: "Tasks", disabled: openPanelKinds.includes("tasks") },
+    { value: "terminal", label: "Terminal" },
+    { value: "browser", label: "Browser" },
+    { value: "editor", label: "Editor" },
+    { value: "diff", label: "Diff" },
+    { value: "context", label: "Context" },
+  ]);
 
   onMount(() => {
     const storedRatio = Number.parseFloat(
@@ -53,15 +33,10 @@
     }
   });
 
-  function openProofHarness() {
-    proofHarnessOpen = true;
-  }
-
-  function closeProofHarness() {
-    proofHarnessOpen = false;
-  }
-
   function createWorkspacePanel(kind: string) {
+    if (kind === "tasks" && openPanelKinds.includes("tasks")) {
+      return;
+    }
     window.dispatchEvent(
       new CustomEvent("nucleus:create-workspace-panel", {
         detail: { kind },
@@ -83,17 +58,9 @@
   }
 
   function clampProjectRailRatio(ratio: number): number {
-    return Math.min(0.34, Math.max(0.12, ratio));
+    return Math.min(0.4, Math.max(0.12, ratio));
   }
 </script>
-
-<svelte:window
-  onkeydown={(event) => {
-    if (event.key === "Escape") {
-      closeProofHarness();
-    }
-  }}
-/>
 
 <main
   class="app-root"
@@ -105,6 +72,7 @@
   <SplitView
     orientation="horizontal"
     ratio={projectRailRatio}
+    maxRatio={0.4}
     bind:primaryCollapsed={projectRailPrimaryCollapsed}
     bind:secondaryCollapsed={projectRailSecondaryCollapsed}
     minPrimarySize={192}
@@ -208,85 +176,21 @@
                 />
               {/snippet}
             </Menu>
-            <IconButton
-              variant="secondary"
-              icon={testTube}
-              ariaLabel="Open proof harness"
-              tooltip="Proof harness"
-              pressed={proofHarnessOpen}
-              onClick={openProofHarness}
-            />
           </div>
         </header>
 
         <div class="product-shell">
           <section class="workspace-stage" aria-label="Workspace">
-            <ProjectWorkspaceStage {selectedProject} />
+            <ProjectWorkspaceStage
+              {selectedProject}
+              onOpenPanelKindsChange={(kinds) => (openPanelKinds = kinds)}
+            />
           </section>
         </div>
       </div>
     {/snippet}
   </SplitView>
-
-  {#if proofHarnessOpen}
-    <button
-      class="proof-modal-backdrop"
-      type="button"
-      aria-label="Close proof harness"
-      onclick={closeProofHarness}
-    ></button>
-    <dialog class="proof-modal proof-harness-modal" open aria-labelledby="proof-harness-title">
-      <header class="proof-modal-head">
-        <div>
-          <h2 id="proof-harness-title">Proof harness</h2>
-          <Text tone="muted">Disposable diagnostics</Text>
-        </div>
-        <button class="shell-button" type="button" onclick={closeProofHarness}>
-          Close
-        </button>
-      </header>
-
-      <div class="proof-modal-body proof-harness-body">
-        <div class="panel-grid">
-          <ProjectSwitcherPanel bind:selectedProjectId />
-          <TaskListPanel
-            {selectedProjectId}
-            {taskRefreshToken}
-            bind:selectedGoalId
-            bind:selectedGoal
-            bind:selectedTaskId
-            bind:selectedTask
-          />
-          <TaskDetailPanel
-            {selectedTask}
-            onTaskChanged={() => {
-              taskRefreshToken += 1;
-            }}
-          />
-          <RuntimeReadinessPanel />
-          <TaskWorkProgressPanel />
-          <ProductWorkflowProofPanel {selectedProjectId} />
-          <PlanningResearchProofPanel />
-          <ProviderReadinessOverviewPanel />
-          <CommandDiagnosticsPanel />
-          <DiagnosticsProofPanel />
-          <ControlDiagnosticsPanel />
-          <TaskWorkflowDrilldownProofPanel
-            {selectedTask}
-            onTaskCommandChanged={() => {
-              taskRefreshToken += 1;
-            }}
-          />
-        </div>
-      </div>
-    </dialog>
-  {/if}
 </main>
-
-<!--
-  The proof harness keeps all throwaway diagnostics reachable while normal
-  operation starts from a clean product shell.
--->
 
 <style>
   .app-root {
@@ -476,73 +380,6 @@
     background: var(--poodle-color-background-canvas);
   }
 
-  .shell-button {
-    min-height: var(--poodle-size-control-height);
-    min-width: var(--poodle-size-control-minWidth);
-    padding: var(--poodle-space-control-y) var(--poodle-space-control-x);
-    color: var(--poodle-color-text-primary);
-    font: inherit;
-    line-height: 1;
-    border: 1px solid var(--poodle-color-border-subtle);
-    border-radius: var(--poodle-radius-control);
-    background: var(--poodle-color-background-surface);
-    cursor: pointer;
-    -webkit-app-region: no-drag;
-  }
-
-  .shell-button:hover {
-    border-color: var(--poodle-color-border-default);
-    background: var(--poodle-color-background-elevated);
-  }
-
-  .shell-button:focus-visible {
-    outline: 2px solid var(--poodle-color-accent-focusRing);
-    outline-offset: 2px;
-  }
-
-  .proof-modal-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 20;
-    padding: 0;
-    border: 0;
-    background: rgb(0 0 0 / 58%);
-    cursor: default;
-  }
-
-  .proof-modal {
-    position: fixed;
-    inset: 2rem;
-    z-index: 21;
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    min-width: 0;
-    overflow: hidden;
-    border: 1px solid var(--poodle-color-border-subtle);
-    border-radius: var(--poodle-radius-surface);
-    background: var(--poodle-color-background-panel);
-    box-shadow: 0 1.5rem 3rem rgb(0 0 0 / 35%);
-  }
-
-  .proof-modal-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--poodle-space-inline-lg);
-    padding: var(--poodle-space-panel-y) var(--poodle-space-panel-x);
-    border-bottom: 1px solid var(--poodle-color-border-subtle);
-  }
-
-  .proof-modal-body {
-    min-width: 0;
-    overflow: auto;
-    padding: var(--poodle-space-panel-y) var(--poodle-space-panel-x);
-  }
-
-  .proof-harness-body .panel-grid {
-    overflow: visible;
-  }
-
   @media (max-width: 780px) {
     .app-titlebar {
       flex-wrap: wrap;
@@ -554,8 +391,5 @@
       min-height: 1rem;
     }
 
-    .proof-modal {
-      inset: 0.75rem;
-    }
   }
 </style>

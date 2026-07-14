@@ -1,6 +1,6 @@
 # 158 Task Diff Review Validation And Closeout
 
-Status: active
+Status: completed
 Owner: Codex
 Updated: 2026-07-10
 Milestone: `../029-task-attributed-diff-review.md`
@@ -93,9 +93,20 @@ or patch-to-agent priority.
 - Desktop checking reaches only 11 existing linked-Poodle diagnostics in
   `Rating`, `CardRadioGroup`, and `CardToggleGroup`; the Diff panel has no
   diagnostics.
+- Agent Chat history reads now wait for an active turn on Tauri's blocking
+  pool instead of the command/UI thread, so tab re-entry stays responsive.
+- The Editor surface now owns a bounded fill-height region and CodeMirror's
+  scroller owns vertical overflow. The focused desktop suite passes 29 tests.
+- The Diff panel now reads the persisted current review decision and keeps its
+  outcome plus Needs changes reason visible beneath the toolbar after refresh
+  or panel re-entry.
 - Source scans keep patch construction inside the transient dedicated read and
   expose display paths rather than host/store paths.
 
 Remaining before closeout: run a fresh write-capable task in the restarted
 Tauri app, inspect normal/constrained Diff presentation, exercise Open in
 Editor plus both review outcomes, and record operator smoke evidence.
+
+Operator smoke confirmed task-attributed review, Needs changes persistence,
+durable note display, chat tab continuity, and Editor scrolling. The next
+selected lane is review-guided rework execution.

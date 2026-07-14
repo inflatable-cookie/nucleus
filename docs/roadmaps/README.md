@@ -293,6 +293,9 @@ shape.
 - `g04/026-agent-chat-task-context.md` - completed
 - `g04/027-agent-chat-task-workflow-run.md` - completed
 - `g04/028-initial-code-editor-vertical-slice.md` - active
+- `g04/032-native-window-geometry-persistence.md` - completed
+- `g04/033-floating-agent-chat-composer.md` - completed
+- `g04/034-four-main-region-workspace-grid.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -352,6 +355,6 @@ shape.
 
 ## Next Task
 
-Execute
-`docs/roadmaps/g04/batch-cards/158-task-diff-review-validation-and-closeout.md`,
-then stop for operator review and next-lane selection.
+Complete `g04/batch-cards/176-four-main-region-validation-checkpoint.md`:
+confirm the four main regions visually, move representative tabs through every
+target, restart once to prove persistence, then close the lane.

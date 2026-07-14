@@ -19,12 +19,45 @@ fn chat_request_serializes_for_tauri_boundary() {
         message: "hello".to_owned(),
         active_task_id: Some("task:nucleus:one".to_owned()),
         active_goal_id: None,
+        model: Some("gpt-5.4-mini".to_owned()),
+        reasoning_effort: Some("low".to_owned()),
     };
     let value = serde_json::to_value(request).expect("serialize request");
     assert_eq!(value["conversation_id"], "panel:agent-chat");
     assert_eq!(value["message"], "hello");
     assert_eq!(value["active_task_id"], "task:nucleus:one");
     assert_eq!(value["active_goal_id"], serde_json::Value::Null);
+    assert_eq!(value["model"], "gpt-5.4-mini");
+    assert_eq!(value["reasoning_effort"], "low");
+}
+
+#[test]
+fn chat_route_selection_uses_requested_values_and_rejects_invalid_slugs() {
+    let mut request = request("route-selection", "hello");
+    request.model = Some("  gpt-5.4-mini  ".to_owned());
+    request.reasoning_effort = Some("medium".to_owned());
+
+    assert_eq!(
+        selected_route(&request, None).expect("route"),
+        ("gpt-5.4-mini".to_owned(), "medium".to_owned())
+    );
+
+    request.model = Some("gpt 5.4".to_owned());
+    assert_eq!(
+        selected_route(&request, None).expect_err("invalid route"),
+        "chat model contains unsupported characters"
+    );
+}
+
+#[test]
+#[ignore = "requires a locally authenticated Codex app-server"]
+fn live_chat_model_catalog_exposes_reasoning_options() {
+    let models = LocalCodexChatService::available_models().expect("model catalog");
+
+    assert!(!models.is_empty());
+    assert!(models
+        .iter()
+        .all(|model| !model.model.is_empty() && !model.supported_reasoning_efforts.is_empty()));
 }
 
 #[test]
@@ -112,6 +145,8 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
         cwd.to_str().expect("UTF-8 current dir"),
         None,
         None,
+        CHAT_MODEL,
+        CHAT_REASONING_EFFORT,
     )
     .expect("start chat session");
     let mut task_tool = |_: &str, _: &str, _: &str, _| {
@@ -120,12 +155,16 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
     let first = session
         .send_turn(
             "Reply with exactly: first nucleus chat turn",
+            CHAT_MODEL,
+            CHAT_REASONING_EFFORT,
             &mut task_tool,
         )
         .expect("first turn");
     let second = session
         .send_turn(
             "Reply with exactly: second nucleus chat turn",
+            CHAT_MODEL,
+            CHAT_REASONING_EFFORT,
             &mut task_tool,
         )
         .expect("second turn");
@@ -161,6 +200,8 @@ fn live_chat_receives_active_task_context_without_polluting_history() {
                 message: operator_message.to_owned(),
                 active_task_id: Some("task:nucleus-local:bootstrap".to_owned()),
                 active_goal_id: None,
+                model: None,
+                reasoning_effort: None,
             },
         )
         .expect("active task turn");
@@ -186,6 +227,8 @@ fn durable_chat_resumes_provider_thread_after_service_restart() {
         message: message.to_owned(),
         active_task_id: None,
         active_goal_id: None,
+        model: None,
+        reasoning_effort: None,
     };
     let first = LocalCodexChatService::default()
         .send_message(&state, request("Reply with exactly: durable first"))
@@ -224,6 +267,8 @@ fn live_chat_authors_a_task_batch_without_dispatching_work() {
                 message: "Use the task ledger now to create exactly two ready tasks. First: title 'Live tool task one', description 'First live task.', acceptance criterion 'First task exists', normal importance, execute action, validation command 'effigy desktop:check'. Second: title 'Live tool task two', description 'Second live task.', acceptance criterion 'Second task exists', normal importance, test action, validation command 'effigy qa'. Keep your reply brief.".to_owned(),
                 active_task_id: None,
                 active_goal_id: None,
+                model: None,
+                reasoning_effort: None,
             },
             &mut |request| accepted(&mut handler, request),
         )
@@ -381,6 +426,8 @@ fn live_chat_creates_and_runs_a_two_task_goal_through_two_portals() {
                 message: "Inspect this Goal with task_workflow, then run this Goal now. Use the exact excerpt 'run this Goal now' as the mandate authority and a stable idempotency key. Do not accept review or complete the tasks.".to_owned(),
                 active_task_id: None,
                 active_goal_id: Some(goal.goal_id.clone()),
+                model: None,
+                reasoning_effort: None,
             },
             &mut |request| accepted(&mut handler, request),
         )
@@ -429,6 +476,8 @@ fn request(conversation: &str, message: &str) -> LocalCodexChatRequest {
         message: message.to_owned(),
         active_task_id: None,
         active_goal_id: None,
+        model: None,
+        reasoning_effort: None,
     }
 }
 

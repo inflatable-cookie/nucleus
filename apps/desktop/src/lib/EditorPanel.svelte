@@ -149,8 +149,9 @@
   }
 </script>
 
-<Surface tone="canvas" border="none" padding="none" asRole="region" label="Editor">
-  <div class="editor-panel">
+<div class="editor-surface">
+  <Surface tone="canvas" border="none" padding="none" asRole="region" label="Editor">
+    <div class="editor-panel">
     <div class="editor-toolbar">
       <Popover
         bind:open={quickOpen}
@@ -252,10 +253,13 @@
         </div>
       {/if}
     </div>
-  </div>
-</Surface>
+    </div>
+  </Surface>
+</div>
 
 <style>
+  .editor-surface { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+  .editor-surface :global(.poodle-surface) { width: 100%; height: 100%; min-height: 0; overflow: hidden; }
   .editor-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; }
   .editor-toolbar { min-height: 2.5rem; padding: 0.35rem 0.55rem; display: flex; gap: 0.5rem; align-items: center; border-bottom: 1px solid var(--poodle-color-border-subtle); }
   .editor-toolbar :global(.poodle-popover) { min-width: 0; max-width: min(36rem, 70%); }

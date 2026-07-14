@@ -16,10 +16,6 @@ pub struct PanelId(pub String);
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PanelKey(pub String);
 
-/// Stable hosted surface id for a top-level work surface inside a window.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct SurfaceId(pub String);
-
 /// Stable display id known to a local client profile.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DisplayId(pub String);

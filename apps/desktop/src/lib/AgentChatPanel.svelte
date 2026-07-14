@@ -1,4 +1,6 @@
 <script module lang="ts">
+  import type { AgentChatModelOption } from "./control/agentChat";
+
   type ChatMessage = {
     id: string;
     role: "user" | "assistant";
@@ -10,17 +12,23 @@
   const retainedMessages = new Map<string, ChatMessage[]>();
   const retainedModels = new Map<string, string>();
   const retainedReasoningEfforts = new Map<string, string>();
+  const retainedPendingConversations = new Set<string>();
+  let retainedModelCatalog: AgentChatModelOption[] | null = null;
+  let modelCatalogRequest: Promise<AgentChatModelOption[]> | null = null;
+
+  const DEFAULT_MODEL = "gpt-5.4-mini";
+  const DEFAULT_REASONING_EFFORT = "low";
 </script>
 
 <script lang="ts">
   import { tick } from "svelte";
-  import { Button, Icon, Text } from "@poodle/svelte";
-  import { messageSquareText, send } from "@poodle/icons-lucide";
+  import { Icon, Select, Text } from "@poodle/svelte";
+  import { arrowUp, brain, chevronDown, messageSquareText, sparkles } from "@poodle/icons-lucide";
   import TaskCreationReceipt from "./TaskCreationReceipt.svelte";
   import TaskWorkflowReceipt from "./TaskWorkflowReceipt.svelte";
   import type { ControlGoalRecordDto, ControlTaskRecordDto } from "./control";
   import type { TaskAuthoringReceipt, TaskWorkflowReceipt as WorkflowReceipt } from "./control/agentChat";
-  import { loadAgentChatHistory, sendAgentChatMessage } from "./control/agentChat";
+  import { listAgentChatModels, loadAgentChatHistory, sendAgentChatMessage } from "./control/agentChat";
 
   let {
     conversationId,
@@ -44,18 +52,53 @@
   let pending = $state(false);
   let loadingHistory = $state(false);
   let failure = $state<string | null>(null);
-  let model = $state<string | null>(null);
-  let reasoningEffort = $state<string | null>(null);
+  let model = $state(DEFAULT_MODEL);
+  let reasoningEffort = $state(DEFAULT_REASONING_EFFORT);
+  let modelCatalog = $state<AgentChatModelOption[]>(retainedModelCatalog ?? []);
+  let composerInput = $state<HTMLTextAreaElement | null>(null);
   let timeline = $state<HTMLElement | null>(null);
   let hydrationVersion = 0;
+
+  const modelOptions = $derived.by(() => {
+    const options = modelCatalog.map((option) => ({
+      value: option.model,
+      label: option.display_name,
+      icon: sparkles,
+    }));
+    if (!options.some((option) => option.value === model)) {
+      options.unshift({ value: model, label: model, icon: sparkles });
+    }
+    return options;
+  });
+  const selectedModelOption = $derived(
+    modelCatalog.find((option) => option.model === model) ?? null,
+  );
+  const reasoningOptions = $derived.by(() => {
+    const options = selectedModelOption?.supported_reasoning_efforts.map((option) => ({
+      value: option.reasoning_effort,
+      label: reasoningLabel(option.reasoning_effort),
+      icon: brain,
+    })) ?? [];
+    if (!options.some((option) => option.value === reasoningEffort)) {
+      options.unshift({
+        value: reasoningEffort,
+        label: reasoningLabel(reasoningEffort),
+        icon: brain,
+      });
+    }
+    return options;
+  });
 
   $effect(() => {
     if (activeConversationId !== conversationId) {
       activeConversationId = conversationId;
       messages = retainedMessages.get(conversationId) ?? [];
-      model = retainedModels.get(conversationId) ?? null;
-      reasoningEffort = retainedReasoningEfforts.get(conversationId) ?? null;
+      pending = retainedPendingConversations.has(conversationId);
+      model = retainedModels.get(conversationId) ?? DEFAULT_MODEL;
+      reasoningEffort = retainedReasoningEfforts.get(conversationId) ?? DEFAULT_REASONING_EFFORT;
+      void scrollToLatest();
       if (projectId) {
+        void hydrateModelCatalog();
         void hydrateHistory(projectId, conversationId);
       }
     }
@@ -78,8 +121,8 @@
         workflowReceipts: message.workflow_receipts,
       }));
       retainedMessages.set(nextConversationId, messages);
-      model = history.model;
-      reasoningEffort = history.reasoning_effort;
+      model = history.model ?? model;
+      reasoningEffort = history.reasoning_effort ?? reasoningEffort;
       if (history.model) {
         retainedModels.set(nextConversationId, history.model);
       }
@@ -94,6 +137,8 @@
     } finally {
       if (version === hydrationVersion) {
         loadingHistory = false;
+        pending = retainedPendingConversations.has(nextConversationId);
+        await scrollToLatest();
       }
     }
   }
@@ -106,7 +151,10 @@
 
     failure = null;
     pending = true;
+    retainedPendingConversations.add(conversationId);
     draft = "";
+    await tick();
+    resizeComposer();
     const optimisticMessageId = `user:${crypto.randomUUID()}`;
     appendMessage({
       id: optimisticMessageId,
@@ -123,10 +171,12 @@
         message,
         active_goal_id: activeGoal?.goal_id ?? null,
         active_task_id: activeTask?.task_id ?? null,
+        model,
+        reasoning_effort: reasoningEffort,
       });
       model = reply.model;
       retainedModels.set(conversationId, reply.model);
-      reasoningEffort = reply.reasoning_effort;
+      reasoningEffort = reply.reasoning_effort ?? reasoningEffort;
       if (reply.reasoning_effort) {
         retainedReasoningEfforts.set(conversationId, reply.reasoning_effort);
       }
@@ -147,6 +197,7 @@
       retainedMessages.set(conversationId, messages);
       failure = caught instanceof Error ? caught.message : String(caught);
     } finally {
+      retainedPendingConversations.delete(conversationId);
       pending = false;
       await scrollToLatest();
     }
@@ -220,6 +271,60 @@
       void submit();
     }
   }
+
+  async function hydrateModelCatalog(): Promise<void> {
+    if (retainedModelCatalog) {
+      modelCatalog = retainedModelCatalog;
+      return;
+    }
+    modelCatalogRequest ??= listAgentChatModels();
+    try {
+      retainedModelCatalog = await modelCatalogRequest;
+      modelCatalog = retainedModelCatalog;
+      const selected = modelCatalog.find((option) => option.model === model);
+      if (!selected) {
+        const fallback = modelCatalog.find((option) => option.model === DEFAULT_MODEL) ?? modelCatalog[0];
+        if (fallback) {
+          model = fallback.model;
+          reasoningEffort = fallback.default_reasoning_effort;
+          retainedModels.set(conversationId, model);
+          retainedReasoningEfforts.set(conversationId, reasoningEffort);
+        }
+      }
+    } catch {
+      modelCatalogRequest = null;
+    }
+  }
+
+  function selectModel(nextModel: string): void {
+    model = nextModel;
+    retainedModels.set(conversationId, model);
+    const selected = modelCatalog.find((option) => option.model === nextModel);
+    if (
+      selected &&
+      !selected.supported_reasoning_efforts.some(
+        (option) => option.reasoning_effort === reasoningEffort,
+      )
+    ) {
+      reasoningEffort = selected.default_reasoning_effort;
+      retainedReasoningEfforts.set(conversationId, reasoningEffort);
+    }
+  }
+
+  function selectReasoningEffort(effort: string): void {
+    reasoningEffort = effort;
+    retainedReasoningEfforts.set(conversationId, effort);
+  }
+
+  function reasoningLabel(effort: string): string {
+    return effort.charAt(0).toUpperCase() + effort.slice(1);
+  }
+
+  function resizeComposer(): void {
+    if (!composerInput) return;
+    composerInput.style.height = "0px";
+    composerInput.style.height = `${Math.min(Math.max(composerInput.scrollHeight, 42), 128)}px`;
+  }
 </script>
 
 <section class="agent-chat" aria-label="Agent chat">
@@ -258,53 +363,83 @@
     {/if}
   </div>
 
-  <footer class="chat-composer">
-    {#if failure}
-      <div class="chat-error" role="alert">{failure}</div>
-    {/if}
-    {#if !projectId}
-      <Text tone="muted">Select a project to start a conversation.</Text>
-    {/if}
-    {#if activeGoal}
-      <div class="active-context">
-        <span><strong>Goal</strong> · {activeGoal.title}</span>
-        <button type="button" aria-label="Clear active goal context" onclick={onClearActiveGoal}>×</button>
-      </div>
-    {/if}
-    {#if activeTask}
-      <div class="active-context">
-        <span><strong>Task</strong> · {activeTask.title}</span>
-        <button type="button" aria-label="Clear active task context" onclick={onClearActiveTask}>×</button>
-      </div>
-    {/if}
-    <div class="composer-row">
+  <div class="composer-float">
+    {#if failure}<div class="chat-error" role="alert">{failure}</div>{/if}
+    <footer class="chat-composer">
+      {#if activeGoal || activeTask}
+        <div class="context-row">
+          {#if activeGoal}
+            <div class="active-context">
+              <span><strong>Goal</strong> · {activeGoal.title}</span>
+              <button type="button" aria-label="Clear active goal context" onclick={onClearActiveGoal}>×</button>
+            </div>
+          {/if}
+          {#if activeTask}
+            <div class="active-context">
+              <span><strong>Task</strong> · {activeTask.title}</span>
+              <button type="button" aria-label="Clear active task context" onclick={onClearActiveTask}>×</button>
+            </div>
+          {/if}
+        </div>
+      {/if}
       <textarea
+        bind:this={composerInput}
         bind:value={draft}
+        oninput={resizeComposer}
         onkeydown={handleComposerKeydown}
-        placeholder={projectId ? "Message Codex" : "Select a project first"}
+        placeholder={projectId ? "Ask Nucleus anything" : "Select a project first"}
         aria-label="Message Codex"
         rows="1"
         disabled={!projectId || pending || loadingHistory}
       ></textarea>
-      <Button
-        variant="primary"
-        leadingIcon={send}
-        onClick={submit}
-        disabled={!projectId || !draft.trim() || pending || loadingHistory}
-      >
-        Send
-      </Button>
-    </div>
-    <Text size="xs" tone="muted">
-      {model ? `Codex · ${model}${reasoningEffort ? ` · ${reasoningEffort}` : ""} · ` : ""}Enter to send · Shift+Enter for a new line · read-only workspace access
-    </Text>
-  </footer>
+      <div class="composer-toolbar">
+        <div class="route-controls">
+          <div class="route-select route-select-model">
+            <Select
+              value={model}
+              options={modelOptions}
+              variant="ghost"
+              size="sm"
+              native={false}
+              menuMinWidth="16rem"
+              ariaLabel="Chat model"
+              disabled={pending || loadingHistory}
+              onValueChange={selectModel}
+            />
+            <span class="route-chevron" aria-hidden="true"><Icon icon={chevronDown} size="xs" /></span>
+          </div>
+          <div class="route-select route-select-reasoning">
+            <Select
+              value={reasoningEffort}
+              options={reasoningOptions}
+              variant="ghost"
+              size="sm"
+              native={false}
+              menuMinWidth="13rem"
+              ariaLabel="Reasoning effort"
+              disabled={pending || loadingHistory}
+              onValueChange={selectReasoningEffort}
+            />
+            <span class="route-chevron" aria-hidden="true"><Icon icon={chevronDown} size="xs" /></span>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="send-button"
+          aria-label={pending ? "Codex is working" : "Send message"}
+          onclick={() => void submit()}
+          disabled={!projectId || !draft.trim() || pending || loadingHistory}
+        >
+          <Icon icon={arrowUp} size="xs" />
+        </button>
+      </div>
+    </footer>
+  </div>
 </section>
 
 <style>
   .agent-chat {
-    display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
+    position: relative;
     width: 100%;
     height: 100%;
     min-width: 0;
@@ -313,9 +448,12 @@
   }
 
   .chat-timeline {
+    box-sizing: border-box;
     min-height: 0;
     overflow: auto;
+    height: 100%;
     padding: clamp(1rem, 4vw, 3rem);
+    padding-bottom: clamp(11rem, 24vh, 14rem);
   }
 
   .chat-empty {
@@ -393,18 +531,90 @@
   .thinking-dots span:nth-child(2) { animation-delay: 0.15s; }
   .thinking-dots span:nth-child(3) { animation-delay: 0.3s; }
 
-  .chat-composer {
+  .composer-float {
+    position: absolute;
+    z-index: 5;
+    right: clamp(0.75rem, 3vw, 2rem);
+    bottom: clamp(0.75rem, 2vw, 1.35rem);
+    left: clamp(0.75rem, 3vw, 2rem);
     display: grid;
     gap: 0.45rem;
-    padding: 0.75rem 1rem 0.8rem;
-    border-top: 1px solid var(--poodle-color-border-subtle);
-    background: var(--poodle-color-background-panel);
+    width: min(48rem, calc(100% - clamp(1.5rem, 6vw, 4rem)));
+    margin: 0 auto;
   }
 
-  .composer-row {
+  .chat-composer {
+    display: grid;
+    gap: 0.25rem;
+    padding: 0.65rem 0.7rem 0.7rem;
+    border: 1px solid var(--poodle-color-border-default);
+    border-radius: 1rem;
+    background: color-mix(in srgb, var(--poodle-color-background-surface) 96%, transparent);
+    box-shadow: 0 1rem 3rem rgb(0 0 0 / 28%), 0 0 0 1px rgb(255 255 255 / 2%);
+    backdrop-filter: blur(18px);
+  }
+
+  .composer-toolbar {
     display: flex;
-    align-items: end;
-    gap: 0.6rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-width: 0;
+    min-height: 2.15rem;
+    padding: 0 0.05rem;
+  }
+
+  .route-controls,
+  .context-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .context-row {
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding: 0.15rem 0.2rem 0;
+  }
+
+  .route-select {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 2rem;
+    min-width: 0;
+  }
+
+  .route-select-model { max-width: 13rem; }
+  .route-select-reasoning { max-width: 9rem; }
+
+  .route-select :global(.poodle-select__trigger) {
+    display: flex;
+    align-items: center;
+    height: 2rem;
+    max-width: 100%;
+    padding: 0 1.15rem 0 0.25rem;
+    color: var(--poodle-color-text-secondary);
+    font-size: 0.75rem;
+  }
+
+  .route-select :global(.poodle-select__value) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .route-chevron {
+    position: absolute;
+    top: 50%;
+    right: 0.15rem;
+    display: grid;
+    place-items: center;
+    color: var(--poodle-color-text-secondary);
+    opacity: 0.65;
+    pointer-events: none;
+    transform: translateY(-50%);
   }
 
   .active-context {
@@ -447,29 +657,49 @@
     background: var(--poodle-color-background-canvas);
   }
 
-  textarea {
-    flex: 1;
+  .chat-composer textarea {
+    box-sizing: border-box;
+    width: 100%;
     min-width: 0;
-    min-height: 2.35rem;
-    max-height: 9rem;
-    resize: vertical;
-    padding: 0.58rem 0.7rem;
+    min-height: 2.625rem;
+    max-height: 8rem;
+    resize: none;
+    padding: 0.3rem 0.25rem 0.5rem;
     color: var(--poodle-color-text-primary);
-    font: inherit;
-    line-height: 1.35;
-    border: 1px solid var(--poodle-color-border-default);
-    border-radius: var(--poodle-radius-control);
+    font-family: inherit;
+    font-size: 0.8125rem;
+    font-weight: 400;
+    line-height: 1.45;
+    border: 0;
     outline: none;
-    background: var(--poodle-color-background-canvas);
+    background: transparent;
   }
 
-  textarea:focus {
-    border-color: var(--poodle-color-border-strong);
+  .chat-composer textarea::placeholder {
+    color: color-mix(in srgb, var(--poodle-color-text-secondary) 55%, transparent);
+    opacity: 1;
   }
 
-  textarea:disabled {
+  .chat-composer textarea:disabled {
     opacity: 0.55;
   }
+
+  .send-button {
+    display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    color: var(--poodle-color-background-canvas);
+    border: 0;
+    border-radius: 50%;
+    background: var(--poodle-color-text-primary);
+    cursor: pointer;
+  }
+
+  .send-button:hover:not(:disabled) { transform: translateY(-1px); }
+  .send-button:disabled { opacity: 0.28; cursor: default; }
 
   .chat-error {
     padding: 0.55rem 0.65rem;
@@ -477,6 +707,15 @@
     font-size: 0.8rem;
     border: 1px solid var(--poodle-color-status-danger);
     border-radius: var(--poodle-radius-control);
+    background: var(--poodle-color-background-surface);
+  }
+
+  @media (max-width: 36rem) {
+    .chat-timeline { padding-bottom: 13rem; }
+    .composer-toolbar { align-items: end; }
+    .route-controls { flex-wrap: wrap; }
+    .route-select-model { max-width: 10rem; }
+    .route-select-reasoning { max-width: 7.5rem; }
   }
 
   @keyframes pulse {

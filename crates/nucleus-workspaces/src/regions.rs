@@ -1,19 +1,20 @@
 //! Region ids for the Nucleus workspace shell.
 
-/// Region below a hosted surface.
+/// Semantic region inside a workspace window.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RegionId {
     Left,
-    Right,
     CenterTop,
     CenterBottom,
+    RightTop,
+    RightBottom,
 }
 
 /// Broad region family for client rendering.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RegionFamily {
-    Side,
-    Center,
+    Activity,
+    Workspace,
 }
 
 /// Static region definition.
@@ -28,23 +29,28 @@ pub fn region_definition(region_id: RegionId) -> RegionDefinition {
     match region_id {
         RegionId::Left => RegionDefinition {
             id: region_id,
-            family: RegionFamily::Side,
+            family: RegionFamily::Activity,
             label: "Left",
-        },
-        RegionId::Right => RegionDefinition {
-            id: region_id,
-            family: RegionFamily::Side,
-            label: "Right",
         },
         RegionId::CenterTop => RegionDefinition {
             id: region_id,
-            family: RegionFamily::Center,
+            family: RegionFamily::Workspace,
             label: "Center Top",
         },
         RegionId::CenterBottom => RegionDefinition {
             id: region_id,
-            family: RegionFamily::Center,
+            family: RegionFamily::Workspace,
             label: "Center Bottom",
+        },
+        RegionId::RightTop => RegionDefinition {
+            id: region_id,
+            family: RegionFamily::Workspace,
+            label: "Right Top",
+        },
+        RegionId::RightBottom => RegionDefinition {
+            id: region_id,
+            family: RegionFamily::Workspace,
+            label: "Right Bottom",
         },
     }
 }
@@ -52,9 +58,10 @@ pub fn region_definition(region_id: RegionId) -> RegionDefinition {
 pub fn default_region_order() -> Vec<RegionId> {
     vec![
         RegionId::Left,
-        RegionId::Right,
         RegionId::CenterTop,
         RegionId::CenterBottom,
+        RegionId::RightTop,
+        RegionId::RightBottom,
     ]
 }
 
@@ -63,22 +70,23 @@ mod tests {
     use super::{default_region_order, region_definition, RegionFamily, RegionId};
 
     #[test]
-    fn center_top_is_center_family() {
+    fn center_top_is_workspace_family() {
         let definition = region_definition(RegionId::CenterTop);
 
-        assert_eq!(definition.family, RegionFamily::Center);
+        assert_eq!(definition.family, RegionFamily::Workspace);
         assert_eq!(definition.label, "Center Top");
     }
 
     #[test]
-    fn default_region_order_uses_four_regions() {
+    fn default_region_order_uses_activity_plus_four_workspace_regions() {
         assert_eq!(
             default_region_order(),
             vec![
                 RegionId::Left,
-                RegionId::Right,
                 RegionId::CenterTop,
-                RegionId::CenterBottom
+                RegionId::CenterBottom,
+                RegionId::RightTop,
+                RegionId::RightBottom,
             ]
         );
     }

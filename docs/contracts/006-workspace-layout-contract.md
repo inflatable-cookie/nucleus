@@ -2,27 +2,27 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-07-10
+Updated: 2026-07-14
 
 ## Purpose
 
 Define the local workspace layout model.
 
-Only panel arrangement is per project. Display, window, and surface
-configuration is global user/client state because Nucleus is fundamentally
-multi-project.
+Display and window configuration is global user/client state because Nucleus
+is fundamentally multi-project. Panel arrangement is per project and adapts
+into available windows.
 
 Workspace layout state is local client state. It is not committed to the
 project repository like tasks, project metadata, planning docs, or other
 shared management files.
 
 The first desktop bring-up persistence target is
-`~/.nucleus/config/ui.json`. Global display/window/surface records should be
-keyed by client profile. Per-project panel layout records should be keyed by
-client profile, project id, and panel layout id.
+`~/.nucleus/config/ui.json`. Global display/window records should be keyed by
+client profile. Per-project panel layout records should be keyed by client
+profile, project id, and panel layout id.
 
 This JSON file is local client state, not project state. It is acceptable as
-the first authority while the desktop shell is still proving the surface model.
+the first authority while the desktop shell is still proving the layout model.
 If the client state store moves to SQLite later, this file should become an
 import/export or migration source rather than competing authority.
 
@@ -30,8 +30,8 @@ Future sync of layout preferences may exist, but it must be explicit user
 preference sync. It must not become part of the default project-management
 projection.
 
-Nucleus should reuse or recreate the Loophole Echo/Aura display, window, and
-surface hosting model before deep panel work begins.
+Nucleus reuses the Loophole display identity, window placement, and display
+fallback concepts. It does not reuse hosted Surfaces.
 
 Reference sources:
 
@@ -39,7 +39,6 @@ Reference sources:
 - `../loophole/echo/crates/echo-ipc-codecs/src/window_plan/types.rs`
 - `../loophole/echo/crates/echo-ipc-codecs/src/machine/types.rs`
 - `../loophole/chorus/contracts/ui/display-window-hosting-and-surface-baseline-contract.md`
-- `../loophole/chorus/contracts/ui/hosted-surface-lifecycle-baseline-contract.md`
 
 ## Hosting Hierarchy
 
@@ -47,7 +46,6 @@ The workspace hosting tree is:
 
 - display
 - window
-- surface
 - region
 - panel
 
@@ -56,13 +54,12 @@ Rules:
 - displays are machine-local inventory records
 - windows target canonical display ids
 - windows may define fallback display ids
-- surfaces are hosted by windows, not directly by displays
-- regions and panels live inside surfaces
-- active surface selection is window-scoped
-- panel tabs and surface tabs are distinct concepts
+- regions live directly inside windows
+- panels live in regions and provide the only workspace tab hierarchy
+- panel resource attachments do not create another layout identity layer
 
-The first Nucleus panel system should not flatten this into one generic panel
-tree.
+The first Nucleus panel system keeps semantic regions. It does not add a
+generic split tree or a second top-level workspace tab strip.
 
 ## Authority Split
 
@@ -78,19 +75,16 @@ The local client profile owns:
 
 - global window configuration against canonical display ids
 - global window fallback display order
-- global hosted surface inventory
-- global active surface per window
-- global surface ordering per window
 - per-project panel layout rules
 - local layout persistence and recovery state
 
 The authoritative engine host owns:
 
 - project, task, agent, runtime, SCM, memory, planning, and research state
-- server-managed resources that surfaces attach to
+- server-managed resources that panels attach to
 - authorization for filesystem, SCM, command, browser, terminal, and provider
   actions
-- durable refs that a local surface can point at
+- durable refs that a local panel can point at
 
 The client renderer owns:
 
@@ -99,9 +93,8 @@ The client renderer owns:
 - hover and transient focus state
 - local measurement needed to render smoothly
 
-The renderer does not own display targeting, window fallback semantics,
-surface ordering truth, or active-surface fallback. Those are local client
-profile state, not transient renderer state.
+The renderer does not own display targeting or window fallback semantics.
+Those are local client profile state, not transient renderer state.
 
 The renderer also does not own server-managed resources or project
 management state.
@@ -139,95 +132,67 @@ Each window should expose:
 - target display id where configured
 - fallback display ids
 - per-display geometry where available
-- hosted surface ids in order
-- active surface id
+- window region sizing
+- project panel placement against the window regions
 
 Concrete native window handles are runtime-local and must not become persisted
 workspace identity.
 
-## Hosted Surface Model
+The first native desktop persists one primary-window placement record in
+`~/.nucleus/config/ui.json` beside its regions and split ratios. The record
+contains a best-effort display identity, normal unmaximized outer bounds in
+physical pixels, and maximized state.
 
-Hosted surfaces are the top-level user work surfaces inside windows.
+Native placement restore follows one deterministic order: saved display,
+available display with the largest intersection with saved bounds, primary
+display, first available display, then the Tauri default when no display can be
+read. Restored bounds are clamped inside the selected display work area. Stored
+size is normalized to the desktop minimum and a generous corruption ceiling.
+A maximized window retains its last normal bounds rather than replacing them
+with maximized bounds.
 
-In Nucleus, hosted surfaces are global user/client UI containers by default,
-not project-owned objects. The left project/activity panel is responsible for
-quick project switching, and the active project adapts its panels into the
-current surface/window arrangement according to that project's panel rules.
+The native host owns restore and capture. It restores before first show,
+coalesces move and resize writes, and flushes current placement on close. Each
+geometry write merges into the latest config under the same local file lock as
+panel-layout writes. Geometry persistence must not overwrite concurrent region
+or panel changes. Renderer-originated workspace saves preserve the current
+host-owned placement rather than accepting placement fields from the client.
 
-Per-project surfaces are possible later, but they are deliberately out of the
-first model because they create complex configuration and recovery rules.
-
-Examples:
-
-- project overview
-- agent session surface
-- terminal surface
-- browser/preview surface
-- editor surface
-- SCM changes surface
-- review surface
-- research/planning surface
-- diagnostics surface
-
-Each hosted surface should expose:
-
-- stable surface id
-- surface kind
-- label/title
-- host window id
-- lifecycle state
-- attachment refs to server-managed resources where applicable
-
-Surface lifecycle commands are window-scoped:
-
-- create surface in window
-- duplicate surface in window
-- close surface in window
-- set active surface for window
-- reorder surfaces within window
-
-Active-surface fallback after close or recovery must be deterministic and
-owned by the local client profile layout model. It is global client state by
-default, not per-project state.
+Native monitor names are not canonical hardware ids. The first display key is
+a recovery hint composed from name, physical origin, and size. Stable hardware
+identity remains a later machine-inventory concern; bounded fallback is
+mandatory in the meantime.
 
 ## Region And Panel Model
 
-Regions and panels are layout structure below a hosted surface.
+Regions and panels are layout structure directly below a window.
 
 Panel layout is the per-project layer. Each project can define how its panels
-populate the global surfaces/windows and how they adapt when the user switches
-projects.
+populate available windows and how they adapt when the user switches projects.
 
 The initial Nucleus dev-environment shell should plan for:
 
 - left project/activity sidebar
-- right context/actions/review region
 - centerTop primary workspace region
 - centerBottom secondary workspace region
+- rightTop primary side workspace region
+- rightBottom secondary side workspace region
 
 Panel layout may differ from Loophole's DAW-oriented defaults. The reusable
-part is the display/window/surface hosting layer and the distinction between
-surface tabs, regions, and panel tabs.
+part is display/window placement. Panel tabs are the only workspace tabs.
 
-The first panel model must not add a generic bottom region. Terminals, editors,
-browsers, agent chats, task views, and other primary workspace furniture belong
-in `centerTop` or `centerBottom`. Logs, output, evidence summaries, and
-contextual details should appear inside the owning workspace panel or in the
-`right` region when they are contextual rather than primary work.
-
-SCM diff panels are allowed in `centerTop`, `centerBottom`, or `right`.
-They often behave like primary review furniture, but the right region is also a
-natural place for focused diff/review context beside an active chat, editor, or
-terminal.
+The main workspace is a fixed semantic two-column by two-row grid. Terminals,
+editors, browsers, agent chats, task views, diffs, context, and other workspace
+tabs may move between any of its four regions. The left project/activity region
+remains separate and is not a general workspace-tab destination.
 
 The initial region set is:
 
 - `left`: project/activity navigation and active-work awareness
-- `right`: contextual inspector, actions, review, logs, and output when tied
-  to the selected work
 - `centerTop`: primary workspace panels and the default task panel dock
-- `centerBottom`: secondary workspace panels and the only alternate task panel
-  dock
+- `centerBottom`: secondary workspace panels
+- `rightTop`: contextual panels by default, or any moved workspace tab
+- `rightBottom`: secondary side workspace panels
 
 Arbitrary VS Code-style split trees are not the first default. They may exist
 later as a power-user feature, but the first model should be semantic and
@@ -246,6 +211,9 @@ mirrors Loophole's `PanelDefinition.allowedRegions` model:
 
 - each panel has a default region
 - each panel has an explicit allowed-region list
+- every workspace panel kind allows `centerTop`, `centerBottom`, `rightTop`, and
+  `rightBottom`
+- project/activity panel kinds remain restricted to `left`
 - same-region tab reorder preserves the panel's region
 - cross-region drag is accepted only when the target region is allowed
 - cross-region drag should show visible drop targets for every currently
@@ -266,11 +234,12 @@ workspace preset manager; it only prevents closed tool panels from becoming
 unreachable during UI bring-up.
 
 Region sizing is local UI state. The first desktop shell stores split ratios on
-each surface record:
+the window layout record:
 
 - `left_center_ratio`
 - `center_right_ratio`
 - `center_stack_ratio`
+- `right_stack_ratio`
 
 These ratios are client-local preferences below `~/.nucleus/config/ui.json`.
 They must not be committed into project repositories by default.
@@ -293,10 +262,10 @@ Task panel rules:
 
 - the task panel is a system panel, not an ordinary closeable tab
 - it is uncloseable in normal operation
-- it may be collapsed or hidden by the current surface mode, but it is not
+- it may be collapsed or hidden by the current window layout, but it is not
   destroyed
 - its default dock is `centerTop`
-- its only alternate dock in the initial model is `centerBottom`
+- it may move to any of the four main workspace regions
 - it is project-scoped
 - it must not become the primary interaction model by default
 
@@ -306,8 +275,19 @@ Agent chat rules:
 - agent chat may create, update, attach to, or dispatch tasks
 - agent chat should keep task context visible enough to make task-backed work
   understandable without forcing the task panel open
-- active task/thread state should be visible through project/activity surfaces
+- active task/thread state should be visible through project/activity panels
   even when the task panel is not open
+
+The first Agent Chat composer is one floating surface centered over the bottom
+of its timeline. It keeps the message field primary and places only model,
+reasoning, selected-context, and send controls in the normal path. Selected
+Goal and Task context appears as compact removable chips. Errors attach to the
+composer. Shortcut help, access mode, attachments, build mode, and other
+advanced controls do not become a permanent footer.
+
+The timeline must reserve enough bottom space for the floating composer at its
+largest normal height. Composer controls must remain usable when the panel is
+narrow; secondary controls may wrap without introducing horizontal scrolling.
 
 Closeable and movable workspace tabs include terminal, browser, editor, diff,
 research, logs, and similar resource views. These are ordinary workspace
@@ -321,9 +301,6 @@ Each global workspace shell layout must expose:
 - display name
 - layout status
 - window configuration
-- hosted surface inventory
-- active surface per window
-- open surfaces
 - client scope
 - timestamps
 
@@ -333,9 +310,9 @@ Each per-project panel layout must expose:
 - project id
 - display name
 - layout status
-- panel tree
+- panel placements
 - focused panel id
-- panel-to-surface or panel-to-region rules where needed
+- panel-to-window and panel-to-region rules
 - timestamps
 
 Both record families are scoped to a local client profile. Project ids on panel
@@ -356,49 +333,37 @@ history or recovery but excluded from normal workspace selection.
 
 ## Panel Model
 
-Panels are durable layout containers below a hosted surface.
+Panels are the durable user-facing tools inside window regions.
 
 Each panel must expose:
 
 - stable panel id
-- panel kind
-- tab ids
-- active tab id
-- split direction where relevant
-- size hint
-- child panel ids where relevant
+- panel kind/key
+- title
+- current window and region placement
+- allowed regions
+- closeable, movable, and system-panel policy
+- optional attachment refs to server-managed resources
 
 Panel geometry is advisory until concrete client rendering rules exist. Clients
 may adapt geometry to their form factor. Persisted geometry belongs in local
 client layout state, not in committed project-management files.
 
-## Surface Model
+Panel kinds include:
 
-Open workspace surfaces include:
+- agent chat
+- tasks
+- terminal
+- browser
+- editor
+- SCM changes and diff review
+- notes and context
 
-- agent panes
-- terminal views
-- browser views
-- text editor views
-- code editor views
-- SCM changes views
-- SCM diff views
-- SCM commit controls
-- file views
-- notes
-- task views
+Terminal and browser panels attach to server-managed resources. Their presence
+does not prove that the desktop client owns the underlying process or browser
+state.
 
-Each surface must expose a stable surface id, surface kind, title, attachment
-state, and optional provider-specific metadata.
-
-Surfaces should also be hosted by a window and have window-scoped order and
-active-state semantics. Do not model a surface as merely a tab inside one
-client-local panel.
-
-Terminal and browser surfaces are attachments to server-managed resources, not
-proof that the desktop client owns the underlying process or browser state.
-
-Text editor and code editor surfaces are project workspace surfaces, not a
+Text editor and code editor panels are project workspace tools, not a
 replacement for durable project state. The server owns file identity,
 authorization, save/apply command authority, and workspace attachment state.
 The client may render editor buffers and local interaction state for
@@ -533,8 +498,8 @@ Universal is the preferred default. Client-specific layouts are allowed when a
 surface cannot sensibly render the same panel structure.
 
 Multi-display desktop layouts are global client-profile state. Per-project
-panel rules may adapt to the current global window/surface arrangement, but
-they do not own display placement.
+panel rules may adapt to the current global window arrangement, but they do not
+own display placement.
 
 ## Current Rust Surface
 
@@ -550,16 +515,12 @@ they do not own display placement.
 - `DisplayArrangementSignature`
 - `PanelId`
 - `PanelKey`
-- `SurfaceId`
 - display inventory, availability, bounds, arrangement, and scale hints
 - workspace window placement records
 - runtime host window instance records
 - pure window planning and display fallback helpers
-- hosted surface records
-- window-scoped hosted surface order and active-surface state
-- hosted-surface close/reorder/active fallback helpers
 - Nucleus region ids
-- per-project panel placement rules
+- per-project window/region panel placement rules
 - selected-task shell seed rules
 - local-only global shell layout and per-project panel layout record families
 - `WorkspaceLayout`
@@ -570,9 +531,6 @@ they do not own display placement.
 - `PanelKind`
 - `SplitDirection`
 - `PanelSizeHint`
-- `Surface`
-- `SurfaceKind`
-- `SurfaceAttachmentState`
 
 The workspace-model types above are domain types and pure planning helpers;
 they do not themselves implement rendering, layout migration, local SQLite
@@ -596,8 +554,6 @@ and UI configuration remain future work.
 - How canonical display ids are minted and repaired across Tauri, web, and
   remote clients.
 - How window records degrade on web and mobile control planes.
-- How hosted-surface lifecycle commands are represented in engine commands and
-  control API DTOs.
 - How terminal and browser resources are bound to server-managed runtime ids.
 - Exact file-watcher and hot-exit recovery behavior after the first explicit
   revision-conflict flow.
@@ -615,6 +571,4 @@ and UI configuration remain future work.
 - Exact local client profile storage backend schema, codecs, migration rules,
   and conflict behavior for global shell layout and per-project panel layout
   state, likely SQLite-backed.
-- Whether per-project hosted surfaces are ever worth supporting, and which
-  configuration rules would prevent that from becoming confusing.
 - Whether optional cross-device layout preference sync is needed later.

@@ -10,7 +10,7 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `158-task-diff-review-validation-and-closeout.md`
+- `176-four-main-region-validation-checkpoint.md`
 
 ## Planned Cards
 
@@ -39,6 +39,16 @@ Hold execution cards for `g04`.
 
 ## Completed Cards
 
+- `175-four-main-region-desktop-layout.md`
+- `174-four-main-region-schema-and-model.md`
+- `165-layout-simplification-validation-closeout.md`
+- `164-rust-workspace-model-simplification.md`
+- `163-desktop-window-layout-flattening.md`
+- `162-window-panel-model-promotion.md`
+- `161-rework-product-loop-and-validation.md`
+- `160-rework-run-provenance-and-provider-context.md`
+- `159-rework-context-portal-inspection.md`
+- `158-task-diff-review-validation-and-closeout.md`
 - `157-compact-task-diff-review-panel.md`
 - `156-task-diff-read-api-and-tauri-boundary.md`
 - `155-task-run-checkpoint-diff-integration.md`
@@ -182,3 +192,11 @@ Hold execution cards for `g04`.
 - `103-product-shell-project-rail-list.md`
 - `104-active-project-workspace-stage.md`
 - `106-product-shell-validation-next-lane.md`
+- `166-native-window-placement-contract.md`
+- `167-window-placement-schema-and-fallback.md`
+- `168-tauri-window-restore-and-capture.md`
+- `169-native-window-geometry-validation-closeout.md`
+- `170-chat-route-selection-boundary.md`
+- `171-chat-provider-catalog-and-turn-overrides.md`
+- `172-floating-chat-composer-visual-slice.md`
+- `173-floating-chat-composer-validation-checkpoint.md`
