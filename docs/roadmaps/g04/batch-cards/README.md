@@ -10,6 +10,7 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
+- `179-terminal-runtime-validation.md`
 - `176-four-main-region-validation-checkpoint.md`
 
 ## Planned Cards
@@ -39,6 +40,8 @@ Hold execution cards for `g04`.
 
 ## Completed Cards
 
+- `178-xterm-terminal-panel.md`
+- `177-terminal-host-runtime-boundary.md`
 - `175-four-main-region-desktop-layout.md`
 - `174-four-main-region-schema-and-model.md`
 - `165-layout-simplification-validation-closeout.md`

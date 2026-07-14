@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-06-21
+Updated: 2026-07-14
 
 ## Active Contracts
 
@@ -35,6 +35,8 @@ Updated: 2026-06-21
 | `025-goal-loop-next-task-contract.md` | draft | Goal, loop, pathway, and next-task selection rules. |
 | `026-open-ended-planning-conversation-contract.md` | draft | Open-ended ideation and exploration sessions before finite plans or tasks. |
 | `027-provider-auth-forge-execution-contract.md` | draft | Provider credential authority, network-write admission, idempotency, recovery, and sanitized forge execution evidence. |
+| `028-browser-panel-runtime-contract.md` | draft-promoted-first-pass | Desktop native child-webview trust, navigation, and panel lifecycle boundary. |
+| `029-terminal-panel-runtime-contract.md` | draft-promoted-first-pass | Host-routed terminal authority, protocol, PTY lifecycle, transport, and client rendering boundary. |
 
 ## Needed Contracts
 
@@ -42,7 +44,7 @@ The 2026-06-17 stocktake found gaps that should become contracts before more
 runtime implementation depends on them:
 
 - remote host pairing/session contract
-- browser/preview control contract
+- browser/preview automation and remote-control contract beyond the local panel runtime
 - observability and diagnostics contract
 
 ## Authority Ownership Notes
@@ -65,6 +67,10 @@ When it overlaps focused contracts, the focused contract owns the durable rule:
   ideation into planning, research, memories, goals, and task seeds.
 - `027` owns provider-auth and forge network execution authority before any
   real forge provider writes.
+- `028` owns the local desktop browser-panel trust and child-webview lifecycle
+  boundary.
+- `029` owns terminal host routing, session protocol, PTY lifecycle, and client
+  attachment semantics.
 - `011`, `008`, and `002` own SCM/forge, storage, and harness-adapter rules.
 
 Source refs:

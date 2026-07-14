@@ -31,6 +31,8 @@ Contracts define durable rules and interfaces.
 - `025-goal-loop-next-task-contract.md`
 - `026-open-ended-planning-conversation-contract.md`
 - `027-provider-auth-forge-execution-contract.md`
+- `028-browser-panel-runtime-contract.md`
+- `029-terminal-panel-runtime-contract.md`
 - `contract-index.md`
 
 ## Promotion Rule

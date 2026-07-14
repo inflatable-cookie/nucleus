@@ -58,7 +58,6 @@
   let composerInput = $state<HTMLTextAreaElement | null>(null);
   let timeline = $state<HTMLElement | null>(null);
   let hydrationVersion = 0;
-
   const modelOptions = $derived.by(() => {
     const options = modelCatalog.map((option) => ({
       value: option.model,

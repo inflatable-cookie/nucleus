@@ -336,7 +336,12 @@ pub mod task_seed;
 pub mod task_workflow_drilldown;
 pub mod tauri_ipc_command;
 pub mod tauri_ipc_readiness;
+mod terminal_runtime;
 pub mod transport_readiness;
+pub use terminal_runtime::{
+    TerminalEvent, TerminalEventSink, TerminalHostRuntime, TerminalOpenRequest,
+    TerminalSessionSnapshot,
+};
 
 #[cfg(test)]
 mod accepted_memory_persistence_tests;

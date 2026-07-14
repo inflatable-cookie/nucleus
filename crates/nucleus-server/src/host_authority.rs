@@ -38,6 +38,7 @@ pub enum ProjectAuthorityDomain {
     Workspace,
     Session,
     Execution,
+    Terminal,
     ScmForge,
     Memory,
     Planning,
@@ -190,6 +191,7 @@ mod tests {
             ProjectAuthorityDomain::Workspace,
             ProjectAuthorityDomain::Session,
             ProjectAuthorityDomain::Execution,
+            ProjectAuthorityDomain::Terminal,
         ]
         .into_iter()
         .map(|domain| ProjectAuthorityAssignment {
@@ -207,6 +209,7 @@ mod tests {
 
         assert!(map.host_owns_domain(&local, &ProjectAuthorityDomain::Project));
         assert!(map.host_owns_domain(&local, &ProjectAuthorityDomain::Execution));
+        assert!(map.host_owns_domain(&local, &ProjectAuthorityDomain::Terminal));
     }
 
     #[test]

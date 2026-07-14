@@ -101,6 +101,11 @@ The map should record:
 The authority map decides where a command, task update, session event, SCM
 action, or projection write is allowed to land.
 
+Interactive terminal sessions use the `Terminal` authority domain. A legacy
+map may fall back to `Execution` only when that host also has usable project
+source access. The client never gains terminal authority merely because it
+renders the terminal.
+
 ## Local Embedded Mode
 
 For single-user local workflows, embedded desktop mode may own all local

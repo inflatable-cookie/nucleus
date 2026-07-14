@@ -25,7 +25,9 @@ are in place. Product use disproved the inherited hosted-Surface layer. The
 workspace hierarchy is now `display -> window -> region -> panel`; the working
 panel workflow and multi-window foundation remain. Native primary-window
 geometry persistence is confirmed. The floating Agent Chat composer is the
-active bounded design lane.
+current baseline. The host-routed Terminal panel is the active bounded product
+lane: its local authoritative-host adapter and xterm slice are ready for
+operator interaction review without making Tauri the durable terminal API.
 
 Current planning artifacts:
 
@@ -39,6 +41,8 @@ Current planning artifacts:
 - `roadmaps/g04/032-native-window-geometry-persistence.md`
 - `specs/010-floating-agent-chat-composer.md`
 - `roadmaps/g04/033-floating-agent-chat-composer.md`
+- `contracts/029-terminal-panel-runtime-contract.md`
+- `roadmaps/g04/035-host-routed-terminal-panel.md`
 
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`

@@ -35,11 +35,16 @@
       "capabilities": [
         {
           "identifier": "main-window",
-          "windows": ["main"],
+          "webviews": ["main"],
           "permissions": [
             "core:default",
             "core:window:allow-start-dragging",
-            "core:window:allow-set-theme"
+            "core:window:allow-set-theme",
+            "core:webview:allow-webview-hide",
+            "core:webview:allow-webview-show",
+            "core:webview:allow-webview-close",
+            "opener:allow-open-url",
+            "opener:allow-default-urls"
           ]
         }
       ]

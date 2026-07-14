@@ -69,8 +69,8 @@ Future clients may include:
   task seeds, and projection boundaries later.
 - `nucleus-research`: deep research runs, questions, source records,
   observations, synthesis, confidence, gaps, and projection boundaries later.
-- `nucleus-workspaces`: persisted layouts, terminals, browser views, and
-  panel/tab state later.
+- `nucleus-workspaces`: persisted display, window, region, and panel layout
+  state.
 - `nucleus-orchestration`: event-sourced command, event, projection, replay,
   receipt, and deterministic projection mechanics.
 - `nucleus-engine`: portable domain execution, authority checks, command
@@ -95,6 +95,7 @@ Each project needs an authority map assigning domains to engine hosts:
 - workspace authority
 - session authority
 - execution authority
+- terminal authority
 - SCM/forge authority
 - memory authority
 - planning authority
@@ -205,6 +206,19 @@ Terminal and browser panels attach to host-managed runtime resources. Text and
 code editor panels attach to host-authorized file and language-service state.
 SCM changes, diff, and commit panels attach to the authoritative SCM host,
 command authority, and review workflow state.
+
+The first Terminal panel renders xterm in Svelte and talks through a
+transport-neutral client interface. The embedded-host adapter uses Tauri
+commands and channels, while `portable-pty`, project-root resolution, shell
+selection, bounded output replay, and process cleanup stay in the host runtime.
+A remote adapter must preserve the same session protocol and route to the
+project's terminal authority host.
+
+The first desktop Browser panel is a deliberate two-layer exception inside
+that host-managed rule. Nucleus renders trusted navigation chrome in the main
+bundled webview and positions an unprivileged native child webview beneath it.
+The child receives no Nucleus Tauri capabilities. Its lifetime is keyed to the
+panel id and its bounds follow the active panel viewport.
 
 The first code editor uses CodeMirror 6 through official ESM packages inside a
 thin Nucleus-owned Svelte adapter. CodeMirror owns responsive client editing

@@ -177,9 +177,18 @@ Updated: 2026-06-16
   display/window/region/panel hierarchy at the Rust type and pure helper level:
   display inventory, window placement, display fallback planning, Nucleus
   regions, per-project window panel rules, selected-task shell seed rules, and
-  local-only global shell / project panel layout record families. Rendering, local SQLite
-  codecs, migrations, terminal/browser/editor/SCM resource execution, sync,
-  and Aura-style configuration UI remain out of scope.
+  local-only global shell / project panel layout record families. The desktop
+  now realizes a local native child-webview Browser panel outside this crate.
+  Terminal panel authority and protocol are defined in contract `029`; the
+  first host PTY runtime remains outside this layout crate. Workspace SQLite
+  codecs, migrations, browser automation, SCM resource execution, sync, and
+  Aura-style configuration UI remain out of scope.
+- `nucleus-server::terminal_runtime`: first embedded-host terminal session
+  runtime. It resolves the project root on the host, spawns the host shell with
+  `portable-pty`, streams byte output, retains bounded reconnect output, and
+  owns input, resize, exit, and close. The desktop adapts this runtime through
+  Tauri today; remote terminal transport, pairing, and authentication remain
+  unimplemented.
 - `nucleus-server`: current crate name for host API/runtime boundary types.
   The name is historical after the engine-first correction: the crate remains
   useful for sidecar daemon, remote host, and embedded IPC/control surfaces,

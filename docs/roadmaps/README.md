@@ -296,6 +296,7 @@ shape.
 - `g04/032-native-window-geometry-persistence.md` - completed
 - `g04/033-floating-agent-chat-composer.md` - completed
 - `g04/034-four-main-region-workspace-grid.md` - active
+- `g04/035-host-routed-terminal-panel.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -355,6 +356,6 @@ shape.
 
 ## Next Task
 
-Complete `g04/batch-cards/176-four-main-region-validation-checkpoint.md`:
-confirm the four main regions visually, move representative tabs through every
-target, restart once to prove persistence, then close the lane.
+Complete `g04/batch-cards/179-terminal-runtime-validation.md`: run an
+interactive shell, move and remount the tab, confirm output continuity and
+resize, then close the tab and reopen it to prove clean session replacement.

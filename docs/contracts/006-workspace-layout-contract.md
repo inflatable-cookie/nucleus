@@ -260,10 +260,9 @@ manual control when wanted.
 
 Task panel rules:
 
-- the task panel is a system panel, not an ordinary closeable tab
-- it is uncloseable in normal operation
-- it may be collapsed or hidden by the current window layout, but it is not
-  destroyed
+- the task panel is a closeable singleton workspace tab
+- the header `+` menu restores it after close and disables its Tasks launcher
+  while one Tasks panel is already open
 - its default dock is `centerTop`
 - it may move to any of the four main workspace regions
 - it is project-scoped
@@ -289,9 +288,9 @@ The timeline must reserve enough bottom space for the floating composer at its
 largest normal height. Composer controls must remain usable when the panel is
 narrow; secondary controls may wrap without introducing horizontal scrolling.
 
-Closeable and movable workspace tabs include terminal, browser, editor, diff,
-research, logs, and similar resource views. These are ordinary workspace
-resources. The task panel is not.
+Closeable and movable workspace tabs include tasks, terminal, browser, editor,
+diff, research, logs, and similar resource views. Tasks differs only by being a
+singleton with an explicit launcher recovery path.
 
 ## Workspace Identity
 
@@ -359,9 +358,10 @@ Panel kinds include:
 - SCM changes and diff review
 - notes and context
 
-Terminal and browser panels attach to server-managed resources. Their presence
-does not prove that the desktop client owns the underlying process or browser
-state.
+Terminal panels attach to host-managed resources. Browser panels use the local
+native child-webview runtime defined by
+`028-browser-panel-runtime-contract.md`; their remote content remains outside
+the trusted bundled client.
 
 Text editor and code editor panels are project workspace tools, not a
 replacement for durable project state. The server owns file identity,

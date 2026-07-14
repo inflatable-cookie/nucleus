@@ -32,9 +32,11 @@ use nucleus_server::{
     LocalMemoryProposalSeed, LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed,
     LocalTaskSeed, ServerStateService, TaskDiffFilePatchRequest, TaskDiffFilePatchResponse,
     TaskDiffOverviewRequest, TaskDiffOverviewResponse, TaskReviewSnapshotStore,
-    TauriIpcControlCommandAdapter,
+    TauriIpcControlCommandAdapter, TerminalHostRuntime,
 };
 
+mod browser_panel;
+mod terminal_panel;
 mod window_geometry;
 mod workspace_ui;
 
@@ -43,6 +45,7 @@ struct DesktopState {
     chat: Arc<Mutex<LocalCodexChatService>>,
     server_state: ServerStateService<SqliteBackend>,
     task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
+    terminal: TerminalHostRuntime,
 }
 
 #[tauri::command]
@@ -123,6 +126,7 @@ impl DesktopState {
             chat: Arc::new(Mutex::new(chat)),
             server_state,
             task_review_snapshot_store,
+            terminal: TerminalHostRuntime::default(),
         }
     }
 
@@ -480,6 +484,7 @@ fn save_workspace_ui_config(
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(DesktopState::new_with_snapshot_store(
             SqliteBackend::new(desktop_database_path()),
             desktop_snapshot_path(),
@@ -507,7 +512,18 @@ pub fn run() {
             save_editor_file,
             read_task_diff_overview,
             read_task_diff_file_patch,
-            read_task_review_decisions
+            read_task_review_decisions,
+            browser_panel::browser_panel_ensure,
+            browser_panel::browser_panel_set_bounds,
+            browser_panel::browser_panel_reset_cursor,
+            browser_panel::browser_panel_navigate,
+            browser_panel::browser_panel_action,
+            browser_panel::browser_panel_current_url,
+            terminal_panel::terminal_open_or_attach,
+            terminal_panel::terminal_write,
+            terminal_panel::terminal_resize,
+            terminal_panel::terminal_close,
+            terminal_panel::terminal_close_for_panel
         ])
         .run(tauri::generate_context!())
         .expect("failed to run nucleus desktop");

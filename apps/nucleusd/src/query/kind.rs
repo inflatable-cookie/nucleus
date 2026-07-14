@@ -386,6 +386,7 @@ fn default_authority_domains() -> Vec<ProjectAuthorityDomain> {
         ProjectAuthorityDomain::Workspace,
         ProjectAuthorityDomain::Session,
         ProjectAuthorityDomain::Execution,
+        ProjectAuthorityDomain::Terminal,
         ProjectAuthorityDomain::ScmForge,
         ProjectAuthorityDomain::Projection,
     ]

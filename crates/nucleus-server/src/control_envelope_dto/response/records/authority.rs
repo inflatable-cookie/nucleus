@@ -155,6 +155,7 @@ fn authority_domain_dto(domain: &ProjectAuthorityDomain) -> String {
         ProjectAuthorityDomain::Workspace => "workspace".to_owned(),
         ProjectAuthorityDomain::Session => "session".to_owned(),
         ProjectAuthorityDomain::Execution => "execution".to_owned(),
+        ProjectAuthorityDomain::Terminal => "terminal".to_owned(),
         ProjectAuthorityDomain::ScmForge => "scm_forge".to_owned(),
         ProjectAuthorityDomain::Memory => "memory".to_owned(),
         ProjectAuthorityDomain::Planning => "planning".to_owned(),

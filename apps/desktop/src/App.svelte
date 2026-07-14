@@ -6,6 +6,10 @@
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
   import type { ControlProjectRecordDto } from "./lib/control";
   import { beginWindowDrag } from "./lib/windowChrome";
+  import {
+    createNativePanelOverlayId,
+    setNativePanelOverlayIntersection,
+  } from "./lib/nativePanelVisibility";
 
   let selectedProjectId = $state<string | null>(null);
   let selectedProject = $state<ControlProjectRecordDto | null>(null);
@@ -13,6 +17,10 @@
   let projectRailPrimaryCollapsed = $state(false);
   let projectRailSecondaryCollapsed = $state(false);
   let openPanelKinds = $state<string[]>([]);
+  let projectDetailsOverlayRoot = $state<HTMLElement | null>(null);
+  let newPanelOverlayRoot = $state<HTMLElement | null>(null);
+  const projectDetailsOverlayId = createNativePanelOverlayId("project-details");
+  const newPanelOverlayId = createNativePanelOverlayId("new-panel");
   const projectRailRatioStorageKey = "nucleus:desktop:project-rail-ratio";
   const newPanelItems = $derived<MenuItem[]>([
     { value: "agentChat", label: "Agent Chat" },
@@ -102,13 +110,14 @@
         >
           <div class="titlebar-lead" data-tauri-drag-region>
             <div class="titlebar-title-block" data-tauri-drag-region>
-              <div class="titlebar-title-line">
+              <div class="titlebar-title-line" bind:this={projectDetailsOverlayRoot}>
                 <h1>{selectedProject?.display_name ?? "Nucleus"}</h1>
                 <Popover
                   placement="bottom-start"
                   initialFocus="content"
                   ariaLabel="Project details"
                   surfaceMinWidth="18rem"
+                  onOpenChange={(open) => setNativePanelOverlayIntersection(projectDetailsOverlayId, open, projectDetailsOverlayRoot)}
                 >
                   {#snippet trigger()}
                     <span
@@ -160,12 +169,13 @@
           <div class="titlebar-drag-lane" aria-hidden="true" data-tauri-drag-region>
           </div>
 
-          <div class="titlebar-actions" data-no-window-drag>
+          <div class="titlebar-actions" data-no-window-drag bind:this={newPanelOverlayRoot}>
             <Menu
               items={newPanelItems}
               ariaLabel="New workspace panel"
               placement="bottom-end"
               onAction={createWorkspacePanel}
+              onOpenChange={(open) => setNativePanelOverlayIntersection(newPanelOverlayId, open, newPanelOverlayRoot)}
             >
               {#snippet trigger()}
                 <IconButton

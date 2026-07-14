@@ -9,9 +9,13 @@
     type PanelTabItem,
   } from "@poodle/svelte";
   import AgentChatPanel from "./AgentChatPanel.svelte";
+  import BrowserPanel from "./BrowserPanel.svelte";
   import DiffPanel from "./DiffPanel.svelte";
   import EditorPanel from "./EditorPanel.svelte";
   import TaskListPanel from "./TaskListPanel.svelte";
+  import TerminalPanel from "./TerminalPanel.svelte";
+  import { destroyBrowserWebview } from "./browserPanel";
+  import { closeTerminalPanel } from "./terminalClient";
   import type {
     ControlGoalRecordDto,
     ControlProjectRecordDto,
@@ -241,6 +245,7 @@
       "application/x-nucleus-workspace-panel-drag",
       JSON.stringify({ panelId: panel.id, sourceRegion }),
     );
+    window.dispatchEvent(new CustomEvent("nucleus:native-panels-hide"));
     queueMicrotask(() => {
       draggedPanelId = panel.id;
     });
@@ -312,6 +317,7 @@
     draggedPanelId = null;
     panelDropTargetsVisible = false;
     dropTargetRegion = null;
+    window.dispatchEvent(new CustomEvent("nucleus:native-panels-show"));
   }
 
   function addPanel(kind: string): void {
@@ -381,6 +387,16 @@
     const panel = panels.find((candidate) => candidate.id === panelId);
     if (!panel?.closeable) {
       return;
+    }
+
+    if (panel.kind === "browser") {
+      void destroyBrowserWebview(panel.id).catch((caught) => {
+        error = formatError(caught);
+      });
+    } else if (panel.kind === "terminal" && selectedProject?.project_id) {
+      void closeTerminalPanel(selectedProject.project_id, panel.id).catch((caught) => {
+        error = formatError(caught);
+      });
     }
 
     void persist({
@@ -777,6 +793,10 @@
     />
   {:else if panel?.kind === "editor"}
     <EditorPanel projectId={selectedProject?.project_id ?? null} requestedFileRef={editorFileRef} />
+  {:else if panel?.kind === "browser"}
+    <BrowserPanel panelId={panel.id} />
+  {:else if panel?.kind === "terminal"}
+    <TerminalPanel panelId={panel.id} projectId={selectedProject?.project_id ?? null} />
   {:else if panel?.kind === "diff"}
     <DiffPanel
       projectId={selectedProject?.project_id ?? null}

@@ -192,6 +192,9 @@ Current checkpoint:
 - native primary-window geometry persistence is confirmed and complete
 - the floating Agent Chat composer with functional route controls is accepted
 - the active path is the four-main-region workspace grid
+- the four-main-region layout is operator-validated; its automated closeout
+  remains alongside the next product lane
+- the active product path is the host-routed Terminal panel
 
 ## Roadmaps
 
@@ -229,14 +232,18 @@ Current checkpoint:
 - `032-native-window-geometry-persistence.md` - completed
 - `033-floating-agent-chat-composer.md` - completed
 - `034-four-main-region-workspace-grid.md` - active
+- `035-host-routed-terminal-panel.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
+- `batch-cards/179-terminal-runtime-validation.md`
 - `batch-cards/176-four-main-region-validation-checkpoint.md`
 
 Planned cards:
+
+- None.
 
 - None.
 

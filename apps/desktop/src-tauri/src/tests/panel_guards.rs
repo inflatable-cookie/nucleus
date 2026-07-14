@@ -63,6 +63,31 @@ fn diff_panel_shows_the_persisted_current_review_note() {
 }
 
 #[test]
+fn native_browser_yields_to_top_toolbar_overlays() {
+    let app = include_str!("../../../src/App.svelte");
+    let browser = include_str!("../../../src/lib/BrowserPanel.svelte");
+    let visibility = include_str!("../../../src/lib/nativePanelVisibility.ts");
+    let agent_chat = include_str!("../../../src/lib/AgentChatPanel.svelte");
+    let diff = include_str!("../../../src/lib/DiffPanel.svelte");
+    let editor = include_str!("../../../src/lib/EditorPanel.svelte");
+
+    assert!(app.contains("setNativePanelOverlayIntersection(projectDetailsOverlayId, open"));
+    assert!(app.contains("setNativePanelOverlayIntersection(newPanelOverlayId, open"));
+    assert!(browser.contains("NATIVE_PANEL_OVERLAY_EVENT"));
+    assert!(browser.contains("data-native-browser-viewport"));
+    assert!(browser.contains("detail.panelIds.includes(panelId)"));
+    assert!(browser.contains("openOverlays.add(detail.id)"));
+    assert!(browser.contains("openOverlays.delete(detail.id)"));
+    assert!(browser.contains("canShowNativeView()"));
+    assert!(visibility.contains("nucleus:native-panel-overlay"));
+    assert!(visibility.contains("rectanglesIntersect"));
+    assert!(visibility.contains("nativeBrowserPanelId"));
+    assert!(!agent_chat.contains("nativePanelVisibility"));
+    assert!(!diff.contains("nativePanelVisibility"));
+    assert!(!editor.contains("nativePanelVisibility"));
+}
+
+#[test]
 fn proper_tasks_panel_groups_canonical_goal_membership_without_run_controls() {
     let component = include_str!("../../../src/lib/TaskListPanel.svelte");
 

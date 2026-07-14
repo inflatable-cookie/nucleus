@@ -111,6 +111,11 @@ Nucleus therefore needs:
 - server-owned resource refs attached to panels for terminals, browsers, agent
   sessions, editor buffers, SCM state, evidence, review, and task state
 
+Terminal panels render a host-owned session. The client resolves the project's
+terminal authority, then attaches through a transport adapter. Local Tauri IPC
+is one adapter; remote hosts expose the same byte-oriented session protocol.
+Panel movement or remount detaches presentation without killing the shell.
+
 The desktop may start with one native window. Stable window identity leaves
 room for multi-display and multi-window placement without adding another
 container layer.
