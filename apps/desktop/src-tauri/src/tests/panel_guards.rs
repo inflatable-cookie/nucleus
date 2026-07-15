@@ -63,9 +63,10 @@ fn diff_panel_shows_the_persisted_current_review_note() {
 }
 
 #[test]
-fn native_browser_yields_to_top_toolbar_overlays() {
+fn native_browser_yields_to_toolbar_and_modal_overlays() {
     let app = include_str!("../../../src/App.svelte");
     let browser = include_str!("../../../src/lib/BrowserPanel.svelte");
+    let project_rail = include_str!("../../../src/lib/ProjectRail.svelte");
     let visibility = include_str!("../../../src/lib/nativePanelVisibility.ts");
     let agent_chat = include_str!("../../../src/lib/AgentChatPanel.svelte");
     let diff = include_str!("../../../src/lib/DiffPanel.svelte");
@@ -73,6 +74,8 @@ fn native_browser_yields_to_top_toolbar_overlays() {
 
     assert!(app.contains("setNativePanelOverlayIntersection(projectDetailsOverlayId, open"));
     assert!(app.contains("setNativePanelOverlayIntersection(newPanelOverlayId, open"));
+    assert!(project_rail
+        .contains("setNativePanelOverlayVisibility(projectManagerOverlayId, projectManagerOpen)"));
     assert!(browser.contains("NATIVE_PANEL_OVERLAY_EVENT"));
     assert!(browser.contains("data-native-browser-viewport"));
     assert!(browser.contains("detail.panelIds.includes(panelId)"));
@@ -81,6 +84,7 @@ fn native_browser_yields_to_top_toolbar_overlays() {
     assert!(browser.contains("canShowNativeView()"));
     assert!(visibility.contains("nucleus:native-panel-overlay"));
     assert!(visibility.contains("rectanglesIntersect"));
+    assert!(visibility.contains("export function setNativePanelOverlayVisibility"));
     assert!(visibility.contains("nativeBrowserPanelId"));
     assert!(!agent_chat.contains("nativePanelVisibility"));
     assert!(!diff.contains("nativePanelVisibility"));
@@ -117,4 +121,17 @@ fn memory_panel_composes_read_only_accepted_and_proposed_memory() {
     assert!(!panel.contains("acceptMemory"));
     assert!(!panel.contains("rejectMemory"));
     assert!(!panel.contains("projectMemory"));
+}
+
+#[test]
+fn project_rail_keeps_inactive_projects_in_management_only() {
+    let rail = include_str!("../../../src/lib/ProjectRail.svelte");
+
+    assert!(rail.contains("project.status === \"active\""));
+    assert!(rail.contains("{#each activeProjects as project}"));
+    assert!(rail.contains("Manage projects"));
+    assert!(rail.contains("{ value: \"all\", label: \"All\" }"));
+    assert!(rail.contains("{ value: \"parked\", label: \"Parked\" }"));
+    assert!(rail.contains("{ value: \"archived\", label: \"Archived\" }"));
+    assert!(rail.contains("loadedActiveProjects[0]?.project_id ?? null"));
 }

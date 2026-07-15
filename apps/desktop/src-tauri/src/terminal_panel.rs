@@ -58,6 +58,14 @@ pub fn terminal_close_for_panel(
     state.terminal.close_for_panel(&project_id, &panel_id)
 }
 
+#[tauri::command]
+pub fn terminal_close_for_project(
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+) -> Result<(), String> {
+    state.terminal.close_for_project(&project_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,6 +75,7 @@ mod tests {
         let request = TerminalOpenRequest {
             project_id: "project:nucleus-local".to_owned(),
             panel_id: "terminal:main".to_owned(),
+            resource_id: Some("resource:nucleus-local".to_owned()),
             rows: 24,
             cols: 80,
         };

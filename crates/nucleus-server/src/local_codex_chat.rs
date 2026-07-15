@@ -19,9 +19,7 @@ mod task_workflow;
 
 use std::collections::HashMap;
 
-use nucleus_core::PersistenceRecordId;
 use nucleus_local_store::LocalStoreBackend;
-use nucleus_projects::decode_project_storage_record;
 use serde::{Deserialize, Serialize};
 
 pub use goal_execution::{
@@ -61,6 +59,8 @@ const CHAT_TASK_TOOLSET_VERSION: u32 = 5;
 pub struct LocalCodexChatRequest {
     pub conversation_id: String,
     pub project_id: String,
+    #[serde(default)]
+    pub resource_id: Option<String>,
     pub message: String,
     #[serde(default)]
     pub active_task_id: Option<String>,
@@ -164,7 +164,12 @@ impl LocalCodexChatService {
             return Err("chat message must not be empty".to_owned());
         }
 
-        let project_root = project_root(state, &request.project_id)?;
+        let project_target = crate::project_resource_target::resolve_project_resource_target(
+            state,
+            &request.project_id,
+            request.resource_id.as_deref(),
+        )?;
+        let project_root = project_target.root.to_string_lossy().into_owned();
         let provider_message = focused_context_message(
             state,
             &request.project_id,
@@ -183,15 +188,26 @@ impl LocalCodexChatService {
             selected_route(&request, stored.as_ref())?;
         let migration_context = stored
             .as_ref()
-            .filter(|session| session.task_toolset_version < CHAT_TASK_TOOLSET_VERSION)
+            .filter(|session| {
+                session.task_toolset_version < CHAT_TASK_TOOLSET_VERSION
+                    || session.resource_id.as_deref() != Some(&project_target.resource_id)
+            })
             .map(|_| conversation_context(state, &request.project_id, &request.conversation_id))
             .transpose()?;
+        if self
+            .sessions
+            .get(&request.conversation_id)
+            .is_some_and(|session| !session.targets_resource(&project_target.resource_id))
+        {
+            self.sessions.remove(&request.conversation_id);
+        }
         let session = match self.sessions.entry(request.conversation_id.clone()) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(LocalCodexChatSession::start(
                     &request.conversation_id,
                     &project_root,
+                    &project_target.resource_id,
                     stored.as_ref(),
                     migration_context.as_deref(),
                     &selected_model,
@@ -200,6 +216,7 @@ impl LocalCodexChatService {
             }
         };
         let project_id = request.project_id.clone();
+        let resource_id = Some(project_target.resource_id.clone());
         let conversation_id = request.conversation_id.clone();
         let snapshot_store = self.task_review_snapshot_store.as_ref();
         let mut task_tool = |tool: &str, turn_id: &str, call_id: &str, arguments| match tool {
@@ -217,6 +234,7 @@ impl LocalCodexChatService {
                 snapshot_store,
                 &project_id,
                 &conversation_id,
+                resource_id.as_deref(),
                 arguments,
             ),
             _ => Err(format!("unsupported dynamic tool: {tool}")),
@@ -228,6 +246,7 @@ impl LocalCodexChatService {
             session.stored_session(
                 request.conversation_id.clone(),
                 request.project_id.clone(),
+                project_target.resource_id.clone(),
                 turn_count,
             ),
             &canonical_turn_id,
@@ -251,6 +270,7 @@ impl LocalCodexChatService {
             &session.stored_session(
                 request.conversation_id.clone(),
                 request.project_id.clone(),
+                project_target.resource_id.clone(),
                 turn_count,
             ),
         )?;
@@ -380,33 +400,6 @@ where
             .collect();
     }
     Ok(context)
-}
-
-pub(super) fn project_root<B>(
-    state: &ServerStateService<B>,
-    project_id: &str,
-) -> Result<String, String>
-where
-    B: LocalStoreBackend,
-{
-    let record = state
-        .projects()
-        .get(&PersistenceRecordId(project_id.to_owned()))
-        .map_err(|error| format!("project lookup failed: {error:?}"))?
-        .ok_or_else(|| format!("project not found: {project_id}"))?;
-    let project = decode_project_storage_record(&record.payload.bytes)
-        .map_err(|error| format!("project record decode failed: {}", error.reason))?;
-    let working_target = project
-        .default_working_resource
-        .as_ref()
-        .ok_or_else(|| "project has no default working resource".to_owned())?;
-    let path = project
-        .resource(&working_target.resource_id)
-        .and_then(|resource| resource.current_locator.as_deref())
-        .ok_or_else(|| "project default working resource has no available locator".to_owned())?;
-    let canonical = std::fs::canonicalize(&path)
-        .map_err(|error| format!("project working resource is unavailable: {error}"))?;
-    Ok(canonical.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]

@@ -299,8 +299,8 @@ shape.
 - `g04/035-host-routed-terminal-panel.md` - completed
 - `g04/036-project-memory-panel.md` - completed
 - `g04/037-project-resource-foundation.md` - completed
-- `g04/038-project-control-workflow.md` - active
-- `g04/039-multi-resource-attachment-and-targeting.md` - planned
+- `g04/038-project-control-workflow.md` - completed
+- `g04/039-multi-resource-attachment-and-targeting.md` - active
 - `g04/040-transient-chat-and-promotion.md` - planned
 - `g04/041-shared-project-files-control.md` - planned
 - `deferred-lanes.md` - active
@@ -362,7 +362,6 @@ shape.
 
 ## Next Task
 
-Complete `g04/batch-cards/189-project-control-validation.md`: validate
-name-only project creation, compact lifecycle controls, restart continuity,
-truthful delete refusal, and resource-free chat/task behavior with the
-operator.
+Complete `g04/batch-cards/193-multi-resource-workflow-validation.md`: validate
+zero-, one-, and multi-resource workflows, movement repair, persisted targets,
+and local or remote authority shapes without making the common path noisy.

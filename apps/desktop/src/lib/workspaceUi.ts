@@ -6,6 +6,7 @@ export type WorkspacePanelDto = {
   title: string;
   closeable: boolean;
   movable: boolean;
+  resource_targets: Record<string, string>;
   allowed_regions: RegionKey[];
 };
 
@@ -112,6 +113,7 @@ function panel(
     title,
     closeable,
     movable,
+    resource_targets: {},
     allowed_regions: allowedRegionsForKind(kind),
   };
 }

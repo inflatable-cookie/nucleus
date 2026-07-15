@@ -1,6 +1,6 @@
 # 038 Project Control Workflow
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-15
 
@@ -21,9 +21,9 @@ creation and lifecycle surface without introducing a setup wizard.
 - [x] Add create, rename, park, archive, restore, and delete admission with
   revision and authority checks.
 - [x] Add name-only creation and compact project-menu controls to the rail.
-- [ ] Preserve selected-project and workspace behavior across lifecycle
+- [x] Preserve selected-project and workspace behavior across lifecycle
   changes and restart.
-- [ ] Validate empty durable projects before resource attachment begins.
+- [x] Validate empty durable projects before resource attachment begins.
 
 ## Batch Cards
 
@@ -32,6 +32,6 @@ Completed:
 - `batch-cards/187-project-lifecycle-command-boundary.md`
 - `batch-cards/188-minimal-project-rail-controls.md`
 
-Ready:
+Completed:
 
 - `batch-cards/189-project-control-validation.md`

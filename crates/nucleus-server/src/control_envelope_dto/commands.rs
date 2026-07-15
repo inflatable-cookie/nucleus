@@ -20,7 +20,9 @@ use goal_authoring::{goal_command_dto, goal_create_kind, goal_update_kind};
 use memory_proposal_review::{
     memory_proposal_review_action, memory_proposal_review_dto, ControlMemoryProposalReviewActionDto,
 };
-use project_lifecycle::{project_command_dto, project_create_kind, project_lifecycle_kind};
+use project_lifecycle::{
+    project_command_dto, project_create_kind, project_lifecycle_kind, project_resource_kind,
+};
 use read_only::{read_only_command_dto, read_only_command_kind};
 use task_authoring::{
     task_create_dto, task_create_kind, task_update_dto, task_update_kind,
@@ -44,6 +46,20 @@ pub enum ControlCommandDto {
         action: ControlProjectLifecycleActionDto,
         expected_revision: String,
         display_name: Option<String>,
+        actor_ref: String,
+        authority_host_ref: String,
+        idempotency_key: String,
+    },
+    ProjectResource {
+        command_id: String,
+        project_id: String,
+        action: ControlProjectResourceActionDto,
+        expected_revision: String,
+        resource_id: Option<String>,
+        locator: Option<String>,
+        display_name: Option<String>,
+        role: Option<ControlProjectResourceRoleDto>,
+        set_as_default: Option<bool>,
         actor_ref: String,
         authority_host_ref: String,
         idempotency_key: String,
@@ -181,6 +197,23 @@ pub enum ControlProjectLifecycleActionDto {
     Delete,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlProjectResourceActionDto {
+    Attach,
+    Update,
+    Repair,
+    Remove,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlProjectResourceRoleDto {
+    Working,
+    Management,
+    Reference,
+}
+
 impl TryFrom<&ServerCommand> for ControlCommandDto {
     type Error = ControlApiCodecError;
 
@@ -237,6 +270,33 @@ impl ControlCommandDto {
                 action,
                 expected_revision,
                 display_name,
+                actor_ref,
+                authority_host_ref,
+                idempotency_key,
+            ),
+            Self::ProjectResource {
+                command_id,
+                project_id,
+                action,
+                expected_revision,
+                resource_id,
+                locator,
+                display_name,
+                role,
+                set_as_default,
+                actor_ref,
+                authority_host_ref,
+                idempotency_key,
+            } => project_resource_kind(
+                command_id,
+                project_id,
+                action,
+                expected_revision,
+                resource_id,
+                locator,
+                display_name,
+                role,
+                set_as_default,
                 actor_ref,
                 authority_host_ref,
                 idempotency_key,

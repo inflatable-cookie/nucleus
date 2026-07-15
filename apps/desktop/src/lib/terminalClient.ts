@@ -3,6 +3,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 export interface TerminalOpenRequest {
   projectId: string;
   panelId: string;
+  resourceId: string | null;
   rows: number;
   cols: number;
 }
@@ -11,6 +12,7 @@ export interface TerminalSessionSnapshot {
   sessionId: string;
   projectId: string;
   panelId: string;
+  resourceId: string | null;
   authoritativeHostId: string;
   rows: number;
   cols: number;
@@ -63,4 +65,8 @@ export const terminalTransport: TerminalTransport = new TauriTerminalTransport()
 
 export async function closeTerminalPanel(projectId: string, panelId: string): Promise<void> {
   return terminalTransport.close(projectId, panelId);
+}
+
+export async function closeTerminalProject(projectId: string): Promise<void> {
+  return invoke("terminal_close_for_project", { projectId });
 }

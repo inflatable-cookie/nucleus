@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export type AgentChatRequest = {
   conversation_id: string;
   project_id: string;
+  resource_id: string | null;
   message: string;
   active_task_id: string | null;
   active_goal_id: string | null;

@@ -30,3 +30,6 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-15-project-resource-domain-storage.md`
 - `2026-07-15-project-resource-foundation-closeout.md`
 - `2026-07-15-project-lifecycle-controls.md`
+- `2026-07-15-project-resource-mutations.md`
+- `2026-07-15-workspace-resource-target-resolution.md`
+- `2026-07-15-compact-project-resource-controls.md`

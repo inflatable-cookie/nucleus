@@ -8,9 +8,9 @@ use nucleus_local_store::{
     LocalStoreResult, RevisionExpectation,
 };
 use nucleus_projects::{
-    decode_project_storage_record, encode_project_storage_record, ImportanceBaseline,
-    ImportanceLevel, Project, ProjectActivity, ProjectId, ProjectResource, ProjectResourceId,
-    ProjectResourceKind, ProjectResourceRole, ProjectRetention, ProjectStatus,
+    decode_project_storage_record, encode_project_storage_payload, encode_project_storage_record,
+    ImportanceBaseline, ImportanceLevel, Project, ProjectActivity, ProjectId, ProjectResource,
+    ProjectResourceId, ProjectResourceKind, ProjectResourceRole, ProjectRetention, ProjectStatus,
     ResourceLocationStatus, ResourceLocatorRecord, WorkingResourceTarget,
 };
 
@@ -110,21 +110,34 @@ where
         return Ok(None);
     }
 
-    let Ok(decoded) = decode_project_storage_record(&existing.payload.bytes) else {
+    let Ok(mut decoded) = decode_project_storage_record(&existing.payload.bytes) else {
         return Ok(None);
     };
-    if !decoded.resources.is_empty() {
-        return Ok(None);
-    }
 
     let mut record = existing.clone();
-    let project = project_from_seed(seed);
-    let payload = encode_project_storage_record(&project).map_err(|error| {
-        LocalStoreError::InvalidRecord {
-            reason: error.reason,
-        }
+    let (revision_id, payload) = if decoded.resources.is_empty() {
+        let project = project_from_seed(seed);
+        (
+            "rev:seed:repo-location:1",
+            encode_project_storage_record(&project),
+        )
+    } else {
+        let Some(resource) = decoded.resources.iter_mut().find(|resource| {
+            resource.resource_id == "resource:nucleus-local"
+                && resource.authority_host_ref == "host:local"
+        }) else {
+            return Ok(None);
+        };
+        resource.authority_host_ref = decoded.authority_host_ref.clone();
+        (
+            "rev:seed:resource-authority:1",
+            encode_project_storage_payload(&decoded),
+        )
+    };
+    let payload = payload.map_err(|error| LocalStoreError::InvalidRecord {
+        reason: error.reason,
     })?;
-    record.revision_id = RevisionId("rev:seed:repo-location:1".to_owned());
+    record.revision_id = RevisionId(revision_id.to_owned());
     record.payload = LocalStoreRecordPayload {
         media_type: Some("application/json".to_owned()),
         bytes: payload,
@@ -151,7 +164,7 @@ fn local_seed_resources(project_id: &str) -> Vec<ProjectResource> {
         display_name: "Nucleus repository".to_owned(),
         kind: ProjectResourceKind::GitRepository,
         role: ProjectResourceRole::Working,
-        authority_host_ref: "host:local".to_owned(),
+        authority_host_ref: "host:embedded-desktop".to_owned(),
         current_locator: Some(path.clone()),
         locator_history: vec![ResourceLocatorRecord {
             locator: path,
@@ -313,5 +326,40 @@ mod tests {
         assert_eq!(repaired.revision_id.0, "rev:seed:repo-location:1");
         assert_eq!(decoded.repo_count(), 1);
         assert!(decoded.primary_location().is_some());
+    }
+
+    #[test]
+    fn nucleus_local_project_seed_repairs_legacy_resource_authority() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let backend = SqliteBackend::new(temp_dir.path().join("nucleus.sqlite"));
+        let handler = LocalControlRequestHandler::new(backend, None);
+
+        let mut old_project = project_from_seed(&LocalProjectSeed::nucleus_local());
+        old_project.resources[0].authority_host_ref = "host:local".to_owned();
+        let old_record = LocalStoreRecord {
+            id: PersistenceRecordId("project:nucleus-local".to_owned()),
+            domain: PersistenceDomain::Projects,
+            kind: PersistenceRecordKind::Project,
+            revision_id: RevisionId("rev:old-resource-authority".to_owned()),
+            payload: LocalStoreRecordPayload {
+                media_type: Some("application/json".to_owned()),
+                bytes: encode_project_storage_record(&old_project).expect("old project"),
+            },
+        };
+        handler
+            .state()
+            .projects()
+            .put(old_record, RevisionExpectation::MustNotExist)
+            .expect("old project put");
+
+        let repaired =
+            seed_local_project(handler.state(), LocalProjectSeed::nucleus_local()).expect("repair");
+        let decoded = decode_project_storage_record(&repaired.payload.bytes).expect("project");
+
+        assert_eq!(repaired.revision_id.0, "rev:seed:resource-authority:1");
+        assert_eq!(
+            decoded.resources[0].authority_host_ref,
+            "host:embedded-desktop"
+        );
     }
 }

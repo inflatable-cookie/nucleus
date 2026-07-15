@@ -5,7 +5,9 @@ use nucleus_local_store::LocalStoreBackend;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::goal_execution::{execute_goal_run, GoalRunExecutionRequest, GoalRunExecutionStatus};
+use super::goal_execution::{
+    execute_goal_run_for_resource, GoalRunExecutionRequest, GoalRunExecutionStatus,
+};
 use super::goal_inspection::goal_record;
 use super::goal_run::{
     admit_goal_run, read_goal_run_plan, GoalRunAdmissionRequest, GoalRunOutcome,
@@ -94,6 +96,7 @@ pub(super) fn execute<B>(
     snapshot_store: Option<&TaskReviewSnapshotStore>,
     project_id: &str,
     conversation_id: &str,
+    resource_id: Option<&str>,
     arguments: Value,
 ) -> Result<TaskToolOutcome, String>
 where
@@ -104,7 +107,14 @@ where
     validate_scope_fields(&input)?;
     match input.action.as_str() {
         "inspect" => inspect(state, project_id, input),
-        "run" => run(state, snapshot_store, project_id, conversation_id, input),
+        "run" => run(
+            state,
+            snapshot_store,
+            project_id,
+            conversation_id,
+            resource_id,
+            input,
+        ),
         action => Err(format!("unsupported task_workflow action: {action}")),
     }
 }
@@ -210,6 +220,7 @@ fn run<B>(
     snapshot_store: Option<&TaskReviewSnapshotStore>,
     project_id: &str,
     conversation_id: &str,
+    resource_id: Option<&str>,
     input: TaskWorkflowInput,
 ) -> Result<TaskToolOutcome, String>
 where
@@ -328,13 +339,14 @@ where
             });
         }
     };
-    let execution = execute_goal_run(
+    let execution = execute_goal_run_for_resource(
         state,
         snapshot_store,
         GoalRunExecutionRequest {
             plan_id: plan.plan_id.clone(),
             expected_plan_revision: plan.revision_id.clone(),
         },
+        resource_id,
     )?;
     let status = match execution.status {
         GoalRunExecutionStatus::Completed => TaskWorkflowReceiptStatus::ReviewReady,
@@ -533,6 +545,7 @@ mod tests {
             None,
             "project:nucleus-local",
             "conversation:goal-run",
+            None,
             json!({
                 "action": "inspect",
                 "scope": "task",
@@ -561,6 +574,7 @@ mod tests {
             None,
             "project:nucleus-local",
             "conversation:goal-run",
+            None,
             json!({
                 "action": "run",
                 "scope": "goal",

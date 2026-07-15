@@ -15,6 +15,8 @@ const MESSAGE_PREFIX: &str = "product-chat-message:";
 pub struct StoredChatSession {
     pub conversation_id: String,
     pub project_id: String,
+    #[serde(default)]
+    pub resource_id: Option<String>,
     pub session_id: String,
     pub provider_thread_id: String,
     pub model: String,
@@ -389,6 +391,7 @@ mod tests {
         let session = StoredChatSession {
             conversation_id: "project:1:panel:chat".to_owned(),
             project_id: "project:1".to_owned(),
+            resource_id: None,
             session_id: "session:1".to_owned(),
             provider_thread_id: "thread:1".to_owned(),
             model: "gpt-5.4-mini".to_owned(),
@@ -446,6 +449,7 @@ mod tests {
         let session = StoredChatSession {
             conversation_id: "conversation:1".to_owned(),
             project_id: "project:1".to_owned(),
+            resource_id: None,
             session_id: "session:1".to_owned(),
             provider_thread_id: "thread:1".to_owned(),
             model: "model".to_owned(),

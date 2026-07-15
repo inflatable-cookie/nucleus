@@ -1,6 +1,6 @@
 # 191 Workspace Resource Target Resolution
 
-Status: planned
+Status: completed
 Owner: Codex
 Updated: 2026-07-15
 Milestone: `../039-multi-resource-attachment-and-targeting.md`
@@ -22,3 +22,13 @@ explicit compatible resource or the project's truthful default.
 
 - panel code reads host paths directly to choose authority
 - one global default hides task- or panel-specific resource attribution
+
+## Outcome
+
+One host-owned resolver now applies explicit target, configured default, sole
+working resource, then truthful zero/ambiguous outcomes. Chat and task
+execution, editor file operations, terminal sessions, and review snapshots use
+that boundary and retain the resolved resource id. Browser URL navigation needs
+no filesystem target; task diff reads retain the resource attribution captured
+with their immutable snapshots. Panel choices persist per project rather than
+as one global panel default.

@@ -26,6 +26,7 @@
     "@poodle/svelte": "file:../../../poodle/packages/svelte/components",
     "@poodle/svelte-tokens": "file:../../../poodle/packages/svelte/tokens",
     "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-opener": "^2.5.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",

@@ -10,6 +10,7 @@ use nucleus_projects::{decode_project_storage_record, encode_project_storage_pay
 fn request(role: SnapshotRole, created_at_unix_seconds: u64) -> TaskReviewSnapshotCaptureRequest {
     TaskReviewSnapshotCaptureRequest {
         project_id: "project:nucleus-local".to_owned(),
+        resource_id: None,
         work_item_id: "task:nucleus-local:review".to_owned(),
         role,
         created_at_unix_seconds,
@@ -304,6 +305,10 @@ fn public_capture_resolves_the_server_owned_project_location() {
     let manifest = store
         .capture(&state, request(SnapshotRole::Baseline, 10))
         .expect("state-resolved capture");
+    assert_eq!(
+        manifest.resource_id.as_deref(),
+        Some("resource:nucleus-local")
+    );
     assert_eq!(manifest.files.len(), 1);
     assert_eq!(manifest.files[0].display_path, "demo.rs");
 }

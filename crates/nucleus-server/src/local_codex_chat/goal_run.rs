@@ -815,6 +815,7 @@ pub(super) mod tests {
             StoredChatSession {
                 conversation_id: conversation_id.to_owned(),
                 project_id: "project:nucleus-local".to_owned(),
+                resource_id: None,
                 session_id: "session:goal-run".to_owned(),
                 provider_thread_id: "thread:goal-run".to_owned(),
                 model: "gpt-5.4-mini".to_owned(),

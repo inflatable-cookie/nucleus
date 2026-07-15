@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 const MIN_WINDOW_WIDTH: u32 = 900;
 const MIN_WINDOW_HEIGHT: u32 = 620;
 const MAX_WINDOW_DIMENSION: u32 = 16_384;
@@ -78,6 +79,8 @@ pub struct WorkspacePanelDto {
     pub title: String,
     pub closeable: bool,
     pub movable: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resource_targets: BTreeMap<String, String>,
     #[serde(default)]
     pub allowed_regions: Vec<String>,
 }
@@ -402,6 +405,7 @@ fn panel(id: &str, kind: &str, title: &str, closeable: bool, movable: bool) -> W
         title: title.to_owned(),
         closeable,
         movable,
+        resource_targets: BTreeMap::new(),
         allowed_regions: allowed_regions_for_kind(kind),
     }
 }
@@ -454,6 +458,35 @@ mod tests {
                 "right_top".to_string(),
                 "right_bottom".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn panel_resource_targets_round_trip_per_project() {
+        let mut config = default_workspace_ui_config();
+        let panel = config
+            .window
+            .regions
+            .center_top
+            .first_mut()
+            .expect("workspace panel");
+        panel.resource_targets = std::collections::BTreeMap::from([
+            ("project:one".to_owned(), "resource:alpha".to_owned()),
+            ("project:two".to_owned(), "resource:beta".to_owned()),
+        ]);
+
+        let raw = serde_json::to_string(&config).expect("encode config");
+        let (decoded, migrated) = decode_workspace_ui_config(&raw).expect("decode config");
+        let restored = &decoded.window.regions.center_top[0].resource_targets;
+
+        assert!(!migrated);
+        assert_eq!(
+            restored.get("project:one").map(String::as_str),
+            Some("resource:alpha")
+        );
+        assert_eq!(
+            restored.get("project:two").map(String::as_str),
+            Some("resource:beta")
         );
     }
 
@@ -701,6 +734,10 @@ mod tests {
                 title: "Diff".to_owned(),
                 closeable: true,
                 movable: true,
+                resource_targets: std::collections::BTreeMap::from([(
+                    "project:multi".to_owned(),
+                    "resource:second".to_owned(),
+                )]),
                 allowed_regions: vec!["center_top".to_owned(), "center_bottom".to_owned()],
             });
 
@@ -722,6 +759,13 @@ mod tests {
                 "right_bottom".to_string(),
             ]
         );
+        assert_eq!(
+            panel
+                .resource_targets
+                .get("project:multi")
+                .map(String::as_str),
+            Some("resource:second")
+        );
     }
 
     #[test]
@@ -733,6 +777,7 @@ mod tests {
             title: "Editor".to_owned(),
             closeable: true,
             movable: true,
+            resource_targets: std::collections::BTreeMap::new(),
             allowed_regions: vec!["left".to_owned()],
         });
         config
@@ -745,6 +790,7 @@ mod tests {
                 title: "Activity".to_owned(),
                 closeable: false,
                 movable: false,
+                resource_targets: std::collections::BTreeMap::new(),
                 allowed_regions: vec!["right_bottom".to_owned()],
             });
 

@@ -8,7 +8,7 @@ use nucleus_local_store::LocalStoreBackend;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 
-use crate::project_file_policy::project_root;
+use crate::project_resource_target::resolve_optional_project_resource_target;
 use crate::ServerStateService;
 
 const OUTPUT_BUFFER_LIMIT: usize = 1024 * 1024;
@@ -21,6 +21,8 @@ pub type TerminalEventSink = Arc<dyn Fn(TerminalEvent) + Send + Sync + 'static>;
 pub struct TerminalOpenRequest {
     pub project_id: String,
     pub panel_id: String,
+    #[serde(default)]
+    pub resource_id: Option<String>,
     pub rows: u16,
     pub cols: u16,
 }
@@ -31,6 +33,7 @@ pub struct TerminalSessionSnapshot {
     pub session_id: String,
     pub project_id: String,
     pub panel_id: String,
+    pub resource_id: Option<String>,
     pub authoritative_host_id: String,
     pub rows: u16,
     pub cols: u16,
@@ -66,6 +69,7 @@ struct HostedTerminalSession {
     session_id: String,
     project_id: String,
     panel_id: String,
+    resource_id: Option<String>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
@@ -106,7 +110,11 @@ impl TerminalHostRuntime {
         B: LocalStoreBackend,
     {
         validate_open_request(&request)?;
-        let root = project_root(server_state, &request.project_id)?;
+        let (working_directory, resource_id) = terminal_working_directory(
+            server_state,
+            &request.project_id,
+            request.resource_id.as_deref(),
+        )?;
         let session_id = session_id(&request.project_id, &request.panel_id);
 
         let mut sessions = self
@@ -118,11 +126,17 @@ impl TerminalHostRuntime {
             if session.project_id != request.project_id || session.panel_id != request.panel_id {
                 return Err("terminal session identity collision".to_owned());
             }
+            if session.resource_id != resource_id {
+                return Err(
+                    "terminal panel target changed; close its existing session before reopening"
+                        .to_owned(),
+                );
+            }
             session.attach(sink)?;
             return session.snapshot(true);
         }
 
-        let (hosted, reader) = spawn_session(&request, &root, sink)?;
+        let (hosted, reader) = spawn_session(&request, resource_id, &working_directory, sink)?;
         let session = Arc::new(hosted);
         sessions.insert(session_id, Arc::clone(&session));
         drop(sessions);
@@ -194,6 +208,21 @@ impl TerminalHostRuntime {
         self.close(&session_id(project_id, panel_id))
     }
 
+    pub fn close_for_project(&self, project_id: &str) -> Result<(), String> {
+        let session_ids = self
+            .sessions
+            .lock()
+            .map_err(|_| "terminal session registry is unavailable".to_owned())?
+            .values()
+            .filter(|session| session.project_id == project_id)
+            .map(|session| session.session_id.clone())
+            .collect::<Vec<_>>();
+        for session_id in session_ids {
+            self.close(&session_id)?;
+        }
+        Ok(())
+    }
+
     fn session(&self, session_id: &str) -> Result<Option<Arc<HostedTerminalSession>>, String> {
         self.sessions
             .lock()
@@ -246,6 +275,7 @@ impl HostedTerminalSession {
             session_id: self.session_id.clone(),
             project_id: self.project_id.clone(),
             panel_id: self.panel_id.clone(),
+            resource_id: self.resource_id.clone(),
             authoritative_host_id: LOCAL_HOST_ID.to_owned(),
             rows: state.rows,
             cols: state.cols,
@@ -324,6 +354,7 @@ impl HostedTerminalSession {
 
 fn spawn_session(
     request: &TerminalOpenRequest,
+    resource_id: Option<String>,
     project_root: &Path,
     sink: TerminalEventSink,
 ) -> Result<(HostedTerminalSession, Box<dyn Read + Send>), String> {
@@ -353,6 +384,7 @@ fn spawn_session(
         session_id,
         project_id: request.project_id.clone(),
         panel_id: request.panel_id.clone(),
+        resource_id,
         master: Mutex::new(pair.master),
         writer: Mutex::new(writer),
         child: Mutex::new(child),
@@ -421,6 +453,69 @@ fn validate_size(rows: u16, cols: u16) -> Result<(), String> {
     }
 }
 
+fn terminal_working_directory<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+    resource_id: Option<&str>,
+) -> Result<(PathBuf, Option<String>), String>
+where
+    B: LocalStoreBackend,
+{
+    terminal_working_directory_with(
+        state,
+        project_id,
+        resource_id,
+        host_default_working_directory,
+    )
+}
+
+fn terminal_working_directory_with<B, F>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+    resource_id: Option<&str>,
+    host_default: F,
+) -> Result<(PathBuf, Option<String>), String>
+where
+    B: LocalStoreBackend,
+    F: FnOnce() -> Result<PathBuf, String>,
+{
+    match resolve_optional_project_resource_target(state, project_id, resource_id)? {
+        Some(target) => Ok((target.root, Some(target.resource_id))),
+        None => host_default().map(|root| (root, None)),
+    }
+}
+
+fn host_default_working_directory() -> Result<PathBuf, String> {
+    let path = host_home_directory()
+        .ok_or_else(|| "terminal host has no available default working directory".to_owned())?;
+    std::fs::canonicalize(path)
+        .map_err(|error| format!("terminal host default working directory is unavailable: {error}"))
+}
+
+#[cfg(not(windows))]
+fn host_home_directory() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+}
+
+#[cfg(windows)]
+fn host_home_directory() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            let drive = std::env::var_os("HOMEDRIVE")?;
+            let path = std::env::var_os("HOMEPATH")?;
+            if drive.is_empty() || path.is_empty() {
+                return None;
+            }
+            let mut home = PathBuf::from(drive);
+            home.push(path);
+            Some(home)
+        })
+}
+
 fn pty_size(rows: u16, cols: u16) -> PtySize {
     PtySize {
         rows: rows.max(1),
@@ -470,7 +565,15 @@ fn short_session_ref(session_id: &str) -> &str {
 mod tests {
     use super::*;
     use crate::{seed_local_project, LocalProjectSeed};
-    use nucleus_local_store::SqliteBackend;
+    use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
+    use nucleus_local_store::{
+        LocalStoreRecord, LocalStoreRecordPayload, RevisionExpectation, SqliteBackend,
+    };
+    use nucleus_projects::{
+        decode_project_storage_record, encode_project_storage_payload,
+        encode_project_storage_record, ImportanceBaseline, ImportanceLevel, Project,
+        ProjectActivity, ProjectId, ProjectRetention, ProjectStatus,
+    };
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -493,6 +596,69 @@ mod tests {
         assert!(validate_size(24, 0).is_err());
     }
 
+    #[test]
+    fn resource_free_project_uses_host_default_working_directory() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let state =
+            ServerStateService::new(SqliteBackend::new(directory.path().join("state.sqlite")));
+        persist_resource_free_project(&state, "project:empty");
+        let fallback = directory.path().join("host-home");
+        std::fs::create_dir(&fallback).expect("create fallback");
+
+        assert_eq!(
+            terminal_working_directory_with(&state, "project:empty", None, || {
+                Ok(fallback.clone())
+            })
+            .expect("resolve terminal working directory"),
+            (fallback, None)
+        );
+    }
+
+    #[test]
+    fn explicit_resource_target_overrides_terminal_project_default() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+        std::fs::create_dir(&first).expect("first resource");
+        std::fs::create_dir(&second).expect("second resource");
+        let state =
+            ServerStateService::new(SqliteBackend::new(directory.path().join("state.sqlite")));
+        seed_local_project(&state, LocalProjectSeed::nucleus_local()).expect("seed project");
+        let id = PersistenceRecordId("project:nucleus-local".to_owned());
+        let mut record = state.projects().get(&id).expect("get").expect("project");
+        let previous = record.revision_id.clone();
+        let mut project = decode_project_storage_record(&record.payload.bytes).expect("decode");
+        project.resources[0].current_locator = Some(first.to_string_lossy().into_owned());
+        let mut second_resource = project.resources[0].clone();
+        second_resource.resource_id = "resource:second".to_owned();
+        second_resource.display_name = "Second".to_owned();
+        second_resource.current_locator = Some(second.to_string_lossy().into_owned());
+        project.resources.push(second_resource);
+        record.revision_id = RevisionId("rev:terminal-multi-resource".to_owned());
+        record.payload = LocalStoreRecordPayload {
+            media_type: Some("application/json".to_owned()),
+            bytes: encode_project_storage_payload(&project).expect("encode"),
+        };
+        state
+            .projects()
+            .put(record, RevisionExpectation::Exact(previous))
+            .expect("put");
+
+        assert_eq!(
+            terminal_working_directory_with(
+                &state,
+                "project:nucleus-local",
+                Some("resource:second"),
+                || Err("host fallback must not run".to_owned()),
+            )
+            .expect("resolve explicit terminal target"),
+            (
+                second.canonicalize().expect("canonical second"),
+                Some("resource:second".to_owned()),
+            )
+        );
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn local_host_terminal_streams_interactive_shell_output() {
@@ -508,6 +674,7 @@ mod tests {
                 TerminalOpenRequest {
                     project_id: "project:nucleus-local".to_owned(),
                     panel_id: "terminal:test".to_owned(),
+                    resource_id: None,
                     rows: 24,
                     cols: 80,
                 },
@@ -516,6 +683,10 @@ mod tests {
                 }),
             )
             .expect("open terminal");
+        assert_eq!(
+            snapshot.resource_id.as_deref(),
+            Some("resource:nucleus-local")
+        );
 
         runtime
             .write(
@@ -544,5 +715,46 @@ mod tests {
         }
 
         panic!("terminal output marker was not observed");
+    }
+
+    fn persist_resource_free_project(state: &ServerStateService<SqliteBackend>, project_id: &str) {
+        let project = Project {
+            id: ProjectId(project_id.to_owned()),
+            display_name: "Empty project".to_owned(),
+            authority_host_ref: LOCAL_HOST_ID.to_owned(),
+            status: ProjectStatus::Active,
+            retention: ProjectRetention::Durable,
+            importance_baseline: ImportanceBaseline {
+                level: ImportanceLevel::Normal,
+                notes: None,
+            },
+            resources: Vec::new(),
+            default_working_resource: None,
+            management_projection: None,
+            task_ids: Vec::new(),
+            workspace_layout_refs: Vec::new(),
+            activity: ProjectActivity {
+                created_at: None,
+                last_focused_at: None,
+                last_agent_activity_at: None,
+                last_task_activity_at: None,
+            },
+        };
+        state
+            .projects()
+            .put(
+                LocalStoreRecord {
+                    id: PersistenceRecordId(project_id.to_owned()),
+                    domain: PersistenceDomain::Projects,
+                    kind: PersistenceRecordKind::Project,
+                    revision_id: RevisionId("rev:test:1".to_owned()),
+                    payload: LocalStoreRecordPayload {
+                        media_type: Some("application/json".to_owned()),
+                        bytes: encode_project_storage_record(&project).expect("encode project"),
+                    },
+                },
+                RevisionExpectation::MustNotExist,
+            )
+            .expect("persist project");
     }
 }

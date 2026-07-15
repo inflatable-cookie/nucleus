@@ -16,6 +16,7 @@ fn chat_request_serializes_for_tauri_boundary() {
     let request = LocalCodexChatRequest {
         conversation_id: "panel:agent-chat".to_owned(),
         project_id: "project:nucleus".to_owned(),
+        resource_id: None,
         message: "hello".to_owned(),
         active_task_id: Some("task:nucleus:one".to_owned()),
         active_goal_id: None,
@@ -143,6 +144,7 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
     let mut session = LocalCodexChatSession::start(
         "live-smoke",
         cwd.to_str().expect("UTF-8 current dir"),
+        "resource:live-smoke",
         None,
         None,
         CHAT_MODEL,
@@ -197,6 +199,7 @@ fn live_chat_receives_active_task_context_without_polluting_history() {
             LocalCodexChatRequest {
                 conversation_id: conversation_id.to_owned(),
                 project_id: "project:nucleus-local".to_owned(),
+                resource_id: None,
                 message: operator_message.to_owned(),
                 active_task_id: Some("task:nucleus-local:bootstrap".to_owned()),
                 active_goal_id: None,
@@ -224,6 +227,7 @@ fn durable_chat_resumes_provider_thread_after_service_restart() {
     let request = |message: &str| LocalCodexChatRequest {
         conversation_id: "project:nucleus-local:panel:durable-smoke".to_owned(),
         project_id: "project:nucleus-local".to_owned(),
+        resource_id: None,
         message: message.to_owned(),
         active_task_id: None,
         active_goal_id: None,
@@ -264,6 +268,7 @@ fn live_chat_authors_a_task_batch_without_dispatching_work() {
             LocalCodexChatRequest {
                 conversation_id: "project:nucleus-local:panel:task-tool-smoke".to_owned(),
                 project_id: "project:nucleus-local".to_owned(),
+                resource_id: None,
                 message: "Use the task ledger now to create exactly two ready tasks. First: title 'Live tool task one', description 'First live task.', acceptance criterion 'First task exists', normal importance, execute action, validation command 'effigy desktop:check'. Second: title 'Live tool task two', description 'Second live task.', acceptance criterion 'Second task exists', normal importance, test action, validation command 'effigy qa'. Keep your reply brief.".to_owned(),
                 active_task_id: None,
                 active_goal_id: None,
@@ -423,6 +428,7 @@ fn live_chat_creates_and_runs_a_two_task_goal_through_two_portals() {
             LocalCodexChatRequest {
                 conversation_id: format!("project:nucleus-local:panel:{conversation}"),
                 project_id: "project:nucleus-local".to_owned(),
+                resource_id: None,
                 message: "Inspect this Goal with task_workflow, then run this Goal now. Use the exact excerpt 'run this Goal now' as the mandate authority and a stable idempotency key. Do not accept review or complete the tasks.".to_owned(),
                 active_task_id: None,
                 active_goal_id: Some(goal.goal_id.clone()),
@@ -473,6 +479,7 @@ fn request(conversation: &str, message: &str) -> LocalCodexChatRequest {
     LocalCodexChatRequest {
         conversation_id: format!("project:nucleus-local:panel:{conversation}"),
         project_id: "project:nucleus-local".to_owned(),
+        resource_id: None,
         message: message.to_owned(),
         active_task_id: None,
         active_goal_id: None,
@@ -493,6 +500,7 @@ fn persist_legacy_session(
         StoredChatSession {
             conversation_id,
             project_id: "project:nucleus-local".to_owned(),
+            resource_id: None,
             session_id: format!("session:{conversation}"),
             provider_thread_id: format!("thread:{conversation}"),
             model: CHAT_MODEL.to_owned(),

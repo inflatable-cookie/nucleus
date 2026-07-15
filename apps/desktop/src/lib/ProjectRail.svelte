@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Icon, Menu, Text, type MenuItem } from "@poodle/svelte";
+  import { Dialog, Icon, Menu, SegmentedControl, Text, type MenuItem } from "@poodle/svelte";
   import {
     bot,
     chevronDown,
@@ -7,10 +7,11 @@
     folder,
     ellipsis,
     messageCircle,
+    folderCog,
     plus,
     refreshCw,
   } from "@poodle/icons-lucide";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import {
     buildStateListQuery,
     buildControlCommandEnvelope,
@@ -20,6 +21,11 @@
     type ControlProjectRecordDto,
     type TaskAgentWorkUnitDiagnosticDto,
   } from "./control";
+  import {
+    createNativePanelOverlayId,
+    setNativePanelOverlayVisibility,
+  } from "./nativePanelVisibility";
+  import ProjectResourceManager from "./ProjectResourceManager.svelte";
 
   type Props = {
     selectedProjectId: string | null;
@@ -40,18 +46,36 @@
   let pendingDeleteProjectId = $state<string | null>(null);
   let mutatingProjectId = $state<string | null>(null);
   let mutationFailure = $state<string | null>(null);
+  let projectManagerOpen = $state(false);
+  let projectManagerView = $state<"all" | "parked" | "archived">("all");
+  let managingResourcesProjectId = $state<string | null>(null);
+  const projectManagerOverlayId = createNativePanelOverlayId("project-manager");
+
+  const activeProjects = $derived(projects.filter((project) => project.status === "active"));
+  const managedProjects = $derived(
+    projectManagerView === "all"
+      ? projects
+      : projects.filter((project) => project.status === projectManagerView),
+  );
+  const managedResourceProject = $derived(
+    projects.find((project) => project.project_id === managingResourcesProjectId) ?? null,
+  );
 
   const projectCountLabel = $derived(
     loading
       ? "Loading"
       : failure
         ? "Unavailable"
-        : `${projects.length} project${projects.length === 1 ? "" : "s"}`,
+        : `${activeProjects.length} project${activeProjects.length === 1 ? "" : "s"}`,
   );
 
   $effect(() => {
     selectedProject =
-      projects.find((project) => project.project_id === selectedProjectId) ?? null;
+      activeProjects.find((project) => project.project_id === selectedProjectId) ?? null;
+  });
+
+  $effect(() => {
+    setNativePanelOverlayVisibility(projectManagerOverlayId, projectManagerOpen);
   });
 
   function isProjectOpen(projectId: string) {
@@ -74,6 +98,8 @@
 
   function projectMenuItems(project: ControlProjectRecordDto): MenuItem[] {
     return [
+      { value: "resources", label: "Resources" },
+      { value: "separator-resources", label: "", kind: "separator" },
       { value: "rename", label: "Rename" },
       project.status === "active"
         ? { value: "park", label: "Park" }
@@ -89,6 +115,11 @@
   function handleProjectAction(project: ControlProjectRecordDto, action: string) {
     mutationFailure = null;
     pendingDeleteProjectId = null;
+    if (action === "resources") {
+      managingResourcesProjectId = project.project_id;
+      projectManagerOpen = true;
+      return;
+    }
     if (action === "rename") {
       renamingProjectId = project.project_id;
       renameName = project.display_name;
@@ -99,6 +130,24 @@
       return;
     }
     void mutateProject(project, action as "park" | "archive" | "restore");
+  }
+
+  function changeProjectManagerView(view: string) {
+    projectManagerView = view as "all" | "parked" | "archived";
+    renamingProjectId = null;
+    pendingDeleteProjectId = null;
+    mutationFailure = null;
+    managingResourcesProjectId = null;
+  }
+
+  function handleManageProjectResources(event: Event) {
+    const projectId =
+      event instanceof CustomEvent && typeof event.detail?.projectId === "string"
+        ? event.detail.projectId
+        : null;
+    if (!projectId || !projects.some((project) => project.project_id === projectId)) return;
+    managingResourcesProjectId = projectId;
+    projectManagerOpen = true;
   }
 
   async function createProject() {
@@ -185,13 +234,15 @@
 
     try {
       const projectsResponse = await submitControlEnvelope(buildStateListQuery("projects"));
-      projects = projectRecordsFromResponse(projectsResponse);
+      const loadedProjects = projectRecordsFromResponse(projectsResponse);
+      const loadedActiveProjects = loadedProjects.filter((project) => project.status === "active");
+      projects = loadedProjects;
 
       const progress = await queryTaskWorkProgress();
       workUnits = progress.state === "records" ? progress.records : [];
 
-      if (!projects.some((project) => project.project_id === selectedProjectId)) {
-        selectedProjectId = projects[0]?.project_id ?? null;
+      if (!loadedActiveProjects.some((project) => project.project_id === selectedProjectId)) {
+        selectedProjectId = loadedActiveProjects[0]?.project_id ?? null;
       }
       if (selectedProjectId && openProjectIds.length === 0) {
         openProjectIds = [selectedProjectId];
@@ -209,6 +260,12 @@
 
   onMount(() => {
     void loadProjectRail();
+    window.addEventListener("nucleus:manage-project-resources", handleManageProjectResources);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener("nucleus:manage-project-resources", handleManageProjectResources);
+    setNativePanelOverlayVisibility(projectManagerOverlayId, false);
   });
 </script>
 
@@ -222,6 +279,9 @@
       <button class="icon-button" type="button" aria-label="New project" onclick={() => (creating = true)}>
         <Icon icon={plus} size="sm" />
       </button>
+      <button class="icon-button" type="button" aria-label="Manage projects" title="Manage projects" onclick={() => (projectManagerOpen = true)}>
+        <Icon icon={folderCog} size="sm" />
+      </button>
       <button
         class="icon-button"
         type="button"
@@ -233,6 +293,89 @@
       </button>
     </div>
   </header>
+
+  <Dialog
+    bind:open={projectManagerOpen}
+    title={managedResourceProject ? "Project resources" : "Manage projects"}
+    description={managedResourceProject ? "Folders and repositories" : `${projects.length} total`}
+    width="sm"
+    size="sm"
+    showCloseButton
+    onOpenChange={(open) => {
+      projectManagerOpen = open;
+      if (!open) {
+        renamingProjectId = null;
+        pendingDeleteProjectId = null;
+        mutationFailure = null;
+        managingResourcesProjectId = null;
+      }
+    }}
+  >
+    {#if managedResourceProject}
+      <ProjectResourceManager
+        project={managedResourceProject}
+        onBack={() => (managingResourcesProjectId = null)}
+        onChanged={loadProjectRail}
+      />
+    {:else}
+    <section class="project-manager">
+      <SegmentedControl
+        value={projectManagerView}
+        options={[
+          { value: "all", label: "All" },
+          { value: "parked", label: "Parked" },
+          { value: "archived", label: "Archived" },
+        ]}
+        size="sm"
+        ariaLabel="Project status filter"
+        onValueChange={changeProjectManagerView}
+      />
+      {#if mutationFailure}
+        <div class="manager-message"><Text tone="danger">{mutationFailure}</Text></div>
+      {/if}
+      <div class="project-manager-list">
+        {#each managedProjects as project (project.project_id)}
+          <section class="managed-project">
+            <div class="managed-project-row">
+              <span class="managed-project-copy">
+                <strong>{project.display_name}</strong>
+                <small>{project.status}</small>
+              </span>
+              <Menu
+                items={projectMenuItems(project)}
+                ariaLabel={`Project actions for ${project.display_name}`}
+                placement="bottom-end"
+                onAction={(action) => handleProjectAction(project, action)}
+              >
+                {#snippet trigger()}
+                  <span class="project-menu-button" aria-label={`Project actions for ${project.display_name}`}>
+                    <Icon icon={ellipsis} size="sm" />
+                  </span>
+                {/snippet}
+              </Menu>
+            </div>
+            {#if renamingProjectId === project.project_id}
+              <form class="inline-project-form manager-form" onsubmit={(event) => { event.preventDefault(); void renameProject(project); }}>
+                <input bind:value={renameName} aria-label="New project name" />
+                <button type="submit" disabled={!renameName.trim() || mutatingProjectId !== null}>Save</button>
+                <button type="button" onclick={() => (renamingProjectId = null)}>Cancel</button>
+              </form>
+            {/if}
+            {#if pendingDeleteProjectId === project.project_id}
+              <div class="delete-confirmation manager-confirmation">
+                <span>Delete only if this project has no retained work?</span>
+                <button type="button" class="danger-action" onclick={() => void mutateProject(project, "delete")}>Delete</button>
+                <button type="button" onclick={() => (pendingDeleteProjectId = null)}>Cancel</button>
+              </div>
+            {/if}
+          </section>
+        {:else}
+          <div class="manager-empty"><Text tone="muted">No {projectManagerView} projects.</Text></div>
+        {/each}
+      </div>
+    </section>
+    {/if}
+  </Dialog>
 
   {#if creating}
     <form class="inline-project-form" onsubmit={(event) => { event.preventDefault(); void createProject(); }}>
@@ -254,13 +397,13 @@
     <div class="rail-message">
       <Text tone="muted">Loading projects.</Text>
     </div>
-  {:else if projects.length === 0}
+  {:else if activeProjects.length === 0}
     <div class="rail-message">
-      <Text tone="muted">No projects available.</Text>
+      <Text tone="muted">No active projects. Restore one from project management or create a new project.</Text>
     </div>
   {:else}
     <div class="project-stack">
-      {#each projects as project}
+      {#each activeProjects as project}
         {@const open = isProjectOpen(project.project_id)}
         {@const active = project.project_id === selectedProjectId}
         {@const projectWorkUnits = workUnitsForProject(project.project_id)}
@@ -444,6 +587,64 @@
   .project-menu-button:hover:not(:disabled) {
     color: var(--poodle-color-text-primary);
     background: var(--poodle-color-background-surface);
+  }
+
+  .project-manager {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .managed-project-copy {
+    display: grid;
+    min-width: 0;
+  }
+
+  .managed-project-copy strong {
+    color: var(--poodle-color-text-primary);
+    font-size: 0.8125rem;
+  }
+
+  .managed-project-copy small {
+    color: var(--poodle-color-text-muted);
+    font-size: 0.6875rem;
+    text-transform: capitalize;
+  }
+
+  .project-manager-list {
+    display: grid;
+    gap: 0.25rem;
+    max-height: min(24rem, 55vh);
+    overflow: auto;
+  }
+
+  .managed-project {
+    min-width: 0;
+    padding: 0.375rem 0.25rem;
+    border-bottom: 1px solid var(--poodle-color-border-subtle);
+  }
+
+  .managed-project:last-child {
+    border-bottom: 0;
+  }
+
+  .managed-project-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .managed-project-copy {
+    flex: 1;
+  }
+
+  .manager-message,
+  .manager-empty {
+    padding: 0.5rem 0.25rem;
+  }
+
+  .inline-project-form.manager-form,
+  .delete-confirmation.manager-confirmation {
+    margin: 0.375rem 0 0;
   }
 
   .inline-project-form,

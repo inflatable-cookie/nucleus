@@ -21,8 +21,7 @@ export function setNativePanelOverlayIntersection(
   overlayRoot?: HTMLElement | null,
 ): void {
   if (!open || !overlayRoot) {
-    pendingMeasurements.delete(id);
-    dispatchNativePanelOverlay(id, open);
+    setNativePanelOverlayVisibility(id, open);
     return;
   }
 
@@ -48,6 +47,15 @@ export function setNativePanelOverlayIntersection(
 
     dispatchNativePanelOverlay(id, panelIds.length > 0, panelIds);
   });
+}
+
+export function setNativePanelOverlayVisibility(
+  id: string,
+  open: boolean,
+  panelIds?: string[],
+): void {
+  pendingMeasurements.delete(id);
+  dispatchNativePanelOverlay(id, open, panelIds);
 }
 
 function rectanglesIntersect(a: DOMRect, b: DOMRect): boolean {

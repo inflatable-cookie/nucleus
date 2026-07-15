@@ -52,17 +52,24 @@ struct DesktopState {
 fn list_editor_files(
     state: tauri::State<'_, DesktopState>,
     project_id: String,
+    resource_id: Option<String>,
 ) -> Result<Vec<EditorFileEntry>, String> {
-    nucleus_server::list_editor_files(&state.server_state, &project_id)
+    nucleus_server::list_editor_files(&state.server_state, &project_id, resource_id.as_deref())
 }
 
 #[tauri::command]
 fn read_editor_file(
     state: tauri::State<'_, DesktopState>,
     project_id: String,
+    resource_id: Option<String>,
     file_ref: String,
 ) -> Result<EditorFileSnapshot, String> {
-    nucleus_server::read_editor_file(&state.server_state, &project_id, &file_ref)
+    nucleus_server::read_editor_file(
+        &state.server_state,
+        &project_id,
+        resource_id.as_deref(),
+        &file_ref,
+    )
 }
 
 #[tauri::command]
@@ -484,6 +491,7 @@ fn save_workspace_ui_config(
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(DesktopState::new_with_snapshot_store(
             SqliteBackend::new(desktop_database_path()),
@@ -523,7 +531,8 @@ pub fn run() {
             terminal_panel::terminal_write,
             terminal_panel::terminal_resize,
             terminal_panel::terminal_close,
-            terminal_panel::terminal_close_for_panel
+            terminal_panel::terminal_close_for_panel,
+            terminal_panel::terminal_close_for_project
         ])
         .run(tauri::generate_context!())
         .expect("failed to run nucleus desktop");

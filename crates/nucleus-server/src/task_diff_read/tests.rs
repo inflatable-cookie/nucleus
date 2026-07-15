@@ -53,6 +53,7 @@ fn fixture(before: &[u8], after: &[u8]) -> Fixture {
             &state,
             TaskReviewSnapshotCaptureRequest {
                 project_id: PROJECT_ID.to_owned(),
+                resource_id: None,
                 work_item_id: WORK_ITEM_ID.to_owned(),
                 role: SnapshotRole::Baseline,
                 created_at_unix_seconds: 1,
@@ -65,6 +66,7 @@ fn fixture(before: &[u8], after: &[u8]) -> Fixture {
             &state,
             TaskReviewSnapshotCaptureRequest {
                 project_id: PROJECT_ID.to_owned(),
+                resource_id: None,
                 work_item_id: WORK_ITEM_ID.to_owned(),
                 role: SnapshotRole::Target,
                 created_at_unix_seconds: 2,

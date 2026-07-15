@@ -13,6 +13,7 @@
   import DiffPanel from "./DiffPanel.svelte";
   import EditorPanel from "./EditorPanel.svelte";
   import MemoryPanel from "./MemoryPanel.svelte";
+  import PanelResourceTargetControl from "./PanelResourceTargetControl.svelte";
   import TaskListPanel from "./TaskListPanel.svelte";
   import TerminalPanel from "./TerminalPanel.svelte";
   import { destroyBrowserWebview } from "./browserPanel";
@@ -356,6 +357,59 @@
 
   function panelsFor(window: WorkspaceWindowDto, region: RegionKey): WorkspacePanelDto[] {
     return window.regions[region];
+  }
+
+  function panelResourceTarget(panel: WorkspacePanelDto): string | null {
+    const projectId = selectedProject?.project_id;
+    return projectId ? panel.resource_targets[projectId] ?? null : null;
+  }
+
+  function effectivePanelResourceTarget(panel: WorkspacePanelDto): string | null {
+    const explicit = panelResourceTarget(panel);
+    if (explicit || !selectedProject) return explicit;
+    if (selectedProject.default_working_resource_id) {
+      return selectedProject.default_working_resource_id;
+    }
+    const available = selectedProject.resources.filter(
+      (resource) =>
+        resource.role === "working"
+        && resource.location_status === "present"
+        && resource.locator_available,
+    );
+    return available.length === 1 ? available[0].resource_id : null;
+  }
+
+  async function setPanelResourceTarget(
+    panel: WorkspacePanelDto,
+    resourceId: string | null,
+  ): Promise<void> {
+    const projectId = selectedProject?.project_id;
+    if (!config || !workspaceWindow || !projectId) return;
+    if (panel.kind === "terminal") {
+      try {
+        await closeTerminalPanel(projectId, panel.id);
+      } catch (caught) {
+        error = formatError(caught);
+        return;
+      }
+    }
+    const resourceTargets = { ...panel.resource_targets };
+    if (resourceId) resourceTargets[projectId] = resourceId;
+    else delete resourceTargets[projectId];
+    const regions = Object.fromEntries(
+      regionKeys().map((region) => [
+        region,
+        workspaceWindow.regions[region].map((candidate) =>
+          candidate.id === panel.id
+            ? { ...candidate, resource_targets: resourceTargets }
+            : candidate,
+        ),
+      ]),
+    ) as WorkspaceWindowDto["regions"];
+    await persist({
+      ...config,
+      window: { ...workspaceWindow, regions },
+    });
   }
 
   function panelTabsFor(panels: WorkspacePanelDto[]): PanelTabItem[] {
@@ -776,14 +830,20 @@
 
 {#snippet PanelPlaceholder(panel: WorkspacePanelDto | null)}
   {#if panel?.kind === "agentChat"}
-    <AgentChatPanel
-      conversationId={`${selectedProject?.project_id ?? "unselected"}:${panel.id}`}
-      projectId={selectedProject?.project_id ?? null}
-      activeTask={selectedTask}
-      activeGoal={selectedGoal}
-      onClearActiveTask={() => (selectedTaskId = null)}
-      onClearActiveGoal={() => (selectedGoalId = null)}
-    />
+    <div class="resource-panel-shell">
+      {@render ResourceTargetControl(panel)}
+      <div class="resource-panel-body">
+        <AgentChatPanel
+          conversationId={`${selectedProject?.project_id ?? "unselected"}:${panel.id}`}
+          projectId={selectedProject?.project_id ?? null}
+          resourceId={effectivePanelResourceTarget(panel)}
+          activeTask={selectedTask}
+          activeGoal={selectedGoal}
+          onClearActiveTask={() => (selectedTaskId = null)}
+          onClearActiveGoal={() => (selectedGoalId = null)}
+        />
+      </div>
+    </div>
   {:else if panel?.kind === "tasks"}
     <TaskListPanel
       selectedProjectId={selectedProject?.project_id ?? null}
@@ -793,11 +853,31 @@
       bind:selectedTask
     />
   {:else if panel?.kind === "editor"}
-    <EditorPanel projectId={selectedProject?.project_id ?? null} requestedFileRef={editorFileRef} />
+    <div class="resource-panel-shell">
+      {@render ResourceTargetControl(panel)}
+      <div class="resource-panel-body">
+        <EditorPanel
+          projectId={selectedProject?.project_id ?? null}
+          resourceId={effectivePanelResourceTarget(panel)}
+          requestedFileRef={editorFileRef}
+        />
+      </div>
+    </div>
   {:else if panel?.kind === "browser"}
     <BrowserPanel panelId={panel.id} />
   {:else if panel?.kind === "terminal"}
-    <TerminalPanel panelId={panel.id} projectId={selectedProject?.project_id ?? null} />
+    <div class="resource-panel-shell">
+      {@render ResourceTargetControl(panel)}
+      <div class="resource-panel-body">
+        {#key `${selectedProject?.revision_id ?? "unselected"}:${effectivePanelResourceTarget(panel) ?? "host-default"}`}
+          <TerminalPanel
+            panelId={panel.id}
+            projectId={selectedProject?.project_id ?? null}
+            resourceId={effectivePanelResourceTarget(panel)}
+          />
+        {/key}
+      </div>
+    </div>
   {:else if panel?.kind === "diff"}
     <DiffPanel
       projectId={selectedProject?.project_id ?? null}
@@ -818,6 +898,16 @@
         {/if}
       </div>
     </Surface>
+  {/if}
+{/snippet}
+
+{#snippet ResourceTargetControl(panel: WorkspacePanelDto)}
+  {#if selectedProject}
+    <PanelResourceTargetControl
+      project={selectedProject}
+      resourceId={panelResourceTarget(panel)}
+      onValueChange={(resourceId) => void setPanelResourceTarget(panel, resourceId)}
+    />
   {/if}
 {/snippet}
 
@@ -960,6 +1050,20 @@
     gap: var(--poodle-space-stack-sm);
     min-width: 0;
     min-height: 100%;
+  }
+
+  .resource-panel-shell,
+  .resource-panel-body {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .resource-panel-body {
+    flex: 1;
   }
 
   @media (max-width: 1040px) {

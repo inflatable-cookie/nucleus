@@ -31,10 +31,11 @@ operator interaction review without making Tauri the durable terminal API.
 The former Context placeholder now migrates to a read-only Memory panel over
 accepted-memory and proposal summaries; its operator validation is current.
 Projects now generalize beyond repository bookmarks: durable scopes may be
-created by name with zero resources, and compact server-backed lifecycle
-controls are ready for operator validation. The next runway adds zero-to-many
-folder or Git resources, then transient chat promotion and optional Shared
-project files behind advanced controls.
+created by name with zero resources, compact lifecycle controls are validated,
+and the host-owned attach/update/repair/remove boundary detects plain folders
+and Git worktrees. Compact resource management and conditional panel targeting
+are now in place. The active runway validates zero-, one-, and multi-resource
+workflows before transient chat promotion and optional Shared project files.
 
 Current planning artifacts:
 

@@ -4,7 +4,7 @@ use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId, ModelRoute};
 use nucleus_core::RevisionId;
 use nucleus_native_harness::NativeStewardCommandRequest;
 use nucleus_planning::{GoalStatus, PlanningGoalId};
-use nucleus_projects::{ProjectId, ProjectResourceId, ResourceRepairAction};
+use nucleus_projects::{ProjectId, ProjectResourceId, ProjectResourceRole};
 use nucleus_tasks::{
     AcceptanceCriterion, AgentReadiness, TaskActionType, TaskActivityState, TaskId, TaskImportance,
 };
@@ -100,11 +100,7 @@ pub struct ReadOnlyCommand {
 pub enum ProjectCommand {
     Create(ProjectCreateCommand),
     Lifecycle(ProjectLifecycleCommand),
-    RepairResource {
-        project_id: ProjectId,
-        resource_id: ProjectResourceId,
-        action: ResourceRepairAction,
-    },
+    Resource(ProjectResourceCommand),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -132,6 +128,36 @@ pub enum ProjectLifecycleAction {
     Archive,
     Restore,
     Delete,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectResourceCommand {
+    pub project_id: ProjectId,
+    pub expected_revision: RevisionId,
+    pub actor_ref: String,
+    pub authority_host_ref: String,
+    pub idempotency_key: String,
+    pub action: ProjectResourceAction,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectResourceAction {
+    Attach {
+        locator: std::path::PathBuf,
+    },
+    Update {
+        resource_id: ProjectResourceId,
+        display_name: Option<String>,
+        role: Option<ProjectResourceRole>,
+        set_as_default: Option<bool>,
+    },
+    Repair {
+        resource_id: ProjectResourceId,
+        locator: std::path::PathBuf,
+    },
+    Remove {
+        resource_id: ProjectResourceId,
+    },
 }
 
 /// Task state commands.

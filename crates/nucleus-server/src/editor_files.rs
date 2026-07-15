@@ -6,9 +6,9 @@ use nucleus_local_store::LocalStoreBackend;
 use serde::{Deserialize, Serialize};
 
 use crate::project_file_policy::{
-    admitted_path, admitted_project_walk, project_root, MAX_ADMITTED_PROJECT_FILES,
-    MAX_PROJECT_TEXT_FILE_BYTES,
+    admitted_path, admitted_project_walk, MAX_ADMITTED_PROJECT_FILES, MAX_PROJECT_TEXT_FILE_BYTES,
 };
+use crate::project_resource_target::resolve_project_resource_target;
 use crate::ServerStateService;
 
 const MAX_EDITOR_FILE_BYTES: u64 = MAX_PROJECT_TEXT_FILE_BYTES;
@@ -26,6 +26,7 @@ pub struct EditorFileEntry {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EditorFileSnapshot {
     pub project_id: String,
+    pub resource_id: String,
     pub file_ref: String,
     pub display_path: String,
     pub content: String,
@@ -38,6 +39,8 @@ pub struct EditorFileSnapshot {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EditorFileSaveRequest {
     pub project_id: String,
+    #[serde(default)]
+    pub resource_id: Option<String>,
     pub file_ref: String,
     pub expected_content_revision: String,
     pub content: String,
@@ -46,25 +49,27 @@ pub struct EditorFileSaveRequest {
 pub fn list_editor_files<B>(
     state: &ServerStateService<B>,
     project_id: &str,
+    resource_id: Option<&str>,
 ) -> Result<Vec<EditorFileEntry>, String>
 where
     B: LocalStoreBackend,
 {
-    let root = project_root(state, project_id)?;
-    discover(&root)
+    let target = resolve_project_resource_target(state, project_id, resource_id)?;
+    discover(&target.root)
 }
 
 pub fn read_editor_file<B>(
     state: &ServerStateService<B>,
     project_id: &str,
+    resource_id: Option<&str>,
     file_ref: &str,
 ) -> Result<EditorFileSnapshot, String>
 where
     B: LocalStoreBackend,
 {
-    let root = project_root(state, project_id)?;
-    let entry = resolve_entry(&root, file_ref)?;
-    snapshot(project_id, &root, &entry)
+    let target = resolve_project_resource_target(state, project_id, resource_id)?;
+    let entry = resolve_entry(&target.root, file_ref)?;
+    snapshot(project_id, &target.resource_id, &target.root, &entry)
 }
 
 pub fn save_editor_file<B>(
@@ -77,12 +82,17 @@ where
     if request.content.len() as u64 > MAX_EDITOR_FILE_BYTES {
         return Err("editor file exceeds the 2 MiB save limit".to_owned());
     }
-    let root = project_root(state, &request.project_id)?;
+    let target = resolve_project_resource_target(
+        state,
+        &request.project_id,
+        request.resource_id.as_deref(),
+    )?;
+    let root = target.root;
     let entry = resolve_entry(&root, &request.file_ref)?;
     if !entry.writable {
         return Err("editor file is read-only".to_owned());
     }
-    let current = snapshot(&request.project_id, &root, &entry)?;
+    let current = snapshot(&request.project_id, &target.resource_id, &root, &entry)?;
     if current.content_revision != request.expected_content_revision {
         return Err("editor file conflict: content changed since it was opened".to_owned());
     }
@@ -108,7 +118,7 @@ where
         .persist(&path)
         .map_err(|error| format!("editor save replacement failed: {}", error.error))?;
 
-    snapshot(&request.project_id, &root, &entry)
+    snapshot(&request.project_id, &target.resource_id, &root, &entry)
 }
 
 fn discover(root: &Path) -> Result<Vec<EditorFileEntry>, String> {
@@ -155,6 +165,7 @@ fn resolve_entry(root: &Path, expected_ref: &str) -> Result<EditorFileEntry, Str
 
 fn snapshot(
     project_id: &str,
+    resource_id: &str,
     root: &Path,
     entry: &EditorFileEntry,
 ) -> Result<EditorFileSnapshot, String> {
@@ -167,6 +178,7 @@ fn snapshot(
         String::from_utf8(bytes).map_err(|_| "editor file is not valid UTF-8 text".to_owned())?;
     Ok(EditorFileSnapshot {
         project_id: project_id.to_owned(),
+        resource_id: resource_id.to_owned(),
         file_ref: entry.file_ref.clone(),
         display_path: entry.display_path.clone(),
         language_hint: entry.language_hint.clone(),
@@ -249,27 +261,31 @@ mod tests {
         std::os::unix::fs::symlink("/etc/hosts", dir.path().join("outside.txt"))
             .expect("outside symlink");
 
-        let files = list_editor_files(&state, "project:nucleus-local").expect("list");
+        let files = list_editor_files(&state, "project:nucleus-local", None).expect("list");
         assert!(files.iter().any(|file| file.display_path == "demo.rs"));
         assert!(!files.iter().any(|file| matches!(
             file.display_path.as_str(),
             "ignored.rs" | "oversized.txt" | "outside.txt" | "target/hidden.rs" | "binary.bin"
         )));
-        assert!(
-            read_editor_file(&state, "project:nucleus-local", "editor-file:invented")
-                .expect_err("invented ref")
-                .contains("not found")
-        );
+        assert!(read_editor_file(
+            &state,
+            "project:nucleus-local",
+            None,
+            "editor-file:invented",
+        )
+        .expect_err("invented ref")
+        .contains("not found"));
         let demo = files
             .iter()
             .find(|file| file.display_path == "demo.rs")
             .expect("demo");
         let opened =
-            read_editor_file(&state, "project:nucleus-local", &demo.file_ref).expect("read");
+            read_editor_file(&state, "project:nucleus-local", None, &demo.file_ref).expect("read");
         let saved = save_editor_file(
             &state,
             &EditorFileSaveRequest {
                 project_id: opened.project_id.clone(),
+                resource_id: Some(opened.resource_id.clone()),
                 file_ref: opened.file_ref.clone(),
                 expected_content_revision: opened.content_revision.clone(),
                 content: "fn main() { println!(\"ok\"); }\n".to_owned(),
@@ -282,6 +298,7 @@ mod tests {
             &state,
             &EditorFileSaveRequest {
                 project_id: opened.project_id,
+                resource_id: Some(opened.resource_id),
                 file_ref: opened.file_ref,
                 expected_content_revision: opened.content_revision,
                 content: "stale".to_owned(),
@@ -289,5 +306,49 @@ mod tests {
         )
         .expect_err("conflict")
         .contains("conflict"));
+    }
+
+    #[test]
+    fn explicit_resource_target_keeps_editor_reads_in_the_selected_root() {
+        let (first, state) = fixture();
+        let second = tempfile::tempdir().expect("second resource");
+        fs::write(first.path().join("first.txt"), "first").expect("first file");
+        fs::write(second.path().join("second.txt"), "second").expect("second file");
+        let id = PersistenceRecordId("project:nucleus-local".to_owned());
+        let mut record = state.projects().get(&id).expect("get").expect("project");
+        let previous = record.revision_id.clone();
+        let mut project = decode_project_storage_record(&record.payload.bytes).expect("decode");
+        let mut second_resource = project.resources[0].clone();
+        second_resource.resource_id = "resource:second".to_owned();
+        second_resource.display_name = "Second".to_owned();
+        second_resource.current_locator = Some(second.path().to_string_lossy().into_owned());
+        project.resources.push(second_resource);
+        record.revision_id = RevisionId("rev:editor-multi-resource".to_owned());
+        record.payload = nucleus_local_store::LocalStoreRecordPayload {
+            media_type: Some("application/json".to_owned()),
+            bytes: encode_project_storage_payload(&project).expect("encode"),
+        };
+        state
+            .projects()
+            .put(record, RevisionExpectation::Exact(previous))
+            .expect("put");
+
+        let files = list_editor_files(&state, "project:nucleus-local", Some("resource:second"))
+            .expect("list selected resource");
+        assert!(files.iter().any(|file| file.display_path == "second.txt"));
+        assert!(!files.iter().any(|file| file.display_path == "first.txt"));
+        let second_entry = files
+            .iter()
+            .find(|file| file.display_path == "second.txt")
+            .expect("second entry");
+        let opened = read_editor_file(
+            &state,
+            "project:nucleus-local",
+            Some("resource:second"),
+            &second_entry.file_ref,
+        )
+        .expect("read selected resource");
+        assert_eq!(opened.resource_id, "resource:second");
+        assert_eq!(opened.content, "second");
     }
 }

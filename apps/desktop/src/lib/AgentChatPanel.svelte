@@ -33,6 +33,7 @@
   let {
     conversationId,
     projectId,
+    resourceId = null,
     activeGoal,
     activeTask,
     onClearActiveGoal,
@@ -40,6 +41,7 @@
   }: {
     conversationId: string;
     projectId: string | null;
+    resourceId?: string | null;
     activeGoal: ControlGoalRecordDto | null;
     activeTask: ControlTaskRecordDto | null;
     onClearActiveGoal: () => void;
@@ -167,6 +169,7 @@
       const reply = await sendAgentChatMessage({
         conversation_id: conversationId,
         project_id: projectId,
+        resource_id: resourceId,
         message,
         active_goal_id: activeGoal?.goal_id ?? null,
         active_task_id: activeTask?.task_id ?? null,

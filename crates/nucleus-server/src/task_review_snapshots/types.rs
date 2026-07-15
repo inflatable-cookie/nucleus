@@ -49,6 +49,8 @@ pub struct SnapshotManifest {
     pub snapshot_ref: SnapshotRef,
     pub manifest_ref: ManifestRef,
     pub project_id: String,
+    #[serde(default)]
+    pub resource_id: Option<String>,
     pub work_item_id: String,
     pub role: SnapshotRole,
     pub created_at_unix_seconds: u64,
@@ -60,6 +62,8 @@ pub struct SnapshotManifest {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TaskReviewSnapshotCaptureRequest {
     pub project_id: String,
+    #[serde(default)]
+    pub resource_id: Option<String>,
     pub work_item_id: String,
     pub role: SnapshotRole,
     pub created_at_unix_seconds: u64,

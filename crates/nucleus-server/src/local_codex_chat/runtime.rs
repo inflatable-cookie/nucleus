@@ -27,6 +27,7 @@ pub(super) struct LocalCodexChatSession {
     thread_id: String,
     model: String,
     reasoning_effort: Option<String>,
+    resource_id: String,
     child: Child,
     rpc: CodexAppServerRpc,
 }
@@ -36,11 +37,13 @@ impl LocalCodexChatSession {
         &self,
         conversation_id: String,
         project_id: String,
+        resource_id: String,
         turn_count: u64,
     ) -> StoredChatSession {
         StoredChatSession {
             conversation_id,
             project_id,
+            resource_id: Some(resource_id),
             session_id: self.session_id.clone(),
             provider_thread_id: self.thread_id.clone(),
             model: self.model.clone(),
@@ -55,6 +58,7 @@ impl LocalCodexChatSession {
     pub(super) fn start(
         conversation_id: &str,
         project_root: &str,
+        resource_id: &str,
         stored: Option<&StoredChatSession>,
         migration_context: Option<&str>,
         model: &str,
@@ -70,8 +74,10 @@ impl LocalCodexChatSession {
                 )
             },
         );
-        let can_resume =
-            stored.is_some_and(|session| session.task_toolset_version >= CHAT_TASK_TOOLSET_VERSION);
+        let can_resume = stored.is_some_and(|session| {
+            session.task_toolset_version >= CHAT_TASK_TOOLSET_VERSION
+                && session.resource_id.as_deref() == Some(resource_id)
+        });
         let response = if can_resume {
             let stored = stored.expect("resume capability requires stored session");
             rpc.request(
@@ -134,9 +140,14 @@ impl LocalCodexChatSession {
             thread_id,
             model,
             reasoning_effort,
+            resource_id: resource_id.to_owned(),
             child,
             rpc,
         })
+    }
+
+    pub(super) fn targets_resource(&self, resource_id: &str) -> bool {
+        self.resource_id == resource_id
     }
 
     pub(super) fn send_turn<F>(
@@ -175,6 +186,13 @@ impl LocalCodexChatSession {
             task_receipts,
             workflow_receipts,
         })
+    }
+}
+
+impl Drop for LocalCodexChatSession {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -338,13 +356,6 @@ mod tests {
         assert_eq!(params["effort"], "medium");
         assert_eq!(params["sandboxPolicy"]["type"], "readOnly");
         assert_eq!(params["approvalPolicy"], "never");
-    }
-}
-
-impl Drop for LocalCodexChatSession {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 

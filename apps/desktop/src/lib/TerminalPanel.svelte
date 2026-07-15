@@ -9,7 +9,11 @@
     type TerminalSessionSnapshot,
   } from "./terminalClient";
 
-  let { panelId, projectId }: { panelId: string; projectId: string | null } = $props();
+  let {
+    panelId,
+    projectId,
+    resourceId = null,
+  }: { panelId: string; projectId: string | null; resourceId?: string | null } = $props();
 
   let viewport = $state<HTMLDivElement | null>(null);
   let failure = $state<string | null>(null);
@@ -88,6 +92,7 @@
         {
           projectId: selectedProjectId,
           panelId,
+          resourceId,
           rows: Math.max(1, terminal.rows),
           cols: Math.max(1, terminal.cols),
         },

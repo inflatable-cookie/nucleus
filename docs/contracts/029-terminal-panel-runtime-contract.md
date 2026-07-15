@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-07-14
+Updated: 2026-07-15
 
 ## Purpose
 
@@ -36,8 +36,9 @@ Topology examples:
 - embedded desktop host: PTY and shell run in the desktop host process
 - local sidecar: PTY and shell run in the sidecar
 - remote authoritative host: client streams terminal frames to that host
-- remote worker: allowed only when the project authority map assigns terminal
-  authority and the worker can resolve the project source location
+- remote worker: allowed when the project authority map assigns terminal
+  authority; resource-targeted sessions additionally require the worker to
+  resolve that resource's location
 
 ## Session Identity
 
@@ -104,7 +105,11 @@ Initial shell rules:
 
 - resolve the host user's configured shell
 - fall back to a platform shell when unavailable
-- start inside the host-resolved project root
+- start inside the host-resolved default working resource when one is configured
+- for a resource-free project, start inside the authoritative host user's home
+  directory
+- fail truthfully when a configured default resource is unavailable; do not
+  silently replace a broken resource target with the host fallback
 - advertise `TERM=xterm-256color`, `COLORTERM=truecolor`, and
   `TERM_PROGRAM=Nucleus`
 
@@ -121,6 +126,7 @@ deferred.
 - credentials and environment values are never copied into durable terminal
 records
 - remote session access requires authenticated, project-scoped host access
+- clients cannot nominate the resource-free fallback path
 - terminal execution remains distinct from admitted agent command execution
 
 ## First Slice

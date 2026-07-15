@@ -14,6 +14,7 @@ mod event_store;
 mod goal_commands;
 mod handler;
 mod project_commands;
+mod project_resource_commands;
 mod queries;
 mod steward_commands;
 mod task_commands;

@@ -56,6 +56,13 @@ Plain folders are first-class resources and zero-resource projects are valid.
 Absolute paths and remote URIs are location hints resolved by the authoritative
 host. They are never project or resource identity.
 
+Resource membership mutation uses one host-routed command family with attach,
+update, repair, and remove actions. Every mutation carries the expected project
+revision, actor, idempotency key, and project-metadata authority host. Attach
+and repair inspect locators on that host; clients do not read the path to infer
+kind or health. Removing a membership never removes or modifies filesystem
+content.
+
 ## Retention
 
 Projects may be transient or durable.
@@ -72,11 +79,32 @@ memory, or attached resource.
 ## Working Resource
 
 A project may nominate a default working resource and relative directory for
-editor, terminal, browser, diff, and agent execution convenience.
+editor, browser, diff, agent execution, and terminal starting-directory
+convenience.
 
 The default is not project identity. Filesystem-dependent requests must carry
 or resolve a compatible resource target. When no compatible resource exists,
 the project remains valid and the action returns a truthful capability error.
+An operator terminal is the exception: a resource-free project may start a
+shell in the authoritative host user's home directory. This fallback does not
+invent a project resource or grant file-backed capabilities to other actions.
+
+The authoritative host resolves working-directory targets in this order:
+
+1. the request's explicit resource membership id
+2. the project's configured default working resource and relative directory
+3. the sole compatible working resource, when exactly one exists
+
+Zero compatible resources produce capability guidance. Multiple compatible
+resources without an explicit or configured target produce an ambiguity error;
+the host must not choose by list order. Resolved paths never cross the client
+boundary.
+
+Panel target choices are stored as project-id-to-resource-id attribution on the
+panel. This keeps a deliberate choice across remount and restart without
+turning it into a global project default or leaking it into another project.
+Task execution and review snapshots retain the resolved resource id as task
+evidence attribution.
 
 ## Management Repository
 
@@ -188,6 +216,10 @@ Expected repair actions:
 - keep locator history
 - mark unresolved membership if not found
 - keep tasks and history attached to the project
+
+Selecting a replacement locator preserves resource identity, records locator
+history, and fails when the replacement changes the resource kind. A resource
+bound to Shared project files cannot be removed until that binding is detached.
 
 ## Task Interface
 

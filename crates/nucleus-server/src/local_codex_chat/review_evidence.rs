@@ -16,6 +16,7 @@ use crate::ServerStateService;
 
 pub(super) struct TaskReviewEvidenceInput {
     pub project_id: String,
+    pub resource_id: Option<String>,
     pub task_id: String,
     pub work_item_id: String,
     pub command_id: String,
@@ -123,6 +124,7 @@ where
             state,
             TaskReviewSnapshotCaptureRequest {
                 project_id: input.project_id.clone(),
+                resource_id: input.resource_id.clone(),
                 work_item_id: input.work_item_id.clone(),
                 role,
                 created_at_unix_seconds: now_epoch_seconds()?,

@@ -199,6 +199,10 @@ Current checkpoint:
 - project resource foundation, minimal control, multi-resource targeting,
   transient chat, and optional Shared project files are the next sequenced
   product roadmaps
+- workspace actions now resolve explicit, configured-default, or sole working
+  resources on the host and retain panel/task resource attribution
+- compact project resource management now handles attach, default, repair,
+  and removal while keeping ordinary one-resource panels free of topology UI
 
 ## Roadmaps
 
@@ -239,8 +243,8 @@ Current checkpoint:
 - `035-host-routed-terminal-panel.md` - completed
 - `036-project-memory-panel.md` - completed
 - `037-project-resource-foundation.md` - completed
-- `038-project-control-workflow.md` - active
-- `039-multi-resource-attachment-and-targeting.md` - planned
+- `038-project-control-workflow.md` - completed
+- `039-multi-resource-attachment-and-targeting.md` - active
 - `040-transient-chat-and-promotion.md` - planned
 - `041-shared-project-files-control.md` - planned
 
@@ -248,7 +252,7 @@ Current checkpoint:
 
 Ready cards:
 
-- `batch-cards/189-project-control-validation.md`
+- `batch-cards/193-multi-resource-workflow-validation.md`
 
 Completed cards:
 
@@ -256,13 +260,13 @@ Completed cards:
 - `batch-cards/186-project-resource-foundation-validation.md`
 - `batch-cards/187-project-lifecycle-command-boundary.md`
 - `batch-cards/188-minimal-project-rail-controls.md`
-
-Planned cards:
-
+- `batch-cards/189-project-control-validation.md`
 - `batch-cards/190-resource-attachment-and-repair-boundary.md`
 - `batch-cards/191-workspace-resource-target-resolution.md`
 - `batch-cards/192-compact-project-resource-controls.md`
-- `batch-cards/193-multi-resource-workflow-validation.md`
+
+Planned cards:
+
 - `batch-cards/194-transient-project-retention-boundary.md`
 - `batch-cards/195-new-chat-and-in-place-promotion.md`
 - `batch-cards/196-transient-chat-validation.md`

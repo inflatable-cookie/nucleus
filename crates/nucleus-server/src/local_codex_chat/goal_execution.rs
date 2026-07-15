@@ -20,7 +20,6 @@ use serde::{Deserialize, Serialize};
 use super::goal_inspection::goal_record;
 use super::goal_run::{read_goal_run_plan, GoalRunPlan, GoalRunPlanTask, GoalRunRoute};
 use super::mandates::{expire_workflow_mandate, read_workflow_mandate, WorkflowMandateStatus};
-use super::project_root;
 use super::review_evidence::{
     capture_baseline, capture_completed, CompletedReviewEvidence, TaskReviewEvidenceInput,
 };
@@ -120,16 +119,34 @@ pub fn execute_goal_run<B>(
 where
     B: LocalStoreBackend,
 {
-    execute_goal_run_with(state, snapshot_store, request, &mut |input, on_started| {
-        run_task(
-            TaskExecutionRequest {
-                project_root: &input.project_root,
-                route: &input.route,
-                prompt: &input.prompt,
-            },
-            on_started,
-        )
-    })
+    execute_goal_run_for_resource(state, snapshot_store, request, None)
+}
+
+pub(super) fn execute_goal_run_for_resource<B>(
+    state: &ServerStateService<B>,
+    snapshot_store: Option<&TaskReviewSnapshotStore>,
+    request: GoalRunExecutionRequest,
+    resource_id: Option<&str>,
+) -> Result<GoalRunExecutionRecord, String>
+where
+    B: LocalStoreBackend,
+{
+    execute_goal_run_with_resource(
+        state,
+        snapshot_store,
+        request,
+        resource_id,
+        &mut |input, on_started| {
+            run_task(
+                TaskExecutionRequest {
+                    project_root: &input.project_root,
+                    route: &input.route,
+                    prompt: &input.prompt,
+                },
+                on_started,
+            )
+        },
+    )
 }
 
 struct GoalTaskRunInput {
@@ -138,10 +155,28 @@ struct GoalTaskRunInput {
     prompt: String,
 }
 
+#[cfg(test)]
 fn execute_goal_run_with<B, F>(
     state: &ServerStateService<B>,
     snapshot_store: Option<&TaskReviewSnapshotStore>,
     request: GoalRunExecutionRequest,
+    runner: &mut F,
+) -> Result<GoalRunExecutionRecord, String>
+where
+    B: LocalStoreBackend,
+    F: FnMut(
+        GoalTaskRunInput,
+        &mut dyn FnMut(&TaskExecutionLinkage) -> Result<(), String>,
+    ) -> Result<TaskExecutionOutcome, String>,
+{
+    execute_goal_run_with_resource(state, snapshot_store, request, None, runner)
+}
+
+fn execute_goal_run_with_resource<B, F>(
+    state: &ServerStateService<B>,
+    snapshot_store: Option<&TaskReviewSnapshotStore>,
+    request: GoalRunExecutionRequest,
+    resource_id: Option<&str>,
     runner: &mut F,
 ) -> Result<GoalRunExecutionRecord, String>
 where
@@ -160,7 +195,13 @@ where
         return Ok(existing);
     }
     validate_continuation(state, &plan)?;
-    let project_root = project_root(state, &plan.project_id)?;
+    let target = crate::project_resource_target::resolve_project_resource_target(
+        state,
+        &plan.project_id,
+        resource_id,
+    )?;
+    let project_root = target.root.to_string_lossy().into_owned();
+    let resource_id = Some(target.resource_id);
     let mut execution = GoalRunExecutionRecord {
         execution_id: format!("execution:{}", plan.plan_id),
         plan_id: plan.plan_id.clone(),
@@ -231,6 +272,7 @@ where
         };
         let review_input = TaskReviewEvidenceInput {
             project_id: plan.project_id.clone(),
+            resource_id: resource_id.clone(),
             task_id: plan_task.task_id.clone(),
             work_item_id: task_record.work_item_id.clone(),
             command_id: task_record.dispatch.command_id.clone(),

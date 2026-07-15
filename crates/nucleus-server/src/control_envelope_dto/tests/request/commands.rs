@@ -44,6 +44,58 @@ fn request_envelope_dto_round_trips_project_create_and_lifecycle_commands() {
 }
 
 #[test]
+fn request_envelope_dto_round_trips_project_resource_commands() {
+    let commands = [
+        crate::commands::ProjectResourceAction::Attach {
+            locator: std::path::PathBuf::from("/host/project"),
+        },
+        crate::commands::ProjectResourceAction::Update {
+            resource_id: nucleus_projects::ProjectResourceId("resource:one".to_owned()),
+            display_name: Some("Source".to_owned()),
+            role: Some(nucleus_projects::ProjectResourceRole::Working),
+            set_as_default: Some(true),
+        },
+        crate::commands::ProjectResourceAction::Repair {
+            resource_id: nucleus_projects::ProjectResourceId("resource:one".to_owned()),
+            locator: std::path::PathBuf::from("/host/moved-project"),
+        },
+        crate::commands::ProjectResourceAction::Remove {
+            resource_id: nucleus_projects::ProjectResourceId("resource:one".to_owned()),
+        },
+    ];
+
+    for (index, action) in commands.into_iter().enumerate() {
+        let request = ServerControlRequest {
+            id: ServerControlRequestId(format!("request:resource:{index}")),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerControlRequestKind::Command(crate::commands::ServerCommand {
+                id: ServerCommandId(format!("command:resource:{index}")),
+                client_id: ClientId("client:desktop".to_owned()),
+                kind: crate::commands::ServerCommandKind::Project(
+                    crate::commands::ProjectCommand::Resource(
+                        crate::commands::ProjectResourceCommand {
+                            project_id: ProjectId("project:one".to_owned()),
+                            expected_revision: RevisionId("rev:project:1".to_owned()),
+                            actor_ref: "operator:desktop".to_owned(),
+                            authority_host_ref: "host:embedded-desktop".to_owned(),
+                            idempotency_key: format!("resource:{index}"),
+                            action,
+                        },
+                    ),
+                ),
+            }),
+        };
+
+        let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+        let json = serde_json::to_string(&dto).expect("json");
+        let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded");
+        let restored = ServerControlRequest::try_from(decoded).expect("restored");
+
+        assert_eq!(restored, request);
+    }
+}
+
+#[test]
 fn request_envelope_dto_serializes_supported_task_command() {
     let request = ServerControlRequest {
         id: ServerControlRequestId("request:dto:command".to_owned()),

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use nucleus_local_store::LocalStoreBackend;
 
-use crate::project_file_policy::project_root;
+use crate::project_resource_target::resolve_project_resource_target;
 use crate::ServerStateService;
 
 use super::capture::capture_project;
@@ -53,9 +53,15 @@ impl TaskReviewSnapshotStore {
     where
         B: LocalStoreBackend,
     {
-        let root = project_root(state, &request.project_id)
-            .map_err(SnapshotStoreError::CaptureUnavailable)?;
-        self.capture_root(&root, request)
+        let target = resolve_project_resource_target(
+            state,
+            &request.project_id,
+            request.resource_id.as_deref(),
+        )
+        .map_err(SnapshotStoreError::CaptureUnavailable)?;
+        let mut request = request;
+        request.resource_id = Some(target.resource_id);
+        self.capture_root(&target.root, request)
     }
 
     pub fn resolve_manifest(
@@ -237,6 +243,7 @@ impl TaskReviewSnapshotStore {
             snapshot_ref: snapshot_ref.clone(),
             manifest_ref: manifest_ref.clone(),
             project_id: request.project_id,
+            resource_id: request.resource_id,
             work_item_id: request.work_item_id,
             role: request.role,
             created_at_unix_seconds: request.created_at_unix_seconds,

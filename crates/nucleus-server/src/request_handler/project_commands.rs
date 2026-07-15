@@ -29,9 +29,9 @@ where
     let result = match command {
         ProjectCommand::Create(command) => create_project(handler, command_id, command),
         ProjectCommand::Lifecycle(command) => lifecycle_project(handler, command_id, command),
-        ProjectCommand::RepairResource { .. } => Err(ServerControlError::Deferred {
-            reason: "project resource repair is not implemented in the lifecycle lane".to_owned(),
-        }),
+        ProjectCommand::Resource(command) => {
+            super::project_resource_commands::mutate_project_resource(handler, command_id, command)
+        }
     };
     match result {
         Ok(()) => ServerCommandReceiptStatus::AcceptedForStateMutation,

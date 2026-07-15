@@ -1,6 +1,6 @@
 # 190 Resource Attachment And Repair Boundary
 
-Status: planned
+Status: completed
 Owner: Codex
 Updated: 2026-07-15
 Milestone: `../039-multi-resource-attachment-and-targeting.md`
@@ -22,3 +22,12 @@ commands for project resources.
 
 - attaching means copying or moving operator files
 - Git becomes mandatory for a working resource
+
+## Outcome
+
+One typed project-resource command family now owns attach, update, repair, and
+remove. The authoritative host canonicalizes selected directories, detects Git
+worktrees, preserves stable resource identity and locator history across
+repair, assigns the first working default, and removes only membership state.
+Exact project revisions, actors, host authority, idempotency receipts, and
+sanitized read models remain enforced.

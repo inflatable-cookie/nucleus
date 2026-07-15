@@ -17,8 +17,13 @@
 
   let {
     projectId,
+    resourceId = null,
     requestedFileRef = null,
-  }: { projectId: string | null; requestedFileRef?: string | null } = $props();
+  }: {
+    projectId: string | null;
+    resourceId?: string | null;
+    requestedFileRef?: string | null;
+  } = $props();
   let files = $state<EditorFileEntry[]>([]);
   let snapshot = $state<EditorFileSnapshot | null>(null);
   let buffer = $state("");
@@ -35,6 +40,7 @@
 
   $effect(() => {
     projectId;
+    resourceId;
     void loadFiles();
   });
 
@@ -53,7 +59,7 @@
     if (!projectId) return;
     loading = true;
     try {
-      files = await listEditorFiles(projectId);
+      files = await listEditorFiles(projectId, resourceId);
       const preferred = files.find((file) => file.display_path === "README.md") ?? files[0];
       if (preferred) await readFile(preferred.file_ref);
     } catch (caught) {
@@ -79,7 +85,7 @@
     loading = true;
     error = null;
     try {
-      snapshot = await readEditorFile(projectId, fileRef);
+      snapshot = await readEditorFile(projectId, resourceId, fileRef);
       buffer = snapshot.content;
       pendingFileRef = null;
       return true;
@@ -98,6 +104,7 @@
     try {
       snapshot = await saveEditorFile({
         project_id: snapshot.project_id,
+        resource_id: snapshot.resource_id,
         file_ref: snapshot.file_ref,
         expected_content_revision: snapshot.content_revision,
         content: buffer,

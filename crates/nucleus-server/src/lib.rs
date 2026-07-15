@@ -114,6 +114,7 @@ pub mod product_workflow_summary;
 mod project_file_policy;
 pub mod project_lifecycle;
 pub mod project_resource_control;
+mod project_resource_target;
 pub mod project_seed;
 pub mod provider_backpressure_summary;
 pub mod provider_command_persistence;

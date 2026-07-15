@@ -32,11 +32,22 @@ mandatory. Resource roles express working, management, or reference intent.
 Location and Git metadata may change without changing the resource or project
 identity. Repair updates membership state and retains useful location history.
 
+The realized mutation boundary is one typed project-resource command family.
+The authoritative host detects plain folders versus Git worktrees, canonicalizes
+host-local locators, persists exact-revision changes and receipts, and never
+deletes operator files when a membership is removed.
+
 ## Runtime Targeting
 
 Filesystem-dependent panels and agent work target a resource, not a project
 path. A project-level default resource provides the common case without
 removing explicit targeting from the host API.
+
+The operator terminal can also run for a zero-resource project. Its
+authoritative host chooses the host user's home directory as the initial
+working directory; the client does not supply a path and the fallback does not
+become a project resource. A configured but unavailable default resource
+remains a visible repair error rather than silently falling back.
 
 Panels remain visually simple. They show a resource selector only when the
 project has multiple compatible choices or when the current choice needs
@@ -78,3 +89,14 @@ popovers.
 The project rail now implements the name-only durable path. Lifecycle actions
 stay behind each project's overflow menu, with inline conflict and refusal
 feedback instead of a setup wizard or modal sequence.
+
+The same overflow menu opens a compact resource subview. Native folder
+selection supplies a locator to the authoritative host, which detects folder
+or Git kind and owns attach, default, repair, and removal mutations. Panels
+show resource controls only when multiple working choices or repair require
+operator input; their per-project choice persists in workspace UI config.
+
+The working rail contains active projects only. A compact project-management
+dialog owns the all, parked, and archived views plus restore and other
+lifecycle actions. Parking or archiving therefore removes a project from
+normal focus without making it undiscoverable.

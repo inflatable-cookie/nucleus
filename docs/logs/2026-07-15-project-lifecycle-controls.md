@@ -11,6 +11,11 @@ Lane: g04 project control workflow
 - persisted lifecycle receipts separately from project list records
 - refused deletion when retained resources or project-scoped work remain
 - added compact inline creation and overflow-menu controls to the project rail
+- kept the working rail active-only with all, parked, and archived management
+  views in one viewport-safe dialog
+- made native browser views yield while the management dialog is open
+- allowed resource-free projects to open a host-routed terminal from the
+  authoritative host user's home directory
 - surfaced lifecycle conflicts and refusal reasons without modal churn
 
 ## Evidence

@@ -58,6 +58,7 @@ mod memory_proposal_review;
 mod product_workflow_summary;
 mod project_lifecycle;
 mod project_queries;
+mod project_resources;
 mod provider_live_read_smoke_evidence;
 mod provider_read_intent;
 mod provider_readiness_overview;
