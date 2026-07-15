@@ -2,14 +2,18 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-15
+Updated: 2026-07-15
 
 ## Purpose
 
 Define the planned durable project model.
 
-Nucleus projects are not filesystem bookmarks. They are durable work records
-that may contain one or more repos and survive repo movement.
+Nucleus projects are not filesystem bookmarks. They are logical work scopes
+that may contain zero or more filesystem or Git resources and survive resource
+movement.
+
+The authoritative host state store owns the active project record. A project
+does not require a repository, filesystem folder, or project-owned files.
 
 ## Project Fields
 
@@ -19,8 +23,10 @@ Planned fields:
 - display name
 - status: active, parked, archived
 - importance baseline
-- repo membership list
-- management repository root where configured
+- retention: transient or durable
+- resource membership list
+- default working resource where configured
+- management projection where configured
 - task list
 - shared memory refs
 - planning artifact refs
@@ -28,24 +34,57 @@ Planned fields:
 - activity timestamps
 - project authority map refs
 
-## Repo Membership
+## Resource Membership
 
-Each repo membership record should carry:
+Each resource membership record should carry:
 
-- stable repo membership id
+- stable resource membership id
 - project id
-- current path
-- path history
-- git remote metadata where available
-- default branch where available
+- display name
+- kind: filesystem folder or Git repository initially
+- role: working, management, or reference initially
+- authoritative host ref
+- current host-local locator
+- locator history where applicable
+- Git remote and default-branch metadata where available
 - missing/moved status
 - repair notes
 
+Repository membership is a resource specialization, not the project boundary.
+Plain folders are first-class resources and zero-resource projects are valid.
+
+Absolute paths and remote URIs are location hints resolved by the authoritative
+host. They are never project or resource identity.
+
+## Retention
+
+Projects may be transient or durable.
+
+A transient project supports disposable conversation without introducing a
+second conversation ownership model. It may be omitted from the named project
+rail and expired under explicit host retention policy.
+
+Promotion changes the existing project to durable. It must preserve project,
+conversation, goal, task, and memory ids. A host must not silently expire a
+project after admitting durable child state such as a task, goal, accepted
+memory, or attached resource.
+
+## Working Resource
+
+A project may nominate a default working resource and relative directory for
+editor, terminal, browser, diff, and agent execution convenience.
+
+The default is not project identity. Filesystem-dependent requests must carry
+or resolve a compatible resource target. When no compatible resource exists,
+the project remains valid and the action returns a truthful capability error.
+
 ## Management Repository
 
-A project may nominate one repository path as its management repository root.
+A project may configure one active management projection targeting a Git
+resource. The resource may also hold source code or may be a dedicated
+management repository.
 
-That root stores portable shared project intent:
+That projection stores portable shared project intent:
 
 - project metadata
 - repo membership declarations
@@ -56,8 +95,9 @@ That root stores portable shared project intent:
 - decision records
 - artifact references
 
-The management repository is not the live runtime database. The authoritative
+The management projection is not the live runtime database. The authoritative
 engine host imports, projects, validates, and syncs shared state through it.
+The product presents this optional capability as **Shared project files**.
 
 ## Authority Map
 
@@ -109,29 +149,27 @@ The project record should include:
 - planning artifact refs
 - updated timestamp or record revision where known
 
-Repo membership records live under:
+Resource membership records live under:
 
 ```text
-nucleus/repos/<repo-membership-id>.toml
+nucleus/resources/<resource-id>.toml
 ```
 
-Repo membership projection records should include:
+Resource membership projection records should include:
 
-- schema version
-- stable repo membership id
+- schema version and stable resource id
 - project id
 - display name
+- kind and portable role
 - remote refs where available
 - default branch where available
-- portable role or purpose
-- current path hint
-- path history
+- current locator hint
+- locator history
 - missing or moved status
 - repair notes
 
-Absolute local paths are only hints. They must not be the project identity.
-Moved or missing repos should be repairable by updating membership records
-without changing project id.
+Moved or missing resources should be repairable by updating membership records
+without changing project id or resource id.
 
 ## Project Status
 
@@ -141,13 +179,13 @@ without changing project id.
 
 ## Repair Flow
 
-When a repo path is missing, the project must remain intact.
+When a resource locator is missing, the project must remain intact.
 
 Expected repair actions:
 
-- locate moved repo
-- update current path
-- keep path history
+- locate moved resource
+- update current locator
+- keep locator history
 - mark unresolved membership if not found
 - keep tasks and history attached to the project
 
@@ -187,28 +225,42 @@ These records belong to their dedicated contracts:
 
 ## Current Rust Surface
 
-`nucleus-projects` now contains the first draft of:
+`nucleus-projects` now contains the resource-aware project model:
 
 - `ProjectId`
-- `RepoMembershipId`
+- `ProjectResourceId`
 - `ProjectTaskId`
 - `Project`
 - `ProjectStatus`
+- `ProjectRetention`
 - `ImportanceBaseline`
 - `ImportanceLevel`
-- `RepoMembership`
-- `RepoPathRecord`
+- `ProjectResource`
+- `ProjectResourceKind`
+- `ProjectResourceRole`
+- `ResourceLocatorRecord`
 - `GitRemoteMetadata`
-- `RepoLocationStatus`
+- `ResourceLocationStatus`
+- `WorkingResourceTarget`
+- `ManagementProjectionTarget`
 - `WorkspaceLayoutRef`
 - `ProjectActivity`
-- `RepoRepairAction`
+- `ResourceRepairAction`
 - `ProjectProjectionRecord`
-- `RepoMembershipProjectionRecord`
+- `ProjectResourceProjectionRecord`
 
-These are descriptive domain types only. Storage, path repair, repo scanning,
-activity scoring, task scheduling, projection serialization, and projection IO
-remain out of scope.
+Project storage schema v2 persists resource kind, role, authority host,
+locator and history, Git metadata, repair state, retention, working defaults,
+and management-projection refs. Schema-v1 display records migrate on decode
+without changing project id.
+
+Control project records expose sanitized zero-to-many resource summaries with
+identity, kind, role, authority host, location health, and default-target
+markers. They do not expose host-local locators, locator history, Git remote
+URLs, repair notes, relative working directories, or projection policy refs.
+Typed resource-mutation candidates require an actor, expected project
+revision, supported resource kind, and matching authority host before a later
+command executor may act.
 
 ## Control Plane Boundary
 

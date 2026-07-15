@@ -295,8 +295,14 @@ shape.
 - `g04/028-initial-code-editor-vertical-slice.md` - active
 - `g04/032-native-window-geometry-persistence.md` - completed
 - `g04/033-floating-agent-chat-composer.md` - completed
-- `g04/034-four-main-region-workspace-grid.md` - active
-- `g04/035-host-routed-terminal-panel.md` - active
+- `g04/034-four-main-region-workspace-grid.md` - completed
+- `g04/035-host-routed-terminal-panel.md` - completed
+- `g04/036-project-memory-panel.md` - completed
+- `g04/037-project-resource-foundation.md` - completed
+- `g04/038-project-control-workflow.md` - active
+- `g04/039-multi-resource-attachment-and-targeting.md` - planned
+- `g04/040-transient-chat-and-promotion.md` - planned
+- `g04/041-shared-project-files-control.md` - planned
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -356,6 +362,6 @@ shape.
 
 ## Next Task
 
-Complete `g04/batch-cards/179-terminal-runtime-validation.md`: run an
-interactive shell, move and remount the tab, confirm output continuity and
-resize, then close the tab and reopen it to prove clean session replacement.
+Complete `g04/batch-cards/187-project-lifecycle-command-boundary.md`: add
+server-owned create, rename, park, archive, restore, and guarded delete
+commands with durable receipts and no filesystem requirement.

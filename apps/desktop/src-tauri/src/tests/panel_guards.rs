@@ -100,3 +100,21 @@ fn proper_tasks_panel_groups_canonical_goal_membership_without_run_controls() {
     assert!(!component.contains("run_goal"));
     assert!(!component.contains("execute_goal"));
 }
+
+#[test]
+fn memory_panel_composes_read_only_accepted_and_proposed_memory() {
+    let workspace = include_str!("../../../src/lib/ProjectWorkspaceStage.svelte");
+    let panel = include_str!("../../../src/lib/MemoryPanel.svelte");
+    let client = include_str!("../../../src/lib/control/client.ts");
+
+    assert!(workspace.contains("panel?.kind === \"memory\""));
+    assert!(workspace.contains("<MemoryPanel"));
+    assert!(panel.contains("queryAcceptedMemory"));
+    assert!(panel.contains("queryMemoryProposals"));
+    assert!(panel.contains("Accepted"));
+    assert!(panel.contains("Proposed"));
+    assert!(client.contains("buildAcceptedMemoryQuery"));
+    assert!(!panel.contains("acceptMemory"));
+    assert!(!panel.contains("rejectMemory"));
+    assert!(!panel.contains("projectMemory"));
+}

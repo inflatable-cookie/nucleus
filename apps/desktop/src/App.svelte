@@ -29,7 +29,7 @@
     { value: "browser", label: "Browser" },
     { value: "editor", label: "Editor" },
     { value: "diff", label: "Diff" },
-    { value: "context", label: "Context" },
+    { value: "memory", label: "Memory" },
   ]);
 
   onMount(() => {
@@ -148,16 +148,20 @@
                         <dd>{selectedProject?.revision_id ?? "none"}</dd>
                       </div>
                       <div>
-                        <dt>Location</dt>
-                        <dd>{selectedProject?.primary_location ?? "No repo location recorded."}</dd>
+                        <dt>Retention</dt>
+                        <dd>{selectedProject?.retention ?? "none"}</dd>
                       </div>
                       <div>
-                        <dt>Location status</dt>
+                        <dt>Resource health</dt>
                         <dd>{selectedProject?.location_status ?? "not_recorded"}</dd>
                       </div>
                       <div>
-                        <dt>Repos</dt>
-                        <dd>{selectedProject?.repo_count ?? 0}</dd>
+                        <dt>Resources</dt>
+                        <dd>{selectedProject?.resource_count ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Repositories</dt>
+                        <dd>{selectedProject?.repository_count ?? 0}</dd>
                       </div>
                     </dl>
                   </div>

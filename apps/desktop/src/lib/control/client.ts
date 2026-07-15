@@ -3,6 +3,7 @@ import {
   buildCommandHistoryQuery,
   buildDiagnosticsQuery,
   buildMemoryProposalsQuery,
+  buildAcceptedMemoryQuery,
   buildPlanningSessionsQuery,
   buildProductWorkflowSummaryQuery,
   buildProviderReadIntentQuery,
@@ -100,6 +101,10 @@ import {
   type ResearchRunBriefsQueryResult,
 } from "./planningResearch";
 import type { DiagnosticsDomain } from "./types";
+import {
+  acceptedMemoryFromResponse,
+  type AcceptedMemoryQueryResult,
+} from "./memory";
 
 export async function submitControlEnvelope(
   request: ControlRequestEnvelopeDto,
@@ -151,6 +156,13 @@ export async function queryMemoryProposals(
 ): Promise<MemoryProposalsQueryResult> {
   const response = await submitControlEnvelope(buildMemoryProposalsQuery(projectId));
   return memoryProposalsFromResponse(response);
+}
+
+export async function queryAcceptedMemory(
+  projectId: string,
+): Promise<AcceptedMemoryQueryResult> {
+  const response = await submitControlEnvelope(buildAcceptedMemoryQuery(projectId));
+  return acceptedMemoryFromResponse(response);
 }
 
 export async function queryResearchRunBriefs(

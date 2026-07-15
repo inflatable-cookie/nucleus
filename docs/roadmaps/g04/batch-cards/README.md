@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-10
+Updated: 2026-07-15
 
 ## Purpose
 
@@ -10,12 +10,24 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `179-terminal-runtime-validation.md`
-- `176-four-main-region-validation-checkpoint.md`
+- `185-project-resource-control-boundary.md`
 
 ## Planned Cards
 
-- None.
+- `186-project-resource-foundation-validation.md`
+- `187-project-lifecycle-command-boundary.md`
+- `188-minimal-project-rail-controls.md`
+- `189-project-control-validation.md`
+- `190-resource-attachment-and-repair-boundary.md`
+- `191-workspace-resource-target-resolution.md`
+- `192-compact-project-resource-controls.md`
+- `193-multi-resource-workflow-validation.md`
+- `194-transient-project-retention-boundary.md`
+- `195-new-chat-and-in-place-promotion.md`
+- `196-transient-chat-validation.md`
+- `197-management-projection-resource-binding.md`
+- `198-shared-project-files-controls.md`
+- `199-shared-project-files-validation.md`
 
 ## Paused Cards
 
@@ -40,6 +52,13 @@ Hold execution cards for `g04`.
 
 ## Completed Cards
 
+- `184-project-resource-domain-and-storage.md`
+- `182-memory-panel-validation.md`
+- `179-terminal-runtime-validation.md`
+- `176-four-main-region-validation-checkpoint.md`
+- `183-project-resource-model-promotion.md`
+- `181-read-only-memory-panel.md`
+- `180-context-to-memory-migration.md`
 - `178-xterm-terminal-panel.md`
 - `177-terminal-host-runtime-boundary.md`
 - `175-four-main-region-desktop-layout.md`

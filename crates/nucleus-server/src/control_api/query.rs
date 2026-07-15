@@ -1,6 +1,6 @@
 use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId};
 use nucleus_core::{PersistenceRecordId, RevisionId};
-use nucleus_projects::{ProjectId, RepoMembershipId};
+use nucleus_projects::{ProjectId, ProjectResourceId};
 use nucleus_tasks::TaskId;
 use nucleus_workspaces::WorkspaceLayoutId;
 
@@ -100,7 +100,7 @@ pub enum StateRecordQueryScope {
     ListByProject(ProjectId),
     ListByTask(TaskId),
     ListByWorkspace(WorkspaceLayoutId),
-    ListByRepo(RepoMembershipId),
+    ListByRepo(ProjectResourceId),
 }
 
 /// Adapter registry and session query shape.

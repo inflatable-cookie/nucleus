@@ -182,7 +182,7 @@ Panel layout may differ from Loophole's DAW-oriented defaults. The reusable
 part is display/window placement. Panel tabs are the only workspace tabs.
 
 The main workspace is a fixed semantic two-column by two-row grid. Terminals,
-editors, browsers, agent chats, task views, diffs, context, and other workspace
+editors, browsers, agent chats, task views, diffs, memory, and other workspace
 tabs may move between any of its four regions. The left project/activity region
 remains separate and is not a general workspace-tab destination.
 
@@ -229,7 +229,7 @@ the same policy shape, not the final server API.
 
 Closeable panels must have a recovery path. In the first product shell, the
 header `+` menu creates fresh panel instances for known panel kinds such as
-agent chat, terminal, browser, editor, diff, and context. This is not yet a
+agent chat, terminal, browser, editor, diff, and memory. This is not yet a
 workspace preset manager; it only prevents closed tool panels from becoming
 unreachable during UI bring-up.
 

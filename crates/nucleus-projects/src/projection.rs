@@ -1,10 +1,10 @@
-//! Project and repo membership projection records.
+//! Project and resource membership projection records.
 
 use nucleus_core::ProjectionRecordEnvelope;
 
 use crate::{
-    GitRemoteMetadata, ImportanceBaseline, ProjectId, ProjectStatus, RepoLocationStatus,
-    RepoMembershipId, RepoPathRecord,
+    GitRemoteMetadata, ImportanceBaseline, ProjectId, ProjectResourceId, ProjectResourceKind,
+    ProjectResourceRole, ProjectStatus, ResourceLocationStatus, ResourceLocatorRecord,
 };
 
 /// Committable project metadata record.
@@ -16,22 +16,24 @@ pub struct ProjectProjectionRecord {
     pub status: ProjectStatus,
     pub importance_baseline: ImportanceBaseline,
     pub sync_policy_ref: Option<String>,
-    pub management_repo_marker: Option<String>,
+    pub management_resource_id: Option<ProjectResourceId>,
     pub shared_documentation_refs: Vec<String>,
 }
 
-/// Committable repo membership record.
+/// Committable resource membership record.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RepoMembershipProjectionRecord {
+pub struct ProjectResourceProjectionRecord {
     pub envelope: ProjectionRecordEnvelope,
-    pub repo_membership_id: RepoMembershipId,
+    pub resource_id: ProjectResourceId,
     pub project_id: ProjectId,
-    pub display_name: Option<String>,
+    pub display_name: String,
+    pub kind: ProjectResourceKind,
+    pub role: ProjectResourceRole,
+    pub authority_host_ref: String,
     pub git: Option<GitRemoteMetadata>,
     pub default_branch: Option<String>,
-    pub role_or_purpose: Option<String>,
-    pub current_path_hint: Option<String>,
-    pub path_history: Vec<RepoPathRecord>,
-    pub location_status: RepoLocationStatus,
+    pub current_locator_hint: Option<String>,
+    pub locator_history: Vec<ResourceLocatorRecord>,
+    pub location_status: ResourceLocationStatus,
     pub repair_notes: Vec<String>,
 }

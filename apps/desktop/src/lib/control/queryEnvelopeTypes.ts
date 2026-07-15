@@ -41,6 +41,12 @@ export type ControlQueryDto =
       project_id: string;
     }
   | {
+      kind: "accepted_memory";
+      query_id: string;
+      action: "memory";
+      project_id: string;
+    }
+  | {
       kind: "product_workflow_summary";
       query_id: string;
       action: "summary";

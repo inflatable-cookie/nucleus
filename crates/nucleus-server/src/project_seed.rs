@@ -9,8 +9,9 @@ use nucleus_local_store::{
 };
 use nucleus_projects::{
     decode_project_storage_record, encode_project_storage_record, ImportanceBaseline,
-    ImportanceLevel, Project, ProjectActivity, ProjectId, ProjectStatus, RepoLocationStatus,
-    RepoMembership, RepoMembershipId,
+    ImportanceLevel, Project, ProjectActivity, ProjectId, ProjectResource, ProjectResourceId,
+    ProjectResourceKind, ProjectResourceRole, ProjectRetention, ProjectStatus,
+    ResourceLocationStatus, ResourceLocatorRecord, WorkingResourceTarget,
 };
 
 use crate::state::ServerStateService;
@@ -77,11 +78,14 @@ fn project_from_seed(seed: &LocalProjectSeed) -> Project {
         id: ProjectId(seed.project_id.clone()),
         display_name: seed.display_name.clone(),
         status: ProjectStatus::Active,
+        retention: ProjectRetention::Durable,
         importance_baseline: ImportanceBaseline {
             level: seed.importance_level.clone(),
             notes: Some("local seed".to_owned()),
         },
-        repos: local_seed_repos(&seed.project_id),
+        resources: local_seed_resources(&seed.project_id),
+        default_working_resource: local_seed_default_resource(&seed.project_id),
+        management_projection: None,
         task_ids: Vec::new(),
         workspace_layout_refs: Vec::new(),
         activity: ProjectActivity {
@@ -108,7 +112,7 @@ where
     let Ok(decoded) = decode_project_storage_record(&existing.payload.bytes) else {
         return Ok(None);
     };
-    if decoded.repo_count > 0 || decoded.primary_location.is_some() {
+    if !decoded.resources.is_empty() {
         return Ok(None);
     }
 
@@ -131,7 +135,7 @@ where
         .map(Some)
 }
 
-fn local_seed_repos(project_id: &str) -> Vec<RepoMembership> {
+fn local_seed_resources(project_id: &str) -> Vec<ProjectResource> {
     if project_id != "project:nucleus-local" {
         return Vec::new();
     }
@@ -140,20 +144,31 @@ fn local_seed_repos(project_id: &str) -> Vec<RepoMembership> {
         return Vec::new();
     };
 
-    vec![RepoMembership {
-        id: RepoMembershipId("repo:nucleus-local".to_owned()),
+    vec![ProjectResource {
+        id: ProjectResourceId("resource:nucleus-local".to_owned()),
         project_id: ProjectId(project_id.to_owned()),
-        current_path: Some(path.clone()),
-        path_history: vec![nucleus_projects::RepoPathRecord {
-            path,
+        display_name: "Nucleus repository".to_owned(),
+        kind: ProjectResourceKind::GitRepository,
+        role: ProjectResourceRole::Working,
+        authority_host_ref: "host:local".to_owned(),
+        current_locator: Some(path.clone()),
+        locator_history: vec![ResourceLocatorRecord {
+            locator: path,
             observed_at: None,
             note: Some("local bootstrap seed".to_owned()),
         }],
         git: None,
         default_branch: Some("main".to_owned()),
-        location_status: RepoLocationStatus::Present,
+        location_status: ResourceLocationStatus::Present,
         repair_notes: Vec::new(),
     }]
+}
+
+fn local_seed_default_resource(project_id: &str) -> Option<WorkingResourceTarget> {
+    (project_id == "project:nucleus-local").then(|| WorkingResourceTarget {
+        resource_id: ProjectResourceId("resource:nucleus-local".to_owned()),
+        relative_working_directory: None,
+    })
 }
 
 fn infer_local_repo_root() -> Option<PathBuf> {
@@ -242,8 +257,8 @@ mod tests {
             seed_local_project(handler.state(), LocalProjectSeed::nucleus_local()).expect("seed");
         let decoded = decode_project_storage_record(&seeded.payload.bytes).expect("project");
 
-        assert_eq!(decoded.repo_count, 1);
-        assert!(decoded.primary_location.is_some());
+        assert_eq!(decoded.repo_count(), 1);
+        assert!(decoded.primary_location().is_some());
     }
 
     #[test]
@@ -256,11 +271,14 @@ mod tests {
             id: ProjectId("project:nucleus-local".to_owned()),
             display_name: "Nucleus Local".to_owned(),
             status: ProjectStatus::Active,
+            retention: ProjectRetention::Durable,
             importance_baseline: ImportanceBaseline {
                 level: ImportanceLevel::Normal,
                 notes: Some("old seed".to_owned()),
             },
-            repos: Vec::new(),
+            resources: Vec::new(),
+            default_working_resource: None,
+            management_projection: None,
             task_ids: Vec::new(),
             workspace_layout_refs: Vec::new(),
             activity: ProjectActivity {
@@ -291,7 +309,7 @@ mod tests {
         let decoded = decode_project_storage_record(&repaired.payload.bytes).expect("project");
 
         assert_eq!(repaired.revision_id.0, "rev:seed:repo-location:1");
-        assert_eq!(decoded.repo_count, 1);
-        assert!(decoded.primary_location.is_some());
+        assert_eq!(decoded.repo_count(), 1);
+        assert!(decoded.primary_location().is_some());
     }
 }

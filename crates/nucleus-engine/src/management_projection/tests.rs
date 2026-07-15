@@ -1,7 +1,7 @@
 use super::*;
 use nucleus_projects::{
-    ProjectStorageImportanceLevel, ProjectStorageLocationStatus, ProjectStorageRecord,
-    ProjectStorageStatus,
+    ProjectRetentionStorage, ProjectStorageImportanceLevel, ProjectStorageRecord,
+    ProjectStorageStatus, PROJECT_STORAGE_SCHEMA_VERSION,
 };
 use nucleus_tasks::{
     TaskStorageAcceptanceCriterion, TaskStorageActionType, TaskStorageActivityState,
@@ -65,13 +65,15 @@ fn management_projection_rejects_unsafe_planning_file_ref_ids() {
 #[test]
 fn management_projection_export_plan_contains_only_shared_project_task_state() {
     let project = ProjectStorageRecord {
+        schema_version: PROJECT_STORAGE_SCHEMA_VERSION,
         project_id: "project:nucleus".to_owned(),
         display_name: "Nucleus".to_owned(),
         status: ProjectStorageStatus::Active,
+        retention: ProjectRetentionStorage::Durable,
         importance_level: ProjectStorageImportanceLevel::High,
-        repo_count: 0,
-        primary_location: None,
-        location_status: ProjectStorageLocationStatus::NotRecorded,
+        resources: Vec::new(),
+        default_working_resource: None,
+        management_projection: None,
     };
     let task = TaskStorageRecord {
         task_id: "task:projection".to_owned(),
@@ -157,13 +159,15 @@ fn management_projection_export_plan_is_deterministic_by_file_ref() {
 #[test]
 fn management_projection_file_document_round_trips_project_and_task_entries() {
     let project = ProjectStorageRecord {
+        schema_version: PROJECT_STORAGE_SCHEMA_VERSION,
         project_id: "project:nucleus".to_owned(),
         display_name: "Nucleus".to_owned(),
         status: ProjectStorageStatus::Active,
+        retention: ProjectRetentionStorage::Durable,
         importance_level: ProjectStorageImportanceLevel::High,
-        repo_count: 0,
-        primary_location: None,
-        location_status: ProjectStorageLocationStatus::NotRecorded,
+        resources: Vec::new(),
+        default_working_resource: None,
+        management_projection: None,
     };
     let task = TaskStorageRecord {
         task_id: "task:projection".to_owned(),

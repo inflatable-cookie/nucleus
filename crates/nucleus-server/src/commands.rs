@@ -4,7 +4,7 @@ use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId, ModelRoute};
 use nucleus_core::RevisionId;
 use nucleus_native_harness::NativeStewardCommandRequest;
 use nucleus_planning::{GoalStatus, PlanningGoalId};
-use nucleus_projects::{Project, ProjectId, RepoMembershipId, RepoRepairAction};
+use nucleus_projects::{Project, ProjectId, ProjectResourceId, ResourceRepairAction};
 use nucleus_tasks::{
     AcceptanceCriterion, AgentReadiness, TaskActionType, TaskActivityState, TaskId, TaskImportance,
 };
@@ -102,10 +102,10 @@ pub enum ProjectCommand {
     Update(Project),
     Park(ProjectId),
     Archive(ProjectId),
-    RepairRepo {
+    RepairResource {
         project_id: ProjectId,
-        repo_id: RepoMembershipId,
-        action: RepoRepairAction,
+        resource_id: ProjectResourceId,
+        action: ResourceRepairAction,
     },
 }
 

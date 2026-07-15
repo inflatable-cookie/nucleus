@@ -112,6 +112,7 @@ pub mod process_supervision_events;
 pub mod process_supervisor;
 pub mod product_workflow_summary;
 mod project_file_policy;
+pub mod project_resource_control;
 pub mod project_seed;
 pub mod provider_backpressure_summary;
 pub mod provider_command_persistence;

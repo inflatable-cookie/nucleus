@@ -14,6 +14,7 @@ architecture, contracts, and roadmaps.
 - `006-initial-code-editor-vertical-slice.md`
 - `007-task-attributed-diff-review.md`
 - `011-four-main-region-workspace-grid.md`
+- `012-flexible-project-lifecycle-and-resources.md`
 - `templates/`
 
 Batch cards live under the active roadmap lane:

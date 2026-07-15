@@ -58,7 +58,7 @@ fn management_capture_review_model_exposes_readiness_without_provider_mutation()
         command_id: ManagementProjectionCaptureCommandId("capture-command:1".to_owned()),
         actor_ref: "actor:steward".to_owned(),
         target_project_id: ProjectId("project:nucleus".to_owned()),
-        repo_membership_id: Some(RepoMembershipId("repo:nucleus".to_owned())),
+        repo_membership_id: Some(ProjectResourceId("resource:nucleus".to_owned())),
         repository_id: Some(ScmRepositoryRefId("scm-repo:nucleus".to_owned())),
         projection_root: nucleus_engine::ManagementProjectionRoot::default(),
         requested_file_refs: vec![ManagementProjectionFileRef::task("task:1")],

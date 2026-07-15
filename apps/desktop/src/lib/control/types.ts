@@ -23,11 +23,28 @@ export type ControlProjectRecordDto = {
   project_id: string;
   display_name: string;
   status: string;
+  retention: string;
   importance_level: string;
   revision_id: string;
-  repo_count: number;
-  primary_location: string | null;
+  resource_count: number;
+  repository_count: number;
+  default_working_resource_id: string | null;
+  management_resource_id: string | null;
   location_status: string;
+  resources: ControlProjectResourceRecordDto[];
+};
+
+export type ControlProjectResourceRecordDto = {
+  resource_id: string;
+  display_name: string;
+  kind: "filesystem_folder" | "git_repository";
+  role: "working" | "management" | "reference";
+  authority_host_ref: string;
+  location_status: "present" | "missing" | "moved_candidate" | "repair_required";
+  locator_available: boolean;
+  default_branch: string | null;
+  is_default_working_resource: boolean;
+  is_management_resource: boolean;
 };
 
 export type ControlTaskRecordDto = {

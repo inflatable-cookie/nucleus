@@ -78,11 +78,13 @@ Updated: 2026-06-16
   steward tool surfaces. The local store crate leaves room for project tooling
   and Effigy integration records, but no Effigy tool bridge, harness skill
   injection, command execution, or UI exists yet.
-- `nucleus-projects`: first draft durable project, repo membership, path
-  history, repair action, activity, projection record types, and a Rust-owned
-  JSON storage codec for first project display records. The codec preserves
-  stable project id, display name, status, and importance baseline for
-  server-owned storage/control projection use.
+- `nucleus-projects`: durable project identity, transient/durable retention,
+  zero-to-many folder or Git resource memberships, host-local locator history,
+  repair state, working defaults, management-projection targets, activity, and
+  projection record types. Storage schema v2 persists full resource metadata;
+  schema-v1 display records migrate on decode without changing project id.
+  Existing control DTOs derive their repo count and primary-location hints from
+  the full resource record rather than owning the operational model.
 - `nucleus-scm-forge`: first draft provider-agnostic SCM, forge, credential,
   webhook, conflict, review-workflow, task-link, observation, and work-session
   boundary types. Current contracts define the first production adapter trait
@@ -125,10 +127,12 @@ Updated: 2026-06-16
   streams, credentials, secret values, and private notes. Promotion target
   refs, accepted memory mutation, embeddings, semantic search, autonomous
   extraction, provider-native memory sync, projection files, final review UI,
-  and private-note storage by default remain deferred. Read-only memory
-  proposal inspection is now available through server query/control DTO,
+  and private-note storage by default remain deferred. Mutating memory review
+  UI remains deferred. Read-only memory proposal inspection is now available
+  through server query/control DTO,
   `nucleusd query memory-proposals`, and Effigy, returning sanitized counts and
-  refs only.
+  refs only. The desktop Memory panel now combines that projection with the
+  accepted-memory read model; it exposes no review or apply controls.
 - `nucleus-planning`: focused crate scaffold is present. It currently has a
   small front door and named modules for ids, sessions, exploration,
   artifacts, refs, and storage shape. Guided planning session value records now

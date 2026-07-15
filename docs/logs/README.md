@@ -25,3 +25,7 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-13-window-region-panel-simplification.md`
 - `2026-07-13-native-window-geometry.md`
 - `2026-07-14-floating-agent-chat-composer.md`
+- `2026-07-14-project-memory-panel.md`
+- `2026-07-15-panel-validation-closeout.md`
+- `2026-07-15-project-resource-domain-storage.md`
+- `2026-07-15-project-resource-foundation-closeout.md`

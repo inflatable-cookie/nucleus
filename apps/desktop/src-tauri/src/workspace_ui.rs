@@ -4,7 +4,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 const MIN_WINDOW_WIDTH: u32 = 900;
 const MIN_WINDOW_HEIGHT: u32 = 620;
 const MAX_WINDOW_DIMENSION: u32 = 16_384;
@@ -183,6 +183,7 @@ fn normalize_workspace_ui_config(mut config: WorkspaceUiConfigDto) -> WorkspaceU
     config.window.placement = normalize_window_placement(config.window.placement);
     config.window.layout = normalize_layout(config.window.layout);
     normalize_region_placements(&mut config.window.regions);
+    normalize_memory_panels(&mut config.window.regions);
     normalize_singleton_task_panels(&mut config.window.regions);
     normalize_panels(&mut config.window.regions.left);
     normalize_panels(&mut config.window.regions.right_top);
@@ -191,6 +192,23 @@ fn normalize_workspace_ui_config(mut config: WorkspaceUiConfigDto) -> WorkspaceU
     normalize_panels(&mut config.window.regions.center_bottom);
 
     config
+}
+
+fn normalize_memory_panels(regions: &mut WorkspaceRegionsDto) {
+    for panel in regions
+        .center_top
+        .iter_mut()
+        .chain(regions.center_bottom.iter_mut())
+        .chain(regions.right_top.iter_mut())
+        .chain(regions.right_bottom.iter_mut())
+    {
+        if panel.kind == "context" {
+            panel.kind = "memory".to_owned();
+            if panel.title == "Context" {
+                panel.title = "Memory".to_owned();
+            }
+        }
+    }
 }
 
 fn normalize_singleton_task_panels(regions: &mut WorkspaceRegionsDto) {
@@ -340,7 +358,7 @@ fn default_workspace_ui_config() -> WorkspaceUiConfigDto {
             layout: default_workspace_layout(),
             regions: WorkspaceRegionsDto {
                 left: Vec::new(),
-                right_top: vec![panel("panel:context", "context", "Context", true, true)],
+                right_top: vec![panel("panel:memory", "memory", "Memory", true, true)],
                 right_bottom: Vec::new(),
                 center_top: vec![
                     panel("panel:agent-chat", "agentChat", "Agent Chat", true, true),
@@ -416,6 +434,8 @@ mod tests {
         assert_eq!(config.window.id, "window:primary");
         assert_eq!(config.window.regions.left.len(), 0);
         assert_eq!(config.window.regions.right_top.len(), 1);
+        assert_eq!(config.window.regions.right_top[0].kind, "memory");
+        assert_eq!(config.window.regions.right_top[0].title, "Memory");
         assert_eq!(config.window.regions.right_bottom.len(), 0);
         assert_eq!(config.window.regions.center_top.len(), 2);
         assert_eq!(config.window.regions.center_bottom.len(), 1);
@@ -561,6 +581,9 @@ mod tests {
         assert!(migrated);
         assert_eq!(normalized.window.regions.right_top.len(), 1);
         assert!(normalized.window.regions.right_bottom.is_empty());
+        assert_eq!(normalized.window.regions.right_top[0].kind, "memory");
+        assert_eq!(normalized.window.regions.right_top[0].title, "Memory");
+        assert_eq!(normalized.window.regions.right_top[0].id, "panel:context");
         assert_eq!(normalized.window.layout.right_stack_ratio, 0.74);
         assert_eq!(
             normalized.window.regions.right_top[0].allowed_regions,
@@ -571,6 +594,36 @@ mod tests {
                 "right_bottom".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn schema_four_context_panel_migrates_to_memory_in_place() {
+        let raw = r#"{
+          "schema_version": 4,
+          "window": {
+            "id": "window:primary",
+            "placement": {"maximized": false},
+            "layout": {"left_center_ratio": 0.2, "center_right_ratio": 0.74, "center_stack_ratio": 0.6, "right_stack_ratio": 0.5},
+            "regions": {
+              "left": [],
+              "right_top": [],
+              "right_bottom": [{"id":"window:primary:panel:context:42","kind":"context","title":"Context","closeable":true,"movable":true,"allowed_regions":["center_top","center_bottom","right_top","right_bottom"]}],
+              "center_top": [],
+              "center_bottom": []
+            }
+          }
+        }"#;
+
+        let (config, migrated) = decode_workspace_ui_config(raw).expect("schema four decodes");
+        let normalized = normalize_workspace_ui_config(config);
+        let panel = &normalized.window.regions.right_bottom[0];
+
+        assert!(migrated);
+        assert_eq!(panel.id, "window:primary:panel:context:42");
+        assert_eq!(panel.kind, "memory");
+        assert_eq!(panel.title, "Memory");
+        assert!(panel.closeable);
+        assert!(panel.movable);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # 176 Four Main Region Validation Checkpoint
 
-Status: ready
+Status: completed
 Owner: Codex
 Updated: 2026-07-14
 Milestone: `../034-four-main-region-workspace-grid.md`
@@ -18,6 +18,7 @@ docs. Stop for operator layout review.
 - `nucleus-workspaces` tests pass
 - docs QA, Rust formatting, and diff hygiene pass
 
-## Remaining
+## Outcome
 
-Operator visual drag/drop and restart confirmation.
+Schema migration, placement policy, universal main-region drag/drop, collapsed
+region recovery, persistence, and operator interaction are validated.

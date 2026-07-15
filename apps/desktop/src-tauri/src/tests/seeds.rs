@@ -68,8 +68,10 @@ fn desktop_state_seeds_local_project_for_project_queries() {
         nucleus_server::ControlResponseBodyDto::ProjectRecords { records } => {
             assert_eq!(records.len(), 1);
             assert_eq!(records[0].display_name, "Nucleus Local");
-            assert_eq!(records[0].repo_count, 1);
-            assert!(records[0].primary_location.is_some());
+            assert_eq!(records[0].resource_count, 1);
+            assert_eq!(records[0].repository_count, 1);
+            assert_eq!(records[0].resources.len(), 1);
+            assert!(records[0].resources[0].locator_available);
             assert_eq!(records[0].location_status, "present");
         }
         other => panic!("expected project records, got {other:?}"),
@@ -170,6 +172,13 @@ fn desktop_state_seeds_planning_memory_and_research_for_proof_queries() {
             project_id: "project:nucleus-local".to_owned(),
         }))
         .expect("desktop memory proposals should route through the server adapter");
+    let accepted_memory = state
+        .submit_control_envelope(query_request(ControlQueryDto::AcceptedMemory {
+            query_id: "desktop-query-accepted-memory".to_owned(),
+            action: "memory".to_owned(),
+            project_id: "project:nucleus-local".to_owned(),
+        }))
+        .expect("desktop accepted memory should route through the server adapter");
     let research = state
         .submit_control_envelope(query_request(ControlQueryDto::ResearchRunBriefs {
             query_id: "desktop-query-research-run-briefs".to_owned(),
@@ -199,6 +208,14 @@ fn desktop_state_seeds_planning_memory_and_research_for_proof_queries() {
             && proposals[0].proposal_id == "memory-proposal:nucleus-local:harness-identity"
     ));
     assert!(matches!(
+        accepted_memory.body,
+        nucleus_server::ControlResponseBodyDto::AcceptedMemory {
+            ref memories,
+            client_can_mutate: false,
+            ..
+        } if memories.is_empty()
+    ));
+    assert!(matches!(
         research.body,
         nucleus_server::ControlResponseBodyDto::ResearchRunBriefs {
             ref runs,
@@ -209,7 +226,7 @@ fn desktop_state_seeds_planning_memory_and_research_for_proof_queries() {
             && runs[0].run_id == "research-run:nucleus-local:harness-communications"
     ));
 
-    for response in [planning, memory, research] {
+    for response in [planning, memory, accepted_memory, research] {
         let json = serde_json::to_string(&response).expect("response json");
         for forbidden in [
             "raw_transcript",

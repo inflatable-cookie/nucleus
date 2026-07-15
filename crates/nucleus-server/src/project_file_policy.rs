@@ -25,11 +25,16 @@ where
         .ok_or_else(|| format!("project not found: {project_id}"))?;
     let project = decode_project_storage_record(&record.payload.bytes)
         .map_err(|error| format!("project record decode failed: {}", error.reason))?;
+    let working_target = project
+        .default_working_resource
+        .as_ref()
+        .ok_or_else(|| "project has no default working resource".to_owned())?;
     let location = project
-        .primary_location
-        .ok_or_else(|| "project has no local repository location".to_owned())?;
+        .resource(&working_target.resource_id)
+        .and_then(|resource| resource.current_locator.as_deref())
+        .ok_or_else(|| "project default working resource has no available locator".to_owned())?;
     fs::canonicalize(location)
-        .map_err(|error| format!("project repository is unavailable: {error}"))
+        .map_err(|error| format!("project working resource is unavailable: {error}"))
 }
 
 pub(crate) fn admitted_project_walk(root: &Path) -> Walk {

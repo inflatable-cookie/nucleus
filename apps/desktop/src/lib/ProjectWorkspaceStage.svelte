@@ -12,6 +12,7 @@
   import BrowserPanel from "./BrowserPanel.svelte";
   import DiffPanel from "./DiffPanel.svelte";
   import EditorPanel from "./EditorPanel.svelte";
+  import MemoryPanel from "./MemoryPanel.svelte";
   import TaskListPanel from "./TaskListPanel.svelte";
   import TerminalPanel from "./TerminalPanel.svelte";
   import { destroyBrowserWebview } from "./browserPanel";
@@ -562,7 +563,7 @@
         return "list-checks";
       case "terminal":
         return "terminal";
-      case "context":
+      case "memory":
         return "panel-right";
       default:
         return "panel-top";
@@ -804,6 +805,8 @@
       onOpenEditor={openFileInEditor}
       onReviewed={() => focusPanelKind("diff")}
     />
+  {:else if panel?.kind === "memory"}
+    <MemoryPanel projectId={selectedProject?.project_id ?? null} />
   {:else}
     <Surface tone="canvas" border="none" padding="md" asRole="region" label={panel?.title ?? "Empty panel"}>
       <div class="panel-placeholder">

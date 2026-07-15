@@ -25,6 +25,10 @@ import type {
   ControlResearchRunBriefSummaryDto,
   CountByLabelDto,
 } from "./planningResearch";
+import type {
+  ControlAcceptedMemorySourceCountsDto,
+  ControlAcceptedMemorySummaryDto,
+} from "./memory";
 import type { ControlProductWorkflowSummaryDto } from "./productWorkflow";
 import type {
   ControlSelectedTaskCommandAdmissionDto,
@@ -135,6 +139,22 @@ export type ControlResponseEnvelopeDto = {
         source_counts: ControlMemoryProposalSourceCountsDto;
         client_can_mutate: false;
         provider_execution_available: false;
+      }
+    | {
+        type: "accepted_memory";
+        project_id: string;
+        memories: ControlAcceptedMemorySummaryDto[];
+        status_counts: CountByLabelDto[];
+        scope_counts: CountByLabelDto[];
+        kind_counts: CountByLabelDto[];
+        sensitivity_counts: CountByLabelDto[];
+        retention_counts: CountByLabelDto[];
+        confidence_counts: CountByLabelDto[];
+        source_counts: ControlAcceptedMemorySourceCountsDto;
+        client_can_mutate: boolean;
+        projection_written: boolean;
+        embedding_available: boolean;
+        provider_sync_available: boolean;
       }
     | {
         type: "research_run_briefs";
@@ -312,6 +332,15 @@ export function buildMemoryProposalsQuery(projectId: string): ControlRequestEnve
     kind: "memory_proposals",
     query_id: "",
     action: "proposals",
+    project_id: projectId,
+  });
+}
+
+export function buildAcceptedMemoryQuery(projectId: string): ControlRequestEnvelopeDto {
+  return buildControlQueryEnvelope({
+    kind: "accepted_memory",
+    query_id: "",
+    action: "memory",
     project_id: projectId,
   });
 }

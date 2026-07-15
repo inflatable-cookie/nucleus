@@ -10,8 +10,10 @@ use nucleus_planning::{
     encode_goal_storage_record, Goal, GoalStatus, GoalTimestamps, PlanningGoalId,
 };
 use nucleus_projects::{
-    encode_project_storage_record, ImportanceBaseline, ImportanceLevel, Project, ProjectActivity,
-    ProjectId, ProjectStatus,
+    encode_project_storage_record, GitRemoteMetadata, ImportanceBaseline, ImportanceLevel,
+    ManagementProjectionTarget, Project, ProjectActivity, ProjectId, ProjectResource,
+    ProjectResourceId, ProjectResourceKind, ProjectResourceRole, ProjectRetention, ProjectStatus,
+    ResourceLocationStatus, ResourceLocatorRecord, WorkingResourceTarget,
 };
 use nucleus_tasks::{
     encode_task_storage_record, AcceptanceCriterion, AgentReadiness, AssignmentState, NeglectLevel,
@@ -24,11 +26,73 @@ fn response_envelope_dto_serializes_status_error_and_state_records() {
         id: ProjectId("project:dto".to_owned()),
         display_name: "DTO Project".to_owned(),
         status: ProjectStatus::Active,
+        retention: ProjectRetention::Durable,
         importance_baseline: ImportanceBaseline {
             level: ImportanceLevel::High,
             notes: None,
         },
-        repos: Vec::new(),
+        resources: vec![
+            ProjectResource {
+                id: ProjectResourceId("resource:folder".to_owned()),
+                project_id: ProjectId("project:dto".to_owned()),
+                display_name: "Working folder".to_owned(),
+                kind: ProjectResourceKind::FilesystemFolder,
+                role: ProjectResourceRole::Working,
+                authority_host_ref: "host:server".to_owned(),
+                current_locator: Some("/private/server/workspace".into()),
+                locator_history: vec![ResourceLocatorRecord {
+                    locator: "/private/server/old-workspace".into(),
+                    observed_at: None,
+                    note: Some("private locator history".to_owned()),
+                }],
+                git: None,
+                default_branch: None,
+                location_status: ResourceLocationStatus::Present,
+                repair_notes: vec!["private repair note".to_owned()],
+            },
+            ProjectResource {
+                id: ProjectResourceId("resource:repository".to_owned()),
+                project_id: ProjectId("project:dto".to_owned()),
+                display_name: "Management repository".to_owned(),
+                kind: ProjectResourceKind::GitRepository,
+                role: ProjectResourceRole::Management,
+                authority_host_ref: "host:remote".to_owned(),
+                current_locator: Some("/private/remote/management".into()),
+                locator_history: Vec::new(),
+                git: Some(GitRemoteMetadata {
+                    remote_name: Some("origin".to_owned()),
+                    remote_url: Some("ssh://private.example/nucleus.git".to_owned()),
+                    repository_id_hint: Some("private-repository-hint".to_owned()),
+                }),
+                default_branch: Some("main".to_owned()),
+                location_status: ResourceLocationStatus::Missing,
+                repair_notes: Vec::new(),
+            },
+            ProjectResource {
+                id: ProjectResourceId("resource:reference".to_owned()),
+                project_id: ProjectId("project:dto".to_owned()),
+                display_name: "Reference repository".to_owned(),
+                kind: ProjectResourceKind::GitRepository,
+                role: ProjectResourceRole::Reference,
+                authority_host_ref: "host:server".to_owned(),
+                current_locator: None,
+                locator_history: Vec::new(),
+                git: None,
+                default_branch: None,
+                location_status: ResourceLocationStatus::MovedCandidate(
+                    "/private/server/reference-candidate".into(),
+                ),
+                repair_notes: Vec::new(),
+            },
+        ],
+        default_working_resource: Some(WorkingResourceTarget {
+            resource_id: ProjectResourceId("resource:folder".to_owned()),
+            relative_working_directory: Some("private/subdirectory".into()),
+        }),
+        management_projection: Some(ManagementProjectionTarget {
+            resource_id: ProjectResourceId("resource:repository".to_owned()),
+            sync_policy_ref: Some("sync:private".to_owned()),
+        }),
         task_ids: Vec::new(),
         workspace_layout_refs: Vec::new(),
         activity: ProjectActivity {
@@ -60,18 +124,68 @@ fn response_envelope_dto_serializes_status_error_and_state_records() {
 
     let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
     let json = serde_json::to_string(&dto).expect("json");
+    for private_value in [
+        "/private/server/workspace",
+        "/private/server/old-workspace",
+        "/private/remote/management",
+        "/private/server/reference-candidate",
+        "ssh://private.example/nucleus.git",
+        "private-repository-hint",
+        "private repair note",
+        "private/subdirectory",
+        "sync:private",
+    ] {
+        assert!(!json.contains(private_value), "leaked {private_value}");
+    }
     let decoded: ControlResponseEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
 
     assert_eq!(decoded.status, ControlResponseStatusDto::Complete);
     match decoded.body {
         ControlResponseBodyDto::ProjectRecords { records } => {
             assert_eq!(records.len(), 1);
-            assert_eq!(records[0].repo_count, 0);
-            assert_eq!(records[0].primary_location, None);
-            assert_eq!(records[0].location_status, "not_recorded");
+            assert_eq!(records[0].retention, "durable");
+            assert_eq!(records[0].resource_count, 3);
+            assert_eq!(records[0].repository_count, 2);
+            assert_eq!(
+                records[0].default_working_resource_id.as_deref(),
+                Some("resource:folder")
+            );
+            assert_eq!(
+                records[0].management_resource_id.as_deref(),
+                Some("resource:repository")
+            );
+            assert_eq!(records[0].location_status, "mixed");
+            assert_eq!(records[0].resources[0].kind, "filesystem_folder");
+            assert_eq!(records[0].resources[0].role, "working");
+            assert_eq!(records[0].resources[0].authority_host_ref, "host:server");
+            assert!(records[0].resources[0].locator_available);
+            assert!(records[0].resources[0].is_default_working_resource);
+            assert_eq!(records[0].resources[1].kind, "git_repository");
+            assert_eq!(records[0].resources[1].role, "management");
+            assert_eq!(records[0].resources[1].location_status, "missing");
+            assert!(records[0].resources[1].is_management_resource);
+            assert_eq!(records[0].resources[2].role, "reference");
+            assert_eq!(records[0].resources[2].location_status, "moved_candidate");
         }
         other => panic!("expected project records, got {other:?}"),
     }
+}
+
+#[test]
+fn project_resource_mutation_candidate_rejects_unknown_resource_kinds() {
+    let json = serde_json::json!({
+        "project_id": "project:dto",
+        "resource_id": null,
+        "resource_kind": "cloud_bucket",
+        "expected_revision": "rev:1",
+        "actor_ref": "operator:tom",
+        "authority_host_ref": "host:server"
+    });
+
+    let error = serde_json::from_value::<ControlProjectResourceMutationCandidateDto>(json)
+        .expect_err("unknown resource kind must fail closed");
+
+    assert!(error.to_string().contains("unknown variant"));
 }
 
 #[test]

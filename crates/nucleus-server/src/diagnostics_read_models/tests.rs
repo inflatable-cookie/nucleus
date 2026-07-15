@@ -37,7 +37,7 @@ use nucleus_native_harness::{
     NativeStewardSyncAssistanceLinks, NativeStewardSyncDecisionId, NativeStewardSyncDecisionRecord,
     NativeStewardSyncNextAction,
 };
-use nucleus_projects::{ProjectId, RepoMembershipId};
+use nucleus_projects::{ProjectId, ProjectResourceId};
 use nucleus_scm_forge::{
     ScmCapability, ScmChangeKind, ScmChangeRef, ScmProviderKind, ScmProviderRef,
     ScmRepositoryRefId, ScmSessionCommandAdmissionStatus, ScmSessionCommandId,

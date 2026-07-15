@@ -28,6 +28,12 @@ geometry persistence is confirmed. The floating Agent Chat composer is the
 current baseline. The host-routed Terminal panel is the active bounded product
 lane: its local authoritative-host adapter and xterm slice are ready for
 operator interaction review without making Tauri the durable terminal API.
+The former Context placeholder now migrates to a read-only Memory panel over
+accepted-memory and proposal summaries; its operator validation is current.
+The next sequenced product runway generalizes projects beyond repository
+bookmarks: transient or durable project scopes may hold zero or many folder or
+Git resources, with optional Shared project files kept behind advanced project
+controls.
 
 Current planning artifacts:
 
@@ -43,6 +49,14 @@ Current planning artifacts:
 - `roadmaps/g04/033-floating-agent-chat-composer.md`
 - `contracts/029-terminal-panel-runtime-contract.md`
 - `roadmaps/g04/035-host-routed-terminal-panel.md`
+- `roadmaps/g04/036-project-memory-panel.md`
+- `specs/012-flexible-project-lifecycle-and-resources.md`
+- `architecture/project-resource-lifecycle.md`
+- `roadmaps/g04/037-project-resource-foundation.md`
+- `roadmaps/g04/038-project-control-workflow.md`
+- `roadmaps/g04/039-multi-resource-attachment-and-targeting.md`
+- `roadmaps/g04/040-transient-chat-and-promotion.md`
+- `roadmaps/g04/041-shared-project-files-control.md`
 
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`

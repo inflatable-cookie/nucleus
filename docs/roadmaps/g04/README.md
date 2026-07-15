@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-10
+Updated: 2026-07-15
 
 ## Purpose
 
@@ -192,9 +192,13 @@ Current checkpoint:
 - native primary-window geometry persistence is confirmed and complete
 - the floating Agent Chat composer with functional route controls is accepted
 - the active path is the four-main-region workspace grid
-- the four-main-region layout is operator-validated; its automated closeout
-  remains alongside the next product lane
-- the active product path is the host-routed Terminal panel
+- the four-main-region, host-routed Terminal, and read-only Memory lanes are
+  validated and closed
+- the flexible project model is promoted: projects may be transient or durable
+  and contain zero or many folder or Git resources
+- project resource foundation, minimal control, multi-resource targeting,
+  transient chat, and optional Shared project files are the next sequenced
+  product roadmaps
 
 ## Roadmaps
 
@@ -231,21 +235,37 @@ Current checkpoint:
 - `031-window-region-panel-simplification.md` - completed
 - `032-native-window-geometry-persistence.md` - completed
 - `033-floating-agent-chat-composer.md` - completed
-- `034-four-main-region-workspace-grid.md` - active
-- `035-host-routed-terminal-panel.md` - active
+- `034-four-main-region-workspace-grid.md` - completed
+- `035-host-routed-terminal-panel.md` - completed
+- `036-project-memory-panel.md` - completed
+- `037-project-resource-foundation.md` - active
+- `038-project-control-workflow.md` - planned
+- `039-multi-resource-attachment-and-targeting.md` - planned
+- `040-transient-chat-and-promotion.md` - planned
+- `041-shared-project-files-control.md` - planned
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/179-terminal-runtime-validation.md`
-- `batch-cards/176-four-main-region-validation-checkpoint.md`
+- `batch-cards/185-project-resource-control-boundary.md`
 
 Planned cards:
 
-- None.
-
-- None.
+- `batch-cards/186-project-resource-foundation-validation.md`
+- `batch-cards/187-project-lifecycle-command-boundary.md`
+- `batch-cards/188-minimal-project-rail-controls.md`
+- `batch-cards/189-project-control-validation.md`
+- `batch-cards/190-resource-attachment-and-repair-boundary.md`
+- `batch-cards/191-workspace-resource-target-resolution.md`
+- `batch-cards/192-compact-project-resource-controls.md`
+- `batch-cards/193-multi-resource-workflow-validation.md`
+- `batch-cards/194-transient-project-retention-boundary.md`
+- `batch-cards/195-new-chat-and-in-place-promotion.md`
+- `batch-cards/196-transient-chat-validation.md`
+- `batch-cards/197-management-projection-resource-binding.md`
+- `batch-cards/198-shared-project-files-controls.md`
+- `batch-cards/199-shared-project-files-validation.md`
 
 Paused cards:
 
@@ -264,6 +284,13 @@ Superseded cards:
 
 Completed cards:
 
+- `batch-cards/184-project-resource-domain-and-storage.md`
+- `batch-cards/182-memory-panel-validation.md`
+- `batch-cards/179-terminal-runtime-validation.md`
+- `batch-cards/176-four-main-region-validation-checkpoint.md`
+- `batch-cards/183-project-resource-model-promotion.md`
+- `batch-cards/181-read-only-memory-panel.md`
+- `batch-cards/180-context-to-memory-migration.md`
 - `batch-cards/156-task-diff-read-api-and-tauri-boundary.md`
 - `batch-cards/155-task-run-checkpoint-diff-integration.md`
 - `batch-cards/154-task-review-source-snapshot-backend.md`

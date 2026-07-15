@@ -17,7 +17,10 @@ mod tasks;
 pub use commands::ControlCommandDto;
 pub use error::ControlApiCodecError;
 pub use goals::ControlGoalRecordDto;
-pub use projects::ControlProjectRecordDto;
+pub use projects::{
+    ControlProjectRecordDto, ControlProjectResourceKindDto,
+    ControlProjectResourceMutationCandidateDto, ControlProjectResourceRecordDto,
+};
 pub use query::{ControlQueryDto, ControlQueryScopeDto, ControlStateDomainDto};
 pub use records::ControlStateRecordDto;
 pub use request::{ControlRequestBodyDto, ControlRequestEnvelopeDto};

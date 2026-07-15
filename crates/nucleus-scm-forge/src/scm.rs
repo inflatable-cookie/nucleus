@@ -1,6 +1,6 @@
 //! SCM repository, worktree, branch, commit, and remote refs.
 
-use nucleus_projects::RepoMembershipId;
+use nucleus_projects::ProjectResourceId;
 
 use crate::ids::{ScmProviderRef, ScmRepositoryRefId, ScmWorkSessionId, ScmWorktreeRefId};
 
@@ -21,7 +21,7 @@ pub enum ScmProviderKind {
 pub struct ScmRepositoryRef {
     pub id: ScmRepositoryRefId,
     pub provider_kind: ScmProviderKind,
-    pub repo_membership_id: Option<RepoMembershipId>,
+    pub repo_membership_id: Option<ProjectResourceId>,
     pub provider_ref: Option<ScmProviderRef>,
     pub display_name: Option<String>,
     pub default_branch: Option<ScmBranchRef>,

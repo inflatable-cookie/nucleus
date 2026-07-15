@@ -439,11 +439,33 @@
 <style>
   .agent-chat {
     position: relative;
+    isolation: isolate;
     width: 100%;
     height: 100%;
     min-width: 0;
     min-height: 0;
     background: var(--poodle-color-background-canvas);
+  }
+
+  .agent-chat::after {
+    content: "";
+    position: absolute;
+    z-index: 4;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: clamp(5rem, 18vh, 8rem);
+    pointer-events: none;
+    background: linear-gradient(
+      to bottom,
+      transparent,
+      color-mix(in srgb, var(--poodle-color-background-canvas) 28%, transparent) 48%,
+      color-mix(in srgb, var(--poodle-color-background-canvas) 58%, transparent) 100%
+    );
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, black 38%);
+    mask-image: linear-gradient(to bottom, transparent, black 38%);
   }
 
   .chat-timeline {

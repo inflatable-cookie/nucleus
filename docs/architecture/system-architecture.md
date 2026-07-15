@@ -452,18 +452,27 @@ provider instance id.
 
 ## Project Model
 
-Projects are durable entities, not filesystem paths.
+Projects are Nucleus-owned logical work scopes, not filesystem paths.
 
-A project may contain one repo or many repos. A repo may move. Project identity
-survives path changes through explicit repo records, path history, and repair
-flows.
+A project may contain no work resource, one resource, or many resources. Plain
+folders and Git repositories are initial resource kinds. Project and resource
+identity survive locator changes through explicit membership records, locator
+history, and repair flows.
 
 Projects carry activity state so inactive work can be parked without being
 lost.
 
-A project may declare a management repository root. That root stores portable
-project metadata, task records, documentation, decision records, and references
-to artifacts. It is a collaboration surface, not the live runtime database.
+A project may declare one active management projection targeting a Git
+resource. It stores portable project metadata, task records, documentation,
+decision records, and artifact references. It is a collaboration surface, not
+the live runtime database.
+
+Projects may be transient or durable. Transient projects support immediate
+resource-free chat and promote in place when work is kept. Filesystem-dependent
+panels and execution target explicit host-resolved resources or a project
+default; they do not treat the project itself as a path.
+
+`project-resource-lifecycle.md` owns the accepted structural detail.
 
 ## Task Model
 

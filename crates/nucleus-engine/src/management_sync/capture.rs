@@ -1,4 +1,4 @@
-use nucleus_projects::{ProjectId, RepoMembershipId};
+use nucleus_projects::{ProjectId, ProjectResourceId};
 use nucleus_scm_forge::ScmRepositoryRefId;
 
 use crate::{EngineRuntimeReceiptRecordId, ManagementProjectionFileRef, ManagementProjectionRoot};
@@ -133,7 +133,7 @@ pub struct ManagementProjectionCaptureCommand {
     pub command_id: ManagementProjectionCaptureCommandId,
     pub actor_ref: String,
     pub target_project_id: ProjectId,
-    pub repo_membership_id: Option<RepoMembershipId>,
+    pub repo_membership_id: Option<ProjectResourceId>,
     pub repository_id: Option<ScmRepositoryRefId>,
     pub projection_root: ManagementProjectionRoot,
     pub requested_file_refs: Vec<ManagementProjectionFileRef>,

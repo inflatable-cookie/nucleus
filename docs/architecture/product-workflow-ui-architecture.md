@@ -99,7 +99,7 @@ inside each window is not useful for the Nucleus workflow:
 
 - the project rail switches project context
 - semantic regions define the window layout
-- panel tabs hold chat, task, editor, diff, terminal, browser, and context tools
+- panel tabs hold chat, task, editor, diff, terminal, browser, and memory tools
 - a Surface tab strip duplicates panel navigation and obscures workflow state
 
 Nucleus therefore needs:
@@ -142,6 +142,11 @@ more product controls are built, the UI lane should decide:
 
 The UI should prefer product-shaped aggregate queries over many small proof
 queries when the same screen always needs them together.
+
+The Memory panel replaces the undefined Context placeholder. Its first slice
+shows project-scoped accepted memories and memory proposals from existing
+sanitized read models. It is an inspector, not a general context drawer and not
+a mutation surface. Goal and Task focus remains in Agent Chat and Tasks.
 
 ## Retired Proof Debt
 

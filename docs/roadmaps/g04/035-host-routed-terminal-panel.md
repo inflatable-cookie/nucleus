@@ -1,6 +1,7 @@
 # 035 Host-Routed Terminal Panel
 
-Status: active
+Status: completed
+Updated: 2026-07-15
 Owner: Tom
 Updated: 2026-07-14
 
@@ -21,15 +22,12 @@ host-owned PTY without making terminal execution Tauri-local by design.
 - [x] Promote terminal authority, protocol, lifecycle, and transport rules.
 - [x] Add the transport-neutral client and local host PTY runtime.
 - [x] Render xterm with input, output, fit, resize, attach, and close behavior.
-- [ ] Complete operator interaction validation after automated checks pass.
+- [x] Complete operator interaction validation after automated checks pass.
 
 ## Batch Cards
-
-Ready:
-
-- `batch-cards/179-terminal-runtime-validation.md`
 
 Completed:
 
 - `batch-cards/177-terminal-host-runtime-boundary.md`
 - `batch-cards/178-xterm-terminal-panel.md`
+- `batch-cards/179-terminal-runtime-validation.md`

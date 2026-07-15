@@ -20,6 +20,7 @@ Architecture records the system shape once planning starts to settle.
 - `planning-management-projection-shape.md`
 - `task-seed-promotion-admission.md`
 - `product-workflow-ui-architecture.md`
+- `project-resource-lifecycle.md`
 
 ## Open Questions
 

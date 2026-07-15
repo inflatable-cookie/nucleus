@@ -15,7 +15,7 @@ use nucleus_local_store::{
 };
 use nucleus_projects::{
     encode_project_storage_record, ImportanceBaseline, ImportanceLevel, Project, ProjectActivity,
-    ProjectId, ProjectStatus,
+    ProjectId, ProjectRetention, ProjectStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -48,11 +48,14 @@ fn encoded_project_record(id: &str, display_name: &str) -> LocalStoreRecord {
         id: ProjectId(id.to_owned()),
         display_name: display_name.to_owned(),
         status: ProjectStatus::Active,
+        retention: ProjectRetention::Durable,
         importance_baseline: ImportanceBaseline {
             level: ImportanceLevel::Normal,
             notes: None,
         },
-        repos: Vec::new(),
+        resources: Vec::new(),
+        default_working_resource: None,
+        management_projection: None,
         task_ids: Vec::new(),
         workspace_layout_refs: Vec::new(),
         activity: ProjectActivity {

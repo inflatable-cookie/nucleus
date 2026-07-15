@@ -1,6 +1,6 @@
 # 179 Terminal Runtime Validation
 
-Status: ready
+Status: completed
 Owner: Codex
 Updated: 2026-07-14
 Milestone: `../035-host-routed-terminal-panel.md`
@@ -17,6 +17,7 @@ and docs. Stop for operator interaction review.
 - desktop type check and production build pass
 - docs QA and Rust formatting pass
 
-## Remaining
+## Outcome
 
-Operator can run an interactive shell, move tabs, remount, and close cleanly.
+The host-owned PTY protocol, xterm client, panel remount behavior, project
+selection, resizing, and close/reopen lifecycle are validated.

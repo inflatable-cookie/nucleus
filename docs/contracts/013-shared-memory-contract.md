@@ -157,6 +157,23 @@ The server remains responsible for:
 Harness adapters should expose whether they have native memory features, but
 Nucleus must not rely on those features for project memory continuity.
 
+## Initial Product Panel
+
+The first product-facing Memory panel is project-scoped and read-only.
+
+- accepted memory and proposed memory remain visibly separate
+- the panel consumes sanitized server summaries; it does not reconstruct
+  titles, bodies, or source content absent from the read model
+- accepted records may expose identity, scope, kind, lifecycle, sensitivity,
+  retention, confidence, actor refs, and bounded source/link/evidence counts
+- proposals may expose identity, scope, kind, review state, sensitivity,
+  retention, and bounded reference counts
+- empty, loading, unsupported, and error states remain explicit
+
+The first panel does not accept, reject, edit, archive, supersede, project, or
+extract memories. Those controls require a separate product-action lane over
+the existing server admission and review boundaries.
+
 ## Out Of Scope
 
 - vector database selection
@@ -165,7 +182,7 @@ Nucleus must not rely on those features for project memory continuity.
 - automatic extraction policy
 - provider-native memory sync
 - raw transcript retention
-- UI for memory review
+- mutating UI for memory review
 - memory projection migration format
 
 ## Research Gaps

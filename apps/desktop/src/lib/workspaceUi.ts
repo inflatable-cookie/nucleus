@@ -80,7 +80,7 @@ export function createWorkspacePanel(
 
 export function defaultRegionForPanelKind(kind: string): RegionKey {
   switch (kind) {
-    case "context":
+    case "memory":
       return "right_top";
     case "activity":
     case "projectActivity":
@@ -140,8 +140,8 @@ function panelLabelForKind(kind: string): string {
       return "Editor";
     case "diff":
       return "Diff";
-    case "context":
-      return "Context";
+    case "memory":
+      return "Memory";
     default:
       return "Panel";
   }

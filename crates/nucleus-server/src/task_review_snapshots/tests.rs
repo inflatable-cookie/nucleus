@@ -316,7 +316,8 @@ where
     let mut record = state.projects().get(&id).expect("get").expect("project");
     let previous = record.revision_id.clone();
     let mut project = decode_project_storage_record(&record.payload.bytes).expect("decode");
-    project.primary_location = Some(location.to_string_lossy().into_owned());
+    let resource = project.resources.first_mut().expect("seed resource");
+    resource.current_locator = Some(location.to_string_lossy().into_owned());
     record.revision_id = RevisionId("rev:snapshot-test".to_owned());
     record.payload = nucleus_local_store::LocalStoreRecordPayload {
         media_type: Some("application/json".to_owned()),

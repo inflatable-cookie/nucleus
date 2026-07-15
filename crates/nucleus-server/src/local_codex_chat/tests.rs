@@ -528,9 +528,9 @@ fn redirect_project_root(state: &ServerStateService<SqliteBackend>, root: &std::
     let previous = record.revision_id.clone();
     let mut project =
         nucleus_projects::decode_project_storage_record(&record.payload.bytes).expect("decode");
-    project.repo_count = 1;
-    project.primary_location = Some(root.to_string_lossy().into_owned());
-    project.location_status = nucleus_projects::ProjectStorageLocationStatus::Present;
+    let resource = project.resources.first_mut().expect("seed resource");
+    resource.current_locator = Some(root.to_string_lossy().into_owned());
+    resource.location_status = nucleus_projects::ProjectResourceStorageLocationStatus::Present;
     record.revision_id = RevisionId("rev:project:workflow-live-smoke".to_owned());
     record.payload = LocalStoreRecordPayload {
         media_type: Some("application/json".to_owned()),

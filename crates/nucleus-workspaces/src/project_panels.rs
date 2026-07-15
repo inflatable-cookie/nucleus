@@ -64,7 +64,7 @@ impl ProjectPanelLayoutRules {
                     0,
                 ),
                 placement("tasks", "tasks", &window_id, RegionId::CenterTop, 10),
-                placement("context", "context", &window_id, RegionId::RightTop, 0),
+                placement("memory", "memory", &window_id, RegionId::RightTop, 0),
                 placement(
                     "terminal",
                     "terminal",
