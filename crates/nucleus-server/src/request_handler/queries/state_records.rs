@@ -175,8 +175,13 @@ fn engine_scope_from_server_scope(scope: StateRecordQueryScope) -> EngineReadSco
 
 fn server_record_set_from_engine(
     domain: ServerStateDomain,
-    records: EngineReadRecordSet<LocalStoreRecord>,
+    mut records: EngineReadRecordSet<LocalStoreRecord>,
 ) -> ServerStateRecordSet {
+    if domain == ServerStateDomain::Projects {
+        records
+            .records
+            .retain(|record| record.kind == nucleus_core::PersistenceRecordKind::Project);
+    }
     ServerStateRecordSet {
         domain,
         records: records.records,

@@ -4,7 +4,7 @@ use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId, ModelRoute};
 use nucleus_core::RevisionId;
 use nucleus_native_harness::NativeStewardCommandRequest;
 use nucleus_planning::{GoalStatus, PlanningGoalId};
-use nucleus_projects::{Project, ProjectId, ProjectResourceId, ResourceRepairAction};
+use nucleus_projects::{ProjectId, ProjectResourceId, ResourceRepairAction};
 use nucleus_tasks::{
     AcceptanceCriterion, AgentReadiness, TaskActionType, TaskActivityState, TaskId, TaskImportance,
 };
@@ -98,15 +98,40 @@ pub struct ReadOnlyCommand {
 /// Project state commands.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectCommand {
-    Create(Project),
-    Update(Project),
-    Park(ProjectId),
-    Archive(ProjectId),
+    Create(ProjectCreateCommand),
+    Lifecycle(ProjectLifecycleCommand),
     RepairResource {
         project_id: ProjectId,
         resource_id: ProjectResourceId,
         action: ResourceRepairAction,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectCreateCommand {
+    pub display_name: String,
+    pub actor_ref: String,
+    pub authority_host_ref: String,
+    pub idempotency_key: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectLifecycleCommand {
+    pub project_id: ProjectId,
+    pub expected_revision: RevisionId,
+    pub actor_ref: String,
+    pub authority_host_ref: String,
+    pub idempotency_key: String,
+    pub action: ProjectLifecycleAction,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectLifecycleAction {
+    Rename { display_name: String },
+    Park,
+    Archive,
+    Restore,
+    Delete,
 }
 
 /// Task state commands.

@@ -30,6 +30,7 @@ pub enum PersistenceDomain {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PersistenceRecordKind {
     Project,
+    ProjectLifecycleReceipt,
     RepoMembership,
     Task,
     TaskHistoryEntry,

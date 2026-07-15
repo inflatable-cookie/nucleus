@@ -307,10 +307,21 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
             ) => Ok(Self::ProviderLiveReadSmokeEvidenceDiagnostics {
                 diagnostics: ControlProviderLiveReadSmokeEvidenceDiagnosticsDto::from(diagnostics),
             }),
-            ServerControlResponseBody::Command(receipt) => Ok(Self::CommandReceipt {
-                command_id: receipt.command_id.0.clone(),
-                status: command_receipt_status_dto(&receipt.status),
-            }),
+            ServerControlResponseBody::Command(receipt) => {
+                let (error_kind, error_reason) = match &receipt.status {
+                    crate::control_api::ServerCommandReceiptStatus::Rejected(error) => {
+                        let (kind, reason) = control_error_dto(error);
+                        (Some(kind), Some(reason))
+                    }
+                    _ => (None, None),
+                };
+                Ok(Self::CommandReceipt {
+                    command_id: receipt.command_id.0.clone(),
+                    status: command_receipt_status_dto(&receipt.status),
+                    error_kind,
+                    error_reason,
+                })
+            }
             ServerControlResponseBody::ReadOnlyCommand(result) => {
                 Ok(read_only_command_result_dto(result))
             }

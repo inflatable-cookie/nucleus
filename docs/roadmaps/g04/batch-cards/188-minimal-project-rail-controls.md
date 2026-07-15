@@ -1,6 +1,6 @@
 # 188 Minimal Project Rail Controls
 
-Status: planned
+Status: completed
 Owner: Codex
 Updated: 2026-07-15
 Milestone: `../038-project-control-workflow.md`

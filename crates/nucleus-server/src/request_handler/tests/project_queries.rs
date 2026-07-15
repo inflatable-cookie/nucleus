@@ -14,6 +14,19 @@ fn handler_executes_project_list_query() {
         .projects()
         .put(record.clone(), RevisionExpectation::MustNotExist)
         .expect("seed project");
+    handler
+        .state()
+        .projects()
+        .put(
+            fixture_record(
+                PersistenceDomain::Projects,
+                PersistenceRecordKind::ProjectLifecycleReceipt,
+                "project-lifecycle-receipt:1",
+                "rev:receipt:1",
+            ),
+            RevisionExpectation::MustNotExist,
+        )
+        .expect("seed lifecycle receipt");
 
     let response = handler.handle(query_request());
 

@@ -18,6 +18,7 @@ use super::ControlApiCodecError;
 pub struct ControlProjectRecordDto {
     pub project_id: String,
     pub display_name: String,
+    pub authority_host_ref: String,
     pub status: String,
     pub retention: String,
     pub importance_level: String,
@@ -107,6 +108,7 @@ impl TryFrom<&LocalStoreRecord> for ControlProjectRecordDto {
         Ok(Self {
             project_id: decoded.project_id,
             display_name: decoded.display_name,
+            authority_host_ref: decoded.authority_host_ref,
             status: project_status_dto(&decoded.status),
             retention: project_retention_dto(&decoded.retention),
             importance_level: project_importance_dto(&decoded.importance_level),

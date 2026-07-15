@@ -1,6 +1,6 @@
 # 189 Project Control Validation
 
-Status: planned
+Status: ready
 Owner: Codex
 Updated: 2026-07-15
 Milestone: `../038-project-control-workflow.md`

@@ -12,6 +12,7 @@ use super::ControlApiCodecError;
 
 mod goal_authoring;
 mod memory_proposal_review;
+mod project_lifecycle;
 mod read_only;
 mod task_authoring;
 
@@ -19,6 +20,7 @@ use goal_authoring::{goal_command_dto, goal_create_kind, goal_update_kind};
 use memory_proposal_review::{
     memory_proposal_review_action, memory_proposal_review_dto, ControlMemoryProposalReviewActionDto,
 };
+use project_lifecycle::{project_command_dto, project_create_kind, project_lifecycle_kind};
 use read_only::{read_only_command_dto, read_only_command_kind};
 use task_authoring::{
     task_create_dto, task_create_kind, task_update_dto, task_update_kind,
@@ -29,6 +31,23 @@ use task_authoring::{
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ControlCommandDto {
+    ProjectCreate {
+        command_id: String,
+        display_name: String,
+        actor_ref: String,
+        authority_host_ref: String,
+        idempotency_key: String,
+    },
+    ProjectLifecycle {
+        command_id: String,
+        project_id: String,
+        action: ControlProjectLifecycleActionDto,
+        expected_revision: String,
+        display_name: Option<String>,
+        actor_ref: String,
+        authority_host_ref: String,
+        idempotency_key: String,
+    },
     Task {
         command_id: String,
         action: ControlTaskCommandActionDto,
@@ -152,11 +171,24 @@ pub enum ControlTaskCommandActionDto {
     Archive,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlProjectLifecycleActionDto {
+    Rename,
+    Park,
+    Archive,
+    Restore,
+    Delete,
+}
+
 impl TryFrom<&ServerCommand> for ControlCommandDto {
     type Error = ControlApiCodecError;
 
     fn try_from(command: &ServerCommand) -> Result<Self, Self::Error> {
         match &command.kind {
+            ServerCommandKind::Project(project_command) => {
+                project_command_dto(&command.id, project_command)
+            }
             ServerCommandKind::Task(task_command) => task_command_dto(&command.id, task_command),
             ServerCommandKind::Goal(goal_command) => goal_command_dto(&command.id, goal_command),
             ServerCommandKind::ReadOnlyCommand(read_only_command) => {
@@ -177,6 +209,38 @@ impl ControlCommandDto {
         self,
     ) -> Result<(ServerCommandId, ServerCommandKind), ControlApiCodecError> {
         match self {
+            Self::ProjectCreate {
+                command_id,
+                display_name,
+                actor_ref,
+                authority_host_ref,
+                idempotency_key,
+            } => Ok(project_create_kind(
+                command_id,
+                display_name,
+                actor_ref,
+                authority_host_ref,
+                idempotency_key,
+            )),
+            Self::ProjectLifecycle {
+                command_id,
+                project_id,
+                action,
+                expected_revision,
+                display_name,
+                actor_ref,
+                authority_host_ref,
+                idempotency_key,
+            } => project_lifecycle_kind(
+                command_id,
+                project_id,
+                action,
+                expected_revision,
+                display_name,
+                actor_ref,
+                authority_host_ref,
+                idempotency_key,
+            ),
             Self::Task {
                 command_id,
                 action,

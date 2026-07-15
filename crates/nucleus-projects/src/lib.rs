@@ -37,6 +37,7 @@ pub struct ProjectTaskId(pub String);
 pub struct Project {
     pub id: ProjectId,
     pub display_name: String,
+    pub authority_host_ref: String,
     pub status: ProjectStatus,
     pub retention: ProjectRetention,
     pub importance_baseline: ImportanceBaseline,

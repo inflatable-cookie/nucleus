@@ -1,6 +1,6 @@
 # 187 Project Lifecycle Command Boundary
 
-Status: ready
+Status: completed
 Owner: Codex
 Updated: 2026-07-15
 Milestone: `../038-project-control-workflow.md`

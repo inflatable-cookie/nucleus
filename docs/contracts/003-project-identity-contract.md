@@ -251,8 +251,9 @@ These records belong to their dedicated contracts:
 
 Project storage schema v2 persists resource kind, role, authority host,
 locator and history, Git metadata, repair state, retention, working defaults,
-and management-projection refs. Schema-v1 display records migrate on decode
-without changing project id.
+and management-projection refs. Schema v3 adds the project-metadata authority
+host. Schema-v1 display records and schema-v2 resource records migrate on
+decode without changing project id.
 
 Control project records expose sanitized zero-to-many resource summaries with
 identity, kind, role, authority host, location health, and default-target
@@ -261,6 +262,17 @@ URLs, repair notes, relative working directories, or projection policy refs.
 Typed resource-mutation candidates require an actor, expected project
 revision, supported resource kind, and matching authority host before a later
 command executor may act.
+
+The server now owns name-only durable project creation plus typed rename,
+park, archive, restore, and delete commands. Lifecycle mutations require an
+actor, idempotency key, exact project revision, and matching project-metadata
+authority host. Applied commands write durable receipts. Delete is admitted
+only when the server can prove that the project has no retained resources,
+tasks, conversations, memory, planning, research, or workspace records.
+
+Lifecycle command payloads do not accept filesystem locators, repository
+metadata, or topology choices. Project queries exclude lifecycle receipt
+records and expose refusal reasons through sanitized command receipts.
 
 ## Control Plane Boundary
 

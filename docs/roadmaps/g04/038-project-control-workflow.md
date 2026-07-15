@@ -18,20 +18,20 @@ creation and lifecycle surface without introducing a setup wizard.
 
 ## Execution Plan
 
-- [ ] Add create, rename, park, archive, restore, and delete admission with
+- [x] Add create, rename, park, archive, restore, and delete admission with
   revision and authority checks.
-- [ ] Add name-only creation and compact project-menu controls to the rail.
+- [x] Add name-only creation and compact project-menu controls to the rail.
 - [ ] Preserve selected-project and workspace behavior across lifecycle
   changes and restart.
 - [ ] Validate empty durable projects before resource attachment begins.
 
 ## Batch Cards
 
-Ready:
+Completed:
 
 - `batch-cards/187-project-lifecycle-command-boundary.md`
-
-Planned:
-
 - `batch-cards/188-minimal-project-rail-controls.md`
+
+Ready:
+
 - `batch-cards/189-project-control-validation.md`

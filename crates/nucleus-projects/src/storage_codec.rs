@@ -10,7 +10,7 @@ use crate::{
     WorkingResourceTarget,
 };
 
-pub const PROJECT_STORAGE_SCHEMA_VERSION: u16 = 2;
+pub const PROJECT_STORAGE_SCHEMA_VERSION: u16 = 3;
 
 /// Complete server-owned project record used by current storage.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -18,6 +18,8 @@ pub struct ProjectStorageRecord {
     pub schema_version: u16,
     pub project_id: String,
     pub display_name: String,
+    #[serde(default = "default_project_authority_host_ref")]
+    pub authority_host_ref: String,
     pub status: ProjectStorageStatus,
     pub retention: ProjectRetentionStorage,
     pub importance_level: ProjectStorageImportanceLevel,
@@ -192,6 +194,7 @@ impl From<&Project> for ProjectStorageRecord {
             schema_version: PROJECT_STORAGE_SCHEMA_VERSION,
             project_id: project.id.0.clone(),
             display_name: project.display_name.clone(),
+            authority_host_ref: project.authority_host_ref.clone(),
             status: (&project.status).into(),
             retention: (&project.retention).into(),
             importance_level: (&project.importance_baseline.level).into(),
@@ -389,6 +392,7 @@ impl LegacyProjectStorageRecord {
             schema_version: PROJECT_STORAGE_SCHEMA_VERSION,
             project_id: self.project_id,
             display_name: self.display_name,
+            authority_host_ref: default_project_authority_host_ref(),
             status: self.status,
             retention: ProjectRetentionStorage::Durable,
             importance_level: self.importance_level,
@@ -439,7 +443,7 @@ pub fn decode_project_storage_record(
 ) -> Result<ProjectStorageRecord, ProjectRecordCodecError> {
     let value: serde_json::Value = serde_json::from_slice(bytes).map_err(codec_error)?;
     if let Some(schema_version) = value.get("schema_version") {
-        if schema_version.as_u64() != Some(u64::from(PROJECT_STORAGE_SCHEMA_VERSION)) {
+        if !matches!(schema_version.as_u64(), Some(2) | Some(3)) {
             return Err(ProjectRecordCodecError {
                 reason: format!(
                     "unsupported project storage schema version: {}",
@@ -447,12 +451,19 @@ pub fn decode_project_storage_record(
                 ),
             });
         }
-        serde_json::from_value(value).map_err(codec_error)
+        let mut record: ProjectStorageRecord =
+            serde_json::from_value(value).map_err(codec_error)?;
+        record.schema_version = PROJECT_STORAGE_SCHEMA_VERSION;
+        Ok(record)
     } else {
         serde_json::from_value::<LegacyProjectStorageRecord>(value)
             .map(LegacyProjectStorageRecord::migrate)
             .map_err(codec_error)
     }
+}
+
+fn default_project_authority_host_ref() -> String {
+    "host:local".to_owned()
 }
 
 fn system_time_to_unix_ms(time: SystemTime) -> Option<u64> {
@@ -485,6 +496,7 @@ mod tests {
         Project {
             id: ProjectId("project:nucleus".to_owned()),
             display_name: "Nucleus".to_owned(),
+            authority_host_ref: "host:local".to_owned(),
             status: ProjectStatus::Active,
             retention: ProjectRetention::Durable,
             importance_baseline: ImportanceBaseline {
@@ -520,6 +532,7 @@ mod tests {
         let decoded = decode_project_storage_record(&bytes).expect("decode project");
 
         assert_eq!(decoded.schema_version, PROJECT_STORAGE_SCHEMA_VERSION);
+        assert_eq!(decoded.authority_host_ref, "host:local");
         assert_eq!(decoded.retention, ProjectRetentionStorage::Durable);
         assert!(decoded.resources.is_empty());
         assert_eq!(decoded.primary_location(), None);
@@ -527,6 +540,27 @@ mod tests {
             decoded.location_status(),
             ProjectStorageLocationStatus::NotRecorded
         );
+    }
+
+    #[test]
+    fn schema_v2_project_defaults_authority_host_during_decode() {
+        let mut value: serde_json::Value = serde_json::from_slice(
+            &encode_project_storage_record(&project(Vec::new())).expect("encode project"),
+        )
+        .expect("project json");
+        value["schema_version"] = serde_json::json!(2);
+        value
+            .as_object_mut()
+            .expect("project object")
+            .remove("authority_host_ref");
+
+        let decoded = decode_project_storage_record(
+            &serde_json::to_vec(&value).expect("encode schema v2 fixture"),
+        )
+        .expect("decode schema v2 project");
+
+        assert_eq!(decoded.schema_version, PROJECT_STORAGE_SCHEMA_VERSION);
+        assert_eq!(decoded.authority_host_ref, "host:local");
     }
 
     #[test]

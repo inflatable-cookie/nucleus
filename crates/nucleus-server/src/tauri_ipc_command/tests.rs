@@ -47,6 +47,7 @@ fn encoded_project_record(id: &str, display_name: &str) -> LocalStoreRecord {
     let project = Project {
         id: ProjectId(id.to_owned()),
         display_name: display_name.to_owned(),
+        authority_host_ref: "host:embedded-desktop".to_owned(),
         status: ProjectStatus::Active,
         retention: ProjectRetention::Durable,
         importance_baseline: ImportanceBaseline {

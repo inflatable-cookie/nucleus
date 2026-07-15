@@ -362,6 +362,7 @@ shape.
 
 ## Next Task
 
-Complete `g04/batch-cards/187-project-lifecycle-command-boundary.md`: add
-server-owned create, rename, park, archive, restore, and guarded delete
-commands with durable receipts and no filesystem requirement.
+Complete `g04/batch-cards/189-project-control-validation.md`: validate
+name-only project creation, compact lifecycle controls, restart continuity,
+truthful delete refusal, and resource-free chat/task behavior with the
+operator.

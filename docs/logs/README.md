@@ -29,3 +29,4 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-15-panel-validation-closeout.md`
 - `2026-07-15-project-resource-domain-storage.md`
 - `2026-07-15-project-resource-foundation-closeout.md`
+- `2026-07-15-project-lifecycle-controls.md`

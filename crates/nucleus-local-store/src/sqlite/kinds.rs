@@ -5,6 +5,7 @@ use crate::{LocalStoreError, LocalStoreResult};
 pub(super) fn kind_to_text(kind: &PersistenceRecordKind) -> Option<&'static str> {
     match kind {
         PersistenceRecordKind::Project => Some("project"),
+        PersistenceRecordKind::ProjectLifecycleReceipt => Some("project_lifecycle_receipt"),
         PersistenceRecordKind::RepoMembership => Some("repo_membership"),
         PersistenceRecordKind::Task => Some("task"),
         PersistenceRecordKind::TaskHistoryEntry => Some("task_history_entry"),
@@ -34,6 +35,7 @@ pub(super) fn kind_to_text(kind: &PersistenceRecordKind) -> Option<&'static str>
 pub(super) fn kind_from_text(value: &str) -> LocalStoreResult<PersistenceRecordKind> {
     match value {
         "project" => Ok(PersistenceRecordKind::Project),
+        "project_lifecycle_receipt" => Ok(PersistenceRecordKind::ProjectLifecycleReceipt),
         "repo_membership" => Ok(PersistenceRecordKind::RepoMembership),
         "task" => Ok(PersistenceRecordKind::Task),
         "task_history_entry" => Ok(PersistenceRecordKind::TaskHistoryEntry),

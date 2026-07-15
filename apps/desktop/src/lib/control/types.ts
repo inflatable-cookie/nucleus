@@ -22,6 +22,7 @@ export type ControlTaskTransitionAction = "start" | "block" | "complete" | "arch
 export type ControlProjectRecordDto = {
   project_id: string;
   display_name: string;
+  authority_host_ref: string;
   status: string;
   retention: string;
   importance_level: string;

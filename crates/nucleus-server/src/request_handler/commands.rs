@@ -4,6 +4,7 @@ use super::command_admission::{admit_state_command, CommandAdmissionOutcome};
 use super::command_events::append_command_admitted_event;
 use super::goal_commands::handle_goal_command;
 use super::handler::LocalControlRequestHandler;
+use super::project_commands::handle_project_command;
 use super::steward_commands::handle_steward_command;
 use super::task_commands::handle_task_command;
 use crate::memory_proposal_review_persistence::review_memory_proposal;
@@ -55,9 +56,10 @@ where
     }
 
     let status = match command.kind {
-        ServerCommandKind::Project(_)
-        | ServerCommandKind::Workspace(_)
-        | ServerCommandKind::ConfigureModelRoute(_) => {
+        ServerCommandKind::Project(project_command) => {
+            handle_project_command(handler, &command_id.0, project_command)
+        }
+        ServerCommandKind::Workspace(_) | ServerCommandKind::ConfigureModelRoute(_) => {
             ServerCommandReceiptStatus::AcceptedForStateMutation
         }
         ServerCommandKind::Task(task_command) => {

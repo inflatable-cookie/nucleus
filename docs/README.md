@@ -30,10 +30,11 @@ lane: its local authoritative-host adapter and xterm slice are ready for
 operator interaction review without making Tauri the durable terminal API.
 The former Context placeholder now migrates to a read-only Memory panel over
 accepted-memory and proposal summaries; its operator validation is current.
-The next sequenced product runway generalizes projects beyond repository
-bookmarks: transient or durable project scopes may hold zero or many folder or
-Git resources, with optional Shared project files kept behind advanced project
-controls.
+Projects now generalize beyond repository bookmarks: durable scopes may be
+created by name with zero resources, and compact server-backed lifecycle
+controls are ready for operator validation. The next runway adds zero-to-many
+folder or Git resources, then transient chat promotion and optional Shared
+project files behind advanced controls.
 
 Current planning artifacts:
 

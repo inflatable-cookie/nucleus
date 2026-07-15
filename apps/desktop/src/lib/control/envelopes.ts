@@ -48,14 +48,34 @@ import type { ControlQueryDto } from "./queryEnvelopeTypes";
 
 export type { ControlQueryDto } from "./queryEnvelopeTypes";
 
-export type ControlCommandDto = {
-  kind: "task";
-  command_id: string;
-  action: ControlTaskTransitionAction;
-  task_id: string;
-  expected_revision: string | null;
-  reason: string | null;
-};
+export type ControlCommandDto =
+  | {
+      kind: "task";
+      command_id: string;
+      action: ControlTaskTransitionAction;
+      task_id: string;
+      expected_revision: string | null;
+      reason: string | null;
+    }
+  | {
+      kind: "project_create";
+      command_id: string;
+      display_name: string;
+      actor_ref: string;
+      authority_host_ref: string;
+      idempotency_key: string;
+    }
+  | {
+      kind: "project_lifecycle";
+      command_id: string;
+      project_id: string;
+      action: "rename" | "park" | "archive" | "restore" | "delete";
+      expected_revision: string;
+      display_name: string | null;
+      actor_ref: string;
+      authority_host_ref: string;
+      idempotency_key: string;
+    };
 
 export type ControlRequestEnvelopeDto = {
   protocol_family: typeof CONTROL_PROTOCOL_FAMILY;
@@ -218,7 +238,13 @@ export type ControlResponseEnvelopeDto = {
       }
     | ControlSelectedTaskReviewDecisionResponseBodyDto
     | { type: "state_records"; domain: string; records: unknown[] }
-    | { type: "command_receipt"; command_id: string; status: string }
+    | {
+        type: "command_receipt";
+        command_id: string;
+        status: string;
+        error_kind: string | null;
+        error_reason: string | null;
+      }
     | { type: "error"; kind: string; reason: string };
 };
 

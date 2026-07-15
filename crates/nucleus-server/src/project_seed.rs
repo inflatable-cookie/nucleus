@@ -77,6 +77,7 @@ fn project_from_seed(seed: &LocalProjectSeed) -> Project {
     Project {
         id: ProjectId(seed.project_id.clone()),
         display_name: seed.display_name.clone(),
+        authority_host_ref: "host:embedded-desktop".to_owned(),
         status: ProjectStatus::Active,
         retention: ProjectRetention::Durable,
         importance_baseline: ImportanceBaseline {
@@ -270,6 +271,7 @@ mod tests {
         let old_project = Project {
             id: ProjectId("project:nucleus-local".to_owned()),
             display_name: "Nucleus Local".to_owned(),
+            authority_host_ref: "host:embedded-desktop".to_owned(),
             status: ProjectStatus::Active,
             retention: ProjectRetention::Durable,
             importance_baseline: ImportanceBaseline {

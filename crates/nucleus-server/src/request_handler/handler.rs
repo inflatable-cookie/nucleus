@@ -17,6 +17,7 @@ pub struct LocalControlRequestHandler<B> {
     pub(crate) replay: ServerEventReplayService<B>,
     pub(crate) scheduler: RuntimeSchedulerQueue,
     auth_readiness: Option<ClientAuthReadiness>,
+    authority_host_id: crate::EngineHostId,
 }
 
 impl<B> LocalControlRequestHandler<B>
@@ -25,11 +26,24 @@ where
 {
     /// Create a handler from local services.
     pub fn new(backend: B, auth_readiness: Option<ClientAuthReadiness>) -> Self {
+        Self::new_on_host(
+            backend,
+            auth_readiness,
+            crate::EngineHostId("host:embedded-desktop".to_owned()),
+        )
+    }
+
+    pub fn new_on_host(
+        backend: B,
+        auth_readiness: Option<ClientAuthReadiness>,
+        authority_host_id: crate::EngineHostId,
+    ) -> Self {
         Self {
             state: ServerStateService::new(backend.clone()),
             replay: ServerEventReplayService::new(ServerStateService::new(backend)),
             scheduler: RuntimeSchedulerQueue::new(),
             auth_readiness,
+            authority_host_id,
         }
     }
 
@@ -46,6 +60,10 @@ where
     /// Access the inert scheduler queue for later handler cards.
     pub fn scheduler(&self) -> &RuntimeSchedulerQueue {
         &self.scheduler
+    }
+
+    pub fn authority_host_id(&self) -> &crate::EngineHostId {
+        &self.authority_host_id
     }
 
     /// Handle one local control request.

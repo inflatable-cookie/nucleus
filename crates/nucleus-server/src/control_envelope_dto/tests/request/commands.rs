@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn request_envelope_dto_round_trips_project_create_and_lifecycle_commands() {
+    let commands = [
+        crate::commands::ProjectCommand::Create(crate::commands::ProjectCreateCommand {
+            display_name: "Empty Project".to_owned(),
+            actor_ref: "operator:desktop".to_owned(),
+            authority_host_ref: "host:embedded-desktop".to_owned(),
+            idempotency_key: "project:create:1".to_owned(),
+        }),
+        crate::commands::ProjectCommand::Lifecycle(crate::commands::ProjectLifecycleCommand {
+            project_id: ProjectId("project:one".to_owned()),
+            expected_revision: RevisionId("rev:project:1".to_owned()),
+            actor_ref: "operator:desktop".to_owned(),
+            authority_host_ref: "host:embedded-desktop".to_owned(),
+            idempotency_key: "project:rename:1".to_owned(),
+            action: crate::commands::ProjectLifecycleAction::Rename {
+                display_name: "Renamed Project".to_owned(),
+            },
+        }),
+    ];
+
+    for (index, project_command) in commands.into_iter().enumerate() {
+        let request = ServerControlRequest {
+            id: ServerControlRequestId(format!("request:project:{index}")),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerControlRequestKind::Command(crate::commands::ServerCommand {
+                id: ServerCommandId(format!("command:project:{index}")),
+                client_id: ClientId("client:desktop".to_owned()),
+                kind: crate::commands::ServerCommandKind::Project(project_command),
+            }),
+        };
+
+        let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+        let json = serde_json::to_string(&dto).expect("json");
+        let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded");
+        let restored = ServerControlRequest::try_from(decoded).expect("restored");
+
+        assert_eq!(restored, request);
+        assert!(!json.contains("current_locator"));
+        assert!(!json.contains("git_repository"));
+    }
+}
+
+#[test]
 fn request_envelope_dto_serializes_supported_task_command() {
     let request = ServerControlRequest {
         id: ServerControlRequestId("request:dto:command".to_owned()),

@@ -53,6 +53,12 @@ New unscoped chats use transient projects. Promotion changes retention in
 place and preserves all owned identities. Durable child records cannot remain
 under a silently expiring parent.
 
+The first realized lifecycle slice creates durable zero-resource projects by
+name. One typed server command family covers rename, park, archive, restore,
+and guarded delete. Exact revisions, project-metadata host authority, and
+durable idempotency receipts keep desktop controls thin. Delete fails closed
+when retained project work exists or cannot be inspected safely.
+
 ## Projection Shape
 
 Shared project files are an optional Git-backed projection of selected shared
@@ -68,3 +74,7 @@ The primary workflow offers immediate new chat, name-only new project, and
 open-folder-or-repository actions. Resource management, defaults, repair,
 retention, and shared-project-file controls live behind project menus and
 popovers.
+
+The project rail now implements the name-only durable path. Lifecycle actions
+stay behind each project's overflow menu, with inline conflict and refusal
+feedback instead of a setup wizard or modal sequence.

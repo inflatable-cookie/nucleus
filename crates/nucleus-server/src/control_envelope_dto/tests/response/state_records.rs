@@ -25,6 +25,7 @@ fn response_envelope_dto_serializes_status_error_and_state_records() {
     let project = Project {
         id: ProjectId("project:dto".to_owned()),
         display_name: "DTO Project".to_owned(),
+        authority_host_ref: "host:server".to_owned(),
         status: ProjectStatus::Active,
         retention: ProjectRetention::Durable,
         importance_baseline: ImportanceBaseline {
@@ -169,6 +170,33 @@ fn response_envelope_dto_serializes_status_error_and_state_records() {
         }
         other => panic!("expected project records, got {other:?}"),
     }
+}
+
+#[test]
+fn rejected_command_receipt_exposes_kind_and_reason() {
+    let response = ServerControlResponse {
+        request_id: ServerControlRequestId("request:dto:rejected-command".to_owned()),
+        status: ServerControlResponseStatus::Rejected,
+        body: ServerControlResponseBody::Command(crate::control_api::ServerCommandReceipt {
+            command_id: crate::ids::ServerCommandId("command:project:delete".to_owned()),
+            status: crate::control_api::ServerCommandReceiptStatus::Rejected(
+                ServerControlError::InvalidRequest {
+                    reason: "project deletion refused: retained resources=1".to_owned(),
+                },
+            ),
+        }),
+    };
+
+    let dto = ControlResponseEnvelopeDto::try_from(&response).expect("response dto");
+
+    assert!(matches!(
+        dto.body,
+        ControlResponseBodyDto::CommandReceipt {
+            error_kind: Some(kind),
+            error_reason: Some(reason),
+            ..
+        } if kind == "invalid_request" && reason.contains("retained resources=1")
+    ));
 }
 
 #[test]

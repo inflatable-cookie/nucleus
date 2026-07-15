@@ -238,8 +238,8 @@ Current checkpoint:
 - `034-four-main-region-workspace-grid.md` - completed
 - `035-host-routed-terminal-panel.md` - completed
 - `036-project-memory-panel.md` - completed
-- `037-project-resource-foundation.md` - active
-- `038-project-control-workflow.md` - planned
+- `037-project-resource-foundation.md` - completed
+- `038-project-control-workflow.md` - active
 - `039-multi-resource-attachment-and-targeting.md` - planned
 - `040-transient-chat-and-promotion.md` - planned
 - `041-shared-project-files-control.md` - planned
@@ -248,14 +248,17 @@ Current checkpoint:
 
 Ready cards:
 
+- `batch-cards/189-project-control-validation.md`
+
+Completed cards:
+
 - `batch-cards/185-project-resource-control-boundary.md`
-
-Planned cards:
-
 - `batch-cards/186-project-resource-foundation-validation.md`
 - `batch-cards/187-project-lifecycle-command-boundary.md`
 - `batch-cards/188-minimal-project-rail-controls.md`
-- `batch-cards/189-project-control-validation.md`
+
+Planned cards:
+
 - `batch-cards/190-resource-attachment-and-repair-boundary.md`
 - `batch-cards/191-workspace-resource-target-resolution.md`
 - `batch-cards/192-compact-project-resource-controls.md`

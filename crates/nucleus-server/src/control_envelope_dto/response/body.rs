@@ -270,6 +270,8 @@ pub enum ControlResponseBodyDto {
     CommandReceipt {
         command_id: String,
         status: String,
+        error_kind: Option<String>,
+        error_reason: Option<String>,
     },
     ReadOnlyCommandResult {
         command_id: String,
