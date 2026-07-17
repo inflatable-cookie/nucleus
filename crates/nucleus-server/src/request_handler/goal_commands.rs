@@ -1,20 +1,22 @@
-use std::time::SystemTime;
+//! Goal command adapter: DTO mapping plus the storage port. Canonical goal
+//! rules live in `nucleus_engine::goal_commands` (contract 022).
 
-use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
+use nucleus_core::{PersistenceDomain, PersistenceRecordId};
+use nucleus_engine::{
+    EngineGoalCommand, EngineGoalCommandError, EngineGoalCommandService, EngineGoalCreateCommand,
+    EngineGoalRepository, EngineGoalUpdateChanges, EngineGoalUpdateCommand,
+    EngineRevisionExpectation, EngineTaskRecord,
+};
 use nucleus_local_store::{
     LocalStoreBackend, LocalStoreError, LocalStoreRecord, LocalStoreRecordPayload,
     RevisionExpectation,
 };
-use nucleus_planning::{
-    apply_goal_membership_change, decode_goal_storage_record, encode_goal_storage_record,
-    goal_from_storage_record, validate_goal, Goal, GoalMembershipChange, GoalStatus,
-    GoalTaskCandidate, GoalTimestamps, PlanningGoalId,
-};
-use nucleus_tasks::{decode_task_storage_record, TaskId};
+use nucleus_projects::ProjectId;
 
 use super::handler::LocalControlRequestHandler;
 use crate::commands::{GoalCommand, GoalCreateCommand, GoalUpdateCommand};
 use crate::control_api::{ServerCommandReceiptStatus, ServerControlError};
+use crate::state::ServerStateService;
 
 pub(crate) fn handle_goal_command<B>(
     handler: &LocalControlRequestHandler<B>,
@@ -24,45 +26,26 @@ pub(crate) fn handle_goal_command<B>(
 where
     B: LocalStoreBackend + Clone,
 {
-    let result = match command {
-        GoalCommand::Create(command) => create_goal(handler, command_id, command),
-        GoalCommand::Update(command) => update_goal(handler, command_id, command),
+    let repository = GoalStateRepository {
+        state: handler.state(),
     };
+    let service = EngineGoalCommandService::new(repository);
+    let result = service.execute(command_id, engine_goal_command(command));
     match result {
         Ok(()) => ServerCommandReceiptStatus::AcceptedForStateMutation,
-        Err(error) => ServerCommandReceiptStatus::Rejected(error),
+        Err(error) => ServerCommandReceiptStatus::Rejected(engine_goal_error(error)),
     }
 }
 
-fn create_goal<B>(
-    handler: &LocalControlRequestHandler<B>,
-    command_id: &str,
-    command: GoalCreateCommand,
-) -> Result<(), ServerControlError>
-where
-    B: LocalStoreBackend + Clone,
-{
-    if !matches!(command.status, GoalStatus::Proposed | GoalStatus::Ready) {
-        return Err(ServerControlError::InvalidRequest {
-            reason: "goal authoring can create only proposed or ready goals".to_owned(),
-        });
+fn engine_goal_command(command: GoalCommand) -> EngineGoalCommand {
+    match command {
+        GoalCommand::Create(command) => EngineGoalCommand::Create(engine_create_command(command)),
+        GoalCommand::Update(command) => EngineGoalCommand::Update(engine_update_command(command)),
     }
-    let project_id = PersistenceRecordId(command.project_id.0.clone());
-    if handler
-        .state()
-        .projects()
-        .get(&project_id)
-        .map_err(storage_error)?
-        .is_none()
-    {
-        return Err(ServerControlError::NotFound {
-            reason: format!("goal project not found: {}", project_id.0),
-        });
-    }
+}
 
-    let now = SystemTime::now();
-    let goal = Goal {
-        id: PlanningGoalId(format!("goal:{command_id}")),
+fn engine_create_command(command: GoalCreateCommand) -> EngineGoalCreateCommand {
+    EngineGoalCreateCommand {
         project_id: command.project_id,
         title: command.title,
         desired_outcome: command.desired_outcome,
@@ -76,181 +59,128 @@ where
         evidence_refs: command.evidence_refs,
         current_next_task_ref: command.current_next_task_ref,
         next_action: command.next_action,
-        timestamps: GoalTimestamps {
-            created_at: Some(now),
-            updated_at: Some(now),
-            achieved_at: None,
-        },
-    };
-    let candidates = task_candidates(handler, &goal.ordered_task_refs)?;
-    validate_goal(&goal, &candidates).map_err(validation_error)?;
-    persist_goal(
-        handler,
-        goal,
-        RevisionId(format!("rev:goal-create:{command_id}")),
-        RevisionExpectation::MustNotExist,
-    )
+    }
 }
 
-fn update_goal<B>(
-    handler: &LocalControlRequestHandler<B>,
-    command_id: &str,
-    command: GoalUpdateCommand,
-) -> Result<(), ServerControlError>
-where
-    B: LocalStoreBackend + Clone,
-{
-    let record_id = PersistenceRecordId(command.goal_id.0.clone());
-    let record = handler
-        .state()
-        .planning()
-        .get(&record_id)
-        .map_err(storage_error)?
-        .ok_or_else(|| ServerControlError::NotFound {
-            reason: format!("goal record not found: {}", record_id.0),
-        })?;
-    if record.kind != PersistenceRecordKind::Goal {
-        return Err(ServerControlError::InvalidRequest {
-            reason: format!("planning record is not a goal: {}", record_id.0),
-        });
-    }
-    if record.revision_id != command.expected_revision {
-        return Err(ServerControlError::Conflict {
-            reason: format!("goal revision conflict for {}", record_id.0),
-        });
-    }
-    let storage = decode_goal_storage_record(&record.payload.bytes).map_err(codec_error)?;
-    let mut goal = goal_from_storage_record(storage).map_err(codec_error)?;
+fn engine_update_command(command: GoalUpdateCommand) -> EngineGoalUpdateCommand {
     let changes = command.changes;
-
-    if let Some(task_refs) = changes.ordered_task_refs {
-        let candidates = task_candidates(handler, &task_refs)?;
-        goal = apply_goal_membership_change(
-            &goal,
-            &record.revision_id,
-            GoalMembershipChange {
-                expected_revision: command.expected_revision.clone(),
-                ordered_task_refs: task_refs,
-            },
-            &candidates,
-        )
-        .map_err(validation_error)?;
+    EngineGoalUpdateCommand {
+        goal_id: command.goal_id,
+        expected_revision: command.expected_revision,
+        changes: EngineGoalUpdateChanges {
+            title: changes.title,
+            desired_outcome: changes.desired_outcome,
+            scope: changes.scope,
+            owner_refs: changes.owner_refs,
+            ordered_task_refs: changes.ordered_task_refs,
+            planning_artifact_refs: changes.planning_artifact_refs,
+            provenance_refs: changes.provenance_refs,
+            stop_conditions: changes.stop_conditions,
+            evidence_refs: changes.evidence_refs,
+            current_next_task_ref: changes.current_next_task_ref,
+            next_action: changes.next_action,
+        },
     }
-    if let Some(value) = changes.title {
-        goal.title = value;
-    }
-    if let Some(value) = changes.desired_outcome {
-        goal.desired_outcome = value;
-    }
-    if let Some(value) = changes.scope {
-        goal.scope = value;
-    }
-    if let Some(value) = changes.owner_refs {
-        goal.owner_refs = value;
-    }
-    if let Some(value) = changes.planning_artifact_refs {
-        goal.planning_artifact_refs = value;
-    }
-    if let Some(value) = changes.provenance_refs {
-        goal.provenance_refs = value;
-    }
-    if let Some(value) = changes.stop_conditions {
-        goal.stop_conditions = value;
-    }
-    if let Some(value) = changes.evidence_refs {
-        goal.evidence_refs = value;
-    }
-    if let Some(value) = changes.current_next_task_ref {
-        goal.current_next_task_ref = value;
-    }
-    if let Some(value) = changes.next_action {
-        goal.next_action = value;
-    }
-    goal.timestamps.updated_at = Some(SystemTime::now());
-    let candidates = task_candidates(handler, &goal.ordered_task_refs)?;
-    validate_goal(&goal, &candidates).map_err(validation_error)?;
-    persist_goal(
-        handler,
-        goal,
-        RevisionId(format!("rev:goal-update:{command_id}")),
-        RevisionExpectation::Exact(command.expected_revision),
-    )
 }
 
-fn task_candidates<B>(
-    handler: &LocalControlRequestHandler<B>,
-    task_refs: &[TaskId],
-) -> Result<Vec<GoalTaskCandidate>, ServerControlError>
+struct GoalStateRepository<'a, B> {
+    state: &'a ServerStateService<B>,
+}
+
+impl<B> EngineGoalRepository for GoalStateRepository<'_, B>
 where
-    B: LocalStoreBackend + Clone,
+    B: LocalStoreBackend,
 {
-    task_refs
-        .iter()
-        .map(|task_id| {
-            let record = handler
-                .state()
-                .tasks()
-                .get(&PersistenceRecordId(task_id.0.clone()))
-                .map_err(storage_error)?
-                .ok_or_else(|| ServerControlError::NotFound {
-                    reason: format!("goal task not found: {}", task_id.0),
-                })?;
-            let task = decode_task_storage_record(&record.payload.bytes).map_err(|error| {
-                ServerControlError::StorageUnavailable {
-                    reason: format!("goal task decode failed: {}", error.reason),
-                }
-            })?;
-            Ok(GoalTaskCandidate {
-                task_id: task_id.clone(),
-                project_id: nucleus_projects::ProjectId(task.project_id),
-            })
-        })
-        .collect()
-}
+    type Error = LocalStoreError;
 
-fn persist_goal<B>(
-    handler: &LocalControlRequestHandler<B>,
-    goal: Goal,
-    revision_id: RevisionId,
-    expectation: RevisionExpectation,
-) -> Result<(), ServerControlError>
-where
-    B: LocalStoreBackend + Clone,
-{
-    let payload = encode_goal_storage_record(&goal).map_err(codec_error)?;
-    handler
-        .state()
-        .planning()
-        .put(
-            LocalStoreRecord {
-                id: PersistenceRecordId(goal.id.0),
-                domain: PersistenceDomain::Planning,
-                kind: PersistenceRecordKind::Goal,
-                revision_id,
-                payload: LocalStoreRecordPayload {
-                    media_type: Some("application/json".to_owned()),
-                    bytes: payload,
-                },
-            },
-            expectation,
-        )
-        .map_err(storage_error)?;
-    Ok(())
-}
+    fn project_exists(&self, project_id: &ProjectId) -> Result<bool, Self::Error> {
+        Ok(self
+            .state
+            .projects()
+            .get(&PersistenceRecordId(project_id.0.clone()))?
+            .is_some())
+    }
 
-fn validation_error(error: nucleus_planning::GoalValidationError) -> ServerControlError {
-    ServerControlError::InvalidRequest {
-        reason: error.reason,
+    fn get_planning_record(
+        &self,
+        record_id: &PersistenceRecordId,
+    ) -> Result<Option<EngineTaskRecord>, Self::Error> {
+        Ok(self
+            .state
+            .planning()
+            .get(record_id)?
+            .map(engine_record_from_local))
+    }
+
+    fn put_planning_record(
+        &self,
+        record: EngineTaskRecord,
+        revision: EngineRevisionExpectation,
+    ) -> Result<(), Self::Error> {
+        self.state
+            .planning()
+            .put(local_record_from_engine(record), local_revision(revision))?;
+        Ok(())
+    }
+
+    fn get_task_record(
+        &self,
+        record_id: &PersistenceRecordId,
+    ) -> Result<Option<EngineTaskRecord>, Self::Error> {
+        Ok(self
+            .state
+            .tasks()
+            .get(record_id)?
+            .map(engine_record_from_local))
     }
 }
 
-fn codec_error(error: nucleus_planning::PlanningRecordCodecError) -> ServerControlError {
-    ServerControlError::StorageUnavailable {
-        reason: error.reason,
+fn engine_record_from_local(record: LocalStoreRecord) -> EngineTaskRecord {
+    EngineTaskRecord {
+        id: record.id,
+        domain: record.domain,
+        kind: record.kind,
+        revision_id: record.revision_id,
+        payload: record.payload.bytes,
     }
 }
 
-fn storage_error(error: LocalStoreError) -> ServerControlError {
+fn local_record_from_engine(record: EngineTaskRecord) -> LocalStoreRecord {
+    LocalStoreRecord {
+        id: record.id,
+        domain: PersistenceDomain::Planning,
+        kind: record.kind,
+        revision_id: record.revision_id,
+        payload: LocalStoreRecordPayload {
+            media_type: Some("application/json".to_owned()),
+            bytes: record.payload,
+        },
+    }
+}
+
+fn local_revision(revision: EngineRevisionExpectation) -> RevisionExpectation {
+    match revision {
+        EngineRevisionExpectation::MustNotExist => RevisionExpectation::MustNotExist,
+        EngineRevisionExpectation::MustExist => RevisionExpectation::MustExist,
+        EngineRevisionExpectation::Exact(revision) => RevisionExpectation::Exact(revision),
+    }
+}
+
+fn engine_goal_error(error: EngineGoalCommandError<LocalStoreError>) -> ServerControlError {
+    match error {
+        EngineGoalCommandError::InvalidRequest { reason } => {
+            ServerControlError::InvalidRequest { reason }
+        }
+        EngineGoalCommandError::NotFound { reason } => ServerControlError::NotFound { reason },
+        EngineGoalCommandError::Conflict { reason } => ServerControlError::Conflict { reason },
+        EngineGoalCommandError::Codec { reason } => {
+            ServerControlError::StorageUnavailable { reason }
+        }
+        EngineGoalCommandError::Storage(error) => local_store_error(error),
+    }
+}
+
+fn local_store_error(error: LocalStoreError) -> ServerControlError {
     match error {
         LocalStoreError::RecordNotFound { record_id } => ServerControlError::NotFound {
             reason: format!("record not found: {}", record_id.0),

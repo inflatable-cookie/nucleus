@@ -2306,6 +2306,7 @@ dependencies = [
  "nucleus-command-policy",
  "nucleus-core",
  "nucleus-orchestration",
+ "nucleus-planning",
  "nucleus-projects",
  "nucleus-scm-forge",
  "nucleus-tasks",

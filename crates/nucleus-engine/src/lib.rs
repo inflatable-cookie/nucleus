@@ -20,6 +20,7 @@ pub mod runtime_receipts;
 pub mod scm_work_item_linkage;
 pub mod services;
 pub mod task_agent;
+pub mod goal_commands;
 pub mod task_commands;
 pub mod task_readiness;
 pub mod task_timeline;
@@ -117,6 +118,10 @@ pub use task_agent::{
     EngineTaskAgentWorkUnitReviewStatus, EngineTaskAgentWorkUnitRuntimeStatus,
     EngineTaskAgentWorkUnitSourceCursor, EngineTaskAgentWorkUnitSourceId,
     EngineTaskAgentWorkUnitSourceRecord,
+};
+pub use goal_commands::{
+    EngineGoalCommand, EngineGoalCommandError, EngineGoalCommandService, EngineGoalCreateCommand,
+    EngineGoalRepository, EngineGoalUpdateChanges, EngineGoalUpdateCommand,
 };
 pub use task_commands::{
     EngineRevisionExpectation, EngineTaskCommand, EngineTaskCommandError, EngineTaskCommandOutcome,

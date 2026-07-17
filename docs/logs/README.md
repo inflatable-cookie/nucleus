@@ -44,3 +44,4 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-17-admission-gate-framework.md`
 - `2026-07-17-typed-response-collapse.md`
 - `2026-07-17-runtime-effects-to-orchestration.md`
+- `2026-07-18-goal-commands-to-engine.md`

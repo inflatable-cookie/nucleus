@@ -10,6 +10,7 @@ nucleus-agent-protocol = { path = "../nucleus-agent-protocol" }
 nucleus-command-policy = { path = "../nucleus-command-policy" }
 nucleus-core = { path = "../nucleus-core" }
 nucleus-orchestration = { path = "../nucleus-orchestration" }
+nucleus-planning = { path = "../nucleus-planning" }
 nucleus-projects = { path = "../nucleus-projects" }
 nucleus-scm-forge = { path = "../nucleus-scm-forge" }
 nucleus-tasks = { path = "../nucleus-tasks" }
