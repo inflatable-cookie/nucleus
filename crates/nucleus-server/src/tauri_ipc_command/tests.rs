@@ -284,10 +284,10 @@ fn control_command_adapter_routes_provider_read_intent_without_provider_effects(
         response.body,
         crate::control_envelope_dto::ControlResponseBodyDto::ProviderReadIntent { result }
             if result.projection.total_count == 0
-                && !result.credential_resolution_performed
-                && !result.provider_network_call_performed
-                && !result.provider_effect_executed
-                && !result.raw_provider_payload_retained
+                && !result.no_effects.credential_resolution_performed
+                && !result.no_effects.provider_network_call_performed
+                && !result.no_effects.provider_effect_executed
+                && !result.no_effects.raw_provider_payload_retained
     ));
     assert!(!json.contains("access_token"));
     assert!(!json.contains("authorization"));
@@ -334,14 +334,14 @@ fn control_command_adapter_routes_provider_readiness_overview_without_provider_e
                 && overview.status == "unknown"
                 && overview.total_read_intent_count == 0
                 && overview.missing_evidence_family_count == 4
-                && !overview.credential_resolution_performed
-                && !overview.provider_network_call_performed
-                && !overview.provider_effect_executed
-                && !overview.callback_effect_executed
-                && !overview.interruption_effect_executed
-                && !overview.recovery_effect_executed
-                && !overview.task_mutation_executed
-                && !overview.raw_provider_payload_retained
+                && !overview.no_effects.credential_resolution_performed
+                && !overview.no_effects.provider_network_call_performed
+                && !overview.no_effects.provider_effect_executed
+                && !overview.no_effects.callback_effect_executed
+                && !overview.no_effects.interruption_effect_executed
+                && !overview.no_effects.recovery_effect_executed
+                && !overview.no_effects.task_mutation_executed
+                && !overview.no_effects.raw_provider_payload_retained
     ));
     assert!(!json.contains("access_token"));
     assert!(!json.contains("authorization"));

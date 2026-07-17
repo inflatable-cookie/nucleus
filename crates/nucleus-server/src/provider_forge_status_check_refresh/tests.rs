@@ -25,9 +25,9 @@ fn status_check_refresh_records_stopped_provider_contexts() {
             "change-request:github:42".to_owned()
         ))
     );
-    assert!(!record.credential_resolution_performed);
-    assert!(!record.provider_network_call_performed);
-    assert!(!record.raw_provider_payload_retained);
+    assert!(!record.no_effects.credential_resolution_performed);
+    assert!(!record.no_effects.provider_network_call_performed);
+    assert!(!record.no_effects.raw_provider_payload_retained);
 }
 
 #[test]
@@ -101,8 +101,8 @@ fn status_check_refresh_blocks_live_provider_work() {
     assert!(record
         .blockers
         .contains(&ForgeStatusCheckRefreshBlocker::CredentialMaterialPresent));
-    assert!(!record.provider_effect_executed);
-    assert!(!record.task_mutation_executed);
+    assert!(!record.no_effects.provider_effect_executed);
+    assert!(!record.no_effects.task_mutation_executed);
 }
 
 #[test]
@@ -118,8 +118,8 @@ fn status_check_refresh_control_dto_serializes_sanitized_counts() {
     assert_eq!(dto.ready_count, 2);
     assert_eq!(dto.blocker_count, 0);
     assert!(dto.stopped_refresh_recorded);
-    assert!(!dto.credential_resolution_performed);
-    assert!(!dto.provider_network_call_performed);
+    assert!(!dto.no_effects.credential_resolution_performed);
+    assert!(!dto.no_effects.provider_network_call_performed);
     assert!(!serialized.contains("access_token"));
     assert!(!serialized.contains("authorization"));
     assert!(!serialized.contains("raw_response_body"));

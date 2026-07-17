@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use crate::{
     ControlResponseBodyDto, ControlResponseEnvelopeDto, ForgeNetworkExecutionOperationFamily,
     ForgePullRequestProvider, ForgeReadIntentProjectionEntry, ForgeReadIntentProjectionFamily,
@@ -30,9 +31,9 @@ fn response_envelope_dto_serializes_provider_read_intent_without_effect_authorit
                 && result.projection.entries[0].status == "ready"
                 && result.projection.entries[0].forge_provider == Some("github".to_owned())
                 && result.projection.entries[0].operation_family == "pull_request_refresh"
-                && !result.provider_network_call_performed
-                && !result.credential_resolution_performed
-                && !result.raw_provider_payload_retained
+                && !result.no_effects.provider_network_call_performed
+                && !result.no_effects.credential_resolution_performed
+                && !result.no_effects.raw_provider_payload_retained
     ));
     for forbidden in [
         "access_token",
@@ -77,23 +78,9 @@ fn read_intent_result() -> ForgeReadIntentQueryResult {
             evidence_ref_count: 2,
             duplicate_refresh_detected: false,
             stopped_refresh_recorded: true,
-            credential_resolution_performed: false,
-            provider_network_call_performed: false,
-            provider_effect_executed: false,
-            callback_effect_executed: false,
-            interruption_effect_executed: false,
-            recovery_effect_executed: false,
-            task_mutation_executed: false,
-            raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
         }],
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     };
     let source_counts = ForgeReadIntentQuerySourceCounts {
         credential_status_records: 1,
@@ -122,32 +109,11 @@ fn read_intent_result() -> ForgeReadIntentQueryResult {
                 repair_required_count: 0,
                 blocker_count: 0,
                 evidence_ref_count: 2,
-                credential_resolution_performed: false,
-                provider_network_call_performed: false,
-                provider_effect_executed: false,
-                callback_effect_executed: false,
-                interruption_effect_executed: false,
-                recovery_effect_executed: false,
-                task_mutation_executed: false,
-                raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
             },
             source_counts,
-            credential_resolution_performed: false,
-            provider_network_call_performed: false,
-            provider_effect_executed: false,
-            callback_effect_executed: false,
-            interruption_effect_executed: false,
-            recovery_effect_executed: false,
-            task_mutation_executed: false,
-            raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
         },
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }

@@ -126,14 +126,14 @@ pub(crate) fn provider_readiness_overview_response_lines(
         ),
     ];
     lines.extend(no_effect_lines(
-        overview.credential_resolution_performed,
-        overview.provider_network_call_performed,
-        overview.provider_effect_executed,
-        overview.callback_effect_executed,
-        overview.interruption_effect_executed,
-        overview.recovery_effect_executed,
-        overview.task_mutation_executed,
-        overview.raw_provider_payload_retained,
+        overview.no_effects.credential_resolution_performed,
+        overview.no_effects.provider_network_call_performed,
+        overview.no_effects.provider_effect_executed,
+        overview.no_effects.callback_effect_executed,
+        overview.no_effects.interruption_effect_executed,
+        overview.no_effects.recovery_effect_executed,
+        overview.no_effects.task_mutation_executed,
+        overview.no_effects.raw_provider_payload_retained,
     ));
     lines
 }
@@ -164,14 +164,14 @@ pub(crate) fn provider_read_intent_response_lines(
         ),
     ];
     lines.extend(no_effect_lines(
-        result.credential_resolution_performed,
-        result.provider_network_call_performed,
-        result.provider_effect_executed,
-        result.callback_effect_executed,
-        result.interruption_effect_executed,
-        result.recovery_effect_executed,
-        result.task_mutation_executed,
-        result.raw_provider_payload_retained,
+        result.no_effects.credential_resolution_performed,
+        result.no_effects.provider_network_call_performed,
+        result.no_effects.provider_effect_executed,
+        result.no_effects.callback_effect_executed,
+        result.no_effects.interruption_effect_executed,
+        result.no_effects.recovery_effect_executed,
+        result.no_effects.task_mutation_executed,
+        result.no_effects.raw_provider_payload_retained,
     ));
     for entry in result.projection.entries {
         lines.extend(provider_read_intent_entry_lines(entry));
@@ -230,11 +230,11 @@ fn provider_read_intent_entry_lines(entry: ControlProviderReadIntentEntryDto) ->
         format!("  evidence_refs={}", entry.evidence_ref_count),
         format!(
             "  provider_network_call_performed={}",
-            entry.provider_network_call_performed
+            entry.no_effects.provider_network_call_performed
         ),
         format!(
             "  raw_provider_payload_retained={}",
-            entry.raw_provider_payload_retained
+            entry.no_effects.raw_provider_payload_retained
         ),
     ]
 }

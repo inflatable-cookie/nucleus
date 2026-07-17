@@ -27,8 +27,8 @@ fn readiness_overview_reports_unknown_for_empty_evidence() {
     assert_eq!(overview.missing_evidence_family_count, 4);
     assert_eq!(overview.blocker_count, 4);
     assert_eq!(overview.approved_live_read_smoke_evidence_count, 0);
-    assert!(!overview.provider_network_call_performed);
-    assert!(!overview.credential_resolution_performed);
+    assert!(!overview.no_effects.provider_network_call_performed);
+    assert!(!overview.no_effects.credential_resolution_performed);
 }
 
 #[test]
@@ -151,8 +151,8 @@ fn readiness_overview_serializes_without_forbidden_provider_material() {
     let json = serde_json::to_string(&overview).expect("overview json");
 
     assert!(overview.represented_mutating_families.is_empty());
-    assert!(!overview.provider_effect_executed);
-    assert!(!overview.raw_provider_payload_retained);
+    assert!(!overview.no_effects.provider_effect_executed);
+    assert!(!overview.no_effects.raw_provider_payload_retained);
     assert!(!json.contains("access_token"));
     assert!(!json.contains("authorization"));
     assert!(!json.contains("raw_response_body"));
@@ -194,8 +194,8 @@ fn readiness_overview_keeps_mutating_families_represented_not_executed() {
         overview.represented_mutating_families,
         vec![ForgeNetworkExecutionOperationFamily::PullRequestCreate]
     );
-    assert!(!overview.provider_effect_executed);
-    assert!(!overview.provider_network_call_performed);
+    assert!(!overview.no_effects.provider_effect_executed);
+    assert!(!overview.no_effects.provider_network_call_performed);
 }
 
 fn input(projection_input: ForgeReadIntentProjectionInput) -> ForgeReadinessOverviewInput {

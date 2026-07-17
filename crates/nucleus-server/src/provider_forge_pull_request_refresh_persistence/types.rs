@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -25,14 +26,8 @@ pub struct ForgePullRequestRefreshPersistenceInput {
 pub struct ForgePullRequestRefreshPersistenceSet {
     pub persistence_set_id: String,
     pub records: Vec<ForgePullRequestRefreshPersistenceRecord>,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -56,14 +51,8 @@ pub struct ForgePullRequestRefreshPersistenceRecord {
     pub duplicate_refresh_detected: bool,
     pub evidence_refs: Vec<String>,
     pub stopped_refresh_recorded: bool,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -78,14 +67,8 @@ pub struct ForgePullRequestRefreshPersistenceDiagnostics {
     pub blocked_refresh_count: usize,
     pub blocker_count: usize,
     pub evidence_ref_count: usize,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -101,14 +84,8 @@ pub struct ForgePullRequestRefreshPersistenceControlDto {
     pub blocked_refresh_count: usize,
     pub blocker_count: usize,
     pub evidence_ref_count: usize,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

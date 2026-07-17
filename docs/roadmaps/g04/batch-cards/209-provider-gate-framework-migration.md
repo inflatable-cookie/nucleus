@@ -27,9 +27,12 @@ framework.
   all standard 8-boolean blocks in the `provider_live_read_admission`
   family converted (struct decls, constructors, 38 access sites,
   compiler-driven)
-- [ ] execution/ subtree variant blocks (different field sets) and the
-  remaining ~95 files across other provider families — next batches;
-  `executed: false` count 1538 -> 1483 so far
+- [x] second sweep: `ProviderRuntimeNoEffects` (the
+  `provider_effect_executed` variant) + remaining standard blocks across 44
+  more server files, 104 server access sites, nucleusd renderers and test
+  fixtures; `executed: false` count 1538 -> 1228
+- [ ] remaining variant clusters (permitted-family x13, memory-apply x12,
+  scm x6, smaller tails) — next batches
 - [ ] each migrated gate is one file plus data (needs the
   AdmissionRecord/blocker framework beyond NoEffects)
 - [ ] server top-level module count reduced and recorded

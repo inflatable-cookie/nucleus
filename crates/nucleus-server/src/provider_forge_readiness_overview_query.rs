@@ -45,9 +45,9 @@ mod tests {
         assert_eq!(overview.total_read_intent_count, 0);
         assert_eq!(overview.missing_evidence_family_count, 4);
         assert_eq!(overview.approved_live_read_smoke_evidence_count, 0);
-        assert!(!overview.provider_network_call_performed);
-        assert!(!overview.credential_resolution_performed);
-        assert!(!overview.raw_provider_payload_retained);
+        assert!(!overview.no_effects.provider_network_call_performed);
+        assert!(!overview.no_effects.credential_resolution_performed);
+        assert!(!overview.no_effects.raw_provider_payload_retained);
     }
 
     #[test]
@@ -61,7 +61,7 @@ mod tests {
         assert_eq!(overview.status, ForgeReadinessOverviewStatus::Unknown);
         assert_eq!(overview.total_read_intent_count, 0);
         assert_eq!(overview.approved_live_read_smoke_evidence_count, 1);
-        assert!(!overview.provider_network_call_performed);
-        assert!(!overview.raw_provider_payload_retained);
+        assert!(!overview.no_effects.provider_network_call_performed);
+        assert!(!overview.no_effects.raw_provider_payload_retained);
     }
 }

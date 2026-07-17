@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -38,14 +39,8 @@ pub struct ForgeReadinessOverview {
     pub blocker_count: usize,
     pub evidence_ref_count: usize,
     pub approved_live_read_smoke_evidence_count: usize,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

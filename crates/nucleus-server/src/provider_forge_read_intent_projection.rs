@@ -10,6 +10,7 @@ pub use types::{
     ForgeReadIntentProjectionStatus,
 };
 
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use entry_builder::{
     credential_entry, pull_request_entry, repository_metadata_entry, status_check_entry,
 };
@@ -70,14 +71,7 @@ pub fn forge_read_intent_projection(
         blocker_count: entries.iter().map(|entry| entry.blocker_count).sum(),
         evidence_ref_count: entries.iter().map(|entry| entry.evidence_ref_count).sum(),
         entries,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }
 
@@ -98,14 +92,7 @@ pub fn forge_read_intent_projection_control_dto(
         repair_required_count: set.repair_required_count,
         blocker_count: set.blocker_count,
         evidence_ref_count: set.evidence_ref_count,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }
 

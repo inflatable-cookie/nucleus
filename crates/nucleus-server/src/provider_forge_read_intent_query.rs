@@ -1,5 +1,6 @@
 //! Read-only query composition for provider read-intent projections.
 
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use nucleus_local_store::{LocalStoreBackend, LocalStoreResult};
 
 mod types;
@@ -43,26 +44,12 @@ where
         query_id: "forge-read-intent-query".to_owned(),
         projection,
         source_counts,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
         control: ForgeReadIntentQueryControlDto {
             dto_id: "forge-read-intent-query-control-dto".to_owned(),
             projection_control: control,
             source_counts,
-            credential_resolution_performed: false,
-            provider_network_call_performed: false,
-            provider_effect_executed: false,
-            callback_effect_executed: false,
-            interruption_effect_executed: false,
-            recovery_effect_executed: false,
-            task_mutation_executed: false,
-            raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
         },
     })
 }

@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{ForgeNetworkExecutionOperationFamily, ForgePullRequestProvider};
@@ -30,14 +31,8 @@ pub struct ForgeStatusCheckRefreshSet {
     pub records: Vec<ForgeStatusCheckRefreshRecord>,
     pub skipped_provider_context_refs: Vec<String>,
     pub stopped_refresh_recorded: bool,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -56,14 +51,8 @@ pub struct ForgeStatusCheckRefreshRecord {
     pub status: ForgeStatusCheckRefreshStatus,
     pub blockers: Vec<ForgeStatusCheckRefreshBlocker>,
     pub stopped_refresh_recorded: bool,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -77,14 +66,8 @@ pub struct ForgeStatusCheckRefreshControlDto {
     pub blocker_count: usize,
     pub skipped_provider_context_count: usize,
     pub stopped_refresh_recorded: bool,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

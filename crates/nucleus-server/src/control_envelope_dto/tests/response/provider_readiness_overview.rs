@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use crate::{
     ControlResponseBodyDto, ControlResponseEnvelopeDto, ForgeNetworkExecutionOperationFamily,
     ForgePullRequestProvider, ForgeReadIntentProjectionFamily, ForgeReadinessOverview,
@@ -36,9 +37,9 @@ fn response_envelope_dto_serializes_provider_readiness_overview_without_effect_a
                 && overview.blocker_count == 0
                 && overview.evidence_ref_count == 3
                 && overview.approved_live_read_smoke_evidence_count == 1
-                && !overview.provider_network_call_performed
-                && !overview.credential_resolution_performed
-                && !overview.raw_provider_payload_retained
+                && !overview.no_effects.provider_network_call_performed
+                && !overview.no_effects.credential_resolution_performed
+                && !overview.no_effects.raw_provider_payload_retained
     ));
     for forbidden in [
         "access_token",
@@ -90,13 +91,6 @@ fn readiness_overview() -> ForgeReadinessOverview {
         blocker_count: 0,
         evidence_ref_count: 3,
         approved_live_read_smoke_evidence_count: 1,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }

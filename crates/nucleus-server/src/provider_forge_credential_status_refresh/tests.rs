@@ -14,9 +14,9 @@ fn forge_credential_status_refresh_records_stopped_status_refs() {
 
     assert_eq!(set.records.len(), 1);
     assert!(set.stopped_refresh_recorded);
-    assert!(!set.credential_resolution_performed);
-    assert!(!set.provider_network_call_performed);
-    assert!(!set.raw_provider_payload_retained);
+    assert!(!set.no_effects.credential_resolution_performed);
+    assert!(!set.no_effects.provider_network_call_performed);
+    assert!(!set.no_effects.raw_provider_payload_retained);
 
     let record = &set.records[0];
     assert_eq!(
@@ -33,8 +33,8 @@ fn forge_credential_status_refresh_records_stopped_status_refs() {
         Some("provider-context:github:repo")
     );
     assert!(record.stopped_refresh_recorded);
-    assert!(!record.credential_resolution_performed);
-    assert!(!record.provider_network_call_performed);
+    assert!(!record.no_effects.credential_resolution_performed);
+    assert!(!record.no_effects.provider_network_call_performed);
 }
 
 #[test]
@@ -105,10 +105,10 @@ fn forge_credential_status_refresh_blocks_real_effect_requests() {
         ForgeCredentialStatusRefreshStatus::Blocked
     );
     assert_eq!(set.records[0].blockers.len(), 9);
-    assert!(!set.records[0].credential_resolution_performed);
-    assert!(!set.records[0].provider_network_call_performed);
-    assert!(!set.records[0].task_mutation_executed);
-    assert!(!set.records[0].raw_provider_payload_retained);
+    assert!(!set.records[0].no_effects.credential_resolution_performed);
+    assert!(!set.records[0].no_effects.provider_network_call_performed);
+    assert!(!set.records[0].no_effects.task_mutation_executed);
+    assert!(!set.records[0].no_effects.raw_provider_payload_retained);
 }
 
 #[test]
@@ -129,8 +129,8 @@ fn forge_credential_status_refresh_control_dto_serializes_sanitized_counts() {
     assert_eq!(dto.ready_count, 2);
     assert_eq!(dto.ready_credential_count, 1);
     assert_eq!(dto.repair_credential_count, 1);
-    assert!(!dto.credential_resolution_performed);
-    assert!(!dto.provider_network_call_performed);
+    assert!(!dto.no_effects.credential_resolution_performed);
+    assert!(!dto.no_effects.provider_network_call_performed);
 }
 
 fn input(

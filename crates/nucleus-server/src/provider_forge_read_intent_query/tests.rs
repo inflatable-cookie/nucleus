@@ -22,8 +22,8 @@ fn read_intent_query_composes_projection_from_local_store_records() {
     assert_eq!(result.projection.ready_count, 4);
     assert_eq!(result.projection.status_check_count, 1);
     assert_eq!(result.control.projection_control.total_count, 4);
-    assert!(!result.provider_network_call_performed);
-    assert!(!result.credential_resolution_performed);
+    assert!(!result.no_effects.provider_network_call_performed);
+    assert!(!result.no_effects.credential_resolution_performed);
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn read_intent_query_returns_empty_projection_when_store_has_no_sources() {
     assert_eq!(result.control.projection_control.total_count, 0);
     assert_eq!(result.source_counts.credential_status_records, 0);
     assert_eq!(result.source_counts.status_check_records, 0);
-    assert!(!result.raw_provider_payload_retained);
+    assert!(!result.no_effects.raw_provider_payload_retained);
 }
 
 #[test]
@@ -50,8 +50,8 @@ fn read_intent_query_control_dto_serializes_sanitized_counts() {
     let json = serde_json::to_string(&result.control).expect("serialize control");
 
     assert_eq!(result.control.projection_control.total_count, 4);
-    assert!(!result.control.provider_effect_executed);
-    assert!(!result.control.raw_provider_payload_retained);
+    assert!(!result.control.no_effects.provider_effect_executed);
+    assert!(!result.control.no_effects.raw_provider_payload_retained);
     assert!(!json.contains("access_token"));
     assert!(!json.contains("authorization"));
 }

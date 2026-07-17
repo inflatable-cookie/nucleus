@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use super::blockers::{blockers, status};
 use super::types::{
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshRecord, ForgeStatusCheckRefreshStatus,
@@ -26,13 +27,6 @@ pub(super) fn refresh_record(
         stopped_refresh_recorded: status == ForgeStatusCheckRefreshStatus::ReadyForStoppedRefresh,
         status,
         blockers,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }

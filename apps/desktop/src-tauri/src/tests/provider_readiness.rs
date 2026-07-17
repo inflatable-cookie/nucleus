@@ -52,10 +52,10 @@ fn desktop_state_routes_provider_readiness_overview_query_to_typed_dto() {
                     "pull_request".to_owned(),
                     "status_check".to_owned(),
                 ]
-                && !overview.credential_resolution_performed
-                && !overview.provider_network_call_performed
-                && !overview.provider_effect_executed
-                && !overview.raw_provider_payload_retained
+                && !overview.no_effects.credential_resolution_performed
+                && !overview.no_effects.provider_network_call_performed
+                && !overview.no_effects.provider_effect_executed
+                && !overview.no_effects.raw_provider_payload_retained
     ));
     assert_provider_response_is_sanitized(&json, "provider readiness overview");
 
@@ -144,9 +144,9 @@ fn desktop_state_routes_provider_readiness_drilldown_query_to_typed_dto() {
                 && result.source_counts.repository_metadata_records == 1
                 && result.source_counts.pull_request_records == 1
                 && result.source_counts.status_check_records == 1
-                && !result.provider_network_call_performed
-                && !result.provider_effect_executed
-                && !result.raw_provider_payload_retained
+                && !result.no_effects.provider_network_call_performed
+                && !result.no_effects.provider_effect_executed
+                && !result.no_effects.raw_provider_payload_retained
     ));
     assert_provider_response_is_sanitized(&json, "provider readiness drilldown");
 

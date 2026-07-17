@@ -23,8 +23,8 @@ fn handler_exposes_provider_readiness_overview_without_provider_effects() {
             if overview.total_read_intent_count == 0
                 && overview.status == crate::ForgeReadinessOverviewStatus::Unknown
                 && overview.missing_evidence_family_count == 4
-                && !overview.provider_network_call_performed
-                && !overview.credential_resolution_performed
-                && !overview.raw_provider_payload_retained
+                && !overview.no_effects.provider_network_call_performed
+                && !overview.no_effects.credential_resolution_performed
+                && !overview.no_effects.raw_provider_payload_retained
     ));
 }

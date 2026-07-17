@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use crate::{
     ForgeCredentialStatusClass, ForgeCredentialStatusRefreshBlocker,
     ForgeCredentialStatusRefreshPersistenceRecord, ForgeCredentialStatusRefreshPersistenceStatus,
@@ -37,14 +38,7 @@ pub fn credential(
         duplicate_refresh_detected: false,
         evidence_refs: vec!["evidence:credential-status".to_owned()],
         stopped_refresh_recorded: true,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }
 
@@ -70,14 +64,7 @@ pub fn repository(
         duplicate_refresh_detected: false,
         evidence_refs: vec!["evidence:repo-metadata".to_owned()],
         stopped_refresh_recorded: true,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }
 
@@ -109,14 +96,7 @@ pub fn pull_request(
         duplicate_refresh_detected,
         evidence_refs: vec!["evidence:pull-request-refresh".to_owned()],
         stopped_refresh_recorded: true,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }
 
@@ -150,13 +130,6 @@ pub fn status_check(
         duplicate_refresh_detected,
         evidence_refs: vec!["evidence:status-check-refresh".to_owned()],
         stopped_refresh_recorded: true,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }

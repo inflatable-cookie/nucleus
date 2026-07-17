@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{ForgeReadIntentProjectionControlDto, ForgeReadIntentProjectionSet};
@@ -8,14 +9,8 @@ pub struct ForgeReadIntentQueryResult {
     pub projection: ForgeReadIntentProjectionSet,
     pub source_counts: ForgeReadIntentQuerySourceCounts,
     pub control: ForgeReadIntentQueryControlDto,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -31,12 +26,6 @@ pub struct ForgeReadIntentQueryControlDto {
     pub dto_id: String,
     pub projection_control: ForgeReadIntentProjectionControlDto,
     pub source_counts: ForgeReadIntentQuerySourceCounts,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }

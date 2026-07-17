@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use crate::{ForgePullRequestRefreshPersistenceRecord, ForgePullRequestRefreshStatus};
 
 use super::types::{
@@ -40,14 +41,7 @@ pub fn forge_pull_request_refresh_diagnostics_from_persisted_records(
             .iter()
             .map(|record| record.evidence_refs.len())
             .sum(),
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }
 
@@ -66,14 +60,7 @@ pub fn forge_pull_request_refresh_control_dto_from_diagnostics(
         blocked_refresh_count: diagnostics.blocked_refresh_count,
         blocker_count: diagnostics.blocker_count,
         evidence_ref_count: diagnostics.evidence_ref_count,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }
 

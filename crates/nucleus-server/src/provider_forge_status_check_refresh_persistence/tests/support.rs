@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use crate::{
     forge_status_check_refresh, ForgeNetworkExecutionOperationFamily, ForgePullRequestProvider,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
@@ -73,13 +74,6 @@ pub fn persisted(
         duplicate_refresh_detected: false,
         evidence_refs: vec!["evidence:status-check-refresh:planned".to_owned()],
         stopped_refresh_recorded: true,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }

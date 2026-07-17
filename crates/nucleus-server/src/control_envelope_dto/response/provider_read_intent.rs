@@ -1,5 +1,6 @@
 //! Provider read-intent response DTOs.
 
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -14,14 +15,8 @@ pub struct ControlProviderReadIntentQueryResultDto {
     pub query_id: String,
     pub projection: ControlProviderReadIntentProjectionDto,
     pub source_counts: ControlProviderReadIntentSourceCountsDto,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 impl From<&ForgeReadIntentQueryResult> for ControlProviderReadIntentQueryResultDto {
@@ -30,14 +25,7 @@ impl From<&ForgeReadIntentQueryResult> for ControlProviderReadIntentQueryResultD
             query_id: result.query_id.clone(),
             projection: ControlProviderReadIntentProjectionDto::from(&result.projection),
             source_counts: ControlProviderReadIntentSourceCountsDto::from(&result.source_counts),
-            credential_resolution_performed: result.credential_resolution_performed,
-            provider_network_call_performed: result.provider_network_call_performed,
-            provider_effect_executed: result.provider_effect_executed,
-            callback_effect_executed: result.callback_effect_executed,
-            interruption_effect_executed: result.interruption_effect_executed,
-            recovery_effect_executed: result.recovery_effect_executed,
-            task_mutation_executed: result.task_mutation_executed,
-            raw_provider_payload_retained: result.raw_provider_payload_retained,
+        no_effects: result.no_effects,
         }
     }
 }
@@ -58,14 +46,8 @@ pub struct ControlProviderReadIntentProjectionDto {
     pub blocker_count: usize,
     pub evidence_ref_count: usize,
     pub entries: Vec<ControlProviderReadIntentEntryDto>,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 impl From<&ForgeReadIntentProjectionSet> for ControlProviderReadIntentProjectionDto {
@@ -88,14 +70,7 @@ impl From<&ForgeReadIntentProjectionSet> for ControlProviderReadIntentProjection
                 .iter()
                 .map(ControlProviderReadIntentEntryDto::from)
                 .collect(),
-            credential_resolution_performed: projection.credential_resolution_performed,
-            provider_network_call_performed: projection.provider_network_call_performed,
-            provider_effect_executed: projection.provider_effect_executed,
-            callback_effect_executed: projection.callback_effect_executed,
-            interruption_effect_executed: projection.interruption_effect_executed,
-            recovery_effect_executed: projection.recovery_effect_executed,
-            task_mutation_executed: projection.task_mutation_executed,
-            raw_provider_payload_retained: projection.raw_provider_payload_retained,
+        no_effects: projection.no_effects,
         }
     }
 }
@@ -116,14 +91,8 @@ pub struct ControlProviderReadIntentEntryDto {
     pub evidence_ref_count: usize,
     pub duplicate_refresh_detected: bool,
     pub stopped_refresh_recorded: bool,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 impl From<&ForgeReadIntentProjectionEntry> for ControlProviderReadIntentEntryDto {
@@ -142,14 +111,7 @@ impl From<&ForgeReadIntentProjectionEntry> for ControlProviderReadIntentEntryDto
             evidence_ref_count: entry.evidence_ref_count,
             duplicate_refresh_detected: entry.duplicate_refresh_detected,
             stopped_refresh_recorded: entry.stopped_refresh_recorded,
-            credential_resolution_performed: entry.credential_resolution_performed,
-            provider_network_call_performed: entry.provider_network_call_performed,
-            provider_effect_executed: entry.provider_effect_executed,
-            callback_effect_executed: entry.callback_effect_executed,
-            interruption_effect_executed: entry.interruption_effect_executed,
-            recovery_effect_executed: entry.recovery_effect_executed,
-            task_mutation_executed: entry.task_mutation_executed,
-            raw_provider_payload_retained: entry.raw_provider_payload_retained,
+        no_effects: entry.no_effects,
         }
     }
 }

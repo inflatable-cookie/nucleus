@@ -1,5 +1,6 @@
 //! Provider readiness overview response DTO.
 
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -31,14 +32,8 @@ pub struct ControlProviderReadinessOverviewDto {
     pub blocker_count: usize,
     pub evidence_ref_count: usize,
     pub approved_live_read_smoke_evidence_count: usize,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderRuntimeNoEffects,
 }
 
 impl From<&ForgeReadinessOverview> for ControlProviderReadinessOverviewDto {
@@ -85,14 +80,7 @@ impl From<&ForgeReadinessOverview> for ControlProviderReadinessOverviewDto {
             evidence_ref_count: overview.evidence_ref_count,
             approved_live_read_smoke_evidence_count: overview
                 .approved_live_read_smoke_evidence_count,
-            credential_resolution_performed: overview.credential_resolution_performed,
-            provider_network_call_performed: overview.provider_network_call_performed,
-            provider_effect_executed: overview.provider_effect_executed,
-            callback_effect_executed: overview.callback_effect_executed,
-            interruption_effect_executed: overview.interruption_effect_executed,
-            recovery_effect_executed: overview.recovery_effect_executed,
-            task_mutation_executed: overview.task_mutation_executed,
-            raw_provider_payload_retained: overview.raw_provider_payload_retained,
+        no_effects: overview.no_effects,
         }
     }
 }

@@ -29,9 +29,9 @@ fn repository_metadata_refresh_persistence_round_trips_sanitized_record() {
         records[0].refresh_status,
         ForgeRepositoryMetadataRefreshStatus::ReadyForStoppedRefresh
     );
-    assert!(!records[0].credential_resolution_performed);
-    assert!(!records[0].provider_network_call_performed);
-    assert!(!records[0].raw_provider_payload_retained);
+    assert!(!records[0].no_effects.credential_resolution_performed);
+    assert!(!records[0].no_effects.provider_network_call_performed);
+    assert!(!records[0].no_effects.raw_provider_payload_retained);
 }
 
 #[test]
@@ -107,8 +107,8 @@ fn repository_metadata_refresh_persistence_blocks_raw_payloads_and_provider_work
     assert!(record
         .persistence_blockers
         .contains(&ForgeRepositoryMetadataRefreshPersistenceBlocker::CredentialMaterialPresent));
-    assert!(!record.provider_effect_executed);
-    assert!(!record.task_mutation_executed);
+    assert!(!record.no_effects.provider_effect_executed);
+    assert!(!record.no_effects.task_mutation_executed);
 }
 
 #[test]
@@ -130,8 +130,8 @@ fn repository_metadata_refresh_persistence_diagnostics_summarize_records() {
     assert_eq!(diagnostics.persisted_count, 1);
     assert_eq!(diagnostics.duplicate_noop_count, 1);
     assert_eq!(dto.refresh_count, 2);
-    assert!(!dto.credential_resolution_performed);
-    assert!(!dto.provider_network_call_performed);
+    assert!(!dto.no_effects.credential_resolution_performed);
+    assert!(!dto.no_effects.provider_network_call_performed);
     assert!(!json.contains("access_token"));
     assert!(!json.contains("authorization"));
 }

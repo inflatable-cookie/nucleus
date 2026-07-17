@@ -19,8 +19,8 @@ fn handler_exposes_provider_read_intent_query_without_provider_effects() {
         response.body,
         ServerControlResponseBody::Query(ServerQueryResult::ProviderReadIntent(result))
             if result.projection.total_count == 0
-                && !result.provider_network_call_performed
-                && !result.credential_resolution_performed
-                && !result.raw_provider_payload_retained
+                && !result.no_effects.provider_network_call_performed
+                && !result.no_effects.credential_resolution_performed
+                && !result.no_effects.raw_provider_payload_retained
     ));
 }

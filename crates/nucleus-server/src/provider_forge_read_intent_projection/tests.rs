@@ -31,8 +31,8 @@ fn read_intent_projection_groups_persisted_refresh_families() {
         .entries
         .iter()
         .any(|entry| entry.family == ForgeReadIntentProjectionFamily::StatusCheck));
-    assert!(!set.provider_network_call_performed);
-    assert!(!set.credential_resolution_performed);
+    assert!(!set.no_effects.provider_network_call_performed);
+    assert!(!set.no_effects.credential_resolution_performed);
 }
 
 #[test]
@@ -80,8 +80,8 @@ fn read_intent_projection_control_dto_serializes_sanitized_counts() {
     assert_eq!(dto.ready_count, 4);
     assert_eq!(dto.status_check_count, 1);
     assert_eq!(dto.evidence_ref_count, 4);
-    assert!(!dto.provider_effect_executed);
-    assert!(!dto.raw_provider_payload_retained);
+    assert!(!dto.no_effects.provider_effect_executed);
+    assert!(!dto.no_effects.raw_provider_payload_retained);
     assert!(!json.contains("access_token"));
     assert!(!json.contains("authorization"));
 }

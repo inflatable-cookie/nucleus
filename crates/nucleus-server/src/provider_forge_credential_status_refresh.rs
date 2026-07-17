@@ -10,6 +10,7 @@ pub use types::{
     ForgeCredentialStatusRefreshStatus,
 };
 
+use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
 use record_builder::refresh_record;
 
 pub fn forge_credential_status_refresh(
@@ -34,14 +35,7 @@ pub fn forge_credential_status_refresh(
             .collect(),
         stopped_refresh_recorded: records.iter().any(|record| record.stopped_refresh_recorded),
         records,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }
 
@@ -68,14 +62,7 @@ pub fn forge_credential_status_refresh_control_dto(
         blocker_count: set.records.iter().map(|record| record.blockers.len()).sum(),
         skipped_credential_ref_count: set.skipped_credential_ref_ids.len(),
         stopped_refresh_recorded: set.stopped_refresh_recorded,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderRuntimeNoEffects::none(),
     }
 }
 
