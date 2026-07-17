@@ -35,9 +35,9 @@ desktop `bun:test` files wired to nothing).
 
 ## Acceptance Criteria
 
-- [x] CI passes on main (first run green, 2026-07-17); seeded-regression red
-  run deliberately deferred — verify on the first real failure or a scratch
-  branch rather than a broken commit on main
+- [x] CI passes on main (first run green, 2026-07-17) and fails on real
+  regressions: run 29580967746 went red on a missed exhaustive-match arm
+  the same day, and the fix run went green — red-path verified organically
 - [x] `effigy qa` runs Rust + desktop TS + docs checks
 - [x] `nucleus-local-store` has direct tests for revision expectation and
   conflict paths
