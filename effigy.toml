@@ -102,6 +102,7 @@ allowlist_file = "docs/policy/vision-next-task-verbs.txt"
 "desktop:dev" = "cd apps/desktop && bun run tauri:dev"
 "desktop:web:dev" = "cd apps/desktop && bun run dev"
 "desktop:check" = "cd apps/desktop && bun run check"
+"desktop:test" = "cd apps/desktop && bun run test"
 "desktop:build" = "cd apps/desktop && bun run build"
 "dev" = [
   { task = "desktop:dev" },
@@ -118,4 +119,5 @@ allowlist_file = "docs/policy/vision-next-task-verbs.txt"
   { task = "test:rust" },
   { task = "server:smoke" },
   { task = "desktop:check" },
+  { task = "desktop:test" },
 ]

@@ -332,6 +332,124 @@ fn sqlite_repository_enforces_revision_expectations() {
 }
 
 #[test]
+fn sqlite_revision_conflict_carries_expected_and_actual_revisions() {
+    let mut repository =
+        SqliteRepository::open_in_memory(PersistenceDomain::Tasks).expect("open sqlite");
+    let record = fixture_record(
+        PersistenceDomain::Tasks,
+        PersistenceRecordKind::Task,
+        "task:conflict",
+        "rev:current",
+    );
+    repository
+        .put(
+            record.clone(),
+            RevisionExpectation::MustNotExist,
+            LocalStoreTransactionPosture::Autocommit,
+        )
+        .expect("create record");
+
+    let error = repository
+        .put(
+            record.clone(),
+            RevisionExpectation::MustNotExist,
+            LocalStoreTransactionPosture::Autocommit,
+        )
+        .expect_err("duplicate create should conflict");
+
+    match error {
+        LocalStoreError::RevisionConflict(conflict) => {
+            assert_eq!(conflict.record_id, record.id);
+            assert_eq!(conflict.expected, RevisionExpectation::MustNotExist);
+            assert_eq!(conflict.actual, Some(RevisionId("rev:current".to_owned())));
+        }
+        other => panic!("expected revision conflict, got {other:?}"),
+    }
+}
+
+#[test]
+fn sqlite_delete_enforces_revision_expectation_and_removes_record() {
+    let mut repository =
+        SqliteRepository::open_in_memory(PersistenceDomain::Tasks).expect("open sqlite");
+    let record = fixture_record(
+        PersistenceDomain::Tasks,
+        PersistenceRecordKind::Task,
+        "task:delete",
+        "rev:1",
+    );
+    repository
+        .put(
+            record.clone(),
+            RevisionExpectation::MustNotExist,
+            LocalStoreTransactionPosture::Autocommit,
+        )
+        .expect("create record");
+
+    let stale_delete = repository.delete(
+        &record.id,
+        RevisionExpectation::Exact(RevisionId("rev:stale".to_owned())),
+        LocalStoreTransactionPosture::Autocommit,
+    );
+    assert!(matches!(
+        stale_delete,
+        Err(LocalStoreError::RevisionConflict(_))
+    ));
+    assert!(repository
+        .get(&record.id)
+        .expect("read after failed delete")
+        .is_some());
+
+    repository
+        .delete(
+            &record.id,
+            RevisionExpectation::Exact(RevisionId("rev:1".to_owned())),
+            LocalStoreTransactionPosture::Autocommit,
+        )
+        .expect("delete with matching revision");
+    assert!(repository
+        .get(&record.id)
+        .expect("read after delete")
+        .is_none());
+
+    let missing_delete = repository.delete(
+        &record.id,
+        RevisionExpectation::MustExist,
+        LocalStoreTransactionPosture::Autocommit,
+    );
+    assert!(matches!(
+        missing_delete,
+        Err(LocalStoreError::RevisionConflict(_))
+    ));
+}
+
+#[test]
+fn sqlite_must_exist_expectation_rejects_missing_record_writes() {
+    let mut repository =
+        SqliteRepository::open_in_memory(PersistenceDomain::Tasks).expect("open sqlite");
+    let record = fixture_record(
+        PersistenceDomain::Tasks,
+        PersistenceRecordKind::Task,
+        "task:absent",
+        "rev:1",
+    );
+
+    let error = repository
+        .put(
+            record,
+            RevisionExpectation::MustExist,
+            LocalStoreTransactionPosture::Autocommit,
+        )
+        .expect_err("update of missing record should conflict");
+
+    match error {
+        LocalStoreError::RevisionConflict(conflict) => {
+            assert_eq!(conflict.actual, None);
+        }
+        other => panic!("expected revision conflict, got {other:?}"),
+    }
+}
+
+#[test]
 fn sqlite_repository_stores_shared_memory_records() {
     let mut repository =
         SqliteRepository::open_in_memory(PersistenceDomain::SharedMemory).expect("repository");

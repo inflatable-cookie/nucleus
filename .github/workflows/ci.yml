@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Runs on macOS because the read-only spawn sandbox is seatbelt-enforced and
+# fails closed on other platforms, and the desktop target is a macOS Tauri app.
+#
+# Not covered here (local-only via `effigy qa` for now):
+# - effigy docs QA (effigy is a locally built tool, not yet distributable)
+# - desktop TS checks/tests (package.json depends on file:../../../poodle/*
+#   paths outside this repository)
+
+jobs:
+  rust:
+    name: Rust workspace
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check workspace
+        run: cargo check --workspace
+      - name: Test workspace
+        run: cargo test --workspace

@@ -8,7 +8,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "bun test src"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",
