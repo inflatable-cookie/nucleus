@@ -369,6 +369,7 @@ fn local_store_error(error: LocalStoreError) -> ServerControlError {
         },
         LocalStoreError::Unavailable { reason }
         | LocalStoreError::TransactionRejected { reason }
+        | LocalStoreError::BackendBusy { reason }
         | LocalStoreError::BackendRejected { reason } => {
             ServerControlError::StorageUnavailable { reason }
         }
