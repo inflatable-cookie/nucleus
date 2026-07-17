@@ -31,8 +31,11 @@ framework.
   `provider_effect_executed` variant) + remaining standard blocks across 44
   more server files, 104 server access sites, nucleusd renderers and test
   fixtures; `executed: false` count 1538 -> 1228
-- [ ] remaining variant clusters (permitted-family x13, memory-apply x12,
-  scm x6, smaller tails) — next batches
+- [x] third sweep: ConvergenceSnapNoAuthority, ConvergenceRunnerNoAuthority,
+  MemoryApplyNoEffects, ForgeScmNoEffects across 123 server files + app
+  fixtures; `executed: false` count now 802 (from 1538)
+- [ ] remaining tails (small subset blocks, request-flag inputs, per-family
+  one-offs) — final cleanup batch, then the AdmissionRecord framework
 - [ ] each migrated gate is one file plus data (needs the
   AdmissionRecord/blocker framework beyond NoEffects)
 - [ ] server top-level module count reduced and recorded
