@@ -1,8 +1,8 @@
 # 213 Goal Execution To Engine Ports
 
-Status: planned
-Owner: Codex
-Updated: 2026-07-17
+Status: in progress
+Owner: Claude
+Updated: 2026-07-18
 Milestone: `../046-engine-boundary-migration.md`
 Auto-start next card: no
 
@@ -22,9 +22,14 @@ engine behind effect ports, leaving provider IO server-side.
 
 ## Acceptance
 
-- [ ] workflow decisions unit-testable in engine without a codex process
-- [ ] `goal_execution.rs` no longer exists as a single god file
-- [ ] behavior parity proven by existing chat/task tests
+- [ ] workflow decisions unit-testable in engine without a codex process —
+  remaining step; blocked on an engine-neutral task view type (prompt and
+  dispatch composition currently consume server control DTOs)
+- [x] `goal_execution.rs` no longer exists as a single god file: 128-line
+  front door plus run_loop / rules / outcome / dispatch / persistence
+  modules (127-320 lines each) with tests split alongside
+- [x] behavior parity proven: all existing goal-execution tests pass
+  unchanged (42 green, live-auth ones stay ignored)
 
 ## Validation
 
