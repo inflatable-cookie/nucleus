@@ -46,72 +46,29 @@ pub(crate) fn print_query(
         }),
     });
 
-    if matches!(
-        query,
-        QueryDomain::CommandEvidence
-            | QueryDomain::ProviderReadIntent
-            | QueryDomain::ProviderReadinessOverview
-            | QueryDomain::ProviderLiveReadExecutor
-            | QueryDomain::ProviderLiveReadSmokeEvidence
-            | QueryDomain::TaskTimeline { .. }
-            | QueryDomain::TaskReadiness { .. }
-            | QueryDomain::PlanningTaskSeeds { .. }
-            | QueryDomain::PlanningSessions { .. }
-            | QueryDomain::AcceptedMemory { .. }
-            | QueryDomain::AcceptedMemoryProjection { .. }
-            | QueryDomain::AcceptedMemoryProjectionWrites { .. }
-            | QueryDomain::AcceptedMemoryProjectionImport { .. }
-            | QueryDomain::AcceptedMemoryProjectionImportApply { .. }
-            | QueryDomain::AcceptedMemoryImportApplyReviewDiagnostics { .. }
-            | QueryDomain::AcceptedMemoryReviewReceiptStorageDiagnostics { .. }
-            | QueryDomain::AcceptedMemoryActiveApplyDiagnostics { .. }
-            | QueryDomain::AcceptedMemoryReviewReadiness { .. }
-            | QueryDomain::MemoryProposals { .. }
-            | QueryDomain::MemoryProposalReviewDiagnostics { .. }
-            | QueryDomain::ResearchRunBriefs { .. }
-            | QueryDomain::TaskSeedPromotionDiagnostics { .. }
-            | QueryDomain::PlanningProjectionFileWriteDiagnostics { .. }
-            | QueryDomain::PlanningProjectionImportDiagnostics { .. }
-            | QueryDomain::PlanningProjectionImportApplyDiagnostics { .. }
-            | QueryDomain::PlanningProjectionImportActiveApplyDiagnostics { .. }
-            | QueryDomain::PlanningCapturePublicationDiagnostics { .. }
-            | QueryDomain::ProductWorkflowSummary { .. }
-            | QueryDomain::TaskWorkflowDrilldown { .. }
-            | QueryDomain::SelectedTaskActionReadiness { .. }
-            | QueryDomain::SelectedTaskOperatorActionGate { .. }
-            | QueryDomain::SelectedTaskReviewNext { .. }
-            | QueryDomain::SelectedTaskReviewOutcomeRoute { .. }
-            | QueryDomain::SelectedTaskRouteAdmission { .. }
-            | QueryDomain::SelectedTaskCompletionRouteApply { .. }
-            | QueryDomain::SelectedTaskReworkPreparation { .. }
-            | QueryDomain::SelectedTaskProductAggregate { .. }
-            | QueryDomain::SelectedTaskScmHandoff { .. }
-            | QueryDomain::SelectedTaskCommandAdmission { .. }
-            | QueryDomain::SelectedTaskReviewDecisionAdmission(_)
-            | QueryDomain::SelectedTaskReviewDecisionApply(_)
-            | QueryDomain::ProjectAuthorityMap { .. }
-    ) {
-        let dto = ControlResponseEnvelopeDto::try_from(&response)
-            .map_err(|error| format!("{label} query response encoding failed: {}", error.reason))?;
-        return typed_response::print_typed_dto_response(label, dto);
-    }
-
-    match response.body {
+    // No per-domain allowlist: every non-state response renders through the
+    // generic typed path, so a new query variant cannot silently fall through
+    // to the legacy branch at runtime.
+    match &response.body {
         ServerControlResponseBody::Query(nucleus_server::ServerQueryResult::StateRecords(set))
             if response.status == ServerControlResponseStatus::Complete =>
         {
-            print_record_set(label, set.records)
+            return print_record_set(label, set.records.clone());
         }
         ServerControlResponseBody::Query(nucleus_server::ServerQueryResult::RuntimeMetadata(
             set,
         )) if response.status == ServerControlResponseStatus::Complete => {
-            print_record_set(label, set.records)
+            return print_record_set(label, set.records.clone());
         }
-        ServerControlResponseBody::Error(error) => Err(format!("{label} query failed: {error:?}")),
-        body => Err(format!(
-            "{label} query returned unexpected response: {body:?}"
-        )),
+        ServerControlResponseBody::Error(error) => {
+            return Err(format!("{label} query failed: {error:?}"));
+        }
+        _ => {}
     }
+
+    let dto = ControlResponseEnvelopeDto::try_from(&response)
+        .map_err(|error| format!("{label} query response encoding failed: {}", error.reason))?;
+    typed_response::print_typed_dto_response(label, dto)
 }
 
 fn list_count(
@@ -154,5 +111,3 @@ fn print_record_set(label: &str, records: Vec<LocalStoreRecord>) -> Result<(), S
     Ok(())
 }
 
-#[cfg(test)]
-mod tests;

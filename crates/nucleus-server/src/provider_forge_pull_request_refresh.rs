@@ -10,7 +10,7 @@ pub use types::{
     ForgePullRequestRefreshSet, ForgePullRequestRefreshStatus,
 };
 
-use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
+use crate::provider_no_effects::ProviderRuntimeNoEffects;
 use record_builder::refresh_record;
 
 pub fn forge_pull_request_refresh(

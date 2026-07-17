@@ -1,6 +1,6 @@
 //! Provider readiness overview response DTO.
 
-use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
+use crate::provider_no_effects::ProviderRuntimeNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::{

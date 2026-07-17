@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
+use crate::provider_no_effects::ProviderRuntimeNoEffects;
 use crate::{ForgeCredentialStatusRefreshRecord, ForgeCredentialStatusRefreshStatus};
 
 use super::store::REFRESH_PREFIX;

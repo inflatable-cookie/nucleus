@@ -1,6 +1,6 @@
 //! Persistence and control for stopped provider credential-status refreshes.
 
-use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
+use crate::provider_no_effects::ProviderRuntimeNoEffects;
 use nucleus_local_store::{LocalStoreBackend, LocalStoreResult};
 
 mod diagnostics;

@@ -10,7 +10,7 @@ pub use types::{
     ForgeReadIntentProjectionStatus,
 };
 
-use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
+use crate::provider_no_effects::ProviderRuntimeNoEffects;
 use entry_builder::{
     credential_entry, pull_request_entry, repository_metadata_entry, status_check_entry,
 };

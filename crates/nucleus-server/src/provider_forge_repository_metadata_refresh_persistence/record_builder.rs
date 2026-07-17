@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
+use crate::provider_no_effects::ProviderRuntimeNoEffects;
 use crate::{ForgeRepositoryMetadataRefreshRecord, ForgeRepositoryMetadataRefreshStatus};
 
 use super::store::REFRESH_PREFIX;

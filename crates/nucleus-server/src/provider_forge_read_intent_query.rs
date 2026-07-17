@@ -1,6 +1,6 @@
 //! Read-only query composition for provider read-intent projections.
 
-use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
+use crate::provider_no_effects::ProviderRuntimeNoEffects;
 use nucleus_local_store::{LocalStoreBackend, LocalStoreResult};
 
 mod types;

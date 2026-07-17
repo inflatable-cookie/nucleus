@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
+use crate::provider_no_effects::ProviderRuntimeNoEffects;
 use super::blockers::{blockers, status};
 use super::types::ForgePullRequestRefreshInput;
 use super::types::ForgePullRequestRefreshRecord;
