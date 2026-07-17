@@ -1,7 +1,7 @@
 # 207 Atomic Materialization And Typed Errors
 
-Status: planned
-Owner: Codex
+Status: completed
+Owner: Claude
 Updated: 2026-07-17
 Milestone: `../044-persistence-correctness-hardening.md`
 Auto-start next card: no
@@ -23,9 +23,14 @@ Crash-safe projection file writes and structured store errors.
 
 ## Acceptance
 
-- [ ] no bare `fs::write` on projection authority files
-- [ ] busy errors distinguishable and retried where safe
-- [ ] revision-id semantics decided and recorded
+- [x] no bare `fs::write` on projection authority files (temp + fsync +
+  rename in accepted-memory materialization)
+- [x] busy errors distinguishable: `BackendBusy` variant with
+  `is_retryable()`, mapped from SQLite busy/locked codes; `LocalStoreError`
+  now implements `Display` + `Error`
+- [x] revision-id semantics decided and recorded in contract 008: ids stay
+  command-derived and idempotent by replay; write uniqueness comes from the
+  atomic CAS, not revision-id uniqueness
 
 ## Validation
 

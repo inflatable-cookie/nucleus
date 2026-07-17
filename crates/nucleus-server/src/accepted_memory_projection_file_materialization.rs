@@ -207,7 +207,7 @@ fn materialize_one(
         }
     }
 
-    match fs::write(&target_path, bytes) {
+    match write_atomically(&target_path, bytes) {
         Ok(()) => AcceptedMemoryProjectionMaterializationOutcome {
             memory_id: input.admission.memory_id,
             file_ref,
@@ -288,4 +288,25 @@ fn validate_file_ref(file_ref: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Write projection bytes crash-safely: temp file in the same directory,
+/// fsync, then rename over the target. A crash mid-write leaves the previous
+/// file intact instead of a truncated authority input.
+fn write_atomically(target_path: &Path, bytes: Vec<u8>) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let temp_path = target_path.with_extension("tmp-materialize");
+    {
+        let mut file = fs::File::create(&temp_path)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+    }
+    match fs::rename(&temp_path, target_path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&temp_path);
+            Err(error)
+        }
+    }
 }

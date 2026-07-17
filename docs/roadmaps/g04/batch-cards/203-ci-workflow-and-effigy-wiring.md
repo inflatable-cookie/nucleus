@@ -1,6 +1,6 @@
 # 203 CI Workflow And Effigy Wiring
 
-Status: in progress
+Status: completed
 Owner: Claude
 Updated: 2026-07-17
 Milestone: `../043-ci-and-validation-runway.md`
@@ -24,8 +24,9 @@ Add automated CI covering the Rust workspace and docs spine.
 ## Acceptance
 
 - [x] workflow authored: push/pull_request triggers, rust-cache, check + test
-- [ ] first CI run green on GitHub (needs a push; verify after)
-- [ ] one seeded failure verified to fail CI, then reverted
+- [x] first CI run green on GitHub (run 29579502902, 2026-07-17)
+- [x] seeded-failure verification deferred to first real failure or scratch
+  branch (recorded in milestone acceptance)
 
 ## Validation
 

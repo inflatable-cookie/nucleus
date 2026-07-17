@@ -171,9 +171,23 @@ the domain record that needs them.
 
 State changes must be revisioned.
 
-The first model only names revision ids, snapshots, and journal entries. It
-does not define conflict resolution, transactions, migration, or replay
-semantics yet.
+Revision compare-and-swap is atomic: the revision check and the write commit
+or fail as one unit, including against writers on other connections or
+processes. Two writers passing the same `Exact` expectation cannot both
+succeed.
+
+Revision ids are command-derived, not per-write unique. A retried command
+carries the same revision id and is idempotent by replay; write uniqueness is
+guaranteed by the atomic CAS, not by revision-id uniqueness. A command that
+produces different payloads under the same command id is a caller bug.
+
+Event-journal replay order is the store's insertion sequence (`seq`), never
+lexicographic record-id order. Databases created before the sequence column
+migrate on open with order backfilled from insertion rowids.
+
+Projection files materialized to disk are written atomically (temp file,
+fsync, rename); a crash mid-write must never leave a truncated authority
+input.
 
 ## Projection Validation Rule
 

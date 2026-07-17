@@ -1,7 +1,7 @@
 # 205 Transactional CAS And Connection Hygiene
 
-Status: planned
-Owner: Codex
+Status: completed
+Owner: Claude
 Updated: 2026-07-17
 Milestone: `../044-persistence-correctness-hardening.md`
 Auto-start next card: no
@@ -23,9 +23,11 @@ Make revision compare-and-swap atomic and fix SQLite connection handling.
 
 ## Acceptance
 
-- [ ] CAS race closed, proven by concurrent test
-- [ ] no per-operation connection opens; schema init once per store
-- [ ] WAL + busy_timeout active
+- [x] CAS race closed, proven by concurrent test (`BEGIN IMMEDIATE` around
+  check+write; also covers cross-process writers)
+- [x] repositories from one backend share one `Arc<Mutex<Connection>>`;
+  schema and pragmas run once per backend
+- [x] WAL + busy_timeout(5s) + synchronous NORMAL + foreign keys active
 
 ## Validation
 

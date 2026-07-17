@@ -186,6 +186,14 @@ where
         repository.list()
     }
 
+    /// List persisted records in first-insertion (append) order.
+    pub fn list_in_insertion_order(&self) -> LocalStoreResult<Vec<LocalStoreRecord>> {
+        let repository = self
+            .backend
+            .open_repository(self.domain.persistence_domain())?;
+        repository.list_in_insertion_order()
+    }
+
     /// Store one record through server-owned state access.
     pub fn put(
         &self,

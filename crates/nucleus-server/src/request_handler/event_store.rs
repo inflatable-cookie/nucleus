@@ -57,18 +57,17 @@ where
     }
 
     fn list_events(&self) -> Result<Vec<OrchestrationEventStoreRecord>, Self::Error> {
-        let mut records = self
-            .state
+        // Append order comes from the store's insertion sequence, not from
+        // sorting event-id strings — command-derived ids carry no order.
+        self.state
             .event_journal()
-            .list()?
+            .list_in_insertion_order()?
             .iter()
             .map(|record| decode_orchestration_event_store_record(&record.payload.bytes))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| LocalStoreError::InvalidRecord {
                 reason: error.to_string(),
-            })?;
-        records.sort_by(|left, right| left.event_id.0.cmp(&right.event_id.0));
-        Ok(records)
+            })
     }
 }
 
@@ -106,6 +105,40 @@ mod tests {
         let events = store.list_events().expect("list events");
 
         assert_eq!(events, vec![record]);
+    }
+
+    #[test]
+    fn replay_order_is_append_order_not_event_id_order() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state =
+            ServerStateService::new(SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")));
+        let store = ServerOrchestrationEventStore::new(&state);
+
+        // Lexicographic event-id order (event:aaa < event:mmm < event:zzz)
+        // deliberately contradicts append order.
+        for command in ["zzz", "aaa", "mmm"] {
+            let payload = OrchestrationEventRecord::command_admitted(
+                OrchestrationEventId(format!("event:{command}")),
+                OrchestrationCommandId(format!("command:{command}")),
+                OrchestrationCommandFamily::Task,
+                Some("task:order".to_owned()),
+            );
+            store
+                .append_event(OrchestrationEventStoreRecord::from_event(
+                    EventStreamRef("stream:order".to_owned()),
+                    payload,
+                ))
+                .expect("append event");
+        }
+
+        let replayed: Vec<String> = store
+            .list_events()
+            .expect("list events")
+            .into_iter()
+            .map(|record| record.event_id.0)
+            .collect();
+
+        assert_eq!(replayed, vec!["event:zzz", "event:aaa", "event:mmm"]);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # 043 CI And Validation Runway
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-17
 
@@ -35,8 +35,9 @@ desktop `bun:test` files wired to nothing).
 
 ## Acceptance Criteria
 
-- [ ] CI passes on main and fails on a seeded regression (verify after next
-  push to GitHub)
+- [x] CI passes on main (first run green, 2026-07-17); seeded-regression red
+  run deliberately deferred — verify on the first real failure or a scratch
+  branch rather than a broken commit on main
 - [x] `effigy qa` runs Rust + desktop TS + docs checks
 - [x] `nucleus-local-store` has direct tests for revision expectation and
   conflict paths

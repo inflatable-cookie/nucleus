@@ -450,6 +450,171 @@ fn sqlite_must_exist_expectation_rejects_missing_record_writes() {
 }
 
 #[test]
+fn concurrent_exact_revision_writers_cannot_both_succeed() {
+    use crate::repositories::LocalStoreBackend;
+
+    let temp = tempfile::tempdir().expect("temp dir");
+    let path = temp.path().join("cas.sqlite");
+    // Two separate backend instances = two separate SQLite connections, the
+    // worst case the old check-then-write pattern raced on.
+    let backend_a = SqliteBackend::new(&path);
+    let backend_b = SqliteBackend::new(&path);
+
+    let mut seed = backend_a
+        .open_repository(PersistenceDomain::Tasks)
+        .expect("open seed repository");
+    seed.put(
+        fixture_record(
+            PersistenceDomain::Tasks,
+            PersistenceRecordKind::Task,
+            "task:cas",
+            "rev:1",
+        ),
+        RevisionExpectation::MustNotExist,
+        LocalStoreTransactionPosture::Autocommit,
+    )
+    .expect("seed record");
+
+    let contender = |backend: SqliteBackend, revision: &'static str| {
+        std::thread::spawn(move || {
+            let mut repository = backend
+                .open_repository(PersistenceDomain::Tasks)
+                .expect("open contender repository");
+            repository.put(
+                fixture_record(
+                    PersistenceDomain::Tasks,
+                    PersistenceRecordKind::Task,
+                    "task:cas",
+                    revision,
+                ),
+                RevisionExpectation::Exact(RevisionId("rev:1".to_owned())),
+                LocalStoreTransactionPosture::Autocommit,
+            )
+        })
+    };
+
+    let first = contender(backend_a, "rev:2a");
+    let second = contender(backend_b, "rev:2b");
+    let results = [
+        first.join().expect("thread a"),
+        second.join().expect("thread b"),
+    ];
+
+    let successes = results.iter().filter(|result| result.is_ok()).count();
+    let conflicts = results
+        .iter()
+        .filter(|result| matches!(result, Err(LocalStoreError::RevisionConflict(_))))
+        .count();
+    assert_eq!(successes, 1, "exactly one Exact(rev:1) writer may win");
+    assert_eq!(conflicts, 1, "the loser must see a revision conflict");
+}
+
+#[test]
+fn backend_repositories_share_one_connection_per_backend() {
+    use crate::repositories::LocalStoreBackend;
+
+    let temp = tempfile::tempdir().expect("temp dir");
+    let backend = SqliteBackend::new(temp.path().join("shared.sqlite"));
+
+    // Multiple domain repositories from one backend reuse the configured
+    // connection; this proves opening many is cheap and schema init ran once
+    // (a second init would fail loudly if CREATE TABLE were not idempotent,
+    // so instead assert cross-domain visibility through the shared handle).
+    let mut tasks = backend
+        .open_repository(PersistenceDomain::Tasks)
+        .expect("open tasks");
+    let projects = backend
+        .open_repository(PersistenceDomain::Projects)
+        .expect("open projects");
+
+    tasks
+        .put(
+            fixture_record(
+                PersistenceDomain::Tasks,
+                PersistenceRecordKind::Task,
+                "task:shared",
+                "rev:1",
+            ),
+            RevisionExpectation::MustNotExist,
+            LocalStoreTransactionPosture::Autocommit,
+        )
+        .expect("write through tasks repository");
+
+    assert!(projects.list().expect("list projects").is_empty());
+    assert_eq!(tasks.list().expect("list tasks").len(), 1);
+}
+
+#[test]
+fn insertion_order_listing_ignores_lexicographic_id_order() {
+    let mut repository =
+        SqliteRepository::open_in_memory(PersistenceDomain::Tasks).expect("open sqlite");
+    for id in ["task:zulu", "task:alpha", "task:mike"] {
+        repository
+            .put(
+                fixture_record(PersistenceDomain::Tasks, PersistenceRecordKind::Task, id, "rev:1"),
+                RevisionExpectation::MustNotExist,
+                LocalStoreTransactionPosture::Autocommit,
+            )
+            .expect("insert record");
+    }
+    // An update must not move a record to the end of the append order.
+    repository
+        .put(
+            fixture_record(
+                PersistenceDomain::Tasks,
+                PersistenceRecordKind::Task,
+                "task:zulu",
+                "rev:2",
+            ),
+            RevisionExpectation::MustExist,
+            LocalStoreTransactionPosture::Autocommit,
+        )
+        .expect("update first record");
+
+    let ordered: Vec<String> = repository
+        .list_in_insertion_order()
+        .expect("insertion order listing")
+        .into_iter()
+        .map(|record| record.id.0)
+        .collect();
+
+    assert_eq!(ordered, vec!["task:zulu", "task:alpha", "task:mike"]);
+}
+
+#[test]
+fn pre_seq_databases_migrate_with_order_backfilled_from_rowid() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let path = temp.path().join("legacy.sqlite");
+    {
+        let legacy = rusqlite::Connection::open(&path).expect("open legacy db");
+        legacy
+            .execute_batch(
+                "CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    kind TEXT NOT NULL,
+                    revision_id TEXT NOT NULL,
+                    media_type TEXT,
+                    payload BLOB NOT NULL
+                );
+                INSERT INTO tasks VALUES ('task:zulu', 'task', 'rev:1', NULL, x'00');
+                INSERT INTO tasks VALUES ('task:alpha', 'task', 'rev:1', NULL, x'00');",
+            )
+            .expect("seed legacy schema");
+    }
+
+    let repository =
+        SqliteRepository::open(&path, PersistenceDomain::Tasks).expect("open migrates schema");
+    let ordered: Vec<String> = repository
+        .list_in_insertion_order()
+        .expect("ordered listing after migration")
+        .into_iter()
+        .map(|record| record.id.0)
+        .collect();
+
+    assert_eq!(ordered, vec!["task:zulu", "task:alpha"]);
+}
+
+#[test]
 fn sqlite_repository_stores_shared_memory_records() {
     let mut repository =
         SqliteRepository::open_in_memory(PersistenceDomain::SharedMemory).expect("repository");

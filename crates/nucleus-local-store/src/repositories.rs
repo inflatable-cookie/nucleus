@@ -51,6 +51,14 @@ pub trait LocalStoreRepository {
 
     fn list(&self) -> LocalStoreResult<Vec<LocalStoreRecord>>;
 
+    /// List records in the order they were first inserted.
+    ///
+    /// Backends without insertion tracking fall back to `list()`; ordered
+    /// stores (event journals, replay consumers) rely on the override.
+    fn list_in_insertion_order(&self) -> LocalStoreResult<Vec<LocalStoreRecord>> {
+        self.list()
+    }
+
     fn put(
         &mut self,
         record: LocalStoreRecord,

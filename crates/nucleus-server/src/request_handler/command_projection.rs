@@ -62,9 +62,12 @@ mod tests {
         assert_eq!(projection, replayed_projection);
         assert_eq!(projection.admitted_total, 2);
         assert_eq!(projection.task_commands, 1);
+        // The project command was appended last, so append-order replay must
+        // leave the cursor there (the old lexicographic sort put the task
+        // event last and this assertion used to encode that bug).
         assert_eq!(
             projection.last_cursor.expect("cursor").source_event_id,
-            "event:command:task:1:admitted"
+            "event:command:project:1:admitted"
         );
     }
 }

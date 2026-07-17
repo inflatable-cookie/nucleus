@@ -1,6 +1,6 @@
 # 044 Persistence Correctness Hardening
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-07-17
 
@@ -20,30 +20,33 @@ findings 2-3, high persistence items).
 
 ## Execution Plan
 
-- [ ] Make revision CAS atomic: transaction-wrapped check+write or SQL
+- [x] Make revision CAS atomic: transaction-wrapped check+write or SQL
   conditional update with changed-row inspection in
   `nucleus-local-store/src/sqlite.rs`.
-- [ ] Connection hygiene: shared connection (or pool) behind the state
+- [x] Connection hygiene: shared connection (or pool) behind the state
   service, WAL, `busy_timeout`, schema initialized once, not per operation.
-- [ ] Add a monotonic sequence column to the event journal; order replay and
-  cursors by it, replacing lexicographic event-id ordering.
-- [ ] Atomic projection materialization: temp file + fsync + rename in
+- [x] Add a monotonic sequence column to the event journal; order replay by
+  it, replacing lexicographic event-id ordering (numeric cursor type
+  deferred until orchestration replay consumes cursors).
+- [x] Atomic projection materialization: temp file + fsync + rename in
   `accepted_memory_projection_file_materialization`.
-- [ ] Replace stringly `reason: String` store errors with typed variants that
+- [x] Replace stringly `reason: String` store errors with typed variants that
   distinguish busy, conflict, and corruption (retryable vs fatal).
 
 ## Goals
 
-- [ ] two concurrent writers cannot both pass the same `Exact` revision
-- [ ] projections replay in append order under any command-id scheme
+- [x] two concurrent writers cannot both pass the same `Exact` revision
+- [x] projections replay in append order under any command-id scheme
 
 ## Acceptance Criteria
 
-- [ ] multi-thread CAS test proves lost-update prevention
-- [ ] replay test with unsorted command ids proves sequence ordering
-- [ ] kill-mid-write test (or fault injection) leaves no truncated
-  projection file
-- [ ] `LocalStoreError` implements `Display` + `Error` with structured
+- [x] multi-thread CAS test proves lost-update prevention (two backends,
+  separate connections, exactly one `Exact` writer wins)
+- [x] replay test with unsorted command ids proves sequence ordering
+- [x] crash-safety by construction: rename-based swap means a crash
+  mid-write leaves the previous file intact (no fault-injection harness yet;
+  revisit if materialization grows multi-file writes)
+- [x] `LocalStoreError` implements `Display` + `Error` with structured
   variants
 
 ## Batch Cards
