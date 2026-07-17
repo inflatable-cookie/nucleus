@@ -4,8 +4,9 @@
 //! then emits sanitized evidence. It does not spawn processes yet.
 
 use nucleus_command_policy::{
-    CommandApprovalPolicy, CommandAuthorityArea, CommandEvidence, CommandEvidenceId,
-    CommandExecutionRequest, CommandExecutionStatus, CommandInvocation, CommandOutputRetention,
+    evaluate_read_only_invocation, CommandApprovalPolicy, CommandAuthorityArea,
+    CommandEnvironmentPolicy, CommandEvidence, CommandEvidenceId, CommandExecutionRequest,
+    CommandExecutionStatus, CommandInvocation, CommandOutputRetention, CommandPolicyBlocker,
     CommandRisk, CommandSandboxProfile, CommandScope,
 };
 
@@ -23,8 +24,14 @@ pub enum LocalReadOnlyCommandRunnerRejection {
     UnsupportedRisk,
     UnsupportedApproval,
     UnsupportedSandbox,
+    UnsupportedEnvironmentPolicy,
     EmptyExecutable,
     ShellPassthrough,
+    InterpreterEscape,
+    OpaqueInterpreterProgram,
+    DestructiveExecutable,
+    IndirectExecution,
+    MutatingFlag,
     InvalidArgument,
     InvalidWorkingDirectory,
     MissingTimeout,
@@ -109,12 +116,38 @@ impl LocalReadOnlyCommandRunner {
             rejections.push(LocalReadOnlyCommandRunnerRejection::UnsupportedSandbox);
         }
 
+        if matches!(
+            invocation.environment_policy,
+            CommandEnvironmentPolicy::Custom(_)
+        ) {
+            rejections.push(LocalReadOnlyCommandRunnerRejection::UnsupportedEnvironmentPolicy);
+        }
+
         if invocation.executable.trim().is_empty() {
             rejections.push(LocalReadOnlyCommandRunnerRejection::EmptyExecutable);
         }
 
-        if invocation.is_shell_passthrough() {
-            rejections.push(LocalReadOnlyCommandRunnerRejection::ShellPassthrough);
+        for blocker in evaluate_read_only_invocation(invocation).blockers() {
+            rejections.push(match blocker {
+                CommandPolicyBlocker::ShellPassthrough { .. } => {
+                    LocalReadOnlyCommandRunnerRejection::ShellPassthrough
+                }
+                CommandPolicyBlocker::InterpreterInlineCode { .. } => {
+                    LocalReadOnlyCommandRunnerRejection::InterpreterEscape
+                }
+                CommandPolicyBlocker::InterpreterOpaqueProgram { .. } => {
+                    LocalReadOnlyCommandRunnerRejection::OpaqueInterpreterProgram
+                }
+                CommandPolicyBlocker::DestructiveExecutable { .. } => {
+                    LocalReadOnlyCommandRunnerRejection::DestructiveExecutable
+                }
+                CommandPolicyBlocker::IndirectExecution { .. } => {
+                    LocalReadOnlyCommandRunnerRejection::IndirectExecution
+                }
+                CommandPolicyBlocker::MutatingFlag { .. } => {
+                    LocalReadOnlyCommandRunnerRejection::MutatingFlag
+                }
+            });
         }
 
         if !invocation.has_structured_executable() || !invocation.has_structured_argv() {
@@ -172,8 +205,18 @@ fn rejection_label(rejection: &LocalReadOnlyCommandRunnerRejection) -> &'static 
         LocalReadOnlyCommandRunnerRejection::UnsupportedRisk => "unsupported risk",
         LocalReadOnlyCommandRunnerRejection::UnsupportedApproval => "unsupported approval",
         LocalReadOnlyCommandRunnerRejection::UnsupportedSandbox => "unsupported sandbox",
+        LocalReadOnlyCommandRunnerRejection::UnsupportedEnvironmentPolicy => {
+            "unsupported environment policy"
+        }
         LocalReadOnlyCommandRunnerRejection::EmptyExecutable => "empty executable",
         LocalReadOnlyCommandRunnerRejection::ShellPassthrough => "shell passthrough",
+        LocalReadOnlyCommandRunnerRejection::InterpreterEscape => "interpreter inline code",
+        LocalReadOnlyCommandRunnerRejection::OpaqueInterpreterProgram => {
+            "opaque interpreter program"
+        }
+        LocalReadOnlyCommandRunnerRejection::DestructiveExecutable => "destructive executable",
+        LocalReadOnlyCommandRunnerRejection::IndirectExecution => "indirect execution",
+        LocalReadOnlyCommandRunnerRejection::MutatingFlag => "mutating flag",
         LocalReadOnlyCommandRunnerRejection::InvalidArgument => "invalid argument",
         LocalReadOnlyCommandRunnerRejection::InvalidWorkingDirectory => "invalid working directory",
         LocalReadOnlyCommandRunnerRejection::MissingTimeout => "missing timeout",

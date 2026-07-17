@@ -61,6 +61,7 @@ fn print_durable_runtime_smoke(command: CliDurableRuntimeSmoke) -> Result<(), St
     };
 
     println!("durable_runtime_smoke=dry_run");
+    println!("source=fixture_replay");
     println!("status={}", if eligible { "eligible" } else { "blocked" });
     println!("scheduler_admitted={}", replay.scheduler_admitted);
     println!("live_executor_admitted={}", replay.live_executor_admitted);

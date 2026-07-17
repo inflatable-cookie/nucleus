@@ -50,6 +50,19 @@ pub fn codex_turn_start_executor_smoke_boundary(
                 );
             }
         }
+        CodexAppServerTransportExecutorOperatorConfirmation::CliFlagAsserted {
+            operator_ref,
+            flag,
+            scope,
+        } => {
+            evidence_refs.push(format!("operator:{operator_ref}"));
+            evidence_refs.push(format!("assertion:cli-flag:{flag}"));
+            if *scope != CodexAppServerTransportExecutorConfirmationScope::RealProviderWriteSmoke {
+                blockers.push(
+                    CodexAppServerTurnStartExecutorSmokeBoundaryBlocker::OperatorConfirmationScopeNotRealWriteSmoke,
+                );
+            }
+        }
     }
 
     if input.authority.status

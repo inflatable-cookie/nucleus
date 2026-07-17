@@ -1,11 +1,18 @@
 use std::io::Read;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use nucleus_command_policy::CommandInvocation;
+use nucleus_command_policy::{CommandEnvironmentPolicy, CommandInvocation, CommandSandboxProfile};
 
 use super::types::{LocalReadOnlySpawnError, LocalReadOnlySpawnOutputSummary};
+
+/// Environment keys inherited under `MinimalInheritedSafe`. Everything else
+/// in the parent environment (tokens, cloud credentials) is dropped.
+const MINIMAL_SAFE_ENVIRONMENT_KEYS: &[&str] = &[
+    "PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "USER", "LOGNAME", "TZ",
+];
 
 #[derive(Debug)]
 pub(super) struct SpawnResult {
@@ -35,8 +42,16 @@ impl SpawnResult {
 pub(super) fn spawn_and_wait(
     invocation: &CommandInvocation,
 ) -> Result<SpawnResult, LocalReadOnlySpawnError> {
-    let mut child = Command::new(&invocation.executable)
-        .args(&invocation.argv)
+    let mut command = sandboxed_command(invocation)?;
+    apply_environment_policy(&mut command, &invocation.environment_policy);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Own process group so timeout kill reaches grandchildren.
+        command.process_group(0);
+    }
+
+    let mut child = command
         .current_dir(&invocation.working_directory)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -77,6 +92,97 @@ pub(super) fn spawn_and_wait(
     })
 }
 
+/// Build the child command with the invocation's sandbox profile enforced.
+///
+/// On macOS this wraps the invocation in `sandbox-exec` with a seatbelt
+/// profile derived from the sandbox enum. On other platforms sandbox
+/// enforcement is unavailable and the spawn fails closed rather than running
+/// unsandboxed under a sandboxed label.
+fn sandboxed_command(invocation: &CommandInvocation) -> Result<Command, LocalReadOnlySpawnError> {
+    #[cfg(target_os = "macos")]
+    {
+        let profile = seatbelt_profile(&invocation.sandbox, &invocation.working_directory)?;
+        let mut command = Command::new("/usr/bin/sandbox-exec");
+        command
+            .arg("-p")
+            .arg(profile)
+            .arg("--")
+            .arg(&invocation.executable)
+            .args(&invocation.argv);
+        Ok(command)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(LocalReadOnlySpawnError::SandboxUnavailable(format!(
+            "no sandbox backend for profile {:?} on this platform",
+            invocation.sandbox
+        )))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn seatbelt_profile(
+    sandbox: &CommandSandboxProfile,
+    working_directory: &Path,
+) -> Result<String, LocalReadOnlySpawnError> {
+    match sandbox {
+        CommandSandboxProfile::NoFilesystemWrite => Ok(concat!(
+            "(version 1)\n",
+            "(allow default)\n",
+            "(deny file-write*)\n",
+            "(allow file-write-data (literal \"/dev/null\"))\n",
+        )
+        .to_owned()),
+        CommandSandboxProfile::ProjectRestricted => {
+            let root = working_directory.canonicalize().map_err(|error| {
+                LocalReadOnlySpawnError::SandboxUnavailable(format!(
+                    "cannot canonicalize project root for sandbox: {error}"
+                ))
+            })?;
+            let root = root.to_str().ok_or_else(|| {
+                LocalReadOnlySpawnError::SandboxUnavailable(
+                    "project root is not valid UTF-8 for sandbox profile".to_owned(),
+                )
+            })?;
+            if root.contains('"') || root.contains('\\') {
+                return Err(LocalReadOnlySpawnError::SandboxUnavailable(
+                    "project root contains characters unsupported in sandbox profile".to_owned(),
+                ));
+            }
+            Ok(format!(
+                "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (subpath \"{root}\"))\n(allow file-write-data (literal \"/dev/null\"))\n"
+            ))
+        }
+        unsupported => Err(LocalReadOnlySpawnError::SandboxUnavailable(format!(
+            "no seatbelt mapping for sandbox profile {unsupported:?}"
+        ))),
+    }
+}
+
+/// Apply the invocation environment policy. The child never inherits the
+/// full parent environment; `Custom` fails closed to an empty environment
+/// (the runner rejects it before spawn).
+fn apply_environment_policy(command: &mut Command, policy: &CommandEnvironmentPolicy) {
+    command.env_clear();
+    match policy {
+        CommandEnvironmentPolicy::MinimalInheritedSafe => {
+            for key in MINIMAL_SAFE_ENVIRONMENT_KEYS {
+                if let Ok(value) = std::env::var(key) {
+                    command.env(key, value);
+                }
+            }
+        }
+        CommandEnvironmentPolicy::AllowlistedKeys(keys) => {
+            for key in keys {
+                if let Ok(value) = std::env::var(key) {
+                    command.env(key, value);
+                }
+            }
+        }
+        CommandEnvironmentPolicy::Empty | CommandEnvironmentPolicy::Custom(_) => {}
+    }
+}
+
 fn wait_for_exit(
     child: &mut std::process::Child,
     timeout: Duration,
@@ -90,9 +196,7 @@ fn wait_for_exit(
         {
             Some(status) => return Ok((status.code(), false)),
             None if Instant::now() >= deadline => {
-                child
-                    .kill()
-                    .map_err(|error| LocalReadOnlySpawnError::KillFailed(error.to_string()))?;
+                kill_process_group(child)?;
                 let status = child
                     .wait()
                     .map_err(|error| LocalReadOnlySpawnError::WaitFailed(error.to_string()))?;
@@ -101,6 +205,22 @@ fn wait_for_exit(
             None => thread::sleep(Duration::from_millis(5)),
         }
     }
+}
+
+/// Kill the child's whole process group so grandchildren do not survive the
+/// timeout; falls back to killing the direct child.
+fn kill_process_group(child: &mut std::process::Child) -> Result<(), LocalReadOnlySpawnError> {
+    #[cfg(unix)]
+    {
+        let group = child.id() as i32;
+        let killed = unsafe { libc::kill(-group, libc::SIGKILL) };
+        if killed == 0 {
+            return Ok(());
+        }
+    }
+    child
+        .kill()
+        .map_err(|error| LocalReadOnlySpawnError::KillFailed(error.to_string()))
 }
 
 #[derive(Debug)]
@@ -150,6 +270,7 @@ impl LocalReadOnlySpawnError {
             Self::SpawnFailed(reason) => format!("spawn failed: {reason}"),
             Self::WaitFailed(reason) => format!("wait failed: {reason}"),
             Self::KillFailed(reason) => format!("kill failed: {reason}"),
+            Self::SandboxUnavailable(reason) => format!("sandbox unavailable: {reason}"),
             Self::OutputPipeUnavailable(pipe) => format!("{pipe} pipe unavailable"),
             Self::OutputReadFailed(reason) => format!("output read failed: {reason}"),
             Self::OutputReaderPanicked => "output reader panicked".to_owned(),

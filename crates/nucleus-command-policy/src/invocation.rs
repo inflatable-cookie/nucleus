@@ -58,21 +58,6 @@ impl CommandInvocation {
     pub fn has_structured_argv(&self) -> bool {
         self.argv.iter().all(|argument| !argument.contains('\0'))
     }
-
-    /// Returns true when the executable is a known shell entrypoint.
-    pub fn is_shell_passthrough(&self) -> bool {
-        let name = self
-            .executable
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(&self.executable)
-            .to_ascii_lowercase();
-
-        matches!(
-            name.as_str(),
-            "sh" | "bash" | "zsh" | "fish" | "cmd" | "cmd.exe" | "powershell" | "pwsh"
-        )
-    }
 }
 
 #[cfg(test)]
@@ -102,14 +87,5 @@ mod tests {
         assert!(invocation.has_structured_argv());
         assert!(invocation.has_required_timeout());
         assert!(invocation.has_bounded_output());
-        assert!(!invocation.is_shell_passthrough());
-    }
-
-    #[test]
-    fn invocation_records_reject_shell_like_executables() {
-        let mut invocation = invocation();
-        invocation.executable = "/bin/sh".to_owned();
-
-        assert!(invocation.is_shell_passthrough());
     }
 }

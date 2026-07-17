@@ -2391,6 +2391,7 @@ version = "0.0.0"
 dependencies = [
  "blake3",
  "ignore",
+ "libc",
  "nucleus-agent-protocol",
  "nucleus-command-policy",
  "nucleus-core",

@@ -21,6 +21,7 @@ pub(crate) fn print_codex_turn_start_real_write_smoke(
     let boundary = build_codex_turn_start_real_write_smoke_boundary(command.confirm_real_write);
 
     println!("codex_turn_start_real_write_smoke=boundary");
+    println!("boundary_source=fixture_records");
     println!("confirm_real_write={}", command.confirm_real_write);
     println!("status={}", boundary_status_label(&boundary.status));
     println!(
@@ -46,6 +47,7 @@ pub(crate) fn print_codex_turn_start_real_write_smoke(
     if command.execute_provider_write {
         println!("execute_provider_write=true");
         let outcome = live::run_live_codex_turn_start_smoke(&boundary)?;
+        println!("source=live_provider");
         println!("live_smoke_status={}", outcome.status_label());
         println!(
             "provider_write_executed={}",
@@ -90,15 +92,15 @@ pub(crate) fn build_codex_turn_start_real_write_smoke_boundary(
     );
     let smoke_intent = if confirm_real_write {
         CodexAppServerTurnStartExecutorSmokeIntent::RealProviderWriteSmokeRequested {
-            evidence_ref: "evidence:nucleusd-confirm-real-write".to_owned(),
+            evidence_ref: "assertion:cli-flag:--confirm-real-write".to_owned(),
         }
     } else {
         CodexAppServerTurnStartExecutorSmokeIntent::DisabledByDefault
     };
     let operator_confirmation = if confirm_real_write {
-        CodexAppServerTransportExecutorOperatorConfirmation::Confirmed {
+        CodexAppServerTransportExecutorOperatorConfirmation::CliFlagAsserted {
             operator_ref: "operator:nucleusd-cli".to_owned(),
-            evidence_ref: "evidence:nucleusd-confirm-real-write".to_owned(),
+            flag: "--confirm-real-write".to_owned(),
             scope: CodexAppServerTransportExecutorConfirmationScope::RealProviderWriteSmoke,
         }
     } else {
@@ -146,5 +148,19 @@ mod tests {
         );
         assert!(!boundary.provider_write_executed);
         assert!(!boundary.task_mutation_permitted);
+    }
+
+    #[test]
+    fn confirm_flag_records_cli_assertion_not_fabricated_evidence() {
+        let boundary = build_codex_turn_start_real_write_smoke_boundary(true);
+
+        assert!(boundary
+            .evidence_refs
+            .iter()
+            .any(|reference| reference == "assertion:cli-flag:--confirm-real-write"));
+        assert!(!boundary
+            .evidence_refs
+            .iter()
+            .any(|reference| reference.starts_with("evidence:nucleusd-confirm")));
     }
 }

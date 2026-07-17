@@ -7,6 +7,7 @@
 pub mod artifacts;
 pub mod authority;
 pub mod effects;
+pub mod evaluation;
 pub mod evidence;
 pub mod ids;
 pub mod invocation;
@@ -28,6 +29,9 @@ pub use authority::{CommandAuthorityPolicySurface, CommandAuthorityReadiness};
 pub use effects::{
     CommandEffectCancellation, CommandEffectOutcome, CommandEffectOutcomeKind,
     CommandEffectRequest, CommandEffectRequestId, CommandEffectRequestKind, CommandEffectRetry,
+};
+pub use evaluation::{
+    evaluate_read_only_invocation, CommandPolicyBlocker, CommandPolicyDecision,
 };
 pub use evidence::{CommandEvidence, CommandExecutionStatus, CommandOutputRetention};
 pub use ids::{CommandEvidenceId, CommandPolicyId, CommandRequestId};

@@ -21,6 +21,7 @@ nucleus-scm-forge = { path = "../nucleus-scm-forge" }
 nucleus-tasks = { path = "../nucleus-tasks" }
 nucleus-workspaces = { path = "../nucleus-workspaces" }
 blake3 = "1"
+libc = "0.2"
 ignore = "0.4"
 portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }

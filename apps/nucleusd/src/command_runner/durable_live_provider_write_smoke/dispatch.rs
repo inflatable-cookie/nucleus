@@ -21,11 +21,11 @@ fn dispatch_intent(command: &CliDurableLiveProviderWriteSmoke) -> DurableCodexLi
     match (command.confirm_real_write, command.confirm_real_effect) {
         (false, _) => DurableCodexLiveSmokeIntent::DryRunOnly,
         (true, false) => DurableCodexLiveSmokeIntent::ConfirmedRealWrite {
-            confirmation_ref: "evidence:nucleusd-confirm-real-write".to_owned(),
+            confirmation_ref: "assertion:cli-flag:--confirm-real-write".to_owned(),
         },
         (true, true) => DurableCodexLiveSmokeIntent::ConfirmedRealWriteWithEffect {
-            confirmation_ref: "evidence:nucleusd-confirm-real-write".to_owned(),
-            effect_ref: "evidence:nucleusd-confirm-real-effect".to_owned(),
+            confirmation_ref: "assertion:cli-flag:--confirm-real-write".to_owned(),
+            effect_ref: "assertion:cli-flag:--confirm-real-effect".to_owned(),
         },
     }
 }

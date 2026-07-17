@@ -54,9 +54,18 @@ pub enum CodexAppServerTransportExecutorEvidenceState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CodexAppServerTransportExecutorOperatorConfirmation {
     Missing,
+    /// Confirmation backed by stored evidence (interactive or reviewed).
     Confirmed {
         operator_ref: String,
         evidence_ref: String,
+        scope: CodexAppServerTransportExecutorConfirmationScope,
+    },
+    /// Operator asserted confirmation via a CLI flag. No stored evidence
+    /// exists; records must carry the assertion, not a fabricated evidence
+    /// reference.
+    CliFlagAsserted {
+        operator_ref: String,
+        flag: String,
         scope: CodexAppServerTransportExecutorConfirmationScope,
     },
 }
@@ -166,6 +175,15 @@ pub fn codex_transport_executor_authority(
             evidence_refs.push(format!("operator:{operator_ref}"));
             evidence_refs.push(format!("operator-confirmation:{scope:?}"));
             evidence_refs.push(evidence_ref);
+        }
+        CodexAppServerTransportExecutorOperatorConfirmation::CliFlagAsserted {
+            operator_ref,
+            flag,
+            scope,
+        } => {
+            evidence_refs.push(format!("operator:{operator_ref}"));
+            evidence_refs.push(format!("operator-confirmation:{scope:?}"));
+            evidence_refs.push(format!("assertion:cli-flag:{flag}"));
         }
     }
     if input.preflight.status != CodexAppServerLiveSendPreflightStatus::AcceptedForTransportAttempt

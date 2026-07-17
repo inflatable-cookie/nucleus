@@ -58,6 +58,7 @@ pub enum LocalReadOnlySpawnError {
     SpawnFailed(String),
     WaitFailed(String),
     KillFailed(String),
+    SandboxUnavailable(String),
     OutputPipeUnavailable(String),
     OutputReadFailed(String),
     OutputReaderPanicked,
