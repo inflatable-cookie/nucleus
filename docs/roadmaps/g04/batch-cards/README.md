@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-15
+Updated: 2026-07-17
 
 ## Purpose
 
@@ -28,6 +28,26 @@ Hold execution cards for `g04`.
 - `197-management-projection-resource-binding.md`
 - `198-shared-project-files-controls.md`
 - `199-shared-project-files-validation.md`
+- `200-command-policy-evaluation-function.md`
+- `201-spawn-boundary-enforcement-or-honest-evidence.md`
+- `202-operator-confirmation-integrity.md`
+- `203-ci-workflow-and-effigy-wiring.md`
+- `204-desktop-test-wiring-and-store-coverage.md`
+- `205-transactional-cas-and-connection-hygiene.md`
+- `206-monotonic-event-sequencing.md`
+- `207-atomic-materialization-and-typed-errors.md`
+- `208-shared-admission-and-evidence-vocabulary.md`
+- `209-provider-gate-framework-migration.md`
+- `210-typed-response-collapse-and-test-pruning.md`
+- `211-runtime-effects-to-orchestration.md`
+- `212-request-handler-dispatch-to-engine.md`
+- `213-goal-execution-to-engine-ports.md`
+- `214-adapter-layer-decision-and-server-facade.md`
+- `215-envelope-typegen-or-roundtrip-guard.md`
+- `216-csp-and-startup-resilience.md`
+- `217-control-layer-collapse-and-io-hygiene.md`
+- `218-closed-generation-archival.md`
+- `219-docs-qa-and-reference-repair.md`
 
 ## Paused Cards
 

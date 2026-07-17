@@ -35,6 +35,9 @@ Current runway bands:
 - SCM readiness handoff as a practical user workflow, not more provider
   execution
 - deferred-lane checkpoints for memory, provider, SCM, panel, and UI work
+- audit-driven hardening band (milestones 042-048): execution-safety honesty,
+  CI, persistence correctness, admission consolidation, engine boundary
+  migration, desktop contract integrity, roadmap archival
 
 Current checkpoint:
 

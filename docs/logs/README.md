@@ -33,3 +33,8 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-15-project-resource-mutations.md`
 - `2026-07-15-workspace-resource-target-resolution.md`
 - `2026-07-15-compact-project-resource-controls.md`
+- `2026-07-17-codebase-audit-findings.md`
+- `2026-07-17-command-policy-evaluation-function.md`
+- `2026-07-17-operator-confirmation-integrity.md`
+- `2026-07-17-spawn-boundary-sandbox-enforcement.md`
+- `2026-07-17-ci-and-validation-runway.md`
