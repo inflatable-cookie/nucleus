@@ -29,9 +29,9 @@ fn git_push_runner_outcomes_round_trip_sanitized_records() {
         "origin"
     );
     assert_eq!(records[0].evidence_refs, vec!["evidence:runner"]);
-    assert!(!records[0].raw_output_retained);
+    assert!(!records[0].no_effects.raw_output_retained);
     assert!(!records[0].push_executed);
-    assert!(!records[0].pull_request_created);
+    assert!(!records[0].no_effects.pull_request_created);
 }
 
 #[test]
@@ -126,5 +126,5 @@ fn git_push_runner_outcome_diagnostics_summarize_records() {
     assert_eq!(diagnostics.duplicate_noop_count, 1);
     assert_eq!(diagnostics.remote_target_count, 5);
     assert!(!diagnostics.push_executed);
-    assert!(!diagnostics.raw_output_retained);
+    assert!(!diagnostics.no_effects.raw_output_retained);
 }

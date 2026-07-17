@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use nucleus_memory::AcceptedMemoryReviewReceiptAdmissionStatusStorage;
 
 use crate::accepted_memory_active_apply_admission::blockers::{
@@ -39,15 +40,7 @@ pub(super) fn active_apply_admission_record(
         review_admission_status: review.admission_status,
         status,
         blockers,
-        active_memory_apply_performed: false,
-        projection_write_performed: false,
-        scm_effect_performed: false,
-        embedding_available: false,
-        provider_sync_available: false,
-        automatic_extraction_performed: false,
-        task_mutation_performed: false,
-        agent_scheduling_performed: false,
-        ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
     }
 }
 

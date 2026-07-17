@@ -99,15 +99,15 @@ mod tests {
         assert_eq!(diagnostics.counts.unsupported_records_skipped, 1);
         assert_eq!(diagnostics.counts.decode_failed_records, 0);
         assert!(diagnostics.review_receipts_persisted);
-        assert!(!diagnostics.active_memory_apply_performed);
-        assert!(!diagnostics.projection_write_performed);
-        assert!(!diagnostics.scm_effect_performed);
-        assert!(!diagnostics.embedding_available);
-        assert!(!diagnostics.provider_sync_available);
-        assert!(!diagnostics.automatic_extraction_performed);
-        assert!(!diagnostics.task_mutation_performed);
-        assert!(!diagnostics.agent_scheduling_performed);
-        assert!(!diagnostics.ui_effect_performed);
+        assert!(!diagnostics.no_effects.active_memory_apply_performed);
+        assert!(!diagnostics.no_effects.projection_write_performed);
+        assert!(!diagnostics.no_effects.scm_effect_performed);
+        assert!(!diagnostics.no_effects.embedding_available);
+        assert!(!diagnostics.no_effects.provider_sync_available);
+        assert!(!diagnostics.no_effects.automatic_extraction_performed);
+        assert!(!diagnostics.no_effects.task_mutation_performed);
+        assert!(!diagnostics.no_effects.agent_scheduling_performed);
+        assert!(!diagnostics.no_effects.ui_effect_performed);
     }
 
     fn handler() -> (tempfile::TempDir, LocalControlRequestHandler<SqliteBackend>) {

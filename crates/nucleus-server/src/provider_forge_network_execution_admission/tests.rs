@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use super::*;
 use crate::{
     ForgePullRequestProvider, ForgePullRequestRunnerRequestAdapterRecord,
@@ -182,14 +183,7 @@ fn request_set() -> ForgePullRequestRunnerRequestAdapterSet {
         provider_request_prepared: true,
         shell_passthrough_used: false,
         shell_execution_performed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 
@@ -220,13 +214,6 @@ fn request() -> ForgePullRequestRunnerRequestAdapterRecord {
         provider_request_prepared: true,
         shell_passthrough_used: false,
         shell_execution_performed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }

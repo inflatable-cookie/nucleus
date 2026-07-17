@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use crate::accepted_memory_projection_import_apply_admission::blockers::{
     apply_admission_blockers, sorted_unique_non_empty,
 };
@@ -32,15 +33,7 @@ pub(super) fn apply_admission_record(
         evidence_refs: sorted_unique_non_empty(input.evidence_refs),
         status,
         blockers,
-        active_memory_apply_performed: false,
-        projection_write_performed: false,
-        scm_effect_performed: false,
-        embedding_available: false,
-        provider_sync_available: false,
-        automatic_extraction_performed: false,
-        task_mutation_performed: false,
-        agent_scheduling_performed: false,
-        ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
     }
 }
 

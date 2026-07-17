@@ -21,16 +21,16 @@ fn git_branch_worktree_sanitized_outcomes_keep_counts_only() {
             && !outcome.worktree_created
             && !outcome.commit_created
             && !outcome.push_executed
-            && !outcome.pull_request_created
-            && !outcome.forge_effect_executed
-            && !outcome.provider_effect_executed
-            && !outcome.callback_effect_executed
-            && !outcome.interruption_effect_executed
-            && !outcome.recovery_effect_executed
-            && !outcome.task_mutation_executed
-            && !outcome.raw_output_retained
+            && !outcome.no_effects.pull_request_created
+            && !outcome.no_effects.forge_effect_executed
+            && !outcome.no_effects.provider_effect_executed
+            && !outcome.no_effects.callback_effect_executed
+            && !outcome.no_effects.interruption_effect_executed
+            && !outcome.no_effects.recovery_effect_executed
+            && !outcome.no_effects.task_mutation_executed
+            && !outcome.no_effects.raw_output_retained
     }));
-    assert!(!record.raw_output_retained);
+    assert!(!record.no_effects.raw_output_retained);
 }
 
 #[test]

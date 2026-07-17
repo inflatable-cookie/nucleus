@@ -1,5 +1,6 @@
 //! Persistence records for sanitized Convergence publication runner evidence.
 
+use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -27,14 +28,8 @@ pub struct ConvergencePublicationRunnerEvidencePersistenceSet {
     pub records: Vec<ConvergencePublicationRunnerEvidencePersistenceRecord>,
     pub duplicate_evidence_ids: Vec<String>,
     pub blocked_evidence_ids: Vec<String>,
-    pub runner_invocation_permitted: bool,
-    pub provider_handoff_permitted: bool,
-    pub snapshot_creation_permitted: bool,
-    pub publish_permitted: bool,
-    pub publication_review_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceRunnerNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -55,14 +50,8 @@ pub struct ConvergencePublicationRunnerEvidencePersistenceRecord {
     pub status: ConvergencePublicationRunnerEvidencePersistenceStatus,
     pub blockers: Vec<ConvergencePublicationRunnerEvidencePersistenceBlocker>,
     pub duplicate_evidence_detected: bool,
-    pub runner_invocation_permitted: bool,
-    pub provider_handoff_permitted: bool,
-    pub snapshot_creation_permitted: bool,
-    pub publish_permitted: bool,
-    pub publication_review_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceRunnerNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -124,14 +113,7 @@ pub fn convergence_publication_runner_evidence_persistence(
             .map(|record| record.evidence_id.clone())
             .collect(),
         records,
-        runner_invocation_permitted: false,
-        provider_handoff_permitted: false,
-        snapshot_creation_permitted: false,
-        publish_permitted: false,
-        publication_review_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceRunnerNoAuthority::none(),
     }
 }
 
@@ -175,14 +157,7 @@ fn persistence_record(
         status,
         blockers,
         duplicate_evidence_detected,
-        runner_invocation_permitted: false,
-        provider_handoff_permitted: false,
-        snapshot_creation_permitted: false,
-        publish_permitted: false,
-        publication_review_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceRunnerNoAuthority::none(),
     }
 }
 

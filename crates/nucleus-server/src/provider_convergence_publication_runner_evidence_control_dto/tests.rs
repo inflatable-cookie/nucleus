@@ -11,9 +11,9 @@ fn convergence_runner_evidence_control_dto_serializes_sanitized_counts() {
     assert_eq!(decoded, dto);
     assert_eq!(decoded.persisted_count, 1);
     assert_eq!(decoded.reviewable_evidence_count, 1);
-    assert!(!decoded.runner_invocation_permitted);
-    assert!(!decoded.provider_write_permitted);
-    assert!(!decoded.raw_material_retained);
+    assert!(!decoded.no_effects.runner_invocation_permitted);
+    assert!(!decoded.no_effects.provider_write_permitted);
+    assert!(!decoded.no_effects.raw_material_retained);
     assert!(!json.contains("raw_stdout"));
     assert!(!json.contains("provider_payload"));
 }

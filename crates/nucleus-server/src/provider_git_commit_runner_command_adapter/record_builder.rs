@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use crate::{GitCommitRunnerAuthorityRecord, GitCommitRunnerAuthorityStatus};
 
 use super::types::{
@@ -49,14 +50,7 @@ pub(super) fn command_record(
         commit_creation_requested: executable_argv_created,
         commit_created: false,
         push_executed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 

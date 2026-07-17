@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::accepted_memory_projection_import_apply_admission::{
@@ -16,15 +17,8 @@ pub struct ControlAcceptedMemoryProjectionImportApplyDiagnosticsDto {
     pub project_id: String,
     pub records: Vec<ControlAcceptedMemoryProjectionImportApplyRecordDto>,
     pub counts: ControlAcceptedMemoryProjectionImportApplyCountsDto,
-    pub active_memory_apply_performed: bool,
-    pub projection_write_performed: bool,
-    pub scm_effect_performed: bool,
-    pub embedding_available: bool,
-    pub provider_sync_available: bool,
-    pub automatic_extraction_performed: bool,
-    pub task_mutation_performed: bool,
-    pub agent_scheduling_performed: bool,
-    pub ui_effect_performed: bool,
+    #[serde(flatten)]
+    pub no_effects: MemoryApplyNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -80,15 +74,7 @@ impl From<&AcceptedMemoryProjectionImportApplyDiagnostics>
                 .map(ControlAcceptedMemoryProjectionImportApplyRecordDto::from)
                 .collect(),
             counts: ControlAcceptedMemoryProjectionImportApplyCountsDto::from(&diagnostics.counts),
-            active_memory_apply_performed: diagnostics.active_memory_apply_performed,
-            projection_write_performed: diagnostics.projection_write_performed,
-            scm_effect_performed: diagnostics.scm_effect_performed,
-            embedding_available: diagnostics.embedding_available,
-            provider_sync_available: diagnostics.provider_sync_available,
-            automatic_extraction_performed: diagnostics.automatic_extraction_performed,
-            task_mutation_performed: diagnostics.task_mutation_performed,
-            agent_scheduling_performed: diagnostics.agent_scheduling_performed,
-            ui_effect_performed: diagnostics.ui_effect_performed,
+        no_effects: diagnostics.no_effects,
         }
     }
 }

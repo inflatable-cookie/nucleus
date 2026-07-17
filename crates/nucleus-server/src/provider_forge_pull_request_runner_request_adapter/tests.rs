@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use super::*;
 use crate::{
     ForgePullRequestProvider, ForgePullRequestRunnerAuthorityRecord,
@@ -20,8 +21,8 @@ fn forge_pull_request_runner_request_adapter_prepares_sanitized_request() {
         Some(ForgePullRequestProvider::GitHub)
     );
     assert_eq!(request.base_branch, Some("main".to_owned()));
-    assert!(!request.pull_request_created);
-    assert!(!request.provider_effect_executed);
+    assert!(!request.no_effects.pull_request_created);
+    assert!(!request.no_effects.provider_effect_executed);
 }
 
 #[test]
@@ -63,14 +64,7 @@ fn authority_set() -> ForgePullRequestRunnerAuthoritySet {
         skipped_preflight_ids: Vec::new(),
         request_preparation_permitted: true,
         shell_execution_performed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 
@@ -99,13 +93,6 @@ fn authority() -> ForgePullRequestRunnerAuthorityRecord {
         blockers: Vec::new(),
         request_preparation_permitted: true,
         shell_execution_performed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }

@@ -18,8 +18,8 @@ fn git_branch_worktree_runner_authority_accepts_confirmed_isolated_worktree() {
             && !authority.shell_execution_performed
             && !authority.commit_created
             && !authority.push_executed
-            && !authority.pull_request_created
-            && !authority.raw_output_retained
+            && !authority.no_effects.pull_request_created
+            && !authority.no_effects.raw_output_retained
     }));
     assert!(!record.shell_execution_performed);
     assert!(!record.checkout_executed);
@@ -27,7 +27,7 @@ fn git_branch_worktree_runner_authority_accepts_confirmed_isolated_worktree() {
     assert!(!record.worktree_created);
     assert!(!record.commit_created);
     assert!(!record.push_executed);
-    assert!(!record.raw_output_retained);
+    assert!(!record.no_effects.raw_output_retained);
 }
 
 #[test]

@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
 
 use crate::ConvergenceLocalSnapRunnerReplayEffectFamily;
@@ -192,18 +193,18 @@ fn convergence_local_snap_execution_preflight_preserves_refs_and_executes_no_eff
     assert_eq!(record.repo_ids, vec!["repo:refs"]);
     assert_eq!(record.source_authority_ref, "source-authority:refs");
     assert_eq!(record.execution_authority_ref, "execution-authority:refs");
-    assert!(!set.command_spawn_permitted);
-    assert!(!set.local_snap_creation_permitted);
-    assert!(!set.object_upload_permitted);
-    assert!(!set.publication_permitted);
-    assert!(!set.lane_sync_permitted);
-    assert!(!set.provider_write_permitted);
-    assert!(!set.task_mutation_permitted);
-    assert!(!set.raw_material_retained);
-    assert!(!record.command_spawn_permitted);
-    assert!(!record.local_snap_creation_permitted);
-    assert!(!record.provider_write_permitted);
-    assert!(!record.task_mutation_permitted);
+    assert!(!set.no_effects.command_spawn_permitted);
+    assert!(!set.no_effects.local_snap_creation_permitted);
+    assert!(!set.no_effects.object_upload_permitted);
+    assert!(!set.no_effects.publication_permitted);
+    assert!(!set.no_effects.lane_sync_permitted);
+    assert!(!set.no_effects.provider_write_permitted);
+    assert!(!set.no_effects.task_mutation_permitted);
+    assert!(!set.no_effects.raw_material_retained);
+    assert!(!record.no_effects.command_spawn_permitted);
+    assert!(!record.no_effects.local_snap_creation_permitted);
+    assert!(!record.no_effects.provider_write_permitted);
+    assert!(!record.no_effects.task_mutation_permitted);
 }
 
 fn input(
@@ -222,14 +223,7 @@ fn input(
             duplicate_replay_record_ids: Vec::new(),
             blocked_replay_record_ids: Vec::new(),
             unsupported_replay_record_ids: Vec::new(),
-            command_spawn_permitted: false,
-            local_snap_creation_permitted: false,
-            object_upload_permitted: false,
-            publication_permitted: false,
-            lane_sync_permitted: false,
-            provider_write_permitted: false,
-            task_mutation_permitted: false,
-            raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
         },
         existing_preflight_record_ids,
         operator_confirmed,
@@ -268,13 +262,6 @@ fn replay(
         status,
         blockers: Vec::new(),
         duplicate_replay_detected: false,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }

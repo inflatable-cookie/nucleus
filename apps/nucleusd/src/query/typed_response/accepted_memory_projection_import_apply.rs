@@ -30,15 +30,15 @@ pub(crate) fn accepted_memory_projection_import_apply_response_lines(
         ),
         format!(
             "flags active_memory_apply_performed={} projection_write_performed={} scm_effect_performed={} embedding_available={} provider_sync_available={} automatic_extraction_performed={} task_mutation_performed={} agent_scheduling_performed={} ui_effect_performed={}",
-            diagnostics.active_memory_apply_performed,
-            diagnostics.projection_write_performed,
-            diagnostics.scm_effect_performed,
-            diagnostics.embedding_available,
-            diagnostics.provider_sync_available,
-            diagnostics.automatic_extraction_performed,
-            diagnostics.task_mutation_performed,
-            diagnostics.agent_scheduling_performed,
-            diagnostics.ui_effect_performed
+            diagnostics.no_effects.active_memory_apply_performed,
+            diagnostics.no_effects.projection_write_performed,
+            diagnostics.no_effects.scm_effect_performed,
+            diagnostics.no_effects.embedding_available,
+            diagnostics.no_effects.provider_sync_available,
+            diagnostics.no_effects.automatic_extraction_performed,
+            diagnostics.no_effects.task_mutation_performed,
+            diagnostics.no_effects.agent_scheduling_performed,
+            diagnostics.no_effects.ui_effect_performed
         ),
     ];
 

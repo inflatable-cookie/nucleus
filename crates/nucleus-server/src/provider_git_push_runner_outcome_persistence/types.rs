@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -32,14 +33,8 @@ pub struct GitPushRunnerOutcomePersistenceSet {
     pub records: Vec<GitPushRunnerOutcomePersistenceRecord>,
     pub shell_execution_performed: bool,
     pub push_executed: bool,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -71,14 +66,8 @@ pub struct GitPushRunnerOutcomePersistenceRecord {
     pub push_requested: bool,
     pub shell_execution_performed: bool,
     pub push_executed: bool,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -96,14 +85,8 @@ pub struct GitPushRunnerOutcomeDiagnosticsRecord {
     pub evidence_ref_count: usize,
     pub shell_execution_performed: bool,
     pub push_executed: bool,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -29,7 +29,7 @@ fn git_commit_runner_outcomes_round_trip_sanitized_records() {
         Some("commit-message-ref:1".to_owned())
     );
     assert_eq!(records[0].evidence_refs, vec!["evidence:runner"]);
-    assert!(!records[0].raw_output_retained);
+    assert!(!records[0].no_effects.raw_output_retained);
     assert!(!records[0].commit_created);
     assert!(!records[0].push_executed);
 }
@@ -130,5 +130,5 @@ fn git_commit_runner_outcome_diagnostics_summarize_records() {
     assert_eq!(diagnostics.primary_tree_count, 3);
     assert_eq!(diagnostics.isolated_worktree_count, 2);
     assert!(!diagnostics.commit_created);
-    assert!(!diagnostics.raw_output_retained);
+    assert!(!diagnostics.no_effects.raw_output_retained);
 }

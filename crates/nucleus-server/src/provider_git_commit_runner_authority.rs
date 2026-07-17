@@ -10,6 +10,7 @@ pub use types::{
     GitCommitRunnerOperatorEffectIntent, GitCommitRunnerTargetRef,
 };
 
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use record_builder::authority_record;
 use types::GitCommitRunnerAuthorityContext;
 
@@ -52,14 +53,7 @@ pub fn git_commit_runner_authority(
         shell_execution_performed: false,
         commit_created: false,
         push_executed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 

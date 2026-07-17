@@ -46,9 +46,9 @@ fn response_envelope_dto_serializes_review_receipt_storage_diagnostics() {
                 && diagnostics.receipts[0].status == "approved"
                 && diagnostics.receipts[0].admission_status == "admitted"
                 && diagnostics.review_receipts_persisted
-                && !diagnostics.active_memory_apply_performed
-                && !diagnostics.projection_write_performed
-                && !diagnostics.scm_effect_performed
+                && !diagnostics.no_effects.active_memory_apply_performed
+                && !diagnostics.no_effects.projection_write_performed
+                && !diagnostics.no_effects.scm_effect_performed
     ));
     assert!(json.contains("\"type\":\"accepted_memory_review_receipt_storage_diagnostics\""));
     assert!(!json.contains("raw_transcript"));

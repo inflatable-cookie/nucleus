@@ -1,5 +1,6 @@
 //! Stopped-by-default execution admissions for forge pull-request creation.
 
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -19,14 +20,8 @@ pub struct ForgePullRequestExecutionAdmissionSet {
     pub admission_set_id: String,
     pub admissions: Vec<ForgePullRequestExecutionAdmissionRecord>,
     pub skipped_evidence_ids: Vec<String>,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -56,14 +51,8 @@ pub struct ForgePullRequestExecutionAdmissionRecord {
     pub operator_approved: bool,
     pub status: ForgePullRequestExecutionAdmissionStatus,
     pub blockers: Vec<ForgePullRequestExecutionAdmissionBlocker>,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -101,14 +90,7 @@ pub fn forge_pull_request_execution_admission(
             .map(|admission| admission.pr_evidence_id.clone())
             .collect(),
         admissions,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 
@@ -152,14 +134,7 @@ fn admission_record(
         operator_approved,
         status,
         blockers,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 

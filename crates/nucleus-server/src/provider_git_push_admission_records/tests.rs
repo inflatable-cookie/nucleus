@@ -13,14 +13,14 @@ fn git_push_admission_records_admit_ready_commit_preflights() {
                 .commit_preflight_id
                 .starts_with("git-commit-preflight:")
             && !admission.push_executed
-            && !admission.pull_request_created
-            && !admission.forge_effect_executed
-            && !admission.provider_effect_executed
-            && !admission.callback_effect_executed
-            && !admission.interruption_effect_executed
-            && !admission.recovery_effect_executed
-            && !admission.task_mutation_executed
-            && !admission.raw_output_retained
+            && !admission.no_effects.pull_request_created
+            && !admission.no_effects.forge_effect_executed
+            && !admission.no_effects.provider_effect_executed
+            && !admission.no_effects.callback_effect_executed
+            && !admission.no_effects.interruption_effect_executed
+            && !admission.no_effects.recovery_effect_executed
+            && !admission.no_effects.task_mutation_executed
+            && !admission.no_effects.raw_output_retained
     }));
     assert!(!record.push_executed);
 }

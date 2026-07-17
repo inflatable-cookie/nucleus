@@ -4,6 +4,7 @@
 //! stopped apply/admission diagnostics. It does not persist receipts or grant
 //! active apply authority.
 
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use nucleus_projects::ProjectId;
 
 use crate::accepted_memory_import_apply_review_command::{
@@ -19,15 +20,7 @@ pub struct AcceptedMemoryImportApplyReviewDiagnostics {
     pub project_id: ProjectId,
     pub review_set: AcceptedMemoryImportApplyReviewSet,
     pub review_receipts_persisted: bool,
-    pub active_memory_apply_performed: bool,
-    pub projection_write_performed: bool,
-    pub scm_effect_performed: bool,
-    pub embedding_available: bool,
-    pub provider_sync_available: bool,
-    pub automatic_extraction_performed: bool,
-    pub task_mutation_performed: bool,
-    pub agent_scheduling_performed: bool,
-    pub ui_effect_performed: bool,
+    pub no_effects: MemoryApplyNoEffects,
 }
 
 impl AcceptedMemoryImportApplyReviewDiagnostics {
@@ -47,15 +40,7 @@ impl AcceptedMemoryImportApplyReviewDiagnostics {
             project_id,
             review_set,
             review_receipts_persisted: false,
-            active_memory_apply_performed: false,
-            projection_write_performed: false,
-            scm_effect_performed: false,
-            embedding_available: false,
-            provider_sync_available: false,
-            automatic_extraction_performed: false,
-            task_mutation_performed: false,
-            agent_scheduling_performed: false,
-            ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
         }
     }
 }

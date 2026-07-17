@@ -26,14 +26,14 @@ fn git_branch_worktree_execution_handoff_admits_ready_preflights() {
             && !handoff.worktree_created
             && !handoff.commit_created
             && !handoff.push_executed
-            && !handoff.pull_request_created
-            && !handoff.forge_effect_executed
-            && !handoff.provider_effect_executed
-            && !handoff.callback_effect_executed
-            && !handoff.interruption_effect_executed
-            && !handoff.recovery_effect_executed
-            && !handoff.task_mutation_executed
-            && !handoff.raw_output_retained
+            && !handoff.no_effects.pull_request_created
+            && !handoff.no_effects.forge_effect_executed
+            && !handoff.no_effects.provider_effect_executed
+            && !handoff.no_effects.callback_effect_executed
+            && !handoff.no_effects.interruption_effect_executed
+            && !handoff.no_effects.recovery_effect_executed
+            && !handoff.no_effects.task_mutation_executed
+            && !handoff.no_effects.raw_output_retained
     }));
     assert!(!record.shell_handoff_created);
     assert!(!record.checkout_executed);

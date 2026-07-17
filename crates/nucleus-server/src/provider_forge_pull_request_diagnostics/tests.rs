@@ -30,14 +30,14 @@ fn forge_pull_request_diagnostics_grant_no_authority() {
     let diagnostics = forge_pull_request_diagnostics(input(true, true, true, true));
 
     assert!(!diagnostics.pull_request_creation_authority_granted);
-    assert!(!diagnostics.pull_request_created);
-    assert!(!diagnostics.forge_effect_executed);
-    assert!(!diagnostics.provider_effect_executed);
-    assert!(!diagnostics.callback_effect_executed);
-    assert!(!diagnostics.interruption_effect_executed);
-    assert!(!diagnostics.recovery_effect_executed);
-    assert!(!diagnostics.task_mutation_executed);
-    assert!(!diagnostics.raw_output_retained);
+    assert!(!diagnostics.no_effects.pull_request_created);
+    assert!(!diagnostics.no_effects.forge_effect_executed);
+    assert!(!diagnostics.no_effects.provider_effect_executed);
+    assert!(!diagnostics.no_effects.callback_effect_executed);
+    assert!(!diagnostics.no_effects.interruption_effect_executed);
+    assert!(!diagnostics.no_effects.recovery_effect_executed);
+    assert!(!diagnostics.no_effects.task_mutation_executed);
+    assert!(!diagnostics.no_effects.raw_output_retained);
 }
 
 fn input(

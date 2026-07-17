@@ -74,11 +74,11 @@ fn convergence_runner_evidence_persistence_blocks_effect_requests() {
     assert!(set.records[0]
         .blockers
         .contains(&ConvergencePublicationRunnerEvidencePersistenceBlocker::PublishRequested));
-    assert!(!set.runner_invocation_permitted);
-    assert!(!set.provider_handoff_permitted);
-    assert!(!set.publish_permitted);
-    assert!(!set.provider_write_permitted);
-    assert!(!set.raw_material_retained);
+    assert!(!set.no_effects.runner_invocation_permitted);
+    assert!(!set.no_effects.provider_handoff_permitted);
+    assert!(!set.no_effects.publish_permitted);
+    assert!(!set.no_effects.provider_write_permitted);
+    assert!(!set.no_effects.raw_material_retained);
 }
 
 fn input(

@@ -1,5 +1,6 @@
 //! Replay records for stopped Convergence local snap runner adapter decisions.
 
+use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -23,14 +24,8 @@ pub struct ConvergenceLocalSnapRunnerReplayRecordSet {
     pub duplicate_replay_record_ids: Vec<String>,
     pub blocked_replay_record_ids: Vec<String>,
     pub unsupported_replay_record_ids: Vec<String>,
-    pub command_spawn_permitted: bool,
-    pub local_snap_creation_permitted: bool,
-    pub object_upload_permitted: bool,
-    pub publication_permitted: bool,
-    pub lane_sync_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceSnapNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -55,14 +50,8 @@ pub struct ConvergenceLocalSnapRunnerReplayRecord {
     pub status: ConvergenceLocalSnapRunnerReplayStatus,
     pub blockers: Vec<ConvergenceLocalSnapRunnerReplayBlocker>,
     pub duplicate_replay_detected: bool,
-    pub command_spawn_permitted: bool,
-    pub local_snap_creation_permitted: bool,
-    pub object_upload_permitted: bool,
-    pub publication_permitted: bool,
-    pub lane_sync_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceSnapNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -127,14 +116,7 @@ pub fn convergence_local_snap_runner_replay_records(
             .map(|record| record.replay_record_id.clone())
             .collect(),
         records,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }
 
@@ -178,14 +160,7 @@ fn replay_record(
         status,
         blockers,
         duplicate_replay_detected,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }
 

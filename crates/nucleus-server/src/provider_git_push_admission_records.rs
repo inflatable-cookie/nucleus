@@ -1,5 +1,6 @@
 //! Git push admission records from ready commit preflight records.
 
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -19,14 +20,8 @@ pub struct GitPushAdmissionSet {
     pub admissions: Vec<GitPushAdmissionRecord>,
     pub skipped_preflight_ids: Vec<String>,
     pub push_executed: bool,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -55,14 +50,8 @@ pub struct GitPushAdmissionRecord {
     pub status: GitPushAdmissionStatus,
     pub blockers: Vec<GitPushAdmissionBlocker>,
     pub push_executed: bool,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -104,14 +93,7 @@ pub fn git_push_admission_records(input: GitPushAdmissionInput) -> GitPushAdmiss
             .collect(),
         admissions,
         push_executed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 
@@ -151,14 +133,7 @@ fn admission_record(
         status,
         blockers,
         push_executed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 

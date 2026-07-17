@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
 
 use crate::{
@@ -47,14 +48,14 @@ fn convergence_local_snap_runner_replay_diagnostics_are_read_only() {
         Vec::new(),
     )]));
 
-    assert!(!diagnostics.command_spawn_permitted);
-    assert!(!diagnostics.local_snap_creation_permitted);
-    assert!(!diagnostics.object_upload_permitted);
-    assert!(!diagnostics.publication_permitted);
-    assert!(!diagnostics.lane_sync_permitted);
-    assert!(!diagnostics.provider_write_permitted);
-    assert!(!diagnostics.task_mutation_permitted);
-    assert!(!diagnostics.raw_material_retained);
+    assert!(!diagnostics.no_effects.command_spawn_permitted);
+    assert!(!diagnostics.no_effects.local_snap_creation_permitted);
+    assert!(!diagnostics.no_effects.object_upload_permitted);
+    assert!(!diagnostics.no_effects.publication_permitted);
+    assert!(!diagnostics.no_effects.lane_sync_permitted);
+    assert!(!diagnostics.no_effects.provider_write_permitted);
+    assert!(!diagnostics.no_effects.task_mutation_permitted);
+    assert!(!diagnostics.no_effects.raw_material_retained);
 }
 
 fn input(
@@ -66,14 +67,7 @@ fn input(
         duplicate_replay_record_ids: Vec::new(),
         blocked_replay_record_ids: Vec::new(),
         unsupported_replay_record_ids: Vec::new(),
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }
 
@@ -106,13 +100,6 @@ fn record(
         status,
         blockers,
         duplicate_replay_detected: false,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }

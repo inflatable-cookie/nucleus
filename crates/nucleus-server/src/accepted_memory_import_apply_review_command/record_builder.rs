@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use crate::accepted_memory_import_apply_review_command::blockers::{
     review_blockers, sorted_unique_non_empty,
 };
@@ -35,15 +36,7 @@ pub(super) fn review_receipt(
         blockers,
         provenance_refs: sorted_unique_non_empty(input.provenance_refs),
         evidence_refs: sorted_unique_non_empty(input.evidence_refs),
-        active_memory_apply_performed: false,
-        projection_write_performed: false,
-        scm_effect_performed: false,
-        embedding_available: false,
-        provider_sync_available: false,
-        automatic_extraction_performed: false,
-        task_mutation_performed: false,
-        agent_scheduling_performed: false,
-        ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
     }
 }
 

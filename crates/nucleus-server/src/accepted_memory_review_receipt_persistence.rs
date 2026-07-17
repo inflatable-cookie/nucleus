@@ -9,6 +9,7 @@ mod mapping;
 #[cfg(test)]
 mod tests;
 
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
 use nucleus_local_store::{
     LocalStoreBackend, LocalStoreError, LocalStoreRecord, LocalStoreRecordPayload,
@@ -49,45 +50,21 @@ pub enum AcceptedMemoryReviewReceiptPersistenceStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceptedMemoryReviewReceiptPersistenceNoEffects {
     pub review_receipt_written: bool,
-    pub active_memory_apply_performed: bool,
-    pub projection_write_performed: bool,
-    pub scm_effect_performed: bool,
-    pub embedding_available: bool,
-    pub provider_sync_available: bool,
-    pub automatic_extraction_performed: bool,
-    pub task_mutation_performed: bool,
-    pub agent_scheduling_performed: bool,
-    pub ui_effect_performed: bool,
+    pub no_effects: MemoryApplyNoEffects,
 }
 
 impl AcceptedMemoryReviewReceiptPersistenceNoEffects {
     pub fn persisted_only() -> Self {
         Self {
             review_receipt_written: true,
-            active_memory_apply_performed: false,
-            projection_write_performed: false,
-            scm_effect_performed: false,
-            embedding_available: false,
-            provider_sync_available: false,
-            automatic_extraction_performed: false,
-            task_mutation_performed: false,
-            agent_scheduling_performed: false,
-            ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
         }
     }
 
     pub fn duplicate_without_mutation() -> Self {
         Self {
             review_receipt_written: false,
-            active_memory_apply_performed: false,
-            projection_write_performed: false,
-            scm_effect_performed: false,
-            embedding_available: false,
-            provider_sync_available: false,
-            automatic_extraction_performed: false,
-            task_mutation_performed: false,
-            agent_scheduling_performed: false,
-            ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
         }
     }
 }

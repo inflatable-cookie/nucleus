@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
 
 use crate::ConvergenceLocalSnapStoppedRequestStatus;
@@ -96,14 +97,7 @@ fn input(
             records,
             duplicate_idempotency_keys: Vec::new(),
             blocked_request_ids: Vec::new(),
-            command_spawn_permitted: false,
-            local_snap_creation_permitted: false,
-            object_upload_permitted: false,
-            publication_permitted: false,
-            lane_sync_permitted: false,
-            provider_write_permitted: false,
-            task_mutation_permitted: false,
-            raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
         },
     }
 }
@@ -135,13 +129,6 @@ fn record(
         status,
         blockers: Vec::new(),
         duplicate_idempotency_detected,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }

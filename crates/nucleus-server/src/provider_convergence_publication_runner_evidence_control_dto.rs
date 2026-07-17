@@ -1,5 +1,6 @@
 //! Read-only DTOs for Convergence runner evidence persistence.
 
+use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -15,14 +16,8 @@ pub struct ConvergencePublicationRunnerEvidenceControlDto {
     pub blocked_count: usize,
     pub reviewable_evidence_count: usize,
     pub blocker_count: usize,
-    pub runner_invocation_permitted: bool,
-    pub provider_handoff_permitted: bool,
-    pub snapshot_creation_permitted: bool,
-    pub publish_permitted: bool,
-    pub publication_review_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceRunnerNoAuthority,
 }
 
 pub fn convergence_publication_runner_evidence_control_dto(
@@ -52,14 +47,7 @@ pub fn convergence_publication_runner_evidence_control_dto(
             .iter()
             .map(|record| record.blockers.len())
             .sum(),
-        runner_invocation_permitted: false,
-        provider_handoff_permitted: false,
-        snapshot_creation_permitted: false,
-        publish_permitted: false,
-        publication_review_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceRunnerNoAuthority::none(),
     }
 }
 

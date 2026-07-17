@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use super::*;
 use crate::{
     GitBranchWorktreeMode, GitCommitMessageSource, GitCommitRunnerAuthorityRecord,
@@ -20,7 +21,7 @@ fn git_commit_runner_command_adapter_builds_commit_argv() {
     assert!(!command.shell_passthrough_used);
     assert!(!command.commit_created);
     assert!(!command.push_executed);
-    assert!(!command.raw_output_retained);
+    assert!(!command.no_effects.raw_output_retained);
 }
 
 #[test]
@@ -95,14 +96,7 @@ fn authority_set() -> GitCommitRunnerAuthoritySet {
         shell_execution_performed: false,
         commit_created: false,
         push_executed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 
@@ -137,13 +131,6 @@ fn authority() -> GitCommitRunnerAuthorityRecord {
         shell_execution_performed: false,
         commit_created: false,
         push_executed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }

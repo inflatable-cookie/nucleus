@@ -1,5 +1,6 @@
 //! Read-only DTOs for Convergence local snap runner evidence persistence.
 
+use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -15,14 +16,8 @@ pub struct ConvergenceLocalSnapRunnerEvidenceControlDto {
     pub blocked_count: usize,
     pub reviewable_evidence_count: usize,
     pub blocker_count: usize,
-    pub command_spawn_permitted: bool,
-    pub local_snap_creation_permitted: bool,
-    pub object_upload_permitted: bool,
-    pub publication_permitted: bool,
-    pub lane_sync_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceSnapNoAuthority,
 }
 
 pub fn convergence_local_snap_runner_evidence_control_dto(
@@ -51,14 +46,7 @@ pub fn convergence_local_snap_runner_evidence_control_dto(
             .iter()
             .map(|record| record.blockers.len())
             .sum(),
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }
 

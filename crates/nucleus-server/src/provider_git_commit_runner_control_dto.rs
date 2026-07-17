@@ -1,5 +1,6 @@
 //! Control DTOs for Git commit runner outcomes.
 
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::GitCommitRunnerOutcomeDiagnosticsRecord;
@@ -22,14 +23,8 @@ pub struct GitCommitRunnerControlDto {
     pub shell_execution_performed: bool,
     pub commit_created: bool,
     pub push_executed: bool,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 pub fn git_commit_runner_control_dto(
@@ -52,14 +47,7 @@ pub fn git_commit_runner_control_dto(
         shell_execution_performed: false,
         commit_created: false,
         push_executed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 
@@ -81,9 +69,9 @@ mod tests {
         assert_eq!(decoded.evidence_ref_count, 3);
         assert!(!decoded.commit_created);
         assert!(!decoded.push_executed);
-        assert!(!decoded.forge_effect_executed);
-        assert!(!decoded.provider_effect_executed);
-        assert!(!decoded.raw_output_retained);
+        assert!(!decoded.no_effects.forge_effect_executed);
+        assert!(!decoded.no_effects.provider_effect_executed);
+        assert!(!decoded.no_effects.raw_output_retained);
         assert!(!json.contains("raw_stdout"));
         assert!(!json.contains("argv"));
         assert!(!json.contains("commit_message_text"));
@@ -106,14 +94,7 @@ mod tests {
             shell_execution_performed: false,
             commit_created: false,
             push_executed: false,
-            pull_request_created: false,
-            forge_effect_executed: false,
-            provider_effect_executed: false,
-            callback_effect_executed: false,
-            interruption_effect_executed: false,
-            recovery_effect_executed: false,
-            task_mutation_executed: false,
-            raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
         }
     }
 }

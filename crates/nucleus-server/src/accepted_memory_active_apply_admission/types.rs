@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use nucleus_memory::{
     AcceptedMemoryReviewReceiptAdmissionStatusStorage, AcceptedMemoryReviewReceiptDecisionStorage,
     AcceptedMemoryReviewReceiptStatusStorage, AcceptedMemoryReviewReceiptStorageRecord,
@@ -33,15 +34,7 @@ pub struct AcceptedMemoryActiveApplyAdmissionInput {
 pub struct AcceptedMemoryActiveApplyAdmissionSet {
     pub records: Vec<AcceptedMemoryActiveApplyAdmissionRecord>,
     pub counts: AcceptedMemoryActiveApplyAdmissionCounts,
-    pub active_memory_apply_performed: bool,
-    pub projection_write_performed: bool,
-    pub scm_effect_performed: bool,
-    pub embedding_available: bool,
-    pub provider_sync_available: bool,
-    pub automatic_extraction_performed: bool,
-    pub task_mutation_performed: bool,
-    pub agent_scheduling_performed: bool,
-    pub ui_effect_performed: bool,
+    pub no_effects: MemoryApplyNoEffects,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,15 +61,7 @@ pub struct AcceptedMemoryActiveApplyAdmissionRecord {
     pub review_admission_status: AcceptedMemoryReviewReceiptAdmissionStatusStorage,
     pub status: AcceptedMemoryActiveApplyAdmissionStatus,
     pub blockers: Vec<AcceptedMemoryActiveApplyAdmissionBlocker>,
-    pub active_memory_apply_performed: bool,
-    pub projection_write_performed: bool,
-    pub scm_effect_performed: bool,
-    pub embedding_available: bool,
-    pub provider_sync_available: bool,
-    pub automatic_extraction_performed: bool,
-    pub task_mutation_performed: bool,
-    pub agent_scheduling_performed: bool,
-    pub ui_effect_performed: bool,
+    pub no_effects: MemoryApplyNoEffects,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

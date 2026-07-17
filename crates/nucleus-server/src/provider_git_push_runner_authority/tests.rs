@@ -26,8 +26,8 @@ fn git_push_runner_authority_accepts_confirmed_push_intent() {
         Some("operator-confirmation:1".to_owned())
     );
     assert!(!authority.push_executed);
-    assert!(!authority.pull_request_created);
-    assert!(!authority.raw_output_retained);
+    assert!(!authority.no_effects.pull_request_created);
+    assert!(!authority.no_effects.raw_output_retained);
 }
 
 #[test]

@@ -92,14 +92,14 @@ fn convergence_local_snap_request_persistence_blocks_effect_requests() {
     assert!(record
         .blockers
         .contains(&ConvergenceLocalSnapRequestPersistenceBlocker::ObjectUploadRequested));
-    assert!(!set.command_spawn_permitted);
-    assert!(!set.local_snap_creation_permitted);
-    assert!(!set.object_upload_permitted);
-    assert!(!set.publication_permitted);
-    assert!(!set.lane_sync_permitted);
-    assert!(!set.provider_write_permitted);
-    assert!(!set.task_mutation_permitted);
-    assert!(!set.raw_material_retained);
+    assert!(!set.no_effects.command_spawn_permitted);
+    assert!(!set.no_effects.local_snap_creation_permitted);
+    assert!(!set.no_effects.object_upload_permitted);
+    assert!(!set.no_effects.publication_permitted);
+    assert!(!set.no_effects.lane_sync_permitted);
+    assert!(!set.no_effects.provider_write_permitted);
+    assert!(!set.no_effects.task_mutation_permitted);
+    assert!(!set.no_effects.raw_material_retained);
 }
 
 fn input(

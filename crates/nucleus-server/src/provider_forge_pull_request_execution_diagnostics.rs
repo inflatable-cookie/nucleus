@@ -1,5 +1,6 @@
 //! Read-only diagnostics for forge pull-request execution admissions.
 
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -21,14 +22,8 @@ pub struct ForgePullRequestExecutionDiagnosticsRecord {
     pub preflight_count: usize,
     pub preflight_ready_count: usize,
     pub blocker_count: usize,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 pub fn forge_pull_request_execution_diagnostics(
@@ -64,14 +59,7 @@ pub fn forge_pull_request_execution_diagnostics(
                 .iter()
                 .map(|preflight| preflight.blockers.len())
                 .sum::<usize>(),
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 

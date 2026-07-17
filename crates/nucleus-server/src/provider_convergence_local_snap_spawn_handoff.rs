@@ -1,5 +1,6 @@
 //! Stopped process-runner handoff for Convergence local snap commands.
 
+use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -24,14 +25,8 @@ pub struct ConvergenceLocalSnapSpawnHandoffSet {
     pub duplicate_handoff_ids: Vec<String>,
     pub unsupported_handoff_ids: Vec<String>,
     pub process_runner_invocation_permitted: bool,
-    pub command_spawn_permitted: bool,
-    pub local_snap_creation_permitted: bool,
-    pub object_upload_permitted: bool,
-    pub publication_permitted: bool,
-    pub lane_sync_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceSnapNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -59,14 +54,8 @@ pub struct ConvergenceLocalSnapSpawnHandoffRecord {
     pub blockers: Vec<ConvergenceLocalSnapSpawnHandoffBlocker>,
     pub duplicate_handoff_detected: bool,
     pub process_runner_invocation_permitted: bool,
-    pub command_spawn_permitted: bool,
-    pub local_snap_creation_permitted: bool,
-    pub object_upload_permitted: bool,
-    pub publication_permitted: bool,
-    pub lane_sync_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceSnapNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -131,14 +120,7 @@ pub fn convergence_local_snap_spawn_handoff(
             .collect(),
         records,
         process_runner_invocation_permitted: false,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }
 
@@ -185,14 +167,7 @@ fn handoff_record(
         blockers,
         duplicate_handoff_detected,
         process_runner_invocation_permitted: false,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }
 

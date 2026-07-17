@@ -13,6 +13,7 @@ mod types;
 pub use refs::accepted_memory_projection_import_apply_admission_ref;
 pub use types::*;
 
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use counts::apply_admission_counts;
 use record_builder::apply_admission_record;
 
@@ -25,14 +26,6 @@ pub fn accepted_memory_projection_import_apply_admissions(
     AcceptedMemoryProjectionImportApplyAdmissionSet {
         records,
         counts,
-        active_memory_apply_performed: false,
-        projection_write_performed: false,
-        scm_effect_performed: false,
-        embedding_available: false,
-        provider_sync_available: false,
-        automatic_extraction_performed: false,
-        task_mutation_performed: false,
-        agent_scheduling_performed: false,
-        ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
     }
 }

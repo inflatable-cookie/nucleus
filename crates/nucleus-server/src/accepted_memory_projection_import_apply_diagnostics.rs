@@ -4,6 +4,7 @@
 //! build stopped apply/admission records without granting operator approval or
 //! active mutation authority.
 
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use nucleus_projects::ProjectId;
 
 use crate::accepted_memory_projection_import_apply_admission::{
@@ -21,15 +22,7 @@ pub struct AcceptedMemoryProjectionImportApplyDiagnostics {
     pub project_id: ProjectId,
     pub records: Vec<AcceptedMemoryProjectionImportApplyAdmissionRecord>,
     pub counts: AcceptedMemoryProjectionImportApplyDiagnosticCounts,
-    pub active_memory_apply_performed: bool,
-    pub projection_write_performed: bool,
-    pub scm_effect_performed: bool,
-    pub embedding_available: bool,
-    pub provider_sync_available: bool,
-    pub automatic_extraction_performed: bool,
-    pub task_mutation_performed: bool,
-    pub agent_scheduling_performed: bool,
-    pub ui_effect_performed: bool,
+    pub no_effects: MemoryApplyNoEffects,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,15 +71,7 @@ impl AcceptedMemoryProjectionImportApplyDiagnostics {
             project_id: import_diagnostics.project_id,
             records: apply_set.records,
             counts,
-            active_memory_apply_performed: false,
-            projection_write_performed: false,
-            scm_effect_performed: false,
-            embedding_available: false,
-            provider_sync_available: false,
-            automatic_extraction_performed: false,
-            task_mutation_performed: false,
-            agent_scheduling_performed: false,
-            ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
         }
     }
 }

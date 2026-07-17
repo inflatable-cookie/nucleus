@@ -213,7 +213,10 @@ pub use super::provider_live_evidence_task_state_transition_admission::*;
 pub use super::provider_live_evidence_work_candidates::*;
 pub use super::provider_live_evidence_work_observations::*;
 pub use super::provider_live_read_admission::*;
-pub use super::provider_no_effects::{ProviderNoEffects, ProviderRuntimeNoEffects};
+pub use super::provider_no_effects::{
+    ConvergenceRunnerNoAuthority, ConvergenceSnapNoAuthority, ForgeScmNoEffects,
+    MemoryApplyNoEffects, ProviderNoEffects, ProviderRuntimeNoEffects,
+};
 pub use super::provider_live_read_executor_query::*;
 pub use super::provider_live_read_smoke_evidence_query::*;
 pub use super::provider_live_read_smoke_evidence_replay::*;

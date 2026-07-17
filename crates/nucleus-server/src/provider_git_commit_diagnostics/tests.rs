@@ -52,14 +52,14 @@ fn git_commit_diagnostics_grant_no_authority() {
     assert!(!diagnostics.shell_handoff_created);
     assert!(!diagnostics.commit_created);
     assert!(!diagnostics.push_executed);
-    assert!(!diagnostics.pull_request_created);
-    assert!(!diagnostics.forge_effect_executed);
-    assert!(!diagnostics.provider_effect_executed);
-    assert!(!diagnostics.callback_effect_executed);
-    assert!(!diagnostics.interruption_effect_executed);
-    assert!(!diagnostics.recovery_effect_executed);
-    assert!(!diagnostics.task_mutation_executed);
-    assert!(!diagnostics.raw_output_retained);
+    assert!(!diagnostics.no_effects.pull_request_created);
+    assert!(!diagnostics.no_effects.forge_effect_executed);
+    assert!(!diagnostics.no_effects.provider_effect_executed);
+    assert!(!diagnostics.no_effects.callback_effect_executed);
+    assert!(!diagnostics.no_effects.interruption_effect_executed);
+    assert!(!diagnostics.no_effects.recovery_effect_executed);
+    assert!(!diagnostics.no_effects.task_mutation_executed);
+    assert!(!diagnostics.no_effects.raw_output_retained);
 }
 
 fn input(

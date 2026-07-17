@@ -33,31 +33,31 @@ pub(crate) fn accepted_memory_review_receipt_storage_response_lines(
         ),
         format!(
             "active_memory_apply_performed={}",
-            diagnostics.active_memory_apply_performed
+            diagnostics.no_effects.active_memory_apply_performed
         ),
         format!(
             "projection_write_performed={}",
-            diagnostics.projection_write_performed
+            diagnostics.no_effects.projection_write_performed
         ),
-        format!("scm_effect_performed={}", diagnostics.scm_effect_performed),
-        format!("embedding_available={}", diagnostics.embedding_available),
+        format!("scm_effect_performed={}", diagnostics.no_effects.scm_effect_performed),
+        format!("embedding_available={}", diagnostics.no_effects.embedding_available),
         format!(
             "provider_sync_available={}",
-            diagnostics.provider_sync_available
+            diagnostics.no_effects.provider_sync_available
         ),
         format!(
             "automatic_extraction_performed={}",
-            diagnostics.automatic_extraction_performed
+            diagnostics.no_effects.automatic_extraction_performed
         ),
         format!(
             "task_mutation_performed={}",
-            diagnostics.task_mutation_performed
+            diagnostics.no_effects.task_mutation_performed
         ),
         format!(
             "agent_scheduling_performed={}",
-            diagnostics.agent_scheduling_performed
+            diagnostics.no_effects.agent_scheduling_performed
         ),
-        format!("ui_effect_performed={}", diagnostics.ui_effect_performed),
+        format!("ui_effect_performed={}", diagnostics.no_effects.ui_effect_performed),
     ];
     lines.extend(diagnostics.receipts.into_iter().map(|receipt| {
         format!(

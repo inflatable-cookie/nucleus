@@ -26,9 +26,9 @@ fn git_branch_worktree_runner_outcomes_round_trip_sanitized_records() {
     assert_eq!(records[0].outcome_status, completed());
     assert_eq!(records[0].evidence_refs, vec!["evidence:runner"]);
     assert_eq!(records[0].branch_ref, Some("branch-ref:1".to_owned()));
-    assert!(!records[0].raw_output_retained);
+    assert!(!records[0].no_effects.raw_output_retained);
     assert!(!records[0].commit_created);
-    assert!(!records[0].provider_effect_executed);
+    assert!(!records[0].no_effects.provider_effect_executed);
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn git_branch_worktree_runner_outcomes_block_raw_payloads_and_widening() {
     assert!(record
         .persistence_blockers
         .contains(&GitBranchWorktreeRunnerOutcomePersistenceBlocker::CommitRequested));
-    assert!(!record.raw_output_retained);
+    assert!(!record.no_effects.raw_output_retained);
 }
 
 #[test]
@@ -153,5 +153,5 @@ fn git_branch_worktree_runner_outcome_diagnostics_summarize_records() {
     assert_eq!(diagnostics.primary_tree_count, 3);
     assert_eq!(diagnostics.isolated_worktree_count, 2);
     assert!(!diagnostics.commit_created);
-    assert!(!diagnostics.raw_output_retained);
+    assert!(!diagnostics.no_effects.raw_output_retained);
 }

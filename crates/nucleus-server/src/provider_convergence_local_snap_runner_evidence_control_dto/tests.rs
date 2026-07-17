@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
 
 use crate::{
@@ -48,14 +49,14 @@ fn convergence_local_snap_runner_evidence_control_dto_carries_no_authority() {
         Vec::new(),
     )]));
 
-    assert!(!dto.command_spawn_permitted);
-    assert!(!dto.local_snap_creation_permitted);
-    assert!(!dto.object_upload_permitted);
-    assert!(!dto.publication_permitted);
-    assert!(!dto.lane_sync_permitted);
-    assert!(!dto.provider_write_permitted);
-    assert!(!dto.task_mutation_permitted);
-    assert!(!dto.raw_material_retained);
+    assert!(!dto.no_effects.command_spawn_permitted);
+    assert!(!dto.no_effects.local_snap_creation_permitted);
+    assert!(!dto.no_effects.object_upload_permitted);
+    assert!(!dto.no_effects.publication_permitted);
+    assert!(!dto.no_effects.lane_sync_permitted);
+    assert!(!dto.no_effects.provider_write_permitted);
+    assert!(!dto.no_effects.task_mutation_permitted);
+    assert!(!dto.no_effects.raw_material_retained);
 }
 
 fn input(
@@ -76,14 +77,7 @@ fn input(
             .map(|record| record.evidence_id.clone())
             .collect(),
         records,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }
 
@@ -114,13 +108,6 @@ fn record(
         status,
         blockers,
         duplicate_evidence_detected,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }

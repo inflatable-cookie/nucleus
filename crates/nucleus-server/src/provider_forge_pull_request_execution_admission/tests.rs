@@ -16,16 +16,16 @@ fn forge_pull_request_execution_admission_admits_reviewable_evidence() {
             && admission
                 .pr_evidence_id
                 .starts_with("forge-pull-request-dry-run-evidence:")
-            && !admission.pull_request_created
-            && !admission.forge_effect_executed
-            && !admission.provider_effect_executed
-            && !admission.callback_effect_executed
-            && !admission.interruption_effect_executed
-            && !admission.recovery_effect_executed
-            && !admission.task_mutation_executed
-            && !admission.raw_output_retained
+            && !admission.no_effects.pull_request_created
+            && !admission.no_effects.forge_effect_executed
+            && !admission.no_effects.provider_effect_executed
+            && !admission.no_effects.callback_effect_executed
+            && !admission.no_effects.interruption_effect_executed
+            && !admission.no_effects.recovery_effect_executed
+            && !admission.no_effects.task_mutation_executed
+            && !admission.no_effects.raw_output_retained
     }));
-    assert!(!record.pull_request_created);
+    assert!(!record.no_effects.pull_request_created);
 }
 
 #[test]

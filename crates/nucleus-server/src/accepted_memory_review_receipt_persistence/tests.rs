@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use nucleus_core::PersistenceRecordId;
 use nucleus_local_store::SqliteBackend;
 use nucleus_memory::{
@@ -41,9 +42,9 @@ fn persists_sanitized_review_receipt_and_duplicate_is_noop() {
     );
     assert!(first.no_effects.review_receipt_written);
     assert!(!second.no_effects.review_receipt_written);
-    assert!(!first.no_effects.active_memory_apply_performed);
-    assert!(!first.no_effects.projection_write_performed);
-    assert!(!first.no_effects.scm_effect_performed);
+    assert!(!first.no_effects.no_effects.active_memory_apply_performed);
+    assert!(!first.no_effects.no_effects.projection_write_performed);
+    assert!(!first.no_effects.no_effects.scm_effect_performed);
 
     let stored = state
         .shared_memory()
@@ -113,14 +114,6 @@ fn review_receipt() -> AcceptedMemoryImportApplyReviewReceipt {
         blockers: Vec::new(),
         provenance_refs: vec!["provenance:1".to_owned()],
         evidence_refs: vec!["evidence:1".to_owned()],
-        active_memory_apply_performed: false,
-        projection_write_performed: false,
-        scm_effect_performed: false,
-        embedding_available: false,
-        provider_sync_available: false,
-        automatic_extraction_performed: false,
-        task_mutation_performed: false,
-        agent_scheduling_performed: false,
-        ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
     }
 }

@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::accepted_memory_review_readiness::{
@@ -11,15 +12,8 @@ pub struct ControlAcceptedMemoryReviewReadinessDto {
     pub project_id: String,
     pub records: Vec<ControlAcceptedMemoryReviewReadinessRecordDto>,
     pub counts: ControlAcceptedMemoryReviewReadinessCountsDto,
-    pub active_memory_apply_performed: bool,
-    pub projection_write_performed: bool,
-    pub scm_effect_performed: bool,
-    pub embedding_available: bool,
-    pub provider_sync_available: bool,
-    pub automatic_extraction_performed: bool,
-    pub task_mutation_performed: bool,
-    pub agent_scheduling_performed: bool,
-    pub ui_effect_performed: bool,
+    #[serde(flatten)]
+    pub no_effects: MemoryApplyNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -65,15 +59,7 @@ impl From<&AcceptedMemoryReviewReadiness> for ControlAcceptedMemoryReviewReadine
                 .map(ControlAcceptedMemoryReviewReadinessRecordDto::from)
                 .collect(),
             counts: ControlAcceptedMemoryReviewReadinessCountsDto::from(&readiness.counts),
-            active_memory_apply_performed: readiness.active_memory_apply_performed,
-            projection_write_performed: readiness.projection_write_performed,
-            scm_effect_performed: readiness.scm_effect_performed,
-            embedding_available: readiness.embedding_available,
-            provider_sync_available: readiness.provider_sync_available,
-            automatic_extraction_performed: readiness.automatic_extraction_performed,
-            task_mutation_performed: readiness.task_mutation_performed,
-            agent_scheduling_performed: readiness.agent_scheduling_performed,
-            ui_effect_performed: readiness.ui_effect_performed,
+        no_effects: readiness.no_effects,
         }
     }
 }

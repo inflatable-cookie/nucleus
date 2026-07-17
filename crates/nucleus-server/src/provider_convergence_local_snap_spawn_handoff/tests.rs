@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
 
 #[test]
@@ -122,19 +123,19 @@ fn convergence_local_snap_spawn_handoff_blocks_effect_requests_without_effects()
         .blockers
         .contains(&ConvergenceLocalSnapSpawnHandoffBlocker::RawMaterialPresent));
     assert!(!set.process_runner_invocation_permitted);
-    assert!(!set.command_spawn_permitted);
-    assert!(!set.local_snap_creation_permitted);
-    assert!(!set.object_upload_permitted);
-    assert!(!set.publication_permitted);
-    assert!(!set.lane_sync_permitted);
-    assert!(!set.provider_write_permitted);
-    assert!(!set.task_mutation_permitted);
-    assert!(!set.raw_material_retained);
+    assert!(!set.no_effects.command_spawn_permitted);
+    assert!(!set.no_effects.local_snap_creation_permitted);
+    assert!(!set.no_effects.object_upload_permitted);
+    assert!(!set.no_effects.publication_permitted);
+    assert!(!set.no_effects.lane_sync_permitted);
+    assert!(!set.no_effects.provider_write_permitted);
+    assert!(!set.no_effects.task_mutation_permitted);
+    assert!(!set.no_effects.raw_material_retained);
     assert!(!record.process_runner_invocation_permitted);
-    assert!(!record.command_spawn_permitted);
-    assert!(!record.local_snap_creation_permitted);
-    assert!(!record.provider_write_permitted);
-    assert!(!record.task_mutation_permitted);
+    assert!(!record.no_effects.command_spawn_permitted);
+    assert!(!record.no_effects.local_snap_creation_permitted);
+    assert!(!record.no_effects.provider_write_permitted);
+    assert!(!record.no_effects.task_mutation_permitted);
 }
 
 #[test]
@@ -183,14 +184,7 @@ fn input(
             blocked_spawn_request_ids: Vec::new(),
             duplicate_spawn_request_ids: Vec::new(),
             unsupported_spawn_request_ids: Vec::new(),
-            command_spawn_permitted: false,
-            local_snap_creation_permitted: false,
-            object_upload_permitted: false,
-            publication_permitted: false,
-            lane_sync_permitted: false,
-            provider_write_permitted: false,
-            task_mutation_permitted: false,
-            raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
         },
         existing_handoff_ids,
         raw_material_present,
@@ -224,13 +218,6 @@ fn request(
         status,
         blockers: Vec::new(),
         duplicate_spawn_request_detected: false,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }

@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use super::helpers::unique_sorted;
 use super::store::OUTCOME_PREFIX;
 use super::types::{
@@ -61,14 +62,7 @@ pub(super) fn outcome_record(
         evidence_refs: unique_sorted(input.evidence_refs.clone()),
         provider_request_prepared: request.provider_request_prepared,
         shell_execution_performed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 

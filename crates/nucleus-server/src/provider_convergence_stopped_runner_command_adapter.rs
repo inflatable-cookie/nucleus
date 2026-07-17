@@ -1,5 +1,6 @@
 //! Stopped command-adapter records for Convergence publication runner evidence.
 
+use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -19,14 +20,8 @@ pub struct ConvergenceStoppedRunnerCommandAdapterSet {
     pub adapter_set_id: String,
     pub records: Vec<ConvergenceStoppedRunnerCommandAdapterRecord>,
     pub skipped_persisted_evidence_ids: Vec<String>,
-    pub runner_invocation_permitted: bool,
-    pub provider_handoff_permitted: bool,
-    pub snapshot_creation_permitted: bool,
-    pub publish_permitted: bool,
-    pub publication_review_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceRunnerNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -48,14 +43,8 @@ pub struct ConvergenceStoppedRunnerCommandAdapterRecord {
     pub command_shape: ConvergenceStoppedRunnerCommandShape,
     pub status: ConvergenceStoppedRunnerCommandAdapterStatus,
     pub blockers: Vec<ConvergenceStoppedRunnerCommandAdapterBlocker>,
-    pub runner_invocation_permitted: bool,
-    pub provider_handoff_permitted: bool,
-    pub snapshot_creation_permitted: bool,
-    pub publish_permitted: bool,
-    pub publication_review_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceRunnerNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -111,14 +100,7 @@ pub fn convergence_stopped_runner_command_adapter(
             .map(|record| record.persisted_evidence_id.clone())
             .collect(),
         records,
-        runner_invocation_permitted: false,
-        provider_handoff_permitted: false,
-        snapshot_creation_permitted: false,
-        publish_permitted: false,
-        publication_review_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceRunnerNoAuthority::none(),
     }
 }
 
@@ -149,14 +131,7 @@ fn adapter_record(
         command_shape: ConvergenceStoppedRunnerCommandShape::SnapshotPublishReview,
         status,
         blockers,
-        runner_invocation_permitted: false,
-        provider_handoff_permitted: false,
-        snapshot_creation_permitted: false,
-        publish_permitted: false,
-        publication_review_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceRunnerNoAuthority::none(),
     }
 }
 

@@ -1,5 +1,6 @@
 //! Stopped command-adapter records for Convergence local snap runner evidence.
 
+use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -18,14 +19,8 @@ pub struct ConvergenceLocalSnapStoppedRunnerCommandAdapterSet {
     pub adapter_set_id: String,
     pub records: Vec<ConvergenceLocalSnapStoppedRunnerCommandAdapterRecord>,
     pub skipped_persisted_evidence_ids: Vec<String>,
-    pub command_spawn_permitted: bool,
-    pub local_snap_creation_permitted: bool,
-    pub object_upload_permitted: bool,
-    pub publication_permitted: bool,
-    pub lane_sync_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceSnapNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -50,14 +45,8 @@ pub struct ConvergenceLocalSnapStoppedRunnerCommandAdapterRecord {
     pub command_shape: ConvergenceLocalSnapStoppedRunnerCommandShape,
     pub status: ConvergenceLocalSnapStoppedRunnerCommandAdapterStatus,
     pub blockers: Vec<ConvergenceLocalSnapStoppedRunnerCommandAdapterBlocker>,
-    pub command_spawn_permitted: bool,
-    pub local_snap_creation_permitted: bool,
-    pub object_upload_permitted: bool,
-    pub publication_permitted: bool,
-    pub lane_sync_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceSnapNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -111,14 +100,7 @@ pub fn convergence_local_snap_stopped_runner_command_adapter(
             .map(|record| record.persisted_evidence_id.clone())
             .collect(),
         records,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }
 
@@ -152,14 +134,7 @@ fn adapter_record(
         command_shape: ConvergenceLocalSnapStoppedRunnerCommandShape::ConvergeSnap,
         status,
         blockers,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }
 

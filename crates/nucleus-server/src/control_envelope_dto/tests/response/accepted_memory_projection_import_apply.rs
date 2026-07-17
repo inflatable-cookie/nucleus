@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use nucleus_projects::ProjectId;
 
 use crate::accepted_memory_projection_import_apply_admission::{
@@ -41,15 +42,7 @@ fn response_envelope_dto_serializes_import_apply_diagnostics_without_payloads() 
                         provenance_refs: 1,
                         evidence_refs: 2,
                     },
-                    active_memory_apply_performed: false,
-                    projection_write_performed: false,
-                    scm_effect_performed: false,
-                    embedding_available: false,
-                    provider_sync_available: false,
-                    automatic_extraction_performed: false,
-                    task_mutation_performed: false,
-                    agent_scheduling_performed: false,
-                    ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
                 },
             ),
         ),
@@ -66,15 +59,15 @@ fn response_envelope_dto_serializes_import_apply_diagnostics_without_payloads() 
                 && diagnostics.records[0].status == "blocked"
                 && diagnostics.records[0].blockers[0].kind == "missing_operator_ref"
                 && diagnostics.counts.blocked == 1
-                && !diagnostics.active_memory_apply_performed
-                && !diagnostics.projection_write_performed
-                && !diagnostics.scm_effect_performed
-                && !diagnostics.embedding_available
-                && !diagnostics.provider_sync_available
-                && !diagnostics.automatic_extraction_performed
-                && !diagnostics.task_mutation_performed
-                && !diagnostics.agent_scheduling_performed
-                && !diagnostics.ui_effect_performed
+                && !diagnostics.no_effects.active_memory_apply_performed
+                && !diagnostics.no_effects.projection_write_performed
+                && !diagnostics.no_effects.scm_effect_performed
+                && !diagnostics.no_effects.embedding_available
+                && !diagnostics.no_effects.provider_sync_available
+                && !diagnostics.no_effects.automatic_extraction_performed
+                && !diagnostics.no_effects.task_mutation_performed
+                && !diagnostics.no_effects.agent_scheduling_performed
+                && !diagnostics.no_effects.ui_effect_performed
     ));
     assert!(json.contains("\"type\":\"accepted_memory_projection_import_apply_diagnostics\""));
     assert!(!json.contains("raw_transcript"));
@@ -101,14 +94,6 @@ fn record() -> AcceptedMemoryProjectionImportApplyAdmissionRecord {
             AcceptedMemoryProjectionImportApplyAdmissionBlocker::MissingOperatorRef,
             AcceptedMemoryProjectionImportApplyAdmissionBlocker::MissingApprovalRef,
         ],
-        active_memory_apply_performed: false,
-        projection_write_performed: false,
-        scm_effect_performed: false,
-        embedding_available: false,
-        provider_sync_available: false,
-        automatic_extraction_performed: false,
-        task_mutation_performed: false,
-        agent_scheduling_performed: false,
-        ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
     }
 }

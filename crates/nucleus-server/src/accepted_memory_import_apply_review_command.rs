@@ -12,6 +12,7 @@ mod types;
 pub use refs::accepted_memory_import_apply_review_receipt_ref;
 pub use types::*;
 
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use counts::review_receipt_counts;
 use record_builder::review_receipt;
 
@@ -24,14 +25,6 @@ pub fn accepted_memory_import_apply_review_receipts(
     AcceptedMemoryImportApplyReviewSet {
         receipts,
         counts,
-        active_memory_apply_performed: false,
-        projection_write_performed: false,
-        scm_effect_performed: false,
-        embedding_available: false,
-        provider_sync_available: false,
-        automatic_extraction_performed: false,
-        task_mutation_performed: false,
-        agent_scheduling_performed: false,
-        ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
     }
 }

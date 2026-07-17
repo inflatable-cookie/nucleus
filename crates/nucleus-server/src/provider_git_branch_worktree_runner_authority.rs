@@ -11,6 +11,7 @@ pub use types::{
     GitBranchWorktreeRunnerOperatorEffectIntent, GitBranchWorktreeRunnerTargetRef,
 };
 
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use record_builder::authority_record;
 use types::GitBranchWorktreeRunnerAuthorityContext;
 
@@ -59,14 +60,7 @@ pub fn git_branch_worktree_runner_authority(
         worktree_created: false,
         commit_created: false,
         push_executed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 

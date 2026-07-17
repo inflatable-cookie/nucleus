@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use crate::accepted_memory_projection_import_apply_admission::{
     AcceptedMemoryProjectionImportApplyAdmissionBlocker,
     AcceptedMemoryProjectionImportApplyAdmissionRecord,
@@ -30,15 +31,7 @@ pub struct AcceptedMemoryImportApplyReviewInput {
 pub struct AcceptedMemoryImportApplyReviewSet {
     pub receipts: Vec<AcceptedMemoryImportApplyReviewReceipt>,
     pub counts: AcceptedMemoryImportApplyReviewCounts,
-    pub active_memory_apply_performed: bool,
-    pub projection_write_performed: bool,
-    pub scm_effect_performed: bool,
-    pub embedding_available: bool,
-    pub provider_sync_available: bool,
-    pub automatic_extraction_performed: bool,
-    pub task_mutation_performed: bool,
-    pub agent_scheduling_performed: bool,
-    pub ui_effect_performed: bool,
+    pub no_effects: MemoryApplyNoEffects,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,15 +54,7 @@ pub struct AcceptedMemoryImportApplyReviewReceipt {
     pub blockers: Vec<AcceptedMemoryImportApplyReviewBlocker>,
     pub provenance_refs: Vec<String>,
     pub evidence_refs: Vec<String>,
-    pub active_memory_apply_performed: bool,
-    pub projection_write_performed: bool,
-    pub scm_effect_performed: bool,
-    pub embedding_available: bool,
-    pub provider_sync_available: bool,
-    pub automatic_extraction_performed: bool,
-    pub task_mutation_performed: bool,
-    pub agent_scheduling_performed: bool,
-    pub ui_effect_performed: bool,
+    pub no_effects: MemoryApplyNoEffects,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

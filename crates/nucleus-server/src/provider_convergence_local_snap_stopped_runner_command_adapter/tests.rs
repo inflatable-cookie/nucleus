@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
 
 #[test]
@@ -101,22 +102,22 @@ fn convergence_local_snap_stopped_runner_command_adapter_blocks_missing_descript
     assert!(record.blockers.contains(
         &ConvergenceLocalSnapStoppedRunnerCommandAdapterBlocker::MissingLocalSnapDescriptor
     ));
-    assert!(!set.command_spawn_permitted);
-    assert!(!set.local_snap_creation_permitted);
-    assert!(!set.object_upload_permitted);
-    assert!(!set.publication_permitted);
-    assert!(!set.lane_sync_permitted);
-    assert!(!set.provider_write_permitted);
-    assert!(!set.task_mutation_permitted);
-    assert!(!set.raw_material_retained);
-    assert!(!record.command_spawn_permitted);
-    assert!(!record.local_snap_creation_permitted);
-    assert!(!record.object_upload_permitted);
-    assert!(!record.publication_permitted);
-    assert!(!record.lane_sync_permitted);
-    assert!(!record.provider_write_permitted);
-    assert!(!record.task_mutation_permitted);
-    assert!(!record.raw_material_retained);
+    assert!(!set.no_effects.command_spawn_permitted);
+    assert!(!set.no_effects.local_snap_creation_permitted);
+    assert!(!set.no_effects.object_upload_permitted);
+    assert!(!set.no_effects.publication_permitted);
+    assert!(!set.no_effects.lane_sync_permitted);
+    assert!(!set.no_effects.provider_write_permitted);
+    assert!(!set.no_effects.task_mutation_permitted);
+    assert!(!set.no_effects.raw_material_retained);
+    assert!(!record.no_effects.command_spawn_permitted);
+    assert!(!record.no_effects.local_snap_creation_permitted);
+    assert!(!record.no_effects.object_upload_permitted);
+    assert!(!record.no_effects.publication_permitted);
+    assert!(!record.no_effects.lane_sync_permitted);
+    assert!(!record.no_effects.provider_write_permitted);
+    assert!(!record.no_effects.task_mutation_permitted);
+    assert!(!record.no_effects.raw_material_retained);
 }
 
 fn input(
@@ -128,14 +129,7 @@ fn input(
             records,
             duplicate_evidence_ids: Vec::new(),
             blocked_evidence_ids: Vec::new(),
-            command_spawn_permitted: false,
-            local_snap_creation_permitted: false,
-            object_upload_permitted: false,
-            publication_permitted: false,
-            lane_sync_permitted: false,
-            provider_write_permitted: false,
-            task_mutation_permitted: false,
-            raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
         },
     }
 }
@@ -166,13 +160,6 @@ fn record(
         status,
         blockers: Vec::new(),
         duplicate_evidence_detected: false,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }

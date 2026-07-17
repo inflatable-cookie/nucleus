@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
 use super::*;
 
 use crate::{
@@ -46,14 +47,14 @@ fn convergence_stopped_runner_command_diagnostics_are_read_only() {
         Vec::new(),
     )]));
 
-    assert!(!diagnostics.runner_invocation_permitted);
-    assert!(!diagnostics.provider_handoff_permitted);
-    assert!(!diagnostics.snapshot_creation_permitted);
-    assert!(!diagnostics.publish_permitted);
-    assert!(!diagnostics.publication_review_permitted);
-    assert!(!diagnostics.provider_write_permitted);
-    assert!(!diagnostics.task_mutation_permitted);
-    assert!(!diagnostics.raw_material_retained);
+    assert!(!diagnostics.no_effects.runner_invocation_permitted);
+    assert!(!diagnostics.no_effects.provider_handoff_permitted);
+    assert!(!diagnostics.no_effects.snapshot_creation_permitted);
+    assert!(!diagnostics.no_effects.publish_permitted);
+    assert!(!diagnostics.no_effects.publication_review_permitted);
+    assert!(!diagnostics.no_effects.provider_write_permitted);
+    assert!(!diagnostics.no_effects.task_mutation_permitted);
+    assert!(!diagnostics.no_effects.raw_material_retained);
 }
 
 fn input(
@@ -63,14 +64,7 @@ fn input(
         adapter_set_id: "adapter".to_owned(),
         records,
         skipped_persisted_evidence_ids: Vec::new(),
-        runner_invocation_permitted: false,
-        provider_handoff_permitted: false,
-        snapshot_creation_permitted: false,
-        publish_permitted: false,
-        publication_review_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceRunnerNoAuthority::none(),
     }
 }
 
@@ -97,13 +91,6 @@ fn record(
         command_shape: ConvergenceStoppedRunnerCommandShape::SnapshotPublishReview,
         status,
         blockers,
-        runner_invocation_permitted: false,
-        provider_handoff_permitted: false,
-        snapshot_creation_permitted: false,
-        publish_permitted: false,
-        publication_review_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceRunnerNoAuthority::none(),
     }
 }

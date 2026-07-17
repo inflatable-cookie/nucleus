@@ -16,16 +16,16 @@ fn forge_pull_request_descriptor_records_admit_ready_push_preflights() {
             && descriptor.head_branch == Some("nucleus/change-request".to_owned())
             && descriptor.title_source == Some(ForgePullRequestTextSource::AgentSuggested)
             && descriptor.body_source == Some(ForgePullRequestTextSource::GeneratedFromEvidence)
-            && !descriptor.pull_request_created
-            && !descriptor.forge_effect_executed
-            && !descriptor.provider_effect_executed
-            && !descriptor.callback_effect_executed
-            && !descriptor.interruption_effect_executed
-            && !descriptor.recovery_effect_executed
-            && !descriptor.task_mutation_executed
-            && !descriptor.raw_output_retained
+            && !descriptor.no_effects.pull_request_created
+            && !descriptor.no_effects.forge_effect_executed
+            && !descriptor.no_effects.provider_effect_executed
+            && !descriptor.no_effects.callback_effect_executed
+            && !descriptor.no_effects.interruption_effect_executed
+            && !descriptor.no_effects.recovery_effect_executed
+            && !descriptor.no_effects.task_mutation_executed
+            && !descriptor.no_effects.raw_output_retained
     }));
-    assert!(!record.pull_request_created);
+    assert!(!record.no_effects.pull_request_created);
 }
 
 #[test]

@@ -10,6 +10,7 @@ mod types;
 
 pub use types::*;
 
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use crate::accepted_memory_projection::AcceptedMemoryProjection;
 use crate::accepted_memory_projection_import_apply_diagnostics::AcceptedMemoryProjectionImportApplyDiagnostics;
 use crate::accepted_memory_projection_import_diagnostics::AcceptedMemoryProjectionImportDiagnostics;
@@ -36,15 +37,7 @@ impl AcceptedMemoryReviewReadiness {
             project_id: accepted_memory.project_id,
             records,
             counts,
-            active_memory_apply_performed: false,
-            projection_write_performed: false,
-            scm_effect_performed: false,
-            embedding_available: false,
-            provider_sync_available: false,
-            automatic_extraction_performed: false,
-            task_mutation_performed: false,
-            agent_scheduling_performed: false,
-            ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
         }
     }
 }

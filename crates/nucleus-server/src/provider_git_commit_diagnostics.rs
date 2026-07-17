@@ -1,5 +1,6 @@
 //! Read-only diagnostics for Git commit admission gates.
 
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -31,14 +32,8 @@ pub struct GitCommitDiagnosticsRecord {
     pub shell_handoff_created: bool,
     pub commit_created: bool,
     pub push_executed: bool,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 pub fn git_commit_diagnostics(input: GitCommitDiagnosticsInput) -> GitCommitDiagnosticsRecord {
@@ -98,14 +93,7 @@ pub fn git_commit_diagnostics(input: GitCommitDiagnosticsInput) -> GitCommitDiag
         shell_handoff_created: false,
         commit_created: false,
         push_executed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 

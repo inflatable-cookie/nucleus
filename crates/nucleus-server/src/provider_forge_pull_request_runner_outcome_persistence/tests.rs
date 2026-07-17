@@ -30,9 +30,9 @@ fn forge_pull_request_runner_outcomes_round_trip_sanitized_record() {
         records[0].title_source,
         Some(ForgePullRequestTextSource::GeneratedFromEvidence)
     );
-    assert!(!records[0].pull_request_created);
-    assert!(!records[0].provider_effect_executed);
-    assert!(!records[0].raw_output_retained);
+    assert!(!records[0].no_effects.pull_request_created);
+    assert!(!records[0].no_effects.provider_effect_executed);
+    assert!(!records[0].no_effects.raw_output_retained);
 }
 
 #[test]
@@ -128,6 +128,6 @@ fn forge_pull_request_runner_outcome_diagnostics_summarize_records() {
     assert_eq!(diagnostics.repair_required_count, 1);
     assert_eq!(diagnostics.duplicate_noop_count, 1);
     assert_eq!(diagnostics.provider_request_prepared_count, 5);
-    assert!(!diagnostics.pull_request_created);
-    assert!(!diagnostics.raw_output_retained);
+    assert!(!diagnostics.no_effects.pull_request_created);
+    assert!(!diagnostics.no_effects.raw_output_retained);
 }

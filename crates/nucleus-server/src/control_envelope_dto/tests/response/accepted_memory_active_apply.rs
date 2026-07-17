@@ -45,15 +45,15 @@ fn response_envelope_dto_serializes_active_apply_diagnostics_without_payloads() 
                 && diagnostics.records[0].review_status == "approved"
                 && diagnostics.records[0].review_admission_status == "admitted"
                 && diagnostics.records[0].status == "admitted"
-                && !diagnostics.active_memory_apply_performed
-                && !diagnostics.projection_write_performed
-                && !diagnostics.scm_effect_performed
-                && !diagnostics.embedding_available
-                && !diagnostics.provider_sync_available
-                && !diagnostics.automatic_extraction_performed
-                && !diagnostics.task_mutation_performed
-                && !diagnostics.agent_scheduling_performed
-                && !diagnostics.ui_effect_performed
+                && !diagnostics.no_effects.active_memory_apply_performed
+                && !diagnostics.no_effects.projection_write_performed
+                && !diagnostics.no_effects.scm_effect_performed
+                && !diagnostics.no_effects.embedding_available
+                && !diagnostics.no_effects.provider_sync_available
+                && !diagnostics.no_effects.automatic_extraction_performed
+                && !diagnostics.no_effects.task_mutation_performed
+                && !diagnostics.no_effects.agent_scheduling_performed
+                && !diagnostics.no_effects.ui_effect_performed
     ));
     assert!(json.contains("\"type\":\"accepted_memory_active_apply_diagnostics\""));
     assert!(!json.contains("raw_transcript"));

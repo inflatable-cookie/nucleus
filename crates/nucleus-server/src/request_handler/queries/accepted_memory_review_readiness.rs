@@ -155,15 +155,15 @@ mod tests {
         assert_eq!(readiness.counts.projection_write_admitted, 1);
         assert_eq!(readiness.counts.import_candidates_ready, 1);
         assert_eq!(readiness.counts.approval_required, 1);
-        assert!(!readiness.active_memory_apply_performed);
-        assert!(!readiness.projection_write_performed);
-        assert!(!readiness.scm_effect_performed);
-        assert!(!readiness.embedding_available);
-        assert!(!readiness.provider_sync_available);
-        assert!(!readiness.automatic_extraction_performed);
-        assert!(!readiness.task_mutation_performed);
-        assert!(!readiness.agent_scheduling_performed);
-        assert!(!readiness.ui_effect_performed);
+        assert!(!readiness.no_effects.active_memory_apply_performed);
+        assert!(!readiness.no_effects.projection_write_performed);
+        assert!(!readiness.no_effects.scm_effect_performed);
+        assert!(!readiness.no_effects.embedding_available);
+        assert!(!readiness.no_effects.provider_sync_available);
+        assert!(!readiness.no_effects.automatic_extraction_performed);
+        assert!(!readiness.no_effects.task_mutation_performed);
+        assert!(!readiness.no_effects.agent_scheduling_performed);
+        assert!(!readiness.no_effects.ui_effect_performed);
     }
 
     fn handler() -> (tempfile::TempDir, LocalControlRequestHandler<SqliteBackend>) {

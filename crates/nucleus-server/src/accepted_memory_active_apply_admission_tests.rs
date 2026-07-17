@@ -27,15 +27,15 @@ fn approved_durable_review_receipt_is_admitted_without_effects() {
         "accepted-memory-import-apply-review:command:1"
     );
     assert_eq!(set.records[0].memory_id, "memory:1");
-    assert!(!set.active_memory_apply_performed);
-    assert!(!set.projection_write_performed);
-    assert!(!set.scm_effect_performed);
-    assert!(!set.embedding_available);
-    assert!(!set.provider_sync_available);
-    assert!(!set.automatic_extraction_performed);
-    assert!(!set.task_mutation_performed);
-    assert!(!set.agent_scheduling_performed);
-    assert!(!set.ui_effect_performed);
+    assert!(!set.no_effects.active_memory_apply_performed);
+    assert!(!set.no_effects.projection_write_performed);
+    assert!(!set.no_effects.scm_effect_performed);
+    assert!(!set.no_effects.embedding_available);
+    assert!(!set.no_effects.provider_sync_available);
+    assert!(!set.no_effects.automatic_extraction_performed);
+    assert!(!set.no_effects.task_mutation_performed);
+    assert!(!set.no_effects.agent_scheduling_performed);
+    assert!(!set.no_effects.ui_effect_performed);
 }
 
 #[test]
@@ -69,9 +69,9 @@ fn deferred_rejected_and_blocked_reviews_are_not_admitted() {
         .blockers
         .contains(&AcceptedMemoryActiveApplyAdmissionBlocker::ReviewBlocked));
     assert!(set.records.iter().all(|record| {
-        !record.active_memory_apply_performed
-            && !record.projection_write_performed
-            && !record.scm_effect_performed
+        !record.no_effects.active_memory_apply_performed
+            && !record.no_effects.projection_write_performed
+            && !record.no_effects.scm_effect_performed
     }));
 }
 
@@ -133,7 +133,7 @@ fn missing_refs_and_effect_requests_are_blocked() {
     assert!(set.records[0]
         .blockers
         .contains(&AcceptedMemoryActiveApplyAdmissionBlocker::ActiveMemoryMutationRequested));
-    assert!(!set.records[0].active_memory_apply_performed);
+    assert!(!set.records[0].no_effects.active_memory_apply_performed);
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn duplicate_source_admission_cannot_grant_active_apply() {
     assert!(set.records[0]
         .blockers
         .contains(&AcceptedMemoryActiveApplyAdmissionBlocker::ReviewAdmissionDuplicateNoop));
-    assert!(!set.records[0].active_memory_apply_performed);
+    assert!(!set.records[0].no_effects.active_memory_apply_performed);
 }
 
 fn active_apply_input(

@@ -1,5 +1,6 @@
 //! Stopped process-spawn requests for Convergence local snap commands.
 
+use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -23,14 +24,8 @@ pub struct ConvergenceLocalSnapSpawnRequestSet {
     pub blocked_spawn_request_ids: Vec<String>,
     pub duplicate_spawn_request_ids: Vec<String>,
     pub unsupported_spawn_request_ids: Vec<String>,
-    pub command_spawn_permitted: bool,
-    pub local_snap_creation_permitted: bool,
-    pub object_upload_permitted: bool,
-    pub publication_permitted: bool,
-    pub lane_sync_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceSnapNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -56,14 +51,8 @@ pub struct ConvergenceLocalSnapSpawnRequestRecord {
     pub status: ConvergenceLocalSnapSpawnRequestStatus,
     pub blockers: Vec<ConvergenceLocalSnapSpawnRequestBlocker>,
     pub duplicate_spawn_request_detected: bool,
-    pub command_spawn_permitted: bool,
-    pub local_snap_creation_permitted: bool,
-    pub object_upload_permitted: bool,
-    pub publication_permitted: bool,
-    pub lane_sync_permitted: bool,
-    pub provider_write_permitted: bool,
-    pub task_mutation_permitted: bool,
-    pub raw_material_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ConvergenceSnapNoAuthority,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -127,14 +116,7 @@ pub fn convergence_local_snap_spawn_request(
             .map(|record| record.spawn_request_id.clone())
             .collect(),
         records,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }
 
@@ -179,14 +161,7 @@ fn spawn_request_record(
         status,
         blockers,
         duplicate_spawn_request_detected,
-        command_spawn_permitted: false,
-        local_snap_creation_permitted: false,
-        object_upload_permitted: false,
-        publication_permitted: false,
-        lane_sync_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceSnapNoAuthority::none(),
     }
 }
 

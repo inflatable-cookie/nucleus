@@ -47,15 +47,7 @@ fn accepted_memory_active_apply_response_lines_are_read_only_and_sanitized() {
                 other_project_records_skipped: 0,
                 decode_failed_records: 0,
             },
-            active_memory_apply_performed: false,
-            projection_write_performed: false,
-            scm_effect_performed: false,
-            embedding_available: false,
-            provider_sync_available: false,
-            automatic_extraction_performed: false,
-            task_mutation_performed: false,
-            agent_scheduling_performed: false,
-            ui_effect_performed: false,
+            no_effects: nucleus_server::MemoryApplyNoEffects::none(),
         },
     );
     let rendered = lines.join("\n");

@@ -29,15 +29,15 @@ pub(crate) fn accepted_memory_review_response_lines(
         ),
         format!(
             "flags active_memory_apply_performed={} projection_write_performed={} scm_effect_performed={} embedding_available={} provider_sync_available={} automatic_extraction_performed={} task_mutation_performed={} agent_scheduling_performed={} ui_effect_performed={}",
-            readiness.active_memory_apply_performed,
-            readiness.projection_write_performed,
-            readiness.scm_effect_performed,
-            readiness.embedding_available,
-            readiness.provider_sync_available,
-            readiness.automatic_extraction_performed,
-            readiness.task_mutation_performed,
-            readiness.agent_scheduling_performed,
-            readiness.ui_effect_performed
+            readiness.no_effects.active_memory_apply_performed,
+            readiness.no_effects.projection_write_performed,
+            readiness.no_effects.scm_effect_performed,
+            readiness.no_effects.embedding_available,
+            readiness.no_effects.provider_sync_available,
+            readiness.no_effects.automatic_extraction_performed,
+            readiness.no_effects.task_mutation_performed,
+            readiness.no_effects.agent_scheduling_performed,
+            readiness.no_effects.ui_effect_performed
         ),
     ];
 

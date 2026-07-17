@@ -71,15 +71,15 @@ fn diagnostics_build_stopped_apply_records_without_effects_or_operator_approval(
     assert!(diagnostics.records[0]
         .blockers
         .contains(&AcceptedMemoryProjectionImportApplyAdmissionBlocker::MissingApprovalRef));
-    assert!(!diagnostics.active_memory_apply_performed);
-    assert!(!diagnostics.projection_write_performed);
-    assert!(!diagnostics.scm_effect_performed);
-    assert!(!diagnostics.embedding_available);
-    assert!(!diagnostics.provider_sync_available);
-    assert!(!diagnostics.automatic_extraction_performed);
-    assert!(!diagnostics.task_mutation_performed);
-    assert!(!diagnostics.agent_scheduling_performed);
-    assert!(!diagnostics.ui_effect_performed);
+    assert!(!diagnostics.no_effects.active_memory_apply_performed);
+    assert!(!diagnostics.no_effects.projection_write_performed);
+    assert!(!diagnostics.no_effects.scm_effect_performed);
+    assert!(!diagnostics.no_effects.embedding_available);
+    assert!(!diagnostics.no_effects.provider_sync_available);
+    assert!(!diagnostics.no_effects.automatic_extraction_performed);
+    assert!(!diagnostics.no_effects.task_mutation_performed);
+    assert!(!diagnostics.no_effects.agent_scheduling_performed);
+    assert!(!diagnostics.no_effects.ui_effect_performed);
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn diagnostics_keep_duplicate_noop_visible_without_applying_memory() {
     assert!(diagnostics.records[0]
         .blockers
         .contains(&AcceptedMemoryProjectionImportApplyAdmissionBlocker::DuplicateNoop));
-    assert!(!diagnostics.records[0].active_memory_apply_performed);
+    assert!(!diagnostics.records[0].no_effects.active_memory_apply_performed);
 }
 
 fn no_conflict(memory_id: &str) -> crate::AcceptedMemoryProjectionImportConflictRecord {

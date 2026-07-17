@@ -35,15 +35,15 @@ fn no_conflict_import_is_admitted_without_effects() {
         set.records[0].apply_admission_ref,
         "accepted-memory-import-apply-admission:request:ready"
     );
-    assert!(!set.active_memory_apply_performed);
-    assert!(!set.projection_write_performed);
-    assert!(!set.scm_effect_performed);
-    assert!(!set.embedding_available);
-    assert!(!set.provider_sync_available);
-    assert!(!set.automatic_extraction_performed);
-    assert!(!set.task_mutation_performed);
-    assert!(!set.agent_scheduling_performed);
-    assert!(!set.ui_effect_performed);
+    assert!(!set.no_effects.active_memory_apply_performed);
+    assert!(!set.no_effects.projection_write_performed);
+    assert!(!set.no_effects.scm_effect_performed);
+    assert!(!set.no_effects.embedding_available);
+    assert!(!set.no_effects.provider_sync_available);
+    assert!(!set.no_effects.automatic_extraction_performed);
+    assert!(!set.no_effects.task_mutation_performed);
+    assert!(!set.no_effects.agent_scheduling_performed);
+    assert!(!set.no_effects.ui_effect_performed);
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn duplicate_noop_is_explicit_and_does_not_receive_apply_authority() {
     assert!(set.records[0]
         .blockers
         .contains(&AcceptedMemoryProjectionImportApplyAdmissionBlocker::DuplicateNoop));
-    assert!(!set.records[0].active_memory_apply_performed);
+    assert!(!set.records[0].no_effects.active_memory_apply_performed);
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn semantic_conflict_missing_refs_and_effect_requests_are_blocked() {
     assert!(set.records[0].blockers.contains(
         &AcceptedMemoryProjectionImportApplyAdmissionBlocker::ActiveMemoryMutationRequested
     ));
-    assert!(!set.records[0].active_memory_apply_performed);
+    assert!(!set.records[0].no_effects.active_memory_apply_performed);
 }
 
 #[test]

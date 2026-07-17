@@ -1,5 +1,6 @@
 //! Forge pull-request descriptor records from ready Git push preflight records.
 
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -21,14 +22,8 @@ pub struct ForgePullRequestDescriptorSet {
     pub descriptor_set_id: String,
     pub descriptors: Vec<ForgePullRequestDescriptorRecord>,
     pub skipped_preflight_ids: Vec<String>,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -55,14 +50,8 @@ pub struct ForgePullRequestDescriptorRecord {
     pub body_source: Option<ForgePullRequestTextSource>,
     pub status: ForgePullRequestDescriptorStatus,
     pub blockers: Vec<ForgePullRequestDescriptorBlocker>,
-    pub pull_request_created: bool,
-    pub forge_effect_executed: bool,
-    pub provider_effect_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_output_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ForgeScmNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -125,14 +114,7 @@ pub fn forge_pull_request_descriptor_records(
             .map(|descriptor| descriptor.push_preflight_id.clone())
             .collect(),
         descriptors,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 
@@ -179,14 +161,7 @@ fn descriptor_record(
         body_source: context.body_source.clone(),
         status,
         blockers,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 

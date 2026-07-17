@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
 use super::*;
 
 #[test]
@@ -107,22 +108,22 @@ fn convergence_stopped_runner_command_adapter_blocks_missing_stages_without_effe
     assert!(record
         .blockers
         .contains(&ConvergenceStoppedRunnerCommandAdapterBlocker::MissingSnapshotStage));
-    assert!(!set.runner_invocation_permitted);
-    assert!(!set.provider_handoff_permitted);
-    assert!(!set.snapshot_creation_permitted);
-    assert!(!set.publish_permitted);
-    assert!(!set.publication_review_permitted);
-    assert!(!set.provider_write_permitted);
-    assert!(!set.task_mutation_permitted);
-    assert!(!set.raw_material_retained);
-    assert!(!record.runner_invocation_permitted);
-    assert!(!record.provider_handoff_permitted);
-    assert!(!record.snapshot_creation_permitted);
-    assert!(!record.publish_permitted);
-    assert!(!record.publication_review_permitted);
-    assert!(!record.provider_write_permitted);
-    assert!(!record.task_mutation_permitted);
-    assert!(!record.raw_material_retained);
+    assert!(!set.no_effects.runner_invocation_permitted);
+    assert!(!set.no_effects.provider_handoff_permitted);
+    assert!(!set.no_effects.snapshot_creation_permitted);
+    assert!(!set.no_effects.publish_permitted);
+    assert!(!set.no_effects.publication_review_permitted);
+    assert!(!set.no_effects.provider_write_permitted);
+    assert!(!set.no_effects.task_mutation_permitted);
+    assert!(!set.no_effects.raw_material_retained);
+    assert!(!record.no_effects.runner_invocation_permitted);
+    assert!(!record.no_effects.provider_handoff_permitted);
+    assert!(!record.no_effects.snapshot_creation_permitted);
+    assert!(!record.no_effects.publish_permitted);
+    assert!(!record.no_effects.publication_review_permitted);
+    assert!(!record.no_effects.provider_write_permitted);
+    assert!(!record.no_effects.task_mutation_permitted);
+    assert!(!record.no_effects.raw_material_retained);
 }
 
 fn input(
@@ -134,14 +135,7 @@ fn input(
             records,
             duplicate_evidence_ids: Vec::new(),
             blocked_evidence_ids: Vec::new(),
-            runner_invocation_permitted: false,
-            provider_handoff_permitted: false,
-            snapshot_creation_permitted: false,
-            publish_permitted: false,
-            publication_review_permitted: false,
-            provider_write_permitted: false,
-            task_mutation_permitted: false,
-            raw_material_retained: false,
+        no_effects: ConvergenceRunnerNoAuthority::none(),
         },
     }
 }
@@ -173,13 +167,6 @@ fn record(
         status,
         blockers: Vec::new(),
         duplicate_evidence_detected: false,
-        runner_invocation_permitted: false,
-        provider_handoff_permitted: false,
-        snapshot_creation_permitted: false,
-        publish_permitted: false,
-        publication_review_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceRunnerNoAuthority::none(),
     }
 }

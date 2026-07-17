@@ -1,5 +1,6 @@
 //! Read-only diagnostics over persisted accepted-memory review receipts.
 
+use crate::provider_no_effects::{MemoryApplyNoEffects};
 use nucleus_memory::{
     AcceptedMemoryReviewReceiptAdmissionStatusStorage, AcceptedMemoryReviewReceiptDecisionStorage,
     AcceptedMemoryReviewReceiptStatusStorage, AcceptedMemoryReviewReceiptStorageRecord,
@@ -14,15 +15,7 @@ pub struct AcceptedMemoryReviewReceiptStorageDiagnostics {
     pub receipts: Vec<AcceptedMemoryReviewReceiptStorageRecord>,
     pub counts: AcceptedMemoryReviewReceiptStorageDiagnosticCounts,
     pub review_receipts_persisted: bool,
-    pub active_memory_apply_performed: bool,
-    pub projection_write_performed: bool,
-    pub scm_effect_performed: bool,
-    pub embedding_available: bool,
-    pub provider_sync_available: bool,
-    pub automatic_extraction_performed: bool,
-    pub task_mutation_performed: bool,
-    pub agent_scheduling_performed: bool,
-    pub ui_effect_performed: bool,
+    pub no_effects: MemoryApplyNoEffects,
 }
 
 /// Persisted review receipt diagnostics counts.
@@ -100,15 +93,7 @@ impl AcceptedMemoryReviewReceiptStorageDiagnostics {
             review_receipts_persisted: !receipts.is_empty(),
             receipts,
             counts,
-            active_memory_apply_performed: false,
-            projection_write_performed: false,
-            scm_effect_performed: false,
-            embedding_available: false,
-            provider_sync_available: false,
-            automatic_extraction_performed: false,
-            task_mutation_performed: false,
-            agent_scheduling_performed: false,
-            ui_effect_performed: false,
+        no_effects: MemoryApplyNoEffects::none(),
         }
     }
 }

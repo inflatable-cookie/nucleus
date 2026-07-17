@@ -20,14 +20,14 @@ fn git_commit_admission_records_admit_reviewable_branch_worktree_evidence() {
                 .starts_with("git-branch-worktree-execution-handoff:")
             && !admission.commit_created
             && !admission.push_executed
-            && !admission.pull_request_created
-            && !admission.forge_effect_executed
-            && !admission.provider_effect_executed
-            && !admission.callback_effect_executed
-            && !admission.interruption_effect_executed
-            && !admission.recovery_effect_executed
-            && !admission.task_mutation_executed
-            && !admission.raw_output_retained
+            && !admission.no_effects.pull_request_created
+            && !admission.no_effects.forge_effect_executed
+            && !admission.no_effects.provider_effect_executed
+            && !admission.no_effects.callback_effect_executed
+            && !admission.no_effects.interruption_effect_executed
+            && !admission.no_effects.recovery_effect_executed
+            && !admission.no_effects.task_mutation_executed
+            && !admission.no_effects.raw_output_retained
     }));
     assert!(!record.commit_created);
 }

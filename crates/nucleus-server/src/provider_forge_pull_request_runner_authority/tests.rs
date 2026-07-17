@@ -18,9 +18,9 @@ fn forge_pull_request_runner_authority_accepts_request_preparation() {
         authority.forge_provider,
         Some(ForgePullRequestProvider::GitHub)
     );
-    assert!(!authority.pull_request_created);
-    assert!(!authority.provider_effect_executed);
-    assert!(!authority.raw_output_retained);
+    assert!(!authority.no_effects.pull_request_created);
+    assert!(!authority.no_effects.provider_effect_executed);
+    assert!(!authority.no_effects.raw_output_retained);
 }
 
 #[test]

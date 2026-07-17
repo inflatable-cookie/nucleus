@@ -9,6 +9,7 @@ pub use types::{
     GitPushRunnerCommandAdapterStatus, GitPushRunnerCommandKind,
 };
 
+use crate::provider_no_effects::{ForgeScmNoEffects};
 use record_builder::command_record;
 
 pub fn git_push_runner_command_adapter(
@@ -38,14 +39,7 @@ pub fn git_push_runner_command_adapter(
         shell_passthrough_used: false,
         shell_execution_performed: false,
         push_executed: false,
-        pull_request_created: false,
-        forge_effect_executed: false,
-        provider_effect_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_output_retained: false,
+        no_effects: ForgeScmNoEffects::none(),
     }
 }
 

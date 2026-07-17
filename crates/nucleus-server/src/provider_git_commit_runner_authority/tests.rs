@@ -24,7 +24,7 @@ fn git_commit_runner_authority_accepts_confirmed_commit_intent() {
     );
     assert!(!authority.commit_created);
     assert!(!authority.push_executed);
-    assert!(!authority.raw_output_retained);
+    assert!(!authority.no_effects.raw_output_retained);
 }
 
 #[test]

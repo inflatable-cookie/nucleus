@@ -219,13 +219,13 @@ fn projection_input(memory_id: &str) -> AcceptedMemoryProjectionImportInput {
 }
 
 fn assert_no_effects(set: &crate::AcceptedMemoryImportApplyReviewSet) {
-    assert!(!set.active_memory_apply_performed);
-    assert!(!set.projection_write_performed);
-    assert!(!set.scm_effect_performed);
-    assert!(!set.embedding_available);
-    assert!(!set.provider_sync_available);
-    assert!(!set.automatic_extraction_performed);
-    assert!(!set.task_mutation_performed);
-    assert!(!set.agent_scheduling_performed);
-    assert!(!set.ui_effect_performed);
+    assert!(!set.no_effects.active_memory_apply_performed);
+    assert!(!set.no_effects.projection_write_performed);
+    assert!(!set.no_effects.scm_effect_performed);
+    assert!(!set.no_effects.embedding_available);
+    assert!(!set.no_effects.provider_sync_available);
+    assert!(!set.no_effects.automatic_extraction_performed);
+    assert!(!set.no_effects.task_mutation_performed);
+    assert!(!set.no_effects.agent_scheduling_performed);
+    assert!(!set.no_effects.ui_effect_performed);
 }

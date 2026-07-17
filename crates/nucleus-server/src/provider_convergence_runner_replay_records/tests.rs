@@ -1,3 +1,4 @@
+use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
 use super::*;
 
 use crate::{
@@ -126,14 +127,7 @@ fn input(
             adapter_set_id: "adapter".to_owned(),
             records,
             skipped_persisted_evidence_ids: Vec::new(),
-            runner_invocation_permitted: false,
-            provider_handoff_permitted: false,
-            snapshot_creation_permitted: false,
-            publish_permitted: false,
-            publication_review_permitted: false,
-            provider_write_permitted: false,
-            task_mutation_permitted: false,
-            raw_material_retained: false,
+        no_effects: ConvergenceRunnerNoAuthority::none(),
         },
         existing_replay_record_ids,
         raw_material_present,
@@ -163,13 +157,6 @@ fn adapter(
         command_shape: ConvergenceStoppedRunnerCommandShape::SnapshotPublishReview,
         status,
         blockers: Vec::new(),
-        runner_invocation_permitted: false,
-        provider_handoff_permitted: false,
-        snapshot_creation_permitted: false,
-        publish_permitted: false,
-        publication_review_permitted: false,
-        provider_write_permitted: false,
-        task_mutation_permitted: false,
-        raw_material_retained: false,
+        no_effects: ConvergenceRunnerNoAuthority::none(),
     }
 }
