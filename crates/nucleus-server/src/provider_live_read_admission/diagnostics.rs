@@ -72,18 +72,12 @@ fn persistence_count(
     records: &[ProviderLiveReadPersistenceRecord],
     status: ProviderLiveReadPersistenceStatus,
 ) -> usize {
-    records
-        .iter()
-        .filter(|record| record.persistence_status == status)
-        .count()
+    crate::admission_gate::count_by_status(records, &status, |record| &record.persistence_status)
 }
 
 fn request_count(
     records: &[ProviderLiveReadPersistenceRecord],
     status: ProviderLiveReadRequestReceiptStatus,
 ) -> usize {
-    records
-        .iter()
-        .filter(|record| record.request_status == status)
-        .count()
+    crate::admission_gate::count_by_status(records, &status, |record| &record.request_status)
 }

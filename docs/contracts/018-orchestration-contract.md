@@ -191,6 +191,21 @@ not in Tauri UI code.
 and projections. It must not be the only place orchestration domain logic can
 run, because embedded desktop and remote host forms need the same rules.
 
+## Admission Gate Framework Rule
+
+New admission-only gates implement the shared `AdmissionGate` trait
+(`nucleus-server::admission_gate`): declare input, blocker, status, and
+no-effects types plus pure `blockers` and `classify` functions in one file.
+Do not stamp new per-feature types/blockers/record_builder/diagnostics kits.
+
+No-effects claims use the shared serde-flattened structs in
+`nucleus-server::provider_no_effects`; a gate must not declare a private
+boolean block for effects it did not run. Diagnostics count statuses through
+`count_by_status`, not per-family count helpers.
+
+Existing stamped families migrate opportunistically; wire field names are
+preserved via serde flatten during migration.
+
 ## Non-Goals
 
 This contract does not yet choose:

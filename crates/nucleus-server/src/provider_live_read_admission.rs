@@ -2,6 +2,7 @@
 
 mod blockers;
 mod diagnostics;
+mod gate;
 mod execution;
 mod persistence_blockers;
 mod persistence_record_builder;
@@ -15,6 +16,8 @@ mod types;
 
 use crate::provider_no_effects::ProviderNoEffects;
 use nucleus_local_store::{LocalStoreBackend, LocalStoreResult};
+
+pub use gate::{ProviderLiveReadAdmissionGate, ProviderLiveReadGateInput};
 
 pub use diagnostics::{
     provider_live_read_persistence_control_dto_from_diagnostics,

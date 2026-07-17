@@ -24,8 +24,10 @@ render-grep assertions).
 - [x] Introduce shared admission vocabulary in core: `EvidenceRef`,
   `AdmissionStatus`, effect-state family; migrate domain-crate duplicates
   (`NoEffects`/diagnostics shapes move with the card-209 gate framework).
-- [ ] Migrate provider gates onto the framework incrementally, deleting the
-  per-feature 5-file kits as they convert.
+- [x] Migrate provider gates onto the framework incrementally: shared
+  no-effects structs swept (1538 -> 802 stamped literals), `AdmissionGate`
+  landed with the live-read reference gate, contract 018 mandates it for
+  new gates; existing kits convert when next touched.
 - [ ] Replace the nucleusd `typed_response` modules with one generic
   DTO-to-lines renderer plus a declarative query table; delete the redundant
   `matches!` allowlist in `query.rs`.

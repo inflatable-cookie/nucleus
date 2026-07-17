@@ -257,6 +257,7 @@ pub mod provider_live_evidence_task_state_transition_admission;
 pub mod provider_live_evidence_work_candidates;
 pub mod provider_live_evidence_work_observations;
 pub mod provider_live_read_admission;
+pub mod admission_gate;
 pub mod provider_no_effects;
 pub mod provider_live_read_executor_query;
 pub mod provider_live_read_smoke_evidence_query;

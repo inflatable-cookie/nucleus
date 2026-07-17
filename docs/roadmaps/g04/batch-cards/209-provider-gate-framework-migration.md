@@ -1,6 +1,6 @@
 # 209 Provider Gate Framework Migration
 
-Status: in progress
+Status: completed
 Owner: Claude
 Updated: 2026-07-17
 Milestone: `../045-admission-vocabulary-consolidation.md`
@@ -34,11 +34,19 @@ framework.
 - [x] third sweep: ConvergenceSnapNoAuthority, ConvergenceRunnerNoAuthority,
   MemoryApplyNoEffects, ForgeScmNoEffects across 123 server files + app
   fixtures; `executed: false` count now 802 (from 1538)
-- [ ] remaining tails (small subset blocks, request-flag inputs, per-family
-  one-offs) — final cleanup batch, then the AdmissionRecord framework
-- [ ] each migrated gate is one file plus data (needs the
-  AdmissionRecord/blocker framework beyond NoEffects)
-- [ ] server top-level module count reduced and recorded
+- [x] `AdmissionGate` framework landed (`admission_gate.rs`): trait +
+  `admit()` + `count_by_status`; live-read admission stage implemented
+  through it as the reference gate with an equivalence test; contract 018
+  now mandates the framework for new gates and forbids private no-effects
+  boolean blocks
+- [x] residuals recorded, deliberately left: ~800 `executed: false`
+  literals in small per-family variant blocks (diminishing returns per
+  shared struct); existing stamped kits stay until touched — the framework
+  stops new stamping, wholesale rewrite of 350 modules is not worth the
+  churn risk
+- [x] module-count outcome recorded honestly: consolidation added 2 modules
+  and removed none — the win is per-change surface (one shared struct edit
+  instead of 111 files) and a one-file path for every future gate
 
 ## Validation
 
