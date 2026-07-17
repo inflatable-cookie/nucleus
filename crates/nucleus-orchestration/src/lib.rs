@@ -7,10 +7,14 @@
 pub mod commands;
 pub mod event_store;
 pub mod events;
+pub mod host_identity;
 pub mod projections;
-pub mod receipts;
-pub mod replay;
-pub mod streams;
+pub mod runtime_effect_events;
+pub mod runtime_effect_replay;
+pub mod runtime_effect_retention;
+pub mod runtime_effect_storage;
+pub mod runtime_effect_subscriptions;
+pub mod runtime_effect_transport;
 
 pub use commands::{
     OrchestrationAcceptedCommand, OrchestrationCommandAdmission,

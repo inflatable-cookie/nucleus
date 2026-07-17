@@ -1,8 +1,6 @@
 //! Server boundary identity types.
 
-/// Stable client id assigned by the server boundary.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct ClientId(pub String);
+pub use nucleus_orchestration::host_identity::ClientId;
 
 /// Stable command id supplied by a client or assigned at ingress.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -16,6 +14,4 @@ pub struct ServerQueryId(pub String);
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ServerControlRequestId(pub String);
 
-/// Stable event id emitted by the server boundary.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct ServerEventId(pub String);
+pub use nucleus_orchestration::host_identity::ServerEventId;

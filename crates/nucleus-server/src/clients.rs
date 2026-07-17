@@ -1,26 +1,11 @@
-//! Control-plane client identity types.
+//! Client identity re-exports plus server-side connection records.
+//!
+//! Identity vocabulary relocated to nucleus-orchestration::host_identity
+//! (contract 022); the connection record stays host-side.
+
+pub use nucleus_orchestration::host_identity::{ClientIdentity, ClientKind};
 
 use crate::deployment::AccessEndpoint;
-use crate::ids::ClientId;
-
-/// Control-plane client identity.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClientIdentity {
-    pub id: ClientId,
-    pub kind: ClientKind,
-    pub display_name: String,
-}
-
-/// Supported client categories.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ClientKind {
-    Desktop,
-    Web,
-    Mobile,
-    Cli,
-    Service,
-    Other(String),
-}
 
 /// Client connection record from the server's point of view.
 #[derive(Clone, Debug, Eq, PartialEq)]

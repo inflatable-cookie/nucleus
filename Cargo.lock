@@ -2344,7 +2344,9 @@ dependencies = [
 name = "nucleus-orchestration"
 version = "0.0.0"
 dependencies = [
+ "nucleus-command-policy",
  "nucleus-core",
+ "nucleus-scm-forge",
  "serde",
  "serde_json",
 ]

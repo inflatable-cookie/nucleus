@@ -120,12 +120,15 @@ Move toward `nucleus-orchestration`:
 - `event_replay`
 - event-store repository traits
 - `events`
-- `runtime_effect_events`
-- `runtime_effect_replay`
-- `runtime_effect_retention`
-- `runtime_effect_storage`
-- `runtime_effect_subscriptions`
-- `runtime_effect_transport`
+- `runtime_effect_events` — moved 2026-07-17
+- `runtime_effect_replay` — moved 2026-07-17
+- `runtime_effect_retention` — moved 2026-07-17
+- `runtime_effect_storage` — moved 2026-07-17
+- `runtime_effect_subscriptions` — moved 2026-07-17
+- `runtime_effect_transport` — moved 2026-07-17
+- client identity vocabulary (`ClientId`, `ClientIdentity`, `ClientKind`,
+  `ServerEventId`) — moved to `host_identity` 2026-07-17; the server keeps
+  re-export shims and the host-side `ClientConnection`
 - parts of `scheduler`
 
 Move toward `nucleus-engine`:

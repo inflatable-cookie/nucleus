@@ -1,6 +1,6 @@
 # 046 Engine Boundary Migration
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-07-17
 
@@ -31,7 +31,7 @@ hardcoded into the server).
 
 ## Execution Plan
 
-- [ ] Move the self-contained `runtime_effect_*` modules from server to
+- [x] Move the self-contained `runtime_effect_*` modules from server to
   nucleus-orchestration.
 - [ ] Move request-handler command/query dispatch into engine services with
   IO behind ports.

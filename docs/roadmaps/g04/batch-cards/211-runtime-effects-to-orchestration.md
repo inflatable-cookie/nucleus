@@ -1,7 +1,7 @@
 # 211 Runtime Effects To Orchestration
 
-Status: planned
-Owner: Codex
+Status: completed
+Owner: Claude
 Updated: 2026-07-17
 Milestone: `../046-engine-boundary-migration.md`
 Auto-start next card: no
@@ -21,8 +21,13 @@ nucleus-orchestration per contract 022.
 
 ## Acceptance
 
-- [ ] modules live in orchestration with tests passing
-- [ ] contract 022 list updated to reflect executed moves
+- [x] all six runtime_effect modules live in orchestration with tests
+  passing; client identity vocabulary moved to
+  `nucleus-orchestration::host_identity` (ClientConnection stays
+  server-side); server keeps re-export shims so no consumer churn
+- [x] one-line placeholder modules (`replay.rs`, `streams.rs`,
+  `receipts.rs`) deleted from orchestration
+- [x] contract 022 list updated with move dates
 
 ## Validation
 
