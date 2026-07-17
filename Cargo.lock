@@ -2302,6 +2302,7 @@ dependencies = [
 name = "nucleus-engine"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "nucleus-agent-protocol",
  "nucleus-command-policy",
  "nucleus-core",

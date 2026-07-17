@@ -139,7 +139,9 @@ Move toward `nucleus-engine`:
 - `command_runtime_readiness`
 - `read_only_command_control`
 - `request_handler` — task dispatch already engine-backed; goal rules moved
-  to `nucleus_engine::goal_commands` 2026-07-17; project lifecycle pending
+  to `nucleus_engine::goal_commands` 2026-07-17; project lifecycle rules
+  moved to `nucleus_engine::project_commands` 2026-07-18 (resource
+  commands stay host-side: filesystem authority)
 - `runtime_readiness_diagnostics`
 - `state`
 - domain seed logic only if kept as engine fixtures

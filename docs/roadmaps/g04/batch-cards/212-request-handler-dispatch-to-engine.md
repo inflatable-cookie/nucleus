@@ -1,6 +1,6 @@
 # 212 Request Handler Dispatch To Engine
 
-Status: in progress
+Status: completed
 Owner: Claude
 Updated: 2026-07-17
 Milestone: `../046-engine-boundary-migration.md`
@@ -28,9 +28,14 @@ ports.
   (status gates, membership validation, field merge, revision derivation);
   server handler is now DTO mapping + storage port + error mapping, proven
   by unchanged server tests plus new engine unit tests
-- [ ] project lifecycle commands (506 lines, zero engine refs) — next
-  batch; project_resource_commands stays host-side by design (filesystem
-  authority)
+- [x] project lifecycle rules moved to
+  `nucleus_engine::project_commands`: authority-host checks, idempotency
+  fingerprints and replay, create/rename/park/archive/restore, and the
+  deletion-impact refusal scan, all behind an `EngineProjectRepository`
+  port; server adapter is DTO mapping + port + error mapping; engine unit
+  tests cover idempotent replay, key-reuse conflict, and authority
+  rejection; project_resource_commands stays host-side by design
+  (filesystem authority)
 
 ## Validation
 

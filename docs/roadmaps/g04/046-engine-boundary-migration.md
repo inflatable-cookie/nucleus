@@ -33,8 +33,9 @@ hardcoded into the server).
 
 - [x] Move the self-contained `runtime_effect_*` modules from server to
   nucleus-orchestration.
-- [ ] Move request-handler command/query dispatch into engine services with
-  IO behind ports.
+- [x] Move request-handler command/query dispatch into engine services with
+  IO behind ports (tasks pre-existing, goals and project lifecycle moved;
+  resource commands host-side by design).
 - [ ] Move goal/task workflow logic (`local_codex_chat/goal_execution`) into
   engine behind effect ports.
 - [ ] Resolve the adapter and fixtures planning gaps above.
