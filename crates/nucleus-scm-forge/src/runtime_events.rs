@@ -15,9 +15,8 @@ pub struct AdapterObservationBatchRef(pub String);
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct AdapterTaskLinkProposalRef(pub String);
 
-/// Symbolic ref to sanitized adapter evidence.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct AdapterSanitizedEvidenceRef(pub String);
+/// Symbolic ref to sanitized adapter evidence (shared core type).
+pub use nucleus_core::EvidenceRef as AdapterSanitizedEvidenceRef;
 
 /// Symbolic ref to a server-owned command authority request.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

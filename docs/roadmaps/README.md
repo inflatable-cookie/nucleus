@@ -306,7 +306,7 @@ shape.
 - `g04/042-execution-safety-honesty-and-enforcement.md` - completed
 - `g04/043-ci-and-validation-runway.md` - completed
 - `g04/044-persistence-correctness-hardening.md` - completed
-- `g04/045-admission-vocabulary-consolidation.md` - planned
+- `g04/045-admission-vocabulary-consolidation.md` - active
 - `g04/046-engine-boundary-migration.md` - planned
 - `g04/047-desktop-contract-integrity.md` - planned
 - `g04/048-roadmap-residue-archival.md` - planned

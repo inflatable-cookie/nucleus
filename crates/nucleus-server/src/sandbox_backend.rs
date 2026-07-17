@@ -8,9 +8,8 @@ use nucleus_command_policy::{CommandSandboxEnforcement, CommandSandboxProfile};
 
 use crate::host_authority::EngineHostId;
 
-/// Stable sandbox backend evidence ref.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct SandboxBackendEvidenceRef(pub String);
+/// Stable sandbox backend evidence ref (shared core type).
+pub use nucleus_core::EvidenceRef as SandboxBackendEvidenceRef;
 
 /// Host sandbox backend family.
 #[derive(Clone, Debug, Eq, PartialEq)]

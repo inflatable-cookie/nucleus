@@ -73,9 +73,8 @@ pub enum NativeEffigyScope {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct NativeEffigyManifestRef(pub String);
 
-/// Sanitized evidence reference.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct NativeEffigyEvidenceRef(pub String);
+/// Sanitized evidence reference (shared core type).
+pub use nucleus_core::EvidenceRef as NativeEffigyEvidenceRef;
 
 /// One Effigy selector known to Nucleus.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -8,9 +8,8 @@ use crate::effects::{CommandEffectRequestId, CommandEffectRetry};
 use crate::ids::CommandRequestId;
 use crate::runtime_states::{CommandEffectNonTerminalState, CommandEffectTerminalState};
 
-/// Symbolic ref to sanitized command evidence.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct CommandEvidenceRef(pub String);
+/// Symbolic ref to sanitized command evidence (shared core type).
+pub use nucleus_core::EvidenceRef as CommandEvidenceRef;
 
 /// Symbolic ref to a retained command artifact.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

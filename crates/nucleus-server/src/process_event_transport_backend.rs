@@ -8,9 +8,8 @@ use nucleus_command_policy::CommandProcessSupervisionEventKind;
 
 use crate::host_authority::EngineHostId;
 
-/// Stable process event transport evidence ref.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct ProcessEventTransportEvidenceRef(pub String);
+/// Stable process event transport evidence ref (shared core type).
+pub use nucleus_core::EvidenceRef as ProcessEventTransportEvidenceRef;
 
 /// Host process event transport backend family.
 #[derive(Clone, Debug, Eq, PartialEq)]

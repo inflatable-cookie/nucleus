@@ -8,9 +8,8 @@ use nucleus_command_policy::CommandArtifactPayloadClass;
 
 use crate::host_authority::EngineHostId;
 
-/// Stable artifact store backend evidence ref.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct ArtifactStoreBackendEvidenceRef(pub String);
+/// Stable artifact store backend evidence ref (shared core type).
+pub use nucleus_core::EvidenceRef as ArtifactStoreBackendEvidenceRef;
 
 /// Host artifact store backend family.
 #[derive(Clone, Debug, Eq, PartialEq)]

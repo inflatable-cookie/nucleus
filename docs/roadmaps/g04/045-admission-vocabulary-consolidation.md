@@ -1,6 +1,6 @@
 # 045 Admission Vocabulary Consolidation
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-07-17
 
@@ -21,9 +21,9 @@ render-grep assertions).
 
 ## Execution Plan
 
-- [ ] Introduce shared admission vocabulary in core/orchestration: one
-  generic `NoEffects`, `EvidenceRef`, admission-status, and diagnostics
-  shape parameterized by domain.
+- [x] Introduce shared admission vocabulary in core: `EvidenceRef`,
+  `AdmissionStatus`, effect-state family; migrate domain-crate duplicates
+  (`NoEffects`/diagnostics shapes move with the card-209 gate framework).
 - [ ] Migrate provider gates onto the framework incrementally, deleting the
   per-feature 5-file kits as they convert.
 - [ ] Replace the nucleusd `typed_response` modules with one generic

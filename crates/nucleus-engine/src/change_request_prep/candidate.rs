@@ -51,9 +51,8 @@ impl EngineChangeRequestCandidateRecord {
     }
 }
 
-/// Candidate evidence reference.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct EngineChangeRequestEvidenceRef(pub String);
+/// Candidate evidence reference (shared core type).
+pub use nucleus_core::EvidenceRef as EngineChangeRequestEvidenceRef;
 
 /// Candidate policy gate.
 #[derive(Clone, Debug, Eq, PartialEq)]

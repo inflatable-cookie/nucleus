@@ -13,9 +13,8 @@ use crate::{
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ScmSessionCommandId(pub String);
 
-/// Sanitized evidence ref for a session command.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct ScmSessionCommandEvidenceRef(pub String);
+/// Sanitized evidence ref for a session command (shared core type).
+pub use nucleus_core::EvidenceRef as ScmSessionCommandEvidenceRef;
 
 /// Working-session command request.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -104,7 +103,7 @@ impl ScmSessionCommandAdmission {
         let status = if command.scope == ScmSessionCommandScope::Unsupported {
             ScmSessionCommandAdmissionStatus::Rejected("unsupported command scope".to_owned())
         } else if !supported.contains(&command.capability) {
-            ScmSessionCommandAdmissionStatus::UnsupportedCapability
+            ScmSessionCommandAdmissionStatus::Unsupported
         } else if command
             .plan
             .as_ref()
@@ -138,15 +137,8 @@ impl ScmSessionCommandAdmission {
     }
 }
 
-/// Session command admission state.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ScmSessionCommandAdmissionStatus {
-    Accepted,
-    RequiresApproval,
-    Blocked(String),
-    UnsupportedCapability,
-    Rejected(String),
-}
+/// Session command admission state (shared core vocabulary).
+pub use nucleus_core::AdmissionStatus as ScmSessionCommandAdmissionStatus;
 
 fn contains_forbidden_session_term(value: &str) -> bool {
     [
@@ -278,7 +270,7 @@ mod tests {
         ));
         assert_eq!(
             unsupported.status,
-            ScmSessionCommandAdmissionStatus::UnsupportedCapability
+            ScmSessionCommandAdmissionStatus::Unsupported
         );
         assert!(!blocked.executes_provider_command());
         assert!(!unsupported.executes_provider_command());

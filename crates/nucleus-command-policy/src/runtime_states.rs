@@ -17,44 +17,12 @@ pub struct CommandEffectStateRecord {
     pub summary: Option<String>,
 }
 
-/// Command effect state.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommandEffectState {
-    NonTerminal(CommandEffectNonTerminalState),
-    Terminal(CommandEffectTerminalState),
-}
-
-/// Non-terminal command effect state.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommandEffectNonTerminalState {
-    Requested,
-    PolicyInspection,
-    ApprovalRequired,
-    Accepted,
-    Queued,
-    Running,
-    CancellationRequested,
-    RecoveryRequired,
-}
-
-/// Terminal command effect state.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommandEffectTerminalState {
-    Rejected,
-    BlockedByPolicy,
-    Unsupported,
-    Succeeded,
-    Failed,
-    Cancelled,
-    TimedOut,
-}
-
-impl CommandEffectState {
-    /// Returns whether this state is terminal.
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Terminal(_))
-    }
-}
+/// Command effect states (shared core vocabulary re-exported under the
+/// command names).
+pub use nucleus_core::{
+    EffectNonTerminalState as CommandEffectNonTerminalState,
+    EffectState as CommandEffectState, EffectTerminalState as CommandEffectTerminalState,
+};
 
 #[cfg(test)]
 mod tests {

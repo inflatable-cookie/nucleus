@@ -15,42 +15,12 @@ pub struct AdapterEffectStateRecord {
     pub summary: Option<String>,
 }
 
-/// Adapter effect state.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AdapterEffectState {
-    NonTerminal(AdapterEffectNonTerminalState),
-    Terminal(AdapterEffectTerminalState),
-}
-
-/// Non-terminal adapter effect state.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AdapterEffectNonTerminalState {
-    Requested,
-    Accepted,
-    Queued,
-    Running,
-    CancellationRequested,
-    RecoveryRequired,
-}
-
-/// Terminal adapter effect state.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AdapterEffectTerminalState {
-    Rejected,
-    BlockedByPolicy,
-    Unsupported,
-    Succeeded,
-    Failed,
-    Cancelled,
-    TimedOut,
-}
-
-impl AdapterEffectState {
-    /// Returns whether this state is terminal.
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Terminal(_))
-    }
-}
+/// Adapter effect states (shared core vocabulary re-exported under the
+/// adapter names).
+pub use nucleus_core::{
+    EffectNonTerminalState as AdapterEffectNonTerminalState,
+    EffectState as AdapterEffectState, EffectTerminalState as AdapterEffectTerminalState,
+};
 
 #[cfg(test)]
 mod tests {

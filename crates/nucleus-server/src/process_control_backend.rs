@@ -7,9 +7,8 @@
 
 use crate::host_authority::EngineHostId;
 
-/// Stable process-control backend evidence ref.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct ProcessControlBackendEvidenceRef(pub String);
+/// Stable process-control backend evidence ref (shared core type).
+pub use nucleus_core::EvidenceRef as ProcessControlBackendEvidenceRef;
 
 /// Host process-control backend family.
 #[derive(Clone, Debug, Eq, PartialEq)]

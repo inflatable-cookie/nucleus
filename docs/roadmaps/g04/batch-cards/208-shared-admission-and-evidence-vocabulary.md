@@ -1,7 +1,7 @@
 # 208 Shared Admission And Evidence Vocabulary
 
-Status: planned
-Owner: Codex
+Status: completed
+Owner: Claude
 Updated: 2026-07-17
 Milestone: `../045-admission-vocabulary-consolidation.md`
 Auto-start next card: no
@@ -23,9 +23,20 @@ per-crate and per-feature copies.
 
 ## Acceptance
 
-- [ ] shared vocabulary exists with docs and tests
-- [ ] domain crates consume it; duplicate definitions deleted
-- [ ] no behavior change (pure type consolidation)
+- [x] shared vocabulary exists in `nucleus-core::effects`: `EvidenceRef`,
+  `AdmissionStatus`, `EffectState`/`EffectNonTerminalState`/
+  `EffectTerminalState` (union across domains)
+- [x] eleven `*EvidenceRef(pub String)` newtypes (command-policy, scm-forge,
+  native-harness x2, engine, server x5), two identical admission enums
+  (scm-forge, native-harness; `UnsupportedCapability` folded into
+  `Unsupported`), and the twin effect-state enum families are now `pub use`
+  renames of the core types; duplicates deleted
+- [x] no behavior change: pure type consolidation, none of the migrated
+  types were serialized; memory's two-variant admission enum left alone
+  (different shape, not a duplicate)
+- [x] `NoEffects` consolidation intentionally deferred to card 209: the ~100
+  server structs carry per-domain field names, so the shared shape belongs
+  to the gate framework, not a bare struct swap
 
 ## Validation
 

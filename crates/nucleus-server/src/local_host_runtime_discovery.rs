@@ -28,9 +28,8 @@ use crate::sandbox_backend::{
 };
 use crate::{ProcessInterruptionHostContract, ProcessSupervisorAcceptanceDecision};
 
-/// Stable evidence ref for local host runtime discovery.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct LocalHostRuntimeDiscoveryEvidenceRef(pub String);
+/// Stable evidence ref for local host runtime discovery (shared core type).
+pub use nucleus_core::EvidenceRef as LocalHostRuntimeDiscoveryEvidenceRef;
 
 /// Overall readiness status reported by local host runtime discovery.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -136,9 +136,8 @@ pub struct NativeApprovalRequest {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct NativeRuntimeReceiptRef(pub String);
 
-/// Sanitized evidence ref for a native tool action.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct NativeToolEvidenceRef(pub String);
+/// Sanitized evidence ref for a native tool action (shared core type).
+pub use nucleus_core::EvidenceRef as NativeToolEvidenceRef;
 
 fn contains_forbidden_raw_output_term(value: &str) -> bool {
     [

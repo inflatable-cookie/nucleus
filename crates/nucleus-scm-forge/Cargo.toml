@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+nucleus-core = { path = "../nucleus-core" }
 nucleus-command-policy = { path = "../nucleus-command-policy" }
 nucleus-projects = { path = "../nucleus-projects" }
 nucleus-tasks = { path = "../nucleus-tasks" }

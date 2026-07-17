@@ -30,12 +30,5 @@ impl NativeStewardCommandAdmission {
     }
 }
 
-/// Admission status for a steward command request.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum NativeStewardCommandAdmissionStatus {
-    Accepted,
-    RequiresApproval,
-    Rejected(String),
-    Blocked(String),
-    Unsupported,
-}
+/// Admission status for a steward command request (shared core vocabulary).
+pub use nucleus_core::AdmissionStatus as NativeStewardCommandAdmissionStatus;

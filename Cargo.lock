@@ -2264,6 +2264,7 @@ version = "0.0.0"
 name = "nucleus-command-policy"
 version = "0.0.0"
 dependencies = [
+ "nucleus-core",
  "serde",
  "serde_json",
 ]
@@ -2336,6 +2337,7 @@ name = "nucleus-native-harness"
 version = "0.0.0"
 dependencies = [
  "nucleus-agent-protocol",
+ "nucleus-core",
 ]
 
 [[package]]
@@ -2381,6 +2383,7 @@ name = "nucleus-scm-forge"
 version = "0.0.0"
 dependencies = [
  "nucleus-command-policy",
+ "nucleus-core",
  "nucleus-projects",
  "nucleus-tasks",
 ]
