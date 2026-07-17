@@ -1,3 +1,4 @@
+use crate::provider_no_effects::ProviderNoEffects;
 use super::{
     ProviderLiveReadPersistenceControlDto, ProviderLiveReadPersistenceDiagnostics,
     ProviderLiveReadPersistenceRecord, ProviderLiveReadPersistenceStatus,
@@ -43,14 +44,7 @@ pub fn provider_live_read_persistence_diagnostics_from_records(
             .iter()
             .map(|record| record.evidence_refs.len())
             .sum(),
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_write_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderNoEffects::none(),
     }
 }
 
@@ -70,14 +64,7 @@ pub fn provider_live_read_persistence_control_dto_from_diagnostics(
         blocked_request_count: diagnostics.blocked_request_count,
         blocker_count: diagnostics.blocker_count,
         evidence_ref_count: diagnostics.evidence_ref_count,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_write_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderNoEffects::none(),
     }
 }
 

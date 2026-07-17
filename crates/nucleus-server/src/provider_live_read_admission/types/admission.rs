@@ -1,3 +1,4 @@
+use crate::provider_no_effects::ProviderNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::{ForgeNetworkExecutionOperationFamily, ForgePullRequestProvider};
@@ -33,14 +34,8 @@ pub struct ProviderLiveReadAdmissionSet {
     pub records: Vec<ProviderLiveReadAdmissionRecord>,
     pub skipped_provider_context_refs: Vec<String>,
     pub fixture_preflight_permitted: bool,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_write_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -61,14 +56,8 @@ pub struct ProviderLiveReadAdmissionRecord {
     pub status: ProviderLiveReadAdmissionStatus,
     pub blockers: Vec<ProviderLiveReadAdmissionBlocker>,
     pub fixture_preflight_permitted: bool,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_write_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -84,14 +73,8 @@ pub struct ProviderLiveReadAdmissionControlDto {
     pub evidence_ref_count: usize,
     pub skipped_provider_context_count: usize,
     pub fixture_preflight_permitted: bool,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_write_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -1,3 +1,4 @@
+use crate::provider_no_effects::ProviderNoEffects;
 use super::{
     ProviderLiveReadPersistenceBlocker, ProviderLiveReadPersistenceInput,
     ProviderLiveReadPersistenceRecord, ProviderLiveReadPersistenceStatus,
@@ -50,13 +51,6 @@ pub(super) fn persistence_record(
         planned_request_recorded: request.planned_request_recorded,
         live_read_record_persisted: !duplicate
             && persistence_status == ProviderLiveReadPersistenceStatus::Persisted,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_write_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderNoEffects::none(),
     }
 }

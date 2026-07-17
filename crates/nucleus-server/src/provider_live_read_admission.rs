@@ -13,6 +13,7 @@ mod request_receipt_blockers;
 mod request_receipt_record_builder;
 mod types;
 
+use crate::provider_no_effects::ProviderNoEffects;
 use nucleus_local_store::{LocalStoreBackend, LocalStoreResult};
 
 pub use diagnostics::{
@@ -135,14 +136,7 @@ pub fn provider_live_read_admission(
             .iter()
             .any(|record| record.fixture_preflight_permitted),
         records,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_write_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderNoEffects::none(),
     }
 }
 
@@ -168,14 +162,7 @@ pub fn provider_live_read_admission_control_dto(
             .sum(),
         skipped_provider_context_count: set.skipped_provider_context_refs.len(),
         fixture_preflight_permitted: set.fixture_preflight_permitted,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_write_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderNoEffects::none(),
     }
 }
 
@@ -204,14 +191,7 @@ pub fn provider_live_read_preflight(
             .iter()
             .any(|preflight| preflight.fixture_request_planning_permitted),
         preflights,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_write_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderNoEffects::none(),
     }
 }
 
@@ -238,14 +218,7 @@ pub fn provider_live_read_request_receipt(
             .collect(),
         planned_request_recorded: records.iter().any(|record| record.planned_request_recorded),
         records,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_write_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderNoEffects::none(),
     }
 }
 
@@ -292,14 +265,7 @@ where
             input.request_receipts.request_receipt_set_id
         ),
         records,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_write_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderNoEffects::none(),
     })
 }
 

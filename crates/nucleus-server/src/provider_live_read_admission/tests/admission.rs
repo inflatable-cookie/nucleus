@@ -23,11 +23,11 @@ fn accepts_fixture_preflight_for_read_family() {
     );
     assert_eq!(record.target_refs, vec!["change-request:github:42"]);
     assert_eq!(record.evidence_refs.len(), 5);
-    assert!(!record.credential_resolution_performed);
-    assert!(!record.provider_network_call_performed);
-    assert!(!record.provider_write_executed);
-    assert!(!record.task_mutation_executed);
-    assert!(!record.raw_provider_payload_retained);
+    assert!(!record.no_effects.credential_resolution_performed);
+    assert!(!record.no_effects.provider_network_call_performed);
+    assert!(!record.no_effects.provider_write_executed);
+    assert!(!record.no_effects.task_mutation_executed);
+    assert!(!record.no_effects.raw_provider_payload_retained);
 }
 
 #[test]
@@ -74,8 +74,8 @@ fn rejects_mutating_operation_families_as_unsupported() {
     assert!(record
         .blockers
         .contains(&ProviderLiveReadAdmissionBlocker::MutatingOperationFamily));
-    assert!(!record.provider_write_executed);
-    assert!(!record.provider_network_call_performed);
+    assert!(!record.no_effects.provider_write_executed);
+    assert!(!record.no_effects.provider_network_call_performed);
 }
 
 #[test]
@@ -114,10 +114,10 @@ fn blocks_requested_live_effects_and_material() {
     assert!(record
         .blockers
         .contains(&ProviderLiveReadAdmissionBlocker::TaskMutationRequested));
-    assert!(!record.credential_resolution_performed);
-    assert!(!record.provider_network_call_performed);
-    assert!(!record.provider_write_executed);
-    assert!(!record.raw_provider_payload_retained);
+    assert!(!record.no_effects.credential_resolution_performed);
+    assert!(!record.no_effects.provider_network_call_performed);
+    assert!(!record.no_effects.provider_write_executed);
+    assert!(!record.no_effects.raw_provider_payload_retained);
 }
 
 #[test]
@@ -130,10 +130,10 @@ fn control_dto_serializes_sanitized_counts() {
     assert_eq!(dto.ready_count, 1);
     assert_eq!(dto.evidence_ref_count, 5);
     assert!(dto.fixture_preflight_permitted);
-    assert!(!dto.credential_resolution_performed);
-    assert!(!dto.provider_network_call_performed);
-    assert!(!dto.provider_write_executed);
-    assert!(!dto.raw_provider_payload_retained);
+    assert!(!dto.no_effects.credential_resolution_performed);
+    assert!(!dto.no_effects.provider_network_call_performed);
+    assert!(!dto.no_effects.provider_write_executed);
+    assert!(!dto.no_effects.raw_provider_payload_retained);
     assert!(!json.contains("access_token"));
     assert!(!json.contains("authorization"));
     assert!(!json.contains("provider_payload_bytes"));

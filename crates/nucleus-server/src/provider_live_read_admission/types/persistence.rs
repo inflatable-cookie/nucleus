@@ -1,3 +1,4 @@
+use crate::provider_no_effects::ProviderNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::ForgeNetworkExecutionOperationFamily;
@@ -28,14 +29,8 @@ pub struct ProviderLiveReadPersistenceInput {
 pub struct ProviderLiveReadPersistenceSet {
     pub persistence_set_id: String,
     pub records: Vec<ProviderLiveReadPersistenceRecord>,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_write_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -60,14 +55,8 @@ pub struct ProviderLiveReadPersistenceRecord {
     pub evidence_refs: Vec<String>,
     pub planned_request_recorded: bool,
     pub live_read_record_persisted: bool,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_write_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -83,14 +72,8 @@ pub struct ProviderLiveReadPersistenceDiagnostics {
     pub blocked_request_count: usize,
     pub blocker_count: usize,
     pub evidence_ref_count: usize,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_write_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -107,14 +90,8 @@ pub struct ProviderLiveReadPersistenceControlDto {
     pub blocked_request_count: usize,
     pub blocker_count: usize,
     pub evidence_ref_count: usize,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_write_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderNoEffects,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

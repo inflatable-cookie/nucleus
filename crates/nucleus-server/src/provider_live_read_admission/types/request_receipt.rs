@@ -1,3 +1,4 @@
+use crate::provider_no_effects::ProviderNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::ForgeNetworkExecutionOperationFamily;
@@ -29,14 +30,8 @@ pub struct ProviderLiveReadRequestReceiptSet {
     pub records: Vec<ProviderLiveReadRequestReceiptRecord>,
     pub skipped_preflight_ids: Vec<String>,
     pub planned_request_recorded: bool,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_write_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -56,14 +51,8 @@ pub struct ProviderLiveReadRequestReceiptRecord {
     pub blockers: Vec<ProviderLiveReadRequestReceiptBlocker>,
     pub duplicate_request_detected: bool,
     pub planned_request_recorded: bool,
-    pub credential_resolution_performed: bool,
-    pub provider_network_call_performed: bool,
-    pub provider_write_executed: bool,
-    pub callback_effect_executed: bool,
-    pub interruption_effect_executed: bool,
-    pub recovery_effect_executed: bool,
-    pub task_mutation_executed: bool,
-    pub raw_provider_payload_retained: bool,
+    #[serde(flatten)]
+    pub no_effects: ProviderNoEffects,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

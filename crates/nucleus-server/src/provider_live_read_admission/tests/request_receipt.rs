@@ -21,9 +21,9 @@ fn records_planned_request_without_execution() {
         Some("provider-live-read-receipt:github:pull-request".to_owned())
     );
     assert_eq!(record.evidence_refs.len(), 11);
-    assert!(!record.provider_network_call_performed);
-    assert!(!record.provider_write_executed);
-    assert!(!record.raw_provider_payload_retained);
+    assert!(!record.no_effects.provider_network_call_performed);
+    assert!(!record.no_effects.provider_write_executed);
+    assert!(!record.no_effects.raw_provider_payload_retained);
 }
 
 #[test]
@@ -65,8 +65,8 @@ fn blocks_non_ready_preflight_and_effects() {
     assert!(record
         .blockers
         .contains(&ProviderLiveReadRequestReceiptBlocker::TaskMutationRequested));
-    assert!(!record.provider_network_call_performed);
-    assert!(!record.task_mutation_executed);
+    assert!(!record.no_effects.provider_network_call_performed);
+    assert!(!record.no_effects.task_mutation_executed);
 }
 
 #[test]

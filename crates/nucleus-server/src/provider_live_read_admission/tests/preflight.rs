@@ -17,11 +17,11 @@ fn accepts_ready_admission() {
         Some("endpoint:github:pull-request-read".to_owned())
     );
     assert_eq!(preflight.evidence_refs.len(), 8);
-    assert!(!preflight.credential_resolution_performed);
-    assert!(!preflight.provider_network_call_performed);
-    assert!(!preflight.provider_write_executed);
-    assert!(!preflight.task_mutation_executed);
-    assert!(!preflight.raw_provider_payload_retained);
+    assert!(!preflight.no_effects.credential_resolution_performed);
+    assert!(!preflight.no_effects.provider_network_call_performed);
+    assert!(!preflight.no_effects.provider_write_executed);
+    assert!(!preflight.no_effects.task_mutation_executed);
+    assert!(!preflight.no_effects.raw_provider_payload_retained);
 }
 
 #[test]
@@ -38,7 +38,7 @@ fn blocks_non_ready_admission() {
     assert!(preflight
         .blockers
         .contains(&ProviderLiveReadPreflightBlocker::AdmissionNotReady));
-    assert!(!preflight.provider_network_call_performed);
+    assert!(!preflight.no_effects.provider_network_call_performed);
 }
 
 #[test]
@@ -83,6 +83,6 @@ fn blocks_effect_requests() {
     assert!(preflight
         .blockers
         .contains(&ProviderLiveReadPreflightBlocker::CredentialMaterialPresent));
-    assert!(!preflight.provider_network_call_performed);
-    assert!(!preflight.provider_write_executed);
+    assert!(!preflight.no_effects.provider_network_call_performed);
+    assert!(!preflight.no_effects.provider_write_executed);
 }

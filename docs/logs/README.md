@@ -40,3 +40,4 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-17-ci-and-validation-runway.md`
 - `2026-07-17-persistence-correctness-hardening.md`
 - `2026-07-17-shared-admission-vocabulary.md`
+- `2026-07-17-provider-no-effects-pilot.md`

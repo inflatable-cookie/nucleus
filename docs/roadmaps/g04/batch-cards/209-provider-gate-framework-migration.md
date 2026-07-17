@@ -1,7 +1,7 @@
 # 209 Provider Gate Framework Migration
 
-Status: planned
-Owner: Codex
+Status: in progress
+Owner: Claude
 Updated: 2026-07-17
 Milestone: `../045-admission-vocabulary-consolidation.md`
 Auto-start next card: no
@@ -23,8 +23,15 @@ framework.
 
 ## Acceptance
 
-- [ ] at least the `provider_live_read_admission` family migrated end to end
-- [ ] each migrated gate is one file plus data
+- [x] shared `ProviderNoEffects` (serde-flattened, wire-identical) landed;
+  all standard 8-boolean blocks in the `provider_live_read_admission`
+  family converted (struct decls, constructors, 38 access sites,
+  compiler-driven)
+- [ ] execution/ subtree variant blocks (different field sets) and the
+  remaining ~95 files across other provider families — next batches;
+  `executed: false` count 1538 -> 1483 so far
+- [ ] each migrated gate is one file plus data (needs the
+  AdmissionRecord/blocker framework beyond NoEffects)
 - [ ] server top-level module count reduced and recorded
 
 ## Validation

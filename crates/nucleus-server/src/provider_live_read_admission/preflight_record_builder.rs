@@ -1,3 +1,4 @@
+use crate::provider_no_effects::ProviderNoEffects;
 use super::preflight_blockers::{blockers, status};
 use super::types::{
     ProviderLiveReadAdmissionRecord, ProviderLiveReadPreflightInput,
@@ -34,14 +35,7 @@ pub(super) fn preflight_record(
             == ProviderLiveReadPreflightStatus::ReadyForRequestReceiptPlanning,
         status,
         blockers,
-        credential_resolution_performed: false,
-        provider_network_call_performed: false,
-        provider_write_executed: false,
-        callback_effect_executed: false,
-        interruption_effect_executed: false,
-        recovery_effect_executed: false,
-        task_mutation_executed: false,
-        raw_provider_payload_retained: false,
+        no_effects: ProviderNoEffects::none(),
     }
 }
 

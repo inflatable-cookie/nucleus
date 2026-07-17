@@ -27,10 +27,10 @@ fn round_trips_sanitized_planned_record() {
         ProviderLiveReadRequestReceiptStatus::PlannedRequestRecorded
     );
     assert_eq!(records[0].evidence_refs.len(), 12);
-    assert!(!records[0].credential_resolution_performed);
-    assert!(!records[0].provider_network_call_performed);
-    assert!(!records[0].provider_write_executed);
-    assert!(!records[0].raw_provider_payload_retained);
+    assert!(!records[0].no_effects.credential_resolution_performed);
+    assert!(!records[0].no_effects.provider_network_call_performed);
+    assert!(!records[0].no_effects.provider_write_executed);
+    assert!(!records[0].no_effects.raw_provider_payload_retained);
 }
 
 #[test]
@@ -115,9 +115,9 @@ fn blocks_raw_payloads_and_provider_effects() {
     assert!(record
         .persistence_blockers
         .contains(&ProviderLiveReadPersistenceBlocker::TaskMutationRequested));
-    assert!(!record.provider_network_call_performed);
-    assert!(!record.provider_write_executed);
-    assert!(!record.task_mutation_executed);
+    assert!(!record.no_effects.provider_network_call_performed);
+    assert!(!record.no_effects.provider_write_executed);
+    assert!(!record.no_effects.task_mutation_executed);
 }
 
 #[test]
@@ -149,9 +149,9 @@ fn diagnostics_serialize_sanitized_counts() {
     assert_eq!(diagnostics.planned_request_count, 2);
     assert_eq!(dto.live_read_count, 2);
     assert_eq!(dto.evidence_ref_count, 24);
-    assert!(!dto.credential_resolution_performed);
-    assert!(!dto.provider_network_call_performed);
-    assert!(!dto.provider_write_executed);
+    assert!(!dto.no_effects.credential_resolution_performed);
+    assert!(!dto.no_effects.provider_network_call_performed);
+    assert!(!dto.no_effects.provider_write_executed);
     assert!(!json.contains("access_token"));
     assert!(!json.contains("authorization"));
     assert!(!json.contains("provider_payload_bytes"));
