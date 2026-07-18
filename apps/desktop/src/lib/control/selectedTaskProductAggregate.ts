@@ -1,3 +1,4 @@
+import { parseSingleRecordResponse, type QueryFallback } from "./singleRecordResponse";
 import {
   buildControlQueryEnvelope,
   type ControlRequestEnvelopeDto,
@@ -139,12 +140,6 @@ export type SelectedTaskProductAggregateQueryResult =
     }
   | QueryFallback;
 
-type QueryFallback =
-  | { state: "empty" }
-  | { state: "unsupported"; reason: string }
-  | { state: "error"; kind: string; reason: string }
-  | { state: "unexpected"; reason: string };
-
 export function buildSelectedTaskProductAggregateQuery(
   projectId: string,
   taskId: string,
@@ -164,26 +159,8 @@ export function buildSelectedTaskProductAggregateQuery(
 export function selectedTaskProductAggregateFromResponse(
   response: ControlResponseEnvelopeDto,
 ): SelectedTaskProductAggregateQueryResult {
-  switch (response.body.type) {
-    case "selected_task_product_aggregate":
-      return {
-        state: "record",
-        aggregate: response.body.aggregate,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected selected task product aggregate response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "selected_task_product_aggregate", "selected task product aggregate", (body) => ({
+    state: "record" as const,
+    aggregate: body.aggregate,
+  }));
 }

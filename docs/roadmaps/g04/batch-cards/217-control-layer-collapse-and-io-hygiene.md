@@ -1,8 +1,8 @@
 # 217 Control Layer Collapse And IO Hygiene
 
-Status: planned
-Owner: Codex
-Updated: 2026-07-17
+Status: completed
+Owner: Claude
+Updated: 2026-07-18
 Milestone: `../047-desktop-contract-integrity.md`
 Auto-start next card: no
 
@@ -23,9 +23,18 @@ thread.
 
 ## Acceptance
 
-- [ ] control-layer duplication removed (~400 lines)
-- [ ] no SQLite or directory-walk IO on the main thread
-- [ ] file open/save no longer O(repo)
+- [x] control-layer duplication removed: shared `QueryFallback` +
+  `parseSingleRecordResponse` replace eleven local fallback declarations
+  and ten cloned switch ladders
+- [x] no SQLite or directory-walk IO on the main thread:
+  `submit_control_envelope`, editor list/read/save, diff overview/patch,
+  review decisions, and `terminal_open_or_attach` are async +
+  `spawn_blocking`
+- [x] file open/save no longer O(repo): text probe reads an 8KB prefix
+  instead of whole files, and a short-TTL discovery cache stops every
+  open/save re-walking and re-probing the project
+- [x] AgentChatPanel module caches bounded to 32 conversations (LRU-ish
+  eviction)
 
 ## Validation
 

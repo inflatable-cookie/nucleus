@@ -1,3 +1,4 @@
+import { parseSingleRecordResponse, type QueryFallback } from "./singleRecordResponse";
 import type { ControlResponseEnvelopeDto } from "./envelopes";
 import type { ControlSelectedTaskCommandAdmissionDto } from "./taskWorkflow";
 import type { ControlSelectedTaskReviewOutcomeRouteNoEffectsDto } from "./selectedTaskReviewOutcomeRoute";
@@ -54,12 +55,6 @@ export type ControlSelectedTaskRouteAdmissionDto = {
   no_effects: ControlSelectedTaskReviewOutcomeRouteNoEffectsDto;
 };
 
-type QueryFallback =
-  | { state: "empty" }
-  | { state: "unsupported"; reason: string }
-  | { state: "error"; kind: string; reason: string }
-  | { state: "unexpected"; reason: string };
-
 export type SelectedTaskRouteAdmissionQueryResult =
   | {
       state: "record";
@@ -70,26 +65,8 @@ export type SelectedTaskRouteAdmissionQueryResult =
 export function selectedTaskRouteAdmissionFromResponse(
   response: ControlResponseEnvelopeDto,
 ): SelectedTaskRouteAdmissionQueryResult {
-  switch (response.body.type) {
-    case "selected_task_route_admission":
-      return {
-        state: "record",
-        admission: response.body.admission,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected selected task route admission response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "selected_task_route_admission", "selected task route admission", (body) => ({
+    state: "record" as const,
+    admission: body.admission,
+  }));
 }

@@ -1,3 +1,4 @@
+import { parseSingleRecordResponse, type QueryFallback } from "./singleRecordResponse";
 import type { ControlResponseEnvelopeDto } from "./envelopes";
 import type { ControlTaskWorkflowNoEffectsDto } from "./taskWorkflow";
 
@@ -62,12 +63,6 @@ export type ControlSelectedTaskReviewNextDto = {
   no_effects: ControlSelectedTaskReviewNextNoEffectsDto;
 };
 
-type QueryFallback =
-  | { state: "empty" }
-  | { state: "unsupported"; reason: string }
-  | { state: "error"; kind: string; reason: string }
-  | { state: "unexpected"; reason: string };
-
 export type SelectedTaskReviewNextQueryResult =
   | {
       state: "record";
@@ -78,26 +73,8 @@ export type SelectedTaskReviewNextQueryResult =
 export function selectedTaskReviewNextFromResponse(
   response: ControlResponseEnvelopeDto,
 ): SelectedTaskReviewNextQueryResult {
-  switch (response.body.type) {
-    case "selected_task_review_next":
-      return {
-        state: "record",
-        reviewNext: response.body.review_next,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected selected task review next response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "selected_task_review_next", "selected task review next", (body) => ({
+    state: "record" as const,
+    reviewNext: body.review_next,
+  }));
 }

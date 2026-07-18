@@ -1,3 +1,4 @@
+import { parseSingleRecordResponse, type QueryFallback } from "./singleRecordResponse";
 import type { ControlResponseEnvelopeDto } from "./envelopes";
 
 export type ControlSelectedTaskScmHandoffSummaryDto = {
@@ -80,12 +81,6 @@ export type ControlSelectedTaskScmHandoffDto = {
   no_effects: ControlSelectedTaskScmHandoffNoEffectsDto;
 };
 
-type QueryFallback =
-  | { state: "empty" }
-  | { state: "unsupported"; reason: string }
-  | { state: "error"; kind: string; reason: string }
-  | { state: "unexpected"; reason: string };
-
 export type SelectedTaskScmHandoffQueryResult =
   | {
       state: "record";
@@ -96,26 +91,8 @@ export type SelectedTaskScmHandoffQueryResult =
 export function selectedTaskScmHandoffFromResponse(
   response: ControlResponseEnvelopeDto,
 ): SelectedTaskScmHandoffQueryResult {
-  switch (response.body.type) {
-    case "selected_task_scm_handoff":
-      return {
-        state: "record",
-        handoff: response.body.handoff,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected selected task SCM handoff response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "selected_task_scm_handoff", "selected task SCM handoff", (body) => ({
+    state: "record" as const,
+    handoff: body.handoff,
+  }));
 }

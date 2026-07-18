@@ -1,3 +1,4 @@
+import { parseSingleRecordResponse, type QueryFallback } from "./singleRecordResponse";
 import type { ControlResponseEnvelopeDto } from "./envelopes";
 import type {
   ControlSelectedTaskCommandAdmissionCommandDto,
@@ -26,12 +27,6 @@ export type ControlSelectedTaskCompletionRouteApplyDto = {
   no_effects: ControlSelectedTaskReviewOutcomeRouteNoEffectsDto;
 };
 
-type QueryFallback =
-  | { state: "empty" }
-  | { state: "unsupported"; reason: string }
-  | { state: "error"; kind: string; reason: string }
-  | { state: "unexpected"; reason: string };
-
 export type SelectedTaskCompletionRouteApplyQueryResult =
   | {
       state: "record";
@@ -42,26 +37,8 @@ export type SelectedTaskCompletionRouteApplyQueryResult =
 export function selectedTaskCompletionRouteApplyFromResponse(
   response: ControlResponseEnvelopeDto,
 ): SelectedTaskCompletionRouteApplyQueryResult {
-  switch (response.body.type) {
-    case "selected_task_completion_route_apply":
-      return {
-        state: "record",
-        apply: response.body.apply,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected selected task completion route apply response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "selected_task_completion_route_apply", "selected task completion route apply", (body) => ({
+    state: "record" as const,
+    apply: body.apply,
+  }));
 }

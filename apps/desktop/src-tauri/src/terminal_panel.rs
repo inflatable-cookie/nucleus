@@ -9,7 +9,7 @@ use nucleus_server::{
 use crate::DesktopState;
 
 #[tauri::command]
-pub fn terminal_open_or_attach(
+pub async fn terminal_open_or_attach(
     state: tauri::State<'_, DesktopState>,
     request: TerminalOpenRequest,
     on_event: Channel<TerminalEvent>,
@@ -17,9 +17,13 @@ pub fn terminal_open_or_attach(
     let sink: TerminalEventSink = Arc::new(move |event| {
         let _ = on_event.send(event);
     });
-    state
-        .terminal
-        .open_or_attach(&state.server_state, request, sink)
+    let terminal = state.terminal.clone();
+    let server_state = state.server_state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        terminal.open_or_attach(&server_state, request, sink)
+    })
+    .await
+    .map_err(|_| "desktop terminal worker failed".to_owned())?
 }
 
 #[tauri::command]

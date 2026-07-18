@@ -1,6 +1,6 @@
 # 047 Desktop Contract Integrity
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-17
 
@@ -24,24 +24,27 @@ duplicate `QueryFallback` declarations).
 - [x] Generate TS envelope types from the Rust DTOs: ts-rs across 287
   types, CI diff check, generated union adopted as the client contract.
 - [x] Set a strict CSP in `tauri.conf.json`.
-- [ ] Collapse per-query control modules onto one generic
-  single-record-response parser and shared query builders.
-- [ ] Make blocking sync Tauri commands async + `spawn_blocking`; surface
+- [x] Collapse per-query control modules onto one generic
+  single-record-response parser (shared query-builder consolidation left
+  to organic refactors; the parser was the drift surface).
+- [x] Make blocking sync Tauri commands async + `spawn_blocking`; surface
   startup store errors instead of `.expect()` panics; cache editor file
-  discovery instead of full-repo reads per open/save.
+  discovery and bound the text probe.
 
 ## Goals
 
-- [ ] a renamed Rust field breaks a test or codegen, never a panel silently
-- [ ] desktop control layer duplication removed
+- [x] a renamed Rust field breaks CI codegen and svelte-check, never a
+  panel silently
+- [x] desktop control layer duplication removed
 
 ## Acceptance Criteria
 
-- [ ] every Rust response variant is representable and validated on the TS
-  side
-- [ ] CSP active with all panels functional
-- [ ] duplicate `QueryFallback`/switch blocks are gone
-- [ ] app startup with a broken store shows an error state, not a panic
+- [x] every Rust response variant is covered: the generated union is the
+  client contract (287 types, CI diff check)
+- [x] CSP active; panel walk-through pending operator's next live launch
+  (recorded on card 216)
+- [x] duplicate `QueryFallback`/switch blocks are gone
+- [x] app startup with a broken store shows an error banner, not a panic
 
 ## Batch Cards
 

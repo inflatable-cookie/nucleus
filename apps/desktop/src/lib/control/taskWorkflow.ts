@@ -1,3 +1,4 @@
+import { parseSingleRecordResponse, type QueryFallback } from "./singleRecordResponse";
 import type { ControlResponseEnvelopeDto } from "./envelopes";
 
 export type ControlTaskWorkflowTaskDto = {
@@ -246,116 +247,38 @@ export type SelectedTaskCommandAdmissionQueryResult =
     }
   | QueryFallback;
 
-type QueryFallback =
-  | { state: "empty" }
-  | { state: "unsupported"; reason: string }
-  | { state: "error"; kind: string; reason: string }
-  | { state: "unexpected"; reason: string };
-
 export function taskWorkflowDrilldownFromResponse(
   response: ControlResponseEnvelopeDto,
 ): TaskWorkflowDrilldownQueryResult {
-  switch (response.body.type) {
-    case "task_workflow_drilldown":
-      return {
-        state: "record",
-        drilldown: response.body.drilldown,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected task workflow drilldown response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "task_workflow_drilldown", "task workflow drilldown", (body) => ({
+    state: "record" as const,
+    drilldown: body.drilldown,
+  }));
 }
 
 export function selectedTaskActionReadinessFromResponse(
   response: ControlResponseEnvelopeDto,
 ): SelectedTaskActionReadinessQueryResult {
-  switch (response.body.type) {
-    case "selected_task_action_readiness":
-      return {
-        state: "record",
-        readiness: response.body.readiness,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected selected task action readiness response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "selected_task_action_readiness", "selected task action readiness", (body) => ({
+    state: "record" as const,
+    readiness: body.readiness,
+  }));
 }
 
 export function selectedTaskOperatorActionGateFromResponse(
   response: ControlResponseEnvelopeDto,
 ): SelectedTaskOperatorActionGateQueryResult {
-  switch (response.body.type) {
-    case "selected_task_operator_action_gate":
-      return {
-        state: "record",
-        gate: response.body.gate,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected selected task operator action gate response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "selected_task_operator_action_gate", "selected task operator action gate", (body) => ({
+    state: "record" as const,
+    gate: body.gate,
+  }));
 }
 
 export function selectedTaskCommandAdmissionFromResponse(
   response: ControlResponseEnvelopeDto,
 ): SelectedTaskCommandAdmissionQueryResult {
-  switch (response.body.type) {
-    case "selected_task_command_admission":
-      return {
-        state: "record",
-        admission: response.body.admission,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected selected task command admission response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "selected_task_command_admission", "selected task command admission", (body) => ({
+    state: "record" as const,
+    admission: body.admission,
+  }));
 }

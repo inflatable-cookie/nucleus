@@ -53,3 +53,4 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-18-engine-boundary-migration-closeout.md`
 - `2026-07-18-rust-ts-typegen.md`
 - `2026-07-18-csp-and-startup-resilience.md`
+- `2026-07-18-audit-hardening-band-closeout.md`

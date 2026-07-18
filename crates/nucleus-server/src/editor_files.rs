@@ -157,10 +157,38 @@ fn discover(root: &Path) -> Result<Vec<EditorFileEntry>, String> {
 }
 
 fn resolve_entry(root: &Path, expected_ref: &str) -> Result<EditorFileEntry, String> {
-    discover(root)?
+    cached_discover(root)?
         .into_iter()
         .find(|entry| entry.file_ref == expected_ref)
         .ok_or_else(|| "editor file ref was not found in the admitted project files".to_owned())
+}
+
+/// Short-lived discovery cache: every open and save used to re-walk and
+/// re-probe the whole project. Entries expire quickly so external file
+/// changes still appear; saves go through `snapshot` re-reads regardless.
+fn cached_discover(root: &Path) -> Result<Vec<EditorFileEntry>, String> {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    const DISCOVERY_TTL: Duration = Duration::from_secs(2);
+    static CACHE: Mutex<Option<HashMap<PathBuf, (Instant, Vec<EditorFileEntry>)>>> =
+        Mutex::new(None);
+
+    let key = root.to_path_buf();
+    let mut guard = CACHE
+        .lock()
+        .map_err(|_| "editor discovery cache lock poisoned".to_owned())?;
+    let cache = guard.get_or_insert_with(HashMap::new);
+    if let Some((at, entries)) = cache.get(&key) {
+        if at.elapsed() < DISCOVERY_TTL {
+            return Ok(entries.clone());
+        }
+    }
+    let entries = discover(root)?;
+    cache.insert(key, (Instant::now(), entries.clone()));
+    Ok(entries)
 }
 
 fn snapshot(
@@ -189,9 +217,35 @@ fn snapshot(
     })
 }
 
+/// Probe text-ness from a bounded prefix instead of reading whole files:
+/// discovery runs this for every candidate, so full reads made listing
+/// O(total repo bytes).
 fn is_text_file(path: &Path) -> Result<bool, String> {
-    let bytes = fs::read(path).map_err(|error| format!("editor file probe failed: {error}"))?;
-    Ok(!bytes.contains(&0) && std::str::from_utf8(&bytes).is_ok())
+    use std::io::Read;
+    const PROBE_BYTES: usize = 8 * 1024;
+    let mut file =
+        fs::File::open(path).map_err(|error| format!("editor file probe failed: {error}"))?;
+    let mut buffer = vec![0_u8; PROBE_BYTES];
+    let mut filled = 0;
+    while filled < PROBE_BYTES {
+        let read = file
+            .read(&mut buffer[filled..])
+            .map_err(|error| format!("editor file probe failed: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        filled += read;
+    }
+    let probe = &buffer[..filled];
+    if probe.contains(&0) {
+        return Ok(false);
+    }
+    // A multi-byte UTF-8 sequence may be cut at the probe boundary; only the
+    // final three bytes can be a legitimate partial sequence.
+    match std::str::from_utf8(probe) {
+        Ok(_) => Ok(true),
+        Err(error) => Ok(filled == PROBE_BYTES && probe.len() - error.valid_up_to() < 4),
+    }
 }
 
 fn file_ref(display_path: &str) -> String {

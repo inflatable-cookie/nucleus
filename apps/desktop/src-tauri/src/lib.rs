@@ -103,35 +103,50 @@ fn seed_fixture_state(
 }
 
 #[tauri::command]
-fn list_editor_files(
+async fn list_editor_files(
     state: tauri::State<'_, DesktopState>,
     project_id: String,
     resource_id: Option<String>,
 ) -> Result<Vec<EditorFileEntry>, String> {
-    nucleus_server::list_editor_files(&state.server_state, &project_id, resource_id.as_deref())
+    let server_state = state.server_state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        nucleus_server::list_editor_files(&server_state, &project_id, resource_id.as_deref())
+    })
+    .await
+    .map_err(|_| "desktop editor worker failed".to_owned())?
 }
 
 #[tauri::command]
-fn read_editor_file(
+async fn read_editor_file(
     state: tauri::State<'_, DesktopState>,
     project_id: String,
     resource_id: Option<String>,
     file_ref: String,
 ) -> Result<EditorFileSnapshot, String> {
-    nucleus_server::read_editor_file(
-        &state.server_state,
-        &project_id,
-        resource_id.as_deref(),
-        &file_ref,
-    )
+    let server_state = state.server_state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        nucleus_server::read_editor_file(
+            &server_state,
+            &project_id,
+            resource_id.as_deref(),
+            &file_ref,
+        )
+    })
+    .await
+    .map_err(|_| "desktop editor worker failed".to_owned())?
 }
 
 #[tauri::command]
-fn save_editor_file(
+async fn save_editor_file(
     state: tauri::State<'_, DesktopState>,
     request: EditorFileSaveRequest,
 ) -> Result<EditorFileSnapshot, String> {
-    nucleus_server::save_editor_file(&state.server_state, &request)
+    let server_state = state.server_state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        nucleus_server::save_editor_file(&server_state, &request)
+    })
+    .await
+    .map_err(|_| "desktop editor worker failed".to_owned())?
 }
 
 impl DesktopState {
@@ -184,33 +199,45 @@ impl DesktopState {
 }
 
 #[tauri::command]
-fn read_task_diff_overview(
+async fn read_task_diff_overview(
     state: tauri::State<'_, DesktopState>,
     request: TaskDiffOverviewRequest,
 ) -> Result<TaskDiffOverviewResponse, String> {
-    nucleus_server::read_task_diff_overview(&state.server_state, &request)
+    let server_state = state.server_state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        nucleus_server::read_task_diff_overview(&server_state, &request)
+    })
+    .await
+    .map_err(|_| "desktop diff worker failed".to_owned())?
 }
 
 #[tauri::command]
-fn read_task_diff_file_patch(
+async fn read_task_diff_file_patch(
     state: tauri::State<'_, DesktopState>,
     request: TaskDiffFilePatchRequest,
 ) -> Result<TaskDiffFilePatchResponse, String> {
     let store = state
         .task_review_snapshot_store
-        .as_ref()
+        .clone()
         .ok_or_else(|| "task review snapshot backend is not configured".to_owned())?;
-    nucleus_server::read_task_diff_file_patch(&state.server_state, store, &request)
+    let server_state = state.server_state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        nucleus_server::read_task_diff_file_patch(&server_state, &store, &request)
+    })
+    .await
+    .map_err(|_| "desktop diff worker failed".to_owned())?
 }
 
 #[tauri::command]
-fn read_task_review_decisions(
+async fn read_task_review_decisions(
     state: tauri::State<'_, DesktopState>,
     project_id: String,
     task_id: String,
 ) -> Result<Vec<ControlSelectedTaskReviewDecisionRecordDto>, String> {
+    let server_state = state.server_state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
     nucleus_server::selected_task_review_decision_records::read_selected_task_review_decisions(
-        &state.server_state,
+        &server_state,
     )
     .map_err(|error| format!("task review decision read failed: {error:?}"))
     .map(|records| {
@@ -220,6 +247,9 @@ fn read_task_review_decisions(
             .map(ControlSelectedTaskReviewDecisionRecordDto::from)
             .collect()
     })
+    })
+    .await
+    .map_err(|_| "desktop review worker failed".to_owned())?
 }
 
 #[tauri::command]
@@ -503,11 +533,25 @@ fn seed_local_provider_readiness_evidence(
 }
 
 #[tauri::command]
-fn submit_control_envelope(
+async fn submit_control_envelope(
     state: tauri::State<'_, DesktopState>,
     request: ControlRequestEnvelopeDto,
 ) -> Result<ControlResponseEnvelopeDto, ControlApiCodecError> {
-    state.submit_control_envelope(request)
+    // Storage IO runs off the main thread; the adapter mutex no longer
+    // serializes panel queries through the UI thread.
+    let adapter = state.adapter.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut adapter = adapter.lock().map_err(|_| ControlApiCodecError {
+            failure: nucleus_server::ControlApiCodecFailure::ServerErrorPayload,
+            reason: "desktop command adapter lock is poisoned".to_owned(),
+        })?;
+        adapter.submit_control_envelope(request)
+    })
+    .await
+    .map_err(|_| ControlApiCodecError {
+        failure: nucleus_server::ControlApiCodecFailure::ServerErrorPayload,
+        reason: "desktop command worker failed".to_owned(),
+    })?
 }
 
 #[tauri::command]

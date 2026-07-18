@@ -1,3 +1,4 @@
+import { parseSingleRecordResponse, type QueryFallback } from "./singleRecordResponse";
 import type { ControlResponseEnvelopeDto } from "./envelopes";
 import type { ControlTaskWorkflowNoEffectsDto } from "./taskWorkflow";
 import { invoke } from "@tauri-apps/api/core";
@@ -77,12 +78,6 @@ export type ControlSelectedTaskReviewDecisionRecordDto = {
   raw_command_output_retained: boolean;
 };
 
-type QueryFallback =
-  | { state: "empty" }
-  | { state: "unsupported"; reason: string }
-  | { state: "error"; kind: string; reason: string }
-  | { state: "unexpected"; reason: string };
-
 export type SelectedTaskReviewDecisionAdmissionQueryResult =
   | {
       state: "record";
@@ -110,53 +105,17 @@ export function readTaskReviewDecisions(
 export function selectedTaskReviewDecisionAdmissionFromResponse(
   response: ControlResponseEnvelopeDto,
 ): SelectedTaskReviewDecisionAdmissionQueryResult {
-  switch (response.body.type) {
-    case "selected_task_review_decision_admission":
-      return {
-        state: "record",
-        admission: response.body.admission,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected selected task review decision admission response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "selected_task_review_decision_admission", "selected task review decision admission", (body) => ({
+    state: "record" as const,
+    admission: body.admission,
+  }));
 }
 
 export function selectedTaskReviewDecisionApplyFromResponse(
   response: ControlResponseEnvelopeDto,
 ): SelectedTaskReviewDecisionApplyQueryResult {
-  switch (response.body.type) {
-    case "selected_task_review_decision_apply":
-      return {
-        state: "record",
-        record: response.body.record,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected selected task review decision apply response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "selected_task_review_decision_apply", "selected task review decision apply", (body) => ({
+    state: "record" as const,
+    record: body.record,
+  }));
 }

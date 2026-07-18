@@ -9,10 +9,23 @@
     workflowReceipts: import("./control/agentChat").TaskWorkflowReceipt[];
   };
 
+  // Module-level so conversation state survives panel remounts; bounded so
+  // long sessions do not accumulate every conversation ever opened.
+  const RETAINED_CONVERSATION_LIMIT = 32;
   const retainedMessages = new Map<string, ChatMessage[]>();
   const retainedModels = new Map<string, string>();
   const retainedReasoningEfforts = new Map<string, string>();
   const retainedPendingConversations = new Set<string>();
+
+  function retain<Value>(cache: Map<string, Value>, key: string, value: Value) {
+    cache.delete(key);
+    cache.set(key, value);
+    while (cache.size > RETAINED_CONVERSATION_LIMIT) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+  }
   let retainedModelCatalog: AgentChatModelOption[] | null = null;
   let modelCatalogRequest: Promise<AgentChatModelOption[]> | null = null;
 
@@ -121,14 +134,14 @@
         taskReceipts: message.task_receipts,
         workflowReceipts: message.workflow_receipts,
       }));
-      retainedMessages.set(nextConversationId, messages);
+      retain(retainedMessages, nextConversationId, messages);
       model = history.model ?? model;
       reasoningEffort = history.reasoning_effort ?? reasoningEffort;
       if (history.model) {
-        retainedModels.set(nextConversationId, history.model);
+        retain(retainedModels, nextConversationId, history.model);
       }
       if (history.reasoning_effort) {
-        retainedReasoningEfforts.set(nextConversationId, history.reasoning_effort);
+        retain(retainedReasoningEfforts, nextConversationId, history.reasoning_effort);
       }
       await scrollToLatest();
     } catch (caught) {
@@ -177,10 +190,10 @@
         reasoning_effort: reasoningEffort,
       });
       model = reply.model;
-      retainedModels.set(conversationId, reply.model);
+      retain(retainedModels, conversationId, reply.model);
       reasoningEffort = reply.reasoning_effort ?? reasoningEffort;
       if (reply.reasoning_effort) {
-        retainedReasoningEfforts.set(conversationId, reply.reasoning_effort);
+        retain(retainedReasoningEfforts, conversationId, reply.reasoning_effort);
       }
       appendMessage({
         id: reply.turn_id,
@@ -196,7 +209,7 @@
       }
     } catch (caught) {
       messages = messages.filter((message) => message.id !== optimisticMessageId);
-      retainedMessages.set(conversationId, messages);
+      retain(retainedMessages, conversationId, messages);
       failure = caught instanceof Error ? caught.message : String(caught);
     } finally {
       retainedPendingConversations.delete(conversationId);
@@ -207,7 +220,7 @@
 
   function appendMessage(message: ChatMessage): void {
     messages = [...messages, message];
-    retainedMessages.set(conversationId, messages);
+    retain(retainedMessages, conversationId, messages);
     void scrollToLatest();
   }
 
@@ -289,8 +302,8 @@
         if (fallback) {
           model = fallback.model;
           reasoningEffort = fallback.default_reasoning_effort;
-          retainedModels.set(conversationId, model);
-          retainedReasoningEfforts.set(conversationId, reasoningEffort);
+          retain(retainedModels, conversationId, model);
+          retain(retainedReasoningEfforts, conversationId, reasoningEffort);
         }
       }
     } catch {
@@ -300,7 +313,7 @@
 
   function selectModel(nextModel: string): void {
     model = nextModel;
-    retainedModels.set(conversationId, model);
+    retain(retainedModels, conversationId, model);
     const selected = modelCatalog.find((option) => option.model === nextModel);
     if (
       selected &&
@@ -309,13 +322,13 @@
       )
     ) {
       reasoningEffort = selected.default_reasoning_effort;
-      retainedReasoningEfforts.set(conversationId, reasoningEffort);
+      retain(retainedReasoningEfforts, conversationId, reasoningEffort);
     }
   }
 
   function selectReasoningEffort(effort: string): void {
     reasoningEffort = effort;
-    retainedReasoningEfforts.set(conversationId, effort);
+    retain(retainedReasoningEfforts, conversationId, effort);
   }
 
   function reasoningLabel(effort: string): string {

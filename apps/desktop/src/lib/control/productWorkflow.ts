@@ -1,3 +1,4 @@
+import { parseSingleRecordResponse, type QueryFallback } from "./singleRecordResponse";
 import type { ControlResponseEnvelopeDto } from "./envelopes";
 
 export type ControlProductWorkflowProjectDto = {
@@ -99,35 +100,11 @@ export type ProductWorkflowSummaryQueryResult =
     }
   | QueryFallback;
 
-type QueryFallback =
-  | { state: "empty" }
-  | { state: "unsupported"; reason: string }
-  | { state: "error"; kind: string; reason: string }
-  | { state: "unexpected"; reason: string };
-
 export function productWorkflowSummaryFromResponse(
   response: ControlResponseEnvelopeDto,
 ): ProductWorkflowSummaryQueryResult {
-  switch (response.body.type) {
-    case "product_workflow_summary":
-      return {
-        state: "record",
-        summary: response.body.summary,
-      };
-    case "query_empty":
-      return { state: "empty" };
-    case "query_unsupported":
-      return { state: "unsupported", reason: response.body.reason };
-    case "error":
-      return {
-        state: "error",
-        kind: response.body.kind,
-        reason: response.body.reason,
-      };
-    default:
-      return {
-        state: "unexpected",
-        reason: `unexpected product workflow response: ${response.body.type}`,
-      };
-  }
+  return parseSingleRecordResponse(response, "product_workflow_summary", "product workflow", (body) => ({
+    state: "record" as const,
+    summary: body.summary,
+  }));
 }

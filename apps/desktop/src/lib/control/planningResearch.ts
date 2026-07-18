@@ -1,3 +1,4 @@
+import { parseSingleRecordResponse, type QueryFallback } from "./singleRecordResponse";
 import type { ControlResponseEnvelopeDto } from "./envelopes";
 
 export type CountByLabelDto = {
@@ -109,12 +110,6 @@ export type ResearchRunBriefsQueryResult =
       provider_execution_available: boolean;
     }
   | QueryFallback;
-
-type QueryFallback =
-  | { state: "empty" }
-  | { state: "unsupported"; reason: string }
-  | { state: "error"; kind: string; reason: string }
-  | { state: "unexpected"; reason: string };
 
 export function planningSessionsFromResponse(
   response: ControlResponseEnvelopeDto,
