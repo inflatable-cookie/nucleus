@@ -309,7 +309,7 @@ shape.
 - `g04/045-admission-vocabulary-consolidation.md` - completed
 - `g04/046-engine-boundary-migration.md` - active
 - `g04/047-desktop-contract-integrity.md` - planned
-- `g04/048-roadmap-residue-archival.md` - planned
+- `g04/048-roadmap-residue-archival.md` - superseded
 - `deferred-lanes.md` - active
 
 ## Previous Generation

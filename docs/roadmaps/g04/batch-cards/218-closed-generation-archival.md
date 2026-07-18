@@ -1,6 +1,6 @@
 # 218 Closed Generation Archival
 
-Status: planned
+Status: superseded
 Owner: Codex
 Updated: 2026-07-17
 Milestone: `../048-roadmap-residue-archival.md`

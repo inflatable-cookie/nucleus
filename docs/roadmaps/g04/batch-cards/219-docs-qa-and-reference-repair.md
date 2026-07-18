@@ -1,6 +1,6 @@
 # 219 Docs QA And Reference Repair
 
-Status: planned
+Status: superseded
 Owner: Codex
 Updated: 2026-07-17
 Milestone: `../048-roadmap-residue-archival.md`

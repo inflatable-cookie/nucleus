@@ -1,8 +1,16 @@
 # 048 Roadmap Residue Archival
 
-Status: planned
+Status: superseded
 Owner: Tom
-Updated: 2026-07-17
+Updated: 2026-07-18
+
+Superseded 2026-07-18 by operator decision: closed-generation batch cards
+stay in place. They are contained in their closed `gNN/` directories,
+correctly indexed, and serve as validation evidence per the deferred-lanes
+return rules. The audit measured volume, not harm — the cards are inert,
+unlike the live-code sprawl the rest of the band fixed. If repo-wide search
+noise ever bites, the fix is a search-tool exclude, not a file move. See
+`../../logs/2026-07-18-roadmap-archival-superseded.md`.
 
 ## Purpose
 
