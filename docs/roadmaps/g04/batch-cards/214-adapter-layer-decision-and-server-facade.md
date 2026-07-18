@@ -1,8 +1,8 @@
 # 214 Adapter Layer Decision And Server Facade
 
-Status: planned
-Owner: Codex
-Updated: 2026-07-17
+Status: in progress
+Owner: Claude
+Updated: 2026-07-18
 Milestone: `../046-engine-boundary-migration.md`
 Auto-start next card: no
 
@@ -23,9 +23,18 @@ public facade.
 
 ## Acceptance
 
-- [ ] no orphan crates; docs match reality
-- [ ] consumers import through the facade only
-- [ ] module-count guard active in CI
+- [x] operator decision executed: `nucleus-agent-protocol` gained the real
+  execution boundary (`AgentSessionRuntime` / `AgentLiveSession` /
+  `AgentToolCallHandler`); the Codex app-server driver (process, JSON-RPC,
+  turn loop, tool-call wire envelope) moved to
+  `nucleus-agent-adapters::codex_runtime` behind it, resolved through
+  `AgentAdapterRegistry`; the chat runtime is now a thin wrapper keeping
+  Nucleus-side concerns (tool semantics, receipts, instructions).
+  nucleus-agent-adapters is no longer an orphan crate — the server depends
+  on it and a new adapter is one `AgentSessionRuntime` impl plus a
+  registry entry
+- [ ] `nucleus-contract-fixtures` fate (wire into tests or delete)
+- [ ] server facade module and CI module-count guard — next batch
 
 ## Validation
 

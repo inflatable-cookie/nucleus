@@ -5,6 +5,8 @@
 //! control yet.
 
 pub mod codex;
+pub mod codex_runtime;
+pub mod live_registry;
 pub mod config;
 pub mod credentials;
 pub mod persistence;
@@ -13,6 +15,8 @@ pub mod registry;
 pub mod selection;
 pub mod status;
 
+pub use codex_runtime::{CodexSessionRuntime, CODEX_LIVE_ADAPTER_ID};
+pub use live_registry::AgentAdapterRegistry;
 pub use codex::{
     codex_app_server_descriptor, codex_app_server_registry, CodexAppServerDescriptor,
     CodexAppServerMethodSet, CodexAppServerSchemaEvidence,

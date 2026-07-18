@@ -7,6 +7,7 @@ pub mod capabilities;
 pub mod codex;
 pub mod events;
 pub mod identity;
+pub mod live_runtime;
 pub mod routes;
 pub mod runtime;
 pub mod sessions;
@@ -27,6 +28,11 @@ pub use events::{
     RuntimeEventIdentity, RuntimeEventKind, RuntimeEventPayload, RuntimeEventSource,
     SessionPayload, SessionPayloadKind, Severity, TokenUsagePayload, ToolCallPayload,
     ToolCallStatus, TurnPayload, TurnPayloadKind, UserInputPayload, UserInputPromptKind,
+};
+pub use live_runtime::{
+    AgentLiveSession, AgentModelOption, AgentReasoningOption, AgentSessionRuntime,
+    AgentSessionStartRequest, AgentStartedSessionInfo, AgentToolCall, AgentToolCallHandler,
+    AgentTurnReply, AgentTurnRequest,
 };
 pub use identity::{
     AdapterIdentity, AuthenticationPreflight, ProviderDriverKind, TransportFamily, VersionDiscovery,

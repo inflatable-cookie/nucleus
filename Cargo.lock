@@ -2254,11 +2254,15 @@ name = "nucleus-agent-adapters"
 version = "0.0.0"
 dependencies = [
  "nucleus-agent-protocol",
+ "serde_json",
 ]
 
 [[package]]
 name = "nucleus-agent-protocol"
 version = "0.0.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "nucleus-command-policy"
@@ -2399,6 +2403,7 @@ dependencies = [
  "blake3",
  "ignore",
  "libc",
+ "nucleus-agent-adapters",
  "nucleus-agent-protocol",
  "nucleus-command-policy",
  "nucleus-core",

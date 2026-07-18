@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+nucleus-agent-adapters = { path = "../nucleus-agent-adapters" }
 nucleus-agent-protocol = { path = "../nucleus-agent-protocol" }
 nucleus-command-policy = { path = "../nucleus-command-policy" }
 nucleus-core = { path = "../nucleus-core" }
