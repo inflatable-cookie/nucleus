@@ -22,9 +22,16 @@ DTOs.
 
 ## Acceptance
 
-- [ ] a renamed/removed Rust field fails CI
-- [ ] TS union covers all Rust body variants
-- [ ] protocol constants single-sourced
+- [x] a renamed/removed Rust field fails CI: ts-rs bindings for 287 control
+  DTO types regenerate in CI with a diff check; the generated envelope
+  union is now the client contract (hand-written drifted types replaced by
+  re-exports — the guard caught a snapshot DTO 12 fields behind,
+  bigint-vs-number wire mismatches on 487 integer fields, and
+  literal-false capability types)
+- [x] TS union covers all 56 Rust body variants (generated)
+- [x] protocol constants checked against the generated envelope type at
+  compile time via `generatedContract.ts`; `effigy desktop:bindings`
+  regenerates locally
 
 ## Validation
 
