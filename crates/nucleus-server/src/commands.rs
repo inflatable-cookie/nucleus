@@ -106,6 +106,7 @@ pub enum ProjectCommand {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectCreateCommand {
     pub display_name: String,
+    pub transient: bool,
     pub actor_ref: String,
     pub authority_host_ref: String,
     pub idempotency_key: String,
@@ -128,6 +129,8 @@ pub enum ProjectLifecycleAction {
     Archive,
     Restore,
     Delete,
+    Promote { display_name: Option<String> },
+    ExpireTransient,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

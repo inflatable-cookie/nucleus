@@ -61,6 +61,7 @@ export type ControlCommandDto =
       kind: "project_create";
       command_id: string;
       display_name: string;
+      transient: boolean | null;
       actor_ref: string;
       authority_host_ref: string;
       idempotency_key: string;

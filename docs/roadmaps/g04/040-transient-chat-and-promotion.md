@@ -1,6 +1,6 @@
 # 040 Transient Chat And Promotion
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-07-15
 
@@ -18,7 +18,7 @@ work in place without moving conversation or task identity.
 
 ## Execution Plan
 
-- [ ] Add transient retention, expiry eligibility, promotion, and durable-child
+- [x] Add transient retention, expiry eligibility, promotion, and durable-child
   safeguards to the host boundary.
 - [ ] Make New Chat create and focus a resource-free transient project without
   prompting.

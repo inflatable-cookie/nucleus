@@ -1,8 +1,8 @@
 # 194 Transient Project Retention Boundary
 
-Status: planned
-Owner: Codex
-Updated: 2026-07-15
+Status: completed
+Owner: Claude
+Updated: 2026-07-18
 Milestone: `../040-transient-chat-and-promotion.md`
 Auto-start next card: yes
 
@@ -13,10 +13,19 @@ safeguards to the server-owned project lifecycle.
 
 ## Acceptance
 
-- expiry policy is explicit, inspectable, and host-owned
-- promotion preserves all project-scoped identities
-- tasks, goals, accepted memory, and resources prevent silent expiry
-- restart does not accidentally promote or delete transient work
+- [x] expiry is explicit and host-owned: an `expire_transient` lifecycle
+  command with admission (no automatic sweep); refusal reasons make
+  eligibility inspectable
+- [x] promotion preserves all project-scoped identities: `promote` flips
+  retention in place on the same project record (engine test pins the id)
+- [x] tasks, goals, accepted memory, and resources block expiry with an
+  explicit retention-decision refusal (kind-aware domain scan; goals
+  filtered from planning records; conversations do not block — transient
+  chat expires with its project)
+- [x] restart cannot promote or delete transient work: both are explicit
+  idempotency-fingerprinted lifecycle commands, and creation defaults the
+  transient name to "New Chat" with retention persisted in the project
+  record
 
 ## Stop Conditions
 

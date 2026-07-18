@@ -6,8 +6,8 @@ use nucleus_core::{PersistenceDomain, PersistenceRecordId};
 use nucleus_engine::{
     EngineProjectCommand, EngineProjectCommandError, EngineProjectCommandService,
     EngineProjectCreateCommand, EngineProjectLifecycleAction, EngineProjectLifecycleCommand,
-    EngineProjectLifecycleReceipt, EngineProjectRepository, EngineProjectScanDomain,
-    EngineRevisionExpectation, EngineTaskRecord,
+    EngineProjectLifecycleReceipt, EngineProjectRepository, EngineProjectRetentionChoice,
+    EngineProjectScanDomain, EngineRevisionExpectation, EngineTaskRecord,
 };
 use nucleus_local_store::{
     LocalStoreBackend, LocalStoreError, LocalStoreRecord, LocalStoreRecordPayload,
@@ -37,6 +37,11 @@ where
             command_id,
             EngineProjectCommand::Create(EngineProjectCreateCommand {
                 display_name: command.display_name,
+                retention: if command.transient {
+                    EngineProjectRetentionChoice::Transient
+                } else {
+                    EngineProjectRetentionChoice::Durable
+                },
                 actor_ref: command.actor_ref,
                 authority_host_ref: command.authority_host_ref,
                 idempotency_key: command.idempotency_key,
@@ -90,6 +95,10 @@ fn engine_action(action: ProjectLifecycleAction) -> EngineProjectLifecycleAction
         ProjectLifecycleAction::Archive => EngineProjectLifecycleAction::Archive,
         ProjectLifecycleAction::Restore => EngineProjectLifecycleAction::Restore,
         ProjectLifecycleAction::Delete => EngineProjectLifecycleAction::Delete,
+        ProjectLifecycleAction::Promote { display_name } => {
+            EngineProjectLifecycleAction::Promote { display_name }
+        }
+        ProjectLifecycleAction::ExpireTransient => EngineProjectLifecycleAction::ExpireTransient,
     }
 }
 
@@ -159,7 +168,7 @@ where
     fn domain_payloads(
         &self,
         domain: EngineProjectScanDomain,
-    ) -> Result<Vec<(String, Vec<u8>)>, Self::Error> {
+    ) -> Result<Vec<(String, String, Vec<u8>)>, Self::Error> {
         let records = match domain {
             EngineProjectScanDomain::Tasks => self.state.tasks().list()?,
             EngineProjectScanDomain::Planning => self.state.planning().list()?,
@@ -170,7 +179,7 @@ where
         };
         Ok(records
             .into_iter()
-            .map(|record| (record.id.0, record.payload.bytes))
+            .map(|record| (record.id.0, format!("{:?}", record.kind), record.payload.bytes))
             .collect())
     }
 

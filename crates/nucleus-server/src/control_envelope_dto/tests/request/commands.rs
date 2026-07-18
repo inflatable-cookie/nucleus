@@ -5,6 +5,7 @@ fn request_envelope_dto_round_trips_project_create_and_lifecycle_commands() {
     let commands = [
         crate::commands::ProjectCommand::Create(crate::commands::ProjectCreateCommand {
             display_name: "Empty Project".to_owned(),
+            transient: false,
             actor_ref: "operator:desktop".to_owned(),
             authority_host_ref: "host:embedded-desktop".to_owned(),
             idempotency_key: "project:create:1".to_owned(),

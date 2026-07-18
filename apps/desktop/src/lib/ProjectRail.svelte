@@ -162,6 +162,7 @@
         kind: "project_create",
         command_id: `command:${idempotencyKey}`,
         display_name: displayName,
+        transient: null,
         actor_ref: "operator:desktop",
         authority_host_ref: "host:embedded-desktop",
         idempotency_key: idempotencyKey,

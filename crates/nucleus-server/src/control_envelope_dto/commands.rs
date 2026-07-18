@@ -37,6 +37,8 @@ pub enum ControlCommandDto {
     ProjectCreate {
         command_id: String,
         display_name: String,
+        #[serde(default)]
+        transient: Option<bool>,
         actor_ref: String,
         authority_host_ref: String,
         idempotency_key: String,
@@ -198,6 +200,8 @@ pub enum ControlProjectLifecycleActionDto {
     Archive,
     Restore,
     Delete,
+    Promote,
+    ExpireTransient,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
@@ -250,12 +254,14 @@ impl ControlCommandDto {
             Self::ProjectCreate {
                 command_id,
                 display_name,
+                transient,
                 actor_ref,
                 authority_host_ref,
                 idempotency_key,
             } => Ok(project_create_kind(
                 command_id,
                 display_name,
+                transient,
                 actor_ref,
                 authority_host_ref,
                 idempotency_key,

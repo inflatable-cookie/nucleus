@@ -13,6 +13,6 @@ mod tests;
 pub use model::{
     EngineProjectCommand, EngineProjectCommandError, EngineProjectCreateCommand,
     EngineProjectLifecycleAction, EngineProjectLifecycleCommand, EngineProjectLifecycleReceipt,
-    EngineProjectRepository, EngineProjectScanDomain,
+    EngineProjectRepository, EngineProjectRetentionChoice, EngineProjectScanDomain,
 };
 pub use service::EngineProjectCommandService;

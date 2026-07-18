@@ -129,6 +129,7 @@ pub use goal_run_rules::{
 pub use project_commands::{
     EngineProjectCommand, EngineProjectCommandError, EngineProjectCommandService,
     EngineProjectCreateCommand, EngineProjectLifecycleAction, EngineProjectLifecycleCommand,
+    EngineProjectRetentionChoice,
     EngineProjectLifecycleReceipt, EngineProjectRepository, EngineProjectScanDomain,
 };
 pub use goal_commands::{

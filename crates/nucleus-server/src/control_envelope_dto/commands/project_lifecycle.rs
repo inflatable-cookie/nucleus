@@ -19,6 +19,7 @@ pub(super) fn project_command_dto(
 ) -> Result<super::ControlCommandDto, ControlApiCodecError> {
     match command {
         ProjectCommand::Create(command) => Ok(super::ControlCommandDto::ProjectCreate {
+            transient: Some(command.transient),
             command_id: command_id.0.clone(),
             display_name: command.display_name.clone(),
             actor_ref: command.actor_ref.clone(),
@@ -107,6 +108,7 @@ fn resource_command_dto(
 pub(super) fn project_create_kind(
     command_id: String,
     display_name: String,
+    transient: Option<bool>,
     actor_ref: String,
     authority_host_ref: String,
     idempotency_key: String,
@@ -115,6 +117,7 @@ pub(super) fn project_create_kind(
         ServerCommandId(command_id),
         crate::commands::ServerCommandKind::Project(ProjectCommand::Create(ProjectCreateCommand {
             display_name,
+            transient: transient.unwrap_or(false),
             actor_ref,
             authority_host_ref,
             idempotency_key,
@@ -143,6 +146,12 @@ pub(super) fn project_lifecycle_kind(
         ControlProjectLifecycleActionDto::Archive => ProjectLifecycleAction::Archive,
         ControlProjectLifecycleActionDto::Restore => ProjectLifecycleAction::Restore,
         ControlProjectLifecycleActionDto::Delete => ProjectLifecycleAction::Delete,
+        ControlProjectLifecycleActionDto::Promote => {
+            ProjectLifecycleAction::Promote { display_name }
+        }
+        ControlProjectLifecycleActionDto::ExpireTransient => {
+            ProjectLifecycleAction::ExpireTransient
+        }
     };
     Ok((
         ServerCommandId(command_id),
@@ -228,6 +237,10 @@ fn action_dto(action: &ProjectLifecycleAction) -> ControlProjectLifecycleActionD
         ProjectLifecycleAction::Archive => ControlProjectLifecycleActionDto::Archive,
         ProjectLifecycleAction::Restore => ControlProjectLifecycleActionDto::Restore,
         ProjectLifecycleAction::Delete => ControlProjectLifecycleActionDto::Delete,
+        ProjectLifecycleAction::Promote { .. } => ControlProjectLifecycleActionDto::Promote,
+        ProjectLifecycleAction::ExpireTransient => {
+            ControlProjectLifecycleActionDto::ExpireTransient
+        }
     }
 }
 

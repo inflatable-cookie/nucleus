@@ -301,7 +301,7 @@ shape.
 - `g04/037-project-resource-foundation.md` - completed
 - `g04/038-project-control-workflow.md` - completed
 - `g04/039-multi-resource-attachment-and-targeting.md` - active
-- `g04/040-transient-chat-and-promotion.md` - planned
+- `g04/040-transient-chat-and-promotion.md` - active
 - `g04/041-shared-project-files-control.md` - planned
 - `g04/042-execution-safety-honesty-and-enforcement.md` - completed
 - `g04/043-ci-and-validation-runway.md` - completed

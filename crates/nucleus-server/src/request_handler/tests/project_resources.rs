@@ -224,6 +224,7 @@ fn create_request(idempotency_key: &str, display_name: &str) -> ServerControlReq
             client_id: ClientId("client:desktop".to_owned()),
             kind: ServerCommandKind::Project(ProjectCommand::Create(ProjectCreateCommand {
                 display_name: display_name.to_owned(),
+                transient: false,
                 actor_ref: "operator:test".to_owned(),
                 authority_host_ref: "host:embedded-desktop".to_owned(),
                 idempotency_key: idempotency_key.to_owned(),

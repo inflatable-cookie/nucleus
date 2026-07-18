@@ -10,7 +10,7 @@ use nucleus_projects::{
 use super::model::{
     EngineProjectCommand, EngineProjectCommandError, EngineProjectCreateCommand,
     EngineProjectLifecycleAction, EngineProjectLifecycleCommand, EngineProjectLifecycleReceipt,
-    EngineProjectRepository, EngineProjectScanDomain,
+    EngineProjectRepository, EngineProjectRetentionChoice, EngineProjectScanDomain,
 };
 use crate::task_commands::{EngineRevisionExpectation, EngineTaskRecord};
 
@@ -46,10 +46,17 @@ where
             &command.authority_host_ref,
             &command.idempotency_key,
         )?;
+        let transient = command.retention == EngineProjectRetentionChoice::Transient;
         let display_name = command.display_name.trim();
-        if display_name.is_empty() {
-            return Err(invalid("project name must not be empty"));
-        }
+        let display_name = if display_name.is_empty() {
+            if transient {
+                "New Chat"
+            } else {
+                return Err(invalid("project name must not be empty"));
+            }
+        } else {
+            display_name
+        };
         let project_id = project_id_for_create(&command.idempotency_key);
         let fingerprint = request_fingerprint(&[
             "create",
@@ -67,7 +74,11 @@ where
             display_name: display_name.to_owned(),
             authority_host_ref: command.authority_host_ref.clone(),
             status: ProjectStatus::Active,
-            retention: ProjectRetention::Durable,
+            retention: if transient {
+                ProjectRetention::Transient
+            } else {
+                ProjectRetention::Durable
+            },
             importance_baseline: ImportanceBaseline {
                 level: ImportanceLevel::Normal,
                 notes: None,
@@ -172,6 +183,15 @@ where
                 )
                 .map_err(EngineProjectCommandError::Storage)?;
             None
+        } else if command.action == EngineProjectLifecycleAction::ExpireTransient {
+            self.refuse_expiry_with_durable_children(&project)?;
+            self.repository
+                .delete_project_record(
+                    &record_id,
+                    EngineRevisionExpectation::Exact(command.expected_revision.clone()),
+                )
+                .map_err(EngineProjectCommandError::Storage)?;
+            None
         } else {
             apply_action(&mut project, &command.action)?;
             let revision = RevisionId(format!("rev:project-{action}:{command_id}"));
@@ -206,6 +226,56 @@ where
             .map_err(EngineProjectCommandError::Storage)
     }
 
+    /// Transient expiry deletes only chat residue: any durable child (task,
+    /// goal, accepted memory, attached resource) blocks it and demands an
+    /// explicit retention decision instead. Conversations do not block —
+    /// transient chat expires with its project.
+    fn refuse_expiry_with_durable_children(
+        &self,
+        project: &nucleus_projects::ProjectStorageRecord,
+    ) -> CommandResult<R> {
+        if project.retention != nucleus_projects::ProjectRetentionStorage::Transient {
+            return Err(invalid("only transient projects can expire"));
+        }
+        let mut retained: Vec<String> = Vec::new();
+        if !project.resources.is_empty() {
+            retained.push(format!("resources={}", project.resources.len()));
+        }
+        let durable_domains = [
+            (EngineProjectScanDomain::Tasks, None),
+            (EngineProjectScanDomain::Planning, Some("Goal")),
+            (EngineProjectScanDomain::SharedMemory, None),
+        ];
+        for (domain, kind_filter) in durable_domains {
+            let matches = self
+                .repository
+                .domain_payloads(domain)
+                .map_err(EngineProjectCommandError::Storage)?
+                .into_iter()
+                .filter(|(_, kind, _)| kind_filter.map_or(true, |expected| kind == expected))
+                .try_fold(0_usize, |count, (record_id, _, payload)| {
+                    let value: serde_json::Value =
+                        serde_json::from_slice(&payload).map_err(|_| {
+                            invalid(&format!(
+                                "transient expiry cannot prove child safety: {record_id}"
+                            ))
+                        })?;
+                    Ok(count + usize::from(json_references_project(&value, &project.project_id)))
+                })?;
+            if matches > 0 {
+                retained.push(format!("{}={matches}", domain.label()));
+            }
+        }
+        if retained.is_empty() {
+            Ok(())
+        } else {
+            Err(invalid(&format!(
+                "transient expiry refused: durable children require a retention decision: {}",
+                retained.join(", ")
+            )))
+        }
+    }
+
     /// A project deletes only when nothing still references it: no attached
     /// resources, refs, or records in any scanned domain.
     fn refuse_delete_with_retained_records(
@@ -222,7 +292,7 @@ where
                 .domain_payloads(domain)
                 .map_err(EngineProjectCommandError::Storage)?
                 .into_iter()
-                .try_fold(0_usize, |count, (record_id, payload)| {
+                .try_fold(0_usize, |count, (record_id, _, payload)| {
                     let value: serde_json::Value =
                         serde_json::from_slice(&payload).map_err(|_| {
                             invalid(&format!(
@@ -312,8 +382,21 @@ fn apply_action<E>(
         EngineProjectLifecycleAction::Restore => {
             project.status = nucleus_projects::ProjectStorageStatus::Active
         }
-        EngineProjectLifecycleAction::Delete => {
-            unreachable!("delete handled before update")
+        EngineProjectLifecycleAction::Promote { display_name } => {
+            if project.retention != nucleus_projects::ProjectRetentionStorage::Transient {
+                return Err(invalid("only transient projects can be promoted"));
+            }
+            project.retention = nucleus_projects::ProjectRetentionStorage::Durable;
+            if let Some(display_name) = display_name {
+                let display_name = display_name.trim();
+                if display_name.is_empty() {
+                    return Err(invalid("project name must not be empty"));
+                }
+                project.display_name = display_name.to_owned();
+            }
+        }
+        EngineProjectLifecycleAction::Delete | EngineProjectLifecycleAction::ExpireTransient => {
+            unreachable!("delete and expiry handled before update")
         }
     }
     Ok(())
@@ -356,12 +439,17 @@ fn action_name(action: &EngineProjectLifecycleAction) -> &'static str {
         EngineProjectLifecycleAction::Archive => "archive",
         EngineProjectLifecycleAction::Restore => "restore",
         EngineProjectLifecycleAction::Delete => "delete",
+        EngineProjectLifecycleAction::Promote { .. } => "promote",
+        EngineProjectLifecycleAction::ExpireTransient => "expire-transient",
     }
 }
 
 fn action_value(action: &EngineProjectLifecycleAction) -> &str {
     match action {
         EngineProjectLifecycleAction::Rename { display_name } => display_name.trim(),
+        EngineProjectLifecycleAction::Promote {
+            display_name: Some(display_name),
+        } => display_name.trim(),
         _ => "",
     }
 }
