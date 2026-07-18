@@ -23,10 +23,10 @@ hardcoded into the server).
 
 ## Planning Gaps
 
-- [ ] decide adapter-crate fate: route the Codex runtime through
-  `nucleus-agent-protocol` traits and a real registry, or delete
-  `nucleus-agent-adapters` and record "Codex-only, in-server, for now" in
-  architecture
+- [x] adapter-crate fate decided (operator, 2026-07-18): route the Codex
+  runtime through `nucleus-agent-protocol` traits with
+  `nucleus-agent-adapters` as the real registry — many more adapters are
+  planned, so the boundary must be real; execution lands with card 214
 - [ ] decide `nucleus-contract-fixtures` fate: wire into tests or delete
 
 ## Execution Plan
@@ -36,8 +36,9 @@ hardcoded into the server).
 - [x] Move request-handler command/query dispatch into engine services with
   IO behind ports (tasks pre-existing, goals and project lifecycle moved;
   resource commands host-side by design).
-- [ ] Move goal/task workflow logic (`local_codex_chat/goal_execution`) into
-  engine behind effect ports.
+- [x] Move goal/task workflow logic (`local_codex_chat/goal_execution`) into
+  engine behind effect ports: god file decomposed, pure decisions live in
+  `nucleus_engine::goal_run_rules`; provider IO stays host-side.
 - [ ] Resolve the adapter and fixtures planning gaps above.
 - [ ] Add a facade module for the server public API and stop flat
   re-exporting internals; add a CI guard so server module count trends down.

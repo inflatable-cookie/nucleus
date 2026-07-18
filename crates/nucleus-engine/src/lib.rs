@@ -21,6 +21,7 @@ pub mod scm_work_item_linkage;
 pub mod services;
 pub mod task_agent;
 pub mod goal_commands;
+pub mod goal_run_rules;
 pub mod project_commands;
 pub mod task_commands;
 pub mod task_readiness;
@@ -119,6 +120,11 @@ pub use task_agent::{
     EngineTaskAgentWorkUnitReviewStatus, EngineTaskAgentWorkUnitRuntimeStatus,
     EngineTaskAgentWorkUnitSourceCursor, EngineTaskAgentWorkUnitSourceId,
     EngineTaskAgentWorkUnitSourceRecord,
+};
+pub use goal_run_rules::{
+    goal_run_task_prompt, goal_run_work_item_id, parse_task_action,
+    validate_goal_continuation_status, validate_goal_run_mandate, validate_goal_run_task,
+    EngineGoalRunReworkContext, EngineGoalRunTaskView,
 };
 pub use project_commands::{
     EngineProjectCommand, EngineProjectCommandError, EngineProjectCommandService,

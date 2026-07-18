@@ -47,3 +47,4 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-18-goal-commands-to-engine.md`
 - `2026-07-18-project-commands-to-engine.md`
 - `2026-07-18-goal-execution-decomposition.md`
+- `2026-07-18-goal-run-rules-to-engine.md`

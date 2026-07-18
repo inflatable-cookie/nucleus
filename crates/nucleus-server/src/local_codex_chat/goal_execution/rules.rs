@@ -33,19 +33,15 @@ where
     B: LocalStoreBackend,
 {
     let mandate = read_workflow_mandate(state, &plan.mandate_id)?;
-    if mandate.revision_id != plan.mandate_revision
-        || mandate.status != WorkflowMandateStatus::Active
-    {
-        return Err("goal run mandate is no longer active at its admitted revision".to_owned());
-    }
-    if now_epoch_seconds()? >= mandate.expires_at_epoch_seconds {
-        return Err("goal run mandate expired before the next task".to_owned());
-    }
+    nucleus_engine::validate_goal_run_mandate(
+        mandate.revision_id == plan.mandate_revision,
+        mandate.status == WorkflowMandateStatus::Active,
+        now_epoch_seconds()?,
+        mandate.expires_at_epoch_seconds,
+    )?;
     if let Some(goal_id) = plan.goal_id.as_deref() {
         let goal = goal_record(state, &plan.project_id, goal_id)?;
-        if !matches!(goal.status.as_str(), "ready" | "active") {
-            return Err(format!("Goal cannot continue from status {}", goal.status));
-        }
+        nucleus_engine::validate_goal_continuation_status(&goal.status)?;
     }
     Ok(())
 }
@@ -59,19 +55,10 @@ where
     B: LocalStoreBackend,
 {
     let task = active_task(state, &plan.project_id, &plan_task.task_id)?;
-    if task.revision_id != plan_task.revision_id {
-        return Err(format!(
-            "task changed after Goal run admission: {}",
-            task.task_id
-        ));
-    }
-    if task.activity != "ready" || !task.agent_ready {
-        return Err(format!(
-            "task is no longer ready for agent execution: {}",
-            task.task_id
-        ));
-    }
-    Ok(())
+    nucleus_engine::validate_goal_run_task(
+        &plan_task.revision_id,
+        &super::dispatch::goal_run_task_view(&task),
+    )
 }
 
 pub(super) fn ensure_scheduled_source<B>(

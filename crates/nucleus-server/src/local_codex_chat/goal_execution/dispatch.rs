@@ -201,53 +201,52 @@ pub(super) fn compose_dispatch(
 }
 
 pub(super) fn task_prompt(plan: &GoalRunPlan, ordinal: usize, task: &crate::ControlTaskRecordDto) -> String {
-    let criteria = task
-        .acceptance_criteria
-        .iter()
-        .map(|criterion| format!("- {}", criterion.text))
-        .collect::<Vec<_>>()
-        .join("\n");
     let rework = plan.ordered_tasks.get(ordinal).and_then(|plan_task| {
-        plan_task.rework_decision_ref.as_ref().map(|decision_ref| {
-            format!(
-                "\n\nRework this reviewed result.\nReview decision: {decision_ref}\nReview note: {}\nReviewed work items: {}\nReviewed evidence: {}\nAddress the review note while preserving unrelated existing work. Do not treat these opaque refs as file paths or patch content.",
-                plan_task.rework_reason.as_deref().unwrap_or("No review note supplied."),
-                plan_task.reviewed_work_item_refs.join(", "),
-                plan_task.reviewed_evidence_refs.join(", ")
-            )
-        })
-    }).unwrap_or_default();
-    format!(
-        "Execute this Nucleus task as position {} in {}.\n\nTitle: {}\nDescription: {}\nAction: {}\nAcceptance criteria:\n{}\nValidation commands:\n{}\nTask stop conditions:\n{}{}\n\nMake the required workspace changes and run proportionate validation. Do not complete or otherwise mutate the Nucleus task record. End with a concise result summary.",
-        ordinal + 1,
-        plan.goal_id
-            .as_deref()
-            .map(|goal_id| format!("Goal {goal_id}"))
-            .unwrap_or_else(|| "the explicit single-task scope".to_owned()),
-        task.title,
-        task.description.as_deref().unwrap_or("No description supplied."),
-        task.action_type,
-        criteria,
-        task.validation_commands.join("\n"),
-        task.stop_conditions.join("\n"),
-        rework
+        plan_task
+            .rework_decision_ref
+            .as_ref()
+            .map(|decision_ref| nucleus_engine::EngineGoalRunReworkContext {
+                decision_ref: decision_ref.clone(),
+                reason: plan_task.rework_reason.clone(),
+                reviewed_work_item_refs: plan_task.reviewed_work_item_refs.clone(),
+                reviewed_evidence_refs: plan_task.reviewed_evidence_refs.clone(),
+            })
+    });
+    nucleus_engine::goal_run_task_prompt(
+        plan.goal_id.as_deref(),
+        ordinal,
+        &goal_run_task_view(task),
+        rework.as_ref(),
     )
 }
 
-pub(super) fn task_action(value: &str) -> Result<TaskActionType, String> {
-    match value {
-        "research" => Ok(TaskActionType::Research),
-        "plan" => Ok(TaskActionType::Plan),
-        "execute" => Ok(TaskActionType::Execute),
-        "test" => Ok(TaskActionType::Test),
-        "check" => Ok(TaskActionType::Check),
-        "review" => Ok(TaskActionType::Review),
-        other => Err(format!("unsupported task action type: {other}")),
+pub(super) fn goal_run_task_view(
+    task: &crate::ControlTaskRecordDto,
+) -> nucleus_engine::EngineGoalRunTaskView {
+    nucleus_engine::EngineGoalRunTaskView {
+        task_id: task.task_id.clone(),
+        revision_id: task.revision_id.clone(),
+        title: task.title.clone(),
+        description: task.description.clone(),
+        action_type: task.action_type.clone(),
+        activity: task.activity.clone(),
+        agent_ready: task.agent_ready,
+        acceptance_criteria: task
+            .acceptance_criteria
+            .iter()
+            .map(|criterion| criterion.text.clone())
+            .collect(),
+        validation_commands: task.validation_commands.clone(),
+        stop_conditions: task.stop_conditions.clone(),
     }
 }
 
+pub(super) fn task_action(value: &str) -> Result<TaskActionType, String> {
+    nucleus_engine::parse_task_action(value)
+}
+
 pub(super) fn work_item_id(plan: &GoalRunPlan, task: &GoalRunPlanTask) -> String {
-    format!("work-item:goal-run:{}:{}", plan.plan_id, task.task_id)
+    nucleus_engine::goal_run_work_item_id(&plan.plan_id, &task.task_id)
 }
 
 pub(super) fn task_record_linkage(record: &GoalTaskExecutionRecord) -> Option<TaskExecutionLinkage> {
