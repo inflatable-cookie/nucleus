@@ -8,7 +8,8 @@ use crate::{
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for Codex interruption outcomes.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexInterruptionDiagnosticsDto {
     pub outcomes: Vec<CodexInterruptionDiagnosticDto>,
     pub client_can_interrupt_provider: bool,
@@ -18,7 +19,8 @@ pub struct CodexInterruptionDiagnosticsDto {
     pub source_summary: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexInterruptionDiagnosticDto {
     pub request_id: String,
     pub admission_id: Option<String>,

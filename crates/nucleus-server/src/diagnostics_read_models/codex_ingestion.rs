@@ -5,7 +5,8 @@ use crate::{CodexTaskRuntimeObservationLink, CodexTaskRuntimeObservationLinkStat
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for Codex ingestion acceptance.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexIngestionDiagnosticsDto {
     pub observations: Vec<CodexIngestionObservationDiagnosticDto>,
     pub client_can_mutate_observations: bool,
@@ -15,7 +16,8 @@ pub struct CodexIngestionDiagnosticsDto {
 }
 
 /// One Codex observation visible to diagnostics clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexIngestionObservationDiagnosticDto {
     pub source_id: String,
     pub binding_id: String,

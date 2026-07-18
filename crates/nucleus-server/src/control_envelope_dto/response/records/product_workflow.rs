@@ -9,7 +9,8 @@ use crate::{
     ProductWorkflowTaskLane,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowSummaryDto {
     pub summary_id: String,
     pub project_id: String,
@@ -26,52 +27,61 @@ pub struct ControlProductWorkflowSummaryDto {
     pub no_effects: ControlProductWorkflowNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowProjectDto {
     pub display_name: Option<String>,
     pub status: Option<String>,
     pub authority_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowLaneDto {
     pub lane: String,
+    #[ts(as = "u32")]
     pub count: usize,
     pub task_refs: Vec<String>,
     pub rationale_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowPlanningContextDto {
     pub planning_session_refs: Vec<String>,
     pub task_seed_refs: Vec<String>,
     pub accepted_planning_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowContextDto {
     pub memory_proposal_refs: Vec<String>,
     pub accepted_memory_refs: Vec<String>,
     pub research_run_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowRuntimeDto {
     pub runtime_evidence_refs: Vec<String>,
     pub command_evidence_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowReviewDto {
     pub review_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowScmReadinessDto {
     pub readiness_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowNextDto {
     pub source: String,
     pub next_ref: Option<String>,
@@ -80,28 +90,42 @@ pub struct ControlProductWorkflowNextDto {
     pub blocked_reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowSourceCountsDto {
+    #[ts(as = "u32")]
     pub task_candidates: usize,
+    #[ts(as = "u32")]
     pub planning_sessions: usize,
+    #[ts(as = "u32")]
     pub task_seeds: usize,
+    #[ts(as = "u32")]
     pub accepted_planning_refs: usize,
+    #[ts(as = "u32")]
     pub memory_proposals: usize,
+    #[ts(as = "u32")]
     pub accepted_memories: usize,
+    #[ts(as = "u32")]
     pub research_runs: usize,
+    #[ts(as = "u32")]
     pub runtime_evidence_refs: usize,
+    #[ts(as = "u32")]
     pub command_evidence_refs: usize,
+    #[ts(as = "u32")]
     pub review_refs: usize,
+    #[ts(as = "u32")]
     pub scm_readiness_refs: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowGapDto {
     pub area: String,
     pub reason: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProductWorkflowNoEffectsDto {
     pub task_mutation_performed: bool,
     pub provider_execution_performed: bool,

@@ -17,7 +17,8 @@ use crate::accepted_memory_projection_write_diagnostics::{
     AcceptedMemoryProjectionWriteDiagnostics,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionWriteDiagnosticsDto {
     pub project_id: String,
     pub entries: Vec<ControlAcceptedMemoryProjectionWriteEntryDto>,
@@ -31,7 +32,8 @@ pub struct ControlAcceptedMemoryProjectionWriteDiagnosticsDto {
     pub ui_effect_performed: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionWriteEntryDto {
     pub memory_id: String,
     pub plan_ref: String,
@@ -47,29 +49,47 @@ pub struct ControlAcceptedMemoryProjectionWriteEntryDto {
     pub payload_blockers: Vec<ControlAcceptedMemoryProjectionWriteBlockerDto>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionWriteBlockerDto {
     pub kind: String,
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionWriteCountsDto {
+    #[ts(as = "u32")]
     pub accepted_records: usize,
+    #[ts(as = "u32")]
     pub out_of_scope_accepted_records: usize,
+    #[ts(as = "u32")]
     pub admitted_writes: usize,
+    #[ts(as = "u32")]
     pub blocked_writes: usize,
+    #[ts(as = "u32")]
     pub payload_ready_records: usize,
+    #[ts(as = "u32")]
     pub payload_blocked_records: usize,
+    #[ts(as = "u32")]
     pub materialized_files: usize,
+    #[ts(as = "u32")]
     pub skipped_records: usize,
+    #[ts(as = "u32")]
     pub skipped_proposal_records: usize,
+    #[ts(as = "u32")]
     pub skipped_unsupported_records: usize,
+    #[ts(as = "u32")]
     pub skipped_decode_errors: usize,
+    #[ts(as = "u32")]
     pub policy_blockers: usize,
+    #[ts(as = "u32")]
     pub export_blockers: usize,
+    #[ts(as = "u32")]
     pub admission_blockers: usize,
+    #[ts(as = "u32")]
     pub payload_blockers: usize,
+    #[ts(as = "u32")]
     pub file_refs: usize,
 }
 

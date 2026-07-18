@@ -27,7 +27,8 @@ pub struct ProviderNoEffects {
 /// these families record a general `provider_effect_executed` flag instead
 /// of `provider_write_executed`. Kept as its own struct so wire field names
 /// stay exactly as clients already read them.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ProviderRuntimeNoEffects {
     pub credential_resolution_performed: bool,
     pub provider_network_call_performed: bool,
@@ -79,7 +80,8 @@ pub struct ConvergenceRunnerNoAuthority {
 
 /// Accepted-memory apply family: no memory, projection, scm, provider, or
 /// scheduling effects ran.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct MemoryApplyNoEffects {
     pub active_memory_apply_performed: bool,
     pub projection_write_performed: bool,

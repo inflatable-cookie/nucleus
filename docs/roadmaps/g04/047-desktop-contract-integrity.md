@@ -1,6 +1,6 @@
 # 047 Desktop Contract Integrity
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-07-17
 
@@ -21,9 +21,8 @@ duplicate `QueryFallback` declarations).
 
 ## Execution Plan
 
-- [ ] Generate TS envelope types from the Rust DTOs (ts-rs/specta), or add a
-  round-trip test covering every `ControlResponseBodyDto` variant through
-  JSON into the TS union.
+- [x] Generate TS envelope types from the Rust DTOs: ts-rs across 287
+  types, CI diff check, generated union adopted as the client contract.
 - [ ] Set a strict CSP in `tauri.conf.json`.
 - [ ] Collapse per-query control modules onto one generic
   single-record-response parser and shared query builders.

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowDrilldownDto {
     pub drilldown_id: String,
     pub project_id: String,
@@ -19,7 +20,8 @@ pub struct ControlTaskWorkflowDrilldownDto {
     pub no_effects: ControlTaskWorkflowNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowTaskDto {
     pub title: String,
     pub activity: String,
@@ -27,28 +29,33 @@ pub struct ControlTaskWorkflowTaskDto {
     pub action_type: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowReadinessDto {
     pub lane: String,
     pub rationale_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowTimelineDto {
     pub entry_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowWorkProgressDto {
     pub work_items: Vec<ControlTaskWorkflowWorkItemDto>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowWorkItemDto {
     pub work_item_ref: String,
     pub runtime_status: String,
     pub review_status: String,
     pub source_ref: String,
+    #[ts(as = "u32")]
     pub source_count: usize,
     pub session_ref: Option<String>,
     pub turn_refs: Vec<String>,
@@ -61,24 +68,28 @@ pub struct ControlTaskWorkflowWorkItemDto {
     pub issue_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowRuntimeDto {
     pub runtime_receipt_refs: Vec<String>,
     pub command_evidence_refs: Vec<String>,
     pub task_completion_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowReviewDto {
     pub review_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowScmHandoffDto {
     pub handoff_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowNextDto {
     pub source: String,
     pub next_ref: Option<String>,
@@ -87,7 +98,8 @@ pub struct ControlTaskWorkflowNextDto {
     pub blocked_reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowGuidanceDto {
     pub source: String,
     pub safe_action: String,
@@ -97,26 +109,38 @@ pub struct ControlTaskWorkflowGuidanceDto {
     pub blocked_reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowSourceCountsDto {
+    #[ts(as = "u32")]
     pub task_records: usize,
+    #[ts(as = "u32")]
     pub readiness_refs: usize,
+    #[ts(as = "u32")]
     pub timeline_entry_refs: usize,
+    #[ts(as = "u32")]
     pub work_items: usize,
+    #[ts(as = "u32")]
     pub runtime_receipt_refs: usize,
+    #[ts(as = "u32")]
     pub command_evidence_refs: usize,
+    #[ts(as = "u32")]
     pub task_completion_refs: usize,
+    #[ts(as = "u32")]
     pub review_refs: usize,
+    #[ts(as = "u32")]
     pub scm_handoff_refs: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowGapDto {
     pub area: String,
     pub reason: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskWorkflowNoEffectsDto {
     pub task_mutation_performed: bool,
     pub provider_execution_performed: bool,

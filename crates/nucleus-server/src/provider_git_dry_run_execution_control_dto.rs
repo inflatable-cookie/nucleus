@@ -4,18 +4,28 @@ use serde::{Deserialize, Serialize};
 
 use crate::GitDryRunExecutionDiagnosticsRecord;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct GitDryRunExecutionControlDto {
     pub dto_id: String,
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub execution_count: usize,
+    #[ts(as = "u32")]
     pub completed_count: usize,
+    #[ts(as = "u32")]
     pub failed_count: usize,
+    #[ts(as = "u32")]
     pub timed_out_count: usize,
+    #[ts(as = "u32")]
     pub blocked_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_count: usize,
+    #[ts(as = "u32")]
     pub duplicate_noop_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
+    #[ts(as = "u32")]
     pub dry_run_executed_count: usize,
     pub checkout_executed: bool,
     pub branch_mutation_executed: bool,

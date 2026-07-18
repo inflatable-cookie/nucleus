@@ -9,7 +9,8 @@ use crate::{
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for Codex send/subscription state.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexSubscriptionDiagnosticsDto {
     pub writes: Vec<CodexStdioWriteDiagnosticDto>,
     pub subscriptions: Vec<CodexSubscriptionDiagnosticDto>,
@@ -21,7 +22,8 @@ pub struct CodexSubscriptionDiagnosticsDto {
     pub source_summary: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexStdioWriteDiagnosticDto {
     pub write_id: String,
     pub command_id: String,
@@ -36,7 +38,8 @@ pub struct CodexStdioWriteDiagnosticDto {
     pub next_action: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexSubscriptionDiagnosticDto {
     pub subscription_id: String,
     pub command_id: String,

@@ -7,7 +7,8 @@ use crate::accepted_memory_review_readiness::{
     AcceptedMemoryReviewReadinessStatus,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryReviewReadinessDto {
     pub project_id: String,
     pub records: Vec<ControlAcceptedMemoryReviewReadinessRecordDto>,
@@ -16,36 +17,57 @@ pub struct ControlAcceptedMemoryReviewReadinessDto {
     pub no_effects: MemoryApplyNoEffects,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryReviewReadinessRecordDto {
     pub source: String,
     pub memory_id: Option<String>,
     pub source_ref: String,
     pub file_ref: Option<String>,
     pub status: String,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
     pub approval_required: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryReviewReadinessCountsDto {
+    #[ts(as = "u32")]
     pub records: usize,
+    #[ts(as = "u32")]
     pub accepted_memories: usize,
+    #[ts(as = "u32")]
     pub projectable: usize,
+    #[ts(as = "u32")]
     pub projection_blocked: usize,
+    #[ts(as = "u32")]
     pub projection_write_admitted: usize,
+    #[ts(as = "u32")]
     pub projection_write_blocked: usize,
+    #[ts(as = "u32")]
     pub import_candidates_ready: usize,
+    #[ts(as = "u32")]
     pub import_candidates_blocked: usize,
+    #[ts(as = "u32")]
     pub import_admitted: usize,
+    #[ts(as = "u32")]
     pub import_blocked: usize,
+    #[ts(as = "u32")]
     pub duplicate_noops: usize,
+    #[ts(as = "u32")]
     pub conflicts: usize,
+    #[ts(as = "u32")]
     pub apply_admitted: usize,
+    #[ts(as = "u32")]
     pub approval_required: usize,
+    #[ts(as = "u32")]
     pub apply_blocked: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
 }
 

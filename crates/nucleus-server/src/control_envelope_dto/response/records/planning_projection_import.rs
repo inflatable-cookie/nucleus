@@ -2,18 +2,29 @@ use serde::{Deserialize, Serialize};
 
 use crate::{PlanningProjectionImportDiagnosticBucket, PlanningProjectionImportDiagnostics};
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningProjectionImportDiagnosticsDto {
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub candidate_count: usize,
+    #[ts(as = "u32")]
     pub ready_candidate_count: usize,
+    #[ts(as = "u32")]
     pub blocked_candidate_count: usize,
+    #[ts(as = "u32")]
     pub admission_count: usize,
+    #[ts(as = "u32")]
     pub admitted_stopped_count: usize,
+    #[ts(as = "u32")]
     pub duplicate_noop_count: usize,
+    #[ts(as = "u32")]
     pub blocked_admission_count: usize,
+    #[ts(as = "u32")]
     pub conflict_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
     pub candidate_status_buckets: Vec<ControlPlanningProjectionImportBucketDto>,
     pub admission_status_buckets: Vec<ControlPlanningProjectionImportBucketDto>,
@@ -28,9 +39,11 @@ pub struct ControlPlanningProjectionImportDiagnosticsDto {
     pub ui_apply_permitted: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningProjectionImportBucketDto {
     pub label: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 

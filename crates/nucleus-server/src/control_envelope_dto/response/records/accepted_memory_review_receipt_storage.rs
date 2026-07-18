@@ -12,7 +12,8 @@ use nucleus_memory::{
     AcceptedMemoryReviewReceiptStorageRecord,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryReviewReceiptStorageDiagnosticsDto {
     pub diagnostics_id: String,
     pub project_id: String,
@@ -23,7 +24,8 @@ pub struct ControlAcceptedMemoryReviewReceiptStorageDiagnosticsDto {
     pub no_effects: MemoryApplyNoEffects,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryReviewReceiptStorageRecordDto {
     pub review_receipt_id: String,
     pub command_id: String,
@@ -45,22 +47,38 @@ pub struct ControlAcceptedMemoryReviewReceiptStorageRecordDto {
     pub admission_blockers: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryReviewReceiptStorageCountsDto {
+    #[ts(as = "u32")]
     pub records: usize,
+    #[ts(as = "u32")]
     pub approved: usize,
+    #[ts(as = "u32")]
     pub deferred: usize,
+    #[ts(as = "u32")]
     pub rejected: usize,
+    #[ts(as = "u32")]
     pub blocked: usize,
+    #[ts(as = "u32")]
     pub admitted: usize,
+    #[ts(as = "u32")]
     pub duplicate_noops: usize,
+    #[ts(as = "u32")]
     pub admission_blocked: usize,
+    #[ts(as = "u32")]
     pub blockers: usize,
+    #[ts(as = "u32")]
     pub admission_blockers: usize,
+    #[ts(as = "u32")]
     pub provenance_refs: usize,
+    #[ts(as = "u32")]
     pub evidence_refs: usize,
+    #[ts(as = "u32")]
     pub unsupported_records_skipped: usize,
+    #[ts(as = "u32")]
     pub other_project_records_skipped: usize,
+    #[ts(as = "u32")]
     pub decode_failed_records: usize,
 }
 

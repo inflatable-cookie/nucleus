@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 /// Serializable task timeline entry.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskTimelineEntryDto {
     pub entry_id: String,
     pub task_id: String,

@@ -10,7 +10,8 @@ use nucleus_tasks::{
 use super::ControlApiCodecError;
 
 /// Display-ready task record DTO.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskRecordDto {
     pub task_id: String,
     pub project_id: String,
@@ -31,7 +32,8 @@ pub struct ControlTaskRecordDto {
 }
 
 /// Display-ready task acceptance criterion.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskAcceptanceCriterionDto {
     pub text: String,
     pub required: bool,

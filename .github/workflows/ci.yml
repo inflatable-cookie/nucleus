@@ -25,3 +25,9 @@ jobs:
         run: cargo check --workspace
       - name: Test workspace
         run: cargo test --workspace
+      - name: TS bindings are current
+        run: |
+          rm -rf apps/desktop/src/lib/control/generated
+          TS_RS_EXPORT_DIR=$PWD/apps/desktop/src/lib/control/generated \
+            cargo test -p nucleus-server export_bindings
+          git diff --exit-code apps/desktop/src/lib/control/generated

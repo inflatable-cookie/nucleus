@@ -4,11 +4,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::LiveEvidenceCompletionReadModelRecord;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct LiveEvidenceCompletionControlDto {
     pub dto_id: String,
     pub read_model_id: String,
+    #[ts(as = "u32")]
     pub timeline_entry_count: usize,
+    #[ts(as = "u32")]
     pub completed_work_item_count: usize,
     pub skipped_completion_ids: Vec<String>,
     pub repair_required_completion_ids: Vec<String>,

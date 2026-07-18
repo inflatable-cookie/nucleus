@@ -12,7 +12,8 @@ use super::protocol::{protocol_family, protocol_version, validate_protocol};
 use super::{ControlApiCodecError, ControlCommandDto, ControlQueryDto};
 
 /// Serializable request envelope for the first control API wire format.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlRequestEnvelopeDto {
     pub protocol_family: String,
     pub protocol_version: u16,
@@ -54,7 +55,8 @@ impl TryFrom<ControlRequestEnvelopeDto> for ServerControlRequest {
 }
 
 /// Serializable request body.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControlRequestBodyDto {
     Query { query: ControlQueryDto },

@@ -9,7 +9,8 @@ use crate::{
     SelectedTaskReviewDecisionRecord,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewDecisionAdmissionDto {
     pub admission_id: String,
     pub decision_id: String,
@@ -24,7 +25,8 @@ pub struct ControlSelectedTaskReviewDecisionAdmissionDto {
     pub no_effects: ControlSelectedTaskReviewDecisionNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewDecisionCommandDto {
     pub decision_id: String,
     pub project_id: String,
@@ -38,13 +40,15 @@ pub struct ControlSelectedTaskReviewDecisionCommandDto {
     pub reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewDecisionRefusalDto {
     pub kind: String,
     pub reason: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewDecisionNoEffectsDto {
     pub review_mutation_performed: bool,
     pub task_mutation_performed: bool,
@@ -58,7 +62,8 @@ pub struct ControlSelectedTaskReviewDecisionNoEffectsDto {
     pub ui_effect_performed: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewDecisionRecordDto {
     pub decision_id: String,
     pub admission_id: String,

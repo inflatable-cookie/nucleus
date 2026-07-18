@@ -6,15 +6,23 @@ use crate::{
     PlanningTaskSeedPromotionState,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskSeedPromotionDiagnosticsDto {
     pub project_id: String,
+    #[ts(as = "u32")]
     pub task_seed_records: usize,
+    #[ts(as = "u32")]
     pub ready_count: usize,
+    #[ts(as = "u32")]
     pub blocked_count: usize,
+    #[ts(as = "u32")]
     pub rejected_count: usize,
+    #[ts(as = "u32")]
     pub promoted_count: usize,
+    #[ts(as = "u32")]
     pub duplicate_promoted_task_ref_count: usize,
+    #[ts(as = "u32")]
     pub missing_promoted_task_ref_count: usize,
     pub entries: Vec<ControlTaskSeedPromotionDiagnosticEntryDto>,
     pub client_can_mutate: bool,
@@ -23,7 +31,8 @@ pub struct ControlTaskSeedPromotionDiagnosticsDto {
     pub raw_planning_body_exposed: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskSeedPromotionDiagnosticEntryDto {
     pub seed_id: String,
     pub project_id: String,
@@ -33,6 +42,7 @@ pub struct ControlTaskSeedPromotionDiagnosticEntryDto {
     pub promoted_task_ref: Option<String>,
     pub promoted_task_exists: bool,
     pub duplicate_promoted_task_ref: bool,
+    #[ts(as = "u32")]
     pub blocking_question_count: usize,
 }
 

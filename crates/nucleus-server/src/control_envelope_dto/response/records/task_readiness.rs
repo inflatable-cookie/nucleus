@@ -6,7 +6,8 @@ use nucleus_engine::{
 };
 use nucleus_tasks::{TaskActionType, TaskActivityState};
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskReadinessCandidateDto {
     pub task_id: String,
     pub project_id: String,
@@ -21,17 +22,24 @@ pub struct ControlTaskReadinessCandidateDto {
     pub validation_commands: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskReadinessStatusCountDto {
     pub readiness: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskReadinessSourceCountsDto {
+    #[ts(as = "u32")]
     pub task_records: usize,
+    #[ts(as = "u32")]
     pub work_item_evidence_refs: usize,
+    #[ts(as = "u32")]
     pub timeline_evidence_refs: usize,
+    #[ts(as = "u32")]
     pub validation_command_refs: usize,
 }
 

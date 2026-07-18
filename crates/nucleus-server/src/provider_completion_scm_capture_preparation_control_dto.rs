@@ -4,16 +4,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::CompletionScmCapturePreparationDiagnosticsRecord;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CompletionScmCapturePreparationControlDto {
     pub dto_id: String,
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub candidate_count: usize,
+    #[ts(as = "u32")]
     pub skipped_admission_count: usize,
+    #[ts(as = "u32")]
     pub plan_count: usize,
+    #[ts(as = "u32")]
     pub ready_plan_count: usize,
+    #[ts(as = "u32")]
     pub unsupported_plan_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_plan_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
     pub scm_capture_authority_granted: bool,
     pub scm_publish_authority_granted: bool,

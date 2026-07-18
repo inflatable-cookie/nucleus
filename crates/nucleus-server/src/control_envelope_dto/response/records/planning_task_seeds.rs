@@ -6,7 +6,8 @@ use nucleus_engine::{
 };
 use nucleus_tasks::{TaskActionType, TaskImportance};
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningTaskSeedCandidateDto {
     pub seed_id: String,
     pub project_id: String,
@@ -21,17 +22,24 @@ pub struct ControlPlanningTaskSeedCandidateDto {
     pub validation_hint_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningTaskSeedStatusCountDto {
     pub readiness: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningTaskSeedSourceCountsDto {
+    #[ts(as = "u32")]
     pub task_seed_records: usize,
+    #[ts(as = "u32")]
     pub source_artifact_refs: usize,
+    #[ts(as = "u32")]
     pub context_refs: usize,
+    #[ts(as = "u32")]
     pub validation_hint_refs: usize,
 }
 

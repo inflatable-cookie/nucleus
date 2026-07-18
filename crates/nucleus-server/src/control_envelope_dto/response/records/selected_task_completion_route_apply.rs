@@ -10,7 +10,8 @@ use super::selected_task_command_admission::{
 };
 use super::selected_task_review_outcome_route::ControlSelectedTaskReviewOutcomeRouteNoEffectsDto;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskCompletionRouteApplyDto {
     pub apply_id: String,
     pub project_id: String,
@@ -27,7 +28,8 @@ pub struct ControlSelectedTaskCompletionRouteApplyDto {
     pub no_effects: ControlSelectedTaskReviewOutcomeRouteNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskCompletionRouteApplyRefusalDto {
     pub kind: String,
     pub reason: String,

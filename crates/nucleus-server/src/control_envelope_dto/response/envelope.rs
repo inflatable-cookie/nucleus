@@ -11,7 +11,8 @@ use super::body::ControlResponseBodyDto;
 use crate::control_envelope_dto::ControlApiCodecError;
 
 /// Serializable response envelope for the first control API wire format.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlResponseEnvelopeDto {
     pub protocol_family: String,
     pub protocol_version: u16,
@@ -35,7 +36,8 @@ impl TryFrom<&ServerControlResponse> for ControlResponseEnvelopeDto {
 }
 
 /// Serializable response status DTO.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlResponseStatusDto {
     Accepted,

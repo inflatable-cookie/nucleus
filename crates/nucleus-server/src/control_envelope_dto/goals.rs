@@ -6,7 +6,8 @@ use nucleus_planning::{decode_goal_storage_record, GoalStorageStatus};
 
 use super::ControlApiCodecError;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlGoalRecordDto {
     pub goal_id: String,
     pub project_id: String,
@@ -24,8 +25,11 @@ pub struct ControlGoalRecordDto {
     pub current_next_task_ref: Option<String>,
     pub next_action: Option<String>,
     pub revision_id: String,
+    #[ts(as = "Option<u32>")]
     pub created_at_epoch_seconds: Option<u64>,
+    #[ts(as = "Option<u32>")]
     pub updated_at_epoch_seconds: Option<u64>,
+    #[ts(as = "Option<u32>")]
     pub achieved_at_epoch_seconds: Option<u64>,
 }
 

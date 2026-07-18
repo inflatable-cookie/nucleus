@@ -9,7 +9,8 @@ use crate::{
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for Codex provider recovery execution state.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexRecoveryExecutionDiagnosticsDto {
     pub attempts: Vec<CodexRecoveryExecutionAttemptDiagnosticDto>,
     pub client_can_execute_provider_write: bool,
@@ -26,7 +27,8 @@ pub struct CodexRecoveryExecutionDiagnosticsDto {
 }
 
 /// One recovery execution attempt visible to diagnostics clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexRecoveryExecutionAttemptDiagnosticDto {
     pub need_id: String,
     pub envelope_id: String,

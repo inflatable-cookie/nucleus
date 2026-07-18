@@ -8,7 +8,8 @@ use crate::{
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for Codex recovery outcomes.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexRecoveryDiagnosticsDto {
     pub outcomes: Vec<CodexRecoveryDiagnosticDto>,
     pub client_can_resume_provider: bool,
@@ -18,7 +19,8 @@ pub struct CodexRecoveryDiagnosticsDto {
     pub source_summary: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexRecoveryDiagnosticDto {
     pub need_id: String,
     pub admission_id: Option<String>,

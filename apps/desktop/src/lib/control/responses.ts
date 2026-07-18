@@ -59,8 +59,8 @@ export type TaskWorkProgressQueryResult =
   | {
       state: "records";
       records: TaskAgentWorkUnitDiagnosticDto[];
-      client_can_mutate: false;
-      provider_execution_available: false;
+      client_can_mutate: boolean;
+      provider_execution_available: boolean;
     }
   | {
       state: "empty";

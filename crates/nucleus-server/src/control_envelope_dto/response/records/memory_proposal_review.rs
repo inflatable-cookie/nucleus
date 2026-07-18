@@ -5,15 +5,23 @@ use crate::{
     MemoryProposalReviewProposalStatus, MemoryProposalReviewReviewStatus,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlMemoryProposalReviewDiagnosticsDto {
     pub project_id: String,
+    #[ts(as = "u32")]
     pub proposal_records: usize,
+    #[ts(as = "u32")]
     pub queued_count: usize,
+    #[ts(as = "u32")]
     pub deferred_count: usize,
+    #[ts(as = "u32")]
     pub rejected_count: usize,
+    #[ts(as = "u32")]
     pub reviewed_for_promotion_count: usize,
+    #[ts(as = "u32")]
     pub blocked_count: usize,
+    #[ts(as = "u32")]
     pub needs_review_count: usize,
     pub entries: Vec<ControlMemoryProposalReviewDiagnosticEntryDto>,
     pub client_can_mutate: bool,
@@ -26,7 +34,8 @@ pub struct ControlMemoryProposalReviewDiagnosticsDto {
     pub private_note_exposed: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlMemoryProposalReviewDiagnosticEntryDto {
     pub proposal_id: String,
     pub scope_ref: String,
@@ -34,7 +43,9 @@ pub struct ControlMemoryProposalReviewDiagnosticEntryDto {
     pub review_status: String,
     pub reviewer_ref_present: bool,
     pub note_present: bool,
+    #[ts(as = "u32")]
     pub source_ref_count: usize,
+    #[ts(as = "u32")]
     pub link_ref_count: usize,
 }
 

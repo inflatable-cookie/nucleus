@@ -4,15 +4,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::ScmCaptureReviewDiagnosticsRecord;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ScmCaptureReviewControlDto {
     pub dto_id: String,
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub readiness_count: usize,
+    #[ts(as = "u32")]
     pub ready_count: usize,
+    #[ts(as = "u32")]
     pub blocked_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
     pub operator_decision_created: bool,
     pub change_request_authority_granted: bool,

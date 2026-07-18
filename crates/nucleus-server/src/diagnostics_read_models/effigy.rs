@@ -8,7 +8,8 @@ use nucleus_native_harness::{
 use super::helpers::source_summary;
 
 /// Effigy diagnostics read model.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct EffigyDiagnosticsDto {
     pub integration_status: String,
     pub selector_refs: Vec<String>,

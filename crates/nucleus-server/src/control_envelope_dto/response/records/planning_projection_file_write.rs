@@ -5,20 +5,28 @@ use crate::{
     PlanningProjectionFileWriteDiagnostics,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningProjectionFileWriteDiagnosticsDto {
+    #[ts(as = "u32")]
     pub materialized_planning_artifact_files: usize,
+    #[ts(as = "u32")]
     pub materialized_planning_task_seed_files: usize,
+    #[ts(as = "u32")]
     pub invalid_ref_count: usize,
+    #[ts(as = "u32")]
     pub unsupported_record_count: usize,
+    #[ts(as = "u32")]
     pub encode_failure_count: usize,
+    #[ts(as = "u32")]
     pub skipped_write_count: usize,
     pub issues: Vec<ControlPlanningProjectionFileWriteDiagnosticIssueDto>,
     pub import_or_apply_authority: bool,
     pub scm_mutation_authority: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningProjectionFileWriteDiagnosticIssueDto {
     pub file_ref: Option<String>,
     pub class: String,

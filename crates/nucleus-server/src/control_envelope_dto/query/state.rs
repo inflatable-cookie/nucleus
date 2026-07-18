@@ -6,7 +6,8 @@ use crate::state::ServerStateDomain;
 use nucleus_core::PersistenceRecordId;
 
 /// Supported state domain DTOs for the first control envelope.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlStateDomainDto {
     Projects,
@@ -39,7 +40,8 @@ impl From<ControlStateDomainDto> for ServerStateDomain {
 }
 
 /// Supported state query scopes for the first control envelope.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControlQueryScopeDto {
     Get { id: String },

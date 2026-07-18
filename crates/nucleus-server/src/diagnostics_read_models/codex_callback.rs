@@ -8,7 +8,8 @@ use crate::{
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for Codex callback response outcomes.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexCallbackDiagnosticsDto {
     pub outcomes: Vec<CodexCallbackDiagnosticDto>,
     pub client_can_answer_callbacks: bool,
@@ -19,7 +20,8 @@ pub struct CodexCallbackDiagnosticsDto {
     pub source_summary: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexCallbackDiagnosticDto {
     pub request_id: String,
     pub admission_id: Option<String>,

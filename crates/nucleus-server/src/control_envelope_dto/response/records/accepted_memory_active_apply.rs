@@ -13,7 +13,8 @@ use nucleus_memory::{
     AcceptedMemoryReviewReceiptStatusStorage,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryActiveApplyDiagnosticsDto {
     pub diagnostics_id: String,
     pub project_id: String,
@@ -23,7 +24,8 @@ pub struct ControlAcceptedMemoryActiveApplyDiagnosticsDto {
     pub no_effects: MemoryApplyNoEffects,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryActiveApplyRecordDto {
     pub active_apply_admission_ref: String,
     pub request_id: String,
@@ -47,20 +49,34 @@ pub struct ControlAcceptedMemoryActiveApplyRecordDto {
     pub blockers: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryActiveApplyCountsDto {
+    #[ts(as = "u32")]
     pub source_records: usize,
+    #[ts(as = "u32")]
     pub admitted: usize,
+    #[ts(as = "u32")]
     pub duplicate_noops: usize,
+    #[ts(as = "u32")]
     pub blocked: usize,
+    #[ts(as = "u32")]
     pub blockers: usize,
+    #[ts(as = "u32")]
     pub missing_ref_blockers: usize,
+    #[ts(as = "u32")]
     pub review_state_blockers: usize,
+    #[ts(as = "u32")]
     pub stale_ref_blockers: usize,
+    #[ts(as = "u32")]
     pub raw_payload_blockers: usize,
+    #[ts(as = "u32")]
     pub effect_blockers: usize,
+    #[ts(as = "u32")]
     pub unsupported_records_skipped: usize,
+    #[ts(as = "u32")]
     pub other_project_records_skipped: usize,
+    #[ts(as = "u32")]
     pub decode_failed_records: usize,
 }
 

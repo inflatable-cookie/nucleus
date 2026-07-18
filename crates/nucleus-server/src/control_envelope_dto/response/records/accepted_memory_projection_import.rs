@@ -14,7 +14,8 @@ use super::accepted_memory_projection_import_blockers::{
     conflict_status,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionImportDiagnosticsDto {
     pub project_id: String,
     pub candidates: Vec<ControlAcceptedMemoryProjectionImportCandidateDto>,
@@ -30,7 +31,8 @@ pub struct ControlAcceptedMemoryProjectionImportDiagnosticsDto {
     pub ui_effect_performed: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionImportCandidateDto {
     pub candidate_ref: String,
     pub memory_id: Option<String>,
@@ -40,7 +42,8 @@ pub struct ControlAcceptedMemoryProjectionImportCandidateDto {
     pub blockers: Vec<ControlAcceptedMemoryProjectionImportBlockerDto>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionImportAdmissionDto {
     pub admission_ref: String,
     pub candidate_ref: String,
@@ -50,7 +53,8 @@ pub struct ControlAcceptedMemoryProjectionImportAdmissionDto {
     pub blockers: Vec<ControlAcceptedMemoryProjectionImportBlockerDto>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionImportConflictDto {
     pub conflict_ref: String,
     pub admission_ref: String,
@@ -62,43 +66,69 @@ pub struct ControlAcceptedMemoryProjectionImportConflictDto {
     pub blockers: Vec<ControlAcceptedMemoryProjectionImportBlockerDto>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionImportSummaryDto {
     pub title: String,
     pub body_kind: String,
     pub body_summary: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionImportBlockerDto {
     pub kind: String,
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionImportCountsDto {
+    #[ts(as = "u32")]
     pub source_records: usize,
+    #[ts(as = "u32")]
     pub accepted_records: usize,
+    #[ts(as = "u32")]
     pub out_of_scope_accepted_records: usize,
+    #[ts(as = "u32")]
     pub skipped_records: usize,
+    #[ts(as = "u32")]
     pub skipped_proposal_records: usize,
+    #[ts(as = "u32")]
     pub skipped_unsupported_records: usize,
+    #[ts(as = "u32")]
     pub skipped_decode_errors: usize,
+    #[ts(as = "u32")]
     pub skipped_encode_errors: usize,
+    #[ts(as = "u32")]
     pub input_files: usize,
+    #[ts(as = "u32")]
     pub candidates: usize,
+    #[ts(as = "u32")]
     pub ready_candidates: usize,
+    #[ts(as = "u32")]
     pub blocked_candidates: usize,
+    #[ts(as = "u32")]
     pub admitted_imports: usize,
+    #[ts(as = "u32")]
     pub blocked_imports: usize,
+    #[ts(as = "u32")]
     pub no_conflicts: usize,
+    #[ts(as = "u32")]
     pub duplicate_noops: usize,
+    #[ts(as = "u32")]
     pub semantic_conflicts: usize,
+    #[ts(as = "u32")]
     pub policy_conflicts: usize,
+    #[ts(as = "u32")]
     pub blocked_conflicts: usize,
+    #[ts(as = "u32")]
     pub candidate_blockers: usize,
+    #[ts(as = "u32")]
     pub admission_blockers: usize,
+    #[ts(as = "u32")]
     pub conflict_blockers: usize,
+    #[ts(as = "u32")]
     pub file_refs: usize,
 }
 

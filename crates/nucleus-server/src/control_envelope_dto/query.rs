@@ -17,7 +17,8 @@ use super::ControlApiCodecError;
 pub use state::{ControlQueryScopeDto, ControlStateDomainDto};
 
 /// Serializable query DTO.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ControlQueryDto {
     State {

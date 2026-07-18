@@ -12,7 +12,8 @@ use crate::accepted_memory_projection_import_apply_admission::{
     AcceptedMemoryProjectionImportApplyAdmissionStatus,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryImportApplyReviewDiagnosticsDto {
     pub diagnostics_id: String,
     pub project_id: String,
@@ -23,7 +24,8 @@ pub struct ControlAcceptedMemoryImportApplyReviewDiagnosticsDto {
     pub no_effects: MemoryApplyNoEffects,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryImportApplyReviewReceiptDto {
     pub review_receipt_ref: String,
     pub command_id: String,
@@ -45,28 +47,45 @@ pub struct ControlAcceptedMemoryImportApplyReviewReceiptDto {
     pub evidence_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryImportApplyReviewBlockerDto {
     pub kind: String,
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryImportApplyReviewCountsDto {
+    #[ts(as = "u32")]
     pub inputs: usize,
+    #[ts(as = "u32")]
     pub approved: usize,
+    #[ts(as = "u32")]
     pub deferred: usize,
+    #[ts(as = "u32")]
     pub rejected: usize,
+    #[ts(as = "u32")]
     pub blocked: usize,
+    #[ts(as = "u32")]
     pub duplicate_noops: usize,
+    #[ts(as = "u32")]
     pub conflicts: usize,
+    #[ts(as = "u32")]
     pub approval_required: usize,
+    #[ts(as = "u32")]
     pub blockers: usize,
+    #[ts(as = "u32")]
     pub missing_ref_blockers: usize,
+    #[ts(as = "u32")]
     pub admission_blockers: usize,
+    #[ts(as = "u32")]
     pub raw_payload_blockers: usize,
+    #[ts(as = "u32")]
     pub effect_blockers: usize,
+    #[ts(as = "u32")]
     pub provenance_refs: usize,
+    #[ts(as = "u32")]
     pub evidence_refs: usize,
 }
 

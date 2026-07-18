@@ -9,7 +9,8 @@ use nucleus_engine::{
 use super::helpers::{source_status, source_summary};
 
 /// Task-agent work-unit diagnostics read model.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct TaskAgentDiagnosticsDto {
     pub work_units: Vec<TaskAgentWorkUnitDiagnosticDto>,
     pub client_can_mutate_work_units: bool,
@@ -18,7 +19,8 @@ pub struct TaskAgentDiagnosticsDto {
     pub source_summary: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct TaskAgentWorkUnitDiagnosticDto {
     pub work_item_id: String,
     pub project_id: String,
@@ -27,6 +29,7 @@ pub struct TaskAgentWorkUnitDiagnosticDto {
     pub review: String,
     pub last_source_id: String,
     pub last_cursor: String,
+    #[ts(as = "u32")]
     pub source_count: usize,
     pub session_id: Option<String>,
     pub turn_ids: Vec<String>,
@@ -40,7 +43,8 @@ pub struct TaskAgentWorkUnitDiagnosticDto {
     pub summary: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct TaskAgentWorkUnitIssueDto {
     pub code: String,
     pub summary: String,

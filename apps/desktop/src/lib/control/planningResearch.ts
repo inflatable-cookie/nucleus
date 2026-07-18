@@ -9,21 +9,9 @@ export type CountByLabelDto = {
   retention?: string;
 };
 
-export type ControlPlanningSessionSummaryDto = {
-  session_id: string;
-  kind: string;
-  status: string;
-  prompt_or_template_refs: string[];
-  participant_count: number;
-  source_ref_count: number;
-  source_kind_counts: CountByLabelDto[];
-  output_refs: {
-    artifact_refs: string[];
-    task_seed_refs: string[];
-    memory_proposal_refs: string[];
-    research_run_brief_refs: string[];
-  };
-};
+// Canonical shape comes from the Rust DTOs via ts-rs.
+export type { ControlPlanningSessionSummaryDto } from "./generated/ControlPlanningSessionSummaryDto";
+import type { ControlPlanningSessionSummaryDto } from "./generated/ControlPlanningSessionSummaryDto";
 
 export type ControlPlanningSessionSourceCountsDto = {
   planning_session_records: number;
@@ -87,8 +75,8 @@ export type PlanningSessionsQueryResult =
       sessions: ControlPlanningSessionSummaryDto[];
       status_counts: CountByLabelDto[];
       source_counts: ControlPlanningSessionSourceCountsDto;
-      client_can_mutate: false;
-      provider_execution_available: false;
+      client_can_mutate: boolean;
+      provider_execution_available: boolean;
     }
   | QueryFallback;
 
@@ -102,8 +90,8 @@ export type MemoryProposalsQueryResult =
       sensitivity_counts: CountByLabelDto[];
       retention_counts: CountByLabelDto[];
       source_counts: ControlMemoryProposalSourceCountsDto;
-      client_can_mutate: false;
-      provider_execution_available: false;
+      client_can_mutate: boolean;
+      provider_execution_available: boolean;
     }
   | QueryFallback;
 
@@ -117,8 +105,8 @@ export type ResearchRunBriefsQueryResult =
       observation_kind_counts: CountByLabelDto[];
       synthesis_kind_counts: CountByLabelDto[];
       source_counts: ControlResearchRunBriefSourceCountsDto;
-      client_can_mutate: false;
-      provider_execution_available: false;
+      client_can_mutate: boolean;
+      provider_execution_available: boolean;
     }
   | QueryFallback;
 

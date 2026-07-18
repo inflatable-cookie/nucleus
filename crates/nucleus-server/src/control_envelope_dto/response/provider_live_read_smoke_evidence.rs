@@ -4,15 +4,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::ProviderLiveReadApprovedSmokeEvidenceDiagnostics;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProviderLiveReadSmokeEvidenceDiagnosticsDto {
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub evidence_count: usize,
+    #[ts(as = "u32")]
     pub promoted_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_count: usize,
+    #[ts(as = "u32")]
     pub blocked_count: usize,
+    #[ts(as = "u32")]
     pub duplicate_count: usize,
+    #[ts(as = "u32")]
     pub provider_network_read_performed_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
     pub provider_write_executed: bool,
     pub callback_effect_executed: bool,

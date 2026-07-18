@@ -7,7 +7,8 @@ use crate::read_only_command_control::{
 };
 
 /// Serializable sanitized rejection for read-only command results.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ControlReadOnlyCommandRejectionDto {
     HostReadinessBlocked { blockers: usize },

@@ -7,7 +7,8 @@ use crate::diagnostics_read_models::{
 };
 
 /// Serializable diagnostics query result.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(tag = "domain", content = "record", rename_all = "snake_case")]
 pub enum ControlDiagnosticsResultDto {
     Steward(StewardDiagnosticsDto),
@@ -31,7 +32,8 @@ pub enum ControlDiagnosticsResultDto {
 }
 
 /// Serializable combined diagnostics snapshot.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlDiagnosticsSnapshotDto {
     pub steward: StewardDiagnosticsDto,
     pub effigy: EffigyDiagnosticsDto,

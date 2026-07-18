@@ -10,7 +10,8 @@ use crate::{
 };
 
 /// Serializable provider read-intent query result.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProviderReadIntentQueryResultDto {
     pub query_id: String,
     pub projection: ControlProviderReadIntentProjectionDto,
@@ -31,19 +32,31 @@ impl From<&ForgeReadIntentQueryResult> for ControlProviderReadIntentQueryResultD
 }
 
 /// Serializable provider read-intent projection.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProviderReadIntentProjectionDto {
     pub projection_id: String,
+    #[ts(as = "u32")]
     pub total_count: usize,
+    #[ts(as = "u32")]
     pub credential_status_count: usize,
+    #[ts(as = "u32")]
     pub repository_metadata_count: usize,
+    #[ts(as = "u32")]
     pub pull_request_count: usize,
+    #[ts(as = "u32")]
     pub status_check_count: usize,
+    #[ts(as = "u32")]
     pub ready_count: usize,
+    #[ts(as = "u32")]
     pub duplicate_noop_count: usize,
+    #[ts(as = "u32")]
     pub blocked_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
     pub entries: Vec<ControlProviderReadIntentEntryDto>,
     #[serde(flatten)]
@@ -76,7 +89,8 @@ impl From<&ForgeReadIntentProjectionSet> for ControlProviderReadIntentProjection
 }
 
 /// Serializable provider read-intent entry summary.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProviderReadIntentEntryDto {
     pub intent_id: String,
     pub source_persisted_refresh_id: String,
@@ -87,7 +101,9 @@ pub struct ControlProviderReadIntentEntryDto {
     pub forge_provider: Option<String>,
     pub remote_repo_ref: Option<String>,
     pub operation_family: String,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
     pub duplicate_refresh_detected: bool,
     pub stopped_refresh_recorded: bool,
@@ -117,11 +133,16 @@ impl From<&ForgeReadIntentProjectionEntry> for ControlProviderReadIntentEntryDto
 }
 
 /// Serializable provider read-intent source counts.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProviderReadIntentSourceCountsDto {
+    #[ts(as = "u32")]
     pub credential_status_records: usize,
+    #[ts(as = "u32")]
     pub repository_metadata_records: usize,
+    #[ts(as = "u32")]
     pub pull_request_records: usize,
+    #[ts(as = "u32")]
     pub status_check_records: usize,
 }
 

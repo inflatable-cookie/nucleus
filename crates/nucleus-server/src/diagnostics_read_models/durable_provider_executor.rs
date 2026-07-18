@@ -20,7 +20,8 @@ use super::durable_provider_executor_invocation::{
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for durable provider executor command state.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableProviderExecutorDiagnosticsDto {
     pub commands: Vec<DurableProviderExecutorCommandDiagnosticDto>,
     pub statuses: Vec<DurableProviderExecutorStatusDiagnosticDto>,
@@ -40,7 +41,8 @@ pub struct DurableProviderExecutorDiagnosticsDto {
 }
 
 /// One durable executor command visible to diagnostics clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableProviderExecutorCommandDiagnosticDto {
     pub command_id: String,
     pub lane: String,
@@ -62,7 +64,8 @@ pub struct DurableProviderExecutorCommandDiagnosticDto {
 }
 
 /// One durable executor status visible to diagnostics clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableProviderExecutorStatusDiagnosticDto {
     pub status_id: String,
     pub command_id: String,

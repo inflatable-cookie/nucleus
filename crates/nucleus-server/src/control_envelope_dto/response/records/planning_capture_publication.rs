@@ -5,17 +5,25 @@ use crate::{
     PlanningCapturePublicationStoppedRequestDiagnostics,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningCapturePublicationDiagnosticsDto {
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub request_count: usize,
+    #[ts(as = "u32")]
     pub persisted_request_count: usize,
+    #[ts(as = "u32")]
     pub duplicate_request_count: usize,
+    #[ts(as = "u32")]
     pub blocked_request_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
     pub adapter_family_buckets: Vec<ControlPlanningCapturePublicationBucketDto>,
     pub operation_buckets: Vec<ControlPlanningCapturePublicationBucketDto>,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
+    #[ts(as = "u32")]
     pub management_file_ref_count: usize,
     pub command_execution_permitted: bool,
     pub runner_handoff_permitted: bool,
@@ -33,9 +41,11 @@ pub struct ControlPlanningCapturePublicationDiagnosticsDto {
     pub raw_payload_retained: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningCapturePublicationBucketDto {
     pub label: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 

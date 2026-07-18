@@ -7,7 +7,8 @@ use crate::{
     SelectedTaskOperatorActionDisposition, TaskCommand, TaskWorkflowNoEffects,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskCommandAdmissionDto {
     pub admission_id: String,
     pub project_id: String,
@@ -22,7 +23,8 @@ pub struct ControlSelectedTaskCommandAdmissionDto {
     pub no_effects: ControlSelectedTaskCommandAdmissionNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskCommandAdmissionCommandDto {
     pub action: String,
     pub task_id: String,
@@ -30,7 +32,8 @@ pub struct ControlSelectedTaskCommandAdmissionCommandDto {
     pub reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskCommandAdmissionCandidateDto {
     pub family: String,
     pub readiness_status: String,
@@ -43,13 +46,15 @@ pub struct ControlSelectedTaskCommandAdmissionCandidateDto {
     pub reason_required: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskCommandAdmissionRefusalDto {
     pub kind: String,
     pub reason: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskCommandAdmissionNoEffectsDto {
     pub task_mutation_performed: bool,
     pub provider_execution_performed: bool,

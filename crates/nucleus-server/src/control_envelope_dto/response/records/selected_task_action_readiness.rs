@@ -6,7 +6,8 @@ use crate::{
     TaskWorkflowNoEffects,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskActionReadinessDto {
     pub readiness_id: String,
     pub project_id: String,
@@ -17,7 +18,8 @@ pub struct ControlSelectedTaskActionReadinessDto {
     pub no_effects: ControlSelectedTaskActionNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskActionDto {
     pub family: String,
     pub status: String,
@@ -27,28 +29,41 @@ pub struct ControlSelectedTaskActionDto {
     pub blocker_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskActionBlockerDto {
     pub family: String,
     pub reason: String,
     pub evidence_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskActionSourceCountsDto {
+    #[ts(as = "u32")]
     pub task_records: usize,
+    #[ts(as = "u32")]
     pub readiness_refs: usize,
+    #[ts(as = "u32")]
     pub work_items: usize,
+    #[ts(as = "u32")]
     pub active_work_items: usize,
+    #[ts(as = "u32")]
     pub completed_work_items: usize,
+    #[ts(as = "u32")]
     pub runtime_evidence_refs: usize,
+    #[ts(as = "u32")]
     pub completion_refs: usize,
+    #[ts(as = "u32")]
     pub review_refs: usize,
+    #[ts(as = "u32")]
     pub scm_handoff_refs: usize,
+    #[ts(as = "u32")]
     pub gap_count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskActionNoEffectsDto {
     pub task_mutation_performed: bool,
     pub provider_execution_performed: bool,

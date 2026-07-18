@@ -11,7 +11,8 @@ use crate::{
 use super::selected_task_command_admission::ControlSelectedTaskCommandAdmissionDto;
 use super::selected_task_review_outcome_route::ControlSelectedTaskReviewOutcomeRouteNoEffectsDto;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskRouteAdmissionDto {
     pub admission_id: String,
     pub project_id: String,
@@ -22,7 +23,8 @@ pub struct ControlSelectedTaskRouteAdmissionDto {
     pub no_effects: ControlSelectedTaskReviewOutcomeRouteNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskCompletionRouteAdmissionDto {
     pub admission_id: String,
     pub project_id: String,
@@ -37,7 +39,8 @@ pub struct ControlSelectedTaskCompletionRouteAdmissionDto {
     pub no_effects: ControlSelectedTaskReviewOutcomeRouteNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReworkDelegationRouteAdmissionDto {
     pub admission_id: String,
     pub project_id: String,
@@ -54,7 +57,8 @@ pub struct ControlSelectedTaskReworkDelegationRouteAdmissionDto {
     pub no_effects: ControlSelectedTaskReviewOutcomeRouteNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskRouteAdmissionPreviewDto {
     pub family: String,
     pub summary: String,
@@ -62,7 +66,8 @@ pub struct ControlSelectedTaskRouteAdmissionPreviewDto {
     pub evidence_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskRouteAdmissionRefusalDto {
     pub kind: String,
     pub reason: String,

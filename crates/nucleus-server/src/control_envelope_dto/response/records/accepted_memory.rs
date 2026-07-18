@@ -8,7 +8,8 @@ use crate::accepted_memory_projection::{
     AcceptedMemorySummaryScope, AcceptedMemorySummaryStatus,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemorySummaryDto {
     pub memory_id: String,
     pub source_proposal_id: Option<String>,
@@ -21,60 +22,88 @@ pub struct ControlAcceptedMemorySummaryDto {
     pub created_by_ref: String,
     pub accepted_by_ref: String,
     pub reviewer_ref: String,
+    #[ts(as = "u32")]
     pub source_ref_count: usize,
+    #[ts(as = "u32")]
     pub link_ref_count: usize,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
+    #[ts(as = "u32")]
     pub supersedes_count: usize,
+    #[ts(as = "u32")]
     pub superseded_by_count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryStatusCountDto {
     pub status: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryScopeCountDto {
     pub scope: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryKindCountDto {
     pub kind: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemorySensitivityCountDto {
     pub sensitivity: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryRetentionCountDto {
     pub retention: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryConfidenceCountDto {
     pub confidence: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemorySourceCountsDto {
+    #[ts(as = "u32")]
     pub accepted_records: usize,
+    #[ts(as = "u32")]
     pub out_of_scope_accepted_records: usize,
+    #[ts(as = "u32")]
     pub skipped_records: usize,
+    #[ts(as = "u32")]
     pub skipped_proposal_records: usize,
+    #[ts(as = "u32")]
     pub skipped_unsupported_records: usize,
+    #[ts(as = "u32")]
     pub skipped_decode_errors: usize,
+    #[ts(as = "u32")]
     pub source_refs: usize,
+    #[ts(as = "u32")]
     pub link_refs: usize,
+    #[ts(as = "u32")]
     pub evidence_refs: usize,
+    #[ts(as = "u32")]
     pub supersession_refs: usize,
 }
 

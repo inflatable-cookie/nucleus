@@ -7,54 +7,81 @@ use crate::research_run_briefs_projection::{
     ResearchSynthesisKindSummary,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlResearchRunBriefSummaryDto {
     pub run_id: String,
     pub status: String,
+    #[ts(as = "u32")]
     pub source_plan_ref_count: usize,
+    #[ts(as = "u32")]
     pub question_count: usize,
+    #[ts(as = "u32")]
     pub source_ref_count: usize,
+    #[ts(as = "u32")]
     pub observation_ref_count: usize,
+    #[ts(as = "u32")]
     pub synthesis_ref_count: usize,
+    #[ts(as = "u32")]
     pub promotion_target_ref_count: usize,
+    #[ts(as = "u32")]
     pub coverage_ref_count: usize,
+    #[ts(as = "u32")]
     pub gap_ref_count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlResearchRunBriefStatusCountDto {
     pub status: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlResearchSourceKindCountDto {
     pub kind: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlResearchObservationKindCountDto {
     pub kind: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlResearchSynthesisKindCountDto {
     pub kind: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlResearchRunBriefSourceCountsDto {
+    #[ts(as = "u32")]
     pub run_records: usize,
+    #[ts(as = "u32")]
     pub source_plan_refs: usize,
+    #[ts(as = "u32")]
     pub questions: usize,
+    #[ts(as = "u32")]
     pub source_refs: usize,
+    #[ts(as = "u32")]
     pub observation_refs: usize,
+    #[ts(as = "u32")]
     pub synthesis_refs: usize,
+    #[ts(as = "u32")]
     pub promotion_target_refs: usize,
+    #[ts(as = "u32")]
     pub coverage_refs: usize,
+    #[ts(as = "u32")]
     pub gap_refs: usize,
 }
 

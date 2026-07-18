@@ -6,41 +6,56 @@ use crate::planning_sessions_projection::{
     PlanningSessionSummaryKind, PlanningSessionSummaryStatus,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningSessionSummaryDto {
     pub session_id: String,
     pub kind: String,
     pub status: String,
     pub prompt_or_template_refs: Vec<String>,
+    #[ts(as = "u32")]
     pub participant_count: usize,
+    #[ts(as = "u32")]
     pub source_ref_count: usize,
     pub source_kind_counts: Vec<ControlPlanningSessionSourceKindCountDto>,
     pub output_refs: ControlPlanningSessionOutputRefsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningSessionStatusCountDto {
     pub status: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningSessionSourceKindCountDto {
     pub kind: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningSessionSourceCountsDto {
+    #[ts(as = "u32")]
     pub planning_session_records: usize,
+    #[ts(as = "u32")]
     pub exploration_session_records: usize,
+    #[ts(as = "u32")]
     pub prompt_or_template_refs: usize,
+    #[ts(as = "u32")]
     pub participant_refs: usize,
+    #[ts(as = "u32")]
     pub source_refs: usize,
+    #[ts(as = "u32")]
     pub output_refs: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningSessionOutputRefsDto {
     pub artifact_refs: Vec<String>,
     pub task_seed_refs: Vec<String>,

@@ -7,7 +7,8 @@ use crate::memory_proposals_projection::{
     MemoryProposalSummaryKind, MemoryProposalSummaryScope, MemoryProposalSummaryStatus,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlMemoryProposalSummaryDto {
     pub proposal_id: String,
     pub scope: String,
@@ -16,41 +17,58 @@ pub struct ControlMemoryProposalSummaryDto {
     pub review_status: String,
     pub sensitivity: String,
     pub retention: String,
+    #[ts(as = "u32")]
     pub source_ref_count: usize,
+    #[ts(as = "u32")]
     pub link_ref_count: usize,
+    #[ts(as = "u32")]
     pub supersedes_count: usize,
+    #[ts(as = "u32")]
     pub superseded_by_count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlMemoryProposalStatusCountDto {
     pub status: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlMemoryProposalScopeCountDto {
     pub scope: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlMemoryProposalSensitivityCountDto {
     pub sensitivity: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlMemoryProposalRetentionCountDto {
     pub retention: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlMemoryProposalSourceCountsDto {
+    #[ts(as = "u32")]
     pub proposal_records: usize,
+    #[ts(as = "u32")]
     pub source_refs: usize,
+    #[ts(as = "u32")]
     pub link_refs: usize,
+    #[ts(as = "u32")]
     pub supersession_refs: usize,
 }
 

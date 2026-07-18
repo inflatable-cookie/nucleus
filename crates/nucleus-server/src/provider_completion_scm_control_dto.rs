@@ -7,18 +7,25 @@ use crate::{
     CompletionScmReadModelRecord,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CompletionScmControlDto {
     pub dto_id: String,
     pub read_model_id: String,
     pub source_history_available: bool,
     pub adapter_label: String,
     pub workflow_label: String,
+    #[ts(as = "u32")]
     pub candidate_count: usize,
+    #[ts(as = "u32")]
     pub readiness_count: usize,
+    #[ts(as = "u32")]
     pub ready_count: usize,
+    #[ts(as = "u32")]
     pub unsupported_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
     pub repair_required: bool,
     pub readiness: Vec<CompletionScmReadinessDto>,
@@ -28,7 +35,8 @@ pub struct CompletionScmControlDto {
     pub raw_material_exposed: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CompletionScmReadinessDto {
     pub readiness_id: String,
     pub candidate_id: String,

@@ -41,7 +41,8 @@ pub struct CompletionScmProviderNeutralReadiness {
     pub blockers: Vec<CompletionScmProviderNeutralReadinessBlocker>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum CompletionScmProviderNeutralReadinessStatus {
     Ready,

@@ -8,7 +8,8 @@ use crate::{
     SelectedTaskScmHandoffTarget, SelectedTaskScmHandoffTargetShape,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskScmHandoffDto {
     pub handoff_id: String,
     pub project_id: String,
@@ -22,7 +23,8 @@ pub struct ControlSelectedTaskScmHandoffDto {
     pub no_effects: ControlSelectedTaskScmHandoffNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskScmHandoffSummaryDto {
     pub state: String,
     pub reason: String,
@@ -30,13 +32,15 @@ pub struct ControlSelectedTaskScmHandoffSummaryDto {
     pub blocker_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskScmHandoffTargetDto {
     pub shape: String,
     pub target_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskScmHandoffEvidenceDto {
     pub work_item_refs: Vec<String>,
     pub scm_handoff_refs: Vec<String>,
@@ -51,7 +55,8 @@ pub struct ControlSelectedTaskScmHandoffEvidenceDto {
     pub repair_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskScmHandoffNextStepDto {
     pub category: String,
     pub summary: String,
@@ -59,30 +64,46 @@ pub struct ControlSelectedTaskScmHandoffNextStepDto {
     pub rationale_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskScmHandoffSourceCountsDto {
+    #[ts(as = "u32")]
     pub task_records: usize,
+    #[ts(as = "u32")]
     pub work_items: usize,
+    #[ts(as = "u32")]
     pub scm_handoff_refs: usize,
+    #[ts(as = "u32")]
     pub scm_work_session_refs: usize,
+    #[ts(as = "u32")]
     pub provider_change_refs: usize,
+    #[ts(as = "u32")]
     pub checkpoint_refs: usize,
+    #[ts(as = "u32")]
     pub diff_summary_refs: usize,
+    #[ts(as = "u32")]
     pub runtime_receipt_refs: usize,
+    #[ts(as = "u32")]
     pub validation_refs: usize,
+    #[ts(as = "u32")]
     pub review_refs: usize,
+    #[ts(as = "u32")]
     pub change_request_prep_refs: usize,
+    #[ts(as = "u32")]
     pub repair_refs: usize,
+    #[ts(as = "u32")]
     pub gap_count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskScmHandoffGapDto {
     pub area: String,
     pub reason: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskScmHandoffNoEffectsDto {
     pub scm_mutation_performed: bool,
     pub forge_mutation_performed: bool,

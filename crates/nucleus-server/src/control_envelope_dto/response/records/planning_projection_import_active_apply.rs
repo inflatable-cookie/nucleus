@@ -5,20 +5,33 @@ use crate::{
     PlanningProjectionImportActiveApplyDiagnostics,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningProjectionImportActiveApplyDiagnosticsDto {
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub admission_record_count: usize,
+    #[ts(as = "u32")]
     pub admitted_record_count: usize,
+    #[ts(as = "u32")]
     pub duplicate_noop_record_count: usize,
+    #[ts(as = "u32")]
     pub blocked_record_count: usize,
+    #[ts(as = "u32")]
     pub operation_ref_count: usize,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
+    #[ts(as = "u32")]
     pub stale_count: usize,
+    #[ts(as = "u32")]
     pub conflict_count: usize,
+    #[ts(as = "u32")]
     pub unsupported_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_count: usize,
+    #[ts(as = "u32")]
     pub missing_ref_count: usize,
     pub record_status_buckets: Vec<ControlPlanningProjectionImportActiveApplyBucketDto>,
     pub blocker_buckets: Vec<ControlPlanningProjectionImportActiveApplyBucketDto>,
@@ -44,9 +57,11 @@ pub struct ControlPlanningProjectionImportActiveApplyDiagnosticsDto {
     pub ui_apply_permitted: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningProjectionImportActiveApplyBucketDto {
     pub label: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 

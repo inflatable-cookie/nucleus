@@ -14,7 +14,8 @@ use super::super::ControlApiCodecError;
 use super::ControlCommandDto;
 
 /// Serializable task acceptance criterion for authoring commands.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlTaskAcceptanceCriterionDto {
     pub text: String,
     pub required: bool,

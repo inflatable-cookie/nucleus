@@ -8,7 +8,8 @@ use crate::{
     TaskWorkflowNoEffects,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskOperatorActionGateDto {
     pub gate_id: String,
     pub project_id: String,
@@ -21,7 +22,8 @@ pub struct ControlSelectedTaskOperatorActionGateDto {
     pub no_effects: ControlSelectedTaskOperatorActionNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskOperatorActionCandidateDto {
     pub family: String,
     pub readiness_status: String,
@@ -35,32 +37,43 @@ pub struct ControlSelectedTaskOperatorActionCandidateDto {
     pub reason_required: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskOperatorTaskCommandCandidateDto {
     pub action: String,
     pub task_id: String,
     pub expected_revision: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskOperatorActionBlockerDto {
     pub family: String,
     pub reason: String,
     pub evidence_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskOperatorActionGateSourceCountsDto {
+    #[ts(as = "u32")]
     pub readiness_actions: usize,
+    #[ts(as = "u32")]
     pub task_command_candidates: usize,
+    #[ts(as = "u32")]
     pub blocked_actions: usize,
+    #[ts(as = "u32")]
     pub read_only_actions: usize,
+    #[ts(as = "u32")]
     pub deferred_actions: usize,
+    #[ts(as = "u32")]
     pub evidence_refs: usize,
+    #[ts(as = "u32")]
     pub blocker_refs: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskOperatorActionNoEffectsDto {
     pub task_mutation_performed: bool,
     pub provider_execution_performed: bool,

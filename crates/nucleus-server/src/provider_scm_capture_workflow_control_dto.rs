@@ -4,16 +4,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::ScmCaptureWorkflowDiagnosticsRecord;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ScmCaptureWorkflowControlDto {
     pub dto_id: String,
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub workflow_count: usize,
+    #[ts(as = "u32")]
     pub ready_for_operator_review_count: usize,
+    #[ts(as = "u32")]
     pub missing_stage_count: usize,
+    #[ts(as = "u32")]
     pub completed_stage_count: usize,
+    #[ts(as = "u32")]
     pub blocked_stage_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_stage_count: usize,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
     pub replay_only: bool,
     pub raw_output_retained: bool,

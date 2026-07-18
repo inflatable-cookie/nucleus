@@ -30,7 +30,8 @@ use task_authoring::{
 };
 
 /// Serializable command DTO for the first control envelope.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ControlCommandDto {
     ProjectCreate {
@@ -178,7 +179,8 @@ pub enum ControlCommandDto {
 }
 
 /// Supported task command actions for the first command DTO subset.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlTaskCommandActionDto {
     Start,
@@ -187,7 +189,8 @@ pub enum ControlTaskCommandActionDto {
     Archive,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlProjectLifecycleActionDto {
     Rename,
@@ -197,7 +200,8 @@ pub enum ControlProjectLifecycleActionDto {
     Delete,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlProjectResourceActionDto {
     Attach,
@@ -206,7 +210,8 @@ pub enum ControlProjectResourceActionDto {
     Remove,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlProjectResourceRoleDto {
     Working,

@@ -8,7 +8,8 @@ use nucleus_engine::{
 use super::helpers::{source_status, source_summary};
 
 /// Management sync diagnostics read model.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct SyncDiagnosticsDto {
     pub plans: Vec<SyncPlanDiagnosticDto>,
     pub repairs: Vec<SyncRepairDiagnosticDto>,
@@ -19,7 +20,8 @@ pub struct SyncDiagnosticsDto {
     pub source_summary: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct SyncPlanDiagnosticDto {
     pub plan_id: String,
     pub kind: String,
@@ -28,7 +30,8 @@ pub struct SyncPlanDiagnosticDto {
     pub receipt_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct SyncRepairDiagnosticDto {
     pub proposal_id: String,
     pub kind: String,
@@ -37,7 +40,8 @@ pub struct SyncRepairDiagnosticDto {
     pub preserves_incoming_record: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct SyncAssistanceDiagnosticDto {
     pub conflict_id: String,
     pub kind: String,
@@ -45,7 +49,8 @@ pub struct SyncAssistanceDiagnosticDto {
     pub requires_human_approval: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct SyncCapturePrepDiagnosticDto {
     pub prep_id: String,
     pub plan_id: String,

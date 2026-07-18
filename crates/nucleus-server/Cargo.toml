@@ -30,6 +30,7 @@ serde_json = "1"
 similar = "3.1.1"
 tempfile = "3"
 toml = "0.8"
+ts-rs = { version = "11", features = ["serde-compat", "no-serde-warnings"] }
 
 [dev-dependencies]
 nucleus-contract-fixtures = { path = "../nucleus-contract-fixtures" }

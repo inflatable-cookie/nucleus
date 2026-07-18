@@ -103,6 +103,7 @@ allowlist_file = "docs/policy/vision-next-task-verbs.txt"
 "desktop:web:dev" = "cd apps/desktop && bun run dev"
 "desktop:check" = "cd apps/desktop && bun run check"
 "desktop:test" = "cd apps/desktop && bun run test"
+"desktop:bindings" = "TS_RS_EXPORT_DIR=$PWD/apps/desktop/src/lib/control/generated cargo test -p nucleus-server export_bindings"
 "desktop:build" = "cd apps/desktop && bun run build"
 "dev" = [
   { task = "desktop:dev" },

@@ -4,19 +4,30 @@ use serde::{Deserialize, Serialize};
 
 use crate::ScmCaptureDryRunExecutionDiagnosticsRecord;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ScmCaptureDryRunExecutionControlDto {
     pub dto_id: String,
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub receipt_count: usize,
+    #[ts(as = "u32")]
     pub accepted_count: usize,
+    #[ts(as = "u32")]
     pub completed_count: usize,
+    #[ts(as = "u32")]
     pub failed_count: usize,
+    #[ts(as = "u32")]
     pub timed_out_count: usize,
+    #[ts(as = "u32")]
     pub blocked_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_count: usize,
+    #[ts(as = "u32")]
     pub duplicate_noop_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
+    #[ts(as = "u32")]
     pub dry_run_executed_count: usize,
     pub scm_capture_executed: bool,
     pub scm_publish_executed: bool,

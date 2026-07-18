@@ -4,23 +4,39 @@ use crate::{
     PlanningProjectionImportApplyDiagnosticBucket, PlanningProjectionImportApplyDiagnostics,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningProjectionImportApplyDiagnosticsDto {
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub stopped_apply_record_count: usize,
+    #[ts(as = "u32")]
     pub persisted_apply_record_count: usize,
+    #[ts(as = "u32")]
     pub duplicate_noop_record_count: usize,
+    #[ts(as = "u32")]
     pub blocked_apply_record_count: usize,
+    #[ts(as = "u32")]
     pub planned_operation_count: usize,
+    #[ts(as = "u32")]
     pub skipped_operation_count: usize,
+    #[ts(as = "u32")]
     pub blocked_operation_count: usize,
+    #[ts(as = "u32")]
     pub ready_count: usize,
+    #[ts(as = "u32")]
     pub blocked_count: usize,
+    #[ts(as = "u32")]
     pub conflict_count: usize,
+    #[ts(as = "u32")]
     pub stale_count: usize,
+    #[ts(as = "u32")]
     pub duplicate_noop_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
     pub record_status_buckets: Vec<ControlPlanningProjectionImportApplyBucketDto>,
     pub blocker_buckets: Vec<ControlPlanningProjectionImportApplyBucketDto>,
@@ -41,9 +57,11 @@ pub struct ControlPlanningProjectionImportApplyDiagnosticsDto {
     pub ui_apply_permitted: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlPlanningProjectionImportApplyBucketDto {
     pub label: String,
+    #[ts(as = "u32")]
     pub count: usize,
 }
 

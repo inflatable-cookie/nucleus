@@ -1,8 +1,8 @@
 # 215 Envelope Typegen Or Roundtrip Guard
 
-Status: planned
-Owner: Codex
-Updated: 2026-07-17
+Status: completed
+Owner: Claude
+Updated: 2026-07-18
 Milestone: `../047-desktop-contract-integrity.md`
 Auto-start next card: no
 

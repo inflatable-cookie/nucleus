@@ -4,17 +4,27 @@ use serde::{Deserialize, Serialize};
 
 use crate::ProviderLiveReadServerExecutorDiagnostics;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProviderLiveReadExecutorDiagnosticsDto {
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub request_count: usize,
+    #[ts(as = "u32")]
     pub ready_request_count: usize,
+    #[ts(as = "u32")]
     pub blocked_request_count: usize,
+    #[ts(as = "u32")]
     pub descriptor_ready_count: usize,
+    #[ts(as = "u32")]
     pub sanitized_output_count: usize,
+    #[ts(as = "u32")]
     pub parse_error_count: usize,
+    #[ts(as = "u32")]
     pub receipt_count: usize,
+    #[ts(as = "u32")]
     pub provider_network_read_performed_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
     pub provider_write_executed: bool,
     pub callback_effect_executed: bool,

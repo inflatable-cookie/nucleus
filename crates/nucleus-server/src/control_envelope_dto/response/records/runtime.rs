@@ -11,7 +11,8 @@ use super::super::helpers::{
     runtime_receipt_ref_dto, runtime_receipt_status_dto, runtime_surface_dto,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlCommandEvidenceRecordDto {
     pub evidence_id: String,
     pub command_request_id: String,
@@ -24,7 +25,8 @@ pub struct ControlCommandEvidenceRecordDto {
 }
 
 /// Serializable sanitized runtime receipt record.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlRuntimeReceiptRecordDto {
     pub receipt_id: String,
     pub family: String,
@@ -37,7 +39,8 @@ pub struct ControlRuntimeReceiptRecordDto {
 }
 
 /// Serializable sanitized checkpoint record.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlCheckpointRecordDto {
     pub checkpoint_id: String,
     pub family: String,
@@ -55,7 +58,8 @@ pub struct ControlCheckpointRecordDto {
 }
 
 /// Serializable sanitized diff summary record.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlDiffSummaryRecordDto {
     pub diff_id: String,
     pub kind: String,
@@ -72,7 +76,8 @@ pub struct ControlDiffSummaryRecordDto {
 }
 
 /// Serializable sanitized runtime readiness diagnostics record.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlRuntimeReadinessDiagnosticDto {
     pub host_id: String,
     pub runtime_surface: String,
@@ -84,7 +89,8 @@ pub struct ControlRuntimeReadinessDiagnosticDto {
 }
 
 /// Serializable sanitized runtime readiness blocker.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlRuntimeReadinessBlockerDto {
     pub source: String,
     pub code: String,

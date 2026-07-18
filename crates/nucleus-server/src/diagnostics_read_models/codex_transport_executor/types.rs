@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 /// Client-safe diagnostics for Codex transport executor handoff state.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexTransportExecutorDiagnosticsDto {
     pub sessions: Vec<CodexTransportSessionDiagnosticDto>,
     pub authorities: Vec<CodexTransportExecutorAuthorityDiagnosticDto>,
@@ -10,10 +11,15 @@ pub struct CodexTransportExecutorDiagnosticsDto {
     pub frames: Vec<CodexStdioFrameIngestionDiagnosticDto>,
     pub decode_outcomes: Vec<CodexDecodeOutcomeDiagnosticDto>,
     pub transport_receipts: Vec<CodexTransportReceiptDiagnosticDto>,
+    #[ts(as = "u32")]
     pub session_count: usize,
+    #[ts(as = "u32")]
     pub frame_count: usize,
+    #[ts(as = "u32")]
     pub decode_outcome_count: usize,
+    #[ts(as = "u32")]
     pub receipt_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_count: usize,
     pub client_can_execute_provider_write: bool,
     pub client_can_answer_callbacks: bool,
@@ -25,7 +31,8 @@ pub struct CodexTransportExecutorDiagnosticsDto {
     pub source_summary: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexTransportSessionDiagnosticDto {
     pub binding_id: String,
     pub provider_instance_id: String,
@@ -43,7 +50,8 @@ pub struct CodexTransportSessionDiagnosticDto {
     pub next_action: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexTransportExecutorAuthorityDiagnosticDto {
     pub authority_id: String,
     pub provider_instance_id: String,
@@ -56,7 +64,8 @@ pub struct CodexTransportExecutorAuthorityDiagnosticDto {
     pub next_action: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexTransportExecutorEnvelopeDiagnosticDto {
     pub envelope_id: String,
     pub request_id: String,
@@ -73,7 +82,8 @@ pub struct CodexTransportExecutorEnvelopeDiagnosticDto {
     pub next_action: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexTransportExecutionDiagnosticDto {
     pub execution_id: String,
     pub write_attempt_id: String,
@@ -88,11 +98,13 @@ pub struct CodexTransportExecutionDiagnosticDto {
     pub next_action: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexStdioFrameIngestionDiagnosticDto {
     pub ingestion_id: String,
     pub frame_source_id: String,
     pub runtime_instance_id: String,
+    #[ts(as = "u32")]
     pub sequence: u64,
     pub decode_status: String,
     pub receipt_id: String,
@@ -104,11 +116,13 @@ pub struct CodexStdioFrameIngestionDiagnosticDto {
     pub next_action: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexDecodeOutcomeDiagnosticDto {
     pub outcome_id: String,
     pub frame_source_id: String,
     pub runtime_instance_id: String,
+    #[ts(as = "u32")]
     pub sequence: u64,
     pub decode_status: String,
     pub decoded_method: Option<String>,
@@ -125,7 +139,8 @@ pub struct CodexDecodeOutcomeDiagnosticDto {
     pub next_action: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexTransportReceiptDiagnosticDto {
     pub receipt_id: String,
     pub status: String,

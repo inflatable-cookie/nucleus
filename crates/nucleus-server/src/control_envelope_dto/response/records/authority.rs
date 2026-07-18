@@ -7,7 +7,8 @@ use crate::client_protocol::{
 use crate::host_authority::ProjectAuthorityDomain;
 
 /// Serializable project authority-map publication.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProjectAuthorityMapDto {
     pub project_id: String,
     pub domains: Vec<ControlProjectAuthorityDomainDto>,
@@ -15,7 +16,8 @@ pub struct ControlProjectAuthorityMapDto {
 }
 
 /// Serializable project authority-domain publication.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProjectAuthorityDomainDto {
     pub domain: String,
     pub state: String,
@@ -27,7 +29,8 @@ pub struct ControlProjectAuthorityDomainDto {
 }
 
 /// Serializable authority-map validation issue.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProjectAuthorityIssueDto {
     pub kind: String,
     pub domain: Option<String>,

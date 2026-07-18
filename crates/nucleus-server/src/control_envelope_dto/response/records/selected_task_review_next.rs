@@ -7,7 +7,8 @@ use crate::{
     TaskWorkflowNoEffects,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewNextDto {
     pub review_next_id: String,
     pub project_id: String,
@@ -20,7 +21,8 @@ pub struct ControlSelectedTaskReviewNextDto {
     pub no_effects: ControlSelectedTaskReviewNextNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewSummaryDto {
     pub state: String,
     pub reason: String,
@@ -28,7 +30,8 @@ pub struct ControlSelectedTaskReviewSummaryDto {
     pub evidence_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewEvidenceDto {
     pub receipt_refs: Vec<String>,
     pub checkpoint_refs: Vec<String>,
@@ -38,7 +41,8 @@ pub struct ControlSelectedTaskReviewEvidenceDto {
     pub review_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewNextStepDto {
     pub category: String,
     pub summary: String,
@@ -46,31 +50,48 @@ pub struct ControlSelectedTaskReviewNextStepDto {
     pub rationale_refs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewNextSourceCountsDto {
+    #[ts(as = "u32")]
     pub task_records: usize,
+    #[ts(as = "u32")]
     pub work_items: usize,
+    #[ts(as = "u32")]
     pub active_work_items: usize,
+    #[ts(as = "u32")]
     pub completed_work_items: usize,
+    #[ts(as = "u32")]
     pub reviewable_work_items: usize,
+    #[ts(as = "u32")]
     pub receipt_refs: usize,
+    #[ts(as = "u32")]
     pub checkpoint_refs: usize,
+    #[ts(as = "u32")]
     pub diff_summary_refs: usize,
+    #[ts(as = "u32")]
     pub validation_refs: usize,
+    #[ts(as = "u32")]
     pub timeline_refs: usize,
+    #[ts(as = "u32")]
     pub review_refs: usize,
+    #[ts(as = "u32")]
     pub task_completion_refs: usize,
+    #[ts(as = "u32")]
     pub guidance_refs: usize,
+    #[ts(as = "u32")]
     pub gap_count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewGapDto {
     pub area: String,
     pub reason: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewNextNoEffectsDto {
     pub review_mutation_performed: bool,
     pub task_mutation_performed: bool,

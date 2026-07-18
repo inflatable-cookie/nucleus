@@ -8,7 +8,8 @@ use nucleus_native_harness::{
 use super::helpers::{source_status, source_summary};
 
 /// Steward diagnostics read model.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct StewardDiagnosticsDto {
     pub proposals: Vec<StewardProposalDiagnosticDto>,
     pub command_admissions: Vec<StewardCommandAdmissionDiagnosticDto>,
@@ -41,7 +42,8 @@ pub struct StewardSyncDecisionDiagnosticDto {
     pub advisory_only: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct StewardProposalDiagnosticDto {
     pub proposal_id: String,
     pub kind: String,
@@ -52,14 +54,16 @@ pub struct StewardProposalDiagnosticDto {
     pub summary: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct StewardCommandAdmissionDiagnosticDto {
     pub command_id: String,
     pub status: String,
     pub terminal: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct StewardCommandOutcomeDiagnosticDto {
     pub command_id: String,
     pub status: String,

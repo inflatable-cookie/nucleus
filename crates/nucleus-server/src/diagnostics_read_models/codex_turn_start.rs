@@ -8,7 +8,8 @@ use crate::{
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for Codex turn-start outcomes.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexTurnStartDiagnosticsDto {
     pub outcomes: Vec<CodexTurnStartDiagnosticDto>,
     pub client_can_start_turns: bool,
@@ -18,7 +19,8 @@ pub struct CodexTurnStartDiagnosticsDto {
     pub source_summary: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexTurnStartDiagnosticDto {
     pub request_id: String,
     pub admission_id: Option<String>,

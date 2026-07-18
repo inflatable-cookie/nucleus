@@ -8,7 +8,8 @@ use crate::{
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for persisted Codex live executor outcomes.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexLiveExecutorDiagnosticsDto {
     pub attempts: Vec<CodexLiveExecutorAttemptDiagnosticDto>,
     pub client_can_execute_provider_write: bool,
@@ -23,7 +24,8 @@ pub struct CodexLiveExecutorDiagnosticsDto {
 }
 
 /// One live executor attempt visible to diagnostics clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexLiveExecutorAttemptDiagnosticDto {
     pub outcome_id: String,
     pub provider_instance_id: String,
@@ -34,7 +36,9 @@ pub struct CodexLiveExecutorAttemptDiagnosticDto {
     pub final_turn_status: Option<String>,
     pub status: String,
     pub method_sequence: Vec<String>,
+    #[ts(as = "u32")]
     pub notification_count: usize,
+    #[ts(as = "u32")]
     pub server_request_count: usize,
     pub cleanup_status: String,
     pub evidence_refs: Vec<String>,

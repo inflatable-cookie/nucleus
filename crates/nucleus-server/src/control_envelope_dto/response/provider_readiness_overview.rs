@@ -9,7 +9,8 @@ use crate::{
 };
 
 /// Serializable provider readiness overview.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProviderReadinessOverviewDto {
     pub overview_id: String,
     pub projection_id: String,
@@ -23,14 +24,23 @@ pub struct ControlProviderReadinessOverviewDto {
     pub supported_read_families: Vec<String>,
     pub represented_read_families: Vec<String>,
     pub represented_mutating_families: Vec<String>,
+    #[ts(as = "u32")]
     pub total_read_intent_count: usize,
+    #[ts(as = "u32")]
     pub missing_evidence_family_count: usize,
+    #[ts(as = "u32")]
     pub ready_count: usize,
+    #[ts(as = "u32")]
     pub blocked_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_count: usize,
+    #[ts(as = "u32")]
     pub duplicate_noop_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
+    #[ts(as = "u32")]
     pub evidence_ref_count: usize,
+    #[ts(as = "u32")]
     pub approved_live_read_smoke_evidence_count: usize,
     #[serde(flatten)]
     pub no_effects: ProviderRuntimeNoEffects,

@@ -8,12 +8,14 @@ use crate::{
 };
 
 /// Client-safe diagnostics for durable dispatch invocation state.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableProviderExecutorInvocationDiagnosticsDto {
     pub preflights: Vec<DurableInvocationPreflightDiagnosticDto>,
     pub requests: Vec<DurableInvocationRequestDiagnosticDto>,
     pub handoffs: Vec<DurableExecutorHandoffDiagnosticDto>,
     pub persistences: Vec<DurableOutcomePersistenceDiagnosticDto>,
+    #[ts(as = "u32")]
     pub record_count: usize,
     pub client_can_invoke_executor: bool,
     pub client_can_execute_provider_write: bool,
@@ -21,7 +23,8 @@ pub struct DurableProviderExecutorInvocationDiagnosticsDto {
     pub provider_material_exposed: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableInvocationPreflightDiagnosticDto {
     pub preflight_id: String,
     pub command_id: String,
@@ -33,7 +36,8 @@ pub struct DurableInvocationPreflightDiagnosticDto {
     pub next_action: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableInvocationRequestDiagnosticDto {
     pub request_id: String,
     pub preflight_id: String,
@@ -46,7 +50,8 @@ pub struct DurableInvocationRequestDiagnosticDto {
     pub next_action: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableExecutorHandoffDiagnosticDto {
     pub handoff_id: String,
     pub request_id: String,
@@ -62,7 +67,8 @@ pub struct DurableExecutorHandoffDiagnosticDto {
     pub next_action: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableOutcomePersistenceDiagnosticDto {
     pub persistence_id: String,
     pub handoff_id: String,

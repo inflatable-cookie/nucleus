@@ -7,7 +7,8 @@ use crate::memory_proposal_review_command::{
 };
 
 /// Supported memory proposal review command actions.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlMemoryProposalReviewActionDto {
     Queue,

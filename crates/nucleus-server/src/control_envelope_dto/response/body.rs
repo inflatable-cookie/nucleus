@@ -56,7 +56,8 @@ use crate::diagnostics_read_models::TaskAgentWorkUnitDiagnosticDto;
 use crate::ControlGoalRecordDto;
 
 /// Serializable response body DTO.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControlResponseBodyDto {
     QueryEmpty,

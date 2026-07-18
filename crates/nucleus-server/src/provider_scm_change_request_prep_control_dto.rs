@@ -4,14 +4,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::ScmChangeRequestPrepDiagnosticsRecord;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ScmChangeRequestPrepControlDto {
     pub dto_id: String,
     pub diagnostics_id: String,
+    #[ts(as = "u32")]
     pub admission_count: usize,
+    #[ts(as = "u32")]
     pub admitted_count: usize,
+    #[ts(as = "u32")]
     pub blocked_count: usize,
+    #[ts(as = "u32")]
     pub repair_required_count: usize,
+    #[ts(as = "u32")]
     pub blocker_count: usize,
     pub adapter_neutral: bool,
     pub branch_or_snapshot_authority_granted: bool,

@@ -4,7 +4,8 @@ use nucleus_core::{PersistenceDomain, PersistenceRecordKind};
 use nucleus_local_store::LocalStoreRecord;
 
 /// Serializable state record DTO.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlStateRecordDto {
     pub id: String,
     pub domain: String,

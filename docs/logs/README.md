@@ -51,3 +51,4 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-18-roadmap-archival-superseded.md`
 - `2026-07-18-codex-adapter-routing.md`
 - `2026-07-18-engine-boundary-migration-closeout.md`
+- `2026-07-18-rust-ts-typegen.md`

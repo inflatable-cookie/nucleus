@@ -7,7 +7,8 @@ use crate::{
     SelectedTaskReviewOutcomeRouteSourceCounts, SelectedTaskReviewOutcomeRouteStatus,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewOutcomeRouteDto {
     pub route_id: String,
     pub project_id: String,
@@ -25,18 +26,27 @@ pub struct ControlSelectedTaskReviewOutcomeRouteDto {
     pub no_effects: ControlSelectedTaskReviewOutcomeRouteNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewOutcomeRouteSourceCountsDto {
+    #[ts(as = "u32")]
     pub decision_records: usize,
+    #[ts(as = "u32")]
     pub work_item_refs: usize,
+    #[ts(as = "u32")]
     pub evidence_refs: usize,
+    #[ts(as = "u32")]
     pub review_gap_count: usize,
+    #[ts(as = "u32")]
     pub scm_handoff_refs: usize,
+    #[ts(as = "u32")]
     pub downstream_command_hints: usize,
+    #[ts(as = "u32")]
     pub blockers: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReviewOutcomeRouteNoEffectsDto {
     pub review_mutation_performed: bool,
     pub task_lifecycle_mutation_performed: bool,

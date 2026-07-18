@@ -19,34 +19,13 @@ export type ProviderReadIntentAction = "projection";
 export type ControlStateDomain = "projects" | "tasks" | "goals" | "workspaces";
 export type ControlTaskTransitionAction = "start" | "block" | "complete" | "archive";
 
-export type ControlProjectRecordDto = {
-  project_id: string;
-  display_name: string;
-  authority_host_ref: string;
-  status: string;
-  retention: string;
-  importance_level: string;
-  revision_id: string;
-  resource_count: number;
-  repository_count: number;
-  default_working_resource_id: string | null;
-  management_resource_id: string | null;
-  location_status: string;
-  resources: ControlProjectResourceRecordDto[];
-};
+// Canonical shape comes from the Rust DTOs via ts-rs.
+export type { ControlProjectRecordDto } from "./generated/ControlProjectRecordDto";
+import type { ControlProjectRecordDto } from "./generated/ControlProjectRecordDto";
 
-export type ControlProjectResourceRecordDto = {
-  resource_id: string;
-  display_name: string;
-  kind: "filesystem_folder" | "git_repository";
-  role: "working" | "management" | "reference";
-  authority_host_ref: string;
-  location_status: "present" | "missing" | "moved_candidate" | "repair_required";
-  locator_available: boolean;
-  default_branch: string | null;
-  is_default_working_resource: boolean;
-  is_management_resource: boolean;
-};
+// Canonical shape comes from the Rust DTOs via ts-rs.
+export type { ControlProjectResourceRecordDto } from "./generated/ControlProjectResourceRecordDto";
+import type { ControlProjectResourceRecordDto } from "./generated/ControlProjectResourceRecordDto";
 
 export type ControlTaskRecordDto = {
   task_id: string;
@@ -121,36 +100,9 @@ export type ControlRuntimeReadinessDiagnosticDto = {
   summary: string | null;
 };
 
-export type ControlProviderReadinessOverviewDto = {
-  overview_id: string;
-  projection_id: string;
-  project_ref: string | null;
-  repo_ref: string | null;
-  authority_host_ref: string | null;
-  provider_instance_refs: string[];
-  remote_repo_refs: string[];
-  forge_providers: string[];
-  status: string;
-  supported_read_families: string[];
-  represented_read_families: string[];
-  represented_mutating_families: string[];
-  total_read_intent_count: number;
-  missing_evidence_family_count: number;
-  ready_count: number;
-  blocked_count: number;
-  repair_required_count: number;
-  duplicate_noop_count: number;
-  blocker_count: number;
-  evidence_ref_count: number;
-  credential_resolution_performed: boolean;
-  provider_network_call_performed: boolean;
-  provider_effect_executed: boolean;
-  callback_effect_executed: boolean;
-  interruption_effect_executed: boolean;
-  recovery_effect_executed: boolean;
-  task_mutation_executed: boolean;
-  raw_provider_payload_retained: boolean;
-};
+// Canonical shape comes from the Rust DTOs via ts-rs.
+export type { ControlProviderReadinessOverviewDto } from "./generated/ControlProviderReadinessOverviewDto";
+import type { ControlProviderReadinessOverviewDto } from "./generated/ControlProviderReadinessOverviewDto";
 
 export type ControlProviderReadIntentEntryDto = {
   intent_id: string;
@@ -245,25 +197,13 @@ export type StewardCommandOutcomeDiagnosticDto = {
   sync_assistance_refs: string[];
 };
 
-export type StewardDiagnosticsDto = {
-  proposals: StewardProposalDiagnosticDto[];
-  command_admissions: StewardCommandAdmissionDiagnosticDto[];
-  command_outcomes: StewardCommandOutcomeDiagnosticDto[];
-  client_can_mutate: false;
-  source_status: string;
-  source_summary: string | null;
-};
+// Canonical shape comes from the Rust DTOs via ts-rs.
+export type { StewardDiagnosticsDto } from "./generated/StewardDiagnosticsDto";
+import type { StewardDiagnosticsDto } from "./generated/StewardDiagnosticsDto";
 
-export type EffigyDiagnosticsDto = {
-  integration_status: string;
-  selector_refs: string[];
-  health_status: string | null;
-  validation_status: string | null;
-  evidence_refs: string[];
-  client_can_run_effigy: false;
-  source_status: string;
-  source_summary: string | null;
-};
+// Canonical shape comes from the Rust DTOs via ts-rs.
+export type { EffigyDiagnosticsDto } from "./generated/EffigyDiagnosticsDto";
+import type { EffigyDiagnosticsDto } from "./generated/EffigyDiagnosticsDto";
 
 export type SyncPlanDiagnosticDto = {
   plan_id: string;
@@ -297,15 +237,9 @@ export type SyncCapturePrepDiagnosticDto = {
   execution_available: boolean;
 };
 
-export type SyncDiagnosticsDto = {
-  plans: SyncPlanDiagnosticDto[];
-  repairs: SyncRepairDiagnosticDto[];
-  assistance_routes: SyncAssistanceDiagnosticDto[];
-  capture_preps: SyncCapturePrepDiagnosticDto[];
-  client_can_mutate_provider: false;
-  source_status: string;
-  source_summary: string | null;
-};
+// Canonical shape comes from the Rust DTOs via ts-rs.
+export type { SyncDiagnosticsDto } from "./generated/SyncDiagnosticsDto";
+import type { SyncDiagnosticsDto } from "./generated/SyncDiagnosticsDto";
 
 export type ScmSessionPlanDiagnosticDto = {
   session_id: string;
@@ -336,14 +270,9 @@ export type ScmWorkItemLinkDiagnosticDto = {
   requires_repair: boolean;
 };
 
-export type ScmSessionDiagnosticsDto = {
-  sessions: ScmSessionPlanDiagnosticDto[];
-  admissions: ScmCommandAdmissionDiagnosticDto[];
-  work_item_links: ScmWorkItemLinkDiagnosticDto[];
-  client_can_mutate_working_copy: false;
-  source_status: string;
-  source_summary: string | null;
-};
+// Canonical shape comes from the Rust DTOs via ts-rs.
+export type { ScmSessionDiagnosticsDto } from "./generated/ScmSessionDiagnosticsDto";
+import type { ScmSessionDiagnosticsDto } from "./generated/ScmSessionDiagnosticsDto";
 
 export type TaskAgentWorkUnitIssueDto = {
   code: string;
@@ -371,26 +300,14 @@ export type TaskAgentWorkUnitDiagnosticDto = {
   summary: string;
 };
 
-export type TaskAgentDiagnosticsDto = {
-  work_units: TaskAgentWorkUnitDiagnosticDto[];
-  client_can_mutate_work_units: false;
-  provider_execution_available: false;
-  source_status: string;
-  source_summary: string | null;
-};
+// Canonical shape comes from the Rust DTOs via ts-rs.
+export type { TaskAgentDiagnosticsDto } from "./generated/TaskAgentDiagnosticsDto";
+import type { TaskAgentDiagnosticsDto } from "./generated/TaskAgentDiagnosticsDto";
 
-export type ControlDiagnosticsSnapshotDto = {
-  steward: StewardDiagnosticsDto;
-  effigy: EffigyDiagnosticsDto;
-  management_sync: SyncDiagnosticsDto;
-  scm_session: ScmSessionDiagnosticsDto;
-  task_agent: TaskAgentDiagnosticsDto;
-};
+// Canonical shape comes from the Rust DTOs via ts-rs; the hand-written
+// version had drifted 12 fields behind.
+export type { ControlDiagnosticsSnapshotDto } from "./generated/ControlDiagnosticsSnapshotDto";
+import type { ControlDiagnosticsSnapshotDto } from "./generated/ControlDiagnosticsSnapshotDto";
 
-export type ControlDiagnosticsResultDto =
-  | { domain: "steward"; record: StewardDiagnosticsDto }
-  | { domain: "effigy"; record: EffigyDiagnosticsDto }
-  | { domain: "management_sync"; record: SyncDiagnosticsDto }
-  | { domain: "scm_session"; record: ScmSessionDiagnosticsDto }
-  | { domain: "task_agent"; record: TaskAgentDiagnosticsDto }
-  | { domain: "all"; record: ControlDiagnosticsSnapshotDto };
+// Canonical shape comes from the Rust DTOs via ts-rs.
+export type { ControlDiagnosticsResultDto } from "./generated/ControlDiagnosticsResultDto";

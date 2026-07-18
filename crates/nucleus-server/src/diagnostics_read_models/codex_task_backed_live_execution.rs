@@ -11,7 +11,8 @@ use crate::{
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for task-backed Codex live execution state.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexTaskBackedLiveExecutionDiagnosticsDto {
     pub attempts: Vec<CodexTaskBackedLiveExecutionAttemptDiagnosticDto>,
     pub client_can_execute_provider_write: bool,
@@ -27,7 +28,8 @@ pub struct CodexTaskBackedLiveExecutionDiagnosticsDto {
 }
 
 /// One task-backed live execution attempt visible to diagnostics clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexTaskBackedLiveExecutionAttemptDiagnosticDto {
     pub work_item_id: String,
     pub task_id: String,

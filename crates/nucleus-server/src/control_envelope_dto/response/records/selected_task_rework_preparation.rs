@@ -6,7 +6,8 @@ use crate::{
     SelectedTaskReworkPreparationStatus,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReworkPreparationDto {
     pub preparation_id: String,
     pub project_id: String,
@@ -25,13 +26,15 @@ pub struct ControlSelectedTaskReworkPreparationDto {
     pub no_effects: ControlSelectedTaskReworkPreparationNoEffectsDto,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReworkPreparationRefusalDto {
     pub kind: String,
     pub reason: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlSelectedTaskReworkPreparationNoEffectsDto {
     pub review_mutation_performed: bool,
     pub task_lifecycle_mutation_performed: bool,

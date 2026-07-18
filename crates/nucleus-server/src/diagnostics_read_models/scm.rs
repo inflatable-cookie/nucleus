@@ -8,7 +8,8 @@ use nucleus_scm_forge::{
 use super::helpers::{source_status, source_summary};
 
 /// SCM session diagnostics read model.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ScmSessionDiagnosticsDto {
     pub sessions: Vec<ScmSessionPlanDiagnosticDto>,
     pub admissions: Vec<ScmCommandAdmissionDiagnosticDto>,
@@ -18,7 +19,8 @@ pub struct ScmSessionDiagnosticsDto {
     pub source_summary: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ScmSessionPlanDiagnosticDto {
     pub session_id: String,
     pub repository_id: String,
@@ -29,7 +31,8 @@ pub struct ScmSessionPlanDiagnosticDto {
     pub runtime_constraints: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ScmCommandAdmissionDiagnosticDto {
     pub command_id: String,
     pub status: String,
@@ -37,7 +40,8 @@ pub struct ScmCommandAdmissionDiagnosticDto {
     pub executes_provider_command: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ScmWorkItemLinkDiagnosticDto {
     pub link_id: String,
     pub task_id: String,

@@ -8,7 +8,8 @@ use crate::{
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for Codex live spawn smoke attempts.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexLiveSpawnSmokeDiagnosticsDto {
     pub smoke_attempts: Vec<CodexLiveSpawnSmokeDiagnosticDto>,
     pub client_can_start_smoke: bool,
@@ -19,14 +20,17 @@ pub struct CodexLiveSpawnSmokeDiagnosticsDto {
 }
 
 /// One live spawn smoke attempt visible to diagnostics clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexLiveSpawnSmokeDiagnosticDto {
     pub request_id: String,
     pub outcome: String,
     pub command_status: String,
     pub command_evidence_id: String,
     pub receipt_id: String,
+    #[ts(as = "u32")]
     pub stdout_captured_bytes: usize,
+    #[ts(as = "u32")]
     pub stderr_captured_bytes: usize,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,

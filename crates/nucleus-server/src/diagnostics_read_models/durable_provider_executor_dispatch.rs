@@ -8,11 +8,13 @@ use crate::{
 };
 
 /// Client-safe diagnostics for durable provider executor dispatch state.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableProviderExecutorDispatchDiagnosticsDto {
     pub selections: Vec<DurableProviderExecutorDispatchSelectionDiagnosticDto>,
     pub admissions: Vec<DurableProviderExecutorDispatchAdmissionDiagnosticDto>,
     pub linkages: Vec<DurableProviderExecutorDispatchOutcomeLinkageDiagnosticDto>,
+    #[ts(as = "u32")]
     pub record_count: usize,
     pub client_can_execute_provider_write: bool,
     pub client_can_mutate_tasks: bool,
@@ -20,7 +22,8 @@ pub struct DurableProviderExecutorDispatchDiagnosticsDto {
 }
 
 /// One dispatch selection visible to diagnostics clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableProviderExecutorDispatchSelectionDiagnosticDto {
     pub selection_id: String,
     pub command_id: String,
@@ -39,7 +42,8 @@ pub struct DurableProviderExecutorDispatchSelectionDiagnosticDto {
 }
 
 /// One dispatch admission visible to diagnostics clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableProviderExecutorDispatchAdmissionDiagnosticDto {
     pub admission_id: String,
     pub selection_id: String,
@@ -59,7 +63,8 @@ pub struct DurableProviderExecutorDispatchAdmissionDiagnosticDto {
 }
 
 /// One dispatch outcome linkage visible to diagnostics clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DurableProviderExecutorDispatchOutcomeLinkageDiagnosticDto {
     pub linkage_id: String,
     pub admission_id: String,

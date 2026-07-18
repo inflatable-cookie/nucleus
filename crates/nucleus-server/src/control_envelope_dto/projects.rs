@@ -14,7 +14,8 @@ use crate::project_resource_control::ProjectResourceMutationCandidate;
 use super::ControlApiCodecError;
 
 /// Sanitized project read model for control-plane clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProjectRecordDto {
     pub project_id: String,
     pub display_name: String,
@@ -23,7 +24,9 @@ pub struct ControlProjectRecordDto {
     pub retention: String,
     pub importance_level: String,
     pub revision_id: String,
+    #[ts(as = "u32")]
     pub resource_count: usize,
+    #[ts(as = "u32")]
     pub repository_count: usize,
     pub default_working_resource_id: Option<String>,
     pub management_resource_id: Option<String>,
@@ -32,7 +35,8 @@ pub struct ControlProjectRecordDto {
 }
 
 /// Resource identity and host health without host-local locator material.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlProjectResourceRecordDto {
     pub resource_id: String,
     pub display_name: String,

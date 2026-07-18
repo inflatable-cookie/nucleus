@@ -12,7 +12,8 @@ use crate::accepted_memory_projection_policy::{
     AcceptedMemoryProjectionPolicyStatus,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionDiagnosticsDto {
     pub project_id: String,
     pub entries: Vec<ControlAcceptedMemoryProjectionEntryDto>,
@@ -24,7 +25,8 @@ pub struct ControlAcceptedMemoryProjectionDiagnosticsDto {
     pub provider_sync_available: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionEntryDto {
     pub memory_id: String,
     pub plan_ref: String,
@@ -35,26 +37,41 @@ pub struct ControlAcceptedMemoryProjectionEntryDto {
     pub export_blockers: Vec<ControlAcceptedMemoryProjectionBlockerDto>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionBlockerDto {
     pub kind: String,
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ControlAcceptedMemoryProjectionCountsDto {
+    #[ts(as = "u32")]
     pub accepted_records: usize,
+    #[ts(as = "u32")]
     pub out_of_scope_accepted_records: usize,
+    #[ts(as = "u32")]
     pub projectable_records: usize,
+    #[ts(as = "u32")]
     pub local_only_records: usize,
+    #[ts(as = "u32")]
     pub blocked_records: usize,
+    #[ts(as = "u32")]
     pub review_required_records: usize,
+    #[ts(as = "u32")]
     pub skipped_records: usize,
+    #[ts(as = "u32")]
     pub skipped_proposal_records: usize,
+    #[ts(as = "u32")]
     pub skipped_unsupported_records: usize,
+    #[ts(as = "u32")]
     pub skipped_decode_errors: usize,
+    #[ts(as = "u32")]
     pub policy_blockers: usize,
+    #[ts(as = "u32")]
     pub export_blockers: usize,
+    #[ts(as = "u32")]
     pub file_refs: usize,
 }
 

@@ -11,7 +11,8 @@ use crate::{
 use super::helpers::{source_status, source_summary};
 
 /// Client-safe diagnostics for Codex callback response execution state.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexCallbackResponseExecutionDiagnosticsDto {
     pub attempts: Vec<CodexCallbackResponseExecutionAttemptDiagnosticDto>,
     pub client_can_execute_provider_write: bool,
@@ -27,7 +28,8 @@ pub struct CodexCallbackResponseExecutionDiagnosticsDto {
 }
 
 /// One callback response execution attempt visible to diagnostics clients.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexCallbackResponseExecutionAttemptDiagnosticDto {
     pub request_id: String,
     pub callback_response_id: String,

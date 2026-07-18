@@ -11,7 +11,8 @@ use super::{
 };
 
 /// Client-safe combined diagnostics for Codex provider runtime surfaces.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CodexProviderDiagnosticsDto {
     pub ingestion: CodexIngestionDiagnosticsDto,
     pub live_spawn_smoke: CodexLiveSpawnSmokeDiagnosticsDto,
