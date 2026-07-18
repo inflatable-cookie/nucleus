@@ -44,8 +44,62 @@ struct DesktopState {
     adapter: Arc<Mutex<TauriIpcControlCommandAdapter<SqliteBackend>>>,
     chat: Arc<Mutex<LocalCodexChatService>>,
     server_state: ServerStateService<SqliteBackend>,
+    startup_error: Option<String>,
     task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
     terminal: TerminalHostRuntime,
+}
+
+/// Startup posture reported to the UI: storage posture, seeding outcome.
+#[derive(Clone, serde::Serialize)]
+struct DesktopStartupStatus {
+    fixture_backed: bool,
+    startup_error: Option<String>,
+}
+
+#[tauri::command]
+fn desktop_startup_status(state: tauri::State<'_, DesktopState>) -> DesktopStartupStatus {
+    DesktopStartupStatus {
+        fixture_backed: true,
+        startup_error: state.startup_error.clone(),
+    }
+}
+
+/// Seed local fixture state once: if the local project record already
+/// exists, the durable store is left untouched.
+fn seed_fixture_state(
+    handler: &LocalControlRequestHandler<SqliteBackend>,
+) -> Result<(), String> {
+    let seed = LocalProjectSeed::nucleus_local();
+    let existing = handler
+        .state()
+        .projects()
+        .get(&nucleus_core::PersistenceRecordId(seed.project_id.clone()))
+        .map_err(|error| format!("startup storage probe failed: {error}"))?;
+    if existing.is_some() {
+        return Ok(());
+    }
+    seed_local_project(handler.state(), seed).map_err(|error| format!("startup seed failed at project: {error:?}"))?;
+    seed_local_task(handler.state(), LocalTaskSeed::nucleus_local_bootstrap())
+        .map_err(|error| format!("startup seed failed at task: {error:?}"))?;
+    seed_local_command_evidence(handler.state()).map_err(|error| format!("startup seed failed at command evidence: {error:?}"))?;
+    seed_local_provider_readiness_evidence(handler.state())
+        .map_err(|error| format!("startup seed failed at provider readiness evidence: {error:?}"))?;
+    seed_local_planning_session(
+        handler.state(),
+        LocalPlanningSessionSeed::nucleus_local_bootstrap(),
+    )
+    .map_err(|error| format!("startup seed failed at planning session: {error:?}"))?;
+    seed_local_memory_proposal(
+        handler.state(),
+        LocalMemoryProposalSeed::nucleus_local_bootstrap(),
+    )
+    .map_err(|error| format!("startup seed failed at memory proposal: {error:?}"))?;
+    seed_local_research_run_brief(
+        handler.state(),
+        LocalResearchRunBriefSeed::nucleus_local_bootstrap(),
+    )
+    .map_err(|error| format!("startup seed failed at research run brief: {error:?}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -103,35 +157,14 @@ impl DesktopState {
     ) -> Self {
         let server_state = ServerStateService::new(backend.clone());
         let handler = LocalControlRequestHandler::new(backend, None);
-        seed_local_project(handler.state(), LocalProjectSeed::nucleus_local())
-            .expect("local desktop project seed should be writable");
-        seed_local_task(handler.state(), LocalTaskSeed::nucleus_local_bootstrap())
-            .expect("local desktop task seed should be writable");
-        seed_local_command_evidence(handler.state())
-            .expect("local desktop command evidence seed should be writable");
-        seed_local_provider_readiness_evidence(handler.state())
-            .expect("local desktop provider readiness evidence seed should be writable");
-        seed_local_planning_session(
-            handler.state(),
-            LocalPlanningSessionSeed::nucleus_local_bootstrap(),
-        )
-        .expect("local desktop planning session seed should be writable");
-        seed_local_memory_proposal(
-            handler.state(),
-            LocalMemoryProposalSeed::nucleus_local_bootstrap(),
-        )
-        .expect("local desktop memory proposal seed should be writable");
-        seed_local_research_run_brief(
-            handler.state(),
-            LocalResearchRunBriefSeed::nucleus_local_bootstrap(),
-        )
-        .expect("local desktop research run seed should be writable");
+        let startup_error = seed_fixture_state(&handler).err();
         let adapter = TauriIpcControlCommandAdapter::fixture_backed(handler);
 
         Self {
             adapter: Arc::new(Mutex::new(adapter)),
             chat: Arc::new(Mutex::new(chat)),
             server_state,
+            startup_error,
             task_review_snapshot_store,
             terminal: TerminalHostRuntime::default(),
         }
@@ -515,6 +548,7 @@ pub fn run() {
             list_agent_chat_models,
             load_workspace_ui_config,
             save_workspace_ui_config,
+            desktop_startup_status,
             list_editor_files,
             read_editor_file,
             save_editor_file,

@@ -23,7 +23,7 @@ duplicate `QueryFallback` declarations).
 
 - [x] Generate TS envelope types from the Rust DTOs: ts-rs across 287
   types, CI diff check, generated union adopted as the client contract.
-- [ ] Set a strict CSP in `tauri.conf.json`.
+- [x] Set a strict CSP in `tauri.conf.json`.
 - [ ] Collapse per-query control modules onto one generic
   single-record-response parser and shared query builders.
 - [ ] Make blocking sync Tauri commands async + `spawn_blocking`; surface

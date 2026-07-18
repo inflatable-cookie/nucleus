@@ -1,8 +1,8 @@
 # 216 CSP And Startup Resilience
 
-Status: planned
-Owner: Codex
-Updated: 2026-07-17
+Status: completed
+Owner: Claude
+Updated: 2026-07-18
 Milestone: `../047-desktop-contract-integrity.md`
 Auto-start next card: no
 
@@ -21,9 +21,14 @@ Restore the webview CSP backstop and make desktop startup fail soft.
 
 ## Acceptance
 
-- [ ] CSP active, panels functional
-- [ ] broken store shows an error screen, not a panic
-- [ ] fixture posture visible; durable store not silently polluted
+- [x] CSP set: `default-src 'self'` with ipc connect-src, data: images and
+  fonts, inline styles for Svelte/CodeMirror; operator to confirm all
+  panels render on next app launch (needs the live app)
+- [x] broken store shows a persistent error banner via the new
+  `desktop_startup_status` command instead of an `.expect()` panic chain
+- [x] fixture posture shown as an unobtrusive badge; seeding runs only when
+  the local project record is absent — restart no longer rewrites the
+  durable store
 
 ## Validation
 

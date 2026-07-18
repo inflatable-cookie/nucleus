@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import { Icon, IconButton, Menu, Popover, SplitView, type MenuItem } from "@poodle/svelte";
   import { info, plus } from "@poodle/icons-lucide";
   import ProjectRail from "./lib/ProjectRail.svelte";
@@ -11,6 +12,8 @@
     setNativePanelOverlayIntersection,
   } from "./lib/nativePanelVisibility";
 
+  let startupError = $state<string | null>(null);
+  let fixturePosture = $state(false);
   let selectedProjectId = $state<string | null>(null);
   let selectedProject = $state<ControlProjectRecordDto | null>(null);
   let projectRailRatio = $state(0.18);
@@ -33,6 +36,16 @@
   ]);
 
   onMount(() => {
+    void invoke<{ fixture_backed: boolean; startup_error: string | null }>(
+      "desktop_startup_status",
+    )
+      .then((status) => {
+        fixturePosture = status.fixture_backed;
+        startupError = status.startup_error;
+      })
+      .catch((error) => {
+        startupError = `startup status unavailable: ${String(error)}`;
+      });
     const storedRatio = Number.parseFloat(
       window.localStorage.getItem(projectRailRatioStorageKey) ?? "",
     );
@@ -77,6 +90,17 @@
   data-control-size="sm"
   data-poodle-theme-root
 >
+  {#if startupError}
+    <div class="startup-error" role="alert">
+      Nucleus started without its local seed data: {startupError}. Panels may
+      be empty until storage is writable.
+    </div>
+  {/if}
+  {#if fixturePosture}
+    <div class="posture-badge" title="This build serves fixture-backed local state; no live server is connected.">
+      fixture-backed
+    </div>
+  {/if}
   <SplitView
     orientation="horizontal"
     ratio={projectRailRatio}
@@ -405,5 +429,30 @@
       min-height: 1rem;
     }
 
+  }
+  .startup-error {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    padding: 6px 12px;
+    background: #5c1a1a;
+    color: #ffd7d7;
+    font-size: 12px;
+  }
+
+  .posture-badge {
+    position: fixed;
+    right: 10px;
+    bottom: 8px;
+    z-index: 90;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    pointer-events: none;
   }
 </style>
