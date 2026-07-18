@@ -20,9 +20,9 @@ work in place without moving conversation or task identity.
 
 - [x] Add transient retention, expiry eligibility, promotion, and durable-child
   safeguards to the host boundary.
-- [ ] Make New Chat create and focus a resource-free transient project without
+- [x] Make New Chat create and focus a resource-free transient project without
   prompting.
-- [ ] Add unobtrusive keep/name/attach promotion paths and keep transient work
+- [x] Add unobtrusive keep/name/attach promotion paths and keep transient work
   out of the normal named-project rail.
 - [ ] Validate restart, expiry, promotion, task creation, and resource
   attachment behavior.

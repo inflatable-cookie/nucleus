@@ -128,7 +128,11 @@ fn project_rail_keeps_inactive_projects_in_management_only() {
     let rail = include_str!("../../../src/lib/ProjectRail.svelte");
 
     assert!(rail.contains("project.status === \"active\""));
-    assert!(rail.contains("{#each activeProjects as project}"));
+    // The named rail excludes transient chats; they render in their own
+    // quiet Chats group with keep/name promotion (spec 012).
+    assert!(rail.contains("{#each namedProjects as project}"));
+    assert!(rail.contains("project.retention !== \"transient\""));
+    assert!(rail.contains("{#each transientChats as chat (chat.project_id)}"));
     assert!(rail.contains("Manage projects"));
     assert!(rail.contains("{ value: \"all\", label: \"All\" }"));
     assert!(rail.contains("{ value: \"parked\", label: \"Parked\" }"));

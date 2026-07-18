@@ -55,3 +55,4 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-18-csp-and-startup-resilience.md`
 - `2026-07-18-audit-hardening-band-closeout.md`
 - `2026-07-18-transient-retention-boundary.md`
+- `2026-07-18-new-chat-and-promotion.md`

@@ -52,6 +52,8 @@
   const projectManagerOverlayId = createNativePanelOverlayId("project-manager");
 
   const activeProjects = $derived(projects.filter((project) => project.status === "active"));
+  const namedProjects = $derived(activeProjects.filter((project) => project.retention !== "transient"));
+  const transientChats = $derived(activeProjects.filter((project) => project.retention === "transient"));
   const managedProjects = $derived(
     projectManagerView === "all"
       ? projects
@@ -179,6 +181,43 @@
     }
   }
 
+  async function newChat() {
+    if (mutatingProjectId) return;
+    const previousIds = new Set(projects.map((project) => project.project_id));
+    const idempotencyKey = `chat-create:${crypto.randomUUID()}`;
+    mutatingProjectId = "create";
+    mutationFailure = null;
+    try {
+      await submitProjectCommand({
+        kind: "project_create",
+        command_id: `command:${idempotencyKey}`,
+        display_name: "",
+        transient: true,
+        actor_ref: "operator:desktop",
+        authority_host_ref: "host:embedded-desktop",
+        idempotency_key: idempotencyKey,
+      });
+      await loadProjectRail();
+      selectedProjectId = projects.find((project) => !previousIds.has(project.project_id))?.project_id
+        ?? selectedProjectId;
+    } catch (error) {
+      mutationFailure = error instanceof Error ? error.message : String(error);
+    } finally {
+      mutatingProjectId = null;
+    }
+  }
+
+  let namingChatId = $state<string | null>(null);
+  let chatName = $state("");
+
+  async function keepChat(project: ControlProjectRecordDto, displayName: string | null = null) {
+    await mutateProject(project, "promote", displayName);
+    if (!mutationFailure) {
+      namingChatId = null;
+      chatName = "";
+    }
+  }
+
   async function renameProject(project: ControlProjectRecordDto) {
     const displayName = renameName.trim();
     if (!displayName || mutatingProjectId) return;
@@ -191,7 +230,7 @@
 
   async function mutateProject(
     project: ControlProjectRecordDto,
-    action: "rename" | "park" | "archive" | "restore" | "delete",
+    action: "rename" | "park" | "archive" | "restore" | "delete" | "promote",
     displayName: string | null = null,
   ) {
     if (mutatingProjectId) return;
@@ -277,6 +316,9 @@
       <Text tone="muted">{projectCountLabel}</Text>
     </div>
     <div class="project-rail-actions">
+      <button class="icon-button" type="button" aria-label="New chat" title="New chat" onclick={() => void newChat()}>
+        <Icon icon={messageCircle} size="sm" />
+      </button>
       <button class="icon-button" type="button" aria-label="New project" onclick={() => (creating = true)}>
         <Icon icon={plus} size="sm" />
       </button>
@@ -400,11 +442,11 @@
     </div>
   {:else if activeProjects.length === 0}
     <div class="rail-message">
-      <Text tone="muted">No active projects. Restore one from project management or create a new project.</Text>
+      <Text tone="muted">No active projects. Start a chat or create a new project.</Text>
     </div>
   {:else}
     <div class="project-stack">
-      {#each activeProjects as project}
+      {#each namedProjects as project}
         {@const open = isProjectOpen(project.project_id)}
         {@const active = project.project_id === selectedProjectId}
         {@const projectWorkUnits = workUnitsForProject(project.project_id)}
@@ -477,6 +519,45 @@
         </section>
       {/each}
     </div>
+    {#if transientChats.length > 0}
+      <div class="chat-stack">
+        <div class="chat-stack-label"><Text tone="muted">Chats</Text></div>
+        {#each transientChats as chat (chat.project_id)}
+          <div class="chat-row" class:active={chat.project_id === selectedProjectId}>
+            <button
+              class="chat-select"
+              type="button"
+              onclick={() => (selectedProjectId = chat.project_id)}
+            >
+              <span class="project-node-icon" aria-hidden="true"><Icon icon={messageCircle} size="sm" /></span>
+              <span class="chat-name">{chat.display_name}</span>
+            </button>
+            <button
+              class="chat-action"
+              type="button"
+              title="Keep this chat as a durable project"
+              onclick={() => void keepChat(chat)}
+            >Keep</button>
+            <button
+              class="chat-action"
+              type="button"
+              title="Name and keep this chat"
+              onclick={() => { namingChatId = chat.project_id; chatName = ""; }}
+            >Name</button>
+          </div>
+          {#if namingChatId === chat.project_id}
+            <form
+              class="inline-project-form"
+              onsubmit={(event) => { event.preventDefault(); void keepChat(chat, chatName.trim() || null); }}
+            >
+              <input bind:value={chatName} aria-label="Chat name" placeholder="Project name" />
+              <button type="submit" disabled={!chatName.trim() || mutatingProjectId !== null}>Keep</button>
+              <button type="button" onclick={() => { namingChatId = null; chatName = ""; }}>Cancel</button>
+            </form>
+          {/if}
+        {/each}
+      </div>
+    {/if}
   {/if}
 </section>
 
@@ -792,5 +873,63 @@
 
   .rail-message-error {
     border-color: var(--poodle-color-status-danger);
+  }
+  .chat-stack {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .chat-stack-label {
+    padding: 0 6px 4px;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .chat-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px;
+    border-radius: 6px;
+  }
+
+  .chat-row.active {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .chat-select {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 4px 2px;
+    text-align: left;
+  }
+
+  .chat-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+
+  .chat-action {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+
+  .chat-action:hover {
+    color: rgba(255, 255, 255, 0.85);
   }
 </style>

@@ -53,6 +53,14 @@ where
 
     let action = resource_action_name(&command.action);
     apply_resource_action(&mut project, &command)?;
+    if matches!(command.action, ProjectResourceAction::Attach { .. })
+        && project.retention == nucleus_projects::ProjectRetentionStorage::Transient
+    {
+        // Spec 012: a durable child must not leave a transient project
+        // vulnerable to silent expiry; attaching a resource promotes the
+        // project in place within the same mutation.
+        project.retention = nucleus_projects::ProjectRetentionStorage::Durable;
+    }
     let revision = RevisionId(format!("rev:project-resource-{action}:{command_id}"));
     let payload = encode_project_storage_payload(&project).map_err(codec_error)?;
     handler

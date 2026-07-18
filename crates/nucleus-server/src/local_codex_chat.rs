@@ -164,12 +164,29 @@ impl LocalCodexChatService {
             return Err("chat message must not be empty".to_owned());
         }
 
-        let project_target = crate::project_resource_target::resolve_project_resource_target(
+        // Resource-free (transient chat) projects run against the host
+        // user's home as an honest read-only working context, matching the
+        // terminal's zero-resource fallback; file-backed actions still
+        // require an attached resource.
+        let project_target = crate::project_resource_target::resolve_optional_project_resource_target(
             state,
             &request.project_id,
             request.resource_id.as_deref(),
         )?;
-        let project_root = project_target.root.to_string_lossy().into_owned();
+        let (project_root, target_resource_id) = match &project_target {
+            Some(target) => (
+                target.root.to_string_lossy().into_owned(),
+                target.resource_id.clone(),
+            ),
+            None => (
+                std::env::var_os("HOME")
+                    .map(|home| home.to_string_lossy().into_owned())
+                    .ok_or_else(|| {
+                        "resource-free chat requires a resolvable host home directory".to_owned()
+                    })?,
+                "resource:none".to_owned(),
+            ),
+        };
         let provider_message = focused_context_message(
             state,
             &request.project_id,
@@ -190,14 +207,14 @@ impl LocalCodexChatService {
             .as_ref()
             .filter(|session| {
                 session.task_toolset_version < CHAT_TASK_TOOLSET_VERSION
-                    || session.resource_id.as_deref() != Some(&project_target.resource_id)
+                    || session.resource_id.as_deref() != Some(&target_resource_id)
             })
             .map(|_| conversation_context(state, &request.project_id, &request.conversation_id))
             .transpose()?;
         if self
             .sessions
             .get(&request.conversation_id)
-            .is_some_and(|session| !session.targets_resource(&project_target.resource_id))
+            .is_some_and(|session| !session.targets_resource(&target_resource_id))
         {
             self.sessions.remove(&request.conversation_id);
         }
@@ -207,7 +224,7 @@ impl LocalCodexChatService {
                 entry.insert(LocalCodexChatSession::start(
                     &request.conversation_id,
                     &project_root,
-                    &project_target.resource_id,
+                    &target_resource_id,
                     stored.as_ref(),
                     migration_context.as_deref(),
                     &selected_model,
@@ -216,7 +233,7 @@ impl LocalCodexChatService {
             }
         };
         let project_id = request.project_id.clone();
-        let resource_id = Some(project_target.resource_id.clone());
+        let resource_id = project_target.as_ref().map(|target| target.resource_id.clone());
         let conversation_id = request.conversation_id.clone();
         let snapshot_store = self.task_review_snapshot_store.as_ref();
         let mut task_tool = |tool: &str, turn_id: &str, call_id: &str, arguments| match tool {
@@ -246,7 +263,7 @@ impl LocalCodexChatService {
             session.stored_session(
                 request.conversation_id.clone(),
                 request.project_id.clone(),
-                project_target.resource_id.clone(),
+                target_resource_id.clone(),
                 turn_count,
             ),
             &canonical_turn_id,
@@ -270,7 +287,7 @@ impl LocalCodexChatService {
             &session.stored_session(
                 request.conversation_id.clone(),
                 request.project_id.clone(),
-                project_target.resource_id.clone(),
+                target_resource_id.clone(),
                 turn_count,
             ),
         )?;

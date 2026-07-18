@@ -69,6 +69,76 @@ where
     }
 }
 
+/// Spec 012 durable-child admission: creating a durable child (task, goal)
+/// on a transient project promotes the project in place first, so the child
+/// can never be orphaned by transient expiry. Promotion is receipted like
+/// any lifecycle action.
+pub(crate) fn ensure_project_durable<B>(
+    handler: &LocalControlRequestHandler<B>,
+    command_id: &str,
+    project_id: &nucleus_projects::ProjectId,
+) -> Result<(), ServerControlError>
+where
+    B: LocalStoreBackend + Clone,
+{
+    let record_id = PersistenceRecordId(project_id.0.clone());
+    let Some(record) = handler
+        .state()
+        .projects()
+        .get(&record_id)
+        .map_err(|error| engine_project_error(EngineProjectCommandError::Storage(error)))?
+    else {
+        // Missing project surfaces through the child command's own checks.
+        return Ok(());
+    };
+    let mut project = nucleus_projects::decode_project_storage_record(&record.payload.bytes)
+        .map_err(|error| ServerControlError::StorageUnavailable {
+            reason: error.reason,
+        })?;
+    if project.retention != nucleus_projects::ProjectRetentionStorage::Transient {
+        return Ok(());
+    }
+    project.retention = nucleus_projects::ProjectRetentionStorage::Durable;
+    let revision = nucleus_core::RevisionId(format!("rev:project-promote:{command_id}"));
+    let payload = nucleus_projects::encode_project_storage_payload(&project).map_err(|error| {
+        ServerControlError::StorageUnavailable {
+            reason: error.reason,
+        }
+    })?;
+    handler
+        .state()
+        .projects()
+        .put(
+            LocalStoreRecord {
+                id: record_id,
+                domain: PersistenceDomain::Projects,
+                kind: record.kind,
+                revision_id: revision.clone(),
+                payload: LocalStoreRecordPayload {
+                    media_type: Some("application/json".to_owned()),
+                    bytes: payload,
+                },
+            },
+            RevisionExpectation::Exact(record.revision_id.clone()),
+        )
+        .map_err(|error| engine_project_error(EngineProjectCommandError::Storage(error)))?;
+    persist_project_lifecycle_receipt(
+        handler.state(),
+        &ProjectLifecycleReceiptRecord::applied(
+            command_id,
+            format!("auto-promote:{command_id}"),
+            String::new(),
+            project.project_id.clone(),
+            "promote".to_owned(),
+            "system:durable-child-admission".to_owned(),
+            handler.authority_host_id().0.clone(),
+            Some(record.revision_id.0),
+            Some(revision.0),
+        ),
+    )
+    .map_err(|error| engine_project_error(EngineProjectCommandError::Storage(error)))
+}
+
 fn run_engine_command<B>(
     handler: &LocalControlRequestHandler<B>,
     command_id: &str,

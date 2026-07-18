@@ -70,7 +70,7 @@ export type ControlCommandDto =
       kind: "project_lifecycle";
       command_id: string;
       project_id: string;
-      action: "rename" | "park" | "archive" | "restore" | "delete";
+      action: "rename" | "park" | "archive" | "restore" | "delete" | "promote" | "expire_transient";
       expected_revision: string;
       display_name: string | null;
       actor_ref: string;

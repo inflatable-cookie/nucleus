@@ -26,6 +26,14 @@ pub(crate) fn handle_goal_command<B>(
 where
     B: LocalStoreBackend + Clone,
 {
+    if let GoalCommand::Create(ref create) = command {
+        if let Err(error) =
+            super::project_commands::ensure_project_durable(handler, command_id, &create.project_id)
+        {
+            return ServerCommandReceiptStatus::Rejected(error);
+        }
+    }
+
     let repository = GoalStateRepository {
         state: handler.state(),
     };

@@ -33,6 +33,14 @@ where
         return handle_task_seed_promotion(handler, command_id, command);
     }
 
+    if let TaskCommand::Create(ref create) = command {
+        if let Err(error) =
+            super::project_commands::ensure_project_durable(handler, command_id, &create.project_id)
+        {
+            return ServerCommandReceiptStatus::Rejected(error);
+        }
+    }
+
     let repository = ServerTaskCommandRepository::new(handler.state());
     let service = EngineTaskCommandService::new(repository);
 
