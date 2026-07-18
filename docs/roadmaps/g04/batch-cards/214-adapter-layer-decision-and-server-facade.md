@@ -1,6 +1,6 @@
 # 214 Adapter Layer Decision And Server Facade
 
-Status: in progress
+Status: completed
 Owner: Claude
 Updated: 2026-07-18
 Milestone: `../046-engine-boundary-migration.md`
@@ -33,8 +33,19 @@ public facade.
   nucleus-agent-adapters is no longer an orphan crate — the server depends
   on it and a new adapter is one `AgentSessionRuntime` impl plus a
   registry entry
-- [ ] `nucleus-contract-fixtures` fate (wire into tests or delete)
-- [ ] server facade module and CI module-count guard — next batch
+- [x] `nucleus-contract-fixtures` wired (operator: wire): nucleus-server
+  consumes the command-policy fixtures as a dev-dependency — the read-only
+  runner rejects the write/destructive/secret fixtures by scope, and one
+  test documents the authority boundary the wiring exposed (the fixture
+  read-only request carries ScmAdapter authority, which the local runner
+  does not admit)
+- [x] CI module-count ratchet active: `tests/module_ratchet.rs` fails the
+  suite if nucleus-server's top-level module count exceeds the 322
+  baseline; lower as migration proceeds
+- [x] facade deferred with reasoning: unwinding the ~290 flat re-exports
+  would churn nucleusd's 87 import sites for no behavior change; a curated
+  facade earns its keep when a second host form (remote transport) exists.
+  The ratchet guards the growth problem the facade was aimed at
 
 ## Validation
 

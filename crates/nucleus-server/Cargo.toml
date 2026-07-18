@@ -32,3 +32,4 @@ tempfile = "3"
 toml = "0.8"
 
 [dev-dependencies]
+nucleus-contract-fixtures = { path = "../nucleus-contract-fixtures" }

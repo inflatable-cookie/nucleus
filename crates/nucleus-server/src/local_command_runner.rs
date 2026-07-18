@@ -317,4 +317,57 @@ mod tests {
         assert!(rejections.contains(&LocalReadOnlyCommandRunnerRejection::MissingTimeout));
         assert!(rejections.contains(&LocalReadOnlyCommandRunnerRejection::UnboundedOutput));
     }
+
+    fn fixture_invocation(request_id: &str) -> CommandInvocation {
+        CommandInvocation {
+            command_request_id: CommandRequestId(request_id.to_owned()),
+            executable: "git".to_owned(),
+            argv: vec!["status".to_owned()],
+            working_directory: std::env::current_dir().expect("current dir"),
+            timeout: Duration::from_secs(5),
+            stdout_limit_bytes: 16 * 1024,
+            stderr_limit_bytes: 16 * 1024,
+            environment_policy: CommandEnvironmentPolicy::MinimalInheritedSafe,
+            sandbox: CommandSandboxProfile::NoFilesystemWrite,
+            output_retention: CommandOutputRetention::SummaryOnly,
+        }
+    }
+
+    // Contract-fixture wiring: the shared fixtures pin the command-policy
+    // contract, and this runner is a real consumer of it.
+    #[test]
+    fn contract_fixture_write_and_destructive_requests_are_rejected() {
+        let runner = LocalReadOnlyCommandRunner::default();
+
+        for request in [
+            nucleus_contract_fixtures::command_policy::management_state_write_request(),
+            nucleus_contract_fixtures::command_policy::source_code_write_request(),
+            nucleus_contract_fixtures::command_policy::destructive_blocked_request(),
+            nucleus_contract_fixtures::command_policy::secret_access_blocked_request(),
+        ] {
+            let rejections =
+                runner.rejections(&request, &fixture_invocation(&request.id.0.clone()));
+            assert!(
+                rejections.contains(&LocalReadOnlyCommandRunnerRejection::UnsupportedScope),
+                "fixture {} must be rejected by the read-only runner",
+                request.id.0
+            );
+        }
+    }
+
+    #[test]
+    fn contract_fixture_read_only_request_documents_the_authority_boundary() {
+        // The fixture's read-only request carries the ScmAdapter authority
+        // area, which this local runner does not admit — SCM adapter
+        // commands route through their own lane. If that lane ever routes
+        // here, this assertion is the decision point.
+        let runner = LocalReadOnlyCommandRunner::default();
+        let request = nucleus_contract_fixtures::command_policy::read_only_inspection_request();
+        let rejections = runner.rejections(&request, &fixture_invocation(&request.id.0.clone()));
+
+        assert!(
+            rejections.contains(&LocalReadOnlyCommandRunnerRejection::UnsupportedAuthorityArea)
+        );
+        assert!(!rejections.contains(&LocalReadOnlyCommandRunnerRejection::UnsupportedScope));
+    }
 }

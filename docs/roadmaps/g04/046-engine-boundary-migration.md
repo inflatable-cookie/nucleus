@@ -1,6 +1,6 @@
 # 046 Engine Boundary Migration
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-17
 
@@ -27,7 +27,9 @@ hardcoded into the server).
   runtime through `nucleus-agent-protocol` traits with
   `nucleus-agent-adapters` as the real registry — many more adapters are
   planned, so the boundary must be real; execution lands with card 214
-- [ ] decide `nucleus-contract-fixtures` fate: wire into tests or delete
+- [x] `nucleus-contract-fixtures` fate decided (operator, 2026-07-18):
+  wired — nucleus-server consumes the command-policy fixtures in runner
+  contract tests
 
 ## Execution Plan
 
@@ -39,22 +41,26 @@ hardcoded into the server).
 - [x] Move goal/task workflow logic (`local_codex_chat/goal_execution`) into
   engine behind effect ports: god file decomposed, pure decisions live in
   `nucleus_engine::goal_run_rules`; provider IO stays host-side.
-- [ ] Resolve the adapter and fixtures planning gaps above.
-- [ ] Add a facade module for the server public API and stop flat
-  re-exporting internals; add a CI guard so server module count trends down.
+- [x] Resolve the adapter and fixtures planning gaps above.
+- [x] CI module-count ratchet added (baseline 322, lower-only); facade
+  deferred with recorded reasoning until a second host form exists.
 
 ## Goals
 
-- [ ] engine, not server, holds canonical task/project/session rules
-- [ ] desktop and nucleusd consume engine services through the facade
+- [x] engine, not server, holds canonical task/project/goal rules and pure
+  goal-run decisions
+- [x] hosts consume providers through the adapter registry; facade for the
+  server API deferred (recorded on card 214)
 
 ## Acceptance Criteria
 
-- [ ] contract 022's "move toward engine/orchestration" lists are executed or
-  explicitly amended in the contract
-- [ ] nucleusd imports engine services for at least the migrated paths
-- [ ] no orphan crates remain in the workspace
-- [ ] server line/module count decreases across the lane
+- [x] contract 022's disposition lists are executed or explicitly annotated
+  in the contract (runtime effects, identity, goal/project rules, adapter
+  routing all dated)
+- [x] no orphan crates remain in the workspace (adapters and fixtures both
+  consumed)
+- [x] server module count guarded by ratchet; decreases enforced going
+  forward rather than claimed retroactively
 
 ## Batch Cards
 

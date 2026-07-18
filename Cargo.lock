@@ -2406,6 +2406,7 @@ dependencies = [
  "nucleus-agent-adapters",
  "nucleus-agent-protocol",
  "nucleus-command-policy",
+ "nucleus-contract-fixtures",
  "nucleus-core",
  "nucleus-engine",
  "nucleus-local-store",
