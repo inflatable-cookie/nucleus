@@ -1,6 +1,6 @@
 # 050 Swallowtail Task Execution Adoption
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-20
 
@@ -30,7 +30,7 @@ receipts, review semantics, or recovery state out of Nucleus.
   facade while preserving linkage and outcomes.
 - [x] Consolidate the daemon's direct smoke on the shared runtime or retire it
   if its evidence is fully superseded.
-- [ ] Prove native Goal/task execution parity before removing direct transport.
+- [x] Prove native Goal/task execution parity before removing direct transport.
 
 ## Boundary Decisions
 
@@ -62,7 +62,7 @@ receipts, review semantics, or recovery state out of Nucleus.
 - `batch-cards/225-swallowtail-writable-session-driver.md` — completed
 - `batch-cards/226-nucleus-task-executor-adoption.md` — completed
 - `batch-cards/227-codex-smoke-consolidation.md` — completed
-- `batch-cards/228-task-execution-validation-closeout.md` — ready
+- `batch-cards/228-task-execution-validation-closeout.md` — completed
 
 ## Stop Condition
 

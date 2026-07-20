@@ -556,15 +556,18 @@ async fn submit_control_envelope(
 }
 
 #[tauri::command]
-fn load_workspace_ui_config() -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
-    workspace_ui::load_workspace_ui_config()
+fn load_workspace_ui_config(
+    project_id: String,
+) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
+    workspace_ui::load_workspace_ui_config(&project_id)
 }
 
 #[tauri::command]
 fn save_workspace_ui_config(
+    project_id: String,
     config: workspace_ui::WorkspaceUiConfigDto,
 ) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
-    workspace_ui::save_workspace_ui_config(config)
+    workspace_ui::save_workspace_ui_config(&project_id, config)
 }
 
 pub fn run() {

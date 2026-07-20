@@ -1,8 +1,8 @@
 # g04 Product Workflow Vertical Slice
 
-Status: active
+Status: completed
 Owner: Tom
-Updated: 2026-07-15
+Updated: 2026-07-20
 
 ## Purpose
 
@@ -211,6 +211,11 @@ Current checkpoint:
 - direct Codex JSON-RPC is removed from the product task executor without
   changing Goal ordering, durable linkage, checkpoints, diffs, review, or
   receipts
+- multi-resource targeting and transient project/chat behavior are validated
+- optional Shared project files bind exactly one attached Git resource while
+  active Nucleus state remains authoritative
+- the g04 product workflow generation is complete; the next product direction
+  requires an operator-led g05 planning checkpoint
 
 ## Roadmaps
 
@@ -252,20 +257,34 @@ Current checkpoint:
 - `036-project-memory-panel.md` - completed
 - `037-project-resource-foundation.md` - completed
 - `038-project-control-workflow.md` - completed
-- `039-multi-resource-attachment-and-targeting.md` - active
-- `040-transient-chat-and-promotion.md` - planned
-- `041-shared-project-files-control.md` - planned
+- `039-multi-resource-attachment-and-targeting.md` - completed
+- `040-transient-chat-and-promotion.md` - completed
+- `041-shared-project-files-control.md` - completed
+- `042-execution-safety-honesty-and-enforcement.md` - completed
+- `043-ci-and-validation-runway.md` - completed
+- `044-persistence-correctness-hardening.md` - completed
+- `045-admission-vocabulary-consolidation.md` - completed
+- `046-engine-boundary-migration.md` - completed
+- `047-desktop-contract-integrity.md` - completed
+- `048-roadmap-residue-archival.md` - superseded
 - `049-swallowtail-agent-chat-adoption.md` - completed
-- `050-swallowtail-task-execution-adoption.md` - active
+- `050-swallowtail-task-execution-adoption.md` - completed
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/228-task-execution-validation-closeout.md`
+- `batch-cards/199-shared-project-files-validation.md`
 
 Completed cards:
 
+- `batch-cards/198-shared-project-files-controls.md`
+- `batch-cards/197-management-projection-resource-binding.md`
+- `batch-cards/196-transient-chat-validation.md`
+- `batch-cards/193-multi-resource-workflow-validation.md`
+- `batch-cards/195-new-chat-and-in-place-promotion.md`
+- `batch-cards/194-transient-project-retention-boundary.md`
+- `batch-cards/228-task-execution-validation-closeout.md`
 - `batch-cards/227-codex-smoke-consolidation.md`
 - `batch-cards/226-nucleus-task-executor-adoption.md`
 - `batch-cards/225-swallowtail-writable-session-driver.md`
@@ -282,15 +301,6 @@ Completed cards:
 - `batch-cards/190-resource-attachment-and-repair-boundary.md`
 - `batch-cards/191-workspace-resource-target-resolution.md`
 - `batch-cards/192-compact-project-resource-controls.md`
-
-Planned cards:
-
-- `batch-cards/194-transient-project-retention-boundary.md`
-- `batch-cards/195-new-chat-and-in-place-promotion.md`
-- `batch-cards/196-transient-chat-validation.md`
-- `batch-cards/197-management-projection-resource-binding.md`
-- `batch-cards/198-shared-project-files-controls.md`
-- `batch-cards/199-shared-project-files-validation.md`
 
 Paused cards:
 

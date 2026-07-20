@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nucleus_projects::{
-    ProjectResourceStorageKind, ProjectResourceStorageLocationStatus, ProjectResourceStorageRecord,
-    ProjectResourceStorageRole, WorkingResourceStorageRecord,
+    ManagementProjectionStorageRecord, ManagementProjectionSyncPolicy, ProjectResourceStorageKind,
+    ProjectResourceStorageLocationStatus, ProjectResourceStorageRecord, ProjectResourceStorageRole,
+    WorkingResourceStorageRecord,
 };
 
 use crate::commands::ProjectResourceCommand;
@@ -197,6 +198,45 @@ pub(super) fn remove_resource(
         .is_some_and(|target| target.resource_id == resource_id)
     {
         project.default_working_resource = None;
+    }
+    Ok(())
+}
+
+pub(super) fn set_management_projection(
+    project: &mut nucleus_projects::ProjectStorageRecord,
+    resource_id: &str,
+    sync_policy: ManagementProjectionSyncPolicy,
+) -> Result<(), ServerControlError> {
+    let resource = project
+        .resources
+        .iter()
+        .find(|resource| resource.resource_id == resource_id)
+        .ok_or_else(resource_not_found)?;
+    if resource.kind != ProjectResourceStorageKind::GitRepository {
+        return Err(invalid(
+            "shared project files require an explicitly selected Git resource",
+        ));
+    }
+    if resource.authority_host_ref != project.authority_host_ref {
+        return Err(ServerControlError::Unauthorized {
+            reason: format!(
+                "shared project files resource is authoritative on {}",
+                resource.authority_host_ref
+            ),
+        });
+    }
+    project.management_projection = Some(ManagementProjectionStorageRecord {
+        resource_id: resource_id.to_owned(),
+        sync_policy_ref: Some(sync_policy.as_str().to_owned()),
+    });
+    Ok(())
+}
+
+pub(super) fn clear_management_projection(
+    project: &mut nucleus_projects::ProjectStorageRecord,
+) -> Result<(), ServerControlError> {
+    if project.management_projection.take().is_none() {
+        return Err(invalid("shared project files are not configured"));
     }
     Ok(())
 }

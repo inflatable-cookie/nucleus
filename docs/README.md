@@ -18,24 +18,25 @@ The repo uses:
 
 ## Current Lane
 
-`g04` product workflow vertical slice. Durable Agent Chat, low-cardinality
+`g04` product workflow vertical slice is complete. `g05` consolidates the
+product from the app shell inward, starting with project-scoped workspace
+layouts and Agent Chat-only new-project defaults. Durable Agent Chat, low-cardinality
 `task_ledger` and `task_workflow` portals, Goals, Tasks, CodeMirror editing,
 task-attributed Diff review, persisted review notes, and review-guided rework
 are in place. Product use disproved the inherited hosted-Surface layer. The
 workspace hierarchy is now `display -> window -> region -> panel`; the working
 panel workflow and multi-window foundation remain. Native primary-window
 geometry persistence is confirmed. The floating Agent Chat composer is the
-current baseline. The host-routed Terminal panel is the active bounded product
-lane: its local authoritative-host adapter and xterm slice are ready for
-operator interaction review without making Tauri the durable terminal API.
+current baseline. The host-routed Terminal panel and xterm slice are validated
+without making Tauri the durable terminal API.
 The former Context placeholder now migrates to a read-only Memory panel over
 accepted-memory and proposal summaries; its operator validation is current.
 Projects now generalize beyond repository bookmarks: durable scopes may be
 created by name with zero resources, compact lifecycle controls are validated,
 and the host-owned attach/update/repair/remove boundary detects plain folders
 and Git worktrees. Compact resource management and conditional panel targeting
-are now in place. Multi-resource validation is paused for Nucleus Swallowtail
-adoption. Agent Chat model discovery, live sessions, turns, callbacks,
+are now in place and multi-resource validation is complete. Agent Chat model
+discovery, live sessions, turns, callbacks,
 deadlines, and cleanup now use the shared Codex adapter behind the existing
 Nucleus facade, with automated and authenticated native parity complete. The
 product Goal/task executor now uses the Nucleus-owned `TaskExecutionRuntime`
@@ -43,6 +44,12 @@ port over Swallowtail's bounded workspace session while preserving existing
 linkage, receipts, checkpoints, diffs, wait states, and review semantics. The
 separately gated daemon diagnostic smoke now uses Swallowtail's read-only
 session path too; no Nucleus-owned live Codex JSON-RPC client remains.
+Authenticated and native two-task Goal execution parity is confirmed.
+Transient restart, expiry, active-turn protection, resource-free chat, and
+in-place promotion are validated. Shared project files are an optional
+advanced project capability. Explicit Git-resource binding, server-owned
+policy and health, project-scoped export/import routing, and project-menu
+controls are validated.
 
 Current planning artifacts:
 
@@ -71,6 +78,7 @@ Current planning artifacts:
 - `roadmaps/g04/041-shared-project-files-control.md`
 - `roadmaps/g04/049-swallowtail-agent-chat-adoption.md`
 - `roadmaps/g04/050-swallowtail-task-execution-adoption.md`
+- `roadmaps/g05/001-project-scoped-workspace-layouts.md`
 
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`

@@ -4,6 +4,8 @@ Logs record meaningful decisions, evidence, and closeouts.
 
 ## Current Logs
 
+- `2026-07-20-project-scoped-workspace-layouts.md`
+- `2026-07-20-g04-closeout.md`
 - `2026-07-20-swallowtail-codex-smoke-consolidation.md`
 - `2026-07-20-swallowtail-task-executor-adoption.md`
 - `2026-06-17-stocktake.md`
@@ -59,3 +61,6 @@ Logs record meaningful decisions, evidence, and closeouts.
 - `2026-07-18-transient-retention-boundary.md`
 - `2026-07-18-new-chat-and-promotion.md`
 - `2026-07-20-swallowtail-agent-chat-adoption.md`
+- `2026-07-20-swallowtail-task-execution-closeout.md`
+- `2026-07-20-transient-chat-validation.md`
+- `2026-07-20-shared-project-files-foundation.md`

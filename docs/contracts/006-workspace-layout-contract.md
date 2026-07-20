@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-07-14
+Updated: 2026-07-20
 
 ## Purpose
 
@@ -223,9 +223,12 @@ mirrors Loophole's `PanelDefinition.allowedRegions` model:
 - rejected drops must not mutate local layout state
 - closeability, movability, and system-panel status are separate flags
 
-The first desktop shell persists this as `allowed_regions` on local panel
-records in `~/.nucleus/config/ui.json`. This is a bring-up representation of
-the same policy shape, not the final server API.
+The desktop persists this as `allowed_regions` on project-keyed local panel
+records in `~/.nucleus/config/ui.json`. Native window placement remains one
+global record. Schema v7 migrates the former single panel layout into a
+one-time candidate claimed by the first project loaded after upgrade; other
+previously unseen projects receive the minimal Agent Chat-only layout. This is
+a bring-up representation of the same policy shape, not the final server API.
 
 Closeable panels must have a recovery path. In the first product shell, the
 header `+` menu creates fresh panel instances for known panel kinds such as
@@ -242,7 +245,13 @@ the window layout record:
 - `right_stack_ratio`
 
 These ratios are client-local preferences below `~/.nucleus/config/ui.json`.
-They must not be committed into project repositories by default.
+They are stored per project and must not be committed into project
+repositories by default.
+
+The minimal layout for a project without a retained local layout contains one
+Agent Chat panel in `centerTop`. Tasks, Terminal, Browser, Editor, Diff, and
+Memory are added only when requested. The default must not be inferred from
+another project's current tabs.
 
 ## Chat-Led Task Model
 

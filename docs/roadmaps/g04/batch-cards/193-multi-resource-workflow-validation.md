@@ -1,8 +1,8 @@
 # 193 Multi-Resource Workflow Validation
 
-Status: paused
-Owner: Codex
-Updated: 2026-07-15
+Status: completed
+Owner: Tom
+Updated: 2026-07-20
 Milestone: `../039-multi-resource-attachment-and-targeting.md`
 Auto-start next card: no
 
@@ -16,7 +16,7 @@ behavior across zero, one, and many local or remote resources.
 - [x] focused Rust, desktop, persistence, and docs checks pass
 - [x] editor, terminal, browser, diff, and agent chat target the expected resource
 - [x] project state survives a missing or moved resource
-- [ ] operator confirms the common one-resource workflow stays quiet
+- [x] operator confirms the common one-resource workflow stays quiet
 
 ## Validation Evidence
 
@@ -37,3 +37,5 @@ behavior across zero, one, and many local or remote resources.
 
 With a normal project containing one healthy working resource, open Agent
 Chat, Editor, and Terminal. None should show a resource selector or repair bar.
+
+Confirmed by the operator on 2026-07-20.

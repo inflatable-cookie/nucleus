@@ -1,8 +1,8 @@
 # 041 Shared Project Files Control
 
-Status: planned
+Status: completed
 Owner: Tom
-Updated: 2026-07-15
+Updated: 2026-07-20
 
 ## Purpose
 
@@ -19,18 +19,18 @@ project capability after core project and resource workflows are usable.
 
 ## Execution Plan
 
-- [ ] Bind one active management projection to an existing or dedicated Git
+- [x] Bind one active management projection to an existing or dedicated Git
   resource with explicit sync policy.
-- [ ] Reconcile existing management projection/sync machinery with the new
+- [x] Reconcile existing management projection/sync machinery with the new
   resource identity and host authority model.
-- [ ] Add **Shared project files** configuration and diagnostics behind the
+- [x] Add **Shared project files** configuration and diagnostics behind the
   project menu.
-- [ ] Validate export, import, repair, conflict, and disabled-projection paths
+- [x] Validate export, import, repair, conflict, and disabled-projection paths
   without making Git mandatory.
 
 ## Batch Cards
 
-Planned:
+Completed:
 
 - `batch-cards/197-management-projection-resource-binding.md`
 - `batch-cards/198-shared-project-files-controls.md`

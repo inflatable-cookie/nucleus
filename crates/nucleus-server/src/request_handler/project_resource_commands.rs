@@ -198,6 +198,13 @@ fn apply_resource_action(
         ProjectResourceAction::Remove { resource_id } => {
             mutation::remove_resource(project, &resource_id.0)
         }
+        ProjectResourceAction::SetManagementProjection {
+            resource_id,
+            sync_policy,
+        } => mutation::set_management_projection(project, &resource_id.0, *sync_policy),
+        ProjectResourceAction::ClearManagementProjection => {
+            mutation::clear_management_projection(project)
+        }
     }
 }
 
@@ -206,7 +213,11 @@ fn resource_id(action: &ProjectResourceAction) -> Option<&str> {
         ProjectResourceAction::Attach { .. } => None,
         ProjectResourceAction::Update { resource_id, .. }
         | ProjectResourceAction::Repair { resource_id, .. }
-        | ProjectResourceAction::Remove { resource_id } => Some(&resource_id.0),
+        | ProjectResourceAction::Remove { resource_id }
+        | ProjectResourceAction::SetManagementProjection { resource_id, .. } => {
+            Some(&resource_id.0)
+        }
+        ProjectResourceAction::ClearManagementProjection => None,
     }
 }
 
@@ -223,6 +234,8 @@ fn resource_action_name(action: &ProjectResourceAction) -> &'static str {
         ProjectResourceAction::Update { .. } => "update",
         ProjectResourceAction::Repair { .. } => "repair",
         ProjectResourceAction::Remove { .. } => "remove",
+        ProjectResourceAction::SetManagementProjection { .. } => "set_management_projection",
+        ProjectResourceAction::ClearManagementProjection => "clear_management_projection",
     }
 }
 
@@ -257,6 +270,14 @@ fn request_fingerprint(command: &ProjectResourceCommand) -> String {
             values.push(locator.to_string_lossy().into_owned());
         }
         ProjectResourceAction::Remove { resource_id } => values.push(resource_id.0.clone()),
+        ProjectResourceAction::SetManagementProjection {
+            resource_id,
+            sync_policy,
+        } => {
+            values.push(resource_id.0.clone());
+            values.push(sync_policy.as_str().to_owned());
+        }
+        ProjectResourceAction::ClearManagementProjection => {}
     }
     let refs = values.iter().map(String::as_str).collect::<Vec<_>>();
     let mut hasher = blake3::Hasher::new();

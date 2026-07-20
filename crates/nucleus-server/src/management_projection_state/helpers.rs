@@ -1,5 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
+use nucleus_core::PersistenceRecordKind;
 use nucleus_engine::{
     encode_management_projection_file_document, ManagementProjectionFileDocument,
     ManagementProjectionFileRef, ManagementProjectionValidationReport,
@@ -19,7 +20,8 @@ where
     state
         .projects()
         .list()?
-        .iter()
+        .into_iter()
+        .filter(|record| record.kind == PersistenceRecordKind::Project)
         .map(|record| {
             decode_project_storage_record(&record.payload.bytes).map_err(|error| {
                 LocalStoreError::InvalidRecord {
@@ -98,7 +100,8 @@ where
     state
         .tasks()
         .list()?
-        .iter()
+        .into_iter()
+        .filter(|record| record.kind == PersistenceRecordKind::Task)
         .map(|record| {
             decode_task_storage_record(&record.payload.bytes).map_err(|error| {
                 LocalStoreError::InvalidRecord {

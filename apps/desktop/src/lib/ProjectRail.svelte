@@ -26,6 +26,7 @@
     setNativePanelOverlayVisibility,
   } from "./nativePanelVisibility";
   import ProjectResourceManager from "./ProjectResourceManager.svelte";
+  import ProjectSharedFilesManager from "./ProjectSharedFilesManager.svelte";
 
   type Props = {
     selectedProjectId: string | null;
@@ -49,6 +50,7 @@
   let projectManagerOpen = $state(false);
   let projectManagerView = $state<"all" | "parked" | "archived">("all");
   let managingResourcesProjectId = $state<string | null>(null);
+  let managingSharedFilesProjectId = $state<string | null>(null);
   const projectManagerOverlayId = createNativePanelOverlayId("project-manager");
 
   const activeProjects = $derived(projects.filter((project) => project.status === "active"));
@@ -61,6 +63,9 @@
   );
   const managedResourceProject = $derived(
     projects.find((project) => project.project_id === managingResourcesProjectId) ?? null,
+  );
+  const managedSharedFilesProject = $derived(
+    projects.find((project) => project.project_id === managingSharedFilesProjectId) ?? null,
   );
 
   const projectCountLabel = $derived(
@@ -101,6 +106,7 @@
   function projectMenuItems(project: ControlProjectRecordDto): MenuItem[] {
     return [
       { value: "resources", label: "Resources" },
+      { value: "shared-files", label: "Shared project files" },
       { value: "separator-resources", label: "", kind: "separator" },
       { value: "rename", label: "Rename" },
       project.status === "active"
@@ -118,7 +124,14 @@
     mutationFailure = null;
     pendingDeleteProjectId = null;
     if (action === "resources") {
+      managingSharedFilesProjectId = null;
       managingResourcesProjectId = project.project_id;
+      projectManagerOpen = true;
+      return;
+    }
+    if (action === "shared-files") {
+      managingResourcesProjectId = null;
+      managingSharedFilesProjectId = project.project_id;
       projectManagerOpen = true;
       return;
     }
@@ -140,6 +153,7 @@
     pendingDeleteProjectId = null;
     mutationFailure = null;
     managingResourcesProjectId = null;
+    managingSharedFilesProjectId = null;
   }
 
   function handleManageProjectResources(event: Event) {
@@ -148,6 +162,7 @@
         ? event.detail.projectId
         : null;
     if (!projectId || !projects.some((project) => project.project_id === projectId)) return;
+    managingSharedFilesProjectId = null;
     managingResourcesProjectId = projectId;
     projectManagerOpen = true;
   }
@@ -339,8 +354,16 @@
 
   <Dialog
     bind:open={projectManagerOpen}
-    title={managedResourceProject ? "Project resources" : "Manage projects"}
-    description={managedResourceProject ? "Folders and repositories" : `${projects.length} total`}
+    title={managedSharedFilesProject
+      ? "Shared project files"
+      : managedResourceProject
+        ? "Project resources"
+        : "Manage projects"}
+    description={managedSharedFilesProject
+      ? "Optional Git-backed projection"
+      : managedResourceProject
+        ? "Folders and repositories"
+        : `${projects.length} total`}
     width="sm"
     size="sm"
     showCloseButton
@@ -351,10 +374,21 @@
         pendingDeleteProjectId = null;
         mutationFailure = null;
         managingResourcesProjectId = null;
+        managingSharedFilesProjectId = null;
       }
     }}
   >
-    {#if managedResourceProject}
+    {#if managedSharedFilesProject}
+      <ProjectSharedFilesManager
+        project={managedSharedFilesProject}
+        onBack={() => (managingSharedFilesProjectId = null)}
+        onChanged={loadProjectRail}
+        onManageResources={() => {
+          managingSharedFilesProjectId = null;
+          managingResourcesProjectId = managedSharedFilesProject.project_id;
+        }}
+      />
+    {:else if managedResourceProject}
       <ProjectResourceManager
         project={managedResourceProject}
         onBack={() => (managingResourcesProjectId = null)}

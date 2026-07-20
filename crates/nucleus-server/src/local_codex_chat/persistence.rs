@@ -301,6 +301,44 @@ where
         .ok_or_else(|| format!("conversation has no persisted turn: {conversation_id}"))
 }
 
+pub(crate) fn project_has_active_turn<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+) -> Result<bool, String>
+where
+    B: LocalStoreBackend,
+{
+    let conversation_ids = state
+        .agent_sessions()
+        .list()
+        .map_err(storage_error)?
+        .into_iter()
+        .filter(|record| record.id.0.starts_with(SESSION_PREFIX))
+        .map(|record| decode::<StoredChatSession>(&record.payload.bytes))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|session| session.project_id == project_id)
+        .map(|session| session.conversation_id)
+        .collect::<std::collections::HashSet<_>>();
+    if conversation_ids.is_empty() {
+        return Ok(false);
+    }
+
+    state
+        .agent_sessions()
+        .list()
+        .map_err(storage_error)?
+        .into_iter()
+        .filter(|record| record.id.0.starts_with(TURN_PREFIX))
+        .map(|record| decode::<StoredChatTurn>(&record.payload.bytes))
+        .collect::<Result<Vec<_>, _>>()
+        .map(|turns| {
+            turns.into_iter().any(|turn| {
+                turn.status == "started" && conversation_ids.contains(&turn.conversation_id)
+            })
+        })
+}
+
 fn read_turn<B>(
     state: &ServerStateService<B>,
     turn_id: &str,
@@ -469,6 +507,32 @@ mod tests {
             current_turn(&state, "conversation:1").expect("turn").status,
             "failed"
         );
+    }
+
+    #[test]
+    fn active_turn_lookup_is_project_scoped_and_terminal_aware() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
+        let session = StoredChatSession {
+            conversation_id: "conversation:active".to_owned(),
+            project_id: "project:active".to_owned(),
+            resource_id: None,
+            session_id: "session:active".to_owned(),
+            provider_thread_id: "thread:active".to_owned(),
+            model: "model".to_owned(),
+            reasoning_effort: None,
+            adapter_id: "codex-app-server".to_owned(),
+            provider_instance_id: "codex:local-default".to_owned(),
+            turn_count: 1,
+            task_toolset_version: 5,
+        };
+
+        persist_turn_start(&state, session, "turn:active", "Hello", None).expect("start");
+        assert!(project_has_active_turn(&state, "project:active").expect("active lookup"));
+        assert!(!project_has_active_turn(&state, "project:other").expect("other lookup"));
+
+        persist_turn_failure(&state, "turn:active", "stopped").expect("finish");
+        assert!(!project_has_active_turn(&state, "project:active").expect("terminal lookup"));
     }
 
     #[test]

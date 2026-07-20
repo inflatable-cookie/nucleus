@@ -47,18 +47,41 @@ where
                 idempotency_key: command.idempotency_key,
             }),
         ),
-        ProjectCommand::Lifecycle(command) => run_engine_command(
-            handler,
-            command_id,
-            EngineProjectCommand::Lifecycle(EngineProjectLifecycleCommand {
-                project_id: command.project_id,
-                expected_revision: command.expected_revision,
-                action: engine_action(command.action),
-                actor_ref: command.actor_ref,
-                authority_host_ref: command.authority_host_ref,
-                idempotency_key: command.idempotency_key,
-            }),
-        ),
+        ProjectCommand::Lifecycle(command) => {
+            if command.action == ProjectLifecycleAction::ExpireTransient {
+                match crate::local_codex_chat::project_has_active_chat_turn(
+                    handler.state(),
+                    &command.project_id.0,
+                ) {
+                    Ok(true) => {
+                        return ServerCommandReceiptStatus::Rejected(
+                            ServerControlError::InvalidRequest {
+                                reason: "transient expiry refused while a chat turn is active"
+                                    .to_owned(),
+                            },
+                        );
+                    }
+                    Ok(false) => {}
+                    Err(reason) => {
+                        return ServerCommandReceiptStatus::Rejected(
+                            ServerControlError::StorageUnavailable { reason },
+                        );
+                    }
+                }
+            }
+            run_engine_command(
+                handler,
+                command_id,
+                EngineProjectCommand::Lifecycle(EngineProjectLifecycleCommand {
+                    project_id: command.project_id,
+                    expected_revision: command.expected_revision,
+                    action: engine_action(command.action),
+                    actor_ref: command.actor_ref,
+                    authority_host_ref: command.authority_host_ref,
+                    idempotency_key: command.idempotency_key,
+                }),
+            )
+        }
         ProjectCommand::Resource(command) => {
             super::project_resource_commands::mutate_project_resource(handler, command_id, command)
         }

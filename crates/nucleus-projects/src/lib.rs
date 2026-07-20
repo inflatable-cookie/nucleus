@@ -151,6 +151,26 @@ pub struct ManagementProjectionTarget {
     pub sync_policy_ref: Option<String>,
 }
 
+/// Policy for sharing the optional management projection through SCM.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ManagementProjectionSyncPolicy {
+    Manual,
+    Assisted,
+    Automatic,
+    Reviewed,
+}
+
+impl ManagementProjectionSyncPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Assisted => "assisted",
+            Self::Automatic => "automatic",
+            Self::Reviewed => "reviewed",
+        }
+    }
+}
+
 /// Reference to persisted workspace layout state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceLayoutRef {

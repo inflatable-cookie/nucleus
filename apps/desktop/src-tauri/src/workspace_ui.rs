@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 const MIN_WINDOW_WIDTH: u32 = 900;
 const MIN_WINDOW_HEIGHT: u32 = 620;
 const MAX_WINDOW_DIMENSION: u32 = 16_384;
@@ -26,6 +26,34 @@ pub struct WorkspaceWindowDto {
     #[serde(default = "default_workspace_layout")]
     pub layout: WorkspaceLayoutDto,
     pub regions: WorkspaceRegionsDto,
+    #[serde(default)]
+    pub active_panels: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+struct WorkspaceUiStoreDto {
+    schema_version: u32,
+    window: WorkspaceHostWindowDto,
+    #[serde(default)]
+    project_layouts: BTreeMap<String, WorkspaceProjectLayoutDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_legacy_layout: Option<WorkspaceProjectLayoutDto>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+struct WorkspaceHostWindowDto {
+    id: String,
+    #[serde(default)]
+    placement: WorkspaceWindowPlacementDto,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+struct WorkspaceProjectLayoutDto {
+    #[serde(default = "default_workspace_layout")]
+    layout: WorkspaceLayoutDto,
+    regions: WorkspaceRegionsDto,
+    #[serde(default)]
+    active_panels: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -101,65 +129,73 @@ struct LegacyWorkspaceSurfaceDto {
     regions: WorkspaceRegionsDto,
 }
 
-pub fn load_workspace_ui_config() -> Result<WorkspaceUiConfigDto, String> {
+pub fn load_workspace_ui_config(project_id: &str) -> Result<WorkspaceUiConfigDto, String> {
+    validate_project_id(project_id)?;
     let _guard = config_io_lock()?;
-    load_workspace_ui_config_unlocked()
+    let mut store = load_workspace_ui_store_unlocked()?;
+    let changed = ensure_project_layout(&mut store, project_id);
+
+    if changed {
+        let path = workspace_ui_config_path()?;
+        write_workspace_ui_store(&path, &store)?;
+    }
+
+    materialize_project_config(&store, project_id)
 }
 
-fn load_workspace_ui_config_unlocked() -> Result<WorkspaceUiConfigDto, String> {
+pub fn load_workspace_window_placement() -> Result<WorkspaceWindowPlacementDto, String> {
+    let _guard = config_io_lock()?;
+    Ok(load_workspace_ui_store_unlocked()?.window.placement)
+}
+
+fn load_workspace_ui_store_unlocked() -> Result<WorkspaceUiStoreDto, String> {
     let path = workspace_ui_config_path()?;
 
     if !path.exists() {
-        let config = default_workspace_ui_config();
-        write_workspace_ui_config(&path, &config)?;
-        return Ok(config);
+        let store = default_workspace_ui_store();
+        write_workspace_ui_store(&path, &store)?;
+        return Ok(store);
     }
 
     let raw = fs::read_to_string(&path)
         .map_err(|error| format!("read workspace UI config failed: {error}"))?;
-    let (decoded, migrated) = decode_workspace_ui_config(&raw)?;
-    let normalized = normalize_workspace_ui_config(decoded);
+    let (decoded, migrated) = decode_workspace_ui_store(&raw)?;
+    let normalized = normalize_workspace_ui_store(decoded);
     if migrated {
-        write_workspace_ui_config(&path, &normalized)?;
+        write_workspace_ui_store(&path, &normalized)?;
     }
 
     Ok(normalized)
 }
 
 pub fn save_workspace_ui_config(
-    mut config: WorkspaceUiConfigDto,
+    project_id: &str,
+    config: WorkspaceUiConfigDto,
 ) -> Result<WorkspaceUiConfigDto, String> {
+    validate_project_id(project_id)?;
     let _guard = config_io_lock()?;
-    let current = load_workspace_ui_config_unlocked()?;
-    preserve_host_owned_placement(&mut config, &current);
-    let normalized = normalize_workspace_ui_config(config);
+    let mut store = load_workspace_ui_store_unlocked()?;
+    apply_project_config(&mut store, project_id, config);
     let path = workspace_ui_config_path()?;
-    write_workspace_ui_config(&path, &normalized)?;
-    Ok(normalized)
-}
-
-fn preserve_host_owned_placement(
-    requested: &mut WorkspaceUiConfigDto,
-    current: &WorkspaceUiConfigDto,
-) {
-    requested.window.placement = current.window.placement.clone();
+    write_workspace_ui_store(&path, &store)?;
+    materialize_project_config(&store, project_id)
 }
 
 pub fn update_workspace_window_placement(
     placement: WorkspaceWindowPlacementDto,
 ) -> Result<(), String> {
     let _guard = config_io_lock()?;
-    let mut config = load_workspace_ui_config_unlocked()?;
+    let mut store = load_workspace_ui_store_unlocked()?;
     let placement = normalize_window_placement(placement);
 
-    config.window.placement.display_id = placement.display_id;
-    config.window.placement.maximized = placement.maximized;
+    store.window.placement.display_id = placement.display_id;
+    store.window.placement.maximized = placement.maximized;
     if placement.normal_bounds.is_some() {
-        config.window.placement.normal_bounds = placement.normal_bounds;
+        store.window.placement.normal_bounds = placement.normal_bounds;
     }
 
     let path = workspace_ui_config_path()?;
-    write_workspace_ui_config(&path, &normalize_workspace_ui_config(config))
+    write_workspace_ui_store(&path, &normalize_workspace_ui_store(store))
 }
 
 pub fn workspace_ui_config_path() -> Result<PathBuf, String> {
@@ -170,33 +206,44 @@ pub fn workspace_ui_config_path() -> Result<PathBuf, String> {
     Ok(home.join(".nucleus").join("config").join("ui.json"))
 }
 
-fn write_workspace_ui_config(path: &PathBuf, config: &WorkspaceUiConfigDto) -> Result<(), String> {
+fn write_workspace_ui_store(path: &PathBuf, store: &WorkspaceUiStoreDto) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "workspace UI config path has no parent".to_owned())?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("create workspace UI config dir failed: {error}"))?;
 
-    let encoded = serde_json::to_string_pretty(config)
+    let encoded = serde_json::to_string_pretty(store)
         .map_err(|error| format!("encode workspace UI config failed: {error}"))?;
     fs::write(path, format!("{encoded}\n"))
         .map_err(|error| format!("write workspace UI config failed: {error}"))
 }
 
-fn normalize_workspace_ui_config(mut config: WorkspaceUiConfigDto) -> WorkspaceUiConfigDto {
-    config.schema_version = SCHEMA_VERSION;
-    config.window.placement = normalize_window_placement(config.window.placement);
-    config.window.layout = normalize_layout(config.window.layout);
-    normalize_region_placements(&mut config.window.regions);
-    normalize_memory_panels(&mut config.window.regions);
-    normalize_singleton_task_panels(&mut config.window.regions);
-    normalize_panels(&mut config.window.regions.left);
-    normalize_panels(&mut config.window.regions.right_top);
-    normalize_panels(&mut config.window.regions.right_bottom);
-    normalize_panels(&mut config.window.regions.center_top);
-    normalize_panels(&mut config.window.regions.center_bottom);
+fn normalize_workspace_ui_store(mut store: WorkspaceUiStoreDto) -> WorkspaceUiStoreDto {
+    store.schema_version = SCHEMA_VERSION;
+    store.window.placement = normalize_window_placement(store.window.placement);
+    store.project_layouts = store
+        .project_layouts
+        .into_iter()
+        .filter(|(project_id, _)| !project_id.trim().is_empty())
+        .map(|(project_id, layout)| (project_id, normalize_project_layout(layout)))
+        .collect();
+    store.pending_legacy_layout = store.pending_legacy_layout.map(normalize_project_layout);
+    store
+}
 
-    config
+fn normalize_project_layout(mut project: WorkspaceProjectLayoutDto) -> WorkspaceProjectLayoutDto {
+    project.layout = normalize_layout(project.layout);
+    normalize_region_placements(&mut project.regions);
+    normalize_memory_panels(&mut project.regions);
+    normalize_singleton_task_panels(&mut project.regions);
+    normalize_panels(&mut project.regions.left);
+    normalize_panels(&mut project.regions.right_top);
+    normalize_panels(&mut project.regions.right_bottom);
+    normalize_panels(&mut project.regions.center_top);
+    normalize_panels(&mut project.regions.center_bottom);
+    normalize_active_panels(&mut project);
+    project
 }
 
 fn normalize_memory_panels(regions: &mut WorkspaceRegionsDto) {
@@ -292,19 +339,66 @@ fn config_io_lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
         .map_err(|_| "workspace UI config lock is poisoned".to_owned())
 }
 
-fn decode_workspace_ui_config(raw: &str) -> Result<(WorkspaceUiConfigDto, bool), String> {
+fn validate_project_id(project_id: &str) -> Result<(), String> {
+    if project_id.trim().is_empty() {
+        Err("project id is required to load workspace UI config".to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_project_layout(store: &mut WorkspaceUiStoreDto, project_id: &str) -> bool {
+    if store.project_layouts.contains_key(project_id) {
+        return false;
+    }
+
+    let layout = store
+        .pending_legacy_layout
+        .take()
+        .unwrap_or_else(default_project_layout);
+    store
+        .project_layouts
+        .insert(project_id.to_owned(), normalize_project_layout(layout));
+    true
+}
+
+fn apply_project_config(
+    store: &mut WorkspaceUiStoreDto,
+    project_id: &str,
+    config: WorkspaceUiConfigDto,
+) {
+    store.project_layouts.insert(
+        project_id.to_owned(),
+        normalize_project_layout(WorkspaceProjectLayoutDto {
+            layout: config.window.layout,
+            regions: config.window.regions,
+            active_panels: config.window.active_panels,
+        }),
+    );
+    store.pending_legacy_layout = None;
+}
+
+fn decode_workspace_ui_store(raw: &str) -> Result<(WorkspaceUiStoreDto, bool), String> {
     let value = serde_json::from_str::<serde_json::Value>(raw)
         .map_err(|error| format!("decode workspace UI config failed: {error}"))?;
     let is_legacy = value.get("surfaces").is_some();
 
-    if !is_legacy {
-        let migrated = value
+    if !is_legacy
+        && value
             .get("schema_version")
             .and_then(serde_json::Value::as_u64)
-            != Some(u64::from(SCHEMA_VERSION));
+            == Some(u64::from(SCHEMA_VERSION))
+        && value.get("project_layouts").is_some()
+    {
+        let decoded = serde_json::from_value::<WorkspaceUiStoreDto>(value)
+            .map_err(|error| format!("decode workspace UI config failed: {error}"))?;
+        return Ok((decoded, false));
+    }
+
+    if !is_legacy {
         let decoded = serde_json::from_value::<WorkspaceUiConfigDto>(value)
             .map_err(|error| format!("decode workspace UI config failed: {error}"))?;
-        return Ok((decoded, migrated));
+        return Ok((migrate_single_layout(decoded), true));
     }
 
     let legacy = serde_json::from_value::<LegacyWorkspaceUiConfigDto>(value)
@@ -320,21 +414,86 @@ fn decode_workspace_ui_config(raw: &str) -> Result<(WorkspaceUiConfigDto, bool),
             placement: WorkspaceWindowPlacementDto::default(),
             layout: surface.layout.clone(),
             regions: surface.regions.clone(),
+            active_panels: BTreeMap::new(),
         })
-        .unwrap_or_else(|| default_workspace_ui_config().window);
+        .unwrap_or_else(|| WorkspaceWindowDto {
+            id: "window:primary".to_owned(),
+            placement: WorkspaceWindowPlacementDto::default(),
+            layout: default_workspace_layout(),
+            regions: default_project_layout().regions,
+            active_panels: BTreeMap::new(),
+        });
 
     Ok((
-        WorkspaceUiConfigDto {
+        migrate_single_layout(WorkspaceUiConfigDto {
             schema_version: SCHEMA_VERSION,
             window,
-        },
+        }),
         true,
     ))
+}
+
+fn migrate_single_layout(config: WorkspaceUiConfigDto) -> WorkspaceUiStoreDto {
+    WorkspaceUiStoreDto {
+        schema_version: SCHEMA_VERSION,
+        window: WorkspaceHostWindowDto {
+            id: config.window.id,
+            placement: config.window.placement,
+        },
+        project_layouts: BTreeMap::new(),
+        pending_legacy_layout: Some(WorkspaceProjectLayoutDto {
+            layout: config.window.layout,
+            regions: config.window.regions,
+            active_panels: config.window.active_panels,
+        }),
+    }
+}
+
+fn materialize_project_config(
+    store: &WorkspaceUiStoreDto,
+    project_id: &str,
+) -> Result<WorkspaceUiConfigDto, String> {
+    let project = store
+        .project_layouts
+        .get(project_id)
+        .ok_or_else(|| format!("workspace layout is missing for project {project_id}"))?;
+
+    Ok(WorkspaceUiConfigDto {
+        schema_version: SCHEMA_VERSION,
+        window: WorkspaceWindowDto {
+            id: store.window.id.clone(),
+            placement: store.window.placement.clone(),
+            layout: project.layout.clone(),
+            regions: project.regions.clone(),
+            active_panels: project.active_panels.clone(),
+        },
+    })
 }
 
 fn normalize_panels(panels: &mut Vec<WorkspacePanelDto>) {
     for panel in panels {
         panel.allowed_regions = allowed_regions_for_kind(&panel.kind);
+    }
+}
+
+fn normalize_active_panels(project: &mut WorkspaceProjectLayoutDto) {
+    project.active_panels.retain(|region, panel_id| {
+        panels_for_region(&project.regions, region)
+            .is_some_and(|panels| panels.iter().any(|panel| panel.id == *panel_id))
+    });
+}
+
+fn panels_for_region<'a>(
+    regions: &'a WorkspaceRegionsDto,
+    region: &str,
+) -> Option<&'a [WorkspacePanelDto]> {
+    match region {
+        "left" => Some(&regions.left),
+        "center_top" => Some(&regions.center_top),
+        "center_bottom" => Some(&regions.center_bottom),
+        "right_top" => Some(&regions.right_top),
+        "right_bottom" => Some(&regions.right_bottom),
+        _ => None,
     }
 }
 
@@ -354,24 +513,35 @@ fn clamp_ratio(value: f64) -> f64 {
     }
 }
 
-fn default_workspace_ui_config() -> WorkspaceUiConfigDto {
-    WorkspaceUiConfigDto {
+fn default_workspace_ui_store() -> WorkspaceUiStoreDto {
+    WorkspaceUiStoreDto {
         schema_version: SCHEMA_VERSION,
-        window: WorkspaceWindowDto {
+        window: WorkspaceHostWindowDto {
             id: "window:primary".to_owned(),
             placement: WorkspaceWindowPlacementDto::default(),
-            layout: default_workspace_layout(),
-            regions: WorkspaceRegionsDto {
-                left: Vec::new(),
-                right_top: vec![panel("panel:memory", "memory", "Memory", true, true)],
-                right_bottom: Vec::new(),
-                center_top: vec![
-                    panel("panel:agent-chat", "agentChat", "Agent Chat", true, true),
-                    panel("panel:tasks", "tasks", "Tasks", true, true),
-                ],
-                center_bottom: vec![panel("panel:terminal", "terminal", "Terminal", true, true)],
-            },
         },
+        project_layouts: BTreeMap::new(),
+        pending_legacy_layout: None,
+    }
+}
+
+fn default_project_layout() -> WorkspaceProjectLayoutDto {
+    WorkspaceProjectLayoutDto {
+        layout: default_workspace_layout(),
+        regions: WorkspaceRegionsDto {
+            left: Vec::new(),
+            right_top: Vec::new(),
+            right_bottom: Vec::new(),
+            center_top: vec![panel(
+                "panel:agent-chat",
+                "agentChat",
+                "Agent Chat",
+                true,
+                true,
+            )],
+            center_bottom: Vec::new(),
+        },
+        active_panels: BTreeMap::from([("center_top".to_owned(), "panel:agent-chat".to_owned())]),
     }
 }
 
@@ -426,401 +596,34 @@ fn main_region_ids() -> Vec<&'static str> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        decode_workspace_ui_config, normalize_workspace_ui_config, preserve_host_owned_placement,
-    };
-    use crate::workspace_ui::{default_workspace_ui_config, SCHEMA_VERSION};
-
-    #[test]
-    fn default_config_has_primary_window_and_five_region_shape() {
-        let config = default_workspace_ui_config();
-
-        assert_eq!(config.schema_version, SCHEMA_VERSION);
-        assert_eq!(config.window.id, "window:primary");
-        assert_eq!(config.window.regions.left.len(), 0);
-        assert_eq!(config.window.regions.right_top.len(), 1);
-        assert_eq!(config.window.regions.right_top[0].kind, "memory");
-        assert_eq!(config.window.regions.right_top[0].title, "Memory");
-        assert_eq!(config.window.regions.right_bottom.len(), 0);
-        assert_eq!(config.window.regions.center_top.len(), 2);
-        assert_eq!(config.window.regions.center_bottom.len(), 1);
-        assert_eq!(config.window.layout, super::default_workspace_layout());
-        assert!(config
-            .window
-            .regions
-            .center_top
-            .iter()
-            .any(|panel| panel.kind == "tasks" && panel.closeable));
-        assert_eq!(
-            config.window.regions.center_top[1].allowed_regions,
-            vec![
-                "center_top".to_string(),
-                "center_bottom".to_string(),
-                "right_top".to_string(),
-                "right_bottom".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn panel_resource_targets_round_trip_per_project() {
-        let mut config = default_workspace_ui_config();
-        let panel = config
-            .window
-            .regions
-            .center_top
-            .first_mut()
-            .expect("workspace panel");
-        panel.resource_targets = std::collections::BTreeMap::from([
-            ("project:one".to_owned(), "resource:alpha".to_owned()),
-            ("project:two".to_owned(), "resource:beta".to_owned()),
-        ]);
-
-        let raw = serde_json::to_string(&config).expect("encode config");
-        let (decoded, migrated) = decode_workspace_ui_config(&raw).expect("decode config");
-        let restored = &decoded.window.regions.center_top[0].resource_targets;
-
-        assert!(!migrated);
-        assert_eq!(
-            restored.get("project:one").map(String::as_str),
-            Some("resource:alpha")
-        );
-        assert_eq!(
-            restored.get("project:two").map(String::as_str),
-            Some("resource:beta")
-        );
-    }
-
-    #[test]
-    fn empty_panel_resource_targets_serialize_as_an_object() {
-        let config = default_workspace_ui_config();
-        let value = serde_json::to_value(config).expect("encode config");
-
-        assert_eq!(
-            value["window"]["regions"]["center_top"][0]["resource_targets"],
-            serde_json::json!({})
-        );
-    }
-
-    #[test]
-    fn task_panel_is_closeable_and_normalized_to_one_instance() {
-        let mut config = default_workspace_ui_config();
-        let mut duplicate = config.window.regions.center_top[1].clone();
-        config.window.regions.center_top[1].closeable = false;
-        duplicate.id = "panel:tasks:duplicate".to_owned();
-        config.window.regions.right_bottom.push(duplicate);
-
-        let normalized = normalize_workspace_ui_config(config);
-        let task_panels = normalized
-            .window
-            .regions
-            .center_top
-            .iter()
-            .chain(normalized.window.regions.center_bottom.iter())
-            .chain(normalized.window.regions.right_top.iter())
-            .chain(normalized.window.regions.right_bottom.iter())
-            .filter(|panel| panel.kind == "tasks")
-            .collect::<Vec<_>>();
-
-        assert_eq!(task_panels.len(), 1);
-        assert_eq!(task_panels[0].id, "panel:tasks");
-        assert!(task_panels[0].closeable);
-    }
-
-    #[test]
-    fn legacy_config_flattens_the_active_surface_into_the_primary_window() {
-        let raw = r#"{
-          "schema_version": 1,
-          "active_surface_id": "surface:second",
-          "surfaces": [
-            {
-              "id": "surface:main",
-              "title": "Main",
-              "kind": "workspace",
-              "layout": {"left_center_ratio": 0.2, "center_right_ratio": 0.7, "center_stack_ratio": 0.7},
-              "regions": {"left": [], "right": [], "center_top": [], "center_bottom": []}
-            },
-            {
-              "id": "surface:second",
-              "title": "Second",
-              "kind": "workspace",
-              "layout": {"left_center_ratio": 0.3, "center_right_ratio": 0.6, "center_stack_ratio": 0.5},
-              "regions": {
-                "left": [],
-                "right": [],
-                "center_top": [{"id":"panel:editor","kind":"editor","title":"Editor","closeable":true,"movable":true,"allowed_regions":[]}],
-                "center_bottom": []
-              }
-            }
-          ]
-        }"#;
-
-        let (config, migrated) = decode_workspace_ui_config(raw).expect("legacy config migrates");
-        let normalized = normalize_workspace_ui_config(config);
-
-        assert!(migrated);
-        assert_eq!(normalized.schema_version, SCHEMA_VERSION);
-        assert_eq!(normalized.window.id, "window:primary");
-        assert_eq!(
-            normalized.window.placement,
-            super::WorkspaceWindowPlacementDto::default()
-        );
-        assert_eq!(normalized.window.layout.left_center_ratio, 0.3);
-        assert_eq!(normalized.window.regions.center_top[0].kind, "editor");
-        assert_eq!(
-            normalized.window.regions.center_top[0].allowed_regions,
-            vec![
-                "center_top".to_string(),
-                "center_bottom".to_string(),
-                "right_top".to_string(),
-                "right_bottom".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn schema_two_config_gains_empty_native_window_placement() {
-        let raw = r#"{
-          "schema_version": 2,
-          "window": {
-            "id": "window:primary",
-            "layout": {"left_center_ratio": 0.2, "center_right_ratio": 0.74, "center_stack_ratio": 0.74},
-            "regions": {"left": [], "right": [], "center_top": [], "center_bottom": []}
-          }
-        }"#;
-
-        let (config, migrated) = decode_workspace_ui_config(raw).expect("schema two decodes");
-        let normalized = normalize_workspace_ui_config(config);
-
-        assert!(migrated);
-        assert_eq!(normalized.schema_version, SCHEMA_VERSION);
-        assert_eq!(
-            normalized.window.placement,
-            super::WorkspaceWindowPlacementDto::default()
-        );
-        assert!(normalized.window.regions.right_top.is_empty());
-        assert!(normalized.window.regions.right_bottom.is_empty());
-        assert_eq!(normalized.window.layout.right_stack_ratio, 0.74);
-    }
-
-    #[test]
-    fn schema_three_right_region_migrates_to_right_top() {
-        let raw = r#"{
-          "schema_version": 3,
-          "window": {
-            "id": "window:primary",
-            "placement": {"maximized": false},
-            "layout": {"left_center_ratio": 0.2, "center_right_ratio": 0.74, "center_stack_ratio": 0.6},
-            "regions": {
-              "left": [],
-              "right": [{"id":"panel:context","kind":"context","title":"Context","closeable":true,"movable":true,"allowed_regions":["right"]}],
-              "center_top": [],
-              "center_bottom": []
-            }
-          }
-        }"#;
-
-        let (config, migrated) = decode_workspace_ui_config(raw).expect("schema three decodes");
-        let normalized = normalize_workspace_ui_config(config);
-
-        assert!(migrated);
-        assert_eq!(normalized.window.regions.right_top.len(), 1);
-        assert!(normalized.window.regions.right_bottom.is_empty());
-        assert_eq!(normalized.window.regions.right_top[0].kind, "memory");
-        assert_eq!(normalized.window.regions.right_top[0].title, "Memory");
-        assert_eq!(normalized.window.regions.right_top[0].id, "panel:context");
-        assert_eq!(normalized.window.layout.right_stack_ratio, 0.74);
-        assert_eq!(
-            normalized.window.regions.right_top[0].allowed_regions,
-            vec![
-                "center_top".to_string(),
-                "center_bottom".to_string(),
-                "right_top".to_string(),
-                "right_bottom".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn schema_four_context_panel_migrates_to_memory_in_place() {
-        let raw = r#"{
-          "schema_version": 4,
-          "window": {
-            "id": "window:primary",
-            "placement": {"maximized": false},
-            "layout": {"left_center_ratio": 0.2, "center_right_ratio": 0.74, "center_stack_ratio": 0.6, "right_stack_ratio": 0.5},
-            "regions": {
-              "left": [],
-              "right_top": [],
-              "right_bottom": [{"id":"window:primary:panel:context:42","kind":"context","title":"Context","closeable":true,"movable":true,"allowed_regions":["center_top","center_bottom","right_top","right_bottom"]}],
-              "center_top": [],
-              "center_bottom": []
-            }
-          }
-        }"#;
-
-        let (config, migrated) = decode_workspace_ui_config(raw).expect("schema four decodes");
-        let normalized = normalize_workspace_ui_config(config);
-        let panel = &normalized.window.regions.right_bottom[0];
-
-        assert!(migrated);
-        assert_eq!(panel.id, "window:primary:panel:context:42");
-        assert_eq!(panel.kind, "memory");
-        assert_eq!(panel.title, "Memory");
-        assert!(panel.closeable);
-        assert!(panel.movable);
-    }
-
-    #[test]
-    fn placement_normalization_repairs_dimensions_and_display_id() {
-        let mut config = default_workspace_ui_config();
-        config.window.placement = super::WorkspaceWindowPlacementDto {
-            display_id: Some("  display:main  ".to_owned()),
-            normal_bounds: Some(super::WorkspaceWindowBoundsDto {
-                x: -100,
-                y: 40,
-                width: 100,
-                height: 99_999,
-            }),
-            maximized: true,
-        };
-
-        let normalized = normalize_workspace_ui_config(config);
-        let bounds = normalized.window.placement.normal_bounds.unwrap();
-
-        assert_eq!(
-            normalized.window.placement.display_id.as_deref(),
-            Some("display:main")
-        );
-        assert_eq!(bounds.width, super::MIN_WINDOW_WIDTH);
-        assert_eq!(bounds.height, super::MAX_WINDOW_DIMENSION);
-        assert!(normalized.window.placement.maximized);
-    }
-
-    #[test]
-    fn renderer_config_save_preserves_host_owned_placement() {
-        let mut current = default_workspace_ui_config();
-        current.window.placement = super::WorkspaceWindowPlacementDto {
-            display_id: Some("display:current".to_owned()),
-            normal_bounds: Some(super::WorkspaceWindowBoundsDto {
-                x: 20,
-                y: 30,
-                width: 1200,
-                height: 800,
-            }),
-            maximized: false,
-        };
-        let mut requested = default_workspace_ui_config();
-        requested.window.placement.display_id = Some("display:stale".to_owned());
-        requested.window.layout.left_center_ratio = 0.4;
-
-        preserve_host_owned_placement(&mut requested, &current);
-
-        assert_eq!(requested.window.placement, current.window.placement);
-        assert_eq!(requested.window.layout.left_center_ratio, 0.4);
-    }
-
-    #[test]
-    fn workspace_panels_can_move_to_all_main_regions() {
-        assert_eq!(
-            super::allowed_regions_for_kind("diff"),
-            vec![
-                "center_top".to_string(),
-                "center_bottom".to_string(),
-                "right_top".to_string(),
-                "right_bottom".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn normalize_repairs_stale_diff_allowed_regions() {
-        let mut config = default_workspace_ui_config();
-        config
-            .window
-            .regions
-            .center_top
-            .push(super::WorkspacePanelDto {
-                id: "panel:diff".to_owned(),
-                kind: "diff".to_owned(),
-                title: "Diff".to_owned(),
-                closeable: true,
-                movable: true,
-                resource_targets: std::collections::BTreeMap::from([(
-                    "project:multi".to_owned(),
-                    "resource:second".to_owned(),
-                )]),
-                allowed_regions: vec!["center_top".to_owned(), "center_bottom".to_owned()],
-            });
-
-        let normalized = normalize_workspace_ui_config(config);
-        let panel = normalized
-            .window
-            .regions
-            .center_top
-            .iter()
-            .find(|panel| panel.kind == "diff")
-            .expect("diff panel should remain in center top");
-
-        assert_eq!(
-            panel.allowed_regions,
-            vec![
-                "center_top".to_string(),
-                "center_bottom".to_string(),
-                "right_top".to_string(),
-                "right_bottom".to_string(),
-            ]
-        );
-        assert_eq!(
-            panel
-                .resource_targets
-                .get("project:multi")
-                .map(String::as_str),
-            Some("resource:second")
-        );
-    }
-
-    #[test]
-    fn normalization_keeps_activity_left_and_workspace_tabs_in_main_regions() {
-        let mut config = default_workspace_ui_config();
-        config.window.regions.left.push(super::WorkspacePanelDto {
-            id: "panel:legacy-left-editor".to_owned(),
-            kind: "editor".to_owned(),
-            title: "Editor".to_owned(),
-            closeable: true,
-            movable: true,
-            resource_targets: std::collections::BTreeMap::new(),
-            allowed_regions: vec!["left".to_owned()],
-        });
-        config
-            .window
-            .regions
-            .right_bottom
-            .push(super::WorkspacePanelDto {
-                id: "panel:activity".to_owned(),
-                kind: "activity".to_owned(),
-                title: "Activity".to_owned(),
-                closeable: false,
-                movable: false,
-                resource_targets: std::collections::BTreeMap::new(),
-                allowed_regions: vec!["right_bottom".to_owned()],
-            });
-
-        let normalized = normalize_workspace_ui_config(config);
-
-        assert!(normalized
-            .window
-            .regions
-            .center_top
-            .iter()
-            .any(|panel| panel.id == "panel:legacy-left-editor"));
-        assert!(normalized
-            .window
-            .regions
-            .left
-            .iter()
-            .any(|panel| panel.id == "panel:activity"));
-        assert!(normalized.window.regions.right_bottom.is_empty());
-    }
+fn default_workspace_ui_config() -> WorkspaceUiConfigDto {
+    let mut store = default_workspace_ui_store();
+    ensure_project_layout(&mut store, "project:test");
+    materialize_project_config(&store, "project:test").expect("default project config")
 }
+
+#[cfg(test)]
+fn decode_workspace_ui_config(raw: &str) -> Result<(WorkspaceUiConfigDto, bool), String> {
+    let (store, migrated) = decode_workspace_ui_store(raw)?;
+    let mut store = normalize_workspace_ui_store(store);
+    ensure_project_layout(&mut store, "project:test");
+    materialize_project_config(&store, "project:test").map(|config| (config, migrated))
+}
+
+#[cfg(test)]
+fn normalize_workspace_ui_config(config: WorkspaceUiConfigDto) -> WorkspaceUiConfigDto {
+    let mut store = normalize_workspace_ui_store(migrate_single_layout(config));
+    ensure_project_layout(&mut store, "project:test");
+    materialize_project_config(&store, "project:test").expect("normalized project config")
+}
+
+#[cfg(test)]
+fn preserve_host_owned_placement(
+    requested: &mut WorkspaceUiConfigDto,
+    current: &WorkspaceUiConfigDto,
+) {
+    requested.window.placement = current.window.placement.clone();
+}
+
+#[cfg(test)]
+mod tests;

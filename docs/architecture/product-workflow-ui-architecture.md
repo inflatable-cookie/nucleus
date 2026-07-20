@@ -245,13 +245,14 @@ The desktop Rust host restores and captures native window geometry. The
 renderer receives placement in the workspace UI DTO only so normal config
 round trips preserve it; it does not query monitors or position the window.
 
-One schema-v4 `ui.json` remains authority for primary-window placement, region
-composition, and split ratios. Geometry-only writes reload and merge against
-current config under one process lock. This prevents asynchronous resize
-persistence from reverting panel changes. The workspace save command ignores
-renderer placement changes and preserves the latest host-owned geometry.
-Schema v4 migrates the former full-height `right` region to `rightTop`, creates
-an empty `rightBottom`, and adds its independent vertical split ratio.
+One schema-v7 `ui.json` remains authority for global primary-window placement
+and project-keyed region composition, active tabs, and split ratios.
+Geometry-only writes reload and merge against current config under one process
+lock. This prevents asynchronous resize persistence from reverting panel
+changes. Project layout saves ignore renderer placement changes and preserve
+the latest host-owned geometry. Schema v7 retains the former single project
+layout as a one-time migration candidate instead of cloning it into every
+project.
 
 The first monitor key is best-effort native metadata, not durable hardware
 identity. Restore validates every placement against current work areas and

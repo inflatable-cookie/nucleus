@@ -18,6 +18,7 @@ mod planning_import_conflicts;
 mod planning_import_diagnostics;
 mod planning_import_minimum_apply_proof;
 mod planning_import_scan;
+mod project_binding;
 mod types;
 
 pub use apply_import::apply_management_projection_import;
@@ -26,7 +27,9 @@ pub use export_files::{
     write_planning_management_projection_export_files,
 };
 pub use import_staging::stage_management_projection_import_files;
-pub use plan::build_management_projection_export_plan;
+pub use plan::{
+    build_management_projection_export_plan, build_project_management_projection_export_plan,
+};
 pub use planning_import_active_apply_admission::{
     admit_planning_projection_import_active_apply,
     PlanningProjectionImportActiveApplyAdmissionBlocker,
@@ -88,6 +91,10 @@ pub use planning_import_minimum_apply_proof::{
     PlanningProjectionImportMinimumApplyProofStatus,
 };
 pub use planning_import_scan::scan_planning_projection_import_candidates;
+pub use project_binding::{
+    resolve_management_projection_target, stage_project_management_projection_import_files,
+    write_project_management_projection_export_files, ResolvedManagementProjectionTarget,
+};
 pub use types::{
     ManagementProjectionAppliedRecord, ManagementProjectionApplyBlock,
     ManagementProjectionApplyBlockKind, ManagementProjectionApplyTarget,

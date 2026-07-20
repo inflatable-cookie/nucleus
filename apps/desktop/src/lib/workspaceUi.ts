@@ -26,6 +26,7 @@ export type WorkspaceWindowDto = {
   placement: WorkspaceWindowPlacementDto;
   layout: WorkspaceLayoutDto;
   regions: WorkspaceRegionsDto;
+  active_panels: Partial<Record<RegionKey, string>>;
 };
 
 export type WorkspaceWindowPlacementDto = {
@@ -51,14 +52,44 @@ export type WorkspaceUiConfigDto = {
   window: WorkspaceWindowDto;
 };
 
-export async function loadWorkspaceUiConfig(): Promise<WorkspaceUiConfigDto> {
-  return invoke<WorkspaceUiConfigDto>("load_workspace_ui_config");
+const EMPTY_WORKSPACE_PANEL: WorkspacePanelDto = {
+  id: "panel:none",
+  kind: "empty",
+  title: "Empty panel",
+  closeable: false,
+  movable: false,
+  resource_targets: {},
+  allowed_regions: [],
+};
+
+export async function loadWorkspaceUiConfig(projectId: string): Promise<WorkspaceUiConfigDto> {
+  return invoke<WorkspaceUiConfigDto>("load_workspace_ui_config", { projectId });
 }
 
 export async function saveWorkspaceUiConfig(
+  projectId: string,
   config: WorkspaceUiConfigDto,
 ): Promise<WorkspaceUiConfigDto> {
-  return invoke<WorkspaceUiConfigDto>("save_workspace_ui_config", { config });
+  return invoke<WorkspaceUiConfigDto>("save_workspace_ui_config", { projectId, config });
+}
+
+export function workspaceWindowForProject(
+  config: WorkspaceUiConfigDto | null,
+  configProjectId: string | null,
+  selectedProjectId: string | null,
+): WorkspaceWindowDto | null {
+  return config && configProjectId && configProjectId === selectedProjectId
+    ? config.window
+    : null;
+}
+
+export function workspacePanelFor(
+  panels: WorkspacePanelDto[],
+  activePanelId: string | null,
+): WorkspacePanelDto {
+  return panels.find((panel) => panel.id === activePanelId)
+    ?? panels[0]
+    ?? EMPTY_WORKSPACE_PANEL;
 }
 
 export function createWorkspacePanel(

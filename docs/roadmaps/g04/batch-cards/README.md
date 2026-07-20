@@ -1,6 +1,6 @@
 # g04 Batch Cards
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-20
 
@@ -8,53 +8,10 @@ Updated: 2026-07-20
 
 Hold execution cards for `g04`.
 
-## Ready Cards
-
-- `228-task-execution-validation-closeout.md`
-
-## Planned Cards
-
-- `186-project-resource-foundation-validation.md`
-- `187-project-lifecycle-command-boundary.md`
-- `188-minimal-project-rail-controls.md`
-- `189-project-control-validation.md`
-- `190-resource-attachment-and-repair-boundary.md`
-- `191-workspace-resource-target-resolution.md`
-- `192-compact-project-resource-controls.md`
-- `193-multi-resource-workflow-validation.md`
-- `194-transient-project-retention-boundary.md`
-- `195-new-chat-and-in-place-promotion.md`
-- `196-transient-chat-validation.md`
-- `197-management-projection-resource-binding.md`
-- `198-shared-project-files-controls.md`
-- `199-shared-project-files-validation.md`
-- `200-command-policy-evaluation-function.md`
-- `201-spawn-boundary-enforcement-or-honest-evidence.md`
-- `202-operator-confirmation-integrity.md`
-- `203-ci-workflow-and-effigy-wiring.md`
-- `204-desktop-test-wiring-and-store-coverage.md`
-- `205-transactional-cas-and-connection-hygiene.md`
-- `206-monotonic-event-sequencing.md`
-- `207-atomic-materialization-and-typed-errors.md`
-- `208-shared-admission-and-evidence-vocabulary.md`
-- `209-provider-gate-framework-migration.md`
-- `210-typed-response-collapse-and-test-pruning.md`
-- `211-runtime-effects-to-orchestration.md`
-- `212-request-handler-dispatch-to-engine.md`
-- `213-goal-execution-to-engine-ports.md`
-- `214-adapter-layer-decision-and-server-facade.md`
-- `215-envelope-typegen-or-roundtrip-guard.md`
-- `216-csp-and-startup-resilience.md`
-- `217-control-layer-collapse-and-io-hygiene.md`
-- `218-closed-generation-archival.md`
-- `219-docs-qa-and-reference-repair.md`
-
-## Paused Cards
-
-- `193-multi-resource-workflow-validation.md`
-
 ## Superseded Cards
 
+- `218-closed-generation-archival.md`
+- `219-docs-qa-and-reference-repair.md`
 - `138-conversation-mandate-turn-start-boundary.md`
 - `139-task-workflow-inspection-and-run-readiness.md`
 - `140-task-run-admission-composition.md`
@@ -72,6 +29,39 @@ Hold execution cards for `g04`.
 
 ## Completed Cards
 
+- `217-control-layer-collapse-and-io-hygiene.md`
+- `216-csp-and-startup-resilience.md`
+- `215-envelope-typegen-or-roundtrip-guard.md`
+- `214-adapter-layer-decision-and-server-facade.md`
+- `213-goal-execution-to-engine-ports.md`
+- `212-request-handler-dispatch-to-engine.md`
+- `211-runtime-effects-to-orchestration.md`
+- `210-typed-response-collapse-and-test-pruning.md`
+- `209-provider-gate-framework-migration.md`
+- `208-shared-admission-and-evidence-vocabulary.md`
+- `207-atomic-materialization-and-typed-errors.md`
+- `206-monotonic-event-sequencing.md`
+- `205-transactional-cas-and-connection-hygiene.md`
+- `204-desktop-test-wiring-and-store-coverage.md`
+- `203-ci-workflow-and-effigy-wiring.md`
+- `202-operator-confirmation-integrity.md`
+- `201-spawn-boundary-enforcement-or-honest-evidence.md`
+- `200-command-policy-evaluation-function.md`
+- `199-shared-project-files-validation.md`
+- `198-shared-project-files-controls.md`
+- `197-management-projection-resource-binding.md`
+- `196-transient-chat-validation.md`
+- `193-multi-resource-workflow-validation.md`
+- `192-compact-project-resource-controls.md`
+- `191-workspace-resource-target-resolution.md`
+- `190-resource-attachment-and-repair-boundary.md`
+- `189-project-control-validation.md`
+- `188-minimal-project-rail-controls.md`
+- `187-project-lifecycle-command-boundary.md`
+- `186-project-resource-foundation-validation.md`
+- `195-new-chat-and-in-place-promotion.md`
+- `194-transient-project-retention-boundary.md`
+- `228-task-execution-validation-closeout.md`
 - `227-codex-smoke-consolidation.md`
 - `226-nucleus-task-executor-adoption.md`
 - `225-swallowtail-writable-session-driver.md`

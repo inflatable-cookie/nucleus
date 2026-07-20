@@ -4,7 +4,9 @@ use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId, ModelRoute};
 use nucleus_core::RevisionId;
 use nucleus_native_harness::NativeStewardCommandRequest;
 use nucleus_planning::{GoalStatus, PlanningGoalId};
-use nucleus_projects::{ProjectId, ProjectResourceId, ProjectResourceRole};
+use nucleus_projects::{
+    ManagementProjectionSyncPolicy, ProjectId, ProjectResourceId, ProjectResourceRole,
+};
 use nucleus_tasks::{
     AcceptanceCriterion, AgentReadiness, TaskActionType, TaskActivityState, TaskId, TaskImportance,
 };
@@ -161,6 +163,11 @@ pub enum ProjectResourceAction {
     Remove {
         resource_id: ProjectResourceId,
     },
+    SetManagementProjection {
+        resource_id: ProjectResourceId,
+        sync_policy: ManagementProjectionSyncPolicy,
+    },
+    ClearManagementProjection,
 }
 
 /// Task state commands.

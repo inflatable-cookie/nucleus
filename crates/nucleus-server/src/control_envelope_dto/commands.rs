@@ -63,6 +63,7 @@ pub enum ControlCommandDto {
         display_name: Option<String>,
         role: Option<ControlProjectResourceRoleDto>,
         set_as_default: Option<bool>,
+        sync_policy: Option<ControlManagementProjectionSyncPolicyDto>,
         actor_ref: String,
         authority_host_ref: String,
         idempotency_key: String,
@@ -212,6 +213,18 @@ pub enum ControlProjectResourceActionDto {
     Update,
     Repair,
     Remove,
+    SetManagementProjection,
+    ClearManagementProjection,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlManagementProjectionSyncPolicyDto {
+    Manual,
+    Assisted,
+    Automatic,
+    Reviewed,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
@@ -295,6 +308,7 @@ impl ControlCommandDto {
                 display_name,
                 role,
                 set_as_default,
+                sync_policy,
                 actor_ref,
                 authority_host_ref,
                 idempotency_key,
@@ -308,6 +322,7 @@ impl ControlCommandDto {
                 display_name,
                 role,
                 set_as_default,
+                sync_policy,
                 actor_ref,
                 authority_host_ref,
                 idempotency_key,

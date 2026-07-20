@@ -1,5 +1,7 @@
 use nucleus_core::RevisionId;
-use nucleus_projects::{ProjectId, ProjectResourceId, ProjectResourceRole};
+use nucleus_projects::{
+    ManagementProjectionSyncPolicy, ProjectId, ProjectResourceId, ProjectResourceRole,
+};
 
 use crate::commands::{
     ProjectCommand, ProjectCreateCommand, ProjectLifecycleAction, ProjectLifecycleCommand,
@@ -8,8 +10,8 @@ use crate::commands::{
 use crate::ids::ServerCommandId;
 
 use super::{
-    ControlProjectLifecycleActionDto, ControlProjectResourceActionDto,
-    ControlProjectResourceRoleDto,
+    ControlManagementProjectionSyncPolicyDto, ControlProjectLifecycleActionDto,
+    ControlProjectResourceActionDto, ControlProjectResourceRoleDto,
 };
 use crate::control_envelope_dto::ControlApiCodecError;
 
@@ -47,48 +49,74 @@ fn resource_command_dto(
     command_id: &ServerCommandId,
     command: &ProjectResourceCommand,
 ) -> super::ControlCommandDto {
-    let (action, resource_id, locator, display_name, role, set_as_default) = match &command.action {
-        ProjectResourceAction::Attach { locator } => (
-            ControlProjectResourceActionDto::Attach,
-            None,
-            Some(locator.to_string_lossy().into_owned()),
-            None,
-            None,
-            None,
-        ),
-        ProjectResourceAction::Update {
-            resource_id,
-            display_name,
-            role,
-            set_as_default,
-        } => (
-            ControlProjectResourceActionDto::Update,
-            Some(resource_id.0.clone()),
-            None,
-            display_name.clone(),
-            role.as_ref().map(role_dto),
-            *set_as_default,
-        ),
-        ProjectResourceAction::Repair {
-            resource_id,
-            locator,
-        } => (
-            ControlProjectResourceActionDto::Repair,
-            Some(resource_id.0.clone()),
-            Some(locator.to_string_lossy().into_owned()),
-            None,
-            None,
-            None,
-        ),
-        ProjectResourceAction::Remove { resource_id } => (
-            ControlProjectResourceActionDto::Remove,
-            Some(resource_id.0.clone()),
-            None,
-            None,
-            None,
-            None,
-        ),
-    };
+    let (action, resource_id, locator, display_name, role, set_as_default, sync_policy) =
+        match &command.action {
+            ProjectResourceAction::Attach { locator } => (
+                ControlProjectResourceActionDto::Attach,
+                None,
+                Some(locator.to_string_lossy().into_owned()),
+                None,
+                None,
+                None,
+                None,
+            ),
+            ProjectResourceAction::Update {
+                resource_id,
+                display_name,
+                role,
+                set_as_default,
+            } => (
+                ControlProjectResourceActionDto::Update,
+                Some(resource_id.0.clone()),
+                None,
+                display_name.clone(),
+                role.as_ref().map(role_dto),
+                *set_as_default,
+                None,
+            ),
+            ProjectResourceAction::Repair {
+                resource_id,
+                locator,
+            } => (
+                ControlProjectResourceActionDto::Repair,
+                Some(resource_id.0.clone()),
+                Some(locator.to_string_lossy().into_owned()),
+                None,
+                None,
+                None,
+                None,
+            ),
+            ProjectResourceAction::Remove { resource_id } => (
+                ControlProjectResourceActionDto::Remove,
+                Some(resource_id.0.clone()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            ProjectResourceAction::SetManagementProjection {
+                resource_id,
+                sync_policy,
+            } => (
+                ControlProjectResourceActionDto::SetManagementProjection,
+                Some(resource_id.0.clone()),
+                None,
+                None,
+                None,
+                None,
+                Some(sync_policy_dto(*sync_policy)),
+            ),
+            ProjectResourceAction::ClearManagementProjection => (
+                ControlProjectResourceActionDto::ClearManagementProjection,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        };
     super::ControlCommandDto::ProjectResource {
         command_id: command_id.0.clone(),
         project_id: command.project_id.0.clone(),
@@ -99,6 +127,7 @@ fn resource_command_dto(
         display_name,
         role,
         set_as_default,
+        sync_policy,
         actor_ref: command.actor_ref.clone(),
         authority_host_ref: command.authority_host_ref.clone(),
         idempotency_key: command.idempotency_key.clone(),
@@ -179,6 +208,7 @@ pub(super) fn project_resource_kind(
     display_name: Option<String>,
     role: Option<ControlProjectResourceRoleDto>,
     set_as_default: Option<bool>,
+    sync_policy: Option<ControlManagementProjectionSyncPolicyDto>,
     actor_ref: String,
     authority_host_ref: String,
     idempotency_key: String,
@@ -195,6 +225,14 @@ pub(super) fn project_resource_kind(
             .map(std::path::PathBuf::from)
             .ok_or_else(|| {
                 ControlApiCodecError::malformed("project resource action requires locator")
+            })
+    };
+    let required_sync_policy = || {
+        sync_policy
+            .clone()
+            .map(sync_policy_from_dto)
+            .ok_or_else(|| {
+                ControlApiCodecError::malformed("shared project files action requires sync_policy")
             })
     };
     let action = match action {
@@ -214,6 +252,15 @@ pub(super) fn project_resource_kind(
         ControlProjectResourceActionDto::Remove => ProjectResourceAction::Remove {
             resource_id: required_resource_id()?,
         },
+        ControlProjectResourceActionDto::SetManagementProjection => {
+            ProjectResourceAction::SetManagementProjection {
+                resource_id: required_resource_id()?,
+                sync_policy: required_sync_policy()?,
+            }
+        }
+        ControlProjectResourceActionDto::ClearManagementProjection => {
+            ProjectResourceAction::ClearManagementProjection
+        }
     };
     Ok((
         ServerCommandId(command_id),
@@ -257,5 +304,39 @@ fn role_from_dto(role: ControlProjectResourceRoleDto) -> ProjectResourceRole {
         ControlProjectResourceRoleDto::Working => ProjectResourceRole::Working,
         ControlProjectResourceRoleDto::Management => ProjectResourceRole::Management,
         ControlProjectResourceRoleDto::Reference => ProjectResourceRole::Reference,
+    }
+}
+
+fn sync_policy_dto(
+    policy: ManagementProjectionSyncPolicy,
+) -> ControlManagementProjectionSyncPolicyDto {
+    match policy {
+        ManagementProjectionSyncPolicy::Manual => ControlManagementProjectionSyncPolicyDto::Manual,
+        ManagementProjectionSyncPolicy::Assisted => {
+            ControlManagementProjectionSyncPolicyDto::Assisted
+        }
+        ManagementProjectionSyncPolicy::Automatic => {
+            ControlManagementProjectionSyncPolicyDto::Automatic
+        }
+        ManagementProjectionSyncPolicy::Reviewed => {
+            ControlManagementProjectionSyncPolicyDto::Reviewed
+        }
+    }
+}
+
+fn sync_policy_from_dto(
+    policy: ControlManagementProjectionSyncPolicyDto,
+) -> ManagementProjectionSyncPolicy {
+    match policy {
+        ControlManagementProjectionSyncPolicyDto::Manual => ManagementProjectionSyncPolicy::Manual,
+        ControlManagementProjectionSyncPolicyDto::Assisted => {
+            ManagementProjectionSyncPolicy::Assisted
+        }
+        ControlManagementProjectionSyncPolicyDto::Automatic => {
+            ManagementProjectionSyncPolicy::Automatic
+        }
+        ControlManagementProjectionSyncPolicyDto::Reviewed => {
+            ManagementProjectionSyncPolicy::Reviewed
+        }
     }
 }

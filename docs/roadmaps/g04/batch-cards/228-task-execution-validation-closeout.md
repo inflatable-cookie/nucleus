@@ -1,6 +1,6 @@
 # 228 Task Execution Validation Closeout
 
-Status: ready
+Status: completed
 Owner: Tom
 Updated: 2026-07-20
 Milestone: `../050-swallowtail-task-execution-adoption.md`
@@ -18,7 +18,7 @@ transport, and select the next provider-adoption lane.
 - [x] one ordered two-task Goal reaches review-ready
 - [x] waiting, failure, timeout, and recovery outcomes remain inspectable
 - [x] no unapproved direct Codex process or JSON-RPC owner remains
-- [ ] native UI stays responsive and displays the resulting receipts
+- [x] native UI stays responsive and displays the resulting receipts
 
 ## Evidence
 
@@ -37,11 +37,12 @@ transport, and select the next provider-adoption lane.
 - Focused outcome tests preserve approval wait, user-input wait, failure,
   timeout, cancellation, and recovery-required distinctions.
 
-## Remaining Check
+## Native Evidence
 
-Run the same two-task Goal from the native Agent Chat panel. Keep the app
-interactive while both provider turns run, then confirm the Goal receipt and
-both task review/diff surfaces render without an error banner.
+The operator ran the same two-task Goal from the native Agent Chat panel,
+switched panels while it ran, and confirmed the completed result rendered.
+Both ordered workspace writes and the review-ready receipt were persisted; no
+runtime error banner remained.
 
 ## Stop Condition
 

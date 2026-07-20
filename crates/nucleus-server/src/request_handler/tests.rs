@@ -68,6 +68,7 @@ mod steward_commands;
 mod task_authoring;
 mod task_transitions;
 mod task_work_progress_query;
+mod transient_projects;
 
 fn query_request() -> ServerControlRequest {
     ServerControlRequest {

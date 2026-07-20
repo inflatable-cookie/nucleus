@@ -155,6 +155,11 @@ fn response_envelope_dto_serializes_status_error_and_state_records() {
                 records[0].management_resource_id.as_deref(),
                 Some("resource:repository")
             );
+            assert_eq!(records[0].management_sync_policy, None);
+            assert_eq!(
+                records[0].management_projection_status.as_deref(),
+                Some("missing")
+            );
             assert_eq!(records[0].location_status, "mixed");
             assert_eq!(records[0].resources[0].kind, "filesystem_folder");
             assert_eq!(records[0].resources[0].role, "working");

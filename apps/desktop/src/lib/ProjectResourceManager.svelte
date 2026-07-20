@@ -107,6 +107,7 @@
           display_name: displayName,
           role: null,
           set_as_default: setAsDefault,
+          sync_policy: null,
           actor_ref: "operator:desktop",
           authority_host_ref: project.authority_host_ref,
           idempotency_key: idempotencyKey,

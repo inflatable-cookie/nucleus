@@ -22,8 +22,8 @@ enum PersistRequest {
 }
 
 pub fn restore_and_track(window: &WebviewWindow) -> Result<(), String> {
-    let config = workspace_ui::load_workspace_ui_config()?;
-    restore_window(window, &config.window.placement)?;
+    let placement = workspace_ui::load_workspace_window_placement()?;
+    restore_window(window, &placement)?;
 
     let sender = spawn_persistence_worker();
     let tracked_window = window.clone();

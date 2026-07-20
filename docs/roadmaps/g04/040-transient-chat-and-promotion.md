@@ -1,8 +1,8 @@
 # 040 Transient Chat And Promotion
 
-Status: active
+Status: completed
 Owner: Tom
-Updated: 2026-07-15
+Updated: 2026-07-20
 
 ## Purpose
 
@@ -24,13 +24,16 @@ work in place without moving conversation or task identity.
   prompting.
 - [x] Add unobtrusive keep/name/attach promotion paths and keep transient work
   out of the normal named-project rail.
-- [ ] Validate restart, expiry, promotion, task creation, and resource
+- [x] Validate restart, expiry, promotion, task creation, and resource
   attachment behavior.
 
 ## Batch Cards
 
-Planned:
+Completed:
 
 - `batch-cards/194-transient-project-retention-boundary.md`
 - `batch-cards/195-new-chat-and-in-place-promotion.md`
+
+Completed:
+
 - `batch-cards/196-transient-chat-validation.md`

@@ -38,7 +38,13 @@ pub use mandates::{
 };
 use persistence::{
     canonical_turn_id, persist_session, persist_turn_completion, persist_turn_failure,
-    persist_turn_start, read_history, read_session,
+    persist_turn_start, project_has_active_turn, read_history, read_session,
+};
+#[cfg(test)]
+pub(crate) use persistence::{
+    persist_turn_completion as persist_test_turn_completion,
+    persist_turn_failure as persist_test_turn_failure,
+    persist_turn_start as persist_test_turn_start, StoredChatSession as TestStoredChatSession,
 };
 pub use persistence::{ChatMessageRole, LocalCodexChatHistory, StoredChatMessage};
 use runtime::{available_models, LocalCodexChatSession};
@@ -168,26 +174,11 @@ impl LocalCodexChatService {
         // user's home as an honest read-only working context, matching the
         // terminal's zero-resource fallback; file-backed actions still
         // require an attached resource.
-        let project_target =
-            crate::project_resource_target::resolve_optional_project_resource_target(
-                state,
-                &request.project_id,
-                request.resource_id.as_deref(),
-            )?;
-        let (project_root, target_resource_id) = match &project_target {
-            Some(target) => (
-                target.root.to_string_lossy().into_owned(),
-                target.resource_id.clone(),
-            ),
-            None => (
-                std::env::var_os("HOME")
-                    .map(|home| home.to_string_lossy().into_owned())
-                    .ok_or_else(|| {
-                        "resource-free chat requires a resolvable host home directory".to_owned()
-                    })?,
-                "resource:none".to_owned(),
-            ),
-        };
+        let (project_target, project_root, target_resource_id) = resolve_chat_working_context(
+            state,
+            &request.project_id,
+            request.resource_id.as_deref(),
+        )?;
         let provider_message = focused_context_message(
             state,
             &request.project_id,
@@ -277,6 +268,10 @@ impl LocalCodexChatService {
             message,
             request.active_goal_id.clone(),
         )?;
+        if let Err(error) = ensure_chat_project_present(state, &request.project_id) {
+            persist_turn_failure(state, &canonical_turn_id, &error)?;
+            return Err(error);
+        }
         let reply = match session.send_turn(
             &provider_message,
             &selected_model,
@@ -309,6 +304,69 @@ impl LocalCodexChatService {
 
         Ok(reply)
     }
+}
+
+pub(crate) fn project_has_active_chat_turn<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+) -> Result<bool, String>
+where
+    B: LocalStoreBackend,
+{
+    project_has_active_turn(state, project_id)
+}
+
+fn resolve_chat_working_context<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+    resource_id: Option<&str>,
+) -> Result<
+    (
+        Option<crate::project_resource_target::ResolvedProjectResourceTarget>,
+        String,
+        String,
+    ),
+    String,
+>
+where
+    B: LocalStoreBackend,
+{
+    let target = crate::project_resource_target::resolve_optional_project_resource_target(
+        state,
+        project_id,
+        resource_id,
+    )?;
+    let (root, target_resource_id) = match &target {
+        Some(target) => (
+            target.root.to_string_lossy().into_owned(),
+            target.resource_id.clone(),
+        ),
+        None => (
+            std::env::var_os("HOME")
+                .map(|home| home.to_string_lossy().into_owned())
+                .ok_or_else(|| {
+                    "resource-free chat requires a resolvable host home directory".to_owned()
+                })?,
+            "resource:none".to_owned(),
+        ),
+    };
+    Ok((target, root, target_resource_id))
+}
+
+fn ensure_chat_project_present<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+) -> Result<(), String>
+where
+    B: LocalStoreBackend,
+{
+    state
+        .projects()
+        .get(&nucleus_core::PersistenceRecordId(project_id.to_owned()))
+        .map_err(|error| format!("chat project lookup failed: {error:?}"))?
+        .filter(|record| record.kind == nucleus_core::PersistenceRecordKind::Project)
+        .map(|_| ())
+        .ok_or_else(|| format!("chat project expired before provider turn start: {project_id}"))
 }
 
 fn selected_route(

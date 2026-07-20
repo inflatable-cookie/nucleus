@@ -64,6 +64,8 @@ function project(resources: ControlProjectResourceRecordDto[]): ControlProjectRe
     repository_count: 0,
     default_working_resource_id: null,
     management_resource_id: null,
+    management_sync_policy: null,
+    management_projection_status: null,
     location_status: resources.length === 0 ? "not_recorded" : "present",
     resources,
   };

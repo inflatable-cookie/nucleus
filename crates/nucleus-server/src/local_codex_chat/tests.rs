@@ -1,14 +1,14 @@
-use super::persistence::{StoredChatSession, persist_turn_completion, persist_turn_start};
+use super::persistence::{persist_turn_completion, persist_turn_start, StoredChatSession};
 use super::task_authoring::TaskToolOutcome;
 use super::*;
 use crate::{
-    LocalControlRequestHandler, LocalProjectSeed, LocalTaskSeed, seed_local_project,
-    seed_local_task,
+    seed_local_project, seed_local_task, LocalControlRequestHandler, LocalProjectSeed,
+    LocalTaskSeed,
 };
 use nucleus_core::{PersistenceRecordId, RevisionId};
 use nucleus_engine::{EngineTaskAgentWorkUnitReviewStatus, EngineTaskAgentWorkUnitRuntimeStatus};
 use nucleus_local_store::{LocalStoreRecordPayload, RevisionExpectation, SqliteBackend};
-use nucleus_planning::{GoalStatus, decode_goal_storage_record, goal_from_storage_record};
+use nucleus_planning::{decode_goal_storage_record, goal_from_storage_record, GoalStatus};
 use nucleus_projects::ProjectId;
 use nucleus_tasks::decode_task_storage_record;
 
@@ -52,16 +52,64 @@ fn chat_route_selection_uses_requested_values_and_rejects_invalid_slugs() {
 }
 
 #[test]
+fn resource_free_chat_uses_host_home_without_inventing_a_resource() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let backend = SqliteBackend::new(temp_dir.path().join("nucleus.sqlite"));
+    let mut handler = LocalControlRequestHandler::new(backend, None);
+    accepted(
+        &mut handler,
+        crate::control_api::ServerControlRequest {
+            id: crate::ServerControlRequestId("request:resource-free-chat".to_owned()),
+            client_id: crate::ClientId("client:test".to_owned()),
+            kind: crate::control_api::ServerControlRequestKind::Command(crate::ServerCommand {
+                id: crate::ServerCommandId("command:resource-free-chat".to_owned()),
+                client_id: crate::ClientId("client:test".to_owned()),
+                kind: crate::ServerCommandKind::Project(crate::commands::ProjectCommand::Create(
+                    crate::commands::ProjectCreateCommand {
+                        display_name: String::new(),
+                        transient: true,
+                        actor_ref: "operator:test".to_owned(),
+                        authority_host_ref: "host:embedded-desktop".to_owned(),
+                        idempotency_key: "resource-free-chat".to_owned(),
+                    },
+                )),
+            }),
+        },
+    )
+    .expect("create transient project");
+    let project_id = handler
+        .state()
+        .projects()
+        .list()
+        .expect("projects")
+        .into_iter()
+        .find(|record| record.kind == nucleus_core::PersistenceRecordKind::Project)
+        .expect("transient project")
+        .id
+        .0;
+
+    let (target, root, target_resource_id) =
+        resolve_chat_working_context(handler.state(), &project_id, None).expect("chat context");
+
+    assert!(target.is_none());
+    assert_eq!(target_resource_id, "resource:none");
+    assert_eq!(
+        root,
+        std::env::var_os("HOME")
+            .expect("host home")
+            .to_string_lossy()
+    );
+}
+
+#[test]
 #[ignore = "requires a locally authenticated Codex app-server"]
 fn live_chat_model_catalog_exposes_reasoning_options() {
     let models = LocalCodexChatService::available_models().expect("model catalog");
 
     assert!(!models.is_empty());
-    assert!(
-        models
-            .iter()
-            .all(|model| !model.model.is_empty() && !model.supported_reasoning_efforts.is_empty())
-    );
+    assert!(models
+        .iter()
+        .all(|model| !model.model.is_empty() && !model.supported_reasoning_efforts.is_empty()));
 }
 
 #[test]
@@ -180,11 +228,9 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
         Some(CHAT_REASONING_EFFORT)
     );
     assert!(first.assistant_message.contains("first nucleus chat turn"));
-    assert!(
-        second
-            .assistant_message
-            .contains("second nucleus chat turn")
-    );
+    assert!(second
+        .assistant_message
+        .contains("second nucleus chat turn"));
 }
 
 #[test]

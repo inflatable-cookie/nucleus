@@ -28,6 +28,8 @@
     defaultRegionForPanelKind,
     loadWorkspaceUiConfig,
     saveWorkspaceUiConfig,
+    workspacePanelFor,
+    workspaceWindowForProject,
     type RegionKey,
     type WorkspacePanelDto,
     type WorkspaceWindowDto,
@@ -43,26 +45,28 @@
   } = $props();
 
   let config = $state<WorkspaceUiConfigDto | null>(null);
+  let configProjectId = $state<string | null>(null);
+  let loadSequence = 0;
+  let lastSelectedProjectId: string | null = null;
   let loading = $state(true);
   let error = $state<string | null>(null);
   let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let draggedPanelId = $state<string | null>(null);
   let panelDropTargetsVisible = $state(false);
   let dropTargetRegion = $state<RegionKey | null>(null);
-  let activePanels = $state<Record<RegionKey, string | null>>({
-    left: null,
-    center_top: null,
-    center_bottom: null,
-    right_top: null,
-    right_bottom: null,
-  });
   let selectedTaskId = $state<string | null>(null);
   let selectedTask = $state<ControlTaskRecordDto | null>(null);
   let selectedGoalId = $state<string | null>(null);
   let selectedGoal = $state<ControlGoalRecordDto | null>(null);
   let editorFileRef = $state<string | null>(null);
 
-  const workspaceWindow = $derived(config?.window ?? null);
+  const workspaceWindow = $derived(
+    workspaceWindowForProject(
+      config,
+      configProjectId,
+      selectedProject?.project_id ?? null,
+    ),
+  );
   const panelDropTargetRegions = $derived.by<Set<RegionKey>>(() => {
     const panelId = draggedPanelId;
     if (!panelId || !panelDropTargetsVisible) {
@@ -90,7 +94,6 @@
   );
 
   onMount(() => {
-    void loadConfig();
     window.addEventListener("nucleus:create-workspace-panel", handleCreateWorkspacePanel);
     window.addEventListener("nucleus:open-task", handleOpenTask);
     window.addEventListener("nucleus:open-goal", handleOpenGoal);
@@ -103,7 +106,10 @@
   });
 
   $effect(() => {
-    selectedProject?.project_id;
+    const projectId = selectedProject?.project_id ?? null;
+    if (projectId === lastSelectedProjectId) return;
+    lastSelectedProjectId = projectId;
+    void loadConfig(projectId);
     selectedTaskId = null;
     selectedTask = null;
     selectedGoalId = null;
@@ -132,31 +138,55 @@
     }
   });
 
-  async function loadConfig(): Promise<void> {
-    loading = true;
+  async function loadConfig(projectId: string | null): Promise<void> {
+    const sequence = ++loadSequence;
+    config = null;
+    configProjectId = null;
+    loading = Boolean(projectId);
     error = null;
 
+    if (!projectId) {
+      return;
+    }
+
     try {
-      config = await loadWorkspaceUiConfig();
+      const loaded = await loadWorkspaceUiConfig(projectId);
+      if (sequence === loadSequence && selectedProject?.project_id === projectId) {
+        config = loaded;
+        configProjectId = projectId;
+      }
     } catch (caught) {
-      error = formatError(caught);
+      if (sequence === loadSequence) {
+        error = formatError(caught);
+      }
     } finally {
-      loading = false;
+      if (sequence === loadSequence) {
+        loading = false;
+      }
     }
   }
 
   async function persist(nextConfig: WorkspaceUiConfigDto): Promise<void> {
+    const projectId = configProjectId;
+    if (!projectId) return;
     config = nextConfig;
     error = null;
 
     try {
-      config = await saveWorkspaceUiConfig(nextConfig);
+      const saved = await saveWorkspaceUiConfig(projectId, nextConfig);
+      if (configProjectId === projectId && selectedProject?.project_id === projectId) {
+        config = saved;
+      }
     } catch (caught) {
-      error = formatError(caught);
+      if (configProjectId === projectId) {
+        error = formatError(caught);
+      }
     }
   }
 
   function persistLayout(nextConfig: WorkspaceUiConfigDto): void {
+    const projectId = configProjectId;
+    if (!projectId) return;
     config = nextConfig;
     error = null;
 
@@ -166,8 +196,10 @@
 
     layoutPersistTimer = setTimeout(() => {
       layoutPersistTimer = null;
-      void saveWorkspaceUiConfig(nextConfig).catch((caught) => {
-        error = formatError(caught);
+      void saveWorkspaceUiConfig(projectId, nextConfig).catch((caught) => {
+        if (configProjectId === projectId) {
+          error = formatError(caught);
+        }
       });
     }, 200);
   }
@@ -208,7 +240,7 @@
     for (const region of regionKeys()) {
       const panel = workspaceWindow.regions[region].find((candidate) => candidate.kind === kind);
       if (panel) {
-        activePanels = { ...activePanels, [region]: panel.id };
+        setActivePanel(region, panel.id);
         return;
       }
     }
@@ -338,15 +370,14 @@
       .filter((panel) => panel.kind === kind).length;
     const panel = createWorkspacePanel(workspaceWindow.id, kind, existingCount + 1);
 
-    activePanels = {
-      ...activePanels,
-      [targetRegion]: panel.id,
-    };
-
     void persist({
       ...config,
       window: {
         ...workspaceWindow,
+        active_panels: {
+          ...workspaceWindow.active_panels,
+          [targetRegion]: panel.id,
+        },
         regions: {
           ...workspaceWindow.regions,
           [targetRegion]: [...workspaceWindow.regions[targetRegion], panel],
@@ -355,8 +386,8 @@
     });
   }
 
-  function panelsFor(window: WorkspaceWindowDto, region: RegionKey): WorkspacePanelDto[] {
-    return window.regions[region];
+  function panelsFor(window: WorkspaceWindowDto | null, region: RegionKey): WorkspacePanelDto[] {
+    return window?.regions?.[region] ?? [];
   }
 
   function panelResourceTarget(panel: WorkspacePanelDto): string | null {
@@ -422,15 +453,23 @@
   }
 
   function activePanelValue(region: RegionKey, items: PanelTabItem[]): string | null {
-    const saved = activePanels[region];
-    return items.some((item) => item.value === saved) ? saved : items[0]?.value ?? null;
+    const saved = workspaceWindow?.active_panels[region];
+    return saved && items.some((item) => item.value === saved)
+      ? saved
+      : items[0]?.value ?? null;
   }
 
   function setActivePanel(region: RegionKey, panelId: string): void {
-    activePanels = {
-      ...activePanels,
-      [region]: panelId,
-    };
+    if (!config || !workspaceWindow || workspaceWindow.active_panels[region] === panelId) {
+      return;
+    }
+    void persist({
+      ...config,
+      window: {
+        ...workspaceWindow,
+        active_panels: { ...workspaceWindow.active_panels, [region]: panelId },
+      },
+    });
   }
 
   function closePanel(region: RegionKey, panelId: string): void {
@@ -454,10 +493,15 @@
       });
     }
 
+    const activePanels = { ...workspaceWindow.active_panels };
+    if (activePanels[region] === panelId) {
+      delete activePanels[region];
+    }
     void persist({
       ...config,
       window: {
         ...workspaceWindow,
+        active_panels: activePanels,
         regions: {
           ...workspaceWindow.regions,
           [region]: panels.filter((candidate) => candidate.id !== panelId),
@@ -540,15 +584,15 @@
       [targetRegion]: [...workspaceWindow.regions[targetRegion], panel],
     };
 
-    activePanels = {
-      ...activePanels,
-      [sourceRegion]: activePanels[sourceRegion] === panelId ? null : activePanels[sourceRegion],
-      [targetRegion]: panelId,
-    };
+    const activePanels = { ...workspaceWindow.active_panels };
+    if (activePanels[sourceRegion] === panelId) {
+      delete activePanels[sourceRegion];
+    }
+    activePanels[targetRegion] = panelId;
 
     void persist({
       ...config,
-      window: { ...workspaceWindow, regions: nextRegions },
+      window: { ...workspaceWindow, regions: nextRegions, active_panels: activePanels },
     });
   }
 
@@ -605,8 +649,8 @@
     );
   }
 
-  function panelFor(panels: WorkspacePanelDto[], activeItem: PanelTabItem | null): WorkspacePanelDto | null {
-    return panels.find((panel) => panel.id === activeItem?.value) ?? panels[0] ?? null;
+  function panelFor(panels: WorkspacePanelDto[], activeItem: PanelTabItem | null): WorkspacePanelDto {
+    return workspacePanelFor(panels, activeItem?.value ?? null);
   }
 
   function iconForPanel(kind: string): string {
@@ -648,59 +692,62 @@
 </script>
 
 <section class="workspace-stage-shell" aria-label="Workspace">
-  {#if loading}
-    <Surface tone="canvas" border="none" padding="md" asRole="region" label="Workspace loading">
-      <Text tone="muted">Loading workspace</Text>
-    </Surface>
-  {:else if !config || !workspaceWindow}
-    <Surface tone="canvas" border="none" padding="md" asRole="region" label="Workspace unavailable">
-      <Text tone="muted">Workspace unavailable</Text>
-    </Surface>
-  {:else}
-    <div class="window-body">
-      {#if error}
-        <div class="layout-error"><Text size="xs" tone="danger">{error}</Text></div>
-      {/if}
-      <div
-        class="left-main-frame"
-        class:left-main-frame--single={!hasLeftRegion}
-      >
-        <SplitView
-          orientation="horizontal"
-          ratio={workspaceWindow.layout.left_center_ratio}
-          primaryCollapsed={!hasLeftRegion}
-          primaryCollapsedSize={0}
-          collapsePrimaryBelowSize={0}
-          minPrimarySize={140}
-          minSecondarySize={240}
-          ariaLabel="Left and main workspace regions"
-          onRatioChange={(ratio) =>
-            updateWindowLayout({ left_center_ratio: ratio })}
+  {#key selectedProject?.project_id ?? "unselected"}
+    {#if loading}
+      <Surface tone="canvas" border="none" padding="md" asRole="region" label="Workspace loading">
+        <Text tone="muted">Loading workspace</Text>
+      </Surface>
+    {:else if !config || !workspaceWindow}
+      <Surface tone="canvas" border="none" padding="md" asRole="region" label="Workspace unavailable">
+        <Text tone="muted">Workspace unavailable</Text>
+      </Surface>
+    {:else}
+      <div class="window-body">
+        {#if error}
+          <div class="layout-error"><Text size="xs" tone="danger">{error}</Text></div>
+        {/if}
+        <div
+          class="left-main-frame"
+          class:left-main-frame--single={!hasLeftRegion}
         >
-          {#snippet primary()}
-            {@render RegionShell("left", "left", workspaceWindow, "left")}
-          {/snippet}
-          {#snippet secondary()}
-            {@render MainRegions(workspaceWindow)}
-          {/snippet}
-        </SplitView>
+          <SplitView
+            orientation="horizontal"
+            ratio={workspaceWindow.layout.left_center_ratio}
+            primaryCollapsed={!hasLeftRegion}
+            primaryCollapsedSize={0}
+            collapsePrimaryBelowSize={0}
+            minPrimarySize={140}
+            minSecondarySize={240}
+            ariaLabel="Left and main workspace regions"
+            onRatioChange={(ratio) =>
+              updateWindowLayout({ left_center_ratio: ratio })}
+          >
+            {#snippet primary()}
+              {@render RegionShell("left", "left", workspaceWindow, "left")}
+            {/snippet}
+            {#snippet secondary()}
+              {@render MainRegions(workspaceWindow)}
+            {/snippet}
+          </SplitView>
+        </div>
+        {#if !hasLeftRegion && !visibleRegions.center_top && !visibleRegions.center_bottom && !visibleRegions.right_top && !visibleRegions.right_bottom}
+          <Surface tone="canvas" border="none" padding="md" asRole="region" label="Empty workspace">
+            <Text tone="muted">No panels open</Text>
+          </Surface>
+        {/if}
       </div>
-      {#if !hasLeftRegion && !visibleRegions.center_top && !visibleRegions.center_bottom && !visibleRegions.right_top && !visibleRegions.right_bottom}
-        <Surface tone="canvas" border="none" padding="md" asRole="region" label="Empty workspace">
-          <Text tone="muted">No panels open</Text>
-        </Surface>
-      {/if}
-    </div>
-  {/if}
+    {/if}
+  {/key}
 </section>
 
-{#snippet MainRegions(window: WorkspaceWindowDto)}
-  {@const centerVisible = visibleRegions.center_top || visibleRegions.center_bottom}
-  {@const rightVisible = visibleRegions.right_top || visibleRegions.right_bottom}
-  <div
-    class="center-right-frame"
-    class:center-right-frame--single={!centerVisible || !rightVisible}
-  >
+{#snippet MainRegions(window: WorkspaceWindowDto | null)}
+  {#if window}
+    {@const centerVisible = visibleRegions.center_top || visibleRegions.center_bottom}
+    {@const rightVisible = visibleRegions.right_top || visibleRegions.right_bottom}
+    <div
+      class="center-right-frame"
+      class:center-right-frame--single={!centerVisible || !rightVisible}
+    >
     <SplitView
       orientation="horizontal"
       ratio={window.layout.center_right_ratio}
@@ -724,16 +771,18 @@
         {@render RightRegions(window)}
       {/snippet}
     </SplitView>
-  </div>
+    </div>
+  {/if}
 {/snippet}
 
-{#snippet RightRegions(window: WorkspaceWindowDto)}
-  {@const topVisible = visibleRegions.right_top}
-  {@const bottomVisible = visibleRegions.right_bottom}
-  <div
-    class="right-stack-frame"
-    class:right-stack-frame--single={!topVisible || !bottomVisible}
-  >
+{#snippet RightRegions(window: WorkspaceWindowDto | null)}
+  {#if window}
+    {@const topVisible = visibleRegions.right_top}
+    {@const bottomVisible = visibleRegions.right_bottom}
+    <div
+      class="right-stack-frame"
+      class:right-stack-frame--single={!topVisible || !bottomVisible}
+    >
     <SplitView
       orientation="vertical"
       ratio={window.layout.right_stack_ratio}
@@ -756,16 +805,18 @@
         {@render RegionShell("rightBottom", "bottom", window, "right_bottom")}
       {/snippet}
     </SplitView>
-  </div>
+    </div>
+  {/if}
 {/snippet}
 
-{#snippet CenterRegions(window: WorkspaceWindowDto)}
-  {@const topVisible = visibleRegions.center_top}
-  {@const bottomVisible = visibleRegions.center_bottom}
-  <div
-    class="center-stack-frame"
-    class:center-stack-frame--single={!topVisible || !bottomVisible}
-  >
+{#snippet CenterRegions(window: WorkspaceWindowDto | null)}
+  {#if window}
+    {@const topVisible = visibleRegions.center_top}
+    {@const bottomVisible = visibleRegions.center_bottom}
+    <div
+      class="center-stack-frame"
+      class:center-stack-frame--single={!topVisible || !bottomVisible}
+    >
     <SplitView
       orientation="vertical"
       ratio={window.layout.center_stack_ratio}
@@ -788,10 +839,11 @@
         {@render RegionShell("centerBottom", "bottom", window, "center_bottom")}
       {/snippet}
     </SplitView>
-  </div>
+    </div>
+  {/if}
 {/snippet}
 
-{#snippet RegionShell(label: string, edge: DockEdge, window: WorkspaceWindowDto, region: RegionKey)}
+{#snippet RegionShell(label: string, edge: DockEdge, window: WorkspaceWindowDto | null, region: RegionKey)}
   {@const panels = panelsFor(window, region)}
   {@const items = panelTabsFor(panels)}
   <section
@@ -828,8 +880,8 @@
   </section>
 {/snippet}
 
-{#snippet PanelPlaceholder(panel: WorkspacePanelDto | null)}
-  {#if panel?.kind === "agentChat"}
+{#snippet PanelPlaceholder(panel: WorkspacePanelDto)}
+  {#if panel.kind === "agentChat"}
     <div class="resource-panel-shell">
       {@render ResourceTargetControl(panel)}
       <div class="resource-panel-body">
@@ -844,7 +896,7 @@
         />
       </div>
     </div>
-  {:else if panel?.kind === "tasks"}
+  {:else if panel.kind === "tasks"}
     <TaskListPanel
       selectedProjectId={selectedProject?.project_id ?? null}
       bind:selectedGoalId
@@ -852,7 +904,7 @@
       bind:selectedTaskId
       bind:selectedTask
     />
-  {:else if panel?.kind === "editor"}
+  {:else if panel.kind === "editor"}
     <div class="resource-panel-shell">
       {@render ResourceTargetControl(panel)}
       <div class="resource-panel-body">
@@ -863,9 +915,9 @@
         />
       </div>
     </div>
-  {:else if panel?.kind === "browser"}
+  {:else if panel.kind === "browser"}
     <BrowserPanel panelId={panel.id} />
-  {:else if panel?.kind === "terminal"}
+  {:else if panel.kind === "terminal"}
     <div class="resource-panel-shell">
       {@render ResourceTargetControl(panel)}
       <div class="resource-panel-body">
@@ -878,19 +930,19 @@
         {/key}
       </div>
     </div>
-  {:else if panel?.kind === "diff"}
+  {:else if panel.kind === "diff"}
     <DiffPanel
       projectId={selectedProject?.project_id ?? null}
       task={selectedTask}
       onOpenEditor={openFileInEditor}
       onReviewed={() => focusPanelKind("diff")}
     />
-  {:else if panel?.kind === "memory"}
+  {:else if panel.kind === "memory"}
     <MemoryPanel projectId={selectedProject?.project_id ?? null} />
   {:else}
-    <Surface tone="canvas" border="none" padding="md" asRole="region" label={panel?.title ?? "Empty panel"}>
+    <Surface tone="canvas" border="none" padding="md" asRole="region" label={panel.title}>
       <div class="panel-placeholder">
-        {#if panel}
+        {#if panel.kind !== "empty"}
         <Text weight="semibold">{panel.title}</Text>
         <Text tone="muted">{panel.kind}{panel.closeable ? "" : " · system"}</Text>
         {:else}

@@ -4,4 +4,4 @@ import type { ControlProjectResourceRecordDto } from "./ControlProjectResourceRe
 /**
  * Sanitized project read model for control-plane clients.
  */
-export type ControlProjectRecordDto = { project_id: string, display_name: string, authority_host_ref: string, status: string, retention: string, importance_level: string, revision_id: string, resource_count: number, repository_count: number, default_working_resource_id: string | null, management_resource_id: string | null, location_status: string, resources: Array<ControlProjectResourceRecordDto>, };
+export type ControlProjectRecordDto = { project_id: string, display_name: string, authority_host_ref: string, status: string, retention: string, importance_level: string, revision_id: string, resource_count: number, repository_count: number, default_working_resource_id: string | null, management_resource_id: string | null, management_sync_policy: string | null, management_projection_status: string | null, location_status: string, resources: Array<ControlProjectResourceRecordDto>, };

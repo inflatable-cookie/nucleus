@@ -30,6 +30,8 @@ pub struct ControlProjectRecordDto {
     pub repository_count: usize,
     pub default_working_resource_id: Option<String>,
     pub management_resource_id: Option<String>,
+    pub management_sync_policy: Option<String>,
+    pub management_projection_status: Option<String>,
     pub location_status: String,
     pub resources: Vec<ControlProjectResourceRecordDto>,
 }
@@ -94,6 +96,15 @@ impl TryFrom<&LocalStoreRecord> for ControlProjectRecordDto {
             .management_projection
             .as_ref()
             .map(|target| target.resource_id.clone());
+        let management_sync_policy = decoded
+            .management_projection
+            .as_ref()
+            .and_then(|target| target.sync_policy_ref.as_deref())
+            .and_then(sanitized_sync_policy);
+        let management_projection_status = decoded
+            .management_projection
+            .as_ref()
+            .map(|target| management_projection_status(&decoded, &target.resource_id));
         let resource_count = decoded.resources.len();
         let repository_count = decoded.repo_count();
         let location_status = project_location_status_dto(&decoded.location_status());
@@ -121,10 +132,45 @@ impl TryFrom<&LocalStoreRecord> for ControlProjectRecordDto {
             repository_count,
             default_working_resource_id,
             management_resource_id,
+            management_sync_policy,
+            management_projection_status,
             location_status,
             resources,
         })
     }
+}
+
+fn management_projection_status(
+    project: &nucleus_projects::ProjectStorageRecord,
+    resource_id: &str,
+) -> String {
+    let Some(resource) = project.resource(resource_id) else {
+        return "repair_required".to_owned();
+    };
+    if resource.kind != ProjectResourceStorageKind::GitRepository {
+        return "repair_required".to_owned();
+    }
+    match resource.location_status {
+        ProjectResourceStorageLocationStatus::Missing => "missing",
+        ProjectResourceStorageLocationStatus::MovedCandidate { .. } => "moved_candidate",
+        ProjectResourceStorageLocationStatus::RepairRequired => "repair_required",
+        ProjectResourceStorageLocationStatus::Present => {
+            if resource
+                .current_locator
+                .as_deref()
+                .is_some_and(|locator| std::path::Path::new(locator).is_dir())
+            {
+                "ready"
+            } else {
+                "missing"
+            }
+        }
+    }
+    .to_owned()
+}
+
+fn sanitized_sync_policy(value: &str) -> Option<String> {
+    matches!(value, "manual" | "assisted" | "automatic" | "reviewed").then(|| value.to_owned())
 }
 
 impl From<ControlProjectResourceMutationCandidateDto> for ProjectResourceMutationCandidate {

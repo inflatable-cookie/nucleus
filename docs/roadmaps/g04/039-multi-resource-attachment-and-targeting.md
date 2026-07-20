@@ -1,6 +1,6 @@
 # 039 Multi-Resource Attachment And Targeting
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-15
 
@@ -25,7 +25,7 @@ panels and agent work resolve explicit host-owned resource targets.
   resource resolution across chat, editor, terminal, browser, and diff.
 - [x] Add compact resource management and show selectors only when ambiguity
   or repair requires them.
-- [ ] Validate zero, one, and many resources across local and remote authority
+- [x] Validate zero, one, and many resources across local and remote authority
   shapes.
 
 ## Batch Cards
@@ -36,6 +36,6 @@ Completed:
 - `batch-cards/191-workspace-resource-target-resolution.md`
 - `batch-cards/192-compact-project-resource-controls.md`
 
-Ready:
+Completed:
 
 - `batch-cards/193-multi-resource-workflow-validation.md`

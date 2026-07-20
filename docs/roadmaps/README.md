@@ -292,7 +292,10 @@ shape.
 - `g04/025-initial-agent-chat-vertical-slice.md` - completed
 - `g04/026-agent-chat-task-context.md` - completed
 - `g04/027-agent-chat-task-workflow-run.md` - completed
-- `g04/028-initial-code-editor-vertical-slice.md` - active
+- `g04/028-initial-code-editor-vertical-slice.md` - completed
+- `g04/029-task-attributed-diff-review.md` - completed
+- `g04/030-review-guided-rework-execution.md` - completed
+- `g04/031-window-region-panel-simplification.md` - completed
 - `g04/032-native-window-geometry-persistence.md` - completed
 - `g04/033-floating-agent-chat-composer.md` - completed
 - `g04/034-four-main-region-workspace-grid.md` - completed
@@ -300,9 +303,9 @@ shape.
 - `g04/036-project-memory-panel.md` - completed
 - `g04/037-project-resource-foundation.md` - completed
 - `g04/038-project-control-workflow.md` - completed
-- `g04/039-multi-resource-attachment-and-targeting.md` - active
-- `g04/040-transient-chat-and-promotion.md` - active
-- `g04/041-shared-project-files-control.md` - planned
+- `g04/039-multi-resource-attachment-and-targeting.md` - completed
+- `g04/040-transient-chat-and-promotion.md` - completed
+- `g04/041-shared-project-files-control.md` - completed
 - `g04/042-execution-safety-honesty-and-enforcement.md` - completed
 - `g04/043-ci-and-validation-runway.md` - completed
 - `g04/044-persistence-correctness-hardening.md` - completed
@@ -311,7 +314,8 @@ shape.
 - `g04/047-desktop-contract-integrity.md` - completed
 - `g04/048-roadmap-residue-archival.md` - superseded
 - `g04/049-swallowtail-agent-chat-adoption.md` - completed
-- `g04/050-swallowtail-task-execution-adoption.md` - active
+- `g04/050-swallowtail-task-execution-adoption.md` - completed
+- `g05/001-project-scoped-workspace-layouts.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -371,7 +375,6 @@ shape.
 
 ## Next Task
 
-Complete `g04/batch-cards/228-task-execution-validation-closeout.md`: run the
-authenticated single-task and ordered two-task Goal workflows, inspect durable
-review/recovery evidence in the native UI, and close the Swallowtail task
-execution adoption lane only if parity holds.
+Complete `g05/batch-cards/003-project-layout-validation.md`: confirm two
+projects retain visibly different layouts and a newly created project opens
+with Agent Chat only.

@@ -63,6 +63,11 @@ fn request_envelope_dto_round_trips_project_resource_commands() {
         crate::commands::ProjectResourceAction::Remove {
             resource_id: nucleus_projects::ProjectResourceId("resource:one".to_owned()),
         },
+        crate::commands::ProjectResourceAction::SetManagementProjection {
+            resource_id: nucleus_projects::ProjectResourceId("resource:one".to_owned()),
+            sync_policy: nucleus_projects::ManagementProjectionSyncPolicy::Manual,
+        },
+        crate::commands::ProjectResourceAction::ClearManagementProjection,
     ];
 
     for (index, action) in commands.into_iter().enumerate() {

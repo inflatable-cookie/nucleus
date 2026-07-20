@@ -81,13 +81,20 @@ export type ControlCommandDto =
       kind: "project_resource";
       command_id: string;
       project_id: string;
-      action: "attach" | "update" | "repair" | "remove";
+      action:
+        | "attach"
+        | "update"
+        | "repair"
+        | "remove"
+        | "set_management_projection"
+        | "clear_management_projection";
       expected_revision: string;
       resource_id: string | null;
       locator: string | null;
       display_name: string | null;
       role: "working" | "management" | "reference" | null;
       set_as_default: boolean | null;
+      sync_policy: "manual" | "assisted" | "automatic" | "reviewed" | null;
       actor_ref: string;
       authority_host_ref: string;
       idempotency_key: string;
