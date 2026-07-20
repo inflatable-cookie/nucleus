@@ -1,6 +1,6 @@
 //! Read-only DTOs for Convergence local snap runner evidence persistence.
 
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 use serde::{Deserialize, Serialize};
 
 use crate::{

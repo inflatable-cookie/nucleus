@@ -11,7 +11,7 @@ pub use types::{
     GitBranchWorktreeRunnerOperatorEffectIntent, GitBranchWorktreeRunnerTargetRef,
 };
 
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use record_builder::authority_record;
 use types::GitBranchWorktreeRunnerAuthorityContext;
 

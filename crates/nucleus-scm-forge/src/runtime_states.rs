@@ -18,8 +18,8 @@ pub struct AdapterEffectStateRecord {
 /// Adapter effect states (shared core vocabulary re-exported under the
 /// adapter names).
 pub use nucleus_core::{
-    EffectNonTerminalState as AdapterEffectNonTerminalState,
-    EffectState as AdapterEffectState, EffectTerminalState as AdapterEffectTerminalState,
+    EffectNonTerminalState as AdapterEffectNonTerminalState, EffectState as AdapterEffectState,
+    EffectTerminalState as AdapterEffectTerminalState,
 };
 
 #[cfg(test)]

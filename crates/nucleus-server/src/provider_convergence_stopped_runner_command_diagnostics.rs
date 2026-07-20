@@ -1,6 +1,6 @@
 //! Read-only diagnostics for stopped Convergence runner command adapters.
 
-use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
+use crate::provider_no_effects::ConvergenceRunnerNoAuthority;
 use serde::{Deserialize, Serialize};
 
 use crate::{

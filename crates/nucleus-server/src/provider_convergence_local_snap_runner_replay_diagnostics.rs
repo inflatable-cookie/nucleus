@@ -1,6 +1,6 @@
 //! Read-only diagnostics for Convergence local snap runner replay records.
 
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 use serde::{Deserialize, Serialize};
 
 use crate::{ConvergenceLocalSnapRunnerReplayRecordSet, ConvergenceLocalSnapRunnerReplayStatus};

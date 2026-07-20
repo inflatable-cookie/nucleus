@@ -26,7 +26,7 @@ impl From<&ForgeReadIntentQueryResult> for ControlProviderReadIntentQueryResultD
             query_id: result.query_id.clone(),
             projection: ControlProviderReadIntentProjectionDto::from(&result.projection),
             source_counts: ControlProviderReadIntentSourceCountsDto::from(&result.source_counts),
-        no_effects: result.no_effects,
+            no_effects: result.no_effects,
         }
     }
 }
@@ -83,7 +83,7 @@ impl From<&ForgeReadIntentProjectionSet> for ControlProviderReadIntentProjection
                 .iter()
                 .map(ControlProviderReadIntentEntryDto::from)
                 .collect(),
-        no_effects: projection.no_effects,
+            no_effects: projection.no_effects,
         }
     }
 }
@@ -127,7 +127,7 @@ impl From<&ForgeReadIntentProjectionEntry> for ControlProviderReadIntentEntryDto
             evidence_ref_count: entry.evidence_ref_count,
             duplicate_refresh_detected: entry.duplicate_refresh_detected,
             stopped_refresh_recorded: entry.stopped_refresh_recorded,
-        no_effects: entry.no_effects,
+            no_effects: entry.no_effects,
         }
     }
 }

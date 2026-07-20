@@ -551,7 +551,12 @@ fn insertion_order_listing_ignores_lexicographic_id_order() {
     for id in ["task:zulu", "task:alpha", "task:mike"] {
         repository
             .put(
-                fixture_record(PersistenceDomain::Tasks, PersistenceRecordKind::Task, id, "rev:1"),
+                fixture_record(
+                    PersistenceDomain::Tasks,
+                    PersistenceRecordKind::Task,
+                    id,
+                    "rev:1",
+                ),
                 RevisionExpectation::MustNotExist,
                 LocalStoreTransactionPosture::Autocommit,
             )

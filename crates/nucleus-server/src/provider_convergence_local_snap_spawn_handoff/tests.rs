@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 
 #[test]
 fn convergence_local_snap_spawn_handoff_records_ready_requests() {
@@ -184,7 +184,7 @@ fn input(
             blocked_spawn_request_ids: Vec::new(),
             duplicate_spawn_request_ids: Vec::new(),
             unsupported_spawn_request_ids: Vec::new(),
-        no_effects: ConvergenceSnapNoAuthority::none(),
+            no_effects: ConvergenceSnapNoAuthority::none(),
         },
         existing_handoff_ids,
         raw_material_present,

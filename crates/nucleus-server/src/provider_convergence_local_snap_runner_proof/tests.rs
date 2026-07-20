@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 
 use crate::ConvergenceLocalSnapStoppedRequestStatus;
 
@@ -97,7 +97,7 @@ fn input(
             records,
             duplicate_idempotency_keys: Vec::new(),
             blocked_request_ids: Vec::new(),
-        no_effects: ConvergenceSnapNoAuthority::none(),
+            no_effects: ConvergenceSnapNoAuthority::none(),
         },
     }
 }

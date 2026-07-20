@@ -168,11 +168,12 @@ impl LocalCodexChatService {
         // user's home as an honest read-only working context, matching the
         // terminal's zero-resource fallback; file-backed actions still
         // require an attached resource.
-        let project_target = crate::project_resource_target::resolve_optional_project_resource_target(
-            state,
-            &request.project_id,
-            request.resource_id.as_deref(),
-        )?;
+        let project_target =
+            crate::project_resource_target::resolve_optional_project_resource_target(
+                state,
+                &request.project_id,
+                request.resource_id.as_deref(),
+            )?;
         let (project_root, target_resource_id) = match &project_target {
             Some(target) => (
                 target.root.to_string_lossy().into_owned(),
@@ -203,21 +204,25 @@ impl LocalCodexChatService {
         }
         let (selected_model, selected_reasoning_effort) =
             selected_route(&request, stored.as_ref())?;
-        let migration_context = stored
-            .as_ref()
-            .filter(|session| {
-                session.task_toolset_version < CHAT_TASK_TOOLSET_VERSION
-                    || session.resource_id.as_deref() != Some(&target_resource_id)
-            })
-            .map(|_| conversation_context(state, &request.project_id, &request.conversation_id))
-            .transpose()?;
-        if self
-            .sessions
-            .get(&request.conversation_id)
-            .is_some_and(|session| !session.targets_resource(&target_resource_id))
-        {
+        let existing_session_matches =
+            self.sessions
+                .get(&request.conversation_id)
+                .is_some_and(|session| {
+                    session.targets_resource(&target_resource_id)
+                        && session.targets_route(&selected_model, &selected_reasoning_effort)
+                });
+        if self.sessions.contains_key(&request.conversation_id) && !existing_session_matches {
             self.sessions.remove(&request.conversation_id);
         }
+        let migration_context = if !existing_session_matches && stored.is_some() {
+            Some(conversation_context(
+                state,
+                &request.project_id,
+                &request.conversation_id,
+            )?)
+        } else {
+            None
+        };
         let session = match self.sessions.entry(request.conversation_id.clone()) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::hash_map::Entry::Vacant(entry) => {
@@ -233,7 +238,9 @@ impl LocalCodexChatService {
             }
         };
         let project_id = request.project_id.clone();
-        let resource_id = project_target.as_ref().map(|target| target.resource_id.clone());
+        let resource_id = project_target
+            .as_ref()
+            .map(|target| target.resource_id.clone());
         let conversation_id = request.conversation_id.clone();
         let snapshot_store = self.task_review_snapshot_store.as_ref();
         let mut task_tool = |tool: &str, turn_id: &str, call_id: &str, arguments| match tool {

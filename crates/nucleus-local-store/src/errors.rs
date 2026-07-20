@@ -10,17 +10,35 @@ pub type LocalStoreResult<T> = Result<T, LocalStoreError>;
 /// Server-local storage errors.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LocalStoreError {
-    Unavailable { reason: String },
-    UnsupportedDomain { domain: PersistenceDomain },
-    RecordNotFound { record_id: PersistenceRecordId },
-    DuplicateRecord { record_id: PersistenceRecordId },
+    Unavailable {
+        reason: String,
+    },
+    UnsupportedDomain {
+        domain: PersistenceDomain,
+    },
+    RecordNotFound {
+        record_id: PersistenceRecordId,
+    },
+    DuplicateRecord {
+        record_id: PersistenceRecordId,
+    },
     RevisionConflict(RevisionConflict),
-    TransactionRejected { reason: String },
+    TransactionRejected {
+        reason: String,
+    },
     /// The backend is temporarily locked by another writer; safe to retry.
-    BackendBusy { reason: String },
-    BackendRejected { reason: String },
-    InvalidRecord { reason: String },
-    UnsupportedRecordKind { reason: String },
+    BackendBusy {
+        reason: String,
+    },
+    BackendRejected {
+        reason: String,
+    },
+    InvalidRecord {
+        reason: String,
+    },
+    UnsupportedRecordKind {
+        reason: String,
+    },
 }
 
 impl LocalStoreError {

@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::accepted_memory_active_apply_admission::{
@@ -93,7 +93,7 @@ impl From<&AcceptedMemoryActiveApplyDiagnostics>
                 .map(ControlAcceptedMemoryActiveApplyRecordDto::from)
                 .collect(),
             counts: ControlAcceptedMemoryActiveApplyCountsDto::from(&diagnostics.counts),
-        no_effects: diagnostics.no_effects,
+            no_effects: diagnostics.no_effects,
         }
     }
 }

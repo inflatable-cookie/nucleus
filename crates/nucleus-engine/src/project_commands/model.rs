@@ -40,14 +40,18 @@ pub struct EngineProjectLifecycleCommand {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineProjectLifecycleAction {
-    Rename { display_name: String },
+    Rename {
+        display_name: String,
+    },
     Park,
     Archive,
     Restore,
     Delete,
     /// Transient -> durable in place; identity is preserved, records are
     /// never copied into a replacement project.
-    Promote { display_name: Option<String> },
+    Promote {
+        display_name: Option<String>,
+    },
     /// Delete an expired transient project. Refused while any durable
     /// child (task, goal, accepted memory, resource) still references it.
     ExpireTransient,

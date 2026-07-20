@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
 use super::*;
+use crate::provider_no_effects::ConvergenceRunnerNoAuthority;
 
 use crate::{
     ConvergenceStoppedRunnerCommandAdapterBlocker, ConvergenceStoppedRunnerCommandAdapterKind,

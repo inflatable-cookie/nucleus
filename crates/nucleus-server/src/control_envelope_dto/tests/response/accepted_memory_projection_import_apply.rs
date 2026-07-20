@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use nucleus_projects::ProjectId;
 
 use crate::accepted_memory_projection_import_apply_admission::{
@@ -42,7 +42,7 @@ fn response_envelope_dto_serializes_import_apply_diagnostics_without_payloads() 
                         provenance_refs: 1,
                         evidence_refs: 2,
                     },
-        no_effects: MemoryApplyNoEffects::none(),
+                    no_effects: MemoryApplyNoEffects::none(),
                 },
             ),
         ),

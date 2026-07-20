@@ -1,6 +1,6 @@
 //! Read-only diagnostics for Git commit admission gates.
 
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::{

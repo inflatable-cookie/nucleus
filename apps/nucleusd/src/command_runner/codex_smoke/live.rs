@@ -1,18 +1,16 @@
-mod rpc;
-mod values;
-
-use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+use nucleus_agent_adapters::{
+    run_codex_read_only_smoke, CodexReadOnlySmokeCleanup, CodexReadOnlySmokeStatus,
+};
 use nucleus_server::{
-    CodexAppServerTurnStartExecutorSmokeBoundaryRecord,
+    CodexAppServerLiveExecutorCleanupStatus, CodexAppServerLiveExecutorMethod,
+    CodexAppServerLiveExecutorOutcomeStatus, CodexAppServerTurnStartExecutorSmokeBoundaryRecord,
     CodexAppServerTurnStartExecutorSmokeBoundaryStatus,
 };
-use serde_json::json;
 
-use rpc::{CodexAppServerRpc, JsonRpcResult};
-use values::{string_field, turn_field_from_start_response};
-
+const SMOKE_MODEL: &str = "gpt-5.4-mini";
+const SMOKE_REASONING: &str = "low";
 const SMOKE_PROMPT: &str = "Reply with exactly: nucleus codex direct smoke ok";
 
 pub(crate) struct LiveCodexSmokeOutcome {
@@ -22,6 +20,9 @@ pub(crate) struct LiveCodexSmokeOutcome {
     pub(crate) turn_status: Option<String>,
     pub(crate) notifications_seen: usize,
     pub(crate) server_requests_seen: usize,
+    pub(crate) method_sequence: Vec<CodexAppServerLiveExecutorMethod>,
+    pub(crate) outcome_status: CodexAppServerLiveExecutorOutcomeStatus,
+    pub(crate) cleanup_status: CodexAppServerLiveExecutorCleanupStatus,
     status: LiveCodexSmokeStatus,
 }
 
@@ -30,19 +31,10 @@ impl LiveCodexSmokeOutcome {
         match self.status {
             LiveCodexSmokeStatus::Executed => "executed",
             LiveCodexSmokeStatus::Blocked => "blocked",
+            LiveCodexSmokeStatus::Failed => "failed",
+            LiveCodexSmokeStatus::TimedOut => "timed_out",
+            LiveCodexSmokeStatus::CleanupRequired => "cleanup_required",
         }
-    }
-
-    pub(crate) fn completed_method_sequence(
-    ) -> Vec<nucleus_server::CodexAppServerLiveExecutorMethod> {
-        vec![
-            nucleus_server::CodexAppServerLiveExecutorMethod::Initialize,
-            nucleus_server::CodexAppServerLiveExecutorMethod::InitializedNotification,
-            nucleus_server::CodexAppServerLiveExecutorMethod::ThreadStart,
-            nucleus_server::CodexAppServerLiveExecutorMethod::TurnStart,
-            nucleus_server::CodexAppServerLiveExecutorMethod::TurnCompleted,
-            nucleus_server::CodexAppServerLiveExecutorMethod::Cleanup,
-        ]
     }
 
     #[cfg(test)]
@@ -54,6 +46,9 @@ impl LiveCodexSmokeOutcome {
             turn_status: Some("completed".to_owned()),
             notifications_seen: 3,
             server_requests_seen: 1,
+            method_sequence: completed_method_sequence(),
+            outcome_status: CodexAppServerLiveExecutorOutcomeStatus::Completed,
+            cleanup_status: CodexAppServerLiveExecutorCleanupStatus::Completed,
             status: LiveCodexSmokeStatus::Executed,
         }
     }
@@ -67,7 +62,31 @@ impl LiveCodexSmokeOutcome {
             turn_status: None,
             notifications_seen: 0,
             server_requests_seen: 0,
+            method_sequence: Vec::new(),
+            outcome_status: CodexAppServerLiveExecutorOutcomeStatus::Blocked(
+                "durable live provider-write gate blocked".to_owned(),
+            ),
+            cleanup_status: CodexAppServerLiveExecutorCleanupStatus::NotRequired,
             status: LiveCodexSmokeStatus::Blocked,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cleanup_required_for_test(label: &str) -> Self {
+        let reason = "turn cleanup failed".to_owned();
+        let outcome_status =
+            CodexAppServerLiveExecutorOutcomeStatus::CleanupRequired(reason.clone());
+        Self {
+            provider_write_executed: true,
+            thread_id: Some(format!("thread:{label}")),
+            turn_id: Some(format!("turn:{label}")),
+            turn_status: Some("completed".to_owned()),
+            notifications_seen: 2,
+            server_requests_seen: 0,
+            method_sequence: method_sequence("completed"),
+            outcome_status,
+            cleanup_status: CodexAppServerLiveExecutorCleanupStatus::Failed(reason),
+            status: LiveCodexSmokeStatus::CleanupRequired,
         }
     }
 }
@@ -76,6 +95,9 @@ impl LiveCodexSmokeOutcome {
 enum LiveCodexSmokeStatus {
     Executed,
     Blocked,
+    Failed,
+    TimedOut,
+    CleanupRequired,
 }
 
 pub(crate) fn run_live_codex_turn_start_smoke(
@@ -84,107 +106,98 @@ pub(crate) fn run_live_codex_turn_start_smoke(
     if boundary.status
         != CodexAppServerTurnStartExecutorSmokeBoundaryStatus::EligibleForSeparatelyConfirmedRealWriteSmoke
     {
-        return Ok(LiveCodexSmokeOutcome {
+        return Ok(LiveCodexSmokeOutcome::blocked_for_runtime());
+    }
+
+    let cwd =
+        std::env::current_dir().map_err(|error| format!("failed to read current dir: {error}"))?;
+    let outcome = run_codex_read_only_smoke(
+        &cwd,
+        SMOKE_MODEL,
+        SMOKE_REASONING,
+        SMOKE_PROMPT,
+        Duration::from_secs(120),
+    )?;
+    let (status, outcome_status) = match outcome.status {
+        CodexReadOnlySmokeStatus::Completed => (
+            LiveCodexSmokeStatus::Executed,
+            CodexAppServerLiveExecutorOutcomeStatus::Completed,
+        ),
+        CodexReadOnlySmokeStatus::Failed(reason) => (
+            LiveCodexSmokeStatus::Failed,
+            CodexAppServerLiveExecutorOutcomeStatus::Failed(reason),
+        ),
+        CodexReadOnlySmokeStatus::TimedOut => (
+            LiveCodexSmokeStatus::TimedOut,
+            CodexAppServerLiveExecutorOutcomeStatus::TimedOut,
+        ),
+        CodexReadOnlySmokeStatus::CleanupRequired(reason) => (
+            LiveCodexSmokeStatus::CleanupRequired,
+            CodexAppServerLiveExecutorOutcomeStatus::CleanupRequired(reason),
+        ),
+    };
+    let cleanup_status = match outcome.cleanup {
+        CodexReadOnlySmokeCleanup::Completed => CodexAppServerLiveExecutorCleanupStatus::Completed,
+        CodexReadOnlySmokeCleanup::Failed(reason) => {
+            CodexAppServerLiveExecutorCleanupStatus::Failed(reason)
+        }
+    };
+    let method_sequence = method_sequence(&outcome.turn_status);
+
+    Ok(LiveCodexSmokeOutcome {
+        provider_write_executed: outcome.provider_turn_started,
+        thread_id: Some(outcome.thread_id),
+        turn_id: Some(outcome.turn_id),
+        turn_status: Some(outcome.turn_status),
+        notifications_seen: outcome.events_seen,
+        server_requests_seen: outcome.provider_requests_seen,
+        method_sequence,
+        outcome_status,
+        cleanup_status,
+        status,
+    })
+}
+
+impl LiveCodexSmokeOutcome {
+    fn blocked_for_runtime() -> Self {
+        Self {
             provider_write_executed: false,
             thread_id: None,
             turn_id: None,
             turn_status: None,
             notifications_seen: 0,
             server_requests_seen: 0,
+            method_sequence: Vec::new(),
+            outcome_status: CodexAppServerLiveExecutorOutcomeStatus::Blocked(
+                "durable live provider-write gate blocked".to_owned(),
+            ),
+            cleanup_status: CodexAppServerLiveExecutorCleanupStatus::NotRequired,
             status: LiveCodexSmokeStatus::Blocked,
-        });
+        }
     }
-
-    let cwd =
-        std::env::current_dir().map_err(|error| format!("failed to read current dir: {error}"))?;
-    let mut child = spawn_codex_app_server()?;
-    let mut rpc = CodexAppServerRpc::from_child(&mut child)?;
-
-    rpc.request(
-        "initialize",
-        json!({
-            "clientInfo": {
-                "name": "nucleusd",
-                "title": "Nucleus Daemon",
-                "version": "0.0.0"
-            },
-            "capabilities": {
-                "experimentalApi": true,
-                "optOutNotificationMethods": null
-            }
-        }),
-        Duration::from_secs(30),
-    )?;
-    rpc.notify("initialized", None)?;
-
-    let thread_response = rpc.request(
-        "thread/start",
-        json!({
-            "cwd": cwd.display().to_string(),
-            "approvalPolicy": "untrusted",
-            "sandbox": "read-only",
-            "ephemeral": true,
-        }),
-        Duration::from_secs(30),
-    )?;
-    let thread_id = extract_thread_id(thread_response)?;
-
-    let turn_response = rpc.request(
-        "turn/start",
-        json!({
-            "threadId": thread_id,
-            "approvalPolicy": "untrusted",
-            "sandboxPolicy": { "type": "readOnly" },
-            "input": [
-                {
-                    "type": "text",
-                    "text": SMOKE_PROMPT
-                }
-            ]
-        }),
-        Duration::from_secs(120),
-    )?;
-
-    let turn_id = turn_field_from_start_response(&turn_response, "id")?;
-    let turn_status = rpc
-        .wait_for_turn_completed(&turn_id, Duration::from_secs(120))?
-        .unwrap_or_else(|| {
-            turn_field_from_start_response(&turn_response, "status")
-                .unwrap_or_else(|_| "unknown".to_owned())
-        });
-    let counts = rpc.counts();
-    close_child(child);
-
-    Ok(LiveCodexSmokeOutcome {
-        provider_write_executed: true,
-        thread_id: Some(thread_id),
-        turn_id: Some(turn_id),
-        turn_status: Some(turn_status),
-        notifications_seen: counts.notifications,
-        server_requests_seen: counts.server_requests,
-        status: LiveCodexSmokeStatus::Executed,
-    })
 }
 
-fn spawn_codex_app_server() -> Result<Child, String> {
-    Command::new("codex")
-        .arg("app-server")
-        .arg("--stdio")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("failed to spawn codex app-server: {error}"))
+fn method_sequence(turn_status: &str) -> Vec<CodexAppServerLiveExecutorMethod> {
+    if turn_status == "completed" {
+        return completed_method_sequence();
+    }
+    let mut methods = vec![
+        CodexAppServerLiveExecutorMethod::Initialize,
+        CodexAppServerLiveExecutorMethod::InitializedNotification,
+        CodexAppServerLiveExecutorMethod::ThreadStart,
+        CodexAppServerLiveExecutorMethod::TurnStart,
+    ];
+    methods.push(CodexAppServerLiveExecutorMethod::Cleanup);
+    methods
 }
 
-fn extract_thread_id(response: JsonRpcResult) -> Result<String, String> {
-    let thread = response
-        .get("thread")
-        .ok_or_else(|| "codex thread/start response missing thread".to_owned())?;
-    string_field(thread, "id").map(str::to_owned)
-}
-
-fn close_child(mut child: Child) {
-    let _ = child.kill();
-    let _ = child.wait();
+pub(crate) fn completed_method_sequence() -> Vec<CodexAppServerLiveExecutorMethod> {
+    vec![
+        CodexAppServerLiveExecutorMethod::Initialize,
+        CodexAppServerLiveExecutorMethod::InitializedNotification,
+        CodexAppServerLiveExecutorMethod::ThreadStart,
+        CodexAppServerLiveExecutorMethod::TurnStart,
+        CodexAppServerLiveExecutorMethod::TurnCompleted,
+        CodexAppServerLiveExecutorMethod::Cleanup,
+    ]
 }

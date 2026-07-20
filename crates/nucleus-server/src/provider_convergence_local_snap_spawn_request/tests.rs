@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 
 #[test]
 fn convergence_local_snap_spawn_request_records_ready_preflight() {
@@ -181,7 +181,7 @@ fn input(
             blocked_preflight_record_ids: Vec::new(),
             duplicate_preflight_record_ids: Vec::new(),
             unsupported_preflight_record_ids: Vec::new(),
-        no_effects: ConvergenceSnapNoAuthority::none(),
+            no_effects: ConvergenceSnapNoAuthority::none(),
         },
         existing_spawn_request_ids,
         raw_material_present,

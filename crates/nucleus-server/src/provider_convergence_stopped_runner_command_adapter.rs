@@ -1,6 +1,6 @@
 //! Stopped command-adapter records for Convergence publication runner evidence.
 
-use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
+use crate::provider_no_effects::ConvergenceRunnerNoAuthority;
 use serde::{Deserialize, Serialize};
 
 use crate::{

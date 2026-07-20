@@ -30,9 +30,7 @@ pub use effects::{
     CommandEffectCancellation, CommandEffectOutcome, CommandEffectOutcomeKind,
     CommandEffectRequest, CommandEffectRequestId, CommandEffectRequestKind, CommandEffectRetry,
 };
-pub use evaluation::{
-    evaluate_read_only_invocation, CommandPolicyBlocker, CommandPolicyDecision,
-};
+pub use evaluation::{CommandPolicyBlocker, CommandPolicyDecision, evaluate_read_only_invocation};
 pub use evidence::{CommandEvidence, CommandExecutionStatus, CommandOutputRetention};
 pub use ids::{CommandEvidenceId, CommandPolicyId, CommandRequestId};
 pub use invocation::{CommandEnvironmentPolicy, CommandInvocation};

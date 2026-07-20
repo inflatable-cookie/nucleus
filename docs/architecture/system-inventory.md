@@ -2,12 +2,31 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-16
+Updated: 2026-07-20
 
 ## Repos
 
 - `nucleus`: current repo, docs authority and future Rust workspace.
+- `swallowtail`: sibling standalone runtime library. It owns reusable harness
+  and direct-model communication; Nucleus remains a consumer and domain
+  authority.
 - `external/t3code`: ignored research clone, not vendored product code.
+
+## Live Codex Transport Ownership
+
+| Surface | Current transport owner | Disposition |
+| --- | --- | --- |
+| Agent Chat | Swallowtail-backed `nucleus-agent-adapters` runtime | adopted; Nucleus retains tools, transcripts, receipts, and UI |
+| Goal/task execution | Nucleus `TaskExecutionRuntime` port over the Swallowtail Codex adapter | adopted; Nucleus retains admission, linkage, outcomes, evidence, review, and receipts |
+| confirmed daemon smoke | Swallowtail-backed read-only diagnostic in `nucleus-agent-adapters` | adopted; daemon retains explicit confirmation and durable sanitized evidence |
+| supervision and task-runtime records | no live transport | retain in Nucleus as admission, identity, observation, receipt, persistence, recovery, and diagnostics policy |
+
+Agent Chat, diagnostic smoke, and task execution select separate Nucleus-owned
+consumer paths over Swallowtail. Chat and the smoke remain read-only; only chat
+receives the two Nucleus-owned portals. Task execution binds one host-approved
+writable resource, denied provider network, no-approval behavior,
+observe-and-stop provider requests, a Nucleus-owned deadline, and recovery-safe
+cleanup. Nucleus contains no second Codex process or JSON-RPC implementation.
 
 ## Rust Crates
 
@@ -17,9 +36,13 @@ Updated: 2026-06-16
   normalized event and ref storage, but no Rust storage types or persistence
   implementation exist yet.
 - `nucleus-agent-protocol`: first draft adapter identity, transport,
-  capability, event identity, model-route, and agent session lifecycle types.
-- `nucleus-agent-adapters`: first draft adapter registry, instance
-  configuration, readiness, lifecycle, and health types.
+  capability, event identity, model-route, agent session lifecycle, and
+  provider-neutral task-execution port types.
+- `nucleus-agent-adapters`: Nucleus adapter registry and product-facing runtime
+  bridge. Agent Chat and bounded task execution use the Swallowtail-backed
+  `codex-app-server` entry; Nucleus supplies host process/resource authority,
+  preflight inputs, tool execution, transcript migration, task policy, and
+  receipt semantics.
 - `nucleus-native-harness`: first draft Nucleus-owned persona, session, event,
   tool, approval, model backend, and audit boundary types.
 - `nucleus-command-policy`: first draft command authority, sandbox, approval,

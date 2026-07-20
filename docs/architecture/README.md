@@ -21,6 +21,7 @@ Architecture records the system shape once planning starts to settle.
 - `task-seed-promotion-admission.md`
 - `product-workflow-ui-architecture.md`
 - `project-resource-lifecycle.md`
+- `repository-authority-map.md`
 
 ## Open Questions
 

@@ -1,22 +1,17 @@
-//! Adapter registry and configured adapter instance types.
-//!
-//! This crate names adapter registration state only. It does not implement
-//! provider adapters, process spawning, SDK bridges, ACP clients, or CLI/PTY
-//! control yet.
+//! Adapter registry, configured adapter state, and Nucleus-owned translation
+//! layers over shared provider runtimes.
 
 pub mod codex;
-pub mod codex_runtime;
-pub mod live_registry;
 pub mod config;
 pub mod credentials;
+pub mod live_registry;
 pub mod persistence;
 pub mod probes;
 pub mod registry;
 pub mod selection;
 pub mod status;
+pub mod swallowtail_codex;
 
-pub use codex_runtime::{CodexSessionRuntime, CODEX_LIVE_ADAPTER_ID};
-pub use live_registry::AgentAdapterRegistry;
 pub use codex::{
     codex_app_server_descriptor, codex_app_server_registry, CodexAppServerDescriptor,
     CodexAppServerMethodSet, CodexAppServerSchemaEvidence,
@@ -28,6 +23,7 @@ pub use credentials::{
     AdapterSecretResolutionBoundary, AdapterSecretResolutionPolicy, AdapterSecretScope,
     AdapterSecretSource, RawSecretExposurePolicy,
 };
+pub use live_registry::AgentAdapterRegistry;
 pub use persistence::{
     AdapterRegistryPersistedField, AdapterRegistryPersistenceBackend,
     AdapterRegistryPersistencePolicy, AdapterRegistryRecomputedField, AdapterRegistryRepairPolicy,
@@ -45,3 +41,8 @@ pub use selection::{
     ResolvedAdapterConfigRef, ResolvedAdapterConfigValueKind,
 };
 pub use status::{AdapterHealth, AdapterLifecycleStatus, AdapterReadiness};
+pub use swallowtail_codex::{
+    run_codex_read_only_smoke, CodexReadOnlySmokeCleanup, CodexReadOnlySmokeOutcome,
+    CodexReadOnlySmokeStatus, SwallowtailCodexSessionRuntime, SwallowtailCodexTaskExecutionRuntime,
+    CODEX_LIVE_ADAPTER_ID, CODEX_PROVIDER_INSTANCE_ID,
+};

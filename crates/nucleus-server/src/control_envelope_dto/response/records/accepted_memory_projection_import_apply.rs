@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::accepted_memory_projection_import_apply_admission::{
@@ -91,7 +91,7 @@ impl From<&AcceptedMemoryProjectionImportApplyDiagnostics>
                 .map(ControlAcceptedMemoryProjectionImportApplyRecordDto::from)
                 .collect(),
             counts: ControlAcceptedMemoryProjectionImportApplyCountsDto::from(&diagnostics.counts),
-        no_effects: diagnostics.no_effects,
+            no_effects: diagnostics.no_effects,
         }
     }
 }

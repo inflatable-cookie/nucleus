@@ -249,7 +249,13 @@ where
         };
         Ok(records
             .into_iter()
-            .map(|record| (record.id.0, format!("{:?}", record.kind), record.payload.bytes))
+            .map(|record| {
+                (
+                    record.id.0,
+                    format!("{:?}", record.kind),
+                    record.payload.bytes,
+                )
+            })
             .collect())
     }
 

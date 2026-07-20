@@ -13,7 +13,7 @@ mod types;
 pub use refs::accepted_memory_active_apply_admission_ref;
 pub use types::*;
 
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use counts::active_apply_admission_counts;
 use record_builder::active_apply_admission_record;
 

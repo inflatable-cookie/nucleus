@@ -106,10 +106,7 @@ fn create_is_idempotent_and_conflicts_on_key_reuse() {
     // Same key, different request: conflict.
     let mut different = create_command("idem:1");
     different.display_name = "Other".to_owned();
-    let result = service.execute(
-        "command:project:3",
-        EngineProjectCommand::Create(different),
-    );
+    let result = service.execute("command:project:3", EngineProjectCommand::Create(different));
     assert!(matches!(
         result,
         Err(EngineProjectCommandError::Conflict { .. })
@@ -193,7 +190,10 @@ fn create_transient(repository: &MemoryProjectRepository, idem: &str) -> (String
     command.display_name = String::new();
     command.retention = EngineProjectRetentionChoice::Transient;
     service
-        .execute(&format!("command:{idem}"), EngineProjectCommand::Create(command))
+        .execute(
+            &format!("command:{idem}"),
+            EngineProjectCommand::Create(command),
+        )
         .expect("create transient");
     let stored = repository.records.borrow();
     let record = stored.values().next().expect("stored");

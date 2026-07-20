@@ -10,20 +10,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use nucleus_agent_protocol::{AgentSessionId, AgentTurnId};
 use nucleus_core::RevisionId;
 use nucleus_engine::{
-    EngineCheckpointRecordId, EngineDiffSummaryRecordId,
-    EngineRuntimeReceiptEffectFamily, EngineRuntimeReceiptRecord, EngineRuntimeReceiptRecordId,
-    EngineRuntimeReceiptRef, EngineRuntimeReceiptStatus, EngineTaskAgentWorkUnitReviewStatus,
+    EngineCheckpointRecordId, EngineDiffSummaryRecordId, EngineRuntimeReceiptEffectFamily,
+    EngineRuntimeReceiptRecord, EngineRuntimeReceiptRecordId, EngineRuntimeReceiptRef,
+    EngineRuntimeReceiptStatus, EngineTaskAgentWorkUnitReviewStatus,
     EngineTaskAgentWorkUnitRuntimeStatus, EngineTaskAgentWorkUnitSourceId,
 };
-use nucleus_local_store::{
-    LocalStoreBackend, RevisionExpectation,
-};
+use nucleus_local_store::{LocalStoreBackend, RevisionExpectation};
 
 use super::super::goal_run::GoalRunPlan;
 use super::super::review_evidence::CompletedReviewEvidence;
-use super::super::task_execution::{
-    TaskExecutionLinkage, TaskExecutionOutcome,
-};
+use super::super::task_execution::{TaskExecutionLinkage, TaskExecutionOutcome};
 use crate::runtime_receipt_state::write_runtime_receipt;
 use crate::task_agent_work_unit_state::{
     read_task_agent_work_unit_source_records, write_task_agent_work_unit_source_record,
@@ -317,4 +313,3 @@ pub(super) fn runtime_receipt(
         summary: Some(summary.chars().take(500).collect()),
     }
 }
-

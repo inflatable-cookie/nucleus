@@ -1,6 +1,6 @@
 //! Control DTOs for Git commit runner outcomes.
 
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::GitCommitRunnerOutcomeDiagnosticsRecord;
@@ -94,7 +94,7 @@ mod tests {
             shell_execution_performed: false,
             commit_created: false,
             push_executed: false,
-        no_effects: ForgeScmNoEffects::none(),
+            no_effects: ForgeScmNoEffects::none(),
         }
     }
 }

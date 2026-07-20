@@ -72,19 +72,16 @@ impl LocalCodexChatSession {
                 )
             },
         );
-        let can_resume = stored.is_some_and(|session| {
-            session.task_toolset_version >= CHAT_TASK_TOOLSET_VERSION
-                && session.resource_id.as_deref() == Some(resource_id)
-        });
         let live = chat_runtime()?.start_session(AgentSessionStartRequest {
             working_directory: project_root.to_owned(),
             model: model.to_owned(),
             reasoning_effort: reasoning_effort.to_owned(),
             developer_instructions,
             dynamic_tools: dynamic_tool_specs(),
-            resume_provider_thread_id: can_resume
-                .then(|| stored.expect("resume capability requires stored session"))
-                .map(|stored| stored.provider_thread_id.clone()),
+            // Current Codex schema evidence cannot safely redeclare dynamic
+            // tools on thread/resume. Nucleus supplies transcript context and
+            // opens fresh instead of resuming from a provider id alone.
+            resume_provider_thread_id: None,
         })?;
 
         Ok(Self {
@@ -98,6 +95,11 @@ impl LocalCodexChatSession {
 
     pub(super) fn targets_resource(&self, resource_id: &str) -> bool {
         self.resource_id == resource_id
+    }
+
+    pub(super) fn targets_route(&self, model: &str, reasoning_effort: &str) -> bool {
+        let info = self.live.info();
+        info.model == model && info.reasoning_effort.as_deref() == Some(reasoning_effort)
     }
 
     pub(super) fn send_turn<F>(

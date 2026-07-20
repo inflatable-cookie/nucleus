@@ -1,6 +1,6 @@
 //! Stopped-by-default execution handoff records for Git branch/worktree commands.
 
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::{

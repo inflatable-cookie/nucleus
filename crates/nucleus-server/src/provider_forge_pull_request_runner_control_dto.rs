@@ -1,6 +1,6 @@
 //! Control DTOs for stopped forge pull-request runner outcomes.
 
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::ForgePullRequestRunnerOutcomeDiagnosticsRecord;
@@ -82,7 +82,7 @@ mod tests {
             provider_request_prepared_count: 2,
             evidence_ref_count: 3,
             shell_execution_performed: false,
-        no_effects: ForgeScmNoEffects::none(),
+            no_effects: ForgeScmNoEffects::none(),
         }
     }
 }

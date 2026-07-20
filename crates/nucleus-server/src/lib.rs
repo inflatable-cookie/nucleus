@@ -74,6 +74,7 @@ pub use editor_files::{
     list_editor_files, read_editor_file, save_editor_file, EditorFileEntry, EditorFileSaveRequest,
     EditorFileSnapshot,
 };
+pub mod admission_gate;
 pub mod control_api;
 pub mod control_api_planning_queries;
 pub mod control_envelope_dto;
@@ -257,11 +258,10 @@ pub mod provider_live_evidence_task_state_transition_admission;
 pub mod provider_live_evidence_work_candidates;
 pub mod provider_live_evidence_work_observations;
 pub mod provider_live_read_admission;
-pub mod admission_gate;
-pub mod provider_no_effects;
 pub mod provider_live_read_executor_query;
 pub mod provider_live_read_smoke_evidence_query;
 pub mod provider_live_read_smoke_evidence_replay;
+pub mod provider_no_effects;
 pub mod provider_planning_capture_publication_admission;
 pub mod provider_planning_capture_publication_stopped_request;
 pub mod provider_records;

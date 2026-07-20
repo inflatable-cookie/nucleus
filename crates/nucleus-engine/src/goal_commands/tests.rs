@@ -102,7 +102,10 @@ fn create_requires_existing_project_and_persists_goal_record() {
             ..create_command(GoalStatus::Proposed)
         }),
     );
-    assert!(matches!(missing, Err(EngineGoalCommandError::NotFound { .. })));
+    assert!(matches!(
+        missing,
+        Err(EngineGoalCommandError::NotFound { .. })
+    ));
 
     service
         .execute(

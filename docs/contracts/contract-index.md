@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-14
+Updated: 2026-07-20
 
 ## Active Contracts
 
@@ -37,6 +37,8 @@ Updated: 2026-07-14
 | `027-provider-auth-forge-execution-contract.md` | draft | Provider credential authority, network-write admission, idempotency, recovery, and sanitized forge execution evidence. |
 | `028-browser-panel-runtime-contract.md` | draft-promoted-first-pass | Desktop native child-webview trust, navigation, and panel lifecycle boundary. |
 | `029-terminal-panel-runtime-contract.md` | draft-promoted-first-pass | Host-routed terminal authority, protocol, PTY lifecycle, transport, and client rendering boundary. |
+| `030-swallowtail-agent-runtime-integration-contract.md` | draft-promoted-first-pass | Swallowtail-owned AI communication with Nucleus-owned sessions, tools, authority, persistence, and UI. |
+| `031-swallowtail-task-execution-runtime-contract.md` | draft-promoted-first-pass | Nucleus task-executor port over explicit Swallowtail workspace access, outcomes, linkage, and cleanup. |
 
 ## Needed Contracts
 
@@ -71,6 +73,10 @@ When it overlaps focused contracts, the focused contract owns the durable rule:
   boundary.
 - `029` owns terminal host routing, session protocol, PTY lifecycle, and client
   attachment semantics.
+- `030` owns the Nucleus/Swallowtail integration boundary and consumer
+  preservation rules.
+- `031` owns the Swallowtail-backed task-executor port, exact access profile,
+  outcome mapping, and retained Nucleus workflow authority.
 - `011`, `008`, and `002` own SCM/forge, storage, and harness-adapter rules.
 
 Source refs:

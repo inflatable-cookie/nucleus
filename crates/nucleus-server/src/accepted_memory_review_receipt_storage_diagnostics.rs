@@ -1,6 +1,6 @@
 //! Read-only diagnostics over persisted accepted-memory review receipts.
 
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use nucleus_memory::{
     AcceptedMemoryReviewReceiptAdmissionStatusStorage, AcceptedMemoryReviewReceiptDecisionStorage,
     AcceptedMemoryReviewReceiptStatusStorage, AcceptedMemoryReviewReceiptStorageRecord,
@@ -93,7 +93,7 @@ impl AcceptedMemoryReviewReceiptStorageDiagnostics {
             review_receipts_persisted: !receipts.is_empty(),
             receipts,
             counts,
-        no_effects: MemoryApplyNoEffects::none(),
+            no_effects: MemoryApplyNoEffects::none(),
         }
     }
 }

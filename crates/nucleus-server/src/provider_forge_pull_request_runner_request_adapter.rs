@@ -9,7 +9,7 @@ pub use types::{
     ForgePullRequestRunnerRequestAdapterStatus,
 };
 
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use record_builder::request_record;
 
 pub fn forge_pull_request_runner_request_adapter(

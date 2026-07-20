@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
 use super::*;
+use crate::provider_no_effects::ConvergenceRunnerNoAuthority;
 
 #[test]
 fn convergence_stopped_runner_command_adapter_records_reviewable_evidence() {
@@ -135,7 +135,7 @@ fn input(
             records,
             duplicate_evidence_ids: Vec::new(),
             blocked_evidence_ids: Vec::new(),
-        no_effects: ConvergenceRunnerNoAuthority::none(),
+            no_effects: ConvergenceRunnerNoAuthority::none(),
         },
     }
 }

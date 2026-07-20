@@ -1,6 +1,6 @@
 //! Control DTOs for Git branch/worktree runner outcomes.
 
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::GitBranchWorktreeRunnerOutcomeDiagnosticsRecord;
@@ -102,7 +102,7 @@ mod tests {
             worktree_created: false,
             commit_created: false,
             push_executed: false,
-        no_effects: ForgeScmNoEffects::none(),
+            no_effects: ForgeScmNoEffects::none(),
         }
     }
 }

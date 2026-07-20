@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use crate::{GitPushRemoteTarget, GitPushRunnerAuthorityRecord, GitPushRunnerAuthorityStatus};
 
 use super::types::{

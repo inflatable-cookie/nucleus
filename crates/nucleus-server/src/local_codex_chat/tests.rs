@@ -1,13 +1,14 @@
-use super::persistence::{persist_turn_completion, persist_turn_start, StoredChatSession};
+use super::persistence::{StoredChatSession, persist_turn_completion, persist_turn_start};
 use super::task_authoring::TaskToolOutcome;
 use super::*;
 use crate::{
-    seed_local_project, seed_local_task, LocalControlRequestHandler, LocalProjectSeed,
-    LocalTaskSeed,
+    LocalControlRequestHandler, LocalProjectSeed, LocalTaskSeed, seed_local_project,
+    seed_local_task,
 };
 use nucleus_core::{PersistenceRecordId, RevisionId};
+use nucleus_engine::{EngineTaskAgentWorkUnitReviewStatus, EngineTaskAgentWorkUnitRuntimeStatus};
 use nucleus_local_store::{LocalStoreRecordPayload, RevisionExpectation, SqliteBackend};
-use nucleus_planning::{decode_goal_storage_record, goal_from_storage_record, GoalStatus};
+use nucleus_planning::{GoalStatus, decode_goal_storage_record, goal_from_storage_record};
 use nucleus_projects::ProjectId;
 use nucleus_tasks::decode_task_storage_record;
 
@@ -56,9 +57,11 @@ fn live_chat_model_catalog_exposes_reasoning_options() {
     let models = LocalCodexChatService::available_models().expect("model catalog");
 
     assert!(!models.is_empty());
-    assert!(models
-        .iter()
-        .all(|model| !model.model.is_empty() && !model.supported_reasoning_efforts.is_empty()));
+    assert!(
+        models
+            .iter()
+            .all(|model| !model.model.is_empty() && !model.supported_reasoning_efforts.is_empty())
+    );
 }
 
 #[test]
@@ -177,9 +180,48 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
         Some(CHAT_REASONING_EFFORT)
     );
     assert!(first.assistant_message.contains("first nucleus chat turn"));
-    assert!(second
-        .assistant_message
-        .contains("second nucleus chat turn"));
+    assert!(
+        second
+            .assistant_message
+            .contains("second nucleus chat turn")
+    );
+}
+
+#[test]
+#[ignore = "requires a locally authenticated Codex app-server"]
+fn live_chat_route_change_opens_a_fresh_thread_with_transcript_context() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")));
+    seed_local_project(&state, LocalProjectSeed::nucleus_local()).expect("seed project");
+    let mut service = LocalCodexChatService::default();
+    let mut first_request = request(
+        "route-change-smoke",
+        "Reply with exactly: route change first",
+    );
+    first_request.reasoning_effort = Some("low".to_owned());
+    let first = service
+        .send_message(&state, first_request)
+        .expect("first route turn");
+
+    let mut second_request = request(
+        "route-change-smoke",
+        "Reply with exactly: route change second",
+    );
+    second_request.reasoning_effort = Some("medium".to_owned());
+    let second = service
+        .send_message(&state, second_request)
+        .expect("changed route turn");
+    let history = service
+        .history(
+            &state,
+            "project:nucleus-local",
+            "project:nucleus-local:panel:route-change-smoke",
+        )
+        .expect("history");
+
+    assert_ne!(first.thread_id, second.thread_id);
+    assert_eq!(second.reasoning_effort.as_deref(), Some("medium"));
+    assert_eq!(history.messages.len(), 4);
 }
 
 #[test]
@@ -219,7 +261,7 @@ fn live_chat_receives_active_task_context_without_polluting_history() {
 
 #[test]
 #[ignore = "requires a locally authenticated Codex app-server"]
-fn durable_chat_resumes_provider_thread_after_service_restart() {
+fn durable_chat_reopens_with_transcript_context_after_service_restart() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let path = temp_dir.path().join("nucleus.sqlite");
     let state = ServerStateService::new(SqliteBackend::new(path.clone()));
@@ -249,7 +291,7 @@ fn durable_chat_resumes_provider_thread_after_service_restart() {
             "project:nucleus-local:panel:durable-smoke",
         )
         .expect("history");
-    assert_eq!(first.thread_id, second.thread_id);
+    assert_ne!(first.thread_id, second.thread_id);
     assert_eq!(history.messages.len(), 4);
 }
 
@@ -397,30 +439,45 @@ fn live_chat_authors_and_refines_a_goal_backed_runway_without_dispatching_work()
 fn live_chat_creates_and_runs_a_two_task_goal_through_two_portals() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let workspace = tempfile::tempdir().expect("workspace");
+    let snapshot_backend = tempfile::tempdir().expect("snapshot backend");
     let path = temp_dir.path().join("nucleus.sqlite");
     let backend = SqliteBackend::new(path.clone());
     let state = ServerStateService::new(backend.clone());
     seed_local_project(&state, LocalProjectSeed::nucleus_local()).expect("seed project");
     redirect_project_root(&state, workspace.path());
     let mut handler = LocalControlRequestHandler::new(backend, None);
-    let mut service = LocalCodexChatService::default();
+    let snapshot_store =
+        crate::TaskReviewSnapshotStore::new(snapshot_backend.path()).expect("snapshot store");
+    let mut service = LocalCodexChatService::with_task_review_snapshot_store(snapshot_store);
     let conversation = "workflow-live-smoke";
     let created = service
         .send_message_with_task_authoring(
             &state,
             request(
                 conversation,
-                "Use task_ledger to create one ready Goal titled 'Portal execution smoke' and exactly two ordered ready execute tasks under it. Task one must create first.txt containing first. Task two must create second.txt containing second. Give each clear acceptance criteria, stop conditions, and validation commands. Do not run them yet.",
+                "You must call task_ledger now. Create one ready Goal titled 'Portal execution smoke' and exactly two ordered ready execute tasks under it. Task one must create first.txt containing first. Task two must create second.txt containing second. Give each clear acceptance criteria, stop conditions, and validation commands. Do not merely describe the records and do not run them yet.",
             ),
             &mut |request| accepted(&mut handler, request),
         )
         .expect("create Goal runway");
-    let goal = created.task_receipts[0]
+    let task_receipt = created.task_receipts.first().unwrap_or_else(|| {
+        panic!(
+            "provider did not call task_ledger; assistant response: {}",
+            created.assistant_message
+        )
+    });
+    let goal = task_receipt
         .goals_updated
         .last()
-        .or_else(|| created.task_receipts[0].goals_created.last())
+        .or_else(|| task_receipt.goals_created.last())
         .expect("Goal receipt")
         .clone();
+    let task_ids: Vec<&str> = task_receipt
+        .created
+        .iter()
+        .map(|task| task.task_id.as_str())
+        .collect();
+    assert_eq!(task_ids.len(), 2);
 
     let executed = service
         .send_message_with_task_authoring(
@@ -442,9 +499,33 @@ fn live_chat_creates_and_runs_a_two_task_goal_through_two_portals() {
     assert_eq!(executed.workflow_receipts.len(), 1);
     assert_eq!(
         executed.workflow_receipts[0].status,
-        TaskWorkflowReceiptStatus::ReviewReady
+        TaskWorkflowReceiptStatus::ReviewReady,
+        "unexpected workflow receipt: {:#?}",
+        executed.workflow_receipts[0]
     );
     assert_eq!(executed.workflow_receipts[0].total_tasks, 2);
+    assert_eq!(executed.workflow_receipts[0].work_item_refs.len(), 2);
+    assert_eq!(executed.workflow_receipts[0].runtime_receipt_refs.len(), 2);
+    let source_records =
+        crate::read_task_agent_work_unit_source_records(&state).expect("durable task work records");
+    for task_id in task_ids {
+        let completed = source_records
+            .iter()
+            .filter(|record| record.task_id.0 == task_id)
+            .max_by_key(|record| record.source_cursor.0.clone())
+            .unwrap_or_else(|| panic!("missing work record for {task_id}"));
+        assert_eq!(
+            completed.runtime,
+            EngineTaskAgentWorkUnitRuntimeStatus::Completed
+        );
+        assert_eq!(
+            completed.review,
+            EngineTaskAgentWorkUnitReviewStatus::AwaitingReview
+        );
+        assert!(!completed.refs.receipt_ids.is_empty());
+        assert!(!completed.refs.checkpoint_ids.is_empty());
+        assert!(!completed.refs.diff_summary_ids.is_empty());
+    }
     assert_eq!(
         std::fs::read_to_string(workspace.path().join("first.txt"))
             .expect("first file")

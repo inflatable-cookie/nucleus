@@ -4,7 +4,7 @@
 //! build stopped apply/admission records without granting operator approval or
 //! active mutation authority.
 
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use nucleus_projects::ProjectId;
 
 use crate::accepted_memory_projection_import_apply_admission::{
@@ -71,7 +71,7 @@ impl AcceptedMemoryProjectionImportApplyDiagnostics {
             project_id: import_diagnostics.project_id,
             records: apply_set.records,
             counts,
-        no_effects: MemoryApplyNoEffects::none(),
+            no_effects: MemoryApplyNoEffects::none(),
         }
     }
 }

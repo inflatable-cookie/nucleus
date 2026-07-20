@@ -12,7 +12,7 @@ mod types;
 pub use refs::accepted_memory_import_apply_review_receipt_ref;
 pub use types::*;
 
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use counts::review_receipt_counts;
 use record_builder::review_receipt;
 

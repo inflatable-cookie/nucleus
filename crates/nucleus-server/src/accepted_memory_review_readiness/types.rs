@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use nucleus_projects::ProjectId;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -1,6 +1,6 @@
 //! Persistence for sanitized stopped forge pull-request runner outcomes.
 
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use nucleus_local_store::{LocalStoreBackend, LocalStoreResult};
 
 mod diagnostics;

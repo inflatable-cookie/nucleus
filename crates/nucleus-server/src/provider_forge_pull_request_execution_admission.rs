@@ -1,6 +1,6 @@
 //! Stopped-by-default execution admissions for forge pull-request creation.
 
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::{

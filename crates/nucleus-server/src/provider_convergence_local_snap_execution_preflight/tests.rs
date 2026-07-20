@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 
 use crate::ConvergenceLocalSnapRunnerReplayEffectFamily;
 
@@ -223,7 +223,7 @@ fn input(
             duplicate_replay_record_ids: Vec::new(),
             blocked_replay_record_ids: Vec::new(),
             unsupported_replay_record_ids: Vec::new(),
-        no_effects: ConvergenceSnapNoAuthority::none(),
+            no_effects: ConvergenceSnapNoAuthority::none(),
         },
         existing_preflight_record_ids,
         operator_confirmed,

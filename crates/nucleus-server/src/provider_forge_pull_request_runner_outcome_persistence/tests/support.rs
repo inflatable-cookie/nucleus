@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ForgeScmNoEffects};
 use super::super::*;
+use crate::provider_no_effects::ForgeScmNoEffects;
 use crate::{
     ForgePullRequestProvider, ForgePullRequestRunnerRequestAdapterRecord,
     ForgePullRequestRunnerRequestAdapterSet, ForgePullRequestRunnerRequestAdapterStatus,

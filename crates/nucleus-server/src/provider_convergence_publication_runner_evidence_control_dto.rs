@@ -1,6 +1,6 @@
 //! Read-only DTOs for Convergence runner evidence persistence.
 
-use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
+use crate::provider_no_effects::ConvergenceRunnerNoAuthority;
 use serde::{Deserialize, Serialize};
 
 use crate::{

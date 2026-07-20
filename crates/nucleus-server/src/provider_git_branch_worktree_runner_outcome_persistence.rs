@@ -1,6 +1,6 @@
 //! Persistence for sanitized Git branch/worktree runner outcome records.
 
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use nucleus_local_store::{LocalStoreBackend, LocalStoreResult};
 
 mod diagnostics;

@@ -6,5 +6,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+futures-executor = "0.3"
 serde_json = "1"
 nucleus-agent-protocol = { path = "../nucleus-agent-protocol" }
+swallowtail-adapter-codex = { path = "../../../swallowtail/crates/swallowtail-adapter-codex" }
+swallowtail-core = { path = "../../../swallowtail/crates/swallowtail-core" }
+swallowtail-host-local = { path = "../../../swallowtail/crates/swallowtail-host-local" }
+swallowtail-runtime = { path = "../../../swallowtail/crates/swallowtail-runtime" }

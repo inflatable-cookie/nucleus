@@ -1,4 +1,3 @@
-use crate::provider_no_effects::{MemoryApplyNoEffects};
 use crate::accepted_memory_import_apply_review_command::blockers::{
     review_blockers, sorted_unique_non_empty,
 };
@@ -7,6 +6,7 @@ use crate::accepted_memory_import_apply_review_command::types::{
     AcceptedMemoryImportApplyReviewDecision, AcceptedMemoryImportApplyReviewInput,
     AcceptedMemoryImportApplyReviewReceipt, AcceptedMemoryImportApplyReviewStatus,
 };
+use crate::provider_no_effects::MemoryApplyNoEffects;
 
 pub(super) fn review_receipt(
     input: AcceptedMemoryImportApplyReviewInput,

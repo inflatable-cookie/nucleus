@@ -10,6 +10,7 @@ name = "nucleusd"
 path = "src/main.rs"
 
 [dependencies]
+nucleus-agent-adapters = { path = "../../crates/nucleus-agent-adapters" }
 nucleus-command-policy = { path = "../../crates/nucleus-command-policy" }
 nucleus-core = { path = "../../crates/nucleus-core" }
 nucleus-engine = { path = "../../crates/nucleus-engine" }

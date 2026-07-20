@@ -13,7 +13,9 @@ use nucleus_local_store::{
 };
 
 use super::super::goal_run::GoalRunPlan;
-use super::super::mandates::{expire_workflow_mandate, read_workflow_mandate, WorkflowMandateStatus};
+use super::super::mandates::{
+    expire_workflow_mandate, read_workflow_mandate, WorkflowMandateStatus,
+};
 use crate::ServerStateService;
 
 pub(super) fn update_execution<B>(

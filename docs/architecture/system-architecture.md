@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-07-10
+Updated: 2026-07-20
 Vision refs: `docs/vision/001-nucleus-product-vision.md`
 
 ## Top-Level Stack
@@ -47,9 +47,12 @@ Future clients may include:
 - `nucleus-core`: first draft persistence domains, record identity, revision,
   snapshot, journal, and projection envelope vocabulary.
 - `nucleus-agent-protocol`: first draft adapter identity, capability, runtime
-  event, model route, and agent session lifecycle types.
-- `nucleus-agent-adapters`: first draft adapter registry, instance
-  configuration, readiness, lifecycle, and health types.
+  event, model route, agent session lifecycle, and task-execution port types.
+- `nucleus-agent-adapters`: Nucleus adapter registry and product-facing runtime
+  bridge. Reusable harness discovery, protocol, event, callback, timeout, and
+  cleanup mechanics come from Swallowtail adapters; Nucleus retains host and
+  product authority. Agent Chat uses the read-only session profile; Goal/task
+  execution uses the separately registered bounded-workspace task runtime.
 - `nucleus-native-harness`: first draft Nucleus-owned persona, session, event,
   tool, approval, model backend, and audit boundary types.
 - `nucleus-command-policy`: first draft command authority, sandbox, approval,

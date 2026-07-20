@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use nucleus_core::PersistenceRecordId;
 use nucleus_local_store::SqliteBackend;
 use nucleus_memory::{

@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use nucleus_projects::ProjectId;
 
 use crate::accepted_memory_import_apply_review_command::{
@@ -34,7 +34,7 @@ fn response_envelope_dto_serializes_import_apply_review_diagnostics_without_payl
                         input(AcceptedMemoryImportApplyReviewDecision::Reject),
                     ]),
                     review_receipts_persisted: false,
-        no_effects: MemoryApplyNoEffects::none(),
+                    no_effects: MemoryApplyNoEffects::none(),
                 },
             ),
         ),

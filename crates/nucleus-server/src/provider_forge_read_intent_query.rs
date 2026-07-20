@@ -49,7 +49,7 @@ where
             dto_id: "forge-read-intent-query-control-dto".to_owned(),
             projection_control: control,
             source_counts,
-        no_effects: ProviderRuntimeNoEffects::none(),
+            no_effects: ProviderRuntimeNoEffects::none(),
         },
     })
 }

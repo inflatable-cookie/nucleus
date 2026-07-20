@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::accepted_memory_review_readiness::{
@@ -81,7 +81,7 @@ impl From<&AcceptedMemoryReviewReadiness> for ControlAcceptedMemoryReviewReadine
                 .map(ControlAcceptedMemoryReviewReadinessRecordDto::from)
                 .collect(),
             counts: ControlAcceptedMemoryReviewReadinessCountsDto::from(&readiness.counts),
-        no_effects: readiness.no_effects,
+            no_effects: readiness.no_effects,
         }
     }
 }

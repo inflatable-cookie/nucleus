@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 
 #[test]
 fn convergence_local_snap_spawn_receipt_accepts_ready_handoffs() {
@@ -187,7 +187,7 @@ fn input(
             duplicate_handoff_ids: Vec::new(),
             unsupported_handoff_ids: Vec::new(),
             process_runner_invocation_permitted: false,
-        no_effects: ConvergenceSnapNoAuthority::none(),
+            no_effects: ConvergenceSnapNoAuthority::none(),
         },
         existing_receipt_ids,
         raw_output_present,

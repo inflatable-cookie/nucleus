@@ -1,6 +1,6 @@
 //! Replay records for stopped Convergence local snap runner adapter decisions.
 
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 use serde::{Deserialize, Serialize};
 
 use crate::{

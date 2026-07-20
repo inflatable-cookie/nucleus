@@ -110,4 +110,3 @@ fn print_record_set(label: &str, records: Vec<LocalStoreRecord>) -> Result<(), S
     }
     Ok(())
 }
-

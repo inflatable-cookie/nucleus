@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-17
+Updated: 2026-07-20
 
 ## Purpose
 
@@ -10,7 +10,7 @@ Hold execution cards for `g04`.
 
 ## Ready Cards
 
-- `185-project-resource-control-boundary.md`
+- `228-task-execution-validation-closeout.md`
 
 ## Planned Cards
 
@@ -51,7 +51,7 @@ Hold execution cards for `g04`.
 
 ## Paused Cards
 
-- None.
+- `193-multi-resource-workflow-validation.md`
 
 ## Superseded Cards
 
@@ -72,6 +72,14 @@ Hold execution cards for `g04`.
 
 ## Completed Cards
 
+- `227-codex-smoke-consolidation.md`
+- `226-nucleus-task-executor-adoption.md`
+- `225-swallowtail-writable-session-driver.md`
+- `223-direct-codex-execution-inventory.md`
+- `224-swallowtail-writable-execution-contract.md`
+- `222-swallowtail-agent-chat-validation.md`
+- `220-swallowtail-consumer-boundary-promotion.md`
+- `221-swallowtail-agent-chat-transport.md`
 - `184-project-resource-domain-and-storage.md`
 - `182-memory-panel-validation.md`
 - `179-terminal-runtime-validation.md`

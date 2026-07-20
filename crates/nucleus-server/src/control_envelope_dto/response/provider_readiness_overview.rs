@@ -90,7 +90,7 @@ impl From<&ForgeReadinessOverview> for ControlProviderReadinessOverviewDto {
             evidence_ref_count: overview.evidence_ref_count,
             approved_live_read_smoke_evidence_count: overview
                 .approved_live_read_smoke_evidence_count,
-        no_effects: overview.no_effects,
+            no_effects: overview.no_effects,
         }
     }
 }

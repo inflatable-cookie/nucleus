@@ -66,9 +66,7 @@ fn desktop_startup_status(state: tauri::State<'_, DesktopState>) -> DesktopStart
 
 /// Seed local fixture state once: if the local project record already
 /// exists, the durable store is left untouched.
-fn seed_fixture_state(
-    handler: &LocalControlRequestHandler<SqliteBackend>,
-) -> Result<(), String> {
+fn seed_fixture_state(handler: &LocalControlRequestHandler<SqliteBackend>) -> Result<(), String> {
     let seed = LocalProjectSeed::nucleus_local();
     let existing = handler
         .state()
@@ -78,12 +76,15 @@ fn seed_fixture_state(
     if existing.is_some() {
         return Ok(());
     }
-    seed_local_project(handler.state(), seed).map_err(|error| format!("startup seed failed at project: {error:?}"))?;
+    seed_local_project(handler.state(), seed)
+        .map_err(|error| format!("startup seed failed at project: {error:?}"))?;
     seed_local_task(handler.state(), LocalTaskSeed::nucleus_local_bootstrap())
         .map_err(|error| format!("startup seed failed at task: {error:?}"))?;
-    seed_local_command_evidence(handler.state()).map_err(|error| format!("startup seed failed at command evidence: {error:?}"))?;
-    seed_local_provider_readiness_evidence(handler.state())
-        .map_err(|error| format!("startup seed failed at provider readiness evidence: {error:?}"))?;
+    seed_local_command_evidence(handler.state())
+        .map_err(|error| format!("startup seed failed at command evidence: {error:?}"))?;
+    seed_local_provider_readiness_evidence(handler.state()).map_err(|error| {
+        format!("startup seed failed at provider readiness evidence: {error:?}")
+    })?;
     seed_local_planning_session(
         handler.state(),
         LocalPlanningSessionSeed::nucleus_local_bootstrap(),
@@ -236,17 +237,17 @@ async fn read_task_review_decisions(
 ) -> Result<Vec<ControlSelectedTaskReviewDecisionRecordDto>, String> {
     let server_state = state.server_state.clone();
     tauri::async_runtime::spawn_blocking(move || {
-    nucleus_server::selected_task_review_decision_records::read_selected_task_review_decisions(
-        &server_state,
-    )
-    .map_err(|error| format!("task review decision read failed: {error:?}"))
-    .map(|records| {
-        records
-            .iter()
-            .filter(|record| record.project_id == project_id && record.task_id == task_id)
-            .map(ControlSelectedTaskReviewDecisionRecordDto::from)
-            .collect()
-    })
+        nucleus_server::selected_task_review_decision_records::read_selected_task_review_decisions(
+            &server_state,
+        )
+        .map_err(|error| format!("task review decision read failed: {error:?}"))
+        .map(|records| {
+            records
+                .iter()
+                .filter(|record| record.project_id == project_id && record.task_id == task_id)
+                .map(ControlSelectedTaskReviewDecisionRecordDto::from)
+                .collect()
+        })
     })
     .await
     .map_err(|_| "desktop review worker failed".to_owned())?

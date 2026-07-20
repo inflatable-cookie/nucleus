@@ -4,7 +4,7 @@
 //! stopped apply/admission diagnostics. It does not persist receipts or grant
 //! active apply authority.
 
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use nucleus_projects::ProjectId;
 
 use crate::accepted_memory_import_apply_review_command::{
@@ -40,7 +40,7 @@ impl AcceptedMemoryImportApplyReviewDiagnostics {
             project_id,
             review_set,
             review_receipts_persisted: false,
-        no_effects: MemoryApplyNoEffects::none(),
+            no_effects: MemoryApplyNoEffects::none(),
         }
     }
 }

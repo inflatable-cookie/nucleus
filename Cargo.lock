@@ -2253,8 +2253,13 @@ dependencies = [
 name = "nucleus-agent-adapters"
 version = "0.0.0"
 dependencies = [
+ "futures-executor",
  "nucleus-agent-protocol",
  "serde_json",
+ "swallowtail-adapter-codex",
+ "swallowtail-core",
+ "swallowtail-host-local",
+ "swallowtail-runtime",
 ]
 
 [[package]]
@@ -2450,6 +2455,7 @@ dependencies = [
 name = "nucleusd"
 version = "0.0.0"
 dependencies = [
+ "nucleus-agent-adapters",
  "nucleus-command-policy",
  "nucleus-core",
  "nucleus-engine",
@@ -3675,6 +3681,37 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "swallowtail-adapter-codex"
+version = "0.1.0"
+dependencies = [
+ "futures-core",
+ "futures-util",
+ "serde_json",
+ "swallowtail-core",
+ "swallowtail-runtime",
+]
+
+[[package]]
+name = "swallowtail-core"
+version = "0.1.0"
+
+[[package]]
+name = "swallowtail-host-local"
+version = "0.1.0"
+dependencies = [
+ "swallowtail-core",
+ "swallowtail-runtime",
+]
+
+[[package]]
+name = "swallowtail-runtime"
+version = "0.1.0"
+dependencies = [
+ "futures-core",
+ "swallowtail-core",
+]
 
 [[package]]
 name = "swift-rs"

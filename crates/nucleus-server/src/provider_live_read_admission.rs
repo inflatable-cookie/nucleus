@@ -2,8 +2,8 @@
 
 mod blockers;
 mod diagnostics;
-mod gate;
 mod execution;
+mod gate;
 mod persistence_blockers;
 mod persistence_record_builder;
 mod persistence_store;

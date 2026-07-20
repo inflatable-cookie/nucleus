@@ -131,7 +131,11 @@ fn diagnostics_keep_duplicate_noop_visible_without_applying_memory() {
     assert!(diagnostics.records[0]
         .blockers
         .contains(&AcceptedMemoryProjectionImportApplyAdmissionBlocker::DuplicateNoop));
-    assert!(!diagnostics.records[0].no_effects.active_memory_apply_performed);
+    assert!(
+        !diagnostics.records[0]
+            .no_effects
+            .active_memory_apply_performed
+    );
 }
 
 fn no_conflict(memory_id: &str) -> crate::AcceptedMemoryProjectionImportConflictRecord {

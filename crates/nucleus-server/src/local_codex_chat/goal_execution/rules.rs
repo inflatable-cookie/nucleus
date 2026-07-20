@@ -10,13 +10,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use nucleus_core::RevisionId;
 use nucleus_engine::{
     admit_task_agent_work_unit, EngineRuntimeReceiptStatus, EngineTaskAgentWorkUnitReviewStatus,
-    EngineTaskAgentWorkUnitRuntimeStatus,
-    EngineTaskWorkItemAssignment, EngineTaskWorkItemId, EngineTaskWorkItemRecord,
-    EngineTaskWorkItemRefs, EngineTaskWorkItemReviewState, EngineTaskWorkItemRuntimeState,
+    EngineTaskAgentWorkUnitRuntimeStatus, EngineTaskWorkItemAssignment, EngineTaskWorkItemId,
+    EngineTaskWorkItemRecord, EngineTaskWorkItemRefs, EngineTaskWorkItemReviewState,
+    EngineTaskWorkItemRuntimeState,
 };
-use nucleus_local_store::{
-    LocalStoreBackend, RevisionExpectation,
-};
+use nucleus_local_store::{LocalStoreBackend, RevisionExpectation};
 use nucleus_projects::ProjectId;
 use nucleus_tasks::TaskId;
 
@@ -28,7 +26,10 @@ use crate::runtime_receipt_state::write_runtime_receipt;
 use crate::task_agent_work_unit_state::write_task_agent_work_unit_source_record;
 use crate::ServerStateService;
 
-pub(super) fn validate_continuation<B>(state: &ServerStateService<B>, plan: &GoalRunPlan) -> Result<(), String>
+pub(super) fn validate_continuation<B>(
+    state: &ServerStateService<B>,
+    plan: &GoalRunPlan,
+) -> Result<(), String>
 where
     B: LocalStoreBackend,
 {
@@ -176,4 +177,3 @@ where
     execution.terminal_reason = Some(reason);
     Ok(())
 }
-

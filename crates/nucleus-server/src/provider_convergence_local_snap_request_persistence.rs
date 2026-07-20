@@ -1,6 +1,6 @@
 //! Persistence records for stopped Convergence local snap requests.
 
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 use serde::{Deserialize, Serialize};
 
 use crate::{

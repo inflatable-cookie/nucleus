@@ -1,13 +1,8 @@
-
 use nucleus_local_store::LocalStoreBackend;
 use serde::{Deserialize, Serialize};
 
-use super::task_execution::{
-    run_task, TaskExecutionRequest,
-};
-use crate::{
-    ServerStateService, TaskReviewSnapshotStore,
-};
+use super::task_execution::{run_task, TaskExecutionRequest};
+use crate::{ServerStateService, TaskReviewSnapshotStore};
 
 const EXECUTION_PREFIX: &str = "goal-run-execution:";
 
@@ -105,6 +100,7 @@ where
         &mut |input, on_started| {
             run_task(
                 TaskExecutionRequest {
+                    session_id: &input.session_id,
                     project_root: &input.project_root,
                     route: &input.route,
                     prompt: &input.prompt,
@@ -115,7 +111,6 @@ where
     )
 }
 
-
 mod dispatch;
 mod outcome;
 mod persistence;
@@ -125,4 +120,3 @@ mod run_loop;
 mod tests_split;
 
 use run_loop::*;
-

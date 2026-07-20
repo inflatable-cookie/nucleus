@@ -460,7 +460,9 @@ fn invalid<E>(reason: &str) -> EngineProjectCommandError<E> {
     }
 }
 
-fn codec_error<E>(error: nucleus_projects::ProjectRecordCodecError) -> EngineProjectCommandError<E> {
+fn codec_error<E>(
+    error: nucleus_projects::ProjectRecordCodecError,
+) -> EngineProjectCommandError<E> {
     EngineProjectCommandError::Codec {
         reason: error.reason,
     }

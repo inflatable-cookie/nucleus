@@ -1,6 +1,6 @@
 //! Read-only control DTOs for Convergence local snap request persistence.
 
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 use serde::{Deserialize, Serialize};
 
 use crate::{

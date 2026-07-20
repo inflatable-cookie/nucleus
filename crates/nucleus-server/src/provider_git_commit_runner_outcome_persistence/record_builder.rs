@@ -1,4 +1,3 @@
-use crate::provider_no_effects::{ForgeScmNoEffects};
 use super::helpers::unique_sorted;
 use super::store::OUTCOME_PREFIX;
 use super::types::{
@@ -6,6 +5,7 @@ use super::types::{
     GitCommitRunnerOutcomePersistenceRecord, GitCommitRunnerOutcomePersistenceStatus,
     GitCommitRunnerOutcomeStatus,
 };
+use crate::provider_no_effects::ForgeScmNoEffects;
 use crate::{GitCommitRunnerCommandAdapterRecord, GitCommitRunnerCommandAdapterStatus};
 
 pub(super) fn outcome_record(

@@ -9,7 +9,7 @@ pub use types::{
     GitPushRunnerCommandAdapterStatus, GitPushRunnerCommandKind,
 };
 
-use crate::provider_no_effects::{ForgeScmNoEffects};
+use crate::provider_no_effects::ForgeScmNoEffects;
 use record_builder::command_record;
 
 pub fn git_push_runner_command_adapter(

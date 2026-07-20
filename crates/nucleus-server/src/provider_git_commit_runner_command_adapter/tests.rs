@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ForgeScmNoEffects};
 use super::*;
+use crate::provider_no_effects::ForgeScmNoEffects;
 use crate::{
     GitBranchWorktreeMode, GitCommitMessageSource, GitCommitRunnerAuthorityRecord,
     GitCommitRunnerAuthoritySet, GitCommitRunnerAuthorityStatus,

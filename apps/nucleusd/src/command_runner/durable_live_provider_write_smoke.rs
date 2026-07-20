@@ -238,10 +238,7 @@ mod tests {
         );
         assert_eq!(input.thread_id.as_deref(), Some("thread:runner-bridge"));
         assert_eq!(input.turn_id.as_deref(), Some("turn:runner-bridge"));
-        assert_eq!(
-            input.method_sequence,
-            LiveCodexSmokeOutcome::completed_method_sequence()
-        );
+        assert_eq!(input.method_sequence, live::completed_method_sequence());
         assert_eq!(input.notification_count, 3);
         assert_eq!(input.server_request_count, 1);
         assert!(!input.raw_provider_material_present);
@@ -269,6 +266,34 @@ mod tests {
             input.cleanup_status,
             CodexAppServerLiveExecutorCleanupStatus::NotRequired
         );
+    }
+
+    #[test]
+    fn durable_live_provider_write_runner_bridge_preserves_refs_and_cleanup_uncertainty() {
+        let (run, gate) = test_gate_and_run("runner-bridge-cleanup");
+
+        let input = durable_live_provider_write_evidence_input_from_outcome(
+            run,
+            gate,
+            LiveCodexSmokeOutcome::cleanup_required_for_test("runner-bridge-cleanup"),
+        );
+
+        assert!(matches!(
+            input.status,
+            CodexAppServerLiveExecutorOutcomeStatus::CleanupRequired(_)
+        ));
+        assert!(matches!(
+            input.cleanup_status,
+            CodexAppServerLiveExecutorCleanupStatus::Failed(_)
+        ));
+        assert_eq!(
+            input.thread_id.as_deref(),
+            Some("thread:runner-bridge-cleanup")
+        );
+        assert_eq!(input.turn_id.as_deref(), Some("turn:runner-bridge-cleanup"));
+        assert!(input
+            .method_sequence
+            .contains(&nucleus_server::CodexAppServerLiveExecutorMethod::TurnCompleted));
     }
 
     #[test]

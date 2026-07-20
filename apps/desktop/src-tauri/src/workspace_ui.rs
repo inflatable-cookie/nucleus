@@ -79,7 +79,9 @@ pub struct WorkspacePanelDto {
     pub title: String,
     pub closeable: bool,
     pub movable: bool,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    // Renderer code indexes this map directly. Always serialize an empty map
+    // so an optional persisted field never becomes an optional IPC field.
+    #[serde(default)]
     pub resource_targets: BTreeMap<String, String>,
     #[serde(default)]
     pub allowed_regions: Vec<String>,
@@ -487,6 +489,17 @@ mod tests {
         assert_eq!(
             restored.get("project:two").map(String::as_str),
             Some("resource:beta")
+        );
+    }
+
+    #[test]
+    fn empty_panel_resource_targets_serialize_as_an_object() {
+        let config = default_workspace_ui_config();
+        let value = serde_json::to_value(config).expect("encode config");
+
+        assert_eq!(
+            value["window"]["regions"]["center_top"][0]["resource_targets"],
+            serde_json::json!({})
         );
     }
 

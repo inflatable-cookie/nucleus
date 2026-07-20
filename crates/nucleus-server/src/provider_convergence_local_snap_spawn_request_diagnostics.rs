@@ -1,6 +1,6 @@
 //! Read-only diagnostics for stopped Convergence local snap spawn requests.
 
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 use serde::{Deserialize, Serialize};
 
 use crate::{ConvergenceLocalSnapSpawnRequestSet, ConvergenceLocalSnapSpawnRequestStatus};

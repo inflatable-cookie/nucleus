@@ -7,27 +7,17 @@ use super::{dispatch::*, outcome::*, persistence::*, rules::*};
 #[allow(unused_imports)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use nucleus_engine::{
-    EngineTaskAgentWorkUnitReviewStatus,
-    EngineTaskAgentWorkUnitRuntimeStatus,
-};
-use nucleus_local_store::{
-    LocalStoreBackend, RevisionExpectation,
-};
+use nucleus_engine::{EngineTaskAgentWorkUnitReviewStatus, EngineTaskAgentWorkUnitRuntimeStatus};
+use nucleus_local_store::{LocalStoreBackend, RevisionExpectation};
 
 use super::super::goal_run::{read_goal_run_plan, GoalRunRoute};
-use super::super::review_evidence::{
-    capture_baseline, capture_completed, TaskReviewEvidenceInput,
-};
-use super::super::task_execution::{
-    TaskExecutionLinkage, TaskExecutionOutcome,
-};
+use super::super::review_evidence::{capture_baseline, capture_completed, TaskReviewEvidenceInput};
+use super::super::task_execution::{TaskExecutionLinkage, TaskExecutionOutcome};
 use super::super::task_inspection::active_task;
-use crate::{
-    ServerStateService, TaskReviewSnapshotStore,
-};
+use crate::{ServerStateService, TaskReviewSnapshotStore};
 
 pub(super) struct GoalTaskRunInput {
+    pub(super) session_id: String,
     pub(super) project_root: String,
     pub(super) route: GoalRunRoute,
     pub(super) prompt: String,
@@ -194,6 +184,7 @@ where
         let mut running_source = None;
         let outcome = runner(
             GoalTaskRunInput {
+                session_id: format!("session:task:{}", task_record.work_item_id),
                 project_root: project_root.clone(),
                 route: plan.route.clone(),
                 prompt,
@@ -283,4 +274,3 @@ where
     expire_for_execution(state, &plan, &execution)?;
     Ok(execution)
 }
-

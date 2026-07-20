@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 
 use crate::{ConvergenceLocalSnapSpawnRequestBlocker, ConvergenceLocalSnapSpawnRequestRecord};
 

@@ -11,6 +11,7 @@ pub mod live_runtime;
 pub mod routes;
 pub mod runtime;
 pub mod sessions;
+pub mod task_execution;
 pub mod traits;
 
 pub use capabilities::{AdapterCapabilities, CapabilitySupport};
@@ -29,13 +30,13 @@ pub use events::{
     SessionPayload, SessionPayloadKind, Severity, TokenUsagePayload, ToolCallPayload,
     ToolCallStatus, TurnPayload, TurnPayloadKind, UserInputPayload, UserInputPromptKind,
 };
+pub use identity::{
+    AdapterIdentity, AuthenticationPreflight, ProviderDriverKind, TransportFamily, VersionDiscovery,
+};
 pub use live_runtime::{
     AgentLiveSession, AgentModelOption, AgentReasoningOption, AgentSessionRuntime,
     AgentSessionStartRequest, AgentStartedSessionInfo, AgentToolCall, AgentToolCallHandler,
     AgentTurnReply, AgentTurnRequest,
-};
-pub use identity::{
-    AdapterIdentity, AuthenticationPreflight, ProviderDriverKind, TransportFamily, VersionDiscovery,
 };
 pub use routes::{
     ApiCompatibilityFamily, AuthSource, BillingAccountSource, ModelRoute, ModelRouteCapabilities,
@@ -53,6 +54,10 @@ pub use runtime::{
 pub use sessions::{
     AgentSessionId, AgentSessionLifecycleState, AgentSessionRecord, AgentSessionRecoveryState,
     AgentSessionStateChange, AgentTurnId, AgentTurnRecord, AgentTurnStatus, SessionLifecycleAction,
+};
+pub use task_execution::{
+    TaskExecutionLinkage, TaskExecutionOutcome, TaskExecutionRequest, TaskExecutionRuntime,
+    TaskExecutionStartedHandler,
 };
 pub use traits::{
     AdapterCommandAcknowledgement, AdapterCommandRequest, AdapterEventBoundary,

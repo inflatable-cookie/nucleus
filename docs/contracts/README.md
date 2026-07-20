@@ -33,6 +33,8 @@ Contracts define durable rules and interfaces.
 - `027-provider-auth-forge-execution-contract.md`
 - `028-browser-panel-runtime-contract.md`
 - `029-terminal-panel-runtime-contract.md`
+- `030-swallowtail-agent-runtime-integration-contract.md`
+- `031-swallowtail-task-execution-runtime-contract.md`
 - `contract-index.md`
 
 ## Promotion Rule

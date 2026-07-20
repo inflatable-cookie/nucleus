@@ -200,17 +200,20 @@ pub(super) fn compose_dispatch(
     })
 }
 
-pub(super) fn task_prompt(plan: &GoalRunPlan, ordinal: usize, task: &crate::ControlTaskRecordDto) -> String {
+pub(super) fn task_prompt(
+    plan: &GoalRunPlan,
+    ordinal: usize,
+    task: &crate::ControlTaskRecordDto,
+) -> String {
     let rework = plan.ordered_tasks.get(ordinal).and_then(|plan_task| {
-        plan_task
-            .rework_decision_ref
-            .as_ref()
-            .map(|decision_ref| nucleus_engine::EngineGoalRunReworkContext {
+        plan_task.rework_decision_ref.as_ref().map(|decision_ref| {
+            nucleus_engine::EngineGoalRunReworkContext {
                 decision_ref: decision_ref.clone(),
                 reason: plan_task.rework_reason.clone(),
                 reviewed_work_item_refs: plan_task.reviewed_work_item_refs.clone(),
                 reviewed_evidence_refs: plan_task.reviewed_evidence_refs.clone(),
-            })
+            }
+        })
     });
     nucleus_engine::goal_run_task_prompt(
         plan.goal_id.as_deref(),
@@ -249,7 +252,9 @@ pub(super) fn work_item_id(plan: &GoalRunPlan, task: &GoalRunPlanTask) -> String
     nucleus_engine::goal_run_work_item_id(&plan.plan_id, &task.task_id)
 }
 
-pub(super) fn task_record_linkage(record: &GoalTaskExecutionRecord) -> Option<TaskExecutionLinkage> {
+pub(super) fn task_record_linkage(
+    record: &GoalTaskExecutionRecord,
+) -> Option<TaskExecutionLinkage> {
     Some(TaskExecutionLinkage {
         session_id: record.session_id.clone()?,
         thread_id: record.provider_thread_id.clone()?,
@@ -257,7 +262,10 @@ pub(super) fn task_record_linkage(record: &GoalTaskExecutionRecord) -> Option<Ta
     })
 }
 
-pub(super) fn upsert_task_execution(execution: &mut GoalRunExecutionRecord, task: GoalTaskExecutionRecord) {
+pub(super) fn upsert_task_execution(
+    execution: &mut GoalRunExecutionRecord,
+    task: GoalTaskExecutionRecord,
+) {
     if let Some(existing) = execution
         .task_executions
         .iter_mut()
@@ -271,4 +279,3 @@ pub(super) fn upsert_task_execution(execution: &mut GoalRunExecutionRecord, task
             .sort_by_key(|record| record.ordinal);
     }
 }
-

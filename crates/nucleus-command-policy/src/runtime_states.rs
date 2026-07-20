@@ -20,8 +20,8 @@ pub struct CommandEffectStateRecord {
 /// Command effect states (shared core vocabulary re-exported under the
 /// command names).
 pub use nucleus_core::{
-    EffectNonTerminalState as CommandEffectNonTerminalState,
-    EffectState as CommandEffectState, EffectTerminalState as CommandEffectTerminalState,
+    EffectNonTerminalState as CommandEffectNonTerminalState, EffectState as CommandEffectState,
+    EffectTerminalState as CommandEffectTerminalState,
 };
 
 #[cfg(test)]

@@ -1,9 +1,9 @@
-use crate::provider_no_effects::ProviderNoEffects;
 use super::{
     ProviderLiveReadPersistenceControlDto, ProviderLiveReadPersistenceDiagnostics,
     ProviderLiveReadPersistenceRecord, ProviderLiveReadPersistenceStatus,
     ProviderLiveReadRequestReceiptStatus,
 };
+use crate::provider_no_effects::ProviderNoEffects;
 
 pub fn provider_live_read_persistence_diagnostics_from_records(
     records: Vec<ProviderLiveReadPersistenceRecord>,

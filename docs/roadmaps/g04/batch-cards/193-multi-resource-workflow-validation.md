@@ -1,6 +1,6 @@
 # 193 Multi-Resource Workflow Validation
 
-Status: in progress
+Status: paused
 Owner: Codex
 Updated: 2026-07-15
 Milestone: `../039-multi-resource-attachment-and-targeting.md`

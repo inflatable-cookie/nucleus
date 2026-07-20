@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::accepted_memory_import_apply_review_command::{
@@ -106,7 +106,7 @@ impl From<&AcceptedMemoryImportApplyReviewDiagnostics>
                 &diagnostics.review_set.counts,
             ),
             review_receipts_persisted: diagnostics.review_receipts_persisted,
-        no_effects: diagnostics.no_effects,
+            no_effects: diagnostics.no_effects,
         }
     }
 }

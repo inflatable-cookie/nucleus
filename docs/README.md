@@ -34,8 +34,15 @@ Projects now generalize beyond repository bookmarks: durable scopes may be
 created by name with zero resources, compact lifecycle controls are validated,
 and the host-owned attach/update/repair/remove boundary detects plain folders
 and Git worktrees. Compact resource management and conditional panel targeting
-are now in place. The active runway validates zero-, one-, and multi-resource
-workflows before transient chat promotion and optional Shared project files.
+are now in place. Multi-resource validation is paused for Nucleus Swallowtail
+adoption. Agent Chat model discovery, live sessions, turns, callbacks,
+deadlines, and cleanup now use the shared Codex adapter behind the existing
+Nucleus facade, with automated and authenticated native parity complete. The
+product Goal/task executor now uses the Nucleus-owned `TaskExecutionRuntime`
+port over Swallowtail's bounded workspace session while preserving existing
+linkage, receipts, checkpoints, diffs, wait states, and review semantics. The
+separately gated daemon diagnostic smoke now uses Swallowtail's read-only
+session path too; no Nucleus-owned live Codex JSON-RPC client remains.
 
 Current planning artifacts:
 
@@ -53,12 +60,17 @@ Current planning artifacts:
 - `roadmaps/g04/035-host-routed-terminal-panel.md`
 - `roadmaps/g04/036-project-memory-panel.md`
 - `specs/012-flexible-project-lifecycle-and-resources.md`
+- `specs/013-shared-agent-runtime-extraction.md`
+- `contracts/030-swallowtail-agent-runtime-integration-contract.md`
+- `contracts/031-swallowtail-task-execution-runtime-contract.md`
 - `architecture/project-resource-lifecycle.md`
 - `roadmaps/g04/037-project-resource-foundation.md`
 - `roadmaps/g04/038-project-control-workflow.md`
 - `roadmaps/g04/039-multi-resource-attachment-and-targeting.md`
 - `roadmaps/g04/040-transient-chat-and-promotion.md`
 - `roadmaps/g04/041-shared-project-files-control.md`
+- `roadmaps/g04/049-swallowtail-agent-chat-adoption.md`
+- `roadmaps/g04/050-swallowtail-task-execution-adoption.md`
 
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`

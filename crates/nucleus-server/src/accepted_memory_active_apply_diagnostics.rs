@@ -1,6 +1,6 @@
 //! Read-only diagnostics for stopped accepted-memory active-apply admissions.
 
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use nucleus_memory::AcceptedMemoryReviewReceiptStorageRecord;
 use nucleus_projects::ProjectId;
 
@@ -87,7 +87,7 @@ impl AcceptedMemoryActiveApplyDiagnostics {
             project_id,
             records: admission_set.records,
             counts,
-        no_effects: MemoryApplyNoEffects::none(),
+            no_effects: MemoryApplyNoEffects::none(),
         }
     }
 }

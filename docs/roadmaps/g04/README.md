@@ -206,6 +206,11 @@ Current checkpoint:
   resources on the host and retain panel/task resource attribution
 - compact project resource management now handles attach, default, repair,
   and removal while keeping ordinary one-resource panels free of topology UI
+- Agent Chat and Goal/task execution now use separate read-only and bounded-
+  workspace profiles behind Nucleus-owned Swallowtail consumer facades
+- direct Codex JSON-RPC is removed from the product task executor without
+  changing Goal ordering, durable linkage, checkpoints, diffs, review, or
+  receipts
 
 ## Roadmaps
 
@@ -250,15 +255,25 @@ Current checkpoint:
 - `039-multi-resource-attachment-and-targeting.md` - active
 - `040-transient-chat-and-promotion.md` - planned
 - `041-shared-project-files-control.md` - planned
+- `049-swallowtail-agent-chat-adoption.md` - completed
+- `050-swallowtail-task-execution-adoption.md` - active
 
 ## Batch Cards
 
 Ready cards:
 
-- `batch-cards/193-multi-resource-workflow-validation.md`
+- `batch-cards/228-task-execution-validation-closeout.md`
 
 Completed cards:
 
+- `batch-cards/227-codex-smoke-consolidation.md`
+- `batch-cards/226-nucleus-task-executor-adoption.md`
+- `batch-cards/225-swallowtail-writable-session-driver.md`
+- `batch-cards/223-direct-codex-execution-inventory.md`
+- `batch-cards/224-swallowtail-writable-execution-contract.md`
+- `batch-cards/222-swallowtail-agent-chat-validation.md`
+- `batch-cards/221-swallowtail-agent-chat-transport.md`
+- `batch-cards/220-swallowtail-consumer-boundary-promotion.md`
 - `batch-cards/185-project-resource-control-boundary.md`
 - `batch-cards/186-project-resource-foundation-validation.md`
 - `batch-cards/187-project-lifecycle-command-boundary.md`

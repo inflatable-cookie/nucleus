@@ -310,6 +310,8 @@ shape.
 - `g04/046-engine-boundary-migration.md` - completed
 - `g04/047-desktop-contract-integrity.md` - completed
 - `g04/048-roadmap-residue-archival.md` - superseded
+- `g04/049-swallowtail-agent-chat-adoption.md` - completed
+- `g04/050-swallowtail-task-execution-adoption.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -369,6 +371,7 @@ shape.
 
 ## Next Task
 
-Complete `g04/batch-cards/193-multi-resource-workflow-validation.md`: validate
-zero-, one-, and multi-resource workflows, movement repair, persisted targets,
-and local or remote authority shapes without making the common path noisy.
+Complete `g04/batch-cards/228-task-execution-validation-closeout.md`: run the
+authenticated single-task and ordered two-task Goal workflows, inspect durable
+review/recovery evidence in the native UI, and close the Swallowtail task
+execution adoption lane only if parity holds.

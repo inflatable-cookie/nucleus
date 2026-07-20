@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 
 use crate::{
     ConvergenceLocalSnapStoppedRunnerCommandAdapterKind,
@@ -132,7 +132,7 @@ fn input(
             adapter_set_id: "adapter".to_owned(),
             records,
             skipped_persisted_evidence_ids: Vec::new(),
-        no_effects: ConvergenceSnapNoAuthority::none(),
+            no_effects: ConvergenceSnapNoAuthority::none(),
         },
         existing_replay_record_ids,
         raw_material_present,

@@ -27,4 +27,3 @@ pub enum ClientKind {
     Service,
     Other(String),
 }
-

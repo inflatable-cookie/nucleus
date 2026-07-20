@@ -10,11 +10,11 @@ mod types;
 
 pub use types::*;
 
-use crate::provider_no_effects::{MemoryApplyNoEffects};
 use crate::accepted_memory_projection::AcceptedMemoryProjection;
 use crate::accepted_memory_projection_import_apply_diagnostics::AcceptedMemoryProjectionImportApplyDiagnostics;
 use crate::accepted_memory_projection_import_diagnostics::AcceptedMemoryProjectionImportDiagnostics;
 use crate::accepted_memory_projection_write_diagnostics::AcceptedMemoryProjectionWriteDiagnostics;
+use crate::provider_no_effects::MemoryApplyNoEffects;
 
 impl AcceptedMemoryReviewReadiness {
     pub fn from_diagnostics(
@@ -37,7 +37,7 @@ impl AcceptedMemoryReviewReadiness {
             project_id: accepted_memory.project_id,
             records,
             counts,
-        no_effects: MemoryApplyNoEffects::none(),
+            no_effects: MemoryApplyNoEffects::none(),
         }
     }
 }

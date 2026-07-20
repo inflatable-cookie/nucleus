@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
 use super::*;
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 
 #[test]
 fn convergence_local_snap_stopped_runner_command_adapter_records_reviewable_evidence() {
@@ -129,7 +129,7 @@ fn input(
             records,
             duplicate_evidence_ids: Vec::new(),
             blocked_evidence_ids: Vec::new(),
-        no_effects: ConvergenceSnapNoAuthority::none(),
+            no_effects: ConvergenceSnapNoAuthority::none(),
         },
     }
 }

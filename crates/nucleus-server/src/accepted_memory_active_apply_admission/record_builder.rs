@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use nucleus_memory::AcceptedMemoryReviewReceiptAdmissionStatusStorage;
 
 use crate::accepted_memory_active_apply_admission::blockers::{

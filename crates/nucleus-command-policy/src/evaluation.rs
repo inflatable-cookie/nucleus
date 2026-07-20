@@ -166,9 +166,9 @@ fn consume_flagged_wrapper(name: &str, argv: &[String]) -> Option<Vec<String>> {
     }
     // `timeout` consumes a duration positional before the command.
     if name == "timeout" && index < argv.len() && !argv[index].is_empty() {
-        let duration_like = argv[index]
-            .chars()
-            .all(|character| character.is_ascii_digit() || matches!(character, '.' | 's' | 'm' | 'h' | 'd'));
+        let duration_like = argv[index].chars().all(|character| {
+            character.is_ascii_digit() || matches!(character, '.' | 's' | 'm' | 'h' | 'd')
+        });
         if duration_like {
             index += 1;
         }
@@ -211,7 +211,16 @@ fn is_interpreter(name: &str) -> bool {
         || name.starts_with("lua")
         || matches!(
             name,
-            "node" | "nodejs" | "deno" | "bun" | "perl" | "osascript" | "rscript" | "julia" | "elixir" | "erl"
+            "node"
+                | "nodejs"
+                | "deno"
+                | "bun"
+                | "perl"
+                | "osascript"
+                | "rscript"
+                | "julia"
+                | "elixir"
+                | "erl"
         )
 }
 
@@ -288,7 +297,11 @@ fn mutating_flag(name: &str, argv: &[String]) -> Option<String> {
     match name {
         "sed" | "gsed" => argv
             .iter()
-            .find(|argument| *argument == "-i" || argument.starts_with("-i") && argument.len() > 2 || argument.starts_with("--in-place"))
+            .find(|argument| {
+                *argument == "-i"
+                    || argument.starts_with("-i") && argument.len() > 2
+                    || argument.starts_with("--in-place")
+            })
             .cloned(),
         "gawk" | "awk" => argv
             .iter()
@@ -338,7 +351,14 @@ mod tests {
 
     #[test]
     fn shells_are_denied_including_uncommon_ones() {
-        for shell in ["sh", "/bin/bash", "dash", "ksh", "busybox", "C:\\Windows\\cmd.exe"] {
+        for shell in [
+            "sh",
+            "/bin/bash",
+            "dash",
+            "ksh",
+            "busybox",
+            "C:\\Windows\\cmd.exe",
+        ] {
             let decision = decision(shell, &["-c", "true"]);
             assert!(
                 matches!(decision, CommandPolicyDecision::Denied(_)),
@@ -367,7 +387,10 @@ mod tests {
     #[test]
     fn interpreter_script_execution_requires_approval() {
         let decision = decision("python3", &["script.py"]);
-        assert!(matches!(decision, CommandPolicyDecision::RequiresApproval(_)));
+        assert!(matches!(
+            decision,
+            CommandPolicyDecision::RequiresApproval(_)
+        ));
     }
 
     #[test]

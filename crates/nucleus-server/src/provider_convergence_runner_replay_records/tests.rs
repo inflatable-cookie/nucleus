@@ -1,5 +1,5 @@
-use crate::provider_no_effects::{ConvergenceRunnerNoAuthority};
 use super::*;
+use crate::provider_no_effects::ConvergenceRunnerNoAuthority;
 
 use crate::{
     ConvergenceStoppedRunnerCommandAdapterKind, ConvergenceStoppedRunnerCommandAdapterRecord,
@@ -127,7 +127,7 @@ fn input(
             adapter_set_id: "adapter".to_owned(),
             records,
             skipped_persisted_evidence_ids: Vec::new(),
-        no_effects: ConvergenceRunnerNoAuthority::none(),
+            no_effects: ConvergenceRunnerNoAuthority::none(),
         },
         existing_replay_record_ids,
         raw_material_present,

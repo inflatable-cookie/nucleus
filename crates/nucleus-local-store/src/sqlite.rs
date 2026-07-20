@@ -345,7 +345,9 @@ impl LocalStoreRepository for SqliteRepository {
         Self::with_immediate_transaction(&connection, |connection| {
             Self::check_revision(connection, table, id, revision)?;
             let sql = format!("DELETE FROM {table} WHERE id = ?1");
-            let deleted = connection.execute(&sql, params![id.0]).map_err(sqlite_error)?;
+            let deleted = connection
+                .execute(&sql, params![id.0])
+                .map_err(sqlite_error)?;
             if deleted == 0 {
                 Err(LocalStoreError::RecordNotFound {
                     record_id: id.clone(),

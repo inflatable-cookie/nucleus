@@ -361,7 +361,7 @@
 
   function panelResourceTarget(panel: WorkspacePanelDto): string | null {
     const projectId = selectedProject?.project_id;
-    return projectId ? panel.resource_targets[projectId] ?? null : null;
+    return projectId ? (panel.resource_targets ?? {})[projectId] ?? null : null;
   }
 
   function effectivePanelResourceTarget(panel: WorkspacePanelDto): string | null {
@@ -393,7 +393,7 @@
         return;
       }
     }
-    const resourceTargets = { ...panel.resource_targets };
+    const resourceTargets = { ...(panel.resource_targets ?? {}) };
     if (resourceId) resourceTargets[projectId] = resourceId;
     else delete resourceTargets[projectId];
     const regions = Object.fromEntries(

@@ -268,21 +268,23 @@ uses the contract fallback order when the recorded display is gone.
 Operator direction keeps the approved workspace window shell intact. The
 first real workflow is implemented inside the existing Agent Chat panel.
 
-The first slice uses a server-owned local Codex app-server process and retains
-one provider thread per Agent Chat panel while the desktop is open. The server
-resolves the project working directory from project state. The client sends a
-project id, panel conversation id, and message; it does not select an arbitrary
-working directory.
+The first slice uses a server-owned Swallowtail-backed Codex app-server session
+and retains one live provider session per Agent Chat panel while the desktop is
+open. The server resolves the project working directory from project state and
+supplies the approved process host to Swallowtail. The client sends a project
+id, panel conversation id, and message; it does not select an arbitrary working
+directory.
 
 The accepted chat interaction now has first-pass durable continuity:
 
 - Nucleus session, turn, and ordered user/assistant message records persist in
   server-owned local state
 - the panel hydrates from server history after remount or desktop restart
-- the provider thread id is retained as an external ref and resumed after
-  local service restart
-- a mismatched replacement provider thread fails instead of silently changing
-  conversation identity
+- the provider thread id is retained as an external ref for audit, but stored
+  tool-enabled history reopens in a fresh provider session with sanitized
+  transcript context
+- model, reasoning, or resource changes also open a fresh provider session
+  without changing Nucleus conversation identity
 - unsupported callbacks, approvals, and structured user input remain deferred
 - the provider runs with read-only workspace access and no approval escalation
 
@@ -298,10 +300,10 @@ Creating a task never dispatches it. Streaming presentation remains deferred.
 
 The first composer redesign remains inside `AgentChatPanel.svelte`. It uses a
 floating bottom surface rather than adding another shell region or global
-toolbar. The local Codex app-server model catalog feeds compact model and
+toolbar. The Swallowtail Codex adapter's model catalog feeds compact model and
 reasoning selectors; selected values cross the existing Tauri chat command and
-become turn-level provider overrides. Effective route data continues through
-the existing durable chat-session record.
+become session-route inputs. Effective route data continues through the
+existing durable chat-session record.
 
 ## Initial Tasks Panel
 

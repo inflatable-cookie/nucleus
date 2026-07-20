@@ -1,6 +1,6 @@
 //! Read-only diagnostics for stopped Convergence local snap runner commands.
 
-use crate::provider_no_effects::{ConvergenceSnapNoAuthority};
+use crate::provider_no_effects::ConvergenceSnapNoAuthority;
 use serde::{Deserialize, Serialize};
 
 use crate::{

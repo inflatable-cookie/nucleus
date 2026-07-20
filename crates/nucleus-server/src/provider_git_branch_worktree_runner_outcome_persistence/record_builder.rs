@@ -1,4 +1,3 @@
-use crate::provider_no_effects::{ForgeScmNoEffects};
 use super::helpers::unique_sorted;
 use super::store::OUTCOME_PREFIX;
 use super::types::{
@@ -7,6 +6,7 @@ use super::types::{
     GitBranchWorktreeRunnerOutcomePersistenceRecord,
     GitBranchWorktreeRunnerOutcomePersistenceStatus, GitBranchWorktreeRunnerOutcomeStatus,
 };
+use crate::provider_no_effects::ForgeScmNoEffects;
 use crate::{
     GitBranchWorktreeRunnerCommandAdapterRecord, GitBranchWorktreeRunnerCommandAdapterStatus,
 };

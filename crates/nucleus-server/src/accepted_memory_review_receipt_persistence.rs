@@ -9,7 +9,7 @@ mod mapping;
 #[cfg(test)]
 mod tests;
 
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
 use nucleus_local_store::{
     LocalStoreBackend, LocalStoreError, LocalStoreRecord, LocalStoreRecordPayload,
@@ -57,14 +57,14 @@ impl AcceptedMemoryReviewReceiptPersistenceNoEffects {
     pub fn persisted_only() -> Self {
         Self {
             review_receipt_written: true,
-        no_effects: MemoryApplyNoEffects::none(),
+            no_effects: MemoryApplyNoEffects::none(),
         }
     }
 
     pub fn duplicate_without_mutation() -> Self {
         Self {
             review_receipt_written: false,
-        no_effects: MemoryApplyNoEffects::none(),
+            no_effects: MemoryApplyNoEffects::none(),
         }
     }
 }

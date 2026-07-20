@@ -78,7 +78,7 @@ fn read_intent_result() -> ForgeReadIntentQueryResult {
             evidence_ref_count: 2,
             duplicate_refresh_detected: false,
             stopped_refresh_recorded: true,
-        no_effects: ProviderRuntimeNoEffects::none(),
+            no_effects: ProviderRuntimeNoEffects::none(),
         }],
         no_effects: ProviderRuntimeNoEffects::none(),
     };
@@ -109,10 +109,10 @@ fn read_intent_result() -> ForgeReadIntentQueryResult {
                 repair_required_count: 0,
                 blocker_count: 0,
                 evidence_ref_count: 2,
-        no_effects: ProviderRuntimeNoEffects::none(),
+                no_effects: ProviderRuntimeNoEffects::none(),
             },
             source_counts,
-        no_effects: ProviderRuntimeNoEffects::none(),
+            no_effects: ProviderRuntimeNoEffects::none(),
         },
         no_effects: ProviderRuntimeNoEffects::none(),
     }

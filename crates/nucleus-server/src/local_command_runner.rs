@@ -365,9 +365,7 @@ mod tests {
         let request = nucleus_contract_fixtures::command_policy::read_only_inspection_request();
         let rejections = runner.rejections(&request, &fixture_invocation(&request.id.0.clone()));
 
-        assert!(
-            rejections.contains(&LocalReadOnlyCommandRunnerRejection::UnsupportedAuthorityArea)
-        );
+        assert!(rejections.contains(&LocalReadOnlyCommandRunnerRejection::UnsupportedAuthorityArea));
         assert!(!rejections.contains(&LocalReadOnlyCommandRunnerRejection::UnsupportedScope));
     }
 }

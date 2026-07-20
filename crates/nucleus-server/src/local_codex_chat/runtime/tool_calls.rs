@@ -1,6 +1,5 @@
 use super::super::task_authoring::TaskAuthoringReceipt;
 
-
 pub(super) fn consolidate_task_receipts(
     receipts: Vec<TaskAuthoringReceipt>,
 ) -> Vec<TaskAuthoringReceipt> {

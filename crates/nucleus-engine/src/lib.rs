@@ -11,18 +11,18 @@ pub mod checkpoint_diff;
 pub mod codex_runtime_receipts;
 pub mod commands;
 pub mod effects;
+pub mod goal_commands;
+pub mod goal_run_rules;
 pub mod management_projection;
 pub mod management_sync;
 pub mod planning_task_seed;
+pub mod project_commands;
 pub mod projections;
 pub mod repositories;
 pub mod runtime_receipts;
 pub mod scm_work_item_linkage;
 pub mod services;
 pub mod task_agent;
-pub mod goal_commands;
-pub mod goal_run_rules;
-pub mod project_commands;
 pub mod task_commands;
 pub mod task_readiness;
 pub mod task_timeline;
@@ -46,6 +46,15 @@ pub use checkpoint_diff::{
     EngineDiffSummaryRecord, EngineDiffSummaryRecordId,
 };
 pub use codex_runtime_receipts::runtime_receipt_from_codex_fixture;
+pub use goal_commands::{
+    EngineGoalCommand, EngineGoalCommandError, EngineGoalCommandService, EngineGoalCreateCommand,
+    EngineGoalRepository, EngineGoalUpdateChanges, EngineGoalUpdateCommand,
+};
+pub use goal_run_rules::{
+    goal_run_task_prompt, goal_run_work_item_id, parse_task_action,
+    validate_goal_continuation_status, validate_goal_run_mandate, validate_goal_run_task,
+    EngineGoalRunReworkContext, EngineGoalRunTaskView,
+};
 pub use management_projection::{
     decode_management_projection_file_document, encode_management_projection_file_document,
     export_project_planning_projection, export_project_task_projection,
@@ -101,6 +110,12 @@ pub use planning_task_seed::{
     PlanningStorageTaskImportance, PlanningTaskSeedRecordCodecError,
     PlanningTaskSeedStoragePromotionState, PlanningTaskSeedStorageRecord,
 };
+pub use project_commands::{
+    EngineProjectCommand, EngineProjectCommandError, EngineProjectCommandService,
+    EngineProjectCreateCommand, EngineProjectLifecycleAction, EngineProjectLifecycleCommand,
+    EngineProjectLifecycleReceipt, EngineProjectRepository, EngineProjectRetentionChoice,
+    EngineProjectScanDomain,
+};
 pub use runtime_receipts::{
     decode_runtime_receipt_record, encode_runtime_receipt_record, EngineRuntimeReceiptEffectFamily,
     EngineRuntimeReceiptRecord, EngineRuntimeReceiptRecordId, EngineRuntimeReceiptRef,
@@ -120,21 +135,6 @@ pub use task_agent::{
     EngineTaskAgentWorkUnitReviewStatus, EngineTaskAgentWorkUnitRuntimeStatus,
     EngineTaskAgentWorkUnitSourceCursor, EngineTaskAgentWorkUnitSourceId,
     EngineTaskAgentWorkUnitSourceRecord,
-};
-pub use goal_run_rules::{
-    goal_run_task_prompt, goal_run_work_item_id, parse_task_action,
-    validate_goal_continuation_status, validate_goal_run_mandate, validate_goal_run_task,
-    EngineGoalRunReworkContext, EngineGoalRunTaskView,
-};
-pub use project_commands::{
-    EngineProjectCommand, EngineProjectCommandError, EngineProjectCommandService,
-    EngineProjectCreateCommand, EngineProjectLifecycleAction, EngineProjectLifecycleCommand,
-    EngineProjectRetentionChoice,
-    EngineProjectLifecycleReceipt, EngineProjectRepository, EngineProjectScanDomain,
-};
-pub use goal_commands::{
-    EngineGoalCommand, EngineGoalCommandError, EngineGoalCommandService, EngineGoalCreateCommand,
-    EngineGoalRepository, EngineGoalUpdateChanges, EngineGoalUpdateCommand,
 };
 pub use task_commands::{
     EngineRevisionExpectation, EngineTaskCommand, EngineTaskCommandError, EngineTaskCommandOutcome,

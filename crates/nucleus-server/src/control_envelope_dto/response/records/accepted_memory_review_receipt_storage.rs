@@ -1,4 +1,4 @@
-use crate::provider_no_effects::{MemoryApplyNoEffects};
+use crate::provider_no_effects::MemoryApplyNoEffects;
 use serde::{Deserialize, Serialize};
 
 use crate::accepted_memory_review_receipt_storage_diagnostics::{
@@ -96,7 +96,7 @@ impl From<&AcceptedMemoryReviewReceiptStorageDiagnostics>
                 .collect(),
             counts: ControlAcceptedMemoryReviewReceiptStorageCountsDto::from(&diagnostics.counts),
             review_receipts_persisted: diagnostics.review_receipts_persisted,
-        no_effects: diagnostics.no_effects,
+            no_effects: diagnostics.no_effects,
         }
     }
 }
