@@ -3686,8 +3686,10 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 name = "swallowtail-adapter-codex"
 version = "0.1.0"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-util",
+ "semver",
  "serde_json",
  "swallowtail-core",
  "swallowtail-runtime",
@@ -3696,11 +3698,15 @@ dependencies = [
 [[package]]
 name = "swallowtail-core"
 version = "0.1.0"
+dependencies = [
+ "semver",
+]
 
 [[package]]
 name = "swallowtail-host-local"
 version = "0.1.0"
 dependencies = [
+ "sha2",
  "swallowtail-core",
  "swallowtail-runtime",
 ]
@@ -3711,6 +3717,7 @@ version = "0.1.0"
 dependencies = [
  "futures-core",
  "swallowtail-core",
+ "zeroize",
 ]
 
 [[package]]
@@ -5701,6 +5708,12 @@ dependencies = [
  "syn 2.0.117",
  "synstructure",
 ]
+
+[[package]]
+name = "zeroize"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 
 [[package]]
 name = "zerotrie"

@@ -4,6 +4,7 @@ Logs record meaningful decisions, evidence, and closeouts.
 
 ## Current Logs
 
+- `2026-07-24-workspace-sidebar-modes.md`
 - `2026-07-20-project-scoped-workspace-layouts.md`
 - `2026-07-20-g04-closeout.md`
 - `2026-07-20-swallowtail-codex-smoke-consolidation.md`

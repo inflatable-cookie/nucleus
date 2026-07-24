@@ -93,6 +93,18 @@ export type AgentChatHistory = {
   messages: AgentChatHistoryMessage[];
 };
 
+export type AgentChatThreadSummary = {
+  conversation_id: string;
+  project_id: string;
+  session_id: string;
+  thread_id: string;
+  title: string;
+  model: string;
+  reasoning_effort: string | null;
+  turn_count: number;
+  status: string;
+};
+
 export function sendAgentChatMessage(request: AgentChatRequest): Promise<AgentChatReply> {
   return invoke<AgentChatReply>("send_agent_chat_message", { request });
 }
@@ -105,6 +117,10 @@ export function loadAgentChatHistory(
     projectId,
     conversationId,
   });
+}
+
+export function listAgentChatThreads(): Promise<AgentChatThreadSummary[]> {
+  return invoke<AgentChatThreadSummary[]>("list_agent_chat_threads");
 }
 
 export function listAgentChatModels(): Promise<AgentChatModelOption[]> {

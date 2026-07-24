@@ -28,11 +28,12 @@ use nucleus_server::{
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
     ForgeStatusCheckRefreshScope, LocalCodexChatHistory, LocalCodexChatModelOption,
-    LocalCodexChatReply, LocalCodexChatRequest, LocalCodexChatService, LocalControlRequestHandler,
-    LocalMemoryProposalSeed, LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed,
-    LocalTaskSeed, ServerStateService, TaskDiffFilePatchRequest, TaskDiffFilePatchResponse,
-    TaskDiffOverviewRequest, TaskDiffOverviewResponse, TaskReviewSnapshotStore,
-    TauriIpcControlCommandAdapter, TerminalHostRuntime,
+    LocalCodexChatReply, LocalCodexChatRequest, LocalCodexChatService, LocalCodexChatThreadSummary,
+    LocalControlRequestHandler, LocalMemoryProposalSeed, LocalPlanningSessionSeed,
+    LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed, ServerStateService,
+    TaskDiffFilePatchRequest, TaskDiffFilePatchResponse, TaskDiffOverviewRequest,
+    TaskDiffOverviewResponse, TaskReviewSnapshotStore, TauriIpcControlCommandAdapter,
+    TerminalHostRuntime,
 };
 
 mod browser_panel;
@@ -309,6 +310,23 @@ async fn load_agent_chat_history(
     })
     .await
     .map_err(|error| format!("agent chat history worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn list_agent_chat_threads(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<Vec<LocalCodexChatThreadSummary>, String> {
+    let chat = Arc::clone(&state.chat);
+    let server_state = state.server_state.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let chat = chat
+            .lock()
+            .map_err(|_| "agent chat runtime lock is poisoned".to_owned())?;
+        chat.threads(&server_state)
+    })
+    .await
+    .map_err(|error| format!("agent chat thread worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -593,6 +611,7 @@ pub fn run() {
             submit_control_envelope,
             send_agent_chat_message,
             load_agent_chat_history,
+            list_agent_chat_threads,
             list_agent_chat_models,
             load_workspace_ui_config,
             save_workspace_ui_config,

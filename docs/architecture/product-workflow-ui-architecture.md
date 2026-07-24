@@ -61,7 +61,9 @@ ledger and control surface behind the chat-led workflow.
 
 Primary regions:
 
-- project rail: project switching, activity, server/host context
+- workspace sidebar: mutually exclusive Projects, Threads, Files, and Forge
+  views; project switching and cross-project awareness stay outside project
+  panel layouts
 - centerTop: primary agent chat and primary workspace panels
 - centerBottom: secondary workspace panels
 - rightTop: contextual panels by default, or any moved workspace tab
@@ -97,7 +99,8 @@ The useful transferable Loophole concepts are stable display identity, window
 placement, and deterministic display fallback. A second top-level tab hierarchy
 inside each window is not useful for the Nucleus workflow:
 
-- the project rail switches project context
+- the workspace sidebar switches project context and exposes focused navigation
+  modes without mixing their controls into one tree
 - semantic regions define the window layout
 - panel tabs hold chat, task, editor, diff, terminal, browser, and memory tools
 - a Surface tab strip duplicates panel navigation and obscures workflow state
@@ -110,6 +113,11 @@ Nucleus therefore needs:
 - renderer-owned transient drag, hover, focus, and measurement only
 - server-owned resource refs attached to panels for terminals, browsers, agent
   sessions, editor buffers, SCM state, evidence, review, and task state
+
+Threads reads compact summaries from persisted product-chat sessions. Task work
+units may link back to those conversations, but task diagnostics are not a
+substitute thread index. Selecting a thread changes project context without
+making the sidebar authoritative for provider session state.
 
 Terminal panels render a host-owned session. The client resolves the project's
 terminal authority, then attaches through a transport adapter. Local Tauri IPC
@@ -254,6 +262,21 @@ the latest host-owned geometry. Schema v7 retains the former single project
 layout as a one-time migration candidate instead of cloning it into every
 project.
 
+During a splitter drag, the splitter owns transient geometry. The renderer
+commits the final ratio on mouse release, with a short quiet-period fallback
+for keyboard and interrupted interactions. Project config replacement, native
+persistence, and sidebar local-storage writes stay out of the pointer-move hot
+path. Native Browser views are hidden for the gesture so their host bounds are
+not repositioned through Tauri on every frame; they resynchronize once after
+the gesture. Backdrop blur is also suspended during the gesture so WebKit does
+not recomposite large changing panel areas on every frame. Both presentation
+effects resume at the final geometry. A concurrent panel mutation absorbs any
+pending ratio before it saves.
+
+Poodle's resize handle coalesces raw mouse movement to one update per animation
+frame. `SplitView` measures its container once at gesture start and reuses that
+geometry until release, avoiding synchronous layout reads in the move loop.
+
 The first monitor key is best-effort native metadata, not durable hardware
 identity. Restore validates every placement against current work areas and
 uses the contract fallback order when the recorded display is gone.
@@ -384,7 +407,8 @@ The normal editor view contains:
 - a compact project-relative path and dirty indicator
 - the editor itself
 - Save and a small overflow menu
-- quick open through a popover or command, not a permanent explorer sidebar
+- quick open through a popover or command, plus the Files sidebar view when the
+  operator wants a persistent tree
 
 The first slice supports open, edit, undo/redo, search, syntax presentation,
 keyboard save, revision-checked save, reload, and explicit conflict state. It
@@ -409,9 +433,10 @@ pre-dispatch checkpoint and immutable post-runtime checkpoint. It must not
 present the entire current working copy as agent-authored work.
 
 The normal view contains one compact review summary, one changed-file quick
-open, one read-only unified file diff, and a small review menu. There is no
-permanent source-control sidebar, tree, staged/unstaged split, commit box, hunk
-toolbar, or merge editor.
+open, one read-only unified file diff, and a small review menu. Cross-project
+source-control awareness belongs in the mutually exclusive Forge sidebar view,
+not inside Diff. Staged/unstaged controls, commit input, hunk actions, and merge
+editing remain later Forge work.
 
 Accept and Needs changes remain server-admitted task review decisions. Open in
 Editor routes the selected safe file ref into the existing Editor panel. Patch

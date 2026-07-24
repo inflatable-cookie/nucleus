@@ -1,12 +1,8 @@
 <script lang="ts">
   import { Dialog, Icon, Menu, SegmentedControl, Text, type MenuItem } from "@poodle/svelte";
   import {
-    bot,
-    chevronDown,
-    chevronRight,
     folder,
     ellipsis,
-    messageCircle,
     folderCog,
     plus,
     refreshCw,
@@ -16,10 +12,8 @@
     buildStateListQuery,
     buildControlCommandEnvelope,
     projectRecordsFromResponse,
-    queryTaskWorkProgress,
     submitControlEnvelope,
     type ControlProjectRecordDto,
-    type TaskAgentWorkUnitDiagnosticDto,
   } from "./control";
   import {
     createNativePanelOverlayId,
@@ -38,8 +32,6 @@
   let loading = $state(false);
   let failure = $state<string | null>(null);
   let projects = $state<ControlProjectRecordDto[]>([]);
-  let workUnits = $state<TaskAgentWorkUnitDiagnosticDto[]>([]);
-  let openProjectIds = $state<string[]>([]);
   let creating = $state(false);
   let createName = $state("");
   let renamingProjectId = $state<string | null>(null);
@@ -55,7 +47,6 @@
 
   const activeProjects = $derived(projects.filter((project) => project.status === "active"));
   const namedProjects = $derived(activeProjects.filter((project) => project.retention !== "transient"));
-  const transientChats = $derived(activeProjects.filter((project) => project.retention === "transient"));
   const managedProjects = $derived(
     projectManagerView === "all"
       ? projects
@@ -73,7 +64,7 @@
       ? "Loading"
       : failure
         ? "Unavailable"
-        : `${activeProjects.length} project${activeProjects.length === 1 ? "" : "s"}`,
+        : `${namedProjects.length} project${namedProjects.length === 1 ? "" : "s"}`,
   );
 
   $effect(() => {
@@ -85,22 +76,8 @@
     setNativePanelOverlayVisibility(projectManagerOverlayId, projectManagerOpen);
   });
 
-  function isProjectOpen(projectId: string) {
-    return openProjectIds.includes(projectId);
-  }
-
-  function workUnitsForProject(projectId: string) {
-    return workUnits.filter((workUnit) => workUnit.project_id === projectId);
-  }
-
-  function toggleProject(projectId: string) {
+  function selectProject(projectId: string) {
     selectedProjectId = projectId;
-
-    if (isProjectOpen(projectId)) {
-      openProjectIds = openProjectIds.filter((id) => id !== projectId);
-    } else {
-      openProjectIds = [...openProjectIds, projectId];
-    }
   }
 
   function projectMenuItems(project: ControlProjectRecordDto): MenuItem[] {
@@ -196,43 +173,6 @@
     }
   }
 
-  async function newChat() {
-    if (mutatingProjectId) return;
-    const previousIds = new Set(projects.map((project) => project.project_id));
-    const idempotencyKey = `chat-create:${crypto.randomUUID()}`;
-    mutatingProjectId = "create";
-    mutationFailure = null;
-    try {
-      await submitProjectCommand({
-        kind: "project_create",
-        command_id: `command:${idempotencyKey}`,
-        display_name: "",
-        transient: true,
-        actor_ref: "operator:desktop",
-        authority_host_ref: "host:embedded-desktop",
-        idempotency_key: idempotencyKey,
-      });
-      await loadProjectRail();
-      selectedProjectId = projects.find((project) => !previousIds.has(project.project_id))?.project_id
-        ?? selectedProjectId;
-    } catch (error) {
-      mutationFailure = error instanceof Error ? error.message : String(error);
-    } finally {
-      mutatingProjectId = null;
-    }
-  }
-
-  let namingChatId = $state<string | null>(null);
-  let chatName = $state("");
-
-  async function keepChat(project: ControlProjectRecordDto, displayName: string | null = null) {
-    await mutateProject(project, "promote", displayName);
-    if (!mutationFailure) {
-      namingChatId = null;
-      chatName = "";
-    }
-  }
-
   async function renameProject(project: ControlProjectRecordDto) {
     const displayName = renameName.trim();
     if (!displayName || mutatingProjectId) return;
@@ -293,20 +233,12 @@
       const loadedActiveProjects = loadedProjects.filter((project) => project.status === "active");
       projects = loadedProjects;
 
-      const progress = await queryTaskWorkProgress();
-      workUnits = progress.state === "records" ? progress.records : [];
-
       if (!loadedActiveProjects.some((project) => project.project_id === selectedProjectId)) {
         selectedProjectId = loadedActiveProjects[0]?.project_id ?? null;
       }
-      if (selectedProjectId && openProjectIds.length === 0) {
-        openProjectIds = [selectedProjectId];
-      }
     } catch (error) {
       projects = [];
-      workUnits = [];
       selectedProjectId = null;
-      openProjectIds = [];
       failure = error instanceof Error ? error.message : String(error);
     } finally {
       loading = false;
@@ -316,10 +248,12 @@
   onMount(() => {
     void loadProjectRail();
     window.addEventListener("nucleus:manage-project-resources", handleManageProjectResources);
+    window.addEventListener("nucleus:projects-changed", loadProjectRail);
   });
 
   onDestroy(() => {
     window.removeEventListener("nucleus:manage-project-resources", handleManageProjectResources);
+    window.removeEventListener("nucleus:projects-changed", loadProjectRail);
     setNativePanelOverlayVisibility(projectManagerOverlayId, false);
   });
 </script>
@@ -331,9 +265,6 @@
       <Text tone="muted">{projectCountLabel}</Text>
     </div>
     <div class="project-rail-actions">
-      <button class="icon-button" type="button" aria-label="New chat" title="New chat" onclick={() => void newChat()}>
-        <Icon icon={messageCircle} size="sm" />
-      </button>
       <button class="icon-button" type="button" aria-label="New project" onclick={() => (creating = true)}>
         <Icon icon={plus} size="sm" />
       </button>
@@ -474,31 +405,26 @@
     <div class="rail-message">
       <Text tone="muted">Loading projects.</Text>
     </div>
-  {:else if activeProjects.length === 0}
+  {:else if namedProjects.length === 0}
     <div class="rail-message">
-      <Text tone="muted">No active projects. Start a chat or create a new project.</Text>
+      <Text tone="muted">No active projects. Create one to get started.</Text>
     </div>
   {:else}
     <div class="project-stack">
       {#each namedProjects as project}
-        {@const open = isProjectOpen(project.project_id)}
         {@const active = project.project_id === selectedProjectId}
-        {@const projectWorkUnits = workUnitsForProject(project.project_id)}
         <section class:active class="project-node">
           <div class="project-node-row">
             <button
               class="project-node-button"
               type="button"
-              aria-expanded={open}
-              aria-controls={`project-work-${project.project_id}`}
-              onclick={() => toggleProject(project.project_id)}
+              onclick={() => selectProject(project.project_id)}
             >
               <span class="project-node-icon" aria-hidden="true"><Icon icon={folder} size="sm" /></span>
               <span class="project-node-label">
                 <span class="project-name">{project.display_name}</span>
                 <span class="project-meta">{project.status} · {project.importance_level}</span>
               </span>
-              <span class="project-chevron" aria-hidden="true"><Icon icon={open ? chevronDown : chevronRight} size="sm" /></span>
             </button>
             <Menu
               items={projectMenuItems(project)}
@@ -529,69 +455,9 @@
               <button type="button" onclick={() => (pendingDeleteProjectId = null)}>Cancel</button>
             </div>
           {/if}
-
-          {#if open}
-            <div class="project-work-list" id={`project-work-${project.project_id}`}>
-              {#if projectWorkUnits.length === 0}
-                <div class="work-empty">
-                  <Icon icon={bot} size="xs" />
-                  <span>No active AI threads</span>
-                </div>
-              {:else}
-                {#each projectWorkUnits as workUnit}
-                  <div class="work-row">
-                    <Icon icon={messageCircle} size="xs" />
-                    <span class="work-copy">
-                      <span class="work-title">{workUnit.summary}</span>
-                      <span class="work-meta">{workUnit.runtime} · {workUnit.review}</span>
-                    </span>
-                  </div>
-                {/each}
-              {/if}
-            </div>
-          {/if}
         </section>
       {/each}
     </div>
-    {#if transientChats.length > 0}
-      <div class="chat-stack">
-        <div class="chat-stack-label"><Text tone="muted">Chats</Text></div>
-        {#each transientChats as chat (chat.project_id)}
-          <div class="chat-row" class:active={chat.project_id === selectedProjectId}>
-            <button
-              class="chat-select"
-              type="button"
-              onclick={() => (selectedProjectId = chat.project_id)}
-            >
-              <span class="project-node-icon" aria-hidden="true"><Icon icon={messageCircle} size="sm" /></span>
-              <span class="chat-name">{chat.display_name}</span>
-            </button>
-            <button
-              class="chat-action"
-              type="button"
-              title="Keep this chat as a durable project"
-              onclick={() => void keepChat(chat)}
-            >Keep</button>
-            <button
-              class="chat-action"
-              type="button"
-              title="Name and keep this chat"
-              onclick={() => { namingChatId = chat.project_id; chatName = ""; }}
-            >Name</button>
-          </div>
-          {#if namingChatId === chat.project_id}
-            <form
-              class="inline-project-form"
-              onsubmit={(event) => { event.preventDefault(); void keepChat(chat, chatName.trim() || null); }}
-            >
-              <input bind:value={chatName} aria-label="Chat name" placeholder="Project name" />
-              <button type="submit" disabled={!chatName.trim() || mutatingProjectId !== null}>Keep</button>
-              <button type="button" onclick={() => { namingChatId = null; chatName = ""; }}>Cancel</button>
-            </form>
-          {/if}
-        {/each}
-      </div>
-    {/if}
   {/if}
 </section>
 
@@ -821,26 +687,22 @@
     border-color: var(--poodle-color-border-default);
   }
 
-  .project-node-icon,
-  .project-chevron {
+  .project-node-icon {
     display: inline-grid;
     place-items: center;
     color: var(--poodle-color-text-secondary);
   }
 
-  .project-node.active .project-node-icon,
-  .project-node.active .project-chevron {
+  .project-node.active .project-node-icon {
     color: var(--poodle-color-text-primary);
   }
 
-  .project-node-label,
-  .work-copy {
+  .project-node-label {
     display: grid;
     min-width: 0;
   }
 
-  .project-name,
-  .work-title {
+  .project-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -852,50 +714,13 @@
     line-height: 1.25;
   }
 
-  .project-meta,
-  .work-meta {
+  .project-meta {
     overflow: hidden;
     color: var(--poodle-color-text-muted);
     font-size: 0.6875rem;
     line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .project-work-list {
-    display: grid;
-    gap: 0.25rem;
-    margin: 0.125rem 0 0.375rem 1.25rem;
-    padding-left: 0.625rem;
-    border-left: 1px solid var(--poodle-color-border-subtle);
-  }
-
-  .work-row,
-  .work-empty {
-    display: grid;
-    grid-template-columns: 1rem minmax(0, 1fr);
-    align-items: center;
-    gap: 0.375rem;
-    min-width: 0;
-    min-height: 1.75rem;
-    padding: 0.25rem 0.375rem;
-    color: var(--poodle-color-text-secondary);
-    border-radius: var(--poodle-radius-control);
-  }
-
-  .work-row {
-    background: color-mix(in srgb, var(--poodle-color-background-surface) 65%, transparent);
-  }
-
-  .work-empty {
-    color: var(--poodle-color-text-muted);
-    font-size: 0.75rem;
-  }
-
-  .work-title {
-    color: var(--poodle-color-text-secondary);
-    font-size: 0.75rem;
-    line-height: 1.2;
   }
 
   .rail-message {
@@ -907,63 +732,5 @@
 
   .rail-message-error {
     border-color: var(--poodle-color-status-danger);
-  }
-  .chat-stack {
-    margin-top: 10px;
-    padding-top: 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .chat-stack-label {
-    padding: 0 6px 4px;
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-
-  .chat-row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 4px;
-    border-radius: 6px;
-  }
-
-  .chat-row.active {
-    background: rgba(255, 255, 255, 0.06);
-  }
-
-  .chat-select {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 1;
-    min-width: 0;
-    background: none;
-    border: none;
-    color: inherit;
-    cursor: pointer;
-    padding: 4px 2px;
-    text-align: left;
-  }
-
-  .chat-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 12px;
-  }
-
-  .chat-action {
-    background: none;
-    border: none;
-    color: rgba(255, 255, 255, 0.45);
-    font-size: 11px;
-    cursor: pointer;
-    padding: 2px 4px;
-  }
-
-  .chat-action:hover {
-    color: rgba(255, 255, 255, 0.85);
   }
 </style>

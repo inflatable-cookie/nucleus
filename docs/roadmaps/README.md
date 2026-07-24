@@ -316,6 +316,7 @@ shape.
 - `g04/049-swallowtail-agent-chat-adoption.md` - completed
 - `g04/050-swallowtail-task-execution-adoption.md` - completed
 - `g05/001-project-scoped-workspace-layouts.md` - active
+- `g05/002-workspace-sidebar-modes.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -375,6 +376,7 @@ shape.
 
 ## Next Task
 
-Complete `g05/batch-cards/003-project-layout-validation.md`: confirm two
-projects retain visibly different layouts and a newly created project opens
-with Agent Chat only.
+Complete `g05/batch-cards/006-forge-overview-and-validation.md`: confirm the
+four sidebar views remain compact and distinct, Files opens the correct
+resource, and Forge reads as recorded repository context rather than live Git
+status.

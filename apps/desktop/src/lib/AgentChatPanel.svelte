@@ -591,6 +591,12 @@
     backdrop-filter: blur(18px);
   }
 
+  :global(html[data-nucleus-split-resizing]) .agent-chat::after,
+  :global(html[data-nucleus-split-resizing]) .chat-composer {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
   .composer-toolbar {
     display: flex;
     align-items: center;

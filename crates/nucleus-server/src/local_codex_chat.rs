@@ -46,7 +46,9 @@ pub(crate) use persistence::{
     persist_turn_failure as persist_test_turn_failure,
     persist_turn_start as persist_test_turn_start, StoredChatSession as TestStoredChatSession,
 };
-pub use persistence::{ChatMessageRole, LocalCodexChatHistory, StoredChatMessage};
+pub use persistence::{
+    ChatMessageRole, LocalCodexChatHistory, LocalCodexChatThreadSummary, StoredChatMessage,
+};
 use runtime::{available_models, LocalCodexChatSession};
 use task_ledger::execute as execute_task_ledger;
 
@@ -140,6 +142,16 @@ impl LocalCodexChatService {
         B: LocalStoreBackend,
     {
         read_history(state, project_id, conversation_id)
+    }
+
+    pub fn threads<B>(
+        &self,
+        state: &ServerStateService<B>,
+    ) -> Result<Vec<LocalCodexChatThreadSummary>, String>
+    where
+        B: LocalStoreBackend,
+    {
+        persistence::list_threads(state)
     }
 
     pub fn send_message<B>(

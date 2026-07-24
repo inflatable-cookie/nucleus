@@ -4,7 +4,7 @@ fn product_workspace_mounts_tasks_and_routes_chat_receipts_to_it() {
     let chat = include_str!("../../../src/lib/AgentChatPanel.svelte");
 
     assert!(workspace.contains("import TaskListPanel"));
-    assert!(workspace.contains("panel?.kind === \"tasks\""));
+    assert!(workspace.contains("panel.kind === \"tasks\""));
     assert!(workspace.contains("<TaskListPanel"));
     assert!(workspace.contains("nucleus:open-task"));
     assert!(workspace.contains("nucleus:open-goal"));
@@ -30,7 +30,7 @@ fn product_workspace_uses_window_regions_without_surface_tabs() {
     let workspace = include_str!("../../../src/lib/ProjectWorkspaceStage.svelte");
     let config = include_str!("../../../src/lib/workspaceUi.ts");
 
-    assert!(workspace.contains("config?.window"));
+    assert!(workspace.contains("workspaceWindowForProject("));
     assert!(workspace.contains("type WorkspaceWindowDto"));
     assert!(workspace.contains("class=\"window-body\""));
     assert!(!workspace.contains("Workspace surfaces"));
@@ -111,7 +111,7 @@ fn memory_panel_composes_read_only_accepted_and_proposed_memory() {
     let panel = include_str!("../../../src/lib/MemoryPanel.svelte");
     let client = include_str!("../../../src/lib/control/client.ts");
 
-    assert!(workspace.contains("panel?.kind === \"memory\""));
+    assert!(workspace.contains("panel.kind === \"memory\""));
     assert!(workspace.contains("<MemoryPanel"));
     assert!(panel.contains("queryAcceptedMemory"));
     assert!(panel.contains("queryMemoryProposals"));
@@ -126,13 +126,20 @@ fn memory_panel_composes_read_only_accepted_and_proposed_memory() {
 #[test]
 fn project_rail_keeps_inactive_projects_in_management_only() {
     let rail = include_str!("../../../src/lib/ProjectRail.svelte");
+    let sidebar = include_str!("../../../src/lib/WorkspaceSidebar.svelte");
+    let threads = include_str!("../../../src/lib/ThreadsSidebarView.svelte");
 
     assert!(rail.contains("project.status === \"active\""));
-    // The named rail excludes transient chats; they render in their own
-    // quiet Chats group with keep/name promotion (spec 012).
+    // Projects excludes transient chats; Threads owns their keep/name
+    // promotion controls and the durable chat-session index.
     assert!(rail.contains("{#each namedProjects as project}"));
     assert!(rail.contains("project.retention !== \"transient\""));
-    assert!(rail.contains("{#each transientChats as chat (chat.project_id)}"));
+    assert!(sidebar.contains("Projects"));
+    assert!(sidebar.contains("Threads"));
+    assert!(sidebar.contains("Files"));
+    assert!(sidebar.contains("Forge"));
+    assert!(threads.contains("{#each emptyTransientChats as chat (chat.project_id)}"));
+    assert!(threads.contains("listAgentChatThreads"));
     assert!(rail.contains("Manage projects"));
     assert!(rail.contains("{ value: \"all\", label: \"All\" }"));
     assert!(rail.contains("{ value: \"parked\", label: \"Parked\" }"));

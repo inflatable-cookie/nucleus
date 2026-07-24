@@ -3,8 +3,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { Icon, IconButton, Menu, Popover, SplitView, type MenuItem } from "@poodle/svelte";
   import { info, plus } from "@poodle/icons-lucide";
-  import ProjectRail from "./lib/ProjectRail.svelte";
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
+  import WorkspaceSidebar from "./lib/WorkspaceSidebar.svelte";
   import type { ControlProjectRecordDto } from "./lib/control";
   import { beginWindowDrag } from "./lib/windowChrome";
   import {
@@ -17,6 +17,9 @@
   let selectedProjectId = $state<string | null>(null);
   let selectedProject = $state<ControlProjectRecordDto | null>(null);
   let projectRailRatio = $state(0.18);
+  let pendingProjectRailRatio: number | null = null;
+  let projectRailPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  let splitResizeActive = false;
   let projectRailPrimaryCollapsed = $state(false);
   let projectRailSecondaryCollapsed = $state(false);
   let openPanelKinds = $state<string[]>([]);
@@ -52,6 +55,20 @@
     if (Number.isFinite(storedRatio)) {
       projectRailRatio = clampProjectRailRatio(storedRatio);
     }
+
+    window.addEventListener("mousedown", beginSplitResize, true);
+    window.addEventListener("mouseup", commitProjectRailResize);
+    window.addEventListener("mouseup", finishSplitResize);
+    window.addEventListener("blur", finishSplitResize);
+
+    return () => {
+      window.removeEventListener("mousedown", beginSplitResize, true);
+      window.removeEventListener("mouseup", commitProjectRailResize);
+      window.removeEventListener("mouseup", finishSplitResize);
+      window.removeEventListener("blur", finishSplitResize);
+      commitProjectRailResize();
+      finishSplitResize();
+    };
   });
 
   function createWorkspacePanel(kind: string) {
@@ -66,14 +83,53 @@
   }
 
   function resizeProjectRail(ratio: number) {
-    projectRailRatio = clampProjectRailRatio(ratio);
+    pendingProjectRailRatio = clampProjectRailRatio(ratio);
+
+    if (projectRailPersistTimer) {
+      clearTimeout(projectRailPersistTimer);
+    }
+    projectRailPersistTimer = setTimeout(commitProjectRailResize, 200);
+  }
+
+  function beginSplitResize(event: MouseEvent): void {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest(".poodle-resize-handle") || splitResizeActive) {
+      return;
+    }
+
+    splitResizeActive = true;
+    document.documentElement.setAttribute("data-nucleus-split-resizing", "");
+    window.dispatchEvent(new CustomEvent("nucleus:native-panels-hide"));
+  }
+
+  function finishSplitResize(): void {
+    if (!splitResizeActive) {
+      return;
+    }
+
+    splitResizeActive = false;
+    document.documentElement.removeAttribute("data-nucleus-split-resizing");
+    window.dispatchEvent(new CustomEvent("nucleus:native-panels-show"));
+  }
+
+  function commitProjectRailResize() {
+    if (projectRailPersistTimer) {
+      clearTimeout(projectRailPersistTimer);
+      projectRailPersistTimer = null;
+    }
+    if (pendingProjectRailRatio === null) {
+      return;
+    }
+
+    projectRailRatio = pendingProjectRailRatio;
+    pendingProjectRailRatio = null;
     window.localStorage.setItem(projectRailRatioStorageKey, String(projectRailRatio));
   }
 
   function keepProjectRailSplitOpen() {
     projectRailPrimaryCollapsed = false;
     projectRailSecondaryCollapsed = false;
-    if (projectRailRatio < 0.12) {
+    if ((pendingProjectRailRatio ?? projectRailRatio) < 0.12) {
       resizeProjectRail(0.18);
     }
   }
@@ -85,7 +141,7 @@
 
 <main
   class="app-root"
-  data-theme="dark"
+  data-theme="cobalt"
   data-density="compact"
   data-control-size="sm"
   data-poodle-theme-root
@@ -104,6 +160,7 @@
   <SplitView
     orientation="horizontal"
     ratio={projectRailRatio}
+    minRatio={0.12}
     maxRatio={0.4}
     bind:primaryCollapsed={projectRailPrimaryCollapsed}
     bind:secondaryCollapsed={projectRailSecondaryCollapsed}
@@ -118,7 +175,7 @@
   >
     {#snippet primary()}
       <aside class="project-rail" aria-label="Project panel">
-        <ProjectRail bind:selectedProjectId bind:selectedProject />
+        <WorkspaceSidebar bind:selectedProjectId bind:selectedProject />
       </aside>
     {/snippet}
 

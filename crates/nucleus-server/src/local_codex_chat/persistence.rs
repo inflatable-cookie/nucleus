@@ -77,6 +77,19 @@ pub struct LocalCodexChatHistory {
     pub messages: Vec<StoredChatMessage>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalCodexChatThreadSummary {
+    pub conversation_id: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub thread_id: String,
+    pub title: String,
+    pub model: String,
+    pub reasoning_effort: Option<String>,
+    pub turn_count: u64,
+    pub status: String,
+}
+
 pub fn read_session<B>(
     state: &ServerStateService<B>,
     conversation_id: &str,
@@ -126,6 +139,80 @@ where
             .and_then(|session| session.reasoning_effort.clone()),
         messages,
     })
+}
+
+pub fn list_threads<B>(
+    state: &ServerStateService<B>,
+) -> Result<Vec<LocalCodexChatThreadSummary>, String>
+where
+    B: LocalStoreBackend,
+{
+    let records = state.agent_sessions().list().map_err(storage_error)?;
+    let sessions = records
+        .iter()
+        .filter(|record| record.id.0.starts_with(SESSION_PREFIX))
+        .map(|record| decode::<StoredChatSession>(&record.payload.bytes))
+        .collect::<Result<Vec<_>, _>>()?;
+    let turns = records
+        .iter()
+        .filter(|record| record.id.0.starts_with(TURN_PREFIX))
+        .map(|record| decode::<StoredChatTurn>(&record.payload.bytes))
+        .collect::<Result<Vec<_>, _>>()?;
+    let messages = records
+        .iter()
+        .filter(|record| record.id.0.starts_with(MESSAGE_PREFIX))
+        .map(|record| decode::<StoredChatMessage>(&record.payload.bytes))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut summaries = sessions
+        .into_iter()
+        .map(|session| {
+            let status = turns
+                .iter()
+                .filter(|turn| turn.conversation_id == session.conversation_id)
+                .max_by_key(|turn| turn.ordinal)
+                .map(|turn| turn.status.clone())
+                .unwrap_or_else(|| "ready".to_owned());
+            let title = messages
+                .iter()
+                .filter(|message| {
+                    message.conversation_id == session.conversation_id
+                        && message.role == ChatMessageRole::User
+                })
+                .min_by_key(|message| message.sequence)
+                .map(|message| compact_thread_title(&message.text))
+                .unwrap_or_else(|| "New conversation".to_owned());
+
+            LocalCodexChatThreadSummary {
+                conversation_id: session.conversation_id,
+                project_id: session.project_id,
+                session_id: session.session_id,
+                thread_id: session.provider_thread_id,
+                title,
+                model: session.model,
+                reasoning_effort: session.reasoning_effort,
+                turn_count: session.turn_count,
+                status,
+            }
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        left.project_id
+            .cmp(&right.project_id)
+            .then_with(|| left.conversation_id.cmp(&right.conversation_id))
+    });
+    Ok(summaries)
+}
+
+fn compact_thread_title(message: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    let compact = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= MAX_CHARS {
+        return compact;
+    }
+    let mut title = compact.chars().take(MAX_CHARS - 1).collect::<String>();
+    title.push('…');
+    title
 }
 
 pub fn canonical_turn_id(conversation_id: &str, ordinal: u64) -> String {
@@ -478,6 +565,12 @@ mod tests {
             Some("task:1")
         );
         assert_eq!(history.thread_id.as_deref(), Some("thread:1"));
+
+        let threads = list_threads(&reopened).expect("list threads");
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].conversation_id, "project:1:panel:chat");
+        assert_eq!(threads[0].title, "Hello");
+        assert_eq!(threads[0].status, "completed");
     }
 
     #[test]

@@ -51,6 +51,8 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingLayoutConfig: WorkspaceUiConfigDto | null = null;
+  let pendingLayoutProjectId: string | null = null;
   let draggedPanelId = $state<string | null>(null);
   let panelDropTargetsVisible = $state(false);
   let dropTargetRegion = $state<RegionKey | null>(null);
@@ -58,7 +60,7 @@
   let selectedTask = $state<ControlTaskRecordDto | null>(null);
   let selectedGoalId = $state<string | null>(null);
   let selectedGoal = $state<ControlGoalRecordDto | null>(null);
-  let editorFileRef = $state<string | null>(null);
+  let editorFileRequests = $state<Record<string, string>>({});
 
   const workspaceWindow = $derived(
     workspaceWindowForProject(
@@ -97,17 +99,22 @@
     window.addEventListener("nucleus:create-workspace-panel", handleCreateWorkspacePanel);
     window.addEventListener("nucleus:open-task", handleOpenTask);
     window.addEventListener("nucleus:open-goal", handleOpenGoal);
+    window.addEventListener("nucleus:open-file", handleOpenFile);
+    window.addEventListener("mouseup", flushLayoutPersistence);
 
     return () => {
       window.removeEventListener("nucleus:create-workspace-panel", handleCreateWorkspacePanel);
       window.removeEventListener("nucleus:open-task", handleOpenTask);
       window.removeEventListener("nucleus:open-goal", handleOpenGoal);
+      window.removeEventListener("nucleus:open-file", handleOpenFile);
+      window.removeEventListener("mouseup", flushLayoutPersistence);
     };
   });
 
   $effect(() => {
     const projectId = selectedProject?.project_id ?? null;
     if (projectId === lastSelectedProjectId) return;
+    flushLayoutPersistence();
     lastSelectedProjectId = projectId;
     void loadConfig(projectId);
     selectedTaskId = null;
@@ -133,9 +140,7 @@
   });
 
   onDestroy(() => {
-    if (layoutPersistTimer) {
-      clearTimeout(layoutPersistTimer);
-    }
+    flushLayoutPersistence();
   });
 
   async function loadConfig(projectId: string | null): Promise<void> {
@@ -169,6 +174,7 @@
   async function persist(nextConfig: WorkspaceUiConfigDto): Promise<void> {
     const projectId = configProjectId;
     if (!projectId) return;
+    nextConfig = mergePendingLayout(nextConfig, projectId);
     config = nextConfig;
     error = null;
 
@@ -187,21 +193,63 @@
   function persistLayout(nextConfig: WorkspaceUiConfigDto): void {
     const projectId = configProjectId;
     if (!projectId) return;
-    config = nextConfig;
+    pendingLayoutConfig = nextConfig;
+    pendingLayoutProjectId = projectId;
     error = null;
 
     if (layoutPersistTimer) {
       clearTimeout(layoutPersistTimer);
     }
 
-    layoutPersistTimer = setTimeout(() => {
+    layoutPersistTimer = setTimeout(flushLayoutPersistence, 200);
+  }
+
+  function flushLayoutPersistence(): void {
+    if (layoutPersistTimer) {
+      clearTimeout(layoutPersistTimer);
       layoutPersistTimer = null;
-      void saveWorkspaceUiConfig(projectId, nextConfig).catch((caught) => {
-        if (configProjectId === projectId) {
-          error = formatError(caught);
-        }
-      });
-    }, 200);
+    }
+
+    const projectId = pendingLayoutProjectId;
+    const nextConfig = pendingLayoutConfig;
+    pendingLayoutProjectId = null;
+    pendingLayoutConfig = null;
+    if (!projectId || !nextConfig) {
+      return;
+    }
+
+    if (configProjectId === projectId) {
+      config = nextConfig;
+    }
+    void saveWorkspaceUiConfig(projectId, nextConfig).catch((caught) => {
+      if (configProjectId === projectId) {
+        error = formatError(caught);
+      }
+    });
+  }
+
+  function mergePendingLayout(
+    nextConfig: WorkspaceUiConfigDto,
+    projectId: string,
+  ): WorkspaceUiConfigDto {
+    if (pendingLayoutProjectId !== projectId || !pendingLayoutConfig) {
+      return nextConfig;
+    }
+
+    const merged = {
+      ...nextConfig,
+      window: {
+        ...nextConfig.window,
+        layout: pendingLayoutConfig.window.layout,
+      },
+    };
+    if (layoutPersistTimer) {
+      clearTimeout(layoutPersistTimer);
+      layoutPersistTimer = null;
+    }
+    pendingLayoutProjectId = null;
+    pendingLayoutConfig = null;
+    return merged;
   }
 
   function handleCreateWorkspacePanel(event: Event): void {
@@ -233,6 +281,18 @@
     focusPanelKind("tasks");
   }
 
+  function handleOpenFile(event: Event): void {
+    if (
+      !(event instanceof CustomEvent)
+      || event.detail?.projectId !== selectedProject?.project_id
+      || typeof event.detail?.resourceId !== "string"
+      || typeof event.detail?.fileRef !== "string"
+    ) {
+      return;
+    }
+    openFileInEditor(event.detail.fileRef, event.detail.resourceId);
+  }
+
   function focusPanelKind(kind: string): void {
     if (!workspaceWindow) {
       return;
@@ -246,15 +306,22 @@
     }
   }
 
-  function openFileInEditor(fileRef: string): void {
-    editorFileRef = fileRef;
-    const hasEditor = regionKeys().some((region) =>
-      workspaceWindow?.regions[region].some((panel) => panel.kind === "editor"),
-    );
-    if (hasEditor) {
-      focusPanelKind("editor");
-    } else {
-      addPanel("editor");
+  function openFileInEditor(fileRef: string, resourceId: string | null = null): void {
+    let editor: WorkspacePanelDto | null = regionKeys()
+      .flatMap((region) => workspaceWindow?.regions[region] ?? [])
+      .find((panel) =>
+        panel.kind === "editor"
+        && (!resourceId || effectivePanelResourceTarget(panel) === resourceId)
+      ) ?? null;
+    if (!editor) {
+      editor = addPanel("editor", resourceId);
+    }
+    if (!editor) return;
+
+    editorFileRequests = { ...editorFileRequests, [editor.id]: fileRef };
+    const region = findPanelRegion(editor.id);
+    if (region) {
+      setActivePanel(region, editor.id);
     }
   }
 
@@ -354,14 +421,19 @@
     window.dispatchEvent(new CustomEvent("nucleus:native-panels-show"));
   }
 
-  function addPanel(kind: string): void {
+  function addPanel(
+    kind: string,
+    resourceId: string | null = null,
+  ): WorkspacePanelDto | null {
     if (!config || !workspaceWindow) {
-      return;
+      return null;
     }
 
     if (kind === "tasks" && openPanelKinds.includes("tasks")) {
       focusPanelKind("tasks");
-      return;
+      return regionKeys()
+        .flatMap((region) => workspaceWindow.regions[region])
+        .find((panel) => panel.kind === "tasks") ?? null;
     }
 
     const targetRegion = defaultRegionForPanelKind(kind);
@@ -369,6 +441,10 @@
       .flatMap((region) => workspaceWindow.regions[region])
       .filter((panel) => panel.kind === kind).length;
     const panel = createWorkspacePanel(workspaceWindow.id, kind, existingCount + 1);
+    const projectId = selectedProject?.project_id;
+    if (projectId && resourceId) {
+      panel.resource_targets[projectId] = resourceId;
+    }
 
     void persist({
       ...config,
@@ -384,6 +460,7 @@
         },
       },
     });
+    return panel;
   }
 
   function panelsFor(window: WorkspaceWindowDto | null, region: RegionKey): WorkspacePanelDto[] {
@@ -911,7 +988,7 @@
         <EditorPanel
           projectId={selectedProject?.project_id ?? null}
           resourceId={effectivePanelResourceTarget(panel)}
-          requestedFileRef={editorFileRef}
+          requestedFileRef={editorFileRequests[panel.id] ?? null}
         />
       </div>
     </div>
@@ -934,7 +1011,7 @@
     <DiffPanel
       projectId={selectedProject?.project_id ?? null}
       task={selectedTask}
-      onOpenEditor={openFileInEditor}
+      onOpenEditor={(fileRef) => openFileInEditor(fileRef)}
       onReviewed={() => focusPanelKind("diff")}
     />
   {:else if panel.kind === "memory"}

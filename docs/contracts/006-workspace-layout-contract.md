@@ -172,7 +172,7 @@ populate available windows and how they adapt when the user switches projects.
 
 The initial Nucleus dev-environment shell should plan for:
 
-- left project/activity sidebar
+- left workspace sidebar with Projects, Threads, Files, and Forge views
 - centerTop primary workspace region
 - centerBottom secondary workspace region
 - rightTop primary side workspace region
@@ -202,9 +202,11 @@ clear.
 Panel layout records are local UI preference/state records scoped by project.
 They should not be written into the project repository by default.
 
-The full-height project rail is global client shell state, not per-project
-panel layout. Its width may be user-resizable and persisted locally by the
-client, but it must not be committed into project repositories.
+The full-height workspace sidebar is global client shell state, not per-project
+panel layout. Its selected view and width may be persisted locally by the
+client, but they must not be committed into project repositories. Only one
+sidebar view is visible at a time. Projects and Forge may span projects;
+Files is scoped to the selected project's resources.
 
 Panel definitions must carry placement policy, not just current placement. This
 mirrors Loophole's `PanelDefinition.allowedRegions` model:

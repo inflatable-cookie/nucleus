@@ -292,7 +292,7 @@ mod tests {
             .session_access_policy()
             .expect("session policy");
 
-        assert_eq!(policy.resource_access(), ResourceAccess::ReadWrite);
+        assert_eq!(policy.resource_access(), Some(ResourceAccess::ReadWrite));
         assert_eq!(policy.approval_policy(), ProviderApprovalPolicy::Never);
         assert_eq!(policy.external_network(), ExternalNetworkPolicy::Denied);
         assert_eq!(policy.external_search(), ExternalSearchPolicy::Disabled);

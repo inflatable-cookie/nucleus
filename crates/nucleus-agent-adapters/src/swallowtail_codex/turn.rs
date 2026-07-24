@@ -3,8 +3,9 @@ use serde_json::Value;
 use std::future::poll_fn;
 use std::task::Poll;
 use swallowtail_runtime::{
-    CallbackFailureKind, CallbackPayload, CallbackRequest, CallbackRequestKind, CallbackResponse,
-    CallbackResult, CleanupOutcome, RuntimeFailure, TerminalOutcome, TerminalStatus, TurnHandle,
+    CallbackFailureKind, CallbackOperationId, CallbackPayload, CallbackRequest,
+    CallbackRequestKind, CallbackResponse, CallbackResult, CleanupOutcome, RuntimeFailure,
+    TerminalOutcome, TerminalStatus, TurnHandle,
 };
 
 use super::runtime_error;
@@ -133,6 +134,9 @@ pub(super) fn callback_response(
         CallbackRequestKind::Extension(_) => {
             Err("unsupported provider callback extension".to_owned())
         }
+        CallbackRequestKind::HarnessUiDialog(_) => {
+            Err("unsupported harness UI callback".to_owned())
+        }
     };
     let result = match result {
         Ok(text) => match CallbackPayload::new(text.into_bytes(), MAXIMUM_CALLBACK_RESULT_BYTES) {
@@ -141,11 +145,14 @@ pub(super) fn callback_response(
         },
         Err(error) => callback_failure(&error),
     };
-    CallbackResponse::new(
-        request.callback_id().clone(),
-        request.turn_id().clone(),
-        result,
-    )
+    match request.operation_id() {
+        CallbackOperationId::Turn(turn_id) => {
+            CallbackResponse::new(request.callback_id().clone(), turn_id.clone(), result)
+        }
+        CallbackOperationId::Run(run_id) => {
+            CallbackResponse::for_run(request.callback_id().clone(), run_id.clone(), result)
+        }
+    }
 }
 
 fn callback_failure(detail: &str) -> CallbackResult {
