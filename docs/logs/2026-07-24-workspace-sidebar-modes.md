@@ -16,6 +16,11 @@ The global project rail is now a four-mode workspace sidebar:
 Only one view is visible. Project selection and the mounted Projects controller
 survive view changes. Sidebar mode and width remain local client state.
 
+Persisted thread rows now carry their conversation identity into the selected
+project's Agent Chat panel. The workspace queues cross-project requests until
+that project's retained panel layout has loaded, then focuses an existing chat
+panel or creates one before hydrating history.
+
 Splitter drag feedback is now local to the splitter. The outer sidebar and
 project region layouts commit their retained ratios on mouse release instead
 of replacing application layout state or writing storage on every mouse move.

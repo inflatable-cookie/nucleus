@@ -491,7 +491,7 @@
 
   .project-rail-head h2 {
     margin: 0;
-    color: var(--poodle-color-text-primary);
+    color: var(--poodle-color-text-secondary);
     font-size: 0.8125rem;
     font-weight: 700;
     line-height: 1.2;
@@ -544,7 +544,7 @@
     width: 100%;
     min-height: 2.5rem;
     padding: 0.375rem 0.5rem;
-    color: var(--poodle-color-text-primary);
+    color: var(--poodle-color-text-tertiary);
     text-align: left;
     border: 1px solid transparent;
     border-radius: var(--poodle-radius-control);
@@ -582,7 +582,7 @@
   }
 
   .managed-project-copy strong {
-    color: var(--poodle-color-text-primary);
+    color: var(--poodle-color-text-secondary);
     font-size: 0.8125rem;
   }
 
@@ -678,11 +678,13 @@
   }
 
   .project-node-button:hover {
+    color: var(--poodle-color-text-secondary);
     background: var(--poodle-color-background-surface);
     border-color: var(--poodle-color-border-subtle);
   }
 
   .project-node.active .project-node-button {
+    color: var(--poodle-color-text-primary);
     background: var(--poodle-color-background-elevated);
     border-color: var(--poodle-color-border-default);
   }
@@ -690,11 +692,11 @@
   .project-node-icon {
     display: inline-grid;
     place-items: center;
-    color: var(--poodle-color-text-secondary);
+    color: var(--poodle-color-text-tertiary);
   }
 
   .project-node.active .project-node-icon {
-    color: var(--poodle-color-text-primary);
+    color: var(--poodle-color-text-secondary);
   }
 
   .project-node-label {
@@ -721,6 +723,10 @@
     line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .project-node.active .project-meta {
+    color: var(--poodle-color-text-secondary);
   }
 
   .rail-message {

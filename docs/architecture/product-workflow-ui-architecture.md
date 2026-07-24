@@ -116,8 +116,10 @@ Nucleus therefore needs:
 
 Threads reads compact summaries from persisted product-chat sessions. Task work
 units may link back to those conversations, but task diagnostics are not a
-substitute thread index. Selecting a thread changes project context without
-making the sidebar authoritative for provider session state.
+substitute thread index. Selecting a thread changes project context, focuses or
+creates an Agent Chat panel, and passes that panel the persisted conversation
+id for history hydration. The sidebar does not become authoritative for
+provider session state.
 
 Terminal panels render a host-owned session. The client resolves the project's
 terminal authority, then attaches through a transport adapter. Local Tauri IPC

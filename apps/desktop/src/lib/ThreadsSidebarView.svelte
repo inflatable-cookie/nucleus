@@ -25,6 +25,7 @@
   let loading = $state(false);
   let creating = $state(false);
   let failure = $state<string | null>(null);
+  let selectedConversationId = $state<string | null>(null);
   let namingChatId = $state<string | null>(null);
   let chatName = $state("");
 
@@ -133,6 +134,19 @@
     return projects.find((project) => project.project_id === projectId)?.display_name ?? projectId;
   }
 
+  function openThread(thread: AgentChatThreadSummary): void {
+    selectedConversationId = thread.conversation_id;
+    selectedProjectId = thread.project_id;
+    window.dispatchEvent(
+      new CustomEvent("nucleus:open-agent-chat-thread", {
+        detail: {
+          projectId: thread.project_id,
+          conversationId: thread.conversation_id,
+        },
+      }),
+    );
+  }
+
   function notifyProjectsChanged(): void {
     window.dispatchEvent(new CustomEvent("nucleus:projects-changed"));
   }
@@ -191,8 +205,8 @@
         <button
           class="work-thread-row"
           type="button"
-          class:active={thread.project_id === selectedProjectId}
-          onclick={() => (selectedProjectId = thread.project_id)}
+          class:active={thread.conversation_id === selectedConversationId}
+          onclick={() => openThread(thread)}
         >
           <Icon icon={messageCircle} size="sm" />
           <span>
@@ -233,6 +247,7 @@
 
   .sidebar-view-head h2 {
     margin: 0;
+    color: var(--poodle-color-text-secondary);
     font-size: 0.8125rem;
   }
 
@@ -282,7 +297,7 @@
   .work-thread-row {
     gap: 0.5rem;
     min-width: 0;
-    color: var(--poodle-color-text-primary);
+    color: var(--poodle-color-text-tertiary);
     text-align: left;
     border: 0;
     background: transparent;
@@ -296,6 +311,16 @@
     width: 100%;
     padding: 0.5rem;
     border-radius: var(--poodle-radius-control);
+  }
+
+  .thread-select:hover,
+  .work-thread-row:hover {
+    color: var(--poodle-color-text-secondary);
+  }
+
+  .thread-row.active .thread-select,
+  .work-thread-row.active {
+    color: var(--poodle-color-text-primary);
   }
 
   .thread-select span,
@@ -318,6 +343,11 @@
   small {
     color: var(--poodle-color-text-muted);
     font-size: 0.6875rem;
+  }
+
+  .thread-row.active small,
+  .work-thread-row.active small {
+    color: var(--poodle-color-text-secondary);
   }
 
   form {

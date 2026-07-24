@@ -140,9 +140,24 @@ fn project_rail_keeps_inactive_projects_in_management_only() {
     assert!(sidebar.contains("Forge"));
     assert!(threads.contains("{#each emptyTransientChats as chat (chat.project_id)}"));
     assert!(threads.contains("listAgentChatThreads"));
+    assert!(threads.contains("nucleus:open-agent-chat-thread"));
+    assert!(threads.contains("thread.conversation_id"));
+    assert!(sidebar.contains("ThreadsSidebarView bind:selectedProjectId"));
     assert!(rail.contains("Manage projects"));
     assert!(rail.contains("{ value: \"all\", label: \"All\" }"));
     assert!(rail.contains("{ value: \"parked\", label: \"Parked\" }"));
     assert!(rail.contains("{ value: \"archived\", label: \"Archived\" }"));
     assert!(rail.contains("loadedActiveProjects[0]?.project_id ?? null"));
+}
+
+#[test]
+fn thread_selection_routes_persisted_conversation_into_agent_chat() {
+    let workspace = include_str!("../../../src/lib/ProjectWorkspaceStage.svelte");
+
+    assert!(workspace.contains(
+        "window.addEventListener(\"nucleus:open-agent-chat-thread\", handleOpenAgentChatThread)"
+    ));
+    assert!(workspace.contains("pendingThreadOpen"));
+    assert!(workspace.contains("openAgentChatThread(request.conversationId)"));
+    assert!(workspace.contains("conversationId={panelConversationId(panel)}"));
 }

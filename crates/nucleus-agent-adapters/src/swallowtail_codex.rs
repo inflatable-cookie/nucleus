@@ -12,18 +12,17 @@ use nucleus_agent_protocol::{
 };
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
-use swallowtail_adapter_codex::CodexAppServerDriver;
+use swallowtail_adapter_codex::{CodexAppServerDriver, CodexSessionProfileInput};
 use swallowtail_core::ReasoningMode;
 use swallowtail_runtime::{
     HostServices, InteractiveSessionDriver, InteractiveSessionHandle, ModelCatalogDriver,
-    ModelCatalogRequest, OpenSessionRequest, OperationContent, RequestId, RuntimeFailure,
-    RuntimeTurnId, SchemaDocument, SessionOptions, TurnRequest,
+    OperationContent, RequestId, RuntimeFailure, RuntimeTurnId, ScopeId, SessionOptions,
+    TurnRequest,
 };
 
 mod host;
-mod preflight;
+mod preparation;
 mod smoke;
 mod task_execution;
 mod tools;
@@ -64,23 +63,10 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
         let tools = tool_declarations(request.dynamic_tools)?;
         let reasoning =
             ReasoningMode::new(&request.reasoning_effort).map_err(|error| error.to_string())?;
-        let maximum_schema_bytes = tools
-            .iter()
-            .map(|tool| match tool.input_schema() {
-                SchemaDocument::Inline(bytes) => bytes.len(),
-                SchemaDocument::Reference(_) => 0,
-            })
-            .max()
-            .unwrap_or(0);
-        let plan = preflight::session_plan(
-            &request.model,
-            reasoning.clone(),
-            u32::try_from(tools.len()).unwrap_or(u32::MAX),
-            u64::try_from(maximum_schema_bytes).unwrap_or(u64::MAX),
-        )
-        .map_err(runtime_error)?;
-        let host = Arc::new(host::local_host(Path::new(&request.working_directory))?);
-        let services = host::services(&host);
+        let host = host::local_host(Path::new(&request.working_directory))?;
+        let services = host.services();
+        let prepared = block_on(preparation::app_server(&host))?;
+        let driver = CodexAppServerDriver::new(prepared.environment().clone());
         let options = SessionOptions::default()
             .with_developer_instructions(
                 OperationContent::new(request.developer_instructions)
@@ -88,19 +74,18 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
             )
             .with_reasoning_mode(reasoning)
             .with_tools(tools);
-        let session = block_on(
-            CodexAppServerDriver::new(host::environment_ref()?).open_session(
-                plan,
-                OpenSessionRequest::new(
-                    request_id("session")?,
-                    host::working_resource_ref()?,
-                    None,
-                )
-                .with_options(options),
-                services.clone(),
-            ),
-        )
-        .map_err(runtime_error)?;
+        let prepared_session = prepared
+            .prepare_read_only_session(CodexSessionProfileInput::new(
+                request_id("session")?,
+                preparation::model(&request.model)?,
+                host.working_resource().clone(),
+                None,
+                options,
+            ))
+            .map_err(preparation::error)?;
+        let (_, plan, open_request) = prepared_session.into_parts();
+        let session = block_on(driver.open_session(plan, open_request, services.clone()))
+            .map_err(runtime_error)?;
         let provider_thread_id = session
             .provider_session_ref()
             .ok_or_else(|| "Codex session did not return a provider thread id".to_owned())?
@@ -121,17 +106,20 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
     fn model_catalog(&self) -> Result<Vec<AgentModelOption>, String> {
         let current = std::env::current_dir()
             .map_err(|_| "Nucleus could not resolve its host working directory".to_owned())?;
-        let host = Arc::new(host::local_host(&current)?);
-        let services = host::services(&host);
-        let deadline = host::deadline_after(host.as_ref(), CATALOG_TIMEOUT);
-        let models = block_on(
-            CodexAppServerDriver::new(host::environment_ref()?).list_models(
-                preflight::catalog_plan().map_err(runtime_error)?,
-                ModelCatalogRequest::new(request_id("catalog")?).with_deadline(deadline),
-                services,
-            ),
-        )
-        .map_err(runtime_error)?;
+        let host = host::local_host(&current)?;
+        let services = host.services();
+        let prepared = block_on(preparation::app_server(&host))?;
+        let driver = CodexAppServerDriver::new(prepared.environment().clone());
+        let time = services
+            .time()
+            .ok_or_else(|| "Codex catalog time service is unavailable".to_owned())?;
+        let deadline = host::deadline_after(time.as_ref(), CATALOG_TIMEOUT);
+        let catalogue = prepared
+            .prepare_catalogue(request_id("catalog")?, Some(deadline))
+            .map_err(preparation::error)?;
+        let (_, plan, catalog_request) = catalogue.into_parts();
+        let models =
+            block_on(driver.list_models(plan, catalog_request, services)).map_err(runtime_error)?;
 
         Ok(models
             .into_iter()
@@ -241,6 +229,14 @@ fn request_id(kind: &str) -> Result<RequestId, String> {
     .map_err(|error| error.to_string())
 }
 
+fn scope_id(kind: &str) -> Result<ScopeId, String> {
+    ScopeId::new(format!(
+        "nucleus-{kind}-{}",
+        REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ))
+    .map_err(|error| error.to_string())
+}
+
 fn runtime_turn_id() -> Result<RuntimeTurnId, String> {
     RuntimeTurnId::new(format!(
         "nucleus-chat-turn-{}",
@@ -330,5 +326,38 @@ mod tests {
             .expect("unsafe resume is rejected");
 
         assert!(failure.contains("transcript context"));
+    }
+
+    #[test]
+    #[ignore = "requires a locally authenticated Codex installation"]
+    fn current_local_codex_model_catalog_clears_full_preflight() {
+        let models = SwallowtailCodexSessionRuntime
+            .model_catalog()
+            .expect("Codex model catalog");
+
+        assert!(!models.is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires a locally authenticated Codex installation"]
+    fn current_local_codex_chat_session_opens_with_its_preflight_policy() {
+        let working_directory = std::env::current_dir().expect("working directory");
+        let session = SwallowtailCodexSessionRuntime
+            .start_session(AgentSessionStartRequest {
+                working_directory: working_directory.display().to_string(),
+                model: "gpt-5.4-mini".to_owned(),
+                reasoning_effort: "low".to_owned(),
+                developer_instructions: "Nucleus integration smoke.".to_owned(),
+                dynamic_tools: vec![json!({
+                    "type": "function",
+                    "name": "task_ledger",
+                    "description": "Inspect tasks",
+                    "inputSchema": { "type": "object" }
+                })],
+                resume_provider_thread_id: None,
+            })
+            .expect("Codex chat session");
+
+        drop(session);
     }
 }

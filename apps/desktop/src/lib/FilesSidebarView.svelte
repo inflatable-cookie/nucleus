@@ -160,6 +160,7 @@
 
   .sidebar-view-head h2 {
     margin: 0;
+    color: var(--poodle-color-text-secondary);
     font-size: 0.8125rem;
   }
 
@@ -204,6 +205,7 @@
 
   .resource-tree > summary {
     min-height: 2rem;
+    color: var(--poodle-color-text-secondary);
   }
 
   .resource-tree summary span {
@@ -246,7 +248,7 @@
   .tree-directory summary,
   .tree-file {
     min-height: 1.625rem;
-    color: var(--poodle-color-text-secondary);
+    color: var(--poodle-color-text-tertiary);
     font-size: 0.75rem;
   }
 
@@ -264,7 +266,7 @@
   }
 
   .tree-file:hover {
-    color: var(--poodle-color-text-primary);
+    color: var(--poodle-color-text-secondary);
     background: var(--poodle-color-background-surface);
   }
 

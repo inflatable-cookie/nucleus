@@ -3706,6 +3706,7 @@ dependencies = [
 name = "swallowtail-host-local"
 version = "0.1.0"
 dependencies = [
+ "futures-executor",
  "sha2",
  "swallowtail-core",
  "swallowtail-runtime",

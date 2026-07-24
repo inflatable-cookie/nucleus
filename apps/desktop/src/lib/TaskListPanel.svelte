@@ -322,26 +322,26 @@
 {/snippet}
 
 <style>
-  .tasks-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--poodle-color-text-primary); background: var(--poodle-color-background-canvas); }
+  .tasks-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--poodle-color-text-secondary); background: var(--poodle-color-background-canvas); }
   .tasks-header { display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 1rem; border-bottom: 1px solid var(--poodle-color-border-subtle); }
   h1, h2, h3, h4, p { margin: 0; }
-  h1 { font-size: 0.95rem; }
-  h2 { font-size: 1.15rem; line-height: 1.3; }
-  h3 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  h1 { color: var(--poodle-color-text-secondary); font-size: 0.95rem; }
+  h2 { color: var(--poodle-color-text-primary); font-size: 1.15rem; line-height: 1.3; }
+  h3 { color: var(--poodle-color-text-secondary); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
   h4 { margin-bottom: 0.35rem; font-size: 0.75rem; color: var(--poodle-color-text-secondary); }
   .tasks-body { display: grid; grid-template-columns: minmax(14rem, 0.72fr) minmax(20rem, 1.28fr); min-height: 0; }
   .task-list { min-width: 0; overflow: auto; padding: 0.45rem; border-right: 1px solid var(--poodle-color-border-subtle); }
   .goal-group + .goal-group { margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px solid var(--poodle-color-border-subtle); }
-  .goal-row, .task-row { display: grid; gap: 0.3rem; width: 100%; color: inherit; text-align: left; border: 0; border-radius: var(--poodle-radius-control); background: transparent; cursor: pointer; }
+  .goal-row, .task-row { display: grid; gap: 0.3rem; width: 100%; color: var(--poodle-color-text-secondary); text-align: left; border: 0; border-radius: var(--poodle-radius-control); background: transparent; cursor: pointer; }
   .goal-row { padding: 0.65rem 0.7rem; }
   .task-row { padding: 0.55rem 0.7rem; }
   .task-row.nested { padding-left: 1.15rem; }
-  .goal-row:hover, .task-row:hover { background: var(--poodle-color-background-surface); }
-  .goal-row.selected { background: var(--poodle-color-background-surface); }
-  .task-row.selected { background: var(--poodle-color-background-panel); box-shadow: inset 2px 0 var(--poodle-color-border-strong); }
+  .goal-row:hover, .task-row:hover { color: var(--poodle-color-text-primary); background: var(--poodle-color-background-surface); }
+  .goal-row.selected { color: var(--poodle-color-text-primary); background: var(--poodle-color-background-surface); }
+  .task-row.selected { color: var(--poodle-color-text-primary); background: var(--poodle-color-background-panel); box-shadow: inset 2px 0 var(--poodle-color-border-strong); }
   .goal-title, .task-title { font-size: 0.84rem; font-weight: 600; line-height: 1.35; }
-  .goal-meta, .task-meta, .parent-goal { display: flex; align-items: center; gap: 0.35rem; color: var(--poodle-color-text-secondary); font-size: 0.72rem; }
-  .ungrouped-heading { display: flex; justify-content: space-between; padding: 0.5rem 0.7rem 0.25rem; color: var(--poodle-color-text-secondary); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .goal-meta, .task-meta, .parent-goal { display: flex; align-items: center; gap: 0.35rem; color: var(--poodle-color-text-tertiary); font-size: 0.72rem; }
+  .ungrouped-heading { display: flex; justify-content: space-between; padding: 0.5rem 0.7rem 0.25rem; color: var(--poodle-color-text-tertiary); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
   .readiness-dot { width: 0.38rem; height: 0.38rem; border-radius: 50%; background: var(--poodle-color-text-tertiary); }
   .readiness-dot.ready { background: var(--poodle-color-status-success); }
   .task-detail { min-width: 0; overflow: auto; padding: clamp(1rem, 3vw, 2rem); }
@@ -349,14 +349,14 @@
   .eyebrow { display: block; margin-bottom: 0.3rem; color: var(--poodle-color-text-secondary); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; }
   .parent-goal { margin-top: 0.3rem; }
   .state-pill { padding: 0.25rem 0.48rem; color: var(--poodle-color-text-secondary); font-size: 0.7rem; border: 1px solid var(--poodle-color-border-subtle); border-radius: 999px; }
-  .description { max-width: 46rem; margin-top: 1rem; font-size: 0.88rem; line-height: 1.55; white-space: pre-wrap; }
-  .detail-copy { max-width: 46rem; font-size: 0.84rem; line-height: 1.5; white-space: pre-wrap; }
+  .description { max-width: 46rem; margin-top: 1rem; color: var(--poodle-color-text-secondary); font-size: 0.88rem; line-height: 1.55; white-space: pre-wrap; }
+  .detail-copy { max-width: 46rem; color: var(--poodle-color-text-secondary); font-size: 0.84rem; line-height: 1.5; white-space: pre-wrap; }
   .task-facts { display: flex; flex-wrap: wrap; gap: 1.5rem; margin: 1.3rem 0 0; }
   .task-facts div { display: grid; gap: 0.2rem; }
-  dt { color: var(--poodle-color-text-secondary); font-size: 0.7rem; }
+  dt { color: var(--poodle-color-text-tertiary); font-size: 0.7rem; }
   dd { margin: 0; font-size: 0.8rem; text-transform: capitalize; }
   .detail-section { display: grid; gap: 0.65rem; margin-top: 1.5rem; }
-  .acceptance-list { display: grid; gap: 0.5rem; margin: 0; padding-left: 1.15rem; font-size: 0.84rem; line-height: 1.45; }
+  .acceptance-list { display: grid; gap: 0.5rem; margin: 0; padding-left: 1.15rem; color: var(--poodle-color-text-secondary); font-size: 0.84rem; line-height: 1.45; }
   .blocked-reason { display: grid; gap: 0.25rem; margin-top: 1.25rem; padding: 0.7rem; color: var(--poodle-color-status-danger); font-size: 0.8rem; border: 1px solid var(--poodle-color-status-danger); border-radius: var(--poodle-radius-control); }
   .advanced-detail { margin-top: 1.5rem; font-size: 0.8rem; }
   .advanced-detail summary { width: fit-content; color: var(--poodle-color-text-secondary); cursor: pointer; }

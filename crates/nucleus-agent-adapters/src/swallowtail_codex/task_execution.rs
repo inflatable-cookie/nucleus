@@ -5,21 +5,20 @@ use nucleus_agent_protocol::{
 use std::future::poll_fn;
 use std::future::Future;
 use std::path::Path;
-use std::sync::Arc;
 use std::task::Poll;
 use std::thread;
 use swallowtail_adapter_codex::{
-    codex_approval_request_extension, codex_bounded_workspace_access_policy,
-    codex_user_input_request_extension, CodexAppServerDriver,
+    codex_approval_request_extension, codex_user_input_request_extension, CodexAppServerDriver,
+    CodexSessionProfileInput,
 };
 use swallowtail_core::ReasoningMode;
 use swallowtail_runtime::{
-    CallbackRequestKind, CleanupOutcome, InteractiveSessionDriver, OpenSessionRequest,
-    OperationContent, RuntimeFailure, RuntimeTurnId, SessionOptions, TerminalOutcome,
-    TerminalStatus, TurnHandle, TurnRequest,
+    CallbackRequestKind, CleanupOutcome, InteractiveSessionDriver, OperationContent,
+    RuntimeFailure, RuntimeTurnId, SessionOptions, TerminalOutcome, TerminalStatus, TurnHandle,
+    TurnRequest,
 };
 
-use super::{host, preflight, request_id, runtime_error};
+use super::{host, preparation, request_id, runtime_error};
 
 pub const CODEX_PROVIDER_INSTANCE_ID: &str = "codex:local-default";
 
@@ -46,10 +45,10 @@ impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {
         }
         let reasoning =
             ReasoningMode::new(&request.reasoning_effort).map_err(|error| error.to_string())?;
-        let plan = preflight::task_session_plan(&request.model, reasoning.clone())
-            .map_err(runtime_error)?;
-        let host = Arc::new(host::local_host(Path::new(&request.working_directory))?);
-        let services = host::services(&host);
+        let host = host::local_host(Path::new(&request.working_directory))?;
+        let services = host.services();
+        let prepared = block_on_worker(preparation::app_server(&host))?;
+        let driver = CodexAppServerDriver::new(prepared.environment().clone());
         let options = SessionOptions::default()
             .with_developer_instructions(
                 OperationContent::new(request.developer_instructions)
@@ -58,20 +57,19 @@ impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {
             .with_reasoning_mode(reasoning);
         let prompt = OperationContent::new(request.prompt).map_err(|error| error.to_string())?;
         let runtime_turn_id = task_turn_id()?;
-        let mut session = block_on_worker(
-            CodexAppServerDriver::new(host::environment_ref()?).open_session(
-                plan,
-                OpenSessionRequest::new(
-                    request_id("task-session")?,
-                    host::working_resource_ref()?,
-                    None,
-                )
-                .with_options(options)
-                .with_access_policy(codex_bounded_workspace_access_policy()),
-                services.clone(),
-            ),
-        )
-        .map_err(runtime_error)?;
+        let prepared_session = prepared
+            .prepare_bounded_workspace_session(CodexSessionProfileInput::new(
+                request_id("task-session")?,
+                preparation::model(&request.model)?,
+                host.working_resource().clone(),
+                None,
+                options,
+            ))
+            .map_err(preparation::error)?;
+        let (_, plan, open_request) = prepared_session.into_parts();
+        let mut session =
+            block_on_worker(driver.open_session(plan, open_request, services.clone()))
+                .map_err(runtime_error)?;
         let provider_thread_id = match session.provider_session_ref() {
             Some(reference) => reference.as_provider_value().to_owned(),
             None => {

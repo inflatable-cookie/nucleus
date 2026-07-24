@@ -61,6 +61,11 @@
   let selectedGoalId = $state<string | null>(null);
   let selectedGoal = $state<ControlGoalRecordDto | null>(null);
   let editorFileRequests = $state<Record<string, string>>({});
+  let panelConversationIds = $state<Record<string, string>>({});
+  let pendingThreadOpen = $state<{
+    projectId: string;
+    conversationId: string;
+  } | null>(null);
 
   const workspaceWindow = $derived(
     workspaceWindowForProject(
@@ -100,6 +105,7 @@
     window.addEventListener("nucleus:open-task", handleOpenTask);
     window.addEventListener("nucleus:open-goal", handleOpenGoal);
     window.addEventListener("nucleus:open-file", handleOpenFile);
+    window.addEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
     window.addEventListener("mouseup", flushLayoutPersistence);
 
     return () => {
@@ -107,6 +113,7 @@
       window.removeEventListener("nucleus:open-task", handleOpenTask);
       window.removeEventListener("nucleus:open-goal", handleOpenGoal);
       window.removeEventListener("nucleus:open-file", handleOpenFile);
+      window.removeEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
       window.removeEventListener("mouseup", flushLayoutPersistence);
     };
   });
@@ -125,6 +132,20 @@
 
   $effect(() => {
     onOpenPanelKindsChange?.(openPanelKinds);
+  });
+
+  $effect(() => {
+    const request = pendingThreadOpen;
+    if (
+      !request
+      || request.projectId !== selectedProject?.project_id
+      || !workspaceWindow
+    ) {
+      return;
+    }
+
+    pendingThreadOpen = null;
+    openAgentChatThread(request.conversationId);
   });
 
   $effect(() => {
@@ -291,6 +312,61 @@
       return;
     }
     openFileInEditor(event.detail.fileRef, event.detail.resourceId);
+  }
+
+  function handleOpenAgentChatThread(event: Event): void {
+    if (
+      !(event instanceof CustomEvent)
+      || typeof event.detail?.projectId !== "string"
+      || typeof event.detail?.conversationId !== "string"
+    ) {
+      return;
+    }
+
+    pendingThreadOpen = {
+      projectId: event.detail.projectId,
+      conversationId: event.detail.conversationId,
+    };
+  }
+
+  function openAgentChatThread(conversationId: string): void {
+    if (!workspaceWindow || !selectedProject) {
+      return;
+    }
+
+    const projectId = selectedProject.project_id;
+    const agentChatPanels = regionKeys()
+      .flatMap((region) => workspaceWindow.regions[region])
+      .filter((panel) => panel.kind === "agentChat");
+    const panel = agentChatPanels.find(
+      (candidate) => defaultConversationId(projectId, candidate) === conversationId,
+    ) ?? agentChatPanels[0] ?? addPanel("agentChat");
+    if (!panel) {
+      return;
+    }
+
+    panelConversationIds = {
+      ...panelConversationIds,
+      [panelConversationKey(projectId, panel)]: conversationId,
+    };
+    const region = findPanelRegion(panel.id);
+    if (region) {
+      setActivePanel(region, panel.id);
+    }
+  }
+
+  function panelConversationId(panel: WorkspacePanelDto): string {
+    const projectId = selectedProject?.project_id ?? "unselected";
+    return panelConversationIds[panelConversationKey(projectId, panel)]
+      ?? defaultConversationId(projectId, panel);
+  }
+
+  function panelConversationKey(projectId: string, panel: WorkspacePanelDto): string {
+    return `${projectId}:${panel.id}`;
+  }
+
+  function defaultConversationId(projectId: string, panel: WorkspacePanelDto): string {
+    return `${projectId}:${panel.id}`;
   }
 
   function focusPanelKind(kind: string): void {
@@ -963,7 +1039,7 @@
       {@render ResourceTargetControl(panel)}
       <div class="resource-panel-body">
         <AgentChatPanel
-          conversationId={`${selectedProject?.project_id ?? "unselected"}:${panel.id}`}
+          conversationId={panelConversationId(panel)}
           projectId={selectedProject?.project_id ?? null}
           resourceId={effectivePanelResourceTarget(panel)}
           activeTask={selectedTask}

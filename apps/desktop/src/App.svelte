@@ -294,7 +294,7 @@
     height: 100%;
     min-width: 0;
     min-height: 0;
-    color: var(--poodle-color-text-primary);
+    color: var(--poodle-color-text-secondary);
     background: var(--poodle-color-background-canvas);
   }
 

@@ -7,17 +7,16 @@
 use futures_executor::block_on;
 use std::future::poll_fn;
 use std::path::Path;
-use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
-use swallowtail_adapter_codex::CodexAppServerDriver;
+use swallowtail_adapter_codex::{CodexAppServerDriver, CodexSessionProfileInput};
 use swallowtail_core::ReasoningMode;
 use swallowtail_runtime::{
-    CleanupOutcome, InteractiveSessionDriver, OpenSessionRequest, OperationContent, RuntimeFailure,
-    RuntimeTurnId, SessionOptions, TerminalOutcome, TerminalStatus, TurnHandle, TurnRequest,
+    CleanupOutcome, InteractiveSessionDriver, OperationContent, RuntimeFailure, RuntimeTurnId,
+    SessionOptions, TerminalOutcome, TerminalStatus, TurnHandle, TurnRequest,
 };
 
-use super::{host, preflight, request_id, runtime_error, REQUEST_SEQUENCE};
+use super::{host, preparation, request_id, runtime_error, REQUEST_SEQUENCE};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CodexReadOnlySmokeStatus {
@@ -53,9 +52,10 @@ pub fn run_codex_read_only_smoke(
     timeout: Duration,
 ) -> Result<CodexReadOnlySmokeOutcome, String> {
     let reasoning = ReasoningMode::new(reasoning_effort).map_err(|error| error.to_string())?;
-    let plan = preflight::session_plan(model, reasoning.clone(), 0, 0).map_err(runtime_error)?;
-    let host = Arc::new(host::local_host(working_directory)?);
-    let services = host::services(&host);
+    let host = host::local_host(working_directory)?;
+    let services = host.services();
+    let prepared = block_on(preparation::app_server(&host))?;
+    let driver = CodexAppServerDriver::new(prepared.environment().clone());
     let options = SessionOptions::default()
         .with_developer_instructions(
             OperationContent::new(
@@ -64,19 +64,18 @@ pub fn run_codex_read_only_smoke(
             .map_err(|error| error.to_string())?,
         )
         .with_reasoning_mode(reasoning);
-    let mut session = block_on(
-        CodexAppServerDriver::new(host::environment_ref()?).open_session(
-            plan,
-            OpenSessionRequest::new(
-                request_id("diagnostic-session")?,
-                host::working_resource_ref()?,
-                None,
-            )
-            .with_options(options),
-            services.clone(),
-        ),
-    )
-    .map_err(runtime_error)?;
+    let prepared_session = prepared
+        .prepare_read_only_session(CodexSessionProfileInput::new(
+            request_id("diagnostic-session")?,
+            preparation::model(model)?,
+            host.working_resource().clone(),
+            None,
+            options,
+        ))
+        .map_err(preparation::error)?;
+    let (_, plan, open_request) = prepared_session.into_parts();
+    let mut session = block_on(driver.open_session(plan, open_request, services.clone()))
+        .map_err(runtime_error)?;
     let thread_id = match session.provider_session_ref() {
         Some(reference) => reference.as_provider_value().to_owned(),
         None => {

@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-07-20
+Updated: 2026-07-24
 
 ## Purpose
 
@@ -29,6 +29,19 @@ Swallowtail implementation translates the request into portable runtime
 records, drains events, classifies observations, awaits terminal state and
 cleanup, then maps back. Swallowtail types do not enter Goal, task, review, or
 desktop DTOs.
+
+Before task-session preparation, the implementation passes the host-approved
+Codex target and Nucleus-owned access evidence to Swallowtail's prepared
+facade. The facade discovers the exact `codex.cli` version, binds it to the
+configured instance and operation requirements, and produces the matched plan
+and open request. Missing, malformed, incompatible, timed-out, or uncertain
+discovery stops before writable task execution begins.
+
+The facade selects Swallowtail's `Ambient` harness-configuration posture for
+the configured instance and operation. This acknowledges the Codex
+configuration ordinarily visible under the host-approved saved-login
+invocation. It does not grant configuration discovery, mutation, migration,
+installation, or deletion authority.
 
 ## Retained Nucleus Ownership
 
@@ -161,10 +174,10 @@ The first implementation stays behind the Nucleus-owned port. Existing Goal
 run composition, `TaskExecutionOutcome`, linkage persistence, checkpoint/diff
 capture, task-workflow receipts, and UI DTOs remain stable.
 
-During migration one implementation is selected per build/test lane. The
-direct and Swallowtail transports must not both execute one admitted work item.
-Rollback selects the old port implementation before legacy removal; it does
-not copy Swallowtail state into Nucleus domain records.
+There is no runtime compatibility switch around prepared setup. Source rollback
+restores the prior adapter implementation as one coherent change; old and new
+preparation paths must not coexist or execute one admitted work item. Rollback
+does not copy Swallowtail state into Nucleus domain records.
 
 ## Acceptance
 

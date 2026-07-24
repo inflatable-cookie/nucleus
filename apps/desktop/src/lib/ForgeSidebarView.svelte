@@ -123,6 +123,7 @@
 
   .sidebar-view-head h2 {
     margin: 0;
+    color: var(--poodle-color-text-secondary);
     font-size: 0.8125rem;
   }
 
@@ -162,17 +163,25 @@
     justify-content: space-between;
     gap: 0.5rem;
     padding: 0.125rem;
-    color: var(--poodle-color-text-primary);
+    color: var(--poodle-color-text-tertiary);
     text-align: left;
     border: 0;
     background: transparent;
+  }
+
+  .forge-project-head:hover:not(:disabled) {
+    color: var(--poodle-color-text-secondary);
+  }
+
+  .forge-project.active .forge-project-head {
+    color: var(--poodle-color-text-primary);
   }
 
   .repository-row {
     gap: 0.5rem;
     min-width: 0;
     padding: 0.375rem;
-    color: var(--poodle-color-text-secondary);
+    color: var(--poodle-color-text-tertiary);
     background: var(--poodle-color-background-surface);
     border-radius: var(--poodle-radius-control);
   }

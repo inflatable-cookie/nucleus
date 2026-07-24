@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-07-20
+Updated: 2026-07-24
 
 ## Purpose
 
@@ -71,6 +71,25 @@ authoritative host user's home directory as a read-only context.
 
 ## Lifecycle And Diagnostics
 
+- before model-catalog or session preparation, Nucleus passes one
+  host-approved executable target, saved-login environment, stable instance
+  identity, and caller-asserted access evidence to Swallowtail's prepared Codex
+  facade
+- the facade probes the target and binds the exact observed `codex.cli` version
+  into the configured instance and operation requirements; discovery failure
+  stops before app-server launch
+- Nucleus must not substitute a compiled-in, latest-known, or guessed Codex
+  version for host evidence
+- the facade binds Swallowtail's `Ambient` harness-configuration posture
+  because Nucleus launches Codex with the host-approved saved-login environment
+  and accepts its ordinarily visible configuration sources
+- ambient configuration agreement grants no configuration discovery,
+  mutation, migration, installation, or deletion authority
+- Agent Chat and the confirmed smoke use the facade's read-only session profile;
+  the profile binds one canonical access policy into immutable preflight and
+  the session-open request
+- Nucleus does not reconstruct configured instances, capability requirements,
+  version bindings, configuration posture, or session-plan agreement
 - model discovery and turns remain deadline-bound
 - event and callback streams are drained while the turn is active
 - every terminal outcome is mapped explicitly; an empty completed response is
