@@ -378,7 +378,9 @@ shape.
 
 ## Next Task
 
-Execute Swallowtail card 041's approved post-repair pilot through Nucleus's
-normal bundled UI. Count the retained failed launch and catalogue as attempt
-one of four, then run the original workload across three clean launches.
-Retain the 15-turn, 6-thread, read-only, and 60-minute execution ceilings.
+Review the second-defect evidence in
+`logs/2026-07-26-swallowtail-native-pilot-second-defect.md`. Approve or reject
+Swallowtail card 041's reset to 5 physical launches and catalogue attempts
+total. Retain 15 turns, 6 joined provider threads including the failed
+session, read-only effects, and 60 minutes of cumulative active execution.
+Make no further provider call before that decision.

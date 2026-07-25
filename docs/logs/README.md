@@ -4,6 +4,7 @@ Logs record meaningful decisions, evidence, and closeouts.
 
 ## Current Logs
 
+- `2026-07-26-swallowtail-native-pilot-second-defect.md`
 - `2026-07-25-swallowtail-native-pilot-first-defect.md`
 - `2026-07-25-swallowtail-native-pilot-handoff.md`
 - `2026-07-25-swallowtail-native-proof-readiness-implementation.md`

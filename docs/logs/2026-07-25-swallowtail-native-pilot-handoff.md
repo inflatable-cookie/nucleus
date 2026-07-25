@@ -14,7 +14,7 @@ before authenticated catalogue discovery and before the first model turn.
 | --- | --- |
 | Nucleus runtime source | `11d17810ed68e2b02173c3ae907b83f8db867b58` |
 | Swallowtail pre-handoff checkpoint | `ea22603d5fc50545b0ef477187b3ab83a8ab785c` |
-| Swallowtail runtime-code source | `54fbbc2af4e1615bed67815037aa2bcd6cc91dcb` |
+| Swallowtail runtime-code source | `a26b54f0c264abf1712c94db442e9cb0b4078208` |
 | Original pilot runtime source | `e9ead4d35fb7754962053417bf8328e646839b32` |
 | Codex executable | host-approved direct `codex` target; SHA-256 `1da3f4e0e96028b8a771814293c3033dafd1971f943f6c7e79b0897fe705f590` |
 | Codex version | `codex-cli 0.145.0` |
@@ -105,6 +105,14 @@ ceiling. Safe evidence reports zero turns and zero provider threads.
 
 Swallowtail commit `54fbbc2` derives exact plan bounds from the already bounded
 tool declarations and passes all 90 Codex-adapter tests. The failed launch
-still consumed one catalogue attempt. Swallowtail card 041 is paused for
-explicit approval of one additional physical launch and catalogue attempt.
-The 15-turn, 6-thread, read-only, and 60-minute ceilings remain unchanged.
+still consumed one catalogue attempt.
+
+The approved reset's next launch exposed a second Swallowtail facade defect:
+prepared sessions omitted the time service required by their normal turn
+deadline. Safe evidence reports one failed turn and no provider model turn.
+Swallowtail commit `a26b54f` fixes the plan and passes all 90 Codex and 19
+deterministic Nucleus adapter tests.
+
+Card 041 is paused for explicit approval of a fifth physical launch and
+catalogue attempt. The 15-turn, 6-thread, read-only, and cumulative active-time
+ceilings remain unchanged.

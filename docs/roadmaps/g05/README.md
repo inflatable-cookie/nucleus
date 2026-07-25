@@ -36,5 +36,5 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 - `001-project-scoped-workspace-layouts.md` - active
 - `002-workspace-sidebar-modes.md` - completed
 - `003-swallowtail-application-proof-readiness.md` - active; deterministic
-  readiness complete; first pilot defect fixed in Swallowtail; narrow reset
-  approved and live replay executing
+  readiness complete; two pilot facade defects fixed in Swallowtail; live
+  replay paused for a second narrow reset
