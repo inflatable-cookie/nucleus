@@ -13,7 +13,7 @@ before authenticated catalogue discovery and before the first model turn.
 | Surface | Fixed value |
 | --- | --- |
 | Nucleus runtime source | `2a6d72a8d3326cc70c6852f8fa86ff7f8ca995f2` |
-| Swallowtail repository source | `ea22603d5fc50545b0ef477187b3ab83a8ab785c` |
+| Swallowtail pre-handoff checkpoint | `ea22603d5fc50545b0ef477187b3ab83a8ab785c` |
 | Swallowtail runtime-code source | `e9ead4d35fb7754962053417bf8328e646839b32` |
 | Codex executable | host-approved direct `codex` target; SHA-256 `1da3f4e0e96028b8a771814293c3033dafd1971f943f6c7e79b0897fe705f590` |
 | Codex version | `codex-cli 0.145.0` |
