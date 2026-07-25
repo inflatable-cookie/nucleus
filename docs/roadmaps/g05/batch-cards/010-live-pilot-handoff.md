@@ -16,7 +16,7 @@ call approval before the first provider effect.
 
 - cards 007-009 complete
 - exact proof runtime checkpointed at
-  `2a6d72a8d3326cc70c6852f8fa86ff7f8ca995f2`
+  `11d17810ed68e2b02173c3ae907b83f8db867b58`
 - Swallowtail source candidate fixed
 - installed Codex exact target and version observed
 - intended `gpt-5.4-mini` route fixed; current presence remains the first live
