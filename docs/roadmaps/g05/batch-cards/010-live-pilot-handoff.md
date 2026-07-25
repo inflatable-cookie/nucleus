@@ -1,8 +1,9 @@
 # 010 Live Pilot Handoff
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-07-25
+Completed: 2026-07-25
 Milestone: `../003-swallowtail-application-proof-readiness.md`
 Auto-start next card: no
 
@@ -14,10 +15,12 @@ call approval before the first provider effect.
 ## Entry Gates
 
 - cards 007-009 complete
-- current Nucleus worktree clean or exact proof changes checkpointed — open
+- exact proof runtime checkpointed at
+  `2a6d72a8d3326cc70c6852f8fa86ff7f8ca995f2`
 - Swallowtail source candidate fixed
-- installed Codex and `gpt-5.4-mini` catalogue route observed
-- operator accepts the 15-turn and 60-minute ceilings
+- installed Codex exact target and version observed
+- intended `gpt-5.4-mini` route fixed; current presence remains the first live
+  catalogue stop gate
 
 ## Scope
 
@@ -33,16 +36,24 @@ call approval before the first provider effect.
 
 ## Acceptance
 
-- [ ] every exact version and route value is recorded
-- [ ] no implicit model, access, path, credential, or cost fallback remains
-- [ ] the state root and fixture repository are disposable
-- [ ] the live workload and stop conditions match Swallowtail card 040
-- [ ] provider calls remain separately approved
+- [x] every exact version and route value is recorded
+- [x] no implicit model, access, path, credential, or cost fallback remains
+- [x] the state root and fixture repository are disposable
+- [x] the live workload and stop conditions match Swallowtail card 040
+- [x] provider calls remain separately approved
 
 ## Validation
 
 - read-only configuration and installed-version probes only
 - `git diff --check`
+
+## Evidence
+
+- `../../../logs/2026-07-25-swallowtail-native-pilot-handoff.md`
+- no authenticated catalogue request, model turn, workspace write, provider
+  mutation, push, publication, tag, or release occurred
+- the handoff returns Swallowtail card 041 for explicit acceptance of the
+  ChatGPT-backed 15-turn and 60-minute ceilings
 
 ## Stop Conditions
 

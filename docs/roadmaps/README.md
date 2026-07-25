@@ -378,8 +378,8 @@ shape.
 
 ## Next Task
 
-Review and checkpoint the completed
-`g05/batch-cards/007-isolated-native-proof-profile.md` through
-`009-native-proof-selector-and-readiness.md` batch. Then execute
-`010-live-pilot-handoff.md` to freeze exact source, installed Codex, route,
-state-root, workload, and stop bounds without making a provider call.
+Review the exact handoff in
+`logs/2026-07-25-swallowtail-native-pilot-handoff.md`. On explicit approval of
+its ChatGPT-backed 15-turn and 60-minute ceilings, execute Swallowtail
+`g02/batch-cards/041-nucleus-native-application-pilot.md`. Do not make a
+catalogue request or model turn before that approval.

@@ -21,8 +21,12 @@ fn product_workspace_mounts_tasks_and_routes_chat_receipts_to_it() {
     assert!(chat.contains("retainedPendingConversations"));
     assert!(chat.contains("pending = retainedPendingConversations.has(conversationId)"));
     assert!(chat.contains("void scrollToLatest();"));
-    assert!(chat.contains("Clear active task context"));
-    assert!(chat.contains("Clear active goal context"));
+    assert!(chat.contains("const contextAttachments"));
+    assert!(chat.contains("id: \"active-goal\""));
+    assert!(chat.contains("id: \"active-task\""));
+    assert!(chat.contains("onRemoveAttachment={removeContextAttachment}"));
+    assert!(chat.contains("onClearActiveGoal();"));
+    assert!(chat.contains("onClearActiveTask();"));
 }
 
 #[test]

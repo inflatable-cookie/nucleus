@@ -25,7 +25,7 @@ live authority is explicit.
 - [x] cancel the active Agent Chat turn through the normal product path
 - [x] persist exact completed, cancelled, timed-out, and failed truth
 - [x] run deterministic proof preparation through Effigy
-- [ ] return one exact live-pilot handoff without making a provider call
+- [x] return one exact live-pilot handoff without making a provider call
 
 ## Execution Plan
 
@@ -52,9 +52,9 @@ live authority is explicit.
 
 ### Batch 3.4 — Live Pilot Handoff
 
-- [ ] Execute card 010 only after separate authenticated-call approval.
-- [ ] Freeze exact versions, route, state root, workload, and stop bounds.
-- [ ] Return control before the first provider call.
+- [x] Execute card 010 without an authenticated provider call.
+- [x] Freeze exact versions, route, state root, fixture, workload, and stops.
+- [x] Return control before the first provider call.
 
 ## Acceptance Criteria
 
@@ -69,10 +69,10 @@ live authority is explicit.
 
 ## Current Gate
 
-Cards 007-009 are complete in the working tree. Card 010 requires the
-proof-readiness changes to be checkpointed so the exact Nucleus source can be
-fixed. Installed Codex and catalogue probes plus every live provider call
-remain separately gated.
+Cards 007-010 are complete. The exact handoff is recorded in
+`../../logs/2026-07-25-swallowtail-native-pilot-handoff.md`. Swallowtail card
+041 remains gated on explicit acceptance of the ChatGPT-backed 15-turn and
+60-minute live envelope.
 
 ## Batch Cards
 
@@ -81,7 +81,4 @@ Completed:
 - `batch-cards/007-isolated-native-proof-profile.md`
 - `batch-cards/008-agent-chat-cancellation-and-terminal-truth.md`
 - `batch-cards/009-native-proof-selector-and-readiness.md`
-
-Planned:
-
 - `batch-cards/010-live-pilot-handoff.md`

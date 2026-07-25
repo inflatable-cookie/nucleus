@@ -18,7 +18,4 @@ Updated: 2026-07-25
 - `007-isolated-native-proof-profile.md`
 - `008-agent-chat-cancellation-and-terminal-truth.md`
 - `009-native-proof-selector-and-readiness.md`
-
-## Planned Cards
-
 - `010-live-pilot-handoff.md`

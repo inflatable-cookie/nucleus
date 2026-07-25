@@ -36,4 +36,4 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 - `001-project-scoped-workspace-layouts.md` - active
 - `002-workspace-sidebar-modes.md` - completed
 - `003-swallowtail-application-proof-readiness.md` - active; deterministic
-  readiness complete, exact live handoff planned after checkpoint
+  readiness and exact live handoff complete; provider calls await approval

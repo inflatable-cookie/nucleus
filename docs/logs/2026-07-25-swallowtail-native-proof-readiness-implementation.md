@@ -33,10 +33,10 @@ The operator checkpointed the preceding sidebar lane at Nucleus
 by the consumer is
 `2959810f2da3cc64b28cf979094e0166a34c3ff8`.
 
-The proof-readiness implementation remains a Nucleus working-tree change until
-the operator reviews and checkpoints it. An unrelated uncommitted
-`ProjectRail.svelte` rename refinement was preserved and excluded from this
-batch.
+The proof-readiness implementation was checkpointed at
+`d4d8b2b3511b5f2ea40c4cfc684a295a3754008f`. Disposable fixture binding then
+completed at `2a6d72a8d3326cc70c6852f8fa86ff7f8ca995f2`. An unrelated uncommitted
+`ProjectRail.svelte` refinement remains preserved outside the batch.
 
 ## Evidence
 
@@ -59,7 +59,5 @@ publication, or release mutation occurred.
 
 ## Remaining Gate
 
-Card 010 needs an exact Nucleus checkpoint before it can freeze the live pilot
-source. Installed Codex and catalogue probes remain read-only but separately
-authorized by that handoff. The first provider request remains a later
-operator gate.
+Card 010 now freezes the exact live pilot. The first authenticated catalogue
+request and every model turn remain behind explicit operator approval.
