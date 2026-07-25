@@ -21,6 +21,8 @@ The deterministic batch completes g05 cards 007-009:
   and retains typed cancelled, timed-out, cleanup-failed, and other failures
 - persisted turns distinguish completed, cancelled, timed-out, and failed
 - Effigy exposes `desktop:proof` and `desktop:proof:evidence`
+- the proof selector requires a disposable Git fixture and binds fresh seeded
+  state to it instead of the Nucleus source tree
 - evidence opens the existing SQLite store query-only and emits terminal
   counts, never record content or identity
 
@@ -44,7 +46,8 @@ batch.
 - 2 exact-target registry tests pass across focused runs
 - 1 query-only SQLite test passes
 - 1 sanitized terminal-evidence fixture passes
-- 3 desktop-profile tests pass
+- 4 desktop-profile tests pass
+- explicit fixture binding resolves editor reads against the disposable root
 - 1 native cancellation panel guard passes
 - `effigy desktop:check` passes with zero errors
 - `effigy desktop:test` passes all 20 client tests

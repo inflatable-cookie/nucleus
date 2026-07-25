@@ -43,6 +43,19 @@ pub fn seed_local_project<B>(
 where
     B: LocalStoreBackend,
 {
+    seed_local_project_with_resource_root(state, seed, None)
+}
+
+/// Seed one local project while binding its working resource to an explicit
+/// bootstrap root.
+pub fn seed_local_project_with_resource_root<B>(
+    state: &ServerStateService<B>,
+    seed: LocalProjectSeed,
+    resource_root: Option<PathBuf>,
+) -> LocalStoreResult<LocalStoreRecord>
+where
+    B: LocalStoreBackend,
+{
     let record_id = PersistenceRecordId(seed.project_id.clone());
     if let Some(existing) = state.projects().get(&record_id)? {
         if let Some(repaired) = repair_existing_local_project_seed(state, &seed, &existing)? {
@@ -51,7 +64,7 @@ where
         return Ok(existing);
     }
 
-    let project = project_from_seed(&seed);
+    let project = project_from_seed(&seed, resource_root);
     let payload = encode_project_storage_record(&project).map_err(|error| {
         LocalStoreError::InvalidRecord {
             reason: error.reason,
@@ -73,7 +86,7 @@ where
         .put(record, RevisionExpectation::MustNotExist)
 }
 
-fn project_from_seed(seed: &LocalProjectSeed) -> Project {
+fn project_from_seed(seed: &LocalProjectSeed, resource_root: Option<PathBuf>) -> Project {
     Project {
         id: ProjectId(seed.project_id.clone()),
         display_name: seed.display_name.clone(),
@@ -84,7 +97,7 @@ fn project_from_seed(seed: &LocalProjectSeed) -> Project {
             level: seed.importance_level.clone(),
             notes: Some("local seed".to_owned()),
         },
-        resources: local_seed_resources(&seed.project_id),
+        resources: local_seed_resources(&seed.project_id, resource_root),
         default_working_resource: local_seed_default_resource(&seed.project_id),
         management_projection: None,
         task_ids: Vec::new(),
@@ -116,7 +129,7 @@ where
 
     let mut record = existing.clone();
     let (revision_id, payload) = if decoded.resources.is_empty() {
-        let project = project_from_seed(seed);
+        let project = project_from_seed(seed, None);
         (
             "rev:seed:repo-location:1",
             encode_project_storage_record(&project),
@@ -149,12 +162,12 @@ where
         .map(Some)
 }
 
-fn local_seed_resources(project_id: &str) -> Vec<ProjectResource> {
+fn local_seed_resources(project_id: &str, resource_root: Option<PathBuf>) -> Vec<ProjectResource> {
     if project_id != "project:nucleus-local" {
         return Vec::new();
     }
 
-    let Some(path) = infer_local_repo_root() else {
+    let Some(path) = resource_root.or_else(infer_local_repo_root) else {
         return Vec::new();
     };
 
@@ -334,7 +347,7 @@ mod tests {
         let backend = SqliteBackend::new(temp_dir.path().join("nucleus.sqlite"));
         let handler = LocalControlRequestHandler::new(backend, None);
 
-        let mut old_project = project_from_seed(&LocalProjectSeed::nucleus_local());
+        let mut old_project = project_from_seed(&LocalProjectSeed::nucleus_local(), None);
         old_project.resources[0].authority_host_ref = "host:local".to_owned();
         let old_record = LocalStoreRecord {
             id: PersistenceRecordId("project:nucleus-local".to_owned()),

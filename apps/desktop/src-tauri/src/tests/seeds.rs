@@ -81,6 +81,62 @@ fn desktop_state_seeds_local_project_for_project_queries() {
 }
 
 #[test]
+fn desktop_state_binds_seeded_project_to_explicit_proof_fixture() {
+    let database_path = std::env::temp_dir().join(format!(
+        "nucleus-desktop-proof-fixture-test-{}.sqlite",
+        std::process::id()
+    ));
+    let fixture_root = std::env::temp_dir().join(format!(
+        "nucleus-desktop-proof-fixture-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&database_path);
+    let _ = std::fs::remove_dir_all(&fixture_root);
+    std::fs::create_dir_all(&fixture_root).expect("fixture root");
+    let state = DesktopState::new_with_proof_fixture(
+        SqliteBackend::new(database_path.clone()),
+        fixture_root.clone(),
+    );
+
+    let response = state
+        .submit_control_envelope(ControlRequestEnvelopeDto {
+            protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),
+            protocol_version: CONTROL_API_PROTOCOL_VERSION_V1,
+            request_id: "desktop-request-proof-fixture".to_owned(),
+            client_id: "desktop-client".to_owned(),
+            body: ControlRequestBodyDto::Query {
+                query: ControlQueryDto::State {
+                    query_id: "desktop-query-proof-fixture".to_owned(),
+                    domain: nucleus_server::ControlStateDomainDto::Projects,
+                    scope: nucleus_server::ControlQueryScopeDto::List,
+                },
+            },
+        })
+        .expect("desktop project list");
+
+    match response.body {
+        nucleus_server::ControlResponseBodyDto::ProjectRecords { records } => {
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].resource_count, 1);
+            assert!(records[0].resources[0].locator_available);
+        }
+        other => panic!("expected project records, got {other:?}"),
+    }
+
+    std::fs::write(fixture_root.join("FIXTURE.md"), "proof fixture\n").expect("fixture file");
+    let files = nucleus_server::list_editor_files(
+        &state.server_state,
+        "project:nucleus-local",
+        Some("resource:nucleus-local"),
+    )
+    .expect("fixture files");
+    assert!(files.iter().any(|file| file.display_path == "FIXTURE.md"));
+
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_dir_all(fixture_root);
+}
+
+#[test]
 fn desktop_state_seeds_local_task_for_task_queries() {
     let database_path = std::env::temp_dir().join(format!(
         "nucleus-desktop-task-seed-test-{}.sqlite",

@@ -111,11 +111,15 @@ authoritative host user's home directory as a read-only context.
 
 ## Application Proof Profile
 
-Nucleus may launch the normal desktop entry under the explicit data-root and
-deadline settings in Contract 008 and this contract. The profile changes only
-Nucleus-owned storage and deadline policy. It does not alter Codex home,
-credentials, ambient harness configuration, Swallowtail access policy, or
-workspace authority.
+Nucleus may launch the normal desktop entry under the explicit data-root,
+proof-fixture, and deadline settings in Contract 008 and this contract. The
+profile changes only Nucleus-owned storage, bootstrap resource selection, and
+deadline policy. It does not alter Codex home, credentials, ambient harness
+configuration, Swallowtail access policy, or workspace authority.
+
+The proof fixture is an explicit disposable Git repository. It is valid only
+with an isolated data root, replaces inferred Nucleus-source bootstrap
+selection for that fresh state, and grants no write authority.
 
 Proof evidence may retain generated scenario ids, exact version and route
 observations, expected and observed terminal classes, event and callback

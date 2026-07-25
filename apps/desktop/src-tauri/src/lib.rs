@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
@@ -17,13 +17,14 @@ use nucleus_server::{
     persist_forge_status_check_refreshes, read_forge_credential_status_refreshes,
     read_forge_pull_request_refreshes, read_forge_repository_metadata_refreshes,
     read_forge_status_check_refreshes, seed_local_memory_proposal, seed_local_planning_session,
-    seed_local_project, seed_local_research_run_brief, seed_local_task, write_command_evidence,
-    ControlApiCodecError, ControlRequestEnvelopeDto, ControlResponseBodyDto,
-    ControlResponseEnvelopeDto, EditorFileEntry, EditorFileSaveRequest, EditorFileSnapshot,
-    ForgeCredentialStatusRefreshInput, ForgeCredentialStatusRefreshPersistenceInput,
-    ForgeNetworkCredentialKind, ForgeNetworkCredentialResolutionBoundary,
-    ForgeNetworkCredentialStatus, ForgeNetworkExecutionCredentialRef,
-    ForgeNetworkExecutionOperationFamily, ForgePullRequestProvider, ForgePullRequestRefreshInput,
+    seed_local_project_with_resource_root, seed_local_research_run_brief, seed_local_task,
+    write_command_evidence, ControlApiCodecError, ControlRequestEnvelopeDto,
+    ControlResponseBodyDto, ControlResponseEnvelopeDto, EditorFileEntry, EditorFileSaveRequest,
+    EditorFileSnapshot, ForgeCredentialStatusRefreshInput,
+    ForgeCredentialStatusRefreshPersistenceInput, ForgeNetworkCredentialKind,
+    ForgeNetworkCredentialResolutionBoundary, ForgeNetworkCredentialStatus,
+    ForgeNetworkExecutionCredentialRef, ForgeNetworkExecutionOperationFamily,
+    ForgePullRequestProvider, ForgePullRequestRefreshInput,
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
@@ -70,7 +71,10 @@ fn desktop_startup_status(state: tauri::State<'_, DesktopState>) -> DesktopStart
 
 /// Seed local fixture state once: if the local project record already
 /// exists, the durable store is left untouched.
-fn seed_fixture_state(handler: &LocalControlRequestHandler<SqliteBackend>) -> Result<(), String> {
+fn seed_fixture_state(
+    handler: &LocalControlRequestHandler<SqliteBackend>,
+    proof_fixture_root: Option<&Path>,
+) -> Result<(), String> {
     let seed = LocalProjectSeed::nucleus_local();
     let existing = handler
         .state()
@@ -80,8 +84,12 @@ fn seed_fixture_state(handler: &LocalControlRequestHandler<SqliteBackend>) -> Re
     if existing.is_some() {
         return Ok(());
     }
-    seed_local_project(handler.state(), seed)
-        .map_err(|error| format!("startup seed failed at project: {error:?}"))?;
+    seed_local_project_with_resource_root(
+        handler.state(),
+        seed,
+        proof_fixture_root.map(Path::to_path_buf),
+    )
+    .map_err(|error| format!("startup seed failed at project: {error:?}"))?;
     seed_local_task(handler.state(), LocalTaskSeed::nucleus_local_bootstrap())
         .map_err(|error| format!("startup seed failed at task: {error:?}"))?;
     seed_local_command_evidence(handler.state())
@@ -162,6 +170,18 @@ impl DesktopState {
             LocalCodexChatService::default(),
             None,
             PathBuf::from("target/nucleus-desktop-test/ui.json"),
+            None,
+        )
+    }
+
+    #[cfg(test)]
+    fn new_with_proof_fixture(backend: SqliteBackend, proof_fixture_root: PathBuf) -> Self {
+        Self::with_chat(
+            backend,
+            LocalCodexChatService::default(),
+            None,
+            PathBuf::from("target/nucleus-desktop-test/ui.json"),
+            Some(proof_fixture_root),
         )
     }
 
@@ -170,6 +190,7 @@ impl DesktopState {
         snapshot_root: PathBuf,
         workspace_ui_config_path: PathBuf,
         chat_turn_timeout: std::time::Duration,
+        proof_fixture_root: Option<PathBuf>,
     ) -> Self {
         let snapshot_store = TaskReviewSnapshotStore::new(snapshot_root)
             .expect("local task review snapshot store should be writable");
@@ -181,6 +202,7 @@ impl DesktopState {
             ),
             Some(snapshot_store),
             workspace_ui_config_path,
+            proof_fixture_root,
         )
     }
 
@@ -189,10 +211,11 @@ impl DesktopState {
         chat: LocalCodexChatService,
         task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
         workspace_ui_config_path: PathBuf,
+        proof_fixture_root: Option<PathBuf>,
     ) -> Self {
         let server_state = ServerStateService::new(backend.clone());
         let handler = LocalControlRequestHandler::new(backend, None);
-        let startup_error = seed_fixture_state(&handler).err();
+        let startup_error = seed_fixture_state(&handler, proof_fixture_root.as_deref()).err();
         let adapter = TauriIpcControlCommandAdapter::fixture_backed(handler);
 
         Self {
@@ -658,6 +681,7 @@ pub fn run() {
         .prepare()
         .expect("Nucleus desktop profile should be writable");
     let workspace_ui_config_path = profile.workspace_ui_config_path();
+    let proof_fixture_root = profile.proof_fixture_root().map(Path::to_path_buf);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -666,6 +690,7 @@ pub fn run() {
             profile.snapshot_path(),
             workspace_ui_config_path.clone(),
             profile.chat_turn_timeout(),
+            proof_fixture_root,
         ))
         .setup(move |app| {
             app.set_theme(Some(tauri::Theme::Dark));

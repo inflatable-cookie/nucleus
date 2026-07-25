@@ -11,6 +11,16 @@ if [ -e "$proof_root" ] && [ ! -d "$proof_root" ]; then
   exit 2
 fi
 
+fixture_root=${NUCLEUS_DESKTOP_PROOF_FIXTURE_ROOT-}
+case "$fixture_root" in
+  /*) ;;
+  *) echo "NUCLEUS_DESKTOP_PROOF_FIXTURE_ROOT must be an explicit absolute path" >&2; exit 2 ;;
+esac
+if [ ! -d "$fixture_root" ] || [ ! -d "$fixture_root/.git" ]; then
+  echo "NUCLEUS_DESKTOP_PROOF_FIXTURE_ROOT must identify an existing Git repository" >&2
+  exit 2
+fi
+
 proof_timeout=${NUCLEUS_AGENT_CHAT_TURN_TIMEOUT_MS-180000}
 case "$proof_timeout" in
   ""|*[!0-9]*) echo "NUCLEUS_AGENT_CHAT_TURN_TIMEOUT_MS must be an integer" >&2; exit 2 ;;

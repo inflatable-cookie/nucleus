@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const DATA_ROOT_ENV: &str = "NUCLEUS_DESKTOP_DATA_ROOT";
+const PROOF_FIXTURE_ROOT_ENV: &str = "NUCLEUS_DESKTOP_PROOF_FIXTURE_ROOT";
 const CHAT_TIMEOUT_ENV: &str = "NUCLEUS_AGENT_CHAT_TURN_TIMEOUT_MS";
 const DEFAULT_CHAT_TIMEOUT_MS: u64 = 180_000;
 
@@ -10,6 +11,7 @@ const DEFAULT_CHAT_TIMEOUT_MS: u64 = 180_000;
 pub struct DesktopProfile {
     data_root: PathBuf,
     chat_turn_timeout: Duration,
+    proof_fixture_root: Option<PathBuf>,
 }
 
 impl DesktopProfile {
@@ -17,6 +19,7 @@ impl DesktopProfile {
         Self::from_values(
             std::env::var_os(DATA_ROOT_ENV).as_deref(),
             std::env::var_os(CHAT_TIMEOUT_ENV).as_deref(),
+            std::env::var_os(PROOF_FIXTURE_ROOT_ENV).as_deref(),
             std::env::var_os("HOME").as_deref(),
         )
     }
@@ -24,6 +27,7 @@ impl DesktopProfile {
     fn from_values(
         configured_root: Option<&OsStr>,
         configured_timeout: Option<&OsStr>,
+        configured_fixture_root: Option<&OsStr>,
         home: Option<&OsStr>,
     ) -> Result<Self, String> {
         let data_root = match configured_root {
@@ -67,9 +71,31 @@ impl DesktopProfile {
             ));
         }
 
+        let proof_fixture_root = match configured_fixture_root {
+            Some(_) if configured_root.is_none() => {
+                return Err(format!(
+                    "{PROOF_FIXTURE_ROOT_ENV} requires an explicit {DATA_ROOT_ENV}"
+                ));
+            }
+            Some(root) => {
+                let root = PathBuf::from(root);
+                if !root.is_absolute() {
+                    return Err(format!("{PROOF_FIXTURE_ROOT_ENV} must be an absolute path"));
+                }
+                if !root.is_dir() || !root.join(".git").is_dir() {
+                    return Err(format!(
+                        "{PROOF_FIXTURE_ROOT_ENV} must identify an existing Git repository"
+                    ));
+                }
+                Some(root)
+            }
+            None => None,
+        };
+
         Ok(Self {
             data_root,
             chat_turn_timeout: Duration::from_millis(chat_timeout_ms),
+            proof_fixture_root,
         })
     }
 
@@ -94,6 +120,10 @@ impl DesktopProfile {
     pub fn chat_turn_timeout(&self) -> Duration {
         self.chat_turn_timeout
     }
+
+    pub fn proof_fixture_root(&self) -> Option<&Path> {
+        self.proof_fixture_root.as_deref()
+    }
 }
 
 fn create_directory(path: &Path, label: &str) -> Result<(), String> {
@@ -106,15 +136,16 @@ fn create_directory(path: &Path, label: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DesktopProfile, CHAT_TIMEOUT_ENV, DATA_ROOT_ENV};
+    use super::{DesktopProfile, CHAT_TIMEOUT_ENV, DATA_ROOT_ENV, PROOF_FIXTURE_ROOT_ENV};
     use std::ffi::OsStr;
     use std::path::Path;
     use std::time::Duration;
 
     #[test]
     fn default_profile_preserves_nucleus_home_paths_and_deadline() {
-        let profile = DesktopProfile::from_values(None, None, Some(OsStr::new("/Users/example")))
-            .expect("default profile");
+        let profile =
+            DesktopProfile::from_values(None, None, None, Some(OsStr::new("/Users/example")))
+                .expect("default profile");
 
         assert_eq!(
             profile.database_path(),
@@ -136,6 +167,7 @@ mod tests {
         let profile = DesktopProfile::from_values(
             Some(OsStr::new("/tmp/nucleus-proof")),
             Some(OsStr::new("1250")),
+            None,
             Some(OsStr::new("/Users/example")),
         )
         .expect("proof profile");
@@ -156,10 +188,28 @@ mod tests {
     }
 
     #[test]
+    fn explicit_proof_fixture_requires_and_retains_git_repository() {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .find(|path| path.join(".git").is_dir())
+            .expect("repository root");
+        let profile = DesktopProfile::from_values(
+            Some(OsStr::new("/tmp/nucleus-proof")),
+            None,
+            Some(repository.as_os_str()),
+            Some(OsStr::new("/Users/example")),
+        )
+        .expect("proof fixture profile");
+
+        assert_eq!(profile.proof_fixture_root(), Some(repository));
+    }
+
+    #[test]
     fn explicit_invalid_values_do_not_fall_back() {
         assert_eq!(
             DesktopProfile::from_values(
                 Some(OsStr::new("relative")),
+                None,
                 None,
                 Some(OsStr::new("/Users/example")),
             ),
@@ -169,6 +219,7 @@ mod tests {
             DesktopProfile::from_values(
                 Some(OsStr::new("/tmp/nucleus-proof")),
                 Some(OsStr::new("0")),
+                None,
                 Some(OsStr::new("/Users/example")),
             ),
             Err(format!("{CHAT_TIMEOUT_ENV} must be between 1 and 180000"))
@@ -177,9 +228,30 @@ mod tests {
             DesktopProfile::from_values(
                 Some(OsStr::new("/tmp/nucleus-proof")),
                 Some(OsStr::new("180001")),
+                None,
                 Some(OsStr::new("/Users/example")),
             ),
             Err(format!("{CHAT_TIMEOUT_ENV} must be between 1 and 180000"))
+        );
+        assert_eq!(
+            DesktopProfile::from_values(
+                None,
+                None,
+                Some(OsStr::new("/tmp")),
+                Some(OsStr::new("/Users/example")),
+            ),
+            Err(format!(
+                "{PROOF_FIXTURE_ROOT_ENV} requires an explicit {DATA_ROOT_ENV}"
+            ))
+        );
+        assert_eq!(
+            DesktopProfile::from_values(
+                Some(OsStr::new("/tmp/nucleus-proof")),
+                None,
+                Some(OsStr::new("relative")),
+                Some(OsStr::new("/Users/example")),
+            ),
+            Err(format!("{PROOF_FIXTURE_ROOT_ENV} must be an absolute path"))
         );
     }
 }

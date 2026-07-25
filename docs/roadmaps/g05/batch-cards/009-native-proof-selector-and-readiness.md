@@ -19,18 +19,22 @@ full readiness lane without credentials or provider calls.
 
 ## Scope
 
-1. Add an Effigy selector that requires an explicit absolute proof data root.
-2. Allow the selector to set the bounded proof deadline.
-3. Launch the normal Tauri desktop entry with those values.
-4. Add a read-only safe evidence summary over the isolated chat records.
-5. Exclude prompts, assistant output, raw provider material, credentials,
+1. Add an Effigy selector that requires an explicit absolute proof data root
+   and disposable Git fixture.
+2. Bind the fresh bootstrap project to that fixture instead of the Nucleus
+   source tree.
+3. Allow the selector to set the bounded proof deadline.
+4. Launch the normal Tauri desktop entry with those values.
+5. Add a read-only safe evidence summary over the isolated chat records.
+6. Exclude prompts, assistant output, raw provider material, credentials,
    absolute user paths, and raw provider ids.
-6. Run focused and normal desktop validation.
-7. Record exact source versions and the remaining live authority gate.
+7. Run focused and normal desktop validation.
+8. Record exact source versions and the remaining live authority gate.
 
 ## Acceptance
 
 - [x] the selector cannot silently use normal user state
+- [x] the seeded working resource cannot silently use the Nucleus source tree
 - [x] the selector launches the normal desktop product path
 - [x] evidence distinguishes expected and observed terminal classes
 - [x] invalid configuration and redaction fixtures fail before effects
@@ -48,8 +52,11 @@ full readiness lane without credentials or provider calls.
 
 ## Evidence
 
-- `desktop:proof` and `desktop:proof:evidence` require an explicit absolute
-  `NUCLEUS_DESKTOP_DATA_ROOT`.
+- `desktop:proof` and `desktop:proof:evidence` require explicit absolute
+  `NUCLEUS_DESKTOP_DATA_ROOT` and `NUCLEUS_DESKTOP_PROOF_FIXTURE_ROOT`
+  values. The fixture must be an existing Git repository.
+- Fresh proof state binds the seeded project and task fixtures to that
+  repository. Normal desktop startup retains inferred local-project behavior.
 - Evidence reads the existing proof database through a query-only SQLite
   backend and returns terminal counts only.
 - Redaction fixtures exclude prompts, output, errors, provider ids, project
@@ -58,7 +65,8 @@ full readiness lane without credentials or provider calls.
   `7502b761e0a31fb8c3833d2777b068f3f8f998a9`; Swallowtail source:
   `2959810f2da3cc64b28cf979094e0166a34c3ff8`.
 - `desktop:check` passes with zero errors; 20 client tests and the focused Rust
-  readiness tests pass. No provider call occurred.
+  readiness tests pass, including explicit fixture binding. No provider call
+  occurred.
 
 ## Stop Conditions
 

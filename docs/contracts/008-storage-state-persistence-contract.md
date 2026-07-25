@@ -139,6 +139,17 @@ This override isolates Nucleus product state only. It must not rewrite `HOME`,
 resolution, or project resource authority. The default paths remain unchanged
 when the override is absent.
 
+`NUCLEUS_DESKTOP_PROOF_FIXTURE_ROOT` may accompany an explicit
+`NUCLEUS_DESKTOP_DATA_ROOT` for a native proof launch. It must name an existing
+absolute Git repository. The fresh bootstrap project binds its working
+resource to that repository instead of inferring the Nucleus source tree.
+Using the fixture setting without the isolated data root fails startup.
+
+The fixture setting grants no write authority. The selected Swallowtail
+session profile remains read-only, and proof fixtures should also be
+filesystem read-only. Normal startup does not inspect or bind this setting
+when it is absent.
+
 ## Backend Adapter Rule
 
 The storage backend boundary must separate:
