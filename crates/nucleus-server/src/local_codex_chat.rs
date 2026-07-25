@@ -154,6 +154,19 @@ impl LocalCodexChatService {
         persistence::list_threads(state)
     }
 
+    pub fn rename_thread<B>(
+        &self,
+        state: &ServerStateService<B>,
+        project_id: &str,
+        conversation_id: &str,
+        title: &str,
+    ) -> Result<(), String>
+    where
+        B: LocalStoreBackend,
+    {
+        persistence::rename_thread(state, project_id, conversation_id, title)
+    }
+
     pub fn send_message<B>(
         &mut self,
         state: &ServerStateService<B>,

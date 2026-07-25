@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Icon, Text } from "@poodle/svelte";
+  import { EditableLabel, Icon, Text } from "@poodle/svelte";
   import { messageCircle, plus, refreshCw } from "@poodle/icons-lucide";
   import { onMount } from "svelte";
   import {
@@ -11,6 +11,7 @@
   } from "./control";
   import {
     listAgentChatThreads,
+    renameAgentChatThread,
     type AgentChatThreadSummary,
   } from "./control/agentChat";
 
@@ -27,8 +28,9 @@
   let loading = $state(false);
   let creating = $state(false);
   let failure = $state<string | null>(null);
-  let namingChatId = $state<string | null>(null);
-  let chatName = $state("");
+  let projectNameDrafts = $state<Record<string, string>>({});
+  let threadTitleDrafts = $state<Record<string, string>>({});
+  let renamingConversationId = $state<string | null>(null);
 
   const transientChats = $derived(
     projects.filter((project) => project.status === "active" && project.retention === "transient"),
@@ -91,11 +93,14 @@
     }
   }
 
-  async function keepChat(
+  async function convertChat(
     project: ControlProjectRecordDto,
-    displayName: string | null = null,
+    fallbackName: string,
   ): Promise<void> {
     if (creating) return;
+    const displayName = projectNameDrafts[project.project_id]?.trim()
+      || fallbackName.trim()
+      || null;
     const idempotencyKey = `project-promote:${crypto.randomUUID()}`;
     creating = true;
     failure = null;
@@ -111,8 +116,7 @@
         authority_host_ref: project.authority_host_ref,
         idempotency_key: idempotencyKey,
       });
-      namingChatId = null;
-      chatName = "";
+      delete projectNameDrafts[project.project_id];
       await loadThreads();
       notifyProjectsChanged();
     } catch (caught) {
@@ -136,6 +140,49 @@
 
   function projectName(projectId: string): string {
     return projects.find((project) => project.project_id === projectId)?.display_name ?? projectId;
+  }
+
+  function transientProject(projectId: string): ControlProjectRecordDto | null {
+    return transientChats.find((project) => project.project_id === projectId) ?? null;
+  }
+
+  function setProjectNameDraft(projectId: string, value: string): void {
+    const displayName = value.trim();
+    if (displayName) {
+      projectNameDrafts[projectId] = displayName;
+    } else {
+      delete projectNameDrafts[projectId];
+    }
+  }
+
+  async function commitThreadTitle(
+    thread: AgentChatThreadSummary,
+    value: string,
+  ): Promise<void> {
+    const title = value.trim();
+    if (!title || title === thread.title || renamingConversationId) {
+      delete threadTitleDrafts[thread.conversation_id];
+      return;
+    }
+
+    threadTitleDrafts[thread.conversation_id] = title;
+    renamingConversationId = thread.conversation_id;
+    failure = null;
+    try {
+      await renameAgentChatThread(thread.project_id, thread.conversation_id, title);
+      threads = threads.map((candidate) =>
+        candidate.conversation_id === thread.conversation_id
+          ? { ...candidate, title }
+          : candidate
+      );
+      delete threadTitleDrafts[thread.conversation_id];
+      window.dispatchEvent(new CustomEvent("nucleus:threads-changed"));
+    } catch (caught) {
+      delete threadTitleDrafts[thread.conversation_id];
+      failure = formatError(caught);
+    } finally {
+      renamingConversationId = null;
+    }
   }
 
   function openThread(thread: AgentChatThreadSummary): void {
@@ -167,7 +214,7 @@
 
 <section class="sidebar-view" aria-label="Threads">
   <header class="sidebar-view-head">
-    <Text tone="muted">{loading ? "Loading" : `${threadCount} active`}</Text>
+    <span class="sidebar-dimmed">{loading ? "Loading" : `${threadCount} active`}</span>
     <div class="sidebar-view-actions">
       <button type="button" aria-label="New chat" title="New chat" disabled={creating} onclick={() => void newChat()}>
         <Icon icon={plus} size="sm" />
@@ -181,46 +228,92 @@
   {#if failure}
     <div class="sidebar-message"><Text tone="danger">{failure}</Text></div>
   {:else if !loading && threadCount === 0}
-    <div class="sidebar-message"><Text tone="muted">No active threads.</Text></div>
+    <div class="sidebar-message"><span class="sidebar-dimmed">No active threads.</span></div>
   {:else}
     <div class="thread-list">
       {#each emptyTransientChats as chat (chat.project_id)}
         <section class="thread-row" class:active={chat.project_id === selectedProjectId}>
-          <button class="thread-select" type="button" onclick={() => selectEmptyChat(chat.project_id)}>
-            <Icon icon={messageCircle} size="sm" />
+          <div class="thread-select">
+            <button
+              class="thread-open"
+              type="button"
+              aria-label="Open chat"
+              onclick={() => selectEmptyChat(chat.project_id)}
+            >
+              <Icon icon={messageCircle} size="sm" />
+            </button>
             <span>
-              <strong>{chat.display_name}</strong>
-              <small>Quick chat</small>
+              <EditableLabel
+                value={projectNameDrafts[chat.project_id] ?? chat.display_name}
+                ariaLabel="Chat name"
+                activationMode="doubleClick"
+                variant="flush"
+                placeholder="Chat name"
+                maxLength={80}
+                showEditIcon
+                disabled={creating}
+                onCommit={({ value }) => setProjectNameDraft(chat.project_id, value.trim())}
+              />
+              <button class="thread-summary" type="button" onclick={() => selectEmptyChat(chat.project_id)}>
+                <small>Quick chat</small>
+              </button>
             </span>
-          </button>
-          <div class="thread-actions">
-            <button type="button" disabled={creating} onclick={() => void keepChat(chat)}>Keep</button>
-            <button type="button" disabled={creating} onclick={() => { namingChatId = chat.project_id; chatName = ""; }}>Name</button>
           </div>
-          {#if namingChatId === chat.project_id}
-            <form onsubmit={(event) => { event.preventDefault(); void keepChat(chat, chatName.trim()); }}>
-              <input bind:value={chatName} aria-label="Project name" placeholder="Project name" />
-              <button type="submit" disabled={!chatName.trim() || creating}>Keep</button>
-              <button type="button" onclick={() => (namingChatId = null)}>Cancel</button>
-            </form>
-          {/if}
+          <div class="thread-actions">
+            <button type="button" disabled={creating} onclick={() => void convertChat(chat, chat.display_name)}>Convert to project</button>
+          </div>
         </section>
       {/each}
 
       {#each threads as thread (thread.conversation_id)}
-        <button
-          class="work-thread-row"
-          type="button"
+        {@const transientChat = transientProject(thread.project_id)}
+        <section
+          class="work-thread"
+          class:transient={transientChat !== null}
           class:active={thread.conversation_id === selectedConversationId}
-          aria-current={thread.conversation_id === selectedConversationId ? "true" : undefined}
-          onclick={() => openThread(thread)}
         >
-          <Icon icon={messageCircle} size="sm" />
-          <span>
-            <strong>{thread.title}</strong>
-            <small>{projectName(thread.project_id)} · {thread.status} · {thread.model}</small>
-          </span>
-        </button>
+          <div class="work-thread-row">
+            <button
+              class="thread-open"
+              type="button"
+              aria-label="Open chat"
+              aria-current={thread.conversation_id === selectedConversationId ? "true" : undefined}
+              onclick={() => openThread(thread)}
+            >
+              <Icon icon={messageCircle} size="sm" />
+            </button>
+            <span>
+              <EditableLabel
+                value={threadTitleDrafts[thread.conversation_id] ?? thread.title}
+                ariaLabel="Thread name"
+                activationMode="doubleClick"
+                variant="flush"
+                placeholder="Thread name"
+                maxLength={80}
+                showEditIcon
+                disabled={creating || renamingConversationId === thread.conversation_id}
+                onCommit={({ value }) => void commitThreadTitle(thread, value)}
+              />
+              <button class="thread-summary" type="button" onclick={() => openThread(thread)}>
+                <small>{transientChat ? "" : `${projectName(thread.project_id)} · `}{thread.status} · {thread.model}</small>
+              </button>
+            </span>
+          </div>
+          {#if transientChat}
+            <div class="thread-actions">
+              <button
+                type="button"
+                disabled={creating || renamingConversationId === thread.conversation_id}
+                onclick={() => void convertChat(
+                  transientChat,
+                  threadTitleDrafts[thread.conversation_id] ?? thread.title,
+                )}
+              >
+                Convert to project
+              </button>
+            </div>
+          {/if}
+        </section>
       {/each}
     </div>
   {/if}
@@ -252,14 +345,27 @@
     gap: 0.75rem;
   }
 
+  .sidebar-dimmed {
+    color: var(--poodle-color-text-secondary);
+    opacity: var(--poodle-state-opacity-muted);
+  }
+
   .sidebar-view-actions,
   .thread-actions {
     gap: 0.25rem;
   }
 
+  .thread-actions {
+    min-width: 0;
+    justify-content: flex-start;
+  }
+
+  .thread-actions > button {
+    flex: none;
+  }
+
   .sidebar-view-actions button,
-  .thread-actions button,
-  form button {
+  .thread-actions button {
     min-height: 1.75rem;
     color: var(--poodle-color-text-secondary);
     border: 1px solid var(--poodle-color-border-subtle);
@@ -289,8 +395,19 @@
     border-radius: var(--poodle-radius-control);
   }
 
+  .work-thread {
+    display: grid;
+    min-width: 0;
+    border-radius: var(--poodle-radius-control);
+  }
+
+  .work-thread.transient {
+    gap: 0.375rem;
+    padding: 0.375rem;
+  }
+
   .thread-row.active,
-  .work-thread-row.active {
+  .work-thread.active {
     background: var(--poodle-color-background-selected);
   }
 
@@ -298,10 +415,11 @@
   .work-thread-row {
     gap: 0.5rem;
     min-width: 0;
-    color: var(--poodle-color-text-tertiary);
+    color: var(--poodle-color-text-secondary);
     text-align: left;
     border: 0;
     background: transparent;
+    opacity: var(--poodle-state-opacity-muted);
   }
 
   .thread-select {
@@ -314,14 +432,20 @@
     border-radius: var(--poodle-radius-control);
   }
 
+  .work-thread.transient .work-thread-row {
+    padding: 0.125rem;
+  }
+
   .thread-select:hover,
   .work-thread-row:hover {
     color: var(--poodle-color-text-secondary);
+    opacity: 1;
   }
 
   .thread-row.active .thread-select,
-  .work-thread-row.active {
+  .work-thread.active .work-thread-row {
     color: var(--poodle-color-text-primary);
+    opacity: 1;
   }
 
   .thread-select span,
@@ -330,35 +454,39 @@
     min-width: 0;
   }
 
-  strong,
+  .thread-open,
+  .thread-summary {
+    min-width: 0;
+    padding: 0;
+    color: inherit;
+    text-align: left;
+    border: 0;
+    background: transparent;
+  }
+
+  .thread-open {
+    display: flex;
+    flex: none;
+  }
+
+  .thread-summary small {
+    display: block;
+  }
+
   small {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  strong {
-    font-size: 0.8125rem;
-  }
-
   small {
-    color: var(--poodle-color-text-muted);
+    color: var(--poodle-color-text-secondary);
     font-size: 0.6875rem;
   }
 
   .thread-row.active small,
-  .work-thread-row.active small {
+  .work-thread.active small {
     color: var(--poodle-color-text-secondary);
-  }
-
-  form {
-    display: flex;
-    gap: 0.25rem;
-  }
-
-  form input {
-    min-width: 0;
-    flex: 1;
   }
 
   .sidebar-message {

@@ -1,5 +1,13 @@
 <script lang="ts">
-  import { Dialog, Icon, Menu, SegmentedControl, Text, type MenuItem } from "@poodle/svelte";
+  import {
+    Dialog,
+    EditableLabel,
+    Icon,
+    Menu,
+    SegmentedControl,
+    Text,
+    type MenuItem,
+  } from "@poodle/svelte";
   import {
     chevronDown,
     chevronRight,
@@ -250,6 +258,21 @@
     }
   }
 
+  async function commitProjectName(
+    project: ControlProjectRecordDto,
+    value: string,
+  ): Promise<void> {
+    const displayName = value.trim();
+    if (
+      !displayName
+      || displayName === project.display_name
+      || mutatingProjectId
+    ) {
+      return;
+    }
+    await mutateProject(project, "rename", displayName);
+  }
+
   async function mutateProject(
     project: ControlProjectRecordDto,
     action: "rename" | "park" | "archive" | "restore" | "delete" | "promote",
@@ -334,18 +357,20 @@
     refreshProjectRail();
     window.addEventListener("nucleus:manage-project-resources", handleManageProjectResources);
     window.addEventListener("nucleus:projects-changed", refreshProjectRail);
+    window.addEventListener("nucleus:threads-changed", refreshProjectRail);
   });
 
   onDestroy(() => {
     window.removeEventListener("nucleus:manage-project-resources", handleManageProjectResources);
     window.removeEventListener("nucleus:projects-changed", refreshProjectRail);
+    window.removeEventListener("nucleus:threads-changed", refreshProjectRail);
     setNativePanelOverlayVisibility(projectManagerOverlayId, false);
   });
 </script>
 
 <section class="project-rail-list" aria-label="Projects">
   <header class="project-rail-head">
-    <Text tone="muted">{projectCountLabel}</Text>
+    <span class="sidebar-dimmed">{projectCountLabel}</span>
     <div class="project-rail-actions">
       <button class="icon-button" type="button" aria-label="New project" onclick={() => (creating = true)}>
         <Icon icon={plus} size="sm" />
@@ -460,7 +485,7 @@
             {/if}
           </section>
         {:else}
-          <div class="manager-empty"><Text tone="muted">No {projectManagerView} projects.</Text></div>
+          <div class="manager-empty"><span class="sidebar-dimmed">No {projectManagerView} projects.</span></div>
         {/each}
       </div>
     </section>
@@ -485,11 +510,11 @@
     </div>
   {:else if loading && projects.length === 0}
     <div class="rail-message">
-      <Text tone="muted">Loading projects.</Text>
+      <span class="sidebar-dimmed">Loading projects.</span>
     </div>
   {:else if namedProjects.length === 0}
     <div class="rail-message">
-      <Text tone="muted">No active projects. Create one to get started.</Text>
+      <span class="sidebar-dimmed">No active projects. Create one to get started.</span>
     </div>
   {:else}
     <div class="project-stack">
@@ -509,13 +534,28 @@
               <Icon icon={expanded ? chevronDown : chevronRight} size="xs" />
             </button>
             <button
-              class="project-node-button"
+              class="project-node-select"
               type="button"
+              aria-label={`Select ${project.display_name}`}
               onclick={() => selectProject(project.project_id)}
             >
               <span class="project-node-icon" aria-hidden="true"><Icon icon={folder} size="sm" /></span>
-              <span class="project-name">{project.display_name}</span>
             </button>
+            <span
+              class="project-name"
+              onpointerdown={() => selectProject(project.project_id)}
+              onfocusin={() => selectProject(project.project_id)}
+            >
+              <EditableLabel
+                value={project.display_name}
+                ariaLabel={`Rename ${project.display_name}`}
+                activationMode="doubleClick"
+                variant="flush"
+                maxLength={80}
+                disabled={mutatingProjectId !== null}
+                onCommit={({ value }) => void commitProjectName(project, value)}
+              />
+            </span>
             <Menu
               items={projectMenuItems(project)}
               ariaLabel={`Project actions for ${project.display_name}`}
@@ -598,6 +638,11 @@
     min-width: 0;
   }
 
+  .sidebar-dimmed {
+    color: var(--poodle-color-text-secondary);
+    opacity: var(--poodle-state-opacity-muted);
+  }
+
   .project-rail-actions,
   .project-node-row {
     display: flex;
@@ -655,20 +700,17 @@
     background: var(--poodle-color-background-surface);
   }
 
-  .project-node-button {
-    flex: 1;
-    display: grid;
-    grid-template-columns: 1.25rem minmax(0, 1fr);
-    align-items: center;
-    gap: 0.375rem;
-    width: 100%;
+  .project-node-select {
+    display: inline-grid;
+    place-items: center;
+    width: 1.25rem;
     min-height: 2rem;
     padding: 0.25rem 0.125rem;
-    color: var(--poodle-color-text-tertiary);
-    text-align: left;
+    color: var(--poodle-color-text-secondary);
     border: 0;
     background: transparent;
     cursor: pointer;
+    opacity: var(--poodle-state-opacity-muted);
   }
 
   .project-thread-toggle {
@@ -678,15 +720,17 @@
     height: 2rem;
     flex: 0 0 auto;
     padding: 0;
-    color: var(--poodle-color-text-muted);
+    color: var(--poodle-color-icon-muted);
     border: 0;
     border-radius: var(--poodle-radius-control);
     background: transparent;
     cursor: pointer;
+    opacity: var(--poodle-state-opacity-muted);
   }
 
   .project-thread-toggle:hover {
     color: var(--poodle-color-text-primary);
+    opacity: 1;
   }
 
   .project-menu-button {
@@ -696,7 +740,7 @@
     height: 2rem;
     flex: 0 0 auto;
     padding: 0;
-    color: var(--poodle-color-text-muted);
+    color: var(--poodle-color-icon-muted);
     border: 0;
     border-radius: var(--poodle-radius-control);
     background: transparent;
@@ -715,6 +759,7 @@
   .project-menu-button:hover:not(:disabled) {
     color: var(--poodle-color-text-primary);
     background: var(--poodle-color-background-elevated);
+    opacity: 1;
   }
 
   .project-manager {
@@ -733,9 +778,10 @@
   }
 
   .managed-project-copy small {
-    color: var(--poodle-color-text-muted);
+    color: var(--poodle-color-text-secondary);
     font-size: 0.6875rem;
     text-transform: capitalize;
+    opacity: var(--poodle-state-opacity-muted);
   }
 
   .project-manager-list {
@@ -823,18 +869,20 @@
     color: var(--poodle-color-status-danger);
   }
 
-  .project-node-button:hover {
+  .project-node-select:hover {
     color: var(--poodle-color-text-secondary);
+    opacity: 1;
   }
 
-  .project-node.active .project-node-button {
+  .project-node.active .project-node-select {
     color: var(--poodle-color-text-primary);
+    opacity: 1;
   }
 
   .project-node-icon {
     display: inline-grid;
     place-items: center;
-    color: var(--poodle-color-text-tertiary);
+    color: inherit;
   }
 
   .project-node.active .project-node-icon {
@@ -842,13 +890,40 @@
   }
 
   .project-name {
+    flex: 1;
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    color: var(--poodle-color-text-secondary);
     font-size: 0.8125rem;
     font-weight: 600;
     line-height: 1.25;
+    opacity: var(--poodle-state-opacity-muted);
+  }
+
+  .project-name:hover,
+  .project-node.active .project-name,
+  .project-name:focus-within {
+    color: var(--poodle-color-text-primary);
+    opacity: 1;
+  }
+
+  .project-name :global(.poodle-editable-label),
+  .project-name :global(.poodle-editable-label__display),
+  .project-name :global(.poodle-editable-label__input) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .project-name :global(.poodle-editable-label__display) {
+    justify-content: flex-start;
+    color: inherit;
+    font: inherit;
+  }
+
+  .project-name :global(.poodle-editable-label__text) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .project-thread-list {
@@ -867,22 +942,25 @@
     min-width: 0;
     min-height: 1.75rem;
     padding: 0.25rem 0.375rem;
-    color: var(--poodle-color-text-tertiary);
+    color: var(--poodle-color-text-secondary);
     text-align: left;
     border: 0;
     border-radius: var(--poodle-radius-control);
     background: transparent;
     cursor: pointer;
+    opacity: var(--poodle-state-opacity-muted);
   }
 
   .project-thread-row:hover {
     color: var(--poodle-color-text-secondary);
     background: var(--poodle-color-background-surface);
+    opacity: 1;
   }
 
   .project-thread-row.active {
     color: var(--poodle-color-text-primary);
     background: var(--poodle-color-background-selected);
+    opacity: 1;
   }
 
   .project-thread-row.active small {
@@ -903,12 +981,13 @@
 
   .project-thread-row small,
   .project-thread-message {
-    color: var(--poodle-color-text-muted);
+    color: var(--poodle-color-text-secondary);
     font-size: 0.6875rem;
   }
 
   .project-thread-message {
     padding: 0.35rem 0.4rem;
+    opacity: var(--poodle-state-opacity-muted);
   }
 
   .project-thread-error {

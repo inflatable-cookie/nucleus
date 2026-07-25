@@ -330,6 +330,26 @@ async fn list_agent_chat_threads(
 }
 
 #[tauri::command]
+async fn rename_agent_chat_thread(
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+    conversation_id: String,
+    title: String,
+) -> Result<(), String> {
+    let chat = Arc::clone(&state.chat);
+    let server_state = state.server_state.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let chat = chat
+            .lock()
+            .map_err(|_| "agent chat runtime lock is poisoned".to_owned())?;
+        chat.rename_thread(&server_state, &project_id, &conversation_id, &title)
+    })
+    .await
+    .map_err(|error| format!("agent chat thread rename worker failed: {error}"))?
+}
+
+#[tauri::command]
 async fn list_agent_chat_models() -> Result<Vec<LocalCodexChatModelOption>, String> {
     tauri::async_runtime::spawn_blocking(LocalCodexChatService::available_models)
         .await
@@ -612,6 +632,7 @@ pub fn run() {
             send_agent_chat_message,
             load_agent_chat_history,
             list_agent_chat_threads,
+            rename_agent_chat_thread,
             list_agent_chat_models,
             load_workspace_ui_config,
             save_workspace_ui_config,

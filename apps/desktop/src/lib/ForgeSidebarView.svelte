@@ -49,7 +49,7 @@
 
 <section class="sidebar-view" aria-label="Forge">
   <header class="sidebar-view-head">
-    <Text tone="muted">{loading ? "Loading" : `${repositoryCount} repositories`}</Text>
+    <span class="sidebar-dimmed">{loading ? "Loading" : `${repositoryCount} repositories`}</span>
     <button type="button" aria-label="Refresh repositories" title="Refresh repositories" disabled={loading} onclick={() => void loadRepositories()}>
       <Icon icon={refreshCw} size="sm" />
     </button>
@@ -58,7 +58,7 @@
   {#if failure}
     <div class="sidebar-message"><Text tone="danger">{failure}</Text></div>
   {:else if !loading && repositoryProjects.length === 0}
-    <div class="sidebar-message"><Text tone="muted">No Git resources are attached.</Text></div>
+    <div class="sidebar-message"><span class="sidebar-dimmed">No Git resources are attached.</span></div>
   {:else}
     <div class="forge-list">
       {#each repositoryProjects as entry (entry.project.project_id)}
@@ -118,6 +118,11 @@
     gap: 0.75rem;
   }
 
+  .sidebar-dimmed {
+    color: var(--poodle-color-text-secondary);
+    opacity: var(--poodle-state-opacity-muted);
+  }
+
   .sidebar-view-head button {
     display: grid;
     place-items: center;
@@ -154,27 +159,31 @@
     justify-content: space-between;
     gap: 0.5rem;
     padding: 0.125rem;
-    color: var(--poodle-color-text-tertiary);
+    color: var(--poodle-color-text-secondary);
     text-align: left;
     border: 0;
     background: transparent;
+    opacity: var(--poodle-state-opacity-muted);
   }
 
   .forge-project-head:hover:not(:disabled) {
     color: var(--poodle-color-text-secondary);
+    opacity: 1;
   }
 
   .forge-project.active .forge-project-head {
     color: var(--poodle-color-text-primary);
+    opacity: 1;
   }
 
   .repository-row {
     gap: 0.5rem;
     min-width: 0;
     padding: 0.375rem;
-    color: var(--poodle-color-text-tertiary);
+    color: var(--poodle-color-text-secondary);
     background: var(--poodle-color-background-surface);
     border-radius: var(--poodle-radius-control);
+    opacity: var(--poodle-state-opacity-muted);
   }
 
   .repository-row > span:not(.branch-hint) {
@@ -195,7 +204,7 @@
   }
 
   small {
-    color: var(--poodle-color-text-muted);
+    color: var(--poodle-color-text-secondary);
     font-size: 0.6875rem;
   }
 
@@ -203,7 +212,7 @@
     gap: 0.25rem;
     max-width: 40%;
     overflow: hidden;
-    color: var(--poodle-color-text-muted);
+    color: var(--poodle-color-text-secondary);
     font-size: 0.6875rem;
     text-overflow: ellipsis;
     white-space: nowrap;

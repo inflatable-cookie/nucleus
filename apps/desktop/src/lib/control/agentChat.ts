@@ -123,6 +123,18 @@ export function listAgentChatThreads(): Promise<AgentChatThreadSummary[]> {
   return invoke<AgentChatThreadSummary[]>("list_agent_chat_threads");
 }
 
+export function renameAgentChatThread(
+  projectId: string,
+  conversationId: string,
+  title: string,
+): Promise<void> {
+  return invoke<void>("rename_agent_chat_thread", {
+    projectId,
+    conversationId,
+    title,
+  });
+}
+
 export function listAgentChatModels(): Promise<AgentChatModelOption[]> {
   return invoke<AgentChatModelOption[]>("list_agent_chat_models");
 }

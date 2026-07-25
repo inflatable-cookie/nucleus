@@ -75,18 +75,18 @@
 
 <section class="sidebar-view" aria-label="Files">
   <header class="sidebar-view-head">
-    <Text tone="muted">{selectedProject?.display_name ?? "No project"}</Text>
+    <span class="sidebar-dimmed">{selectedProject?.display_name ?? "No project"}</span>
     <button type="button" aria-label="Refresh files" title="Refresh files" disabled={loading || !selectedProject} onclick={() => void loadFiles()}>
       <Icon icon={refreshCw} size="sm" />
     </button>
   </header>
 
   {#if !selectedProject}
-    <div class="sidebar-message"><Text tone="muted">Select a project to browse files.</Text></div>
+    <div class="sidebar-message"><span class="sidebar-dimmed">Select a project to browse files.</span></div>
   {:else if loading && resourceTrees.length === 0}
-    <div class="sidebar-message"><Text tone="muted">Loading files.</Text></div>
+    <div class="sidebar-message"><span class="sidebar-dimmed">Loading files.</span></div>
   {:else if availableResources.length === 0}
-    <div class="sidebar-message"><Text tone="muted">This project has no available working resources.</Text></div>
+    <div class="sidebar-message"><span class="sidebar-dimmed">This project has no available working resources.</span></div>
   {:else}
     <div class="resource-trees">
       {#each resourceTrees as tree (tree.resource.resource_id)}
@@ -102,7 +102,7 @@
           {#if tree.error}
             <div class="resource-message"><Text tone="danger">{tree.error}</Text></div>
           {:else if tree.nodes.length === 0}
-            <div class="resource-message"><Text tone="muted">No admitted text files.</Text></div>
+            <div class="resource-message"><span class="sidebar-dimmed">No admitted text files.</span></div>
           {:else}
             <div class="tree-root">
               {@render FileNodes(tree.nodes, tree.resource.resource_id)}
@@ -153,6 +153,11 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
+  }
+
+  .sidebar-dimmed {
+    color: var(--poodle-color-text-secondary);
+    opacity: var(--poodle-state-opacity-muted);
   }
 
   .sidebar-view-head button {
@@ -218,8 +223,9 @@
   }
 
   small {
-    color: var(--poodle-color-text-muted);
+    color: var(--poodle-color-text-secondary);
     font-size: 0.6875rem;
+    opacity: var(--poodle-state-opacity-muted);
   }
 
   .tree-root,
@@ -239,8 +245,9 @@
   .tree-directory summary,
   .tree-file {
     min-height: 1.625rem;
-    color: var(--poodle-color-text-tertiary);
+    color: var(--poodle-color-text-secondary);
     font-size: 0.75rem;
+    opacity: var(--poodle-state-opacity-muted);
   }
 
   .tree-file {
@@ -259,6 +266,11 @@
   .tree-file:hover {
     color: var(--poodle-color-text-secondary);
     background: var(--poodle-color-background-surface);
+    opacity: 1;
+  }
+
+  .tree-directory summary:hover {
+    opacity: 1;
   }
 
   .sidebar-message,

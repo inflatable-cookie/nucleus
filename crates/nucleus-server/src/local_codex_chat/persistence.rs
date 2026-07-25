@@ -10,6 +10,7 @@ use crate::ServerStateService;
 const SESSION_PREFIX: &str = "product-chat-session:";
 const TURN_PREFIX: &str = "product-chat-turn:";
 const MESSAGE_PREFIX: &str = "product-chat-message:";
+const THREAD_METADATA_PREFIX: &str = "product-chat-thread-metadata:";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StoredChatSession {
@@ -90,6 +91,12 @@ pub struct LocalCodexChatThreadSummary {
     pub status: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct StoredChatThreadMetadata {
+    conversation_id: String,
+    title: String,
+}
+
 pub fn read_session<B>(
     state: &ServerStateService<B>,
     conversation_id: &str,
@@ -163,6 +170,11 @@ where
         .filter(|record| record.id.0.starts_with(MESSAGE_PREFIX))
         .map(|record| decode::<StoredChatMessage>(&record.payload.bytes))
         .collect::<Result<Vec<_>, _>>()?;
+    let thread_metadata = records
+        .iter()
+        .filter(|record| record.id.0.starts_with(THREAD_METADATA_PREFIX))
+        .map(|record| decode::<StoredChatThreadMetadata>(&record.payload.bytes))
+        .collect::<Result<Vec<_>, _>>()?;
 
     let mut summaries = sessions
         .into_iter()
@@ -173,14 +185,20 @@ where
                 .max_by_key(|turn| turn.ordinal)
                 .map(|turn| turn.status.clone())
                 .unwrap_or_else(|| "ready".to_owned());
-            let title = messages
+            let title = thread_metadata
                 .iter()
-                .filter(|message| {
-                    message.conversation_id == session.conversation_id
-                        && message.role == ChatMessageRole::User
+                .find(|metadata| metadata.conversation_id == session.conversation_id)
+                .map(|metadata| metadata.title.clone())
+                .or_else(|| {
+                    messages
+                        .iter()
+                        .filter(|message| {
+                            message.conversation_id == session.conversation_id
+                                && message.role == ChatMessageRole::User
+                        })
+                        .min_by_key(|message| message.sequence)
+                        .map(|message| compact_thread_title(&message.text))
                 })
-                .min_by_key(|message| message.sequence)
-                .map(|message| compact_thread_title(&message.text))
                 .unwrap_or_else(|| "New conversation".to_owned());
 
             LocalCodexChatThreadSummary {
@@ -202,6 +220,42 @@ where
             .then_with(|| left.conversation_id.cmp(&right.conversation_id))
     });
     Ok(summaries)
+}
+
+pub fn rename_thread<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+    conversation_id: &str,
+    title: &str,
+) -> Result<(), String>
+where
+    B: LocalStoreBackend,
+{
+    let session = read_session(state, conversation_id)?
+        .filter(|session| session.project_id == project_id)
+        .ok_or_else(|| format!("chat thread not found: {conversation_id}"))?;
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("chat thread title must not be empty".to_owned());
+    }
+    if title.chars().count() > 80 {
+        return Err("chat thread title must not exceed 80 characters".to_owned());
+    }
+
+    let metadata = StoredChatThreadMetadata {
+        conversation_id: session.conversation_id,
+        title: title.to_owned(),
+    };
+    let revision_hash = blake3::hash(title.as_bytes()).to_hex();
+    put_json(
+        state,
+        thread_metadata_record_id(conversation_id),
+        &metadata,
+        RevisionId(format!(
+            "rev:{THREAD_METADATA_PREFIX}{conversation_id}:{revision_hash}"
+        )),
+        RevisionExpectation::Any,
+    )
 }
 
 fn compact_thread_title(message: &str) -> String {
@@ -492,6 +546,10 @@ fn session_record_id(conversation_id: &str) -> PersistenceRecordId {
     PersistenceRecordId(format!("{SESSION_PREFIX}{conversation_id}"))
 }
 
+fn thread_metadata_record_id(conversation_id: &str) -> PersistenceRecordId {
+    PersistenceRecordId(format!("{THREAD_METADATA_PREFIX}{conversation_id}"))
+}
+
 fn decode<T>(bytes: &[u8]) -> Result<T, String>
 where
     T: for<'de> Deserialize<'de>,
@@ -552,7 +610,7 @@ mod tests {
             }],
         )
         .expect("complete");
-        let reopened = ServerStateService::new(SqliteBackend::new(path));
+        let reopened = ServerStateService::new(SqliteBackend::new(path.clone()));
         let history =
             read_history(&reopened, "project:1", "project:1:panel:chat").expect("read history");
 
@@ -571,6 +629,46 @@ mod tests {
         assert_eq!(threads[0].conversation_id, "project:1:panel:chat");
         assert_eq!(threads[0].title, "Hello");
         assert_eq!(threads[0].status, "completed");
+
+        rename_thread(
+            &reopened,
+            "project:1",
+            "project:1:panel:chat",
+            "Named thread",
+        )
+        .expect("rename thread");
+        let reopened_after_rename = ServerStateService::new(SqliteBackend::new(path));
+        let renamed_threads = list_threads(&reopened_after_rename).expect("list renamed threads");
+        assert_eq!(renamed_threads[0].title, "Named thread");
+    }
+
+    #[test]
+    fn thread_rename_rejects_empty_titles_and_cross_project_access() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
+        let session = StoredChatSession {
+            conversation_id: "conversation:rename".to_owned(),
+            project_id: "project:1".to_owned(),
+            resource_id: None,
+            session_id: "session:1".to_owned(),
+            provider_thread_id: "thread:1".to_owned(),
+            model: "model".to_owned(),
+            reasoning_effort: None,
+            adapter_id: "codex-app-server".to_owned(),
+            provider_instance_id: "codex:local-default".to_owned(),
+            turn_count: 1,
+            task_toolset_version: 5,
+        };
+        persist_turn_start(&state, session, "turn:rename", "Original title", None).expect("start");
+
+        assert_eq!(
+            rename_thread(&state, "project:1", "conversation:rename", "   "),
+            Err("chat thread title must not be empty".to_owned()),
+        );
+        assert_eq!(
+            rename_thread(&state, "project:2", "conversation:rename", "Wrong project"),
+            Err("chat thread not found: conversation:rename".to_owned()),
+        );
     }
 
     #[test]
