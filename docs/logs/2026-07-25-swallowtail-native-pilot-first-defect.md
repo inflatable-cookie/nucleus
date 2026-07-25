@@ -42,5 +42,6 @@ read-only effects, and original 60-minute ceiling do not increase.
 
 ## Next
 
-Approve or reject the one-launch, one-catalogue reset before another provider
-call.
+The operator approved the one-launch, one-catalogue reset on 2026-07-26. The
+paused interval does not consume the 60-minute execution window. The retained
+catalogue remains attempt one of four.
