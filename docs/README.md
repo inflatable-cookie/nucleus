@@ -51,6 +51,12 @@ advanced project capability. Explicit Git-resource binding, server-owned
 policy and health, project-scoped export/import routing, and project-menu
 controls are validated.
 
+Swallowtail's first publication is now held for application-scale consumer
+proof. Nucleus roadmap g05.003 plans isolated desktop state, normal Agent Chat
+cancellation, exact terminal persistence, and a credential-free native proof
+profile after the active sidebar work is checkpointed. Live Codex calls remain
+separately gated.
+
 Current planning artifacts:
 
 - `research/translation-memos/editor-substrate-selection.md`

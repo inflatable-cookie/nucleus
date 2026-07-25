@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-07-20
+Updated: 2026-07-25
 
 ## Repos
 
@@ -27,6 +27,13 @@ receives the two Nucleus-owned portals. Task execution binds one host-approved
 writable resource, denied provider network, no-approval behavior,
 observe-and-stop provider requests, a Nucleus-owned deadline, and recovery-safe
 cleanup. Nucleus contains no second Codex process or JSON-RPC implementation.
+
+The next consumer-proof readiness lane stays in Nucleus. It adds an explicit
+desktop data root, normal Agent Chat cancellation, exact terminal persistence,
+bounded proof deadline configuration, and safe native evidence. Swallowtail
+continues to own cancellation and deadline mechanisms inside the provider
+turn; Nucleus owns the UI action, product state, configuration, and evidence.
+No live provider call belongs to the readiness implementation.
 
 ## Rust Crates
 

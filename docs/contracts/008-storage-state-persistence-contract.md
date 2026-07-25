@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-06-16
+Updated: 2026-07-25
 
 ## Purpose
 
@@ -123,9 +123,21 @@ Initial persisted domains:
 
 These domains must be recoverable after server restart.
 
-The embedded desktop stores its first durable local server database at
-`~/.nucleus/state/nucleus.sqlite`. Local workspace layout remains separate at
-`~/.nucleus/config/ui.json`.
+The embedded desktop uses `~/.nucleus` as its default Nucleus-owned data root.
+Its first durable local server database is
+`~/.nucleus/state/nucleus.sqlite`, task-review snapshots live under
+`~/.nucleus/state/task-review-snapshots`, and local workspace layout remains
+separate at `~/.nucleus/config/ui.json`.
+
+An explicit `NUCLEUS_DESKTOP_DATA_ROOT` selects another Nucleus-owned root for
+all three surfaces. The value must be a non-empty absolute directory. Invalid
+or unusable explicit values fail startup before any database, snapshot, UI
+config, or provider effect. They must not silently fall back to the default.
+
+This override isolates Nucleus product state only. It must not rewrite `HOME`,
+`CODEX_HOME`, provider-native configuration, credential lookup, terminal home
+resolution, or project resource authority. The default paths remain unchanged
+when the override is absent.
 
 ## Backend Adapter Rule
 

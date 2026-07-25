@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-24
+Updated: 2026-07-25
 
 ## Purpose
 
@@ -26,6 +26,7 @@ Runway bands:
 - Terminal, Browser, resource targeting, and host-status consolidation
 - Memory, settings, provider selection, and advanced-control placement
 - accessibility, responsiveness, error-state, and end-to-end workflow passes
+- Swallowtail application-scale readiness and bounded native proof
 
 The operator sets the shape of each inward step after using the previous one.
 Do not compile speculative specialist-panel redesigns ahead of that feedback.
@@ -34,3 +35,5 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 
 - `001-project-scoped-workspace-layouts.md` - active
 - `002-workspace-sidebar-modes.md` - active
+- `003-swallowtail-application-proof-readiness.md` - planned after the current
+  sidebar validation checkpoint

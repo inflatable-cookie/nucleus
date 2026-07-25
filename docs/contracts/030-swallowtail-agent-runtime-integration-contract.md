@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-07-24
+Updated: 2026-07-25
 
 ## Purpose
 
@@ -91,13 +91,40 @@ authoritative host user's home directory as a read-only context.
 - Nucleus does not reconstruct configured instances, capability requirements,
   version bindings, configuration posture, or session-plan agreement
 - model discovery and turns remain deadline-bound
+- the normal Agent Chat turn deadline is 180 seconds
+- `NUCLEUS_AGENT_CHAT_TURN_TIMEOUT_MS` may select a shorter positive deadline
+  at process start for bounded proof; zero, invalid, or longer values fail
+  before provider work
 - event and callback streams are drained while the turn is active
+- a Nucleus-owned thread-safe cancellation signal wakes the active adapter
+  turn loop and requests cancellation through Swallowtail's turn handle
+- native cancellation is scoped by exact project and conversation identity and
+  does not wait for the serialized chat-service mutex
+- cancellation request, provider cancellation, deadline expiry, runtime
+  failure, and cleanup failure remain distinct
 - every terminal outcome is mapped explicitly; an empty completed response is
   an error
 - turn and session cleanup are awaited; child cleanup cannot depend only on
   process drop
 - default errors expose safe diagnostics, not prompts, callback payloads,
   schemas, credentials, raw provider envelopes, or filesystem paths
+
+## Application Proof Profile
+
+Nucleus may launch the normal desktop entry under the explicit data-root and
+deadline settings in Contract 008 and this contract. The profile changes only
+Nucleus-owned storage and deadline policy. It does not alter Codex home,
+credentials, ambient harness configuration, Swallowtail access policy, or
+workspace authority.
+
+Proof evidence may retain generated scenario ids, exact version and route
+observations, expected and observed terminal classes, event and callback
+counts, elapsed time, usage/rate summaries when supplied, and cleanup state.
+It must not retain credentials, prompts, assistant output, raw provider
+payloads or streams, absolute user paths, or raw provider thread/turn ids.
+
+The deterministic readiness lane must pass without authentication or provider
+calls. Live catalogue and turn execution remain a separate operator gate.
 
 ## Compatibility
 

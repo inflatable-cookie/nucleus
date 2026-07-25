@@ -4,6 +4,7 @@ Logs record meaningful decisions, evidence, and closeouts.
 
 ## Current Logs
 
+- `2026-07-25-swallowtail-application-proof-readiness.md`
 - `2026-07-24-swallowtail-prepared-facade-migration.md`
 - `2026-07-24-swallowtail-codex-version-discovery.md`
 - `2026-07-24-workspace-sidebar-modes.md`

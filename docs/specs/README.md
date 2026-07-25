@@ -31,3 +31,4 @@ contracts, roadmaps, or logs carry the durable truth.
 - `archive/008-window-region-panel-simplification.md`
 - `archive/009-native-window-geometry-persistence.md`
 - `archive/010-floating-agent-chat-composer.md`
+- `archive/014-swallowtail-application-proof-readiness.md`

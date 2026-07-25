@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-07-14
+Updated: 2026-07-25
 
 ## Purpose
 
@@ -313,6 +313,21 @@ The accepted chat interaction now has first-pass durable continuity:
   without changing Nucleus conversation identity
 - unsupported callbacks, approvals, and structured user input remain deferred
 - the provider runs with read-only workspace access and no approval escalation
+
+Application-scale proof adds one normal-path control without expanding the
+composer into a runtime console:
+
+- while one turn is active, the composer exposes one Cancel action
+- cancellation targets the exact project and conversation
+- the action disappears when no turn is active
+- cancelled, timed-out, failed, and completed remain distinct persisted
+  outcomes
+- advanced provider ids, lifecycle fields, and proof diagnostics stay out of
+  the normal chat panel
+
+An explicit Nucleus desktop data root may isolate database, review snapshots,
+and UI layout for development and proof runs. It does not repoint the host home
+or provider configuration. The normal desktop default remains `~/.nucleus`.
 
 The first task interaction inside Agent Chat is agent-authored task creation.
 The agent may create one standalone task or a Goal with a longer task runway

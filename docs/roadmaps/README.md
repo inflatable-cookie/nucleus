@@ -379,4 +379,5 @@ shape.
 Complete `g05/batch-cards/006-forge-overview-and-validation.md`: confirm the
 four sidebar views remain compact and distinct, Files opens the correct
 resource, and Forge reads as recorded repository context rather than live Git
-status.
+status. Once that overlapping desktop work is checkpointed, card 007 starts
+the credential-free Swallowtail application-proof readiness lane.

@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-06-19
+Updated: 2026-07-25
 
 ## Purpose
 
@@ -41,6 +41,11 @@ Initial lifecycle states:
 
 Unsupported lifecycle transitions must be rejected or recorded as unsupported
 capabilities. They must not silently no-op.
+
+Cancellation request and terminal cancellation remain separate observations.
+Requesting cancellation moves an active turn toward cancelling; it does not
+claim the provider stopped, the child joined, or the turn reached
+`cancelled`.
 
 ## Lifecycle Actions
 
@@ -81,6 +86,10 @@ Initial turn statuses:
 - completed
 - cancelled
 - failed
+
+Agent Chat persistence must also retain timed-out terminal truth rather than
+folding it into failed. A cleanup failure after cancellation or deadline is
+recovery or failure evidence, not a successful cancelled or timed-out close.
 
 ## Recovery Rule
 
@@ -129,6 +138,17 @@ Current Codex app-server mapping:
   transcript rollback
 - lifecycle `Close` maps first to `thread/unsubscribe`, not provider
   transcript deletion
+
+The current native Agent Chat mapping carries a Nucleus-owned cancellation
+signal into the active Swallowtail turn. The normal desktop cancellation
+command identifies the exact project and conversation. It may request
+Swallowtail turn cancellation only while that conversation owns the active
+turn.
+
+The cancellation control must remain reachable while the serialized chat
+worker is running. It must not wait for the same mutex held by
+`send_agent_chat_message`, detach cleanup, or infer cancellation by matching
+error strings.
 
 If `thread/resume` fails and an adapter starts a new thread, nucleus must record
 that as recovery fallback instead of silently preserving the old session

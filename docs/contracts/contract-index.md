@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-20
+Updated: 2026-07-25
 
 ## Active Contracts
 
@@ -15,9 +15,9 @@ Updated: 2026-07-20
 | `005-task-contract.md` | draft-promoted-first-pass | Durable task model with first Rust domain types. |
 | `006-workspace-layout-contract.md` | draft-promoted-first-pass | Persisted project workspace layout with first Rust domain types. |
 | `007-server-boundary-contract.md` | draft-promoted-first-pass | Server/host API, control-plane access, DTO, transport, and runtime wrapper boundary. |
-| `008-storage-state-persistence-contract.md` | draft-promoted-first-pass | Persistence domains, record identity, revisions, and journal vocabulary. |
+| `008-storage-state-persistence-contract.md` | draft-promoted-first-pass | Persistence domains, explicit local data-root isolation, record identity, revisions, and journal vocabulary. |
 | `009-adapter-registry-contract.md` | draft-promoted-first-pass | Configured harness adapter registry with first Rust types. |
-| `010-agent-session-lifecycle-contract.md` | draft-promoted-first-pass | Server-owned agent session and turn lifecycle with first Rust types. |
+| `010-agent-session-lifecycle-contract.md` | draft-promoted-first-pass | Server-owned agent session and turn lifecycle, cancellation, and terminal truth with first Rust types. |
 | `011-scm-forge-sync-contract.md` | draft-promoted-convergence-backend | Git, SCM, forge, and project-management sync boundary. |
 | `012-native-harness-runtime-contract.md` | draft | Nucleus-owned harness runtime and steward persona boundary. |
 | `013-shared-memory-contract.md` | draft | Server-owned shared memory records for project, task, session, and repo context. |
@@ -37,7 +37,7 @@ Updated: 2026-07-20
 | `027-provider-auth-forge-execution-contract.md` | draft | Provider credential authority, network-write admission, idempotency, recovery, and sanitized forge execution evidence. |
 | `028-browser-panel-runtime-contract.md` | draft-promoted-first-pass | Desktop native child-webview trust, navigation, and panel lifecycle boundary. |
 | `029-terminal-panel-runtime-contract.md` | draft-promoted-first-pass | Host-routed terminal authority, protocol, PTY lifecycle, transport, and client rendering boundary. |
-| `030-swallowtail-agent-runtime-integration-contract.md` | draft-promoted-first-pass | Swallowtail-owned AI communication with Nucleus-owned sessions, tools, authority, persistence, and UI. |
+| `030-swallowtail-agent-runtime-integration-contract.md` | draft-promoted-first-pass | Swallowtail-owned AI communication with Nucleus-owned sessions, tools, cancellation, deadlines, authority, persistence, and UI. |
 | `031-swallowtail-task-execution-runtime-contract.md` | draft-promoted-first-pass | Nucleus task-executor port over explicit Swallowtail workspace access, outcomes, linkage, and cleanup. |
 
 ## Needed Contracts

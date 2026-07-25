@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-24
+Updated: 2026-07-25
 
 ## Ready Cards
 
@@ -15,3 +15,10 @@ Updated: 2026-07-24
 - `002-project-layout-desktop-binding.md`
 - `004-sidebar-tab-shell-and-projects.md`
 - `005-threads-and-files-foundation.md`
+
+## Planned Cards
+
+- `007-isolated-native-proof-profile.md`
+- `008-agent-chat-cancellation-and-terminal-truth.md`
+- `009-native-proof-selector-and-readiness.md`
+- `010-live-pilot-handoff.md`
