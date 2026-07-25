@@ -79,10 +79,12 @@ fn desktop_command_history_uses_sanitized_dto_not_storage_payloads() {
             handler,
         ))),
         chat: Arc::new(Mutex::new(LocalCodexChatService::default())),
+        chat_cancellation: Default::default(),
         server_state: ServerStateService::new(backend),
         startup_error: None,
         task_review_snapshot_store: None,
         terminal: Default::default(),
+        workspace_ui_config_path: Default::default(),
     };
 
     let response = state

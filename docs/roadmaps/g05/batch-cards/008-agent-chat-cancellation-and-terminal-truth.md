@@ -1,6 +1,6 @@
 # 008 Agent Chat Cancellation And Terminal Truth
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-07-25
 Milestone: `../003-swallowtail-application-proof-readiness.md`
@@ -33,12 +33,12 @@ chat mutex, then persist its exact terminal outcome.
 
 ## Acceptance
 
-- [ ] cancellation can be requested while `send_agent_chat_message` is blocked
-- [ ] a request for another project or inactive conversation performs no effect
-- [ ] cancellation request is not treated as terminal completion
-- [ ] Swallowtail terminal cancellation and deadline map to distinct records
-- [ ] normal completion and tool callbacks retain current behavior
-- [ ] no provider id, prompt, output, or raw error enters stable diagnostics
+- [x] cancellation can be requested while `send_agent_chat_message` is blocked
+- [x] a request for another project or inactive conversation performs no effect
+- [x] cancellation request is not treated as terminal completion
+- [x] Swallowtail terminal cancellation and deadline map to distinct records
+- [x] normal completion and tool callbacks retain current behavior
+- [x] no provider id, prompt, output, or raw error enters stable diagnostics
 
 ## Validation
 
@@ -49,10 +49,13 @@ chat mutex, then persist its exact terminal outcome.
 
 ## Evidence
 
-- deterministic pending-turn cancellation fixture
-- wakeup and exact-target assertions
-- durable terminal-state restart assertions
-- no provider call
+- A provider-neutral cancellation signal wakes the adapter poll loop.
+- The desktop registry is outside the chat mutex and targets exact project and
+  conversation identity.
+- Typed cancelled, timed-out, cleanup-failed, and other failure outcomes reach
+  explicit durable statuses without string matching.
+- Focused protocol, adapter, server, desktop, and client tests pass. No
+  provider call occurred.
 
 ## Stop Conditions
 

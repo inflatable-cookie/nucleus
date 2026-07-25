@@ -14,7 +14,7 @@ call approval before the first provider effect.
 ## Entry Gates
 
 - cards 007-009 complete
-- current Nucleus worktree clean or exact proof changes checkpointed
+- current Nucleus worktree clean or exact proof changes checkpointed — open
 - Swallowtail source candidate fixed
 - installed Codex and `gpt-5.4-mini` catalogue route observed
 - operator accepts the 15-turn and 60-minute ceilings

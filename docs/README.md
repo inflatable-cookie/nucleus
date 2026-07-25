@@ -52,10 +52,11 @@ policy and health, project-scoped export/import routing, and project-menu
 controls are validated.
 
 Swallowtail's first publication is now held for application-scale consumer
-proof. Nucleus roadmap g05.003 plans isolated desktop state, normal Agent Chat
-cancellation, exact terminal persistence, and a credential-free native proof
-profile after the active sidebar work is checkpointed. Live Codex calls remain
-separately gated.
+proof. Nucleus roadmap g05.003 now has isolated desktop state, bounded Agent
+Chat deadlines, normal cancellation, exact terminal persistence, explicit
+Effigy proof selectors, and count-only read-only evidence. The deterministic
+readiness batch awaits an exact source checkpoint. Installed Codex and
+catalogue probes plus every live Codex call remain separately gated.
 
 Current planning artifacts:
 
@@ -85,6 +86,7 @@ Current planning artifacts:
 - `roadmaps/g04/049-swallowtail-agent-chat-adoption.md`
 - `roadmaps/g04/050-swallowtail-task-execution-adoption.md`
 - `roadmaps/g05/001-project-scoped-workspace-layouts.md`
+- `roadmaps/g05/003-swallowtail-application-proof-readiness.md`
 
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`

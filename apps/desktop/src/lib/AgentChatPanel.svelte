@@ -47,6 +47,7 @@
   import { tick } from "svelte";
   import {
     AgentChatInput,
+    Button,
     Icon,
     ModelPicker,
     Text,
@@ -60,7 +61,12 @@
   import TaskWorkflowReceipt from "./TaskWorkflowReceipt.svelte";
   import type { ControlGoalRecordDto, ControlTaskRecordDto } from "./control";
   import type { TaskAuthoringReceipt, TaskWorkflowReceipt as WorkflowReceipt } from "./control/agentChat";
-  import { listAgentChatModels, loadAgentChatHistory, sendAgentChatMessage } from "./control/agentChat";
+  import {
+    cancelAgentChatTurn,
+    listAgentChatModels,
+    loadAgentChatHistory,
+    sendAgentChatMessage,
+  } from "./control/agentChat";
 
   let {
     conversationId,
@@ -84,6 +90,7 @@
   let messages = $state<ChatMessage[]>([]);
   let draft = $state("");
   let pending = $state(false);
+  let cancelRequested = $state(false);
   let loadingHistory = $state(false);
   let failure = $state<string | null>(null);
   let model = $state(DEFAULT_MODEL);
@@ -219,6 +226,7 @@
 
     failure = null;
     pending = true;
+    cancelRequested = false;
     retainedPendingConversations.add(conversationId);
     draft = "";
     const optimisticMessageId = `user:${crypto.randomUUID()}`;
@@ -260,13 +268,31 @@
         );
       }
     } catch (caught) {
-      messages = messages.filter((message) => message.id !== optimisticMessageId);
-      retain(retainedMessages, conversationId, messages);
+      if (!cancelRequested) {
+        messages = messages.filter((message) => message.id !== optimisticMessageId);
+        retain(retainedMessages, conversationId, messages);
+      }
       failure = caught instanceof Error ? caught.message : String(caught);
     } finally {
       retainedPendingConversations.delete(conversationId);
       pending = false;
+      cancelRequested = false;
       await scrollToLatest();
+    }
+  }
+
+  async function cancelTurn(): Promise<void> {
+    if (!projectId || !pending || cancelRequested) {
+      return;
+    }
+    failure = null;
+    try {
+      cancelRequested = await cancelAgentChatTurn(projectId, conversationId);
+      if (!cancelRequested) {
+        failure = "No active turn was available to cancel.";
+      }
+    } catch (caught) {
+      failure = caught instanceof Error ? caught.message : String(caught);
     }
   }
 
@@ -416,6 +442,16 @@
           <article class="chat-message chat-message-pending">
             <Text size="sm" tone="muted">Codex</Text>
             <div class="thinking-dots" aria-label="Codex is working"><span></span><span></span><span></span></div>
+            <div class="pending-actions">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={cancelRequested}
+                onClick={() => void cancelTurn()}
+              >
+                {cancelRequested ? "Cancelling…" : "Cancel"}
+              </Button>
+            </div>
           </article>
         {/if}
       </div>
@@ -550,6 +586,10 @@
 
   .chat-message-pending {
     min-height: 2.5rem;
+  }
+
+  .pending-actions {
+    width: fit-content;
   }
 
   .thinking-dots {

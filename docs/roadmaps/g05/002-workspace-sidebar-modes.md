@@ -1,8 +1,8 @@
 # 002 Workspace Sidebar Modes
 
-Status: active
+Status: completed
 Owner: Tom
-Updated: 2026-07-24
+Updated: 2026-07-25
 
 ## Purpose
 
@@ -23,7 +23,7 @@ preserving project selection and the existing project-management controls.
   boundaries.
 - [x] Add the first cross-project Forge repository overview without SCM
   mutation controls.
-- [ ] Validate switching, project continuity, file opening, and compact states.
+- [x] Validate switching, project continuity, file opening, and compact states.
 
 ## Goals
 
@@ -42,11 +42,8 @@ preserving project selection and the existing project-management controls.
 
 ## Batch Cards
 
-Ready:
-
-- `batch-cards/006-forge-overview-and-validation.md`
-
 Completed:
 
 - `batch-cards/004-sidebar-tab-shell-and-projects.md`
 - `batch-cards/005-threads-and-files-foundation.md`
+- `batch-cards/006-forge-overview-and-validation.md`

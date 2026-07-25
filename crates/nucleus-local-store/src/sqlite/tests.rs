@@ -647,3 +647,49 @@ fn sqlite_repository_stores_shared_memory_records() {
         PersistenceRecordKind::SharedMemoryRecord
     );
 }
+
+#[test]
+fn read_only_backend_reads_existing_records_and_rejects_mutation() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let path = temp.path().join("proof.sqlite");
+    let record = fixture_record(
+        PersistenceDomain::AgentSessions,
+        PersistenceRecordKind::AgentSession,
+        "session:proof",
+        "rev:1",
+    );
+    let writer = SqliteBackend::new(path.clone());
+    writer
+        .open_repository(PersistenceDomain::AgentSessions)
+        .expect("writer repository")
+        .put(
+            record.clone(),
+            RevisionExpectation::MustNotExist,
+            LocalStoreTransactionPosture::Autocommit,
+        )
+        .expect("seed record");
+
+    let reader = SqliteBackend::new_read_only(path);
+    let mut repository = reader
+        .open_repository(PersistenceDomain::AgentSessions)
+        .expect("read-only repository");
+    assert_eq!(
+        repository
+            .get(&record.id)
+            .expect("read record")
+            .expect("record exists"),
+        record
+    );
+    assert!(repository
+        .put(
+            fixture_record(
+                PersistenceDomain::AgentSessions,
+                PersistenceRecordKind::AgentSession,
+                "session:forbidden",
+                "rev:1",
+            ),
+            RevisionExpectation::MustNotExist,
+            LocalStoreTransactionPosture::Autocommit,
+        )
+        .is_err());
+}

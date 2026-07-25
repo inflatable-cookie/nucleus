@@ -1,6 +1,6 @@
 # 003 Swallowtail Application Proof Readiness
 
-Status: planned
+Status: active
 Owner: Tom
 Updated: 2026-07-25
 
@@ -21,33 +21,33 @@ live authority is explicit.
 
 ## Goals
 
-- [ ] isolate native desktop state without changing host or provider homes
-- [ ] cancel the active Agent Chat turn through the normal product path
-- [ ] persist exact completed, cancelled, timed-out, and failed truth
-- [ ] run deterministic proof preparation through Effigy
+- [x] isolate native desktop state without changing host or provider homes
+- [x] cancel the active Agent Chat turn through the normal product path
+- [x] persist exact completed, cancelled, timed-out, and failed truth
+- [x] run deterministic proof preparation through Effigy
 - [ ] return one exact live-pilot handoff without making a provider call
 
 ## Execution Plan
 
 ### Batch 3.1 — Isolated Native Profile
 
-- [ ] Execute card 007.
-- [ ] Resolve one explicit desktop data root at startup.
-- [ ] Keep database, review snapshots, and UI configuration under that root.
-- [ ] Add the bounded Agent Chat deadline setting.
+- [x] Execute card 007.
+- [x] Resolve one explicit desktop data root at startup.
+- [x] Keep database, review snapshots, and UI configuration under that root.
+- [x] Add the bounded Agent Chat deadline setting.
 
 ### Batch 3.2 — Cancellation And Terminal Truth
 
-- [ ] Execute card 008.
-- [ ] Carry a consumer cancellation signal into the active Swallowtail turn.
-- [ ] Add the normal Tauri and Agent Chat UI cancellation path.
-- [ ] Persist cancellation and deadline separately from failure.
+- [x] Execute card 008.
+- [x] Carry a consumer cancellation signal into the active Swallowtail turn.
+- [x] Add the normal Tauri and Agent Chat UI cancellation path.
+- [x] Persist cancellation and deadline separately from failure.
 
 ### Batch 3.3 — Deterministic Native Readiness
 
-- [ ] Execute card 009.
-- [ ] Add the isolated native Effigy selector and safe evidence summary.
-- [ ] Pass focused Rust, client, desktop, and docs validation without
+- [x] Execute card 009.
+- [x] Add the isolated native Effigy selector and safe evidence summary.
+- [x] Pass focused Rust, client, desktop, and docs validation without
   credentials or provider calls.
 
 ### Batch 3.4 — Live Pilot Handoff
@@ -58,26 +58,30 @@ live authority is explicit.
 
 ## Acceptance Criteria
 
-- [ ] normal user paths and 180-second deadline remain the defaults
-- [ ] invalid explicit configuration fails before desktop state or provider
+- [x] normal user paths and 180-second deadline remain the defaults
+- [x] invalid explicit configuration fails before desktop state or provider
   effects
-- [ ] cancellation remains available while the chat worker is active
-- [ ] cancellation request and terminal outcome stay distinct
-- [ ] safe persisted evidence can reconcile every deterministic scenario
-- [ ] no raw provider material, secret, prompt, output, or user path is retained
-- [ ] no live provider call occurs before card 010 authority
+- [x] cancellation remains available while the chat worker is active
+- [x] cancellation request and terminal outcome stay distinct
+- [x] safe persisted evidence can reconcile every deterministic scenario
+- [x] no raw provider material, secret, prompt, output, or user path is retained
+- [x] no live provider call occurs before card 010 authority
 
 ## Current Gate
 
-The current sidebar lane modifies the same Tauri, Agent Chat, and server files.
-Cards 007-009 stay planned until card 006 closes and its work is checkpointed.
-Card 010 remains separately provider-gated.
+Cards 007-009 are complete in the working tree. Card 010 requires the
+proof-readiness changes to be checkpointed so the exact Nucleus source can be
+fixed. Installed Codex and catalogue probes plus every live provider call
+remain separately gated.
 
 ## Batch Cards
 
-Planned:
+Completed:
 
 - `batch-cards/007-isolated-native-proof-profile.md`
 - `batch-cards/008-agent-chat-cancellation-and-terminal-truth.md`
 - `batch-cards/009-native-proof-selector-and-readiness.md`
+
+Planned:
+
 - `batch-cards/010-live-pilot-handoff.md`

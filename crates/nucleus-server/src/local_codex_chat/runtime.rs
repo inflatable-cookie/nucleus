@@ -7,9 +7,11 @@
 
 use nucleus_agent_adapters::AgentAdapterRegistry;
 use nucleus_agent_protocol::{
-    AgentLiveSession, AgentSessionStartRequest, AgentToolCall, AgentTurnRequest,
+    AgentLiveSession, AgentSessionStartRequest, AgentToolCall, AgentTurnCancellation,
+    AgentTurnFailure, AgentTurnRequest,
 };
 use serde_json::Value;
+use std::time::Duration;
 
 mod tool_calls;
 
@@ -63,6 +65,7 @@ impl LocalCodexChatSession {
         migration_context: Option<&str>,
         model: &str,
         reasoning_effort: &str,
+        turn_timeout: Duration,
     ) -> Result<Self, String> {
         let developer_instructions = migration_context.map_or_else(
             || TASK_TOOL_INSTRUCTIONS.to_owned(),
@@ -82,6 +85,7 @@ impl LocalCodexChatSession {
             // tools on thread/resume. Nucleus supplies transcript context and
             // opens fresh instead of resuming from a provider id alone.
             resume_provider_thread_id: None,
+            turn_timeout,
         })?;
 
         Ok(Self {
@@ -107,8 +111,9 @@ impl LocalCodexChatSession {
         message: &str,
         model: &str,
         reasoning_effort: &str,
+        cancellation: AgentTurnCancellation,
         task_tool: &mut F,
-    ) -> Result<LocalCodexChatReply, String>
+    ) -> Result<LocalCodexChatReply, AgentTurnFailure>
     where
         F: FnMut(&str, &str, &str, Value) -> Result<TaskToolOutcome, String>,
     {
@@ -129,6 +134,7 @@ impl LocalCodexChatSession {
                 message: message.to_owned(),
                 model: model.to_owned(),
                 reasoning_effort: reasoning_effort.to_owned(),
+                cancellation,
             },
             &mut on_tool_call,
         )?;

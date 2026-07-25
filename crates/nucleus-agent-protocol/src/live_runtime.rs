@@ -6,6 +6,13 @@
 //! own process, transport, and wire protocol.
 
 use serde_json::Value;
+use std::fmt;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::task::{Context, Poll, Waker};
+use std::time::Duration;
 
 /// Request to start (or resume) a provider-backed agent session.
 #[derive(Clone, Debug, PartialEq)]
@@ -16,6 +23,7 @@ pub struct AgentSessionStartRequest {
     pub developer_instructions: String,
     pub dynamic_tools: Vec<Value>,
     pub resume_provider_thread_id: Option<String>,
+    pub turn_timeout: Duration,
 }
 
 /// Provider-assigned identity and effective settings of a started session.
@@ -32,6 +40,115 @@ pub struct AgentTurnRequest {
     pub message: String,
     pub model: String,
     pub reasoning_effort: String,
+    pub cancellation: AgentTurnCancellation,
+}
+
+/// Consumer-owned cancellation signal for one provider turn.
+#[derive(Clone)]
+pub struct AgentTurnCancellation {
+    inner: Arc<AgentTurnCancellationState>,
+}
+
+struct AgentTurnCancellationState {
+    requested: AtomicBool,
+    waker: Mutex<Option<Waker>>,
+}
+
+impl AgentTurnCancellation {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(AgentTurnCancellationState {
+                requested: AtomicBool::new(false),
+                waker: Mutex::new(None),
+            }),
+        }
+    }
+
+    /// Returns true only for the first request.
+    pub fn request(&self) -> bool {
+        if self.inner.requested.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+        if let Ok(mut waker) = self.inner.waker.lock() {
+            if let Some(waker) = waker.take() {
+                waker.wake();
+            }
+        }
+        true
+    }
+
+    pub fn is_requested(&self) -> bool {
+        self.inner.requested.load(Ordering::Acquire)
+    }
+
+    pub fn poll_requested(&self, context: &mut Context<'_>) -> Poll<()> {
+        if self.is_requested() {
+            return Poll::Ready(());
+        }
+        if let Ok(mut waker) = self.inner.waker.lock() {
+            *waker = Some(context.waker().clone());
+        }
+        if self.is_requested() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+
+    pub fn same_request(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl Default for AgentTurnCancellation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for AgentTurnCancellation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AgentTurnCancellation")
+            .field("requested", &self.is_requested())
+            .finish()
+    }
+}
+
+impl PartialEq for AgentTurnCancellation {
+    fn eq(&self, other: &Self) -> bool {
+        self.same_request(other)
+    }
+}
+
+impl Eq for AgentTurnCancellation {}
+
+/// Exact terminal failure observed at the consumer adapter boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AgentTurnFailure {
+    Cancelled,
+    TimedOut,
+    CleanupFailed(String),
+    Failed(String),
+}
+
+impl fmt::Display for AgentTurnFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cancelled => formatter.write_str("agent turn was cancelled"),
+            Self::TimedOut => formatter.write_str("agent turn timed out"),
+            Self::CleanupFailed(reason) => formatter.write_str(reason),
+            Self::Failed(reason) => formatter.write_str(reason),
+        }
+    }
+}
+
+impl std::error::Error for AgentTurnFailure {}
+
+impl From<String> for AgentTurnFailure {
+    fn from(reason: String) -> Self {
+        Self::Failed(reason)
+    }
 }
 
 /// Completed turn output.
@@ -80,7 +197,51 @@ pub trait AgentLiveSession {
         &mut self,
         request: AgentTurnRequest,
         on_tool_call: &mut AgentToolCallHandler<'_>,
-    ) -> Result<AgentTurnReply, String>;
+    ) -> Result<AgentTurnReply, AgentTurnFailure>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentTurnCancellation;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::task::{Context, Poll, Wake, Waker};
+
+    #[test]
+    fn cancellation_is_idempotent_and_request_scoped() {
+        let cancellation = AgentTurnCancellation::new();
+        let same = cancellation.clone();
+        let other = AgentTurnCancellation::new();
+
+        assert!(cancellation.same_request(&same));
+        assert!(!cancellation.same_request(&other));
+        assert!(cancellation.request());
+        assert!(!same.request());
+        assert!(same.is_requested());
+        assert!(!other.is_requested());
+    }
+
+    #[test]
+    fn cancellation_wakes_a_pending_turn_loop() {
+        struct WakeFlag(AtomicBool);
+        impl Wake for WakeFlag {
+            fn wake(self: Arc<Self>) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
+        let cancellation = AgentTurnCancellation::new();
+        let wake_flag = Arc::new(WakeFlag(AtomicBool::new(false)));
+        let waker = Waker::from(wake_flag.clone());
+        let mut context = Context::from_waker(&waker);
+        assert_eq!(cancellation.poll_requested(&mut context), Poll::Pending);
+
+        assert!(cancellation.request());
+        assert!(wake_flag.0.load(Ordering::Acquire));
+        assert_eq!(cancellation.poll_requested(&mut context), Poll::Ready(()));
+    }
 }
 
 /// A provider runtime that can start sessions and list models.

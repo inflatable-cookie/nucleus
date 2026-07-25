@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use kinds::{kind_from_text, kind_to_text};
 use nucleus_core::{PersistenceDomain, PersistenceRecordId, RevisionId};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 
 use crate::backend::{
     LocalStoreBackendDescriptor, LocalStoreBackendFamily, LocalStoreDeploymentRole,
@@ -39,12 +39,13 @@ type SqliteConnectionHandle = Arc<Mutex<Connection>>;
 #[derive(Clone, Debug)]
 pub struct SqliteBackend {
     path: PathBuf,
+    read_only: bool,
     shared: Arc<Mutex<Option<SqliteConnectionHandle>>>,
 }
 
 impl PartialEq for SqliteBackend {
     fn eq(&self, other: &Self) -> bool {
-        self.path == other.path
+        self.path == other.path && self.read_only == other.read_only
     }
 }
 
@@ -55,6 +56,16 @@ impl SqliteBackend {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
+            read_only: false,
+            shared: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Open an existing SQLite store without schema or record mutation.
+    pub fn new_read_only(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            read_only: true,
             shared: Arc::new(Mutex::new(None)),
         }
     }
@@ -68,9 +79,18 @@ impl SqliteBackend {
         if let Some(handle) = slot.as_ref() {
             return Ok(handle.clone());
         }
-        let connection = Connection::open(&self.path).map_err(sqlite_error)?;
-        configure_connection(&connection)?;
-        initialize_schema(&connection)?;
+        let connection = if self.read_only {
+            Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(sqlite_error)?
+        } else {
+            Connection::open(&self.path).map_err(sqlite_error)?
+        };
+        if self.read_only {
+            configure_read_only_connection(&connection)?;
+        } else {
+            configure_connection(&connection)?;
+            initialize_schema(&connection)?;
+        }
         let handle: SqliteConnectionHandle = Arc::new(Mutex::new(connection));
         *slot = Some(handle.clone());
         Ok(handle)
@@ -373,6 +393,16 @@ fn configure_connection(connection: &Connection) -> LocalStoreResult<()> {
         .map_err(sqlite_error)?;
     connection
         .pragma_update(None, "foreign_keys", "ON")
+        .map_err(sqlite_error)?;
+    Ok(())
+}
+
+fn configure_read_only_connection(connection: &Connection) -> LocalStoreResult<()> {
+    connection
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(sqlite_error)?;
+    connection
+        .pragma_update(None, "query_only", "ON")
         .map_err(sqlite_error)?;
     Ok(())
 }

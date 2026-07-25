@@ -1,4 +1,6 @@
-use nucleus_agent_protocol::{AgentToolCall, AgentToolCallHandler};
+use nucleus_agent_protocol::{
+    AgentToolCall, AgentToolCallHandler, AgentTurnCancellation, AgentTurnFailure,
+};
 use serde_json::Value;
 use std::future::poll_fn;
 use std::task::Poll;
@@ -20,11 +22,13 @@ enum TurnActivity {
     Event,
     EventsClosed,
     EventFailed(RuntimeFailure),
+    CancelRequested,
 }
 
 pub(super) async fn drive_turn(
     turn: &mut dyn TurnHandle,
     provider_turn_id: &str,
+    cancellation: &AgentTurnCancellation,
     on_tool_call: &mut AgentToolCallHandler<'_>,
 ) -> Result<TerminalOutcome, String> {
     let mut events = turn
@@ -47,6 +51,9 @@ pub(super) async fn drive_turn(
         let activity = poll_fn(|context| {
             if let Poll::Ready(outcome) = terminal.as_mut().poll(context) {
                 return Poll::Ready(TurnActivity::Terminal(outcome));
+            }
+            if !cancellation_requested && cancellation.poll_requested(context) == Poll::Ready(()) {
+                return Poll::Ready(TurnActivity::CancelRequested);
             }
             if callbacks_open {
                 let callbacks = callback_requests
@@ -102,6 +109,10 @@ pub(super) async fn drive_turn(
             TurnActivity::EventFailed(error) => {
                 events_open = false;
                 first_stream_error.get_or_insert_with(|| runtime_error(error));
+            }
+            TurnActivity::CancelRequested => {
+                let _ = turn.cancellation().request().await;
+                cancellation_requested = true;
             }
         }
 
@@ -163,36 +174,70 @@ fn callback_failure(detail: &str) -> CallbackResult {
     }
 }
 
-pub(super) fn completed_output(outcome: &TerminalOutcome) -> Result<String, String> {
+pub(super) fn completed_output(outcome: &TerminalOutcome) -> Result<String, AgentTurnFailure> {
     match outcome.status() {
         TerminalStatus::Completed => outcome
             .output()
             .map(|output| output.as_str().trim().to_owned())
             .filter(|output| !output.is_empty())
-            .ok_or_else(|| "Codex completed the turn without an assistant message".to_owned()),
-        TerminalStatus::Cancelled => Err("Codex turn was cancelled".to_owned()),
-        TerminalStatus::TimedOut => Err("Codex turn timed out".to_owned()),
-        TerminalStatus::ProviderRequestObserved(_) => {
-            Err("Codex turn stopped for an unsupported provider request".to_owned())
-        }
-        TerminalStatus::ProviderFailed(diagnostic) => {
-            Err(format!("Codex provider failed: {}", diagnostic.message()))
-        }
-        TerminalStatus::HostFailed(diagnostic) => {
-            Err(format!("Codex host failed: {}", diagnostic.message()))
-        }
-        TerminalStatus::RuntimeFailed(diagnostic) => {
-            Err(format!("Codex runtime failed: {}", diagnostic.message()))
+            .ok_or_else(|| {
+                AgentTurnFailure::Failed(
+                    "Codex completed the turn without an assistant message".to_owned(),
+                )
+            }),
+        TerminalStatus::Cancelled => Err(AgentTurnFailure::Cancelled),
+        TerminalStatus::TimedOut => Err(AgentTurnFailure::TimedOut),
+        TerminalStatus::ProviderRequestObserved(_) => Err(AgentTurnFailure::Failed(
+            "Codex turn stopped for an unsupported provider request".to_owned(),
+        )),
+        TerminalStatus::ProviderFailed(diagnostic) => Err(AgentTurnFailure::Failed(format!(
+            "Codex provider failed: {}",
+            diagnostic.message()
+        ))),
+        TerminalStatus::HostFailed(diagnostic) => Err(AgentTurnFailure::Failed(format!(
+            "Codex host failed: {}",
+            diagnostic.message()
+        ))),
+        TerminalStatus::RuntimeFailed(diagnostic) => Err(AgentTurnFailure::Failed(format!(
+            "Codex runtime failed: {}",
+            diagnostic.message()
+        ))),
+    }
+}
+
+pub(super) fn require_clean_turn(cleanup: CleanupOutcome) -> Result<(), AgentTurnFailure> {
+    match cleanup {
+        CleanupOutcome::Clean | CleanupOutcome::NotApplicable => Ok(()),
+        CleanupOutcome::Degraded(diagnostic) | CleanupOutcome::Failed(diagnostic) => {
+            Err(AgentTurnFailure::CleanupFailed(format!(
+                "Codex turn cleanup failed: {}",
+                diagnostic.message()
+            )))
         }
     }
 }
 
-pub(super) fn require_clean_turn(cleanup: CleanupOutcome) -> Result<(), String> {
-    match cleanup {
-        CleanupOutcome::Clean | CleanupOutcome::NotApplicable => Ok(()),
-        CleanupOutcome::Degraded(diagnostic) | CleanupOutcome::Failed(diagnostic) => Err(format!(
-            "Codex turn cleanup failed: {}",
-            diagnostic.message()
-        )),
+#[cfg(test)]
+mod tests {
+    use super::completed_output;
+    use nucleus_agent_protocol::AgentTurnFailure;
+    use swallowtail_runtime::{CleanupOutcome, TerminalOutcome, TerminalStatus};
+
+    #[test]
+    fn terminal_cancellation_and_deadline_remain_typed() {
+        assert_eq!(
+            completed_output(&TerminalOutcome::new(
+                TerminalStatus::Cancelled,
+                CleanupOutcome::Clean,
+            )),
+            Err(AgentTurnFailure::Cancelled),
+        );
+        assert_eq!(
+            completed_output(&TerminalOutcome::new(
+                TerminalStatus::TimedOut,
+                CleanupOutcome::Clean,
+            )),
+            Err(AgentTurnFailure::TimedOut),
+        );
     }
 }

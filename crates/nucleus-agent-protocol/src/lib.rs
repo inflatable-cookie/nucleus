@@ -36,7 +36,7 @@ pub use identity::{
 pub use live_runtime::{
     AgentLiveSession, AgentModelOption, AgentReasoningOption, AgentSessionRuntime,
     AgentSessionStartRequest, AgentStartedSessionInfo, AgentToolCall, AgentToolCallHandler,
-    AgentTurnReply, AgentTurnRequest,
+    AgentTurnCancellation, AgentTurnFailure, AgentTurnReply, AgentTurnRequest,
 };
 pub use routes::{
     ApiCompatibilityFamily, AuthSource, BillingAccountSource, ModelRoute, ModelRouteCapabilities,

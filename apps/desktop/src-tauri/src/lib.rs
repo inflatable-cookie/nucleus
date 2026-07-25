@@ -27,16 +27,17 @@ use nucleus_server::{
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
-    ForgeStatusCheckRefreshScope, LocalCodexChatHistory, LocalCodexChatModelOption,
-    LocalCodexChatReply, LocalCodexChatRequest, LocalCodexChatService, LocalCodexChatThreadSummary,
-    LocalControlRequestHandler, LocalMemoryProposalSeed, LocalPlanningSessionSeed,
-    LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed, ServerStateService,
-    TaskDiffFilePatchRequest, TaskDiffFilePatchResponse, TaskDiffOverviewRequest,
-    TaskDiffOverviewResponse, TaskReviewSnapshotStore, TauriIpcControlCommandAdapter,
-    TerminalHostRuntime,
+    ForgeStatusCheckRefreshScope, LocalCodexChatCancellationRegistry, LocalCodexChatHistory,
+    LocalCodexChatModelOption, LocalCodexChatReply, LocalCodexChatRequest, LocalCodexChatService,
+    LocalCodexChatThreadSummary, LocalControlRequestHandler, LocalMemoryProposalSeed,
+    LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed,
+    ServerStateService, TaskDiffFilePatchRequest, TaskDiffFilePatchResponse,
+    TaskDiffOverviewRequest, TaskDiffOverviewResponse, TaskReviewSnapshotStore,
+    TauriIpcControlCommandAdapter, TerminalHostRuntime,
 };
 
 mod browser_panel;
+mod desktop_profile;
 mod terminal_panel;
 mod window_geometry;
 mod workspace_ui;
@@ -44,10 +45,12 @@ mod workspace_ui;
 struct DesktopState {
     adapter: Arc<Mutex<TauriIpcControlCommandAdapter<SqliteBackend>>>,
     chat: Arc<Mutex<LocalCodexChatService>>,
+    chat_cancellation: LocalCodexChatCancellationRegistry,
     server_state: ServerStateService<SqliteBackend>,
     startup_error: Option<String>,
     task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
     terminal: TerminalHostRuntime,
+    workspace_ui_config_path: PathBuf,
 }
 
 /// Startup posture reported to the UI: storage posture, seeding outcome.
@@ -154,16 +157,30 @@ async fn save_editor_file(
 impl DesktopState {
     #[cfg(test)]
     fn new(backend: SqliteBackend) -> Self {
-        Self::with_chat(backend, LocalCodexChatService::default(), None)
+        Self::with_chat(
+            backend,
+            LocalCodexChatService::default(),
+            None,
+            PathBuf::from("target/nucleus-desktop-test/ui.json"),
+        )
     }
 
-    fn new_with_snapshot_store(backend: SqliteBackend, snapshot_root: PathBuf) -> Self {
+    fn new_with_profile(
+        backend: SqliteBackend,
+        snapshot_root: PathBuf,
+        workspace_ui_config_path: PathBuf,
+        chat_turn_timeout: std::time::Duration,
+    ) -> Self {
         let snapshot_store = TaskReviewSnapshotStore::new(snapshot_root)
             .expect("local task review snapshot store should be writable");
         Self::with_chat(
             backend,
-            LocalCodexChatService::with_task_review_snapshot_store(snapshot_store.clone()),
+            LocalCodexChatService::with_task_review_snapshot_store_and_turn_timeout(
+                snapshot_store.clone(),
+                chat_turn_timeout,
+            ),
             Some(snapshot_store),
+            workspace_ui_config_path,
         )
     }
 
@@ -171,6 +188,7 @@ impl DesktopState {
         backend: SqliteBackend,
         chat: LocalCodexChatService,
         task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
+        workspace_ui_config_path: PathBuf,
     ) -> Self {
         let server_state = ServerStateService::new(backend.clone());
         let handler = LocalControlRequestHandler::new(backend, None);
@@ -180,10 +198,12 @@ impl DesktopState {
         Self {
             adapter: Arc::new(Mutex::new(adapter)),
             chat: Arc::new(Mutex::new(chat)),
+            chat_cancellation: LocalCodexChatCancellationRegistry::default(),
             server_state,
             startup_error,
             task_review_snapshot_store,
             terminal: TerminalHostRuntime::default(),
+            workspace_ui_config_path,
         }
     }
 
@@ -259,38 +279,59 @@ async fn send_agent_chat_message(
     state: tauri::State<'_, DesktopState>,
     request: LocalCodexChatRequest,
 ) -> Result<LocalCodexChatReply, String> {
+    let active_turn = state
+        .chat_cancellation
+        .begin(&request.project_id, &request.conversation_id)?;
+    let cancellation = active_turn.cancellation();
     let chat = Arc::clone(&state.chat);
     let adapter = Arc::clone(&state.adapter);
     let server_state = state.server_state.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
+        let _active_turn = active_turn;
         let mut chat = chat
             .lock()
             .map_err(|_| "agent chat runtime lock is poisoned".to_owned())?;
-        chat.send_message_with_task_authoring(&server_state, request, &mut |control_request| {
-            let envelope = ControlRequestEnvelopeDto::try_from(&control_request)
-                .map_err(|error| error.reason)?;
-            let response = adapter
-                .lock()
-                .map_err(|_| "desktop command adapter lock is poisoned".to_owned())?
-                .submit_control_envelope(envelope)
-                .map_err(|error| error.reason)?;
-            match response.body {
-                ControlResponseBodyDto::CommandReceipt { status, .. }
-                    if status == "accepted_for_state_mutation" =>
-                {
-                    Ok(())
+        chat.send_message_with_task_authoring_and_cancellation(
+            &server_state,
+            request,
+            cancellation,
+            &mut |control_request| {
+                let envelope = ControlRequestEnvelopeDto::try_from(&control_request)
+                    .map_err(|error| error.reason)?;
+                let response = adapter
+                    .lock()
+                    .map_err(|_| "desktop command adapter lock is poisoned".to_owned())?
+                    .submit_control_envelope(envelope)
+                    .map_err(|error| error.reason)?;
+                match response.body {
+                    ControlResponseBodyDto::CommandReceipt { status, .. }
+                        if status == "accepted_for_state_mutation" =>
+                    {
+                        Ok(())
+                    }
+                    ControlResponseBodyDto::CommandReceipt { status, .. } => {
+                        Err(format!("task ledger command was not accepted: {status}"))
+                    }
+                    ControlResponseBodyDto::Error { reason, .. } => Err(reason),
+                    _ => Err("task ledger command returned an unexpected response".to_owned()),
                 }
-                ControlResponseBodyDto::CommandReceipt { status, .. } => {
-                    Err(format!("task ledger command was not accepted: {status}"))
-                }
-                ControlResponseBodyDto::Error { reason, .. } => Err(reason),
-                _ => Err("task ledger command returned an unexpected response".to_owned()),
-            }
-        })
+            },
+        )
     })
     .await
     .map_err(|error| format!("agent chat worker failed: {error}"))?
+}
+
+#[tauri::command]
+fn cancel_agent_chat_turn(
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+    conversation_id: String,
+) -> Result<bool, String> {
+    state
+        .chat_cancellation
+        .request(&project_id, &conversation_id)
 }
 
 #[tauri::command]
@@ -595,32 +636,44 @@ async fn submit_control_envelope(
 
 #[tauri::command]
 fn load_workspace_ui_config(
+    state: tauri::State<'_, DesktopState>,
     project_id: String,
 ) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
-    workspace_ui::load_workspace_ui_config(&project_id)
+    workspace_ui::load_workspace_ui_config(&state.workspace_ui_config_path, &project_id)
 }
 
 #[tauri::command]
 fn save_workspace_ui_config(
+    state: tauri::State<'_, DesktopState>,
     project_id: String,
     config: workspace_ui::WorkspaceUiConfigDto,
 ) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
-    workspace_ui::save_workspace_ui_config(&project_id, config)
+    workspace_ui::save_workspace_ui_config(&state.workspace_ui_config_path, &project_id, config)
 }
 
 pub fn run() {
+    let profile = desktop_profile::DesktopProfile::from_environment()
+        .expect("invalid Nucleus desktop profile");
+    profile
+        .prepare()
+        .expect("Nucleus desktop profile should be writable");
+    let workspace_ui_config_path = profile.workspace_ui_config_path();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(DesktopState::new_with_snapshot_store(
-            SqliteBackend::new(desktop_database_path()),
-            desktop_snapshot_path(),
+        .manage(DesktopState::new_with_profile(
+            SqliteBackend::new(profile.database_path()),
+            profile.snapshot_path(),
+            workspace_ui_config_path.clone(),
+            profile.chat_turn_timeout(),
         ))
-        .setup(|app| {
+        .setup(move |app| {
             app.set_theme(Some(tauri::Theme::Dark));
             if let Some(window) = app.get_webview_window("main") {
                 window.set_theme(Some(tauri::Theme::Dark))?;
-                if let Err(error) = window_geometry::restore_and_track(&window) {
+                if let Err(error) =
+                    window_geometry::restore_and_track(&window, workspace_ui_config_path.clone())
+                {
                     eprintln!("restore native window placement failed: {error}");
                 }
                 window.show()?;
@@ -630,6 +683,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             submit_control_envelope,
             send_agent_chat_message,
+            cancel_agent_chat_turn,
             load_agent_chat_history,
             list_agent_chat_threads,
             rename_agent_chat_thread,
@@ -658,25 +712,6 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run nucleus desktop");
-}
-
-fn desktop_database_path() -> PathBuf {
-    let data_dir = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .expect("HOME is required for local desktop state")
-        .join(".nucleus")
-        .join("state");
-    std::fs::create_dir_all(&data_dir).expect("local desktop state directory should be writable");
-    data_dir.join("nucleus.sqlite")
-}
-
-fn desktop_snapshot_path() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .expect("HOME is required for local desktop state")
-        .join(".nucleus")
-        .join("state")
-        .join("task-review-snapshots")
 }
 
 #[cfg(test)]

@@ -7,8 +7,8 @@
 use futures_executor::block_on;
 use nucleus_agent_protocol::{
     AgentLiveSession, AgentModelOption, AgentReasoningOption, AgentSessionRuntime,
-    AgentSessionStartRequest, AgentStartedSessionInfo, AgentToolCallHandler, AgentTurnReply,
-    AgentTurnRequest,
+    AgentSessionStartRequest, AgentStartedSessionInfo, AgentToolCallHandler, AgentTurnFailure,
+    AgentTurnReply, AgentTurnRequest,
 };
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -40,7 +40,6 @@ use turn::{completed_output, drive_turn, require_clean_turn};
 pub const CODEX_LIVE_ADAPTER_ID: &str = "codex-app-server";
 
 const CATALOG_TIMEOUT: Duration = Duration::from_secs(30);
-const TURN_TIMEOUT: Duration = Duration::from_secs(180);
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -100,6 +99,7 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
             },
             session: Some(session),
             services,
+            turn_timeout: request.turn_timeout,
         }))
     }
 
@@ -158,6 +158,7 @@ struct SwallowtailCodexLiveSession {
     info: AgentStartedSessionInfo,
     session: Option<Box<dyn InteractiveSessionHandle>>,
     services: HostServices,
+    turn_timeout: Duration,
 }
 
 impl AgentLiveSession for SwallowtailCodexLiveSession {
@@ -169,11 +170,13 @@ impl AgentLiveSession for SwallowtailCodexLiveSession {
         &mut self,
         request: AgentTurnRequest,
         on_tool_call: &mut AgentToolCallHandler<'_>,
-    ) -> Result<AgentTurnReply, String> {
+    ) -> Result<AgentTurnReply, AgentTurnFailure> {
         if request.model != self.info.model
             || Some(request.reasoning_effort.as_str()) != self.info.reasoning_effort.as_deref()
         {
-            return Err("chat route changed; reopen the provider session".to_owned());
+            return Err(AgentTurnFailure::Failed(
+                "chat route changed; reopen the provider session".to_owned(),
+            ));
         }
         let session = self
             .session
@@ -182,7 +185,7 @@ impl AgentLiveSession for SwallowtailCodexLiveSession {
         let deadline = self
             .services
             .time()
-            .map(|time| host::deadline_after(time.as_ref(), TURN_TIMEOUT))
+            .map(|time| host::deadline_after(time.as_ref(), self.turn_timeout))
             .ok_or_else(|| "Codex turn time service is unavailable".to_owned())?;
         let mut turn = block_on(
             session.start_turn(
@@ -200,7 +203,12 @@ impl AgentLiveSession for SwallowtailCodexLiveSession {
             .ok_or_else(|| "Codex turn did not return a provider turn id".to_owned())?
             .as_provider_value()
             .to_owned();
-        let outcome = block_on(drive_turn(turn.as_mut(), &provider_turn_id, on_tool_call));
+        let outcome = block_on(drive_turn(
+            turn.as_mut(),
+            &provider_turn_id,
+            &request.cancellation,
+            on_tool_call,
+        ));
         let cleanup = block_on(turn.close());
         let outcome = outcome?;
         require_clean_turn(cleanup)?;
@@ -321,6 +329,7 @@ mod tests {
                 developer_instructions: "instructions".to_owned(),
                 dynamic_tools: Vec::new(),
                 resume_provider_thread_id: Some("thread:stored".to_owned()),
+                turn_timeout: Duration::from_secs(180),
             })
             .err()
             .expect("unsafe resume is rejected");
@@ -355,6 +364,7 @@ mod tests {
                     "inputSchema": { "type": "object" }
                 })],
                 resume_provider_thread_id: None,
+                turn_timeout: Duration::from_secs(180),
             })
             .expect("Codex chat session");
 

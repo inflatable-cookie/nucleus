@@ -200,6 +200,7 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
         None,
         CHAT_MODEL,
         CHAT_REASONING_EFFORT,
+        CHAT_TURN_TIMEOUT,
     )
     .expect("start chat session");
     let mut task_tool = |_: &str, _: &str, _: &str, _| {
@@ -210,6 +211,7 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
             "Reply with exactly: first nucleus chat turn",
             CHAT_MODEL,
             CHAT_REASONING_EFFORT,
+            nucleus_agent_protocol::AgentTurnCancellation::new(),
             &mut task_tool,
         )
         .expect("first turn");
@@ -218,6 +220,7 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
             "Reply with exactly: second nucleus chat turn",
             CHAT_MODEL,
             CHAT_REASONING_EFFORT,
+            nucleus_agent_protocol::AgentTurnCancellation::new(),
             &mut task_tool,
         )
         .expect("second turn");

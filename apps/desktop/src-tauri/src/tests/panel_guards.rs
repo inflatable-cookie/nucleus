@@ -26,6 +26,16 @@ fn product_workspace_mounts_tasks_and_routes_chat_receipts_to_it() {
 }
 
 #[test]
+fn agent_chat_exposes_exact_active_turn_cancellation() {
+    let chat = include_str!("../../../src/lib/AgentChatPanel.svelte");
+    let control = include_str!("../../../src/lib/control/agentChat.ts");
+
+    assert!(chat.contains("cancelAgentChatTurn(projectId, conversationId)"));
+    assert!(chat.contains("cancelRequested ? \"Cancelling…\" : \"Cancel\""));
+    assert!(control.contains("invoke<boolean>(\"cancel_agent_chat_turn\""));
+}
+
+#[test]
 fn product_workspace_uses_window_regions_without_surface_tabs() {
     let workspace = include_str!("../../../src/lib/ProjectWorkspaceStage.svelte");
     let config = include_str!("../../../src/lib/workspaceUi.ts");

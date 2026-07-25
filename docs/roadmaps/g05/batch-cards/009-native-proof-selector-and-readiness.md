@@ -1,6 +1,6 @@
 # 009 Native Proof Selector And Readiness
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-07-25
 Milestone: `../003-swallowtail-application-proof-readiness.md`
@@ -30,12 +30,12 @@ full readiness lane without credentials or provider calls.
 
 ## Acceptance
 
-- [ ] the selector cannot silently use normal user state
-- [ ] the selector launches the normal desktop product path
-- [ ] evidence distinguishes expected and observed terminal classes
-- [ ] invalid configuration and redaction fixtures fail before effects
-- [ ] existing Agent Chat, task tools, history, and sidebar behavior pass
-- [ ] no provider call or workspace write occurs
+- [x] the selector cannot silently use normal user state
+- [x] the selector launches the normal desktop product path
+- [x] evidence distinguishes expected and observed terminal classes
+- [x] invalid configuration and redaction fixtures fail before effects
+- [x] existing Agent Chat, task tools, history, and sidebar behavior pass
+- [x] no provider call or workspace write occurs
 
 ## Validation
 
@@ -48,10 +48,17 @@ full readiness lane without credentials or provider calls.
 
 ## Evidence
 
-- selector inventory
-- isolated path assertions
-- safe evidence snapshots
-- exact test counts and source commits
+- `desktop:proof` and `desktop:proof:evidence` require an explicit absolute
+  `NUCLEUS_DESKTOP_DATA_ROOT`.
+- Evidence reads the existing proof database through a query-only SQLite
+  backend and returns terminal counts only.
+- Redaction fixtures exclude prompts, output, errors, provider ids, project
+  ids, credentials, and paths.
+- Nucleus base source:
+  `7502b761e0a31fb8c3833d2777b068f3f8f998a9`; Swallowtail source:
+  `2959810f2da3cc64b28cf979094e0166a34c3ff8`.
+- `desktop:check` passes with zero errors; 20 client tests and the focused Rust
+  readiness tests pass. No provider call occurred.
 
 ## Stop Conditions
 

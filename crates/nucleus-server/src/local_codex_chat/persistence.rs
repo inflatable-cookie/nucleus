@@ -46,6 +46,23 @@ pub struct StoredChatTurn {
     pub selected_goal_id: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ChatTurnFailureStatus {
+    Cancelled,
+    TimedOut,
+    Failed,
+}
+
+impl ChatTurnFailureStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StoredChatMessage {
     pub message_id: String,
@@ -89,6 +106,19 @@ pub struct LocalCodexChatThreadSummary {
     pub reasoning_effort: Option<String>,
     pub turn_count: u64,
     pub status: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NativeProofEvidenceSummary {
+    pub schema_version: u32,
+    pub expected_terminal_classes: Vec<String>,
+    pub total_turns: u64,
+    pub active_turns: u64,
+    pub completed_turns: u64,
+    pub cancelled_turns: u64,
+    pub timed_out_turns: u64,
+    pub failed_turns: u64,
+    pub unexpected_turns: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -220,6 +250,47 @@ where
             .then_with(|| left.conversation_id.cmp(&right.conversation_id))
     });
     Ok(summaries)
+}
+
+pub fn read_native_proof_evidence<B>(
+    state: &ServerStateService<B>,
+) -> Result<NativeProofEvidenceSummary, String>
+where
+    B: LocalStoreBackend,
+{
+    let turns = state
+        .agent_sessions()
+        .list()
+        .map_err(storage_error)?
+        .into_iter()
+        .filter(|record| record.id.0.starts_with(TURN_PREFIX))
+        .map(|record| decode::<StoredChatTurn>(&record.payload.bytes))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut summary = NativeProofEvidenceSummary {
+        schema_version: 1,
+        expected_terminal_classes: ["completed", "cancelled", "timed_out", "failed"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        total_turns: turns.len() as u64,
+        active_turns: 0,
+        completed_turns: 0,
+        cancelled_turns: 0,
+        timed_out_turns: 0,
+        failed_turns: 0,
+        unexpected_turns: 0,
+    };
+    for turn in turns {
+        match turn.status.as_str() {
+            "started" => summary.active_turns += 1,
+            "completed" => summary.completed_turns += 1,
+            "cancelled" => summary.cancelled_turns += 1,
+            "timed_out" => summary.timed_out_turns += 1,
+            "failed" => summary.failed_turns += 1,
+            _ => summary.unexpected_turns += 1,
+        }
+    }
+    Ok(summary)
 }
 
 pub fn rename_thread<B>(
@@ -384,6 +455,7 @@ where
 pub fn persist_turn_failure<B>(
     state: &ServerStateService<B>,
     turn_id: &str,
+    status: ChatTurnFailureStatus,
     reason: &str,
 ) -> Result<(), String>
 where
@@ -393,13 +465,13 @@ where
     if turn.status != "started" {
         return Err(format!("chat turn is not awaiting failure: {turn_id}"));
     }
-    turn.status = "failed".to_owned();
+    turn.status = status.as_str().to_owned();
     turn.failure_reason = Some(reason.chars().take(500).collect());
     put_json(
         state,
         PersistenceRecordId(format!("{TURN_PREFIX}{turn_id}")),
         &turn,
-        RevisionId(format!("rev:{TURN_PREFIX}{turn_id}:failed")),
+        RevisionId(format!("rev:{TURN_PREFIX}{turn_id}:{}", status.as_str())),
         RevisionExpectation::Exact(revision),
     )
 }
@@ -672,6 +744,94 @@ mod tests {
     }
 
     #[test]
+    fn native_proof_evidence_counts_terminal_truth_without_sensitive_material() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
+        for (ordinal, status) in ["started", "completed", "cancelled", "timed_out", "failed"]
+            .into_iter()
+            .enumerate()
+        {
+            let conversation_id = format!("conversation:{ordinal}");
+            let turn_id = format!("turn:{ordinal}");
+            persist_turn_start(
+                &state,
+                StoredChatSession {
+                    conversation_id,
+                    project_id: "project:sensitive".to_owned(),
+                    resource_id: None,
+                    session_id: format!("session:{ordinal}"),
+                    provider_thread_id: format!("provider-secret-{ordinal}"),
+                    model: "model".to_owned(),
+                    reasoning_effort: None,
+                    adapter_id: "codex-app-server".to_owned(),
+                    provider_instance_id: "codex:local-default".to_owned(),
+                    turn_count: 1,
+                    task_toolset_version: 5,
+                },
+                &turn_id,
+                "prompt-secret-material",
+                None,
+            )
+            .expect("start turn");
+            match status {
+                "started" => {}
+                "completed" => persist_turn_completion(
+                    &state,
+                    &turn_id,
+                    "provider-turn-secret",
+                    "assistant-secret-material",
+                    &[],
+                    &[],
+                )
+                .expect("complete turn"),
+                "cancelled" => persist_turn_failure(
+                    &state,
+                    &turn_id,
+                    ChatTurnFailureStatus::Cancelled,
+                    "cancel-secret-material",
+                )
+                .expect("cancel turn"),
+                "timed_out" => persist_turn_failure(
+                    &state,
+                    &turn_id,
+                    ChatTurnFailureStatus::TimedOut,
+                    "timeout-secret-material",
+                )
+                .expect("time out turn"),
+                "failed" => persist_turn_failure(
+                    &state,
+                    &turn_id,
+                    ChatTurnFailureStatus::Failed,
+                    "failure-secret-material",
+                )
+                .expect("fail turn"),
+                _ => unreachable!(),
+            }
+        }
+
+        let evidence = read_native_proof_evidence(&state).expect("proof evidence");
+        assert_eq!(evidence.total_turns, 5);
+        assert_eq!(evidence.active_turns, 1);
+        assert_eq!(evidence.completed_turns, 1);
+        assert_eq!(evidence.cancelled_turns, 1);
+        assert_eq!(evidence.timed_out_turns, 1);
+        assert_eq!(evidence.failed_turns, 1);
+        assert_eq!(evidence.unexpected_turns, 0);
+        let json = serde_json::to_string(&evidence).expect("evidence JSON");
+        for forbidden in [
+            "prompt-secret",
+            "assistant-secret",
+            "provider-secret",
+            "cancel-secret",
+            "timeout-secret",
+            "failure-secret",
+            "project:sensitive",
+        ] {
+            assert!(!json.contains(forbidden));
+        }
+    }
+
+    #[test]
     fn failed_turn_retains_one_operator_message_without_assistant_copy() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
@@ -689,7 +849,13 @@ mod tests {
             task_toolset_version: 4,
         };
         persist_turn_start(&state, session, "turn:1", "Run the goal", None).expect("start");
-        persist_turn_failure(&state, "turn:1", "provider unavailable").expect("fail");
+        persist_turn_failure(
+            &state,
+            "turn:1",
+            ChatTurnFailureStatus::Failed,
+            "provider unavailable",
+        )
+        .expect("fail");
 
         let history = read_history(&state, "project:1", "conversation:1").expect("history");
         assert_eq!(history.messages.len(), 1);
@@ -722,7 +888,13 @@ mod tests {
         assert!(project_has_active_turn(&state, "project:active").expect("active lookup"));
         assert!(!project_has_active_turn(&state, "project:other").expect("other lookup"));
 
-        persist_turn_failure(&state, "turn:active", "stopped").expect("finish");
+        persist_turn_failure(
+            &state,
+            "turn:active",
+            ChatTurnFailureStatus::Cancelled,
+            "stopped",
+        )
+        .expect("finish");
         assert!(!project_has_active_turn(&state, "project:active").expect("terminal lookup"));
     }
 

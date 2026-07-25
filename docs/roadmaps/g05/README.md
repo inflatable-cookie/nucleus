@@ -34,6 +34,6 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 ## Roadmaps
 
 - `001-project-scoped-workspace-layouts.md` - active
-- `002-workspace-sidebar-modes.md` - active
-- `003-swallowtail-application-proof-readiness.md` - planned after the current
-  sidebar validation checkpoint
+- `002-workspace-sidebar-modes.md` - completed
+- `003-swallowtail-application-proof-readiness.md` - active; deterministic
+  readiness complete, exact live handoff planned after checkpoint

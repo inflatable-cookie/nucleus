@@ -1,6 +1,6 @@
 # 007 Isolated Native Proof Profile
 
-Status: planned
+Status: completed
 Owner: Tom
 Updated: 2026-07-25
 Milestone: `../003-swallowtail-application-proof-readiness.md`
@@ -31,11 +31,11 @@ deadline before any database, config, snapshot, or provider effect.
 
 ## Acceptance
 
-- [ ] one explicit root isolates all three desktop-owned persistence surfaces
-- [ ] normal user paths remain byte-for-byte unchanged
-- [ ] neither `HOME` nor provider configuration is rewritten
-- [ ] invalid configured values fail before state creation or provider work
-- [ ] the production deadline remains 180 seconds by default
+- [x] one explicit root isolates all three desktop-owned persistence surfaces
+- [x] normal user paths remain byte-for-byte unchanged
+- [x] neither `HOME` nor provider configuration is rewritten
+- [x] invalid configured values fail before state creation or provider work
+- [x] the production deadline remains 180 seconds by default
 
 ## Validation
 
@@ -45,9 +45,13 @@ deadline before any database, config, snapshot, or provider effect.
 
 ## Evidence
 
-- exact resolved relative path assertions
-- failure-before-effects fixtures
-- no provider call
+- `DesktopProfile` resolves database, task-review snapshots, and UI config
+  beneath one root.
+- Default paths remain under `~/.nucleus`; the default deadline remains 180
+  seconds.
+- Empty, relative, non-directory, zero, invalid, and over-limit values fail
+  before `DesktopState` construction.
+- Three focused profile tests pass. No provider call occurred.
 
 ## Stop Conditions
 

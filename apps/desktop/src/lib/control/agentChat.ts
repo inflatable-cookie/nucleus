@@ -109,6 +109,16 @@ export function sendAgentChatMessage(request: AgentChatRequest): Promise<AgentCh
   return invoke<AgentChatReply>("send_agent_chat_message", { request });
 }
 
+export function cancelAgentChatTurn(
+  projectId: string,
+  conversationId: string,
+): Promise<boolean> {
+  return invoke<boolean>("cancel_agent_chat_turn", {
+    projectId,
+    conversationId,
+  });
+}
+
 export function loadAgentChatHistory(
   projectId: string,
   conversationId: string,

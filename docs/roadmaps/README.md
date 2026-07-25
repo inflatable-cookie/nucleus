@@ -316,7 +316,9 @@ shape.
 - `g04/049-swallowtail-agent-chat-adoption.md` - completed
 - `g04/050-swallowtail-task-execution-adoption.md` - completed
 - `g05/001-project-scoped-workspace-layouts.md` - active
-- `g05/002-workspace-sidebar-modes.md` - active
+- `g05/002-workspace-sidebar-modes.md` - completed
+- `g05/003-swallowtail-application-proof-readiness.md` - active; deterministic
+  readiness complete, live handoff checkpoint-gated
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -376,8 +378,8 @@ shape.
 
 ## Next Task
 
-Complete `g05/batch-cards/006-forge-overview-and-validation.md`: confirm the
-four sidebar views remain compact and distinct, Files opens the correct
-resource, and Forge reads as recorded repository context rather than live Git
-status. Once that overlapping desktop work is checkpointed, card 007 starts
-the credential-free Swallowtail application-proof readiness lane.
+Review and checkpoint the completed
+`g05/batch-cards/007-isolated-native-proof-profile.md` through
+`009-native-proof-selector-and-readiness.md` batch. Then execute
+`010-live-pilot-handoff.md` to freeze exact source, installed Codex, route,
+state-root, workload, and stop bounds without making a provider call.

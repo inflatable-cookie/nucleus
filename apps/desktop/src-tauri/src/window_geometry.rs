@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
@@ -21,11 +22,11 @@ enum PersistRequest {
     Flush(WorkspaceWindowPlacementDto, Sender<()>),
 }
 
-pub fn restore_and_track(window: &WebviewWindow) -> Result<(), String> {
-    let placement = workspace_ui::load_workspace_window_placement()?;
+pub fn restore_and_track(window: &WebviewWindow, config_path: PathBuf) -> Result<(), String> {
+    let placement = workspace_ui::load_workspace_window_placement(&config_path)?;
     restore_window(window, &placement)?;
 
-    let sender = spawn_persistence_worker();
+    let sender = spawn_persistence_worker(config_path);
     let tracked_window = window.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::Moved(_)
@@ -127,18 +128,18 @@ fn capture_placement(window: &WebviewWindow) -> Option<WorkspaceWindowPlacementD
     })
 }
 
-fn spawn_persistence_worker() -> Sender<PersistRequest> {
+fn spawn_persistence_worker(config_path: PathBuf) -> Sender<PersistRequest> {
     let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || persist_requests(receiver));
+    std::thread::spawn(move || persist_requests(receiver, &config_path));
     sender
 }
 
-fn persist_requests(receiver: Receiver<PersistRequest>) {
+fn persist_requests(receiver: Receiver<PersistRequest>, config_path: &Path) {
     while let Ok(request) = receiver.recv() {
         let mut latest = match request {
             PersistRequest::Schedule(placement) => placement,
             PersistRequest::Flush(placement, acknowledge) => {
-                persist(placement);
+                persist(config_path, placement);
                 let _ = acknowledge.send(());
                 continue;
             }
@@ -148,16 +149,16 @@ fn persist_requests(receiver: Receiver<PersistRequest>) {
             match receiver.recv_timeout(PERSIST_DEBOUNCE) {
                 Ok(PersistRequest::Schedule(placement)) => latest = placement,
                 Ok(PersistRequest::Flush(placement, acknowledge)) => {
-                    persist(placement);
+                    persist(config_path, placement);
                     let _ = acknowledge.send(());
                     break;
                 }
                 Err(RecvTimeoutError::Timeout) => {
-                    persist(latest);
+                    persist(config_path, latest);
                     break;
                 }
                 Err(RecvTimeoutError::Disconnected) => {
-                    persist(latest);
+                    persist(config_path, latest);
                     return;
                 }
             }
@@ -165,8 +166,8 @@ fn persist_requests(receiver: Receiver<PersistRequest>) {
     }
 }
 
-fn persist(placement: WorkspaceWindowPlacementDto) {
-    if let Err(error) = workspace_ui::update_workspace_window_placement(placement) {
+fn persist(config_path: &Path, placement: WorkspaceWindowPlacementDto) {
+    if let Err(error) = workspace_ui::update_workspace_window_placement(config_path, placement) {
         eprintln!("persist native window placement failed: {error}");
     }
 }

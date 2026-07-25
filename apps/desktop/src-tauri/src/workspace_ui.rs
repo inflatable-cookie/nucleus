@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -129,31 +129,31 @@ struct LegacyWorkspaceSurfaceDto {
     regions: WorkspaceRegionsDto,
 }
 
-pub fn load_workspace_ui_config(project_id: &str) -> Result<WorkspaceUiConfigDto, String> {
+pub fn load_workspace_ui_config(
+    path: &Path,
+    project_id: &str,
+) -> Result<WorkspaceUiConfigDto, String> {
     validate_project_id(project_id)?;
     let _guard = config_io_lock()?;
-    let mut store = load_workspace_ui_store_unlocked()?;
+    let mut store = load_workspace_ui_store_unlocked(path)?;
     let changed = ensure_project_layout(&mut store, project_id);
 
     if changed {
-        let path = workspace_ui_config_path()?;
-        write_workspace_ui_store(&path, &store)?;
+        write_workspace_ui_store(path, &store)?;
     }
 
     materialize_project_config(&store, project_id)
 }
 
-pub fn load_workspace_window_placement() -> Result<WorkspaceWindowPlacementDto, String> {
+pub fn load_workspace_window_placement(path: &Path) -> Result<WorkspaceWindowPlacementDto, String> {
     let _guard = config_io_lock()?;
-    Ok(load_workspace_ui_store_unlocked()?.window.placement)
+    Ok(load_workspace_ui_store_unlocked(path)?.window.placement)
 }
 
-fn load_workspace_ui_store_unlocked() -> Result<WorkspaceUiStoreDto, String> {
-    let path = workspace_ui_config_path()?;
-
+fn load_workspace_ui_store_unlocked(path: &Path) -> Result<WorkspaceUiStoreDto, String> {
     if !path.exists() {
         let store = default_workspace_ui_store();
-        write_workspace_ui_store(&path, &store)?;
+        write_workspace_ui_store(path, &store)?;
         return Ok(store);
     }
 
@@ -162,30 +162,31 @@ fn load_workspace_ui_store_unlocked() -> Result<WorkspaceUiStoreDto, String> {
     let (decoded, migrated) = decode_workspace_ui_store(&raw)?;
     let normalized = normalize_workspace_ui_store(decoded);
     if migrated {
-        write_workspace_ui_store(&path, &normalized)?;
+        write_workspace_ui_store(path, &normalized)?;
     }
 
     Ok(normalized)
 }
 
 pub fn save_workspace_ui_config(
+    path: &Path,
     project_id: &str,
     config: WorkspaceUiConfigDto,
 ) -> Result<WorkspaceUiConfigDto, String> {
     validate_project_id(project_id)?;
     let _guard = config_io_lock()?;
-    let mut store = load_workspace_ui_store_unlocked()?;
+    let mut store = load_workspace_ui_store_unlocked(path)?;
     apply_project_config(&mut store, project_id, config);
-    let path = workspace_ui_config_path()?;
-    write_workspace_ui_store(&path, &store)?;
+    write_workspace_ui_store(path, &store)?;
     materialize_project_config(&store, project_id)
 }
 
 pub fn update_workspace_window_placement(
+    path: &Path,
     placement: WorkspaceWindowPlacementDto,
 ) -> Result<(), String> {
     let _guard = config_io_lock()?;
-    let mut store = load_workspace_ui_store_unlocked()?;
+    let mut store = load_workspace_ui_store_unlocked(path)?;
     let placement = normalize_window_placement(placement);
 
     store.window.placement.display_id = placement.display_id;
@@ -194,19 +195,10 @@ pub fn update_workspace_window_placement(
         store.window.placement.normal_bounds = placement.normal_bounds;
     }
 
-    let path = workspace_ui_config_path()?;
-    write_workspace_ui_store(&path, &normalize_workspace_ui_store(store))
+    write_workspace_ui_store(path, &normalize_workspace_ui_store(store))
 }
 
-pub fn workspace_ui_config_path() -> Result<PathBuf, String> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| "HOME is not set; cannot resolve ~/.nucleus/config/ui.json".to_owned())?;
-
-    Ok(home.join(".nucleus").join("config").join("ui.json"))
-}
-
-fn write_workspace_ui_store(path: &PathBuf, store: &WorkspaceUiStoreDto) -> Result<(), String> {
+fn write_workspace_ui_store(path: &Path, store: &WorkspaceUiStoreDto) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "workspace UI config path has no parent".to_owned())?;

@@ -1,5 +1,6 @@
 //! Local Codex-backed product chat with durable Nucleus timeline records.
 
+mod cancellation;
 mod goal_authoring;
 mod goal_execution;
 mod goal_inspection;
@@ -18,10 +19,13 @@ mod task_update;
 mod task_workflow;
 
 use std::collections::HashMap;
+use std::time::Duration;
 
+use nucleus_agent_protocol::{AgentTurnCancellation, AgentTurnFailure};
 use nucleus_local_store::LocalStoreBackend;
 use serde::{Deserialize, Serialize};
 
+pub use cancellation::{ActiveLocalCodexChatTurn, LocalCodexChatCancellationRegistry};
 pub use goal_execution::{
     execute_goal_run, GoalRunExecutionRecord, GoalRunExecutionRequest, GoalRunExecutionStatus,
     GoalTaskExecutionRecord,
@@ -38,16 +42,16 @@ pub use mandates::{
 };
 use persistence::{
     canonical_turn_id, persist_session, persist_turn_completion, persist_turn_failure,
-    persist_turn_start, project_has_active_turn, read_history, read_session,
+    persist_turn_start, project_has_active_turn, read_history, read_session, ChatTurnFailureStatus,
 };
 #[cfg(test)]
 pub(crate) use persistence::{
     persist_turn_completion as persist_test_turn_completion,
-    persist_turn_failure as persist_test_turn_failure,
     persist_turn_start as persist_test_turn_start, StoredChatSession as TestStoredChatSession,
 };
 pub use persistence::{
-    ChatMessageRole, LocalCodexChatHistory, LocalCodexChatThreadSummary, StoredChatMessage,
+    read_native_proof_evidence, ChatMessageRole, LocalCodexChatHistory,
+    LocalCodexChatThreadSummary, NativeProofEvidenceSummary, StoredChatMessage,
 };
 use runtime::{available_models, LocalCodexChatSession};
 use task_ledger::execute as execute_task_ledger;
@@ -57,11 +61,29 @@ pub use task_workflow::{TaskWorkflowReceipt, TaskWorkflowReceiptStatus};
 
 use crate::ServerStateService;
 
+#[cfg(test)]
+pub(crate) fn persist_test_turn_failure<B>(
+    state: &ServerStateService<B>,
+    turn_id: &str,
+    reason: &str,
+) -> Result<(), String>
+where
+    B: LocalStoreBackend,
+{
+    persistence::persist_turn_failure(
+        state,
+        turn_id,
+        persistence::ChatTurnFailureStatus::Failed,
+        reason,
+    )
+}
+
 const CHAT_MODEL: &str = "gpt-5.4-mini";
 const CHAT_REASONING_EFFORT: &str = "low";
 const CHAT_ADAPTER_ID: &str = "codex-app-server";
 const CHAT_PROVIDER_INSTANCE_ID: &str = "codex:local-default";
 const CHAT_TASK_TOOLSET_VERSION: u32 = 5;
+const CHAT_TURN_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LocalCodexChatRequest {
@@ -110,6 +132,7 @@ pub struct LocalCodexChatReply {
 pub struct LocalCodexChatService {
     sessions: HashMap<String, LocalCodexChatSession>,
     task_review_snapshot_store: Option<crate::TaskReviewSnapshotStore>,
+    turn_timeout: Duration,
 }
 
 impl Default for LocalCodexChatService {
@@ -117,6 +140,7 @@ impl Default for LocalCodexChatService {
         Self {
             sessions: HashMap::new(),
             task_review_snapshot_store: None,
+            turn_timeout: CHAT_TURN_TIMEOUT,
         }
     }
 }
@@ -130,6 +154,18 @@ impl LocalCodexChatService {
         Self {
             sessions: HashMap::new(),
             task_review_snapshot_store: Some(store),
+            turn_timeout: CHAT_TURN_TIMEOUT,
+        }
+    }
+
+    pub fn with_task_review_snapshot_store_and_turn_timeout(
+        store: crate::TaskReviewSnapshotStore,
+        turn_timeout: Duration,
+    ) -> Self {
+        Self {
+            sessions: HashMap::new(),
+            task_review_snapshot_store: Some(store),
+            turn_timeout,
         }
     }
     pub fn history<B>(
@@ -190,6 +226,25 @@ impl LocalCodexChatService {
         B: LocalStoreBackend + Clone,
         F: FnMut(crate::control_api::ServerControlRequest) -> Result<(), String>,
     {
+        self.send_message_with_task_authoring_and_cancellation(
+            state,
+            request,
+            AgentTurnCancellation::new(),
+            execute,
+        )
+    }
+
+    pub fn send_message_with_task_authoring_and_cancellation<B, F>(
+        &mut self,
+        state: &ServerStateService<B>,
+        request: LocalCodexChatRequest,
+        cancellation: AgentTurnCancellation,
+        execute: &mut F,
+    ) -> Result<LocalCodexChatReply, String>
+    where
+        B: LocalStoreBackend + Clone,
+        F: FnMut(crate::control_api::ServerControlRequest) -> Result<(), String>,
+    {
         let message = request.message.trim();
         if message.is_empty() {
             return Err("chat message must not be empty".to_owned());
@@ -239,6 +294,7 @@ impl LocalCodexChatService {
         } else {
             None
         };
+        let turn_timeout = self.turn_timeout;
         let session = match self.sessions.entry(request.conversation_id.clone()) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::hash_map::Entry::Vacant(entry) => {
@@ -250,6 +306,7 @@ impl LocalCodexChatService {
                     migration_context.as_deref(),
                     &selected_model,
                     &selected_reasoning_effort,
+                    turn_timeout,
                 )?)
             }
         };
@@ -294,19 +351,32 @@ impl LocalCodexChatService {
             request.active_goal_id.clone(),
         )?;
         if let Err(error) = ensure_chat_project_present(state, &request.project_id) {
-            persist_turn_failure(state, &canonical_turn_id, &error)?;
+            persist_turn_failure(
+                state,
+                &canonical_turn_id,
+                ChatTurnFailureStatus::Failed,
+                &error,
+            )?;
             return Err(error);
         }
         let reply = match session.send_turn(
             &provider_message,
             &selected_model,
             &selected_reasoning_effort,
+            cancellation,
             &mut task_tool,
         ) {
             Ok(reply) => reply,
             Err(error) => {
-                persist_turn_failure(state, &canonical_turn_id, &error)?;
-                return Err(error);
+                let status = match &error {
+                    AgentTurnFailure::Cancelled => ChatTurnFailureStatus::Cancelled,
+                    AgentTurnFailure::TimedOut => ChatTurnFailureStatus::TimedOut,
+                    AgentTurnFailure::CleanupFailed(_) => ChatTurnFailureStatus::Failed,
+                    AgentTurnFailure::Failed(_) => ChatTurnFailureStatus::Failed,
+                };
+                let reason = error.to_string();
+                persist_turn_failure(state, &canonical_turn_id, status, &reason)?;
+                return Err(reason);
             }
         };
         persist_session(
