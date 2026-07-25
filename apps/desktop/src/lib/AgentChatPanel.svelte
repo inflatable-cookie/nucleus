@@ -31,12 +31,31 @@
 
   const DEFAULT_MODEL = "gpt-5.4-mini";
   const DEFAULT_REASONING_EFFORT = "low";
+  const REASONING_EFFORT_RANK: Readonly<Record<string, number>> = {
+    ultra: 0,
+    max: 1,
+    xhigh: 2,
+    high: 3,
+    medium: 4,
+    low: 5,
+    minimal: 6,
+    none: 7,
+  };
 </script>
 
 <script lang="ts">
   import { tick } from "svelte";
-  import { Icon, Select, Text } from "@poodle/svelte";
-  import { arrowUp, brain, chevronDown, messageSquareText, sparkles } from "@poodle/icons-lucide";
+  import {
+    AgentChatInput,
+    Icon,
+    ModelPicker,
+    Text,
+    type AgentChatAttachment,
+    type ModelCapabilityAxis,
+    type ModelOption,
+    type ModelSelection,
+  } from "@poodle/svelte";
+  import { messageSquareText } from "@poodle/icons-lucide";
   import TaskCreationReceipt from "./TaskCreationReceipt.svelte";
   import TaskWorkflowReceipt from "./TaskWorkflowReceipt.svelte";
   import type { ControlGoalRecordDto, ControlTaskRecordDto } from "./control";
@@ -70,38 +89,73 @@
   let model = $state(DEFAULT_MODEL);
   let reasoningEffort = $state(DEFAULT_REASONING_EFFORT);
   let modelCatalog = $state<AgentChatModelOption[]>(retainedModelCatalog ?? []);
-  let composerInput = $state<HTMLTextAreaElement | null>(null);
   let timeline = $state<HTMLElement | null>(null);
   let hydrationVersion = 0;
-  const modelOptions = $derived.by(() => {
-    const options = modelCatalog.map((option) => ({
+
+  const modelPickerAxes: ModelCapabilityAxis[] = [
+    {
+      key: "reasoning",
+      label: "Reasoning",
+      kind: "select",
+      options: [
+        {
+          value: DEFAULT_REASONING_EFFORT,
+          label: reasoningLabel(DEFAULT_REASONING_EFFORT),
+        },
+      ],
+      defaultValue: DEFAULT_REASONING_EFFORT,
+    },
+  ];
+  const modelPickerModels = $derived.by(() => {
+    const options: ModelOption[] = modelCatalog.map((option) => ({
       value: option.model,
       label: option.display_name,
-      icon: sparkles,
+      icon: "sparkles",
+      axes: [
+        {
+          key: "reasoning",
+          options: [...option.supported_reasoning_efforts]
+            .sort(
+              (left, right) =>
+                reasoningEffortRank(left.reasoning_effort) -
+                reasoningEffortRank(right.reasoning_effort),
+            )
+            .map((effort) => ({
+              value: effort.reasoning_effort,
+              label: reasoningLabel(effort.reasoning_effort),
+            })),
+          defaultValue: option.default_reasoning_effort,
+        },
+      ],
     }));
     if (!options.some((option) => option.value === model)) {
-      options.unshift({ value: model, label: model, icon: sparkles });
-    }
-    return options;
-  });
-  const selectedModelOption = $derived(
-    modelCatalog.find((option) => option.model === model) ?? null,
-  );
-  const reasoningOptions = $derived.by(() => {
-    const options = selectedModelOption?.supported_reasoning_efforts.map((option) => ({
-      value: option.reasoning_effort,
-      label: reasoningLabel(option.reasoning_effort),
-      icon: brain,
-    })) ?? [];
-    if (!options.some((option) => option.value === reasoningEffort)) {
       options.unshift({
-        value: reasoningEffort,
-        label: reasoningLabel(reasoningEffort),
-        icon: brain,
+        value: model,
+        label: model,
+        icon: "sparkles",
+        axes: [
+          {
+            key: "reasoning",
+            options: [{ value: reasoningEffort, label: reasoningLabel(reasoningEffort) }],
+            defaultValue: reasoningEffort,
+          },
+        ],
       });
     }
     return options;
   });
+  const modelSelection = $derived<ModelSelection>({
+    model,
+    axes: { reasoning: reasoningEffort },
+  });
+  const contextAttachments = $derived<AgentChatAttachment[]>([
+    ...(activeGoal
+      ? [{ id: "active-goal", label: `Goal · ${activeGoal.title}`, kind: "goal" }]
+      : []),
+    ...(activeTask
+      ? [{ id: "active-task", label: `Task · ${activeTask.title}`, kind: "task" }]
+      : []),
+  ]);
 
   $effect(() => {
     if (activeConversationId !== conversationId) {
@@ -167,8 +221,6 @@
     pending = true;
     retainedPendingConversations.add(conversationId);
     draft = "";
-    await tick();
-    resizeComposer();
     const optimisticMessageId = `user:${crypto.randomUUID()}`;
     appendMessage({
       id: optimisticMessageId,
@@ -280,13 +332,6 @@
     timeline?.scrollTo({ top: timeline.scrollHeight, behavior: "smooth" });
   }
 
-  function handleComposerKeydown(event: KeyboardEvent): void {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void submit();
-    }
-  }
-
   async function hydrateModelCatalog(): Promise<void> {
     if (retainedModelCatalog) {
       modelCatalog = retainedModelCatalog;
@@ -311,34 +356,33 @@
     }
   }
 
-  function selectModel(nextModel: string): void {
+  function selectModelRoute(selection: ModelSelection): void {
+    const nextModel = selection.model;
     model = nextModel;
     retain(retainedModels, conversationId, model);
     const selected = modelCatalog.find((option) => option.model === nextModel);
-    if (
-      selected &&
-      !selected.supported_reasoning_efforts.some(
-        (option) => option.reasoning_effort === reasoningEffort,
-      )
-    ) {
-      reasoningEffort = selected.default_reasoning_effort;
-      retain(retainedReasoningEfforts, conversationId, reasoningEffort);
-    }
-  }
-
-  function selectReasoningEffort(effort: string): void {
-    reasoningEffort = effort;
-    retain(retainedReasoningEfforts, conversationId, effort);
+    const selectedEffort = selection.axes.reasoning;
+    reasoningEffort =
+      typeof selectedEffort === "string"
+        ? selectedEffort
+        : selected?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
+    retain(retainedReasoningEfforts, conversationId, reasoningEffort);
   }
 
   function reasoningLabel(effort: string): string {
     return effort.charAt(0).toUpperCase() + effort.slice(1);
   }
 
-  function resizeComposer(): void {
-    if (!composerInput) return;
-    composerInput.style.height = "0px";
-    composerInput.style.height = `${Math.min(Math.max(composerInput.scrollHeight, 42), 128)}px`;
+  function reasoningEffortRank(effort: string): number {
+    return REASONING_EFFORT_RANK[effort.toLowerCase()] ?? Number.MAX_SAFE_INTEGER;
+  }
+
+  function removeContextAttachment(id: string): void {
+    if (id === "active-goal") {
+      onClearActiveGoal();
+    } else if (id === "active-task") {
+      onClearActiveTask();
+    }
   }
 </script>
 
@@ -380,75 +424,33 @@
 
   <div class="composer-float">
     {#if failure}<div class="chat-error" role="alert">{failure}</div>{/if}
-    <footer class="chat-composer">
-      {#if activeGoal || activeTask}
-        <div class="context-row">
-          {#if activeGoal}
-            <div class="active-context">
-              <span><strong>Goal</strong> · {activeGoal.title}</span>
-              <button type="button" aria-label="Clear active goal context" onclick={onClearActiveGoal}>×</button>
-            </div>
-          {/if}
-          {#if activeTask}
-            <div class="active-context">
-              <span><strong>Task</strong> · {activeTask.title}</span>
-              <button type="button" aria-label="Clear active task context" onclick={onClearActiveTask}>×</button>
-            </div>
-          {/if}
-        </div>
-      {/if}
-      <textarea
-        bind:this={composerInput}
-        bind:value={draft}
-        oninput={resizeComposer}
-        onkeydown={handleComposerKeydown}
-        placeholder={projectId ? "Ask Nucleus anything" : "Select a project first"}
-        aria-label="Message Codex"
-        rows="1"
-        disabled={!projectId || pending || loadingHistory}
-      ></textarea>
-      <div class="composer-toolbar">
-        <div class="route-controls">
-          <div class="route-select route-select-model">
-            <Select
-              value={model}
-              options={modelOptions}
-              variant="ghost"
-              size="sm"
-              native={false}
-              menuMinWidth="16rem"
-              ariaLabel="Chat model"
-              disabled={pending || loadingHistory}
-              onValueChange={selectModel}
-            />
-            <span class="route-chevron" aria-hidden="true"><Icon icon={chevronDown} size="xs" /></span>
-          </div>
-          <div class="route-select route-select-reasoning">
-            <Select
-              value={reasoningEffort}
-              options={reasoningOptions}
-              variant="ghost"
-              size="sm"
-              native={false}
-              menuMinWidth="13rem"
-              ariaLabel="Reasoning effort"
-              disabled={pending || loadingHistory}
-              onValueChange={selectReasoningEffort}
-            />
-            <span class="route-chevron" aria-hidden="true"><Icon icon={chevronDown} size="xs" /></span>
-          </div>
-        </div>
-        <button
-          type="button"
-          class="send-button"
-          aria-label={pending ? "Codex is working" : "Send message"}
-          onclick={() => void submit()}
-          disabled={!projectId || !draft.trim() || pending || loadingHistory}
-        >
-          <Icon icon={arrowUp} size="xs" />
-        </button>
-      </div>
-    </footer>
+    <AgentChatInput
+      bind:value={draft}
+      placeholder={projectId ? "Ask Nucleus anything" : "Select a project first"}
+      ariaLabel="Message Codex"
+      submitLabel="Send message"
+      minRows={2}
+      maxRows={8}
+      size="sm"
+      attachments={contextAttachments}
+      disabled={!projectId || pending || loadingHistory}
+      onSubmit={() => void submit()}
+      onRemoveAttachment={removeContextAttachment}
+    >
+      {#snippet toolbar()}
+        <ModelPicker
+          models={modelPickerModels}
+          axes={modelPickerAxes}
+          value={modelSelection}
+          ariaLabel="Chat model and reasoning"
+          showModelDescriptions={false}
+          emphasis="subdued"
+          size="sm"
+          disabled={pending || loadingHistory}
+          onChange={selectModelRoute}
+        />
+      {/snippet}
+    </AgentChatInput>
   </div>
 </section>
 
@@ -580,169 +582,10 @@
     margin: 0 auto;
   }
 
-  .chat-composer {
-    display: grid;
-    gap: 0.25rem;
-    padding: 0.65rem 0.7rem 0.7rem;
-    border: 1px solid var(--poodle-color-border-default);
-    border-radius: 1rem;
-    background: color-mix(in srgb, var(--poodle-color-background-surface) 96%, transparent);
-    box-shadow: 0 1rem 3rem rgb(0 0 0 / 28%), 0 0 0 1px rgb(255 255 255 / 2%);
-    backdrop-filter: blur(18px);
-  }
-
-  :global(html[data-nucleus-split-resizing]) .agent-chat::after,
-  :global(html[data-nucleus-split-resizing]) .chat-composer {
+  :global(html[data-nucleus-split-resizing]) .agent-chat::after {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-
-  .composer-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    min-width: 0;
-    min-height: 2.15rem;
-    padding: 0 0.05rem;
-  }
-
-  .route-controls,
-  .context-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
-  }
-
-  .context-row {
-    flex-wrap: wrap;
-    gap: 0.3rem;
-    padding: 0.15rem 0.2rem 0;
-  }
-
-  .route-select {
-    position: relative;
-    display: flex;
-    align-items: center;
-    height: 2rem;
-    min-width: 0;
-  }
-
-  .route-select-model { max-width: 13rem; }
-  .route-select-reasoning { max-width: 9rem; }
-
-  .route-select :global(.poodle-select__trigger) {
-    display: flex;
-    align-items: center;
-    height: 2rem;
-    max-width: 100%;
-    padding: 0 1.15rem 0 0.25rem;
-    color: var(--poodle-color-text-secondary);
-    font-size: 0.75rem;
-  }
-
-  .route-select :global(.poodle-select__value) {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .route-chevron {
-    position: absolute;
-    top: 50%;
-    right: 0.15rem;
-    display: grid;
-    place-items: center;
-    color: var(--poodle-color-text-secondary);
-    opacity: 0.65;
-    pointer-events: none;
-    transform: translateY(-50%);
-  }
-
-  .active-context {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.6rem;
-    width: fit-content;
-    max-width: 100%;
-    padding: 0.25rem 0.35rem 0.25rem 0.5rem;
-    color: var(--poodle-color-text-secondary);
-    font-size: 0.75rem;
-    border: 1px solid var(--poodle-color-border-subtle);
-    border-radius: var(--poodle-radius-control);
-    background: var(--poodle-color-background-surface);
-  }
-
-  .active-context span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .active-context button {
-    display: grid;
-    place-items: center;
-    width: 1.25rem;
-    height: 1.25rem;
-    padding: 0;
-    color: inherit;
-    font: inherit;
-    border: 0;
-    border-radius: 50%;
-    background: transparent;
-    cursor: pointer;
-  }
-
-  .active-context button:hover {
-    color: var(--poodle-color-text-primary);
-    background: var(--poodle-color-background-canvas);
-  }
-
-  .chat-composer textarea {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    min-height: 2.625rem;
-    max-height: 8rem;
-    resize: none;
-    padding: 0.3rem 0.25rem 0.5rem;
-    color: var(--poodle-color-text-primary);
-    font-family: inherit;
-    font-size: 0.8125rem;
-    font-weight: 400;
-    line-height: 1.45;
-    border: 0;
-    outline: none;
-    background: transparent;
-  }
-
-  .chat-composer textarea::placeholder {
-    color: color-mix(in srgb, var(--poodle-color-text-secondary) 55%, transparent);
-    opacity: 1;
-  }
-
-  .chat-composer textarea:disabled {
-    opacity: 0.55;
-  }
-
-  .send-button {
-    display: grid;
-    flex: 0 0 auto;
-    place-items: center;
-    width: 1.75rem;
-    height: 1.75rem;
-    padding: 0;
-    color: var(--poodle-color-background-canvas);
-    border: 0;
-    border-radius: 50%;
-    background: var(--poodle-color-text-primary);
-    cursor: pointer;
-  }
-
-  .send-button:hover:not(:disabled) { transform: translateY(-1px); }
-  .send-button:disabled { opacity: 0.28; cursor: default; }
 
   .chat-error {
     padding: 0.55rem 0.65rem;
@@ -755,10 +598,6 @@
 
   @media (max-width: 36rem) {
     .chat-timeline { padding-bottom: 13rem; }
-    .composer-toolbar { align-items: end; }
-    .route-controls { flex-wrap: wrap; }
-    .route-select-model { max-width: 10rem; }
-    .route-select-reasoning { max-width: 7.5rem; }
   }
 
   @keyframes pulse {

@@ -298,27 +298,6 @@
     background: var(--poodle-color-background-canvas);
   }
 
-  .app-root :global(.poodle-split-view__divider) {
-    position: relative;
-    background: transparent;
-  }
-
-  .app-root :global(.poodle-split-view__divider[data-orientation="horizontal"]) {
-    width: 0.25rem;
-  }
-
-  .app-root :global(.poodle-split-view__divider[data-orientation="horizontal"]::before) {
-    content: "";
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 50%;
-    width: 0.0625rem;
-    border-radius: var(--poodle-radius-pill);
-    background: color-mix(in srgb, var(--poodle-color-text-secondary) 7%, transparent);
-    transform: translateX(-50%);
-  }
-
   .app-work-area {
     display: grid;
     grid-template-rows: 3rem minmax(0, 1fr);

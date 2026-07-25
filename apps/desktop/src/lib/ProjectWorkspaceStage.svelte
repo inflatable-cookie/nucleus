@@ -1188,41 +1188,6 @@
       0 0 0 0.0625rem color-mix(in srgb, var(--poodle-color-accent-base) 28%, transparent);
   }
 
-  .workspace-stage-shell :global(.poodle-split-view__divider) {
-    position: relative;
-    background: transparent;
-  }
-
-  .workspace-stage-shell :global(.poodle-split-view__divider[data-orientation="horizontal"]) {
-    width: 0.25rem;
-  }
-
-  .workspace-stage-shell :global(.poodle-split-view__divider[data-orientation="vertical"]) {
-    height: 0.25rem;
-  }
-
-  .workspace-stage-shell :global(.poodle-split-view__divider::before) {
-    content: "";
-    position: absolute;
-    border-radius: var(--poodle-radius-pill);
-    background: color-mix(in srgb, var(--poodle-color-text-secondary) 7%, transparent);
-  }
-
-  .workspace-stage-shell :global(.poodle-split-view__divider[data-orientation="horizontal"]::before) {
-    top: 0;
-    bottom: 0;
-    left: 50%;
-    width: 0.0625rem;
-    transform: translateX(-50%);
-  }
-
-  .workspace-stage-shell :global(.poodle-split-view__divider[data-orientation="vertical"]::before) {
-    top: 50%;
-    right: 0;
-    left: 0;
-    height: 0.0625rem;
-    transform: translateY(-50%);
-  }
 
   .region-cell :global(.poodle-dock-region__strip[data-orientation="horizontal"]) {
     gap: 0 !important;

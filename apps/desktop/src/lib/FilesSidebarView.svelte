@@ -75,10 +75,7 @@
 
 <section class="sidebar-view" aria-label="Files">
   <header class="sidebar-view-head">
-    <div>
-      <h2>Files</h2>
-      <Text tone="muted">{selectedProject?.display_name ?? "No project"}</Text>
-    </div>
+    <Text tone="muted">{selectedProject?.display_name ?? "No project"}</Text>
     <button type="button" aria-label="Refresh files" title="Refresh files" disabled={loading || !selectedProject} onclick={() => void loadFiles()}>
       <Icon icon={refreshCw} size="sm" />
     </button>
@@ -156,12 +153,6 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-  }
-
-  .sidebar-view-head h2 {
-    margin: 0;
-    color: var(--poodle-color-text-secondary);
-    font-size: 0.8125rem;
   }
 
   .sidebar-view-head button {

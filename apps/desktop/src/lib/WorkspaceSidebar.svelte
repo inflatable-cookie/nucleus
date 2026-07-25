@@ -26,6 +26,7 @@
     { value: "forge", label: "Forge", icon: gitBranch },
   ];
   let activeMode = $state<SidebarMode>("projects");
+  let selectedConversationId = $state<string | null>(null);
 
   onMount(() => {
     const stored = window.localStorage.getItem(storageKey);
@@ -56,16 +57,21 @@
       density="compact"
       fullWidth
       ariaLabel="Sidebar views"
+      showTooltips
       onValueChange={selectMode}
     />
   </div>
 
   <div class="sidebar-content">
     <div hidden={activeMode !== "projects"}>
-      <ProjectRail bind:selectedProjectId bind:selectedProject />
+      <ProjectRail
+        bind:selectedProjectId
+        bind:selectedProject
+        bind:selectedConversationId
+      />
     </div>
     {#if activeMode === "threads"}
-      <ThreadsSidebarView bind:selectedProjectId />
+      <ThreadsSidebarView bind:selectedProjectId bind:selectedConversationId />
     {:else if activeMode === "files"}
       <FilesSidebarView {selectedProject} />
     {:else if activeMode === "forge"}
@@ -82,6 +88,8 @@
     height: 100%;
     min-width: 0;
     min-height: 0;
+    container-name: workspace-sidebar;
+    container-type: inline-size;
   }
 
   .sidebar-tabs {
@@ -89,10 +97,37 @@
     padding: 0.375rem 0.375rem 0;
   }
 
+  .sidebar-tabs :global(.poodle-tabs__tooltip) {
+    display: none;
+  }
+
   .sidebar-content,
   .sidebar-content > div {
     min-width: 0;
     min-height: 0;
     height: 100%;
+  }
+
+  @container workspace-sidebar (max-width: 21rem) {
+    .sidebar-tabs :global(.poodle-tabs__label) {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .sidebar-tabs :global(.poodle-tabs__tooltip) {
+      display: block;
+    }
+
+    .sidebar-tabs :global(.poodle-tabs__tab > .poodle-icon) {
+      width: var(--poodle-size-icon-sm);
+      height: var(--poodle-size-icon-sm);
+    }
   }
 </style>

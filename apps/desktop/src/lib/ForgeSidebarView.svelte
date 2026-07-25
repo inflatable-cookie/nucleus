@@ -49,10 +49,7 @@
 
 <section class="sidebar-view" aria-label="Forge">
   <header class="sidebar-view-head">
-    <div>
-      <h2>Forge</h2>
-      <Text tone="muted">{loading ? "Loading" : `${repositoryCount} repositories`}</Text>
-    </div>
+    <Text tone="muted">{loading ? "Loading" : `${repositoryCount} repositories`}</Text>
     <button type="button" aria-label="Refresh repositories" title="Refresh repositories" disabled={loading} onclick={() => void loadRepositories()}>
       <Icon icon={refreshCw} size="sm" />
     </button>
@@ -119,12 +116,6 @@
   .sidebar-view-head {
     justify-content: space-between;
     gap: 0.75rem;
-  }
-
-  .sidebar-view-head h2 {
-    margin: 0;
-    color: var(--poodle-color-text-secondary);
-    font-size: 0.8125rem;
   }
 
   .sidebar-view-head button {

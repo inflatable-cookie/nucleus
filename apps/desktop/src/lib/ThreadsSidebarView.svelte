@@ -16,8 +16,10 @@
 
   let {
     selectedProjectId = $bindable(null),
+    selectedConversationId = $bindable(null),
   }: {
     selectedProjectId: string | null;
+    selectedConversationId: string | null;
   } = $props();
 
   let projects = $state<ControlProjectRecordDto[]>([]);
@@ -25,7 +27,6 @@
   let loading = $state(false);
   let creating = $state(false);
   let failure = $state<string | null>(null);
-  let selectedConversationId = $state<string | null>(null);
   let namingChatId = $state<string | null>(null);
   let chatName = $state("");
 
@@ -78,7 +79,10 @@
       });
       await loadThreads();
       const created = projects.find((project) => !previousIds.has(project.project_id));
-      if (created) selectedProjectId = created.project_id;
+      if (created) {
+        selectedConversationId = null;
+        selectedProjectId = created.project_id;
+      }
       notifyProjectsChanged();
     } catch (caught) {
       failure = formatError(caught);
@@ -147,6 +151,11 @@
     );
   }
 
+  function selectEmptyChat(projectId: string): void {
+    selectedConversationId = null;
+    selectedProjectId = projectId;
+  }
+
   function notifyProjectsChanged(): void {
     window.dispatchEvent(new CustomEvent("nucleus:projects-changed"));
   }
@@ -158,10 +167,7 @@
 
 <section class="sidebar-view" aria-label="Threads">
   <header class="sidebar-view-head">
-    <div>
-      <h2>Threads</h2>
-      <Text tone="muted">{loading ? "Loading" : `${threadCount} active`}</Text>
-    </div>
+    <Text tone="muted">{loading ? "Loading" : `${threadCount} active`}</Text>
     <div class="sidebar-view-actions">
       <button type="button" aria-label="New chat" title="New chat" disabled={creating} onclick={() => void newChat()}>
         <Icon icon={plus} size="sm" />
@@ -180,7 +186,7 @@
     <div class="thread-list">
       {#each emptyTransientChats as chat (chat.project_id)}
         <section class="thread-row" class:active={chat.project_id === selectedProjectId}>
-          <button class="thread-select" type="button" onclick={() => (selectedProjectId = chat.project_id)}>
+          <button class="thread-select" type="button" onclick={() => selectEmptyChat(chat.project_id)}>
             <Icon icon={messageCircle} size="sm" />
             <span>
               <strong>{chat.display_name}</strong>
@@ -206,6 +212,7 @@
           class="work-thread-row"
           type="button"
           class:active={thread.conversation_id === selectedConversationId}
+          aria-current={thread.conversation_id === selectedConversationId ? "true" : undefined}
           onclick={() => openThread(thread)}
         >
           <Icon icon={messageCircle} size="sm" />
@@ -243,12 +250,6 @@
   .sidebar-view-head {
     justify-content: space-between;
     gap: 0.75rem;
-  }
-
-  .sidebar-view-head h2 {
-    margin: 0;
-    color: var(--poodle-color-text-secondary);
-    font-size: 0.8125rem;
   }
 
   .sidebar-view-actions,

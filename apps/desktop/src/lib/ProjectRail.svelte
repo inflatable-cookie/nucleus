@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Dialog, Icon, Menu, SegmentedControl, Text, type MenuItem } from "@poodle/svelte";
   import {
+    chevronDown,
+    chevronRight,
     folder,
     ellipsis,
     folderCog,
@@ -19,15 +21,24 @@
     createNativePanelOverlayId,
     setNativePanelOverlayVisibility,
   } from "./nativePanelVisibility";
+  import {
+    listAgentChatThreads,
+    type AgentChatThreadSummary,
+  } from "./control/agentChat";
   import ProjectResourceManager from "./ProjectResourceManager.svelte";
   import ProjectSharedFilesManager from "./ProjectSharedFilesManager.svelte";
 
   type Props = {
     selectedProjectId: string | null;
     selectedProject: ControlProjectRecordDto | null;
+    selectedConversationId: string | null;
   };
 
-  let { selectedProjectId = $bindable(null), selectedProject = $bindable(null) }: Props = $props();
+  let {
+    selectedProjectId = $bindable(null),
+    selectedProject = $bindable(null),
+    selectedConversationId = $bindable(null),
+  }: Props = $props();
 
   let loading = $state(false);
   let failure = $state<string | null>(null);
@@ -43,6 +54,10 @@
   let projectManagerView = $state<"all" | "parked" | "archived">("all");
   let managingResourcesProjectId = $state<string | null>(null);
   let managingSharedFilesProjectId = $state<string | null>(null);
+  let threads = $state<AgentChatThreadSummary[]>([]);
+  let loadingThreads = $state(false);
+  let threadFailure = $state<string | null>(null);
+  let expandedProjectIds = $state<Set<string>>(new Set());
   const projectManagerOverlayId = createNativePanelOverlayId("project-manager");
 
   const activeProjects = $derived(projects.filter((project) => project.status === "active"));
@@ -76,8 +91,60 @@
     setNativePanelOverlayVisibility(projectManagerOverlayId, projectManagerOpen);
   });
 
+  $effect(() => {
+    if (!selectedConversationId) return;
+    const selectedThread = threads.find(
+      (thread) => thread.conversation_id === selectedConversationId,
+    );
+    if (!selectedThread) return;
+    if (selectedThread.project_id !== selectedProjectId) {
+      selectedConversationId = null;
+      return;
+    }
+    if (!expandedProjectIds.has(selectedThread.project_id)) {
+      expandedProjectIds = new Set([...expandedProjectIds, selectedThread.project_id]);
+    }
+  });
+
   function selectProject(projectId: string) {
     selectedProjectId = projectId;
+    if (
+      selectedConversationId
+      && !threads.some(
+        (thread) =>
+          thread.conversation_id === selectedConversationId
+          && thread.project_id === projectId,
+      )
+    ) {
+      selectedConversationId = null;
+    }
+  }
+
+  function toggleProjectThreads(projectId: string): void {
+    const next = new Set(expandedProjectIds);
+    if (next.has(projectId)) {
+      next.delete(projectId);
+    } else {
+      next.add(projectId);
+    }
+    expandedProjectIds = next;
+  }
+
+  function projectThreads(projectId: string): AgentChatThreadSummary[] {
+    return threads.filter((thread) => thread.project_id === projectId);
+  }
+
+  function openThread(thread: AgentChatThreadSummary): void {
+    selectedConversationId = thread.conversation_id;
+    selectedProjectId = thread.project_id;
+    window.dispatchEvent(
+      new CustomEvent("nucleus:open-agent-chat-thread", {
+        detail: {
+          projectId: thread.project_id,
+          conversationId: thread.conversation_id,
+        },
+      }),
+    );
   }
 
   function projectMenuItems(project: ControlProjectRecordDto): MenuItem[] {
@@ -245,25 +312,40 @@
     }
   }
 
-  onMount(() => {
+  async function loadProjectThreads(): Promise<void> {
+    loadingThreads = true;
+    threadFailure = null;
+    try {
+      threads = await listAgentChatThreads();
+    } catch (error) {
+      threads = [];
+      threadFailure = error instanceof Error ? error.message : String(error);
+    } finally {
+      loadingThreads = false;
+    }
+  }
+
+  function refreshProjectRail(): void {
     void loadProjectRail();
+    void loadProjectThreads();
+  }
+
+  onMount(() => {
+    refreshProjectRail();
     window.addEventListener("nucleus:manage-project-resources", handleManageProjectResources);
-    window.addEventListener("nucleus:projects-changed", loadProjectRail);
+    window.addEventListener("nucleus:projects-changed", refreshProjectRail);
   });
 
   onDestroy(() => {
     window.removeEventListener("nucleus:manage-project-resources", handleManageProjectResources);
-    window.removeEventListener("nucleus:projects-changed", loadProjectRail);
+    window.removeEventListener("nucleus:projects-changed", refreshProjectRail);
     setNativePanelOverlayVisibility(projectManagerOverlayId, false);
   });
 </script>
 
 <section class="project-rail-list" aria-label="Projects">
   <header class="project-rail-head">
-    <div>
-      <h2>Projects</h2>
-      <Text tone="muted">{projectCountLabel}</Text>
-    </div>
+    <Text tone="muted">{projectCountLabel}</Text>
     <div class="project-rail-actions">
       <button class="icon-button" type="button" aria-label="New project" onclick={() => (creating = true)}>
         <Icon icon={plus} size="sm" />
@@ -276,7 +358,7 @@
         type="button"
         aria-label="Refresh projects"
         disabled={loading}
-        onclick={loadProjectRail}
+        onclick={refreshProjectRail}
       >
         <Icon icon={refreshCw} size="sm" />
       </button>
@@ -413,18 +495,26 @@
     <div class="project-stack">
       {#each namedProjects as project}
         {@const active = project.project_id === selectedProjectId}
+        {@const expanded = expandedProjectIds.has(project.project_id)}
+        {@const associatedThreads = projectThreads(project.project_id)}
         <section class:active class="project-node">
           <div class="project-node-row">
+            <button
+              class="project-thread-toggle"
+              type="button"
+              aria-label={`${expanded ? "Hide" : "Show"} threads for ${project.display_name}`}
+              aria-expanded={expanded}
+              onclick={() => toggleProjectThreads(project.project_id)}
+            >
+              <Icon icon={expanded ? chevronDown : chevronRight} size="xs" />
+            </button>
             <button
               class="project-node-button"
               type="button"
               onclick={() => selectProject(project.project_id)}
             >
               <span class="project-node-icon" aria-hidden="true"><Icon icon={folder} size="sm" /></span>
-              <span class="project-node-label">
-                <span class="project-name">{project.display_name}</span>
-                <span class="project-meta">{project.status} · {project.importance_level}</span>
-              </span>
+              <span class="project-name">{project.display_name}</span>
             </button>
             <Menu
               items={projectMenuItems(project)}
@@ -439,6 +529,33 @@
               {/snippet}
             </Menu>
           </div>
+
+          {#if expanded}
+            <div class="project-thread-list">
+              {#if loadingThreads && threads.length === 0}
+                <div class="project-thread-message">Loading threads.</div>
+              {:else if threadFailure}
+                <div class="project-thread-message project-thread-error">{threadFailure}</div>
+              {:else}
+                {#each associatedThreads as thread (thread.conversation_id)}
+                  <button
+                    class="project-thread-row"
+                    class:active={thread.conversation_id === selectedConversationId}
+                    type="button"
+                    aria-current={thread.conversation_id === selectedConversationId
+                      ? "true"
+                      : undefined}
+                    onclick={() => openThread(thread)}
+                  >
+                    <span>{thread.title}</span>
+                    <small>{thread.turn_count} {thread.turn_count === 1 ? "turn" : "turns"}</small>
+                  </button>
+                {:else}
+                  <div class="project-thread-message">No agent threads.</div>
+                {/each}
+              {/if}
+            </div>
+          {/if}
 
           {#if renamingProjectId === project.project_id}
             <form class="inline-project-form nested" onsubmit={(event) => { event.preventDefault(); void renameProject(project); }}>
@@ -489,14 +606,6 @@
     min-width: 0;
   }
 
-  .project-rail-head h2 {
-    margin: 0;
-    color: var(--poodle-color-text-secondary);
-    font-size: 0.8125rem;
-    font-weight: 700;
-    line-height: 1.2;
-  }
-
   .icon-button {
     display: inline-grid;
     place-items: center;
@@ -524,7 +633,7 @@
   .project-stack {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.125rem;
     min-width: 0;
     min-height: 0;
     flex: 1;
@@ -535,28 +644,38 @@
     min-width: 0;
   }
 
+  .project-node-row {
+    gap: 0.125rem;
+    padding: 0 0.125rem;
+    border-radius: var(--poodle-radius-control);
+  }
+
+  .project-node-row:hover,
+  .project-node.active > .project-node-row {
+    background: var(--poodle-color-background-surface);
+  }
+
   .project-node-button {
     flex: 1;
     display: grid;
-    grid-template-columns: 1.25rem minmax(0, 1fr) 1.25rem;
+    grid-template-columns: 1.25rem minmax(0, 1fr);
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.375rem;
     width: 100%;
-    min-height: 2.5rem;
-    padding: 0.375rem 0.5rem;
+    min-height: 2rem;
+    padding: 0.25rem 0.125rem;
     color: var(--poodle-color-text-tertiary);
     text-align: left;
-    border: 1px solid transparent;
-    border-radius: var(--poodle-radius-control);
+    border: 0;
     background: transparent;
     cursor: pointer;
   }
 
-  .project-menu-button {
+  .project-thread-toggle {
     display: inline-grid;
     place-items: center;
-    width: 1.75rem;
-    height: 1.75rem;
+    width: 1.25rem;
+    height: 2rem;
     flex: 0 0 auto;
     padding: 0;
     color: var(--poodle-color-text-muted);
@@ -566,9 +685,36 @@
     cursor: pointer;
   }
 
+  .project-thread-toggle:hover {
+    color: var(--poodle-color-text-primary);
+  }
+
+  .project-menu-button {
+    display: inline-grid;
+    place-items: center;
+    width: 1.5rem;
+    height: 2rem;
+    flex: 0 0 auto;
+    padding: 0;
+    color: var(--poodle-color-text-muted);
+    border: 0;
+    border-radius: var(--poodle-radius-control);
+    background: transparent;
+    cursor: pointer;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 120ms ease;
+  }
+
+  .project-node-row:hover .project-menu-button,
+  .project-node-row:focus-within .project-menu-button {
+    opacity: 1;
+    visibility: visible;
+  }
+
   .project-menu-button:hover:not(:disabled) {
     color: var(--poodle-color-text-primary);
-    background: var(--poodle-color-background-surface);
+    background: var(--poodle-color-background-elevated);
   }
 
   .project-manager {
@@ -679,14 +825,10 @@
 
   .project-node-button:hover {
     color: var(--poodle-color-text-secondary);
-    background: var(--poodle-color-background-surface);
-    border-color: var(--poodle-color-border-subtle);
   }
 
   .project-node.active .project-node-button {
     color: var(--poodle-color-text-primary);
-    background: var(--poodle-color-background-elevated);
-    border-color: var(--poodle-color-border-default);
   }
 
   .project-node-icon {
@@ -699,34 +841,78 @@
     color: var(--poodle-color-text-secondary);
   }
 
-  .project-node-label {
-    display: grid;
-    min-width: 0;
-  }
-
   .project-name {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .project-name {
     font-size: 0.8125rem;
-    font-weight: 650;
+    font-weight: 600;
     line-height: 1.25;
   }
 
-  .project-meta {
+  .project-thread-list {
+    display: grid;
+    gap: 0.125rem;
+    margin: 0.125rem 1.75rem 0.375rem 1.625rem;
+    padding-left: 0.5rem;
+    border-left: 1px solid var(--poodle-color-border-subtle);
+  }
+
+  .project-thread-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    min-height: 1.75rem;
+    padding: 0.25rem 0.375rem;
+    color: var(--poodle-color-text-tertiary);
+    text-align: left;
+    border: 0;
+    border-radius: var(--poodle-radius-control);
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .project-thread-row:hover {
+    color: var(--poodle-color-text-secondary);
+    background: var(--poodle-color-background-surface);
+  }
+
+  .project-thread-row.active {
+    color: var(--poodle-color-text-primary);
+    background: var(--poodle-color-background-selected);
+  }
+
+  .project-thread-row.active small {
+    color: var(--poodle-color-text-secondary);
+  }
+
+  .project-thread-row span,
+  .project-thread-row small {
+    min-width: 0;
     overflow: hidden;
-    color: var(--poodle-color-text-muted);
-    font-size: 0.6875rem;
-    line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .project-node.active .project-meta {
-    color: var(--poodle-color-text-secondary);
+  .project-thread-row span {
+    font-size: 0.75rem;
+  }
+
+  .project-thread-row small,
+  .project-thread-message {
+    color: var(--poodle-color-text-muted);
+    font-size: 0.6875rem;
+  }
+
+  .project-thread-message {
+    padding: 0.35rem 0.4rem;
+  }
+
+  .project-thread-error {
+    color: var(--poodle-color-status-danger);
   }
 
   .rail-message {
