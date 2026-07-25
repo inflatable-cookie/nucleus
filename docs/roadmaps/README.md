@@ -378,8 +378,8 @@ shape.
 
 ## Next Task
 
-Review the exact handoff in
-`logs/2026-07-25-swallowtail-native-pilot-handoff.md`. On explicit approval of
-its ChatGPT-backed 15-turn and 60-minute ceilings, execute Swallowtail
-`g02/batch-cards/041-nucleus-native-application-pilot.md`. Do not make a
-catalogue request or model turn before that approval.
+Review the first-defect evidence in
+`logs/2026-07-25-swallowtail-native-pilot-first-defect.md`. Approve or reject
+Swallowtail card 041's narrow reset to 4 physical launches and 4 catalogue
+attempts total while retaining the original 15-turn, 6-thread, read-only, and
+60-minute ceilings. Make no further provider call before that decision.
