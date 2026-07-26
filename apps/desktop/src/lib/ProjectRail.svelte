@@ -17,7 +17,7 @@
     plus,
     refreshCw,
   } from "@poodle/icons-lucide";
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import {
     buildStateListQuery,
     buildControlCommandEnvelope,
@@ -54,7 +54,9 @@
   let creating = $state(false);
   let createName = $state("");
   let renamingProjectId = $state<string | null>(null);
+  let renamingSurface = $state<"rail" | "manager" | null>(null);
   let renameName = $state("");
+  let renameInput = $state<HTMLInputElement | null>(null);
   let pendingDeleteProjectId = $state<string | null>(null);
   let mutatingProjectId = $state<string | null>(null);
   let mutationFailure = $state<string | null>(null);
@@ -172,7 +174,11 @@
     ];
   }
 
-  function handleProjectAction(project: ControlProjectRecordDto, action: string) {
+  function handleProjectAction(
+    project: ControlProjectRecordDto,
+    action: string,
+    surface: "rail" | "manager",
+  ) {
     mutationFailure = null;
     pendingDeleteProjectId = null;
     if (action === "resources") {
@@ -188,8 +194,7 @@
       return;
     }
     if (action === "rename") {
-      renamingProjectId = project.project_id;
-      renameName = project.display_name;
+      void beginProjectRename(project, surface);
       return;
     }
     if (action === "delete") {
@@ -202,6 +207,7 @@
   function changeProjectManagerView(view: string) {
     projectManagerView = view as "all" | "parked" | "archived";
     renamingProjectId = null;
+    renamingSurface = null;
     pendingDeleteProjectId = null;
     mutationFailure = null;
     managingResourcesProjectId = null;
@@ -250,11 +256,46 @@
 
   async function renameProject(project: ControlProjectRecordDto) {
     const displayName = renameName.trim();
-    if (!displayName || mutatingProjectId) return;
+    if (!displayName) {
+      cancelProjectRename();
+      return;
+    }
+    if (mutatingProjectId) return;
     await mutateProject(project, "rename", displayName);
     if (!mutationFailure) {
-      renamingProjectId = null;
-      renameName = "";
+      cancelProjectRename();
+    }
+  }
+
+  async function beginProjectRename(
+    project: ControlProjectRecordDto,
+    surface: "rail" | "manager",
+  ): Promise<void> {
+    renamingProjectId = project.project_id;
+    renamingSurface = surface;
+    renameName = project.display_name;
+    await tick();
+    renameInput?.focus();
+    renameInput?.select();
+  }
+
+  function cancelProjectRename(): void {
+    renamingProjectId = null;
+    renamingSurface = null;
+    renameName = "";
+    renameInput = null;
+  }
+
+  function handleRenameKeydown(
+    event: KeyboardEvent,
+    project: ControlProjectRecordDto,
+  ): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void renameProject(project);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      cancelProjectRename();
     }
   }
 
@@ -409,6 +450,7 @@
       projectManagerOpen = open;
       if (!open) {
         renamingProjectId = null;
+        renamingSurface = null;
         pendingDeleteProjectId = null;
         mutationFailure = null;
         managingResourcesProjectId = null;
@@ -453,14 +495,26 @@
           <section class="managed-project">
             <div class="managed-project-row">
               <span class="managed-project-copy">
-                <strong>{project.display_name}</strong>
+                {#if renamingProjectId === project.project_id && renamingSurface === "manager"}
+                  <input
+                    class="project-name-input"
+                    bind:this={renameInput}
+                    bind:value={renameName}
+                    aria-label="Project name"
+                    maxlength="80"
+                    onblur={() => void renameProject(project)}
+                    onkeydown={(event) => handleRenameKeydown(event, project)}
+                  />
+                {:else}
+                  <strong>{project.display_name}</strong>
+                {/if}
                 <small>{project.status}</small>
               </span>
               <Menu
                 items={projectMenuItems(project)}
                 ariaLabel={`Project actions for ${project.display_name}`}
                 placement="bottom-end"
-                onAction={(action) => handleProjectAction(project, action)}
+                onAction={(action) => handleProjectAction(project, action, "manager")}
               >
                 {#snippet trigger()}
                   <span class="project-menu-button" aria-label={`Project actions for ${project.display_name}`}>
@@ -469,13 +523,6 @@
                 {/snippet}
               </Menu>
             </div>
-            {#if renamingProjectId === project.project_id}
-              <form class="inline-project-form manager-form" onsubmit={(event) => { event.preventDefault(); void renameProject(project); }}>
-                <input bind:value={renameName} aria-label="New project name" />
-                <button type="submit" disabled={!renameName.trim() || mutatingProjectId !== null}>Save</button>
-                <button type="button" onclick={() => (renamingProjectId = null)}>Cancel</button>
-              </form>
-            {/if}
             {#if pendingDeleteProjectId === project.project_id}
               <div class="delete-confirmation manager-confirmation">
                 <span>Delete only if this project has no retained work?</span>
@@ -546,21 +593,33 @@
               onpointerdown={() => selectProject(project.project_id)}
               onfocusin={() => selectProject(project.project_id)}
             >
-              <EditableLabel
-                value={project.display_name}
-                ariaLabel={`Rename ${project.display_name}`}
-                activationMode="doubleClick"
-                variant="flush"
-                maxLength={80}
-                disabled={mutatingProjectId !== null}
-                onCommit={({ value }) => void commitProjectName(project, value)}
-              />
+              {#if renamingProjectId === project.project_id && renamingSurface === "rail"}
+                <input
+                  class="project-name-input"
+                  bind:this={renameInput}
+                  bind:value={renameName}
+                  aria-label="Project name"
+                  maxlength="80"
+                  onblur={() => void renameProject(project)}
+                  onkeydown={(event) => handleRenameKeydown(event, project)}
+                />
+              {:else}
+                <EditableLabel
+                  value={project.display_name}
+                  ariaLabel={`Rename ${project.display_name}`}
+                  activationMode="doubleClick"
+                  variant="flush"
+                  maxLength={80}
+                  disabled={mutatingProjectId !== null}
+                  onCommit={({ value }) => void commitProjectName(project, value)}
+                />
+              {/if}
             </span>
             <Menu
               items={projectMenuItems(project)}
               ariaLabel={`Project actions for ${project.display_name}`}
               placement="bottom-end"
-              onAction={(action) => handleProjectAction(project, action)}
+              onAction={(action) => handleProjectAction(project, action, "rail")}
             >
               {#snippet trigger()}
                 <button class="project-menu-button" type="button" aria-label={`Project actions for ${project.display_name}`} disabled={mutatingProjectId !== null}>
@@ -595,14 +654,6 @@
                 {/each}
               {/if}
             </div>
-          {/if}
-
-          {#if renamingProjectId === project.project_id}
-            <form class="inline-project-form nested" onsubmit={(event) => { event.preventDefault(); void renameProject(project); }}>
-              <input bind:value={renameName} aria-label="New project name" />
-              <button type="submit" disabled={!renameName.trim() || mutatingProjectId !== null}>Save</button>
-              <button type="button" onclick={() => (renamingProjectId = null)}>Cancel</button>
-            </form>
           {/if}
 
           {#if pendingDeleteProjectId === project.project_id}
@@ -777,6 +828,24 @@
     font-size: 0.8125rem;
   }
 
+  .project-name-input {
+    width: 100%;
+    min-width: 0;
+    padding: 0;
+    color: var(--poodle-color-text-primary);
+    border: 0;
+    border-bottom: 1px solid var(--poodle-color-accent-focusRing);
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-weight: inherit;
+  }
+
+  .managed-project-copy .project-name-input {
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+
   .managed-project-copy small {
     color: var(--poodle-color-text-secondary);
     font-size: 0.6875rem;
@@ -816,7 +885,6 @@
     padding: 0.5rem 0.25rem;
   }
 
-  .inline-project-form.manager-form,
   .delete-confirmation.manager-confirmation {
     margin: 0.375rem 0 0;
   }
@@ -833,7 +901,6 @@
     background: var(--poodle-color-background-surface);
   }
 
-  .inline-project-form.nested,
   .delete-confirmation {
     margin: 0.25rem 0 0.375rem 1.25rem;
   }
