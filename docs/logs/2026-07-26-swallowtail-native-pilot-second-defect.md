@@ -35,7 +35,7 @@ The pilot has consumed 2 physical launches and catalogue attempts, 1 failed
 turn, 1 of 3 reruns, and 1 joined provider-thread lifecycle. It has made zero
 provider model turns.
 
-Swallowtail recommends permitting 5 physical launches and catalogue attempts
+The operator approved 5 physical launches and catalogue attempts
 total, then executing the unchanged 12 planned outcomes across 3 clean
 launches. The failed joined session counts within the unchanged 6-thread
 maximum, leaving at most 5 further provider threads. The 15-turn, 3-live-child,
@@ -43,5 +43,5 @@ serial, read-only, and 60-minute cumulative active-execution limits remain.
 
 ## Next
 
-Approve or reject the second one-launch, one-catalogue reset before another
-provider call.
+Resume the native replay. Use the first ordinary turn as the repaired-path
+gate and stop on deterministic drift.

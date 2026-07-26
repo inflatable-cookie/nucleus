@@ -378,9 +378,7 @@ shape.
 
 ## Next Task
 
-Review the second-defect evidence in
-`logs/2026-07-26-swallowtail-native-pilot-second-defect.md`. Approve or reject
-Swallowtail card 041's reset to 5 physical launches and catalogue attempts
-total. Retain 15 turns, 6 joined provider threads including the failed
-session, read-only effects, and 60 minutes of cumulative active execution.
-Make no further provider call before that decision.
+Resume the approved Swallowtail card 041 native replay. Start with the first
+ordinary Agent Chat turn as the repaired-path gate, then execute the unchanged
+read-only workload within the five-launch, fifteen-turn, six-thread, and
+sixty-minute ceilings.
