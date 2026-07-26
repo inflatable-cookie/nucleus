@@ -378,7 +378,7 @@ shape.
 
 ## Next Task
 
-Run Swallowtail card 041 clean launch four through the normal native UI: 2
-ordinary successes and 2 bounded read-only callback successes across no more
-than 2 provider sessions. Then close and verify joined cleanup within the
+Run Swallowtail card 041 final clean launch five with the 30-second proof
+deadline. Reopen 1 persisted session, prove 1 recovery success, then 1
+controlled read-only deadline. Close and verify joined cleanup within the
 unchanged live envelope.
