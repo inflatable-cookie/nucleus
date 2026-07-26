@@ -378,7 +378,7 @@ shape.
 
 ## Next Task
 
-Resume the approved Swallowtail card 041 native replay. Start with the first
-ordinary Agent Chat turn as the repaired-path gate, then execute the unchanged
-read-only workload within the five-launch, fifteen-turn, six-thread, and
-sixty-minute ceilings.
+Run Swallowtail card 041 clean launch four through the normal native UI: 2
+ordinary successes and 2 bounded read-only callback successes across no more
+than 2 provider sessions. Then close and verify joined cleanup within the
+unchanged live envelope.
