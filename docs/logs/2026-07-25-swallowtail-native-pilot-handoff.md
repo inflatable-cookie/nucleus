@@ -113,6 +113,8 @@ deadline. Safe evidence reports one failed turn and no provider model turn.
 Swallowtail commit `a26b54f` fixes the plan and passes all 90 Codex and 19
 deterministic Nucleus adapter tests.
 
-Card 041 is paused for explicit approval of a fifth physical launch and
-catalogue attempt. The 15-turn, 6-thread, read-only, and cumulative active-time
-ceilings remain unchanged.
+The operator approved the fifth physical launch without increasing the
+15-turn, 6-session, read-only, or cumulative active-time ceilings. The pilot
+then completed all 12 planned outcomes at those exact limits. Final evidence
+is recorded in
+`2026-07-26-swallowtail-native-pilot-closeout.md`.

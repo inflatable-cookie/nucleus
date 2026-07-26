@@ -317,8 +317,8 @@ shape.
 - `g04/050-swallowtail-task-execution-adoption.md` - completed
 - `g05/001-project-scoped-workspace-layouts.md` - active
 - `g05/002-workspace-sidebar-modes.md` - completed
-- `g05/003-swallowtail-application-proof-readiness.md` - active; deterministic
-  readiness complete, live handoff checkpoint-gated
+- `g05/003-swallowtail-application-proof-readiness.md` - completed; native
+  pilot passed at the exact live ceiling
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -378,7 +378,9 @@ shape.
 
 ## Next Task
 
-Run Swallowtail card 041 final clean launch five with the 30-second proof
-deadline. Reopen 1 persisted session, prove 1 recovery success, then 1
-controlled read-only deadline. Close and verify joined cleanup within the
-unchanged live envelope.
+Review the completed native pilot evidence and approve or reject Swallowtail
+card 042's read-only sustained Nucleus envelope: 50 planned turns, 55 attempts
+maximum, 5 launches, 10 provider sessions, 2 live children maximum, and 4
+hours. Exact provider rate, quota, usage, and billed-cost evidence is
+unavailable, so turn and time ceilings remain the consumption control.
+Writable task attempts remain excluded.

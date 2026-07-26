@@ -35,6 +35,5 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 
 - `001-project-scoped-workspace-layouts.md` - active
 - `002-workspace-sidebar-modes.md` - completed
-- `003-swallowtail-application-proof-readiness.md` - active; deterministic
-  readiness complete; two pilot facade defects fixed in Swallowtail; clean
-  launches three and four passed, final recovery-plus-deadline launch next
+- `003-swallowtail-application-proof-readiness.md` - completed; all 12 native
+  pilot outcomes passed at the exact 15-attempt and 6-session ceiling

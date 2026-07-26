@@ -1,8 +1,8 @@
 # 003 Swallowtail Application Proof Readiness
 
-Status: active
+Status: completed
 Owner: Tom
-Updated: 2026-07-25
+Updated: 2026-07-26
 
 ## Purpose
 
@@ -67,12 +67,19 @@ live authority is explicit.
 - [x] no raw provider material, secret, prompt, output, or user path is retained
 - [x] no live provider call occurs before card 010 authority
 
-## Current Gate
+## Closeout
 
-Cards 007-010 are complete. The exact handoff is recorded in
-`../../logs/2026-07-25-swallowtail-native-pilot-handoff.md`. Swallowtail card
-041 remains gated on explicit acceptance of the ChatGPT-backed 15-turn and
-60-minute live envelope.
+Cards 007-010 and the downstream Swallowtail card 041 native pilot are
+complete. The pilot ran through Nucleus's normal catalogue, Agent Chat,
+callback, cancellation, persistence, restart, deadline, and cleanup surfaces.
+All 12 planned outcomes passed at the exact 15-attempt and 6-session ceiling.
+
+Two Swallowtail facade defects failed before provider model work, gained
+deterministic regressions, and passed replay. Nucleus required no further
+product-path change.
+
+The sustained read-only workload is a new live-effect decision owned by
+Swallowtail card 042. Writable proof remains separately gated.
 
 ## Batch Cards
 

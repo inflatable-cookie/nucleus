@@ -52,11 +52,12 @@ policy and health, project-scoped export/import routing, and project-menu
 controls are validated.
 
 Swallowtail's first publication is now held for application-scale consumer
-proof. Nucleus roadmap g05.003 now has isolated desktop state, bounded Agent
+proof. Nucleus roadmap g05.003 completed isolated desktop state, bounded Agent
 Chat deadlines, normal cancellation, exact terminal persistence, explicit
-Effigy proof selectors, and count-only read-only evidence. The deterministic
-readiness batch awaits an exact source checkpoint. Installed Codex and
-catalogue probes plus every live Codex call remain separately gated.
+Effigy proof selectors, and count-only read-only evidence. Swallowtail card
+041 then passed all 12 planned native outcomes at the exact 15-attempt and
+6-session ceiling after fixing 2 deterministic facade defects. Sustained live
+work and every writable attempt remain separately gated.
 
 Current planning artifacts:
 
