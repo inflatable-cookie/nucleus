@@ -6,6 +6,10 @@
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
   import WorkspaceSidebar from "./lib/WorkspaceSidebar.svelte";
   import type { ControlProjectRecordDto } from "./lib/control";
+  import {
+    watchEditorFiles,
+    type EditorFileWatchEvent,
+  } from "./lib/control/editorFileWatch";
   import { beginWindowDrag } from "./lib/windowChrome";
   import {
     createNativePanelOverlayId,
@@ -70,6 +74,46 @@
       finishSplitResize();
     };
   });
+
+  $effect(() => {
+    const projectId = selectedProject?.project_id ?? null;
+    const resourceIds = selectedProject?.resources
+      .filter((resource) =>
+        resource.role === "working"
+        && resource.location_status === "present"
+        && resource.locator_available
+      )
+      .map((resource) => resource.resource_id) ?? [];
+    if (!projectId || resourceIds.length === 0) return;
+
+    let disposed = false;
+    let stop: (() => Promise<void>) | null = null;
+    void watchEditorFiles(projectId, resourceIds, publishEditorFileWatchEvent)
+      .then((watchStop) => {
+        if (disposed) {
+          void watchStop();
+        } else {
+          stop = watchStop;
+        }
+      })
+      .catch((caught) => {
+        console.warn("editor file watch unavailable", caught);
+      });
+
+    return () => {
+      disposed = true;
+      void stop?.().catch(() => undefined);
+    };
+  });
+
+  function publishEditorFileWatchEvent(event: EditorFileWatchEvent): void {
+    if (event.kind === "failed") {
+      console.warn(event.message);
+    }
+    window.dispatchEvent(new CustomEvent("nucleus:editor-files-changed", {
+      detail: event,
+    }));
+  }
 
   function createWorkspacePanel(kind: string) {
     if (kind === "tasks" && openPanelKinds.includes("tasks")) {

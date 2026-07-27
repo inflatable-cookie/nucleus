@@ -12,6 +12,7 @@
   import BrowserPanel from "./BrowserPanel.svelte";
   import DiffPanel from "./DiffPanel.svelte";
   import EditorPanel from "./EditorPanel.svelte";
+  import ForgeDiffPanel from "./ForgeDiffPanel.svelte";
   import MemoryPanel from "./MemoryPanel.svelte";
   import PanelResourceTargetControl from "./PanelResourceTargetControl.svelte";
   import TaskListPanel from "./TaskListPanel.svelte";
@@ -31,6 +32,8 @@
     workspacePanelFor,
     workspaceWindowForProject,
     type RegionKey,
+    type WorkspaceEditorFileDto,
+    type WorkspaceForgeDiffDto,
     type WorkspacePanelDto,
     type WorkspaceWindowDto,
     type WorkspaceUiConfigDto,
@@ -60,11 +63,22 @@
   let selectedTask = $state<ControlTaskRecordDto | null>(null);
   let selectedGoalId = $state<string | null>(null);
   let selectedGoal = $state<ControlGoalRecordDto | null>(null);
-  let editorFileRequests = $state<Record<string, string>>({});
   let panelConversationIds = $state<Record<string, string>>({});
   let pendingThreadOpen = $state<{
     projectId: string;
     conversationId: string;
+  } | null>(null);
+  let pendingFileOpen = $state<{
+    projectId: string;
+    resourceId: string;
+    fileRef: string;
+    displayPath: string | null;
+  } | null>(null);
+  let pendingForgeDiffOpen = $state<{
+    projectId: string;
+    resourceId: string;
+    path: string;
+    scope: "all" | "staged" | "working";
   } | null>(null);
 
   const workspaceWindow = $derived(
@@ -105,6 +119,7 @@
     window.addEventListener("nucleus:open-task", handleOpenTask);
     window.addEventListener("nucleus:open-goal", handleOpenGoal);
     window.addEventListener("nucleus:open-file", handleOpenFile);
+    window.addEventListener("nucleus:open-forge-diff", handleOpenForgeDiff);
     window.addEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
     window.addEventListener("mouseup", flushLayoutPersistence);
 
@@ -113,6 +128,7 @@
       window.removeEventListener("nucleus:open-task", handleOpenTask);
       window.removeEventListener("nucleus:open-goal", handleOpenGoal);
       window.removeEventListener("nucleus:open-file", handleOpenFile);
+      window.removeEventListener("nucleus:open-forge-diff", handleOpenForgeDiff);
       window.removeEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
       window.removeEventListener("mouseup", flushLayoutPersistence);
     };
@@ -146,6 +162,34 @@
 
     pendingThreadOpen = null;
     openAgentChatThread(request.conversationId);
+  });
+
+  $effect(() => {
+    const request = pendingFileOpen;
+    if (
+      !request
+      || request.projectId !== selectedProject?.project_id
+      || !workspaceWindow
+    ) {
+      return;
+    }
+
+    pendingFileOpen = null;
+    openFileInEditor(request.fileRef, request.resourceId, request.displayPath);
+  });
+
+  $effect(() => {
+    const request = pendingForgeDiffOpen;
+    if (
+      !request
+      || request.projectId !== selectedProject?.project_id
+      || !workspaceWindow
+    ) {
+      return;
+    }
+
+    pendingForgeDiffOpen = null;
+    openForgeDiff(request.resourceId, request.path, request.scope);
   });
 
   $effect(() => {
@@ -305,13 +349,40 @@
   function handleOpenFile(event: Event): void {
     if (
       !(event instanceof CustomEvent)
-      || event.detail?.projectId !== selectedProject?.project_id
+      || typeof event.detail?.projectId !== "string"
       || typeof event.detail?.resourceId !== "string"
       || typeof event.detail?.fileRef !== "string"
     ) {
       return;
     }
-    openFileInEditor(event.detail.fileRef, event.detail.resourceId);
+
+    pendingFileOpen = {
+      projectId: event.detail.projectId,
+      resourceId: event.detail.resourceId,
+      fileRef: event.detail.fileRef,
+      displayPath: typeof event.detail.displayPath === "string"
+        ? event.detail.displayPath
+        : null,
+    };
+  }
+
+  function handleOpenForgeDiff(event: Event): void {
+    if (
+      !(event instanceof CustomEvent)
+      || typeof event.detail?.projectId !== "string"
+      || typeof event.detail?.resourceId !== "string"
+      || typeof event.detail?.path !== "string"
+      || !["all", "staged", "working"].includes(event.detail?.scope)
+    ) {
+      return;
+    }
+
+    pendingForgeDiffOpen = {
+      projectId: event.detail.projectId,
+      resourceId: event.detail.resourceId,
+      path: event.detail.path,
+      scope: event.detail.scope,
+    };
   }
 
   function handleOpenAgentChatThread(event: Event): void {
@@ -382,23 +453,107 @@
     }
   }
 
-  function openFileInEditor(fileRef: string, resourceId: string | null = null): void {
+  function openFileInEditor(
+    fileRef: string,
+    resourceId: string | null = null,
+    displayPath: string | null = null,
+  ): void {
+    if (!config || !workspaceWindow) return;
+    const editorFile: WorkspaceEditorFileDto = {
+      resource_id: resourceId,
+      file_ref: fileRef,
+      display_path: displayPath,
+    };
     let editor: WorkspacePanelDto | null = regionKeys()
-      .flatMap((region) => workspaceWindow?.regions[region] ?? [])
+      .flatMap((region) => workspaceWindow.regions[region])
       .find((panel) =>
         panel.kind === "editor"
         && (!resourceId || effectivePanelResourceTarget(panel) === resourceId)
       ) ?? null;
     if (!editor) {
-      editor = addPanel("editor", resourceId);
+      addPanel("editor", resourceId, editorFile);
+      return;
     }
-    if (!editor) return;
 
-    editorFileRequests = { ...editorFileRequests, [editor.id]: fileRef };
     const region = findPanelRegion(editor.id);
-    if (region) {
-      setActivePanel(region, editor.id);
+    if (!region) return;
+    const projectId = selectedProject?.project_id;
+    const resourceTargets = { ...(editor.resource_targets ?? {}) };
+    if (projectId && resourceId) resourceTargets[projectId] = resourceId;
+    const regions = {
+      ...workspaceWindow.regions,
+      [region]: workspaceWindow.regions[region].map((candidate) =>
+        candidate.id === editor.id
+          ? {
+              ...candidate,
+              resource_targets: resourceTargets,
+              editor_file: editorFile,
+            }
+          : candidate
+      ),
+    };
+    void persist({
+      ...config,
+      window: {
+        ...workspaceWindow,
+        regions,
+        active_panels: {
+          ...workspaceWindow.active_panels,
+          [region]: editor.id,
+        },
+      },
+    });
+  }
+
+  function openForgeDiff(
+    resourceId: string,
+    path: string,
+    scope: "all" | "staged" | "working",
+  ): void {
+    if (!config || !workspaceWindow || !selectedProject) return;
+    const target: WorkspaceForgeDiffDto = {
+      resource_id: resourceId,
+      path,
+      scope,
+    };
+    const existing = regionKeys()
+      .flatMap((region) => workspaceWindow.regions[region])
+      .find((panel) => panel.kind === "forgeDiff") ?? null;
+    if (!existing) {
+      addPanel("forgeDiff", resourceId, null, target);
+      return;
     }
+
+    const region = findPanelRegion(existing.id);
+    if (!region) return;
+    const projectId = selectedProject.project_id;
+    const resourceTargets = {
+      ...(existing.resource_targets ?? {}),
+      [projectId]: resourceId,
+    };
+    const regions = {
+      ...workspaceWindow.regions,
+      [region]: workspaceWindow.regions[region].map((candidate) =>
+        candidate.id === existing.id
+          ? {
+              ...candidate,
+              resource_targets: resourceTargets,
+              forge_diff: target,
+            }
+          : candidate
+      ),
+    };
+    void persist({
+      ...config,
+      window: {
+        ...workspaceWindow,
+        active_panels: {
+          ...workspaceWindow.active_panels,
+          [region]: existing.id,
+        },
+        regions,
+      },
+    });
   }
 
   function handlePanelDragStart(event: DragEvent, sourceRegion: RegionKey): void {
@@ -500,6 +655,8 @@
   function addPanel(
     kind: string,
     resourceId: string | null = null,
+    editorFile: WorkspaceEditorFileDto | null = null,
+    forgeDiff: WorkspaceForgeDiffDto | null = null,
   ): WorkspacePanelDto | null {
     if (!config || !workspaceWindow) {
       return null;
@@ -520,6 +677,12 @@
     const projectId = selectedProject?.project_id;
     if (projectId && resourceId) {
       panel.resource_targets[projectId] = resourceId;
+    }
+    if (kind === "editor") {
+      panel.editor_file = editorFile;
+    }
+    if (kind === "forgeDiff") {
+      panel.forge_diff = forgeDiff;
     }
 
     void persist({
@@ -585,12 +748,69 @@
         region,
         workspaceWindow.regions[region].map((candidate) =>
           candidate.id === panel.id
-            ? { ...candidate, resource_targets: resourceTargets }
+            ? {
+                ...candidate,
+                resource_targets: resourceTargets,
+                editor_file: candidate.kind === "editor" ? null : candidate.editor_file,
+              }
             : candidate,
         ),
       ]),
     ) as WorkspaceWindowDto["regions"];
     await persist({
+      ...config,
+      window: { ...workspaceWindow, regions },
+    });
+  }
+
+  function persistEditorFile(
+    panelId: string,
+    opened: {
+      resourceId: string;
+      fileRef: string;
+      displayPath: string;
+    },
+  ): void {
+    const projectId = selectedProject?.project_id;
+    if (!config || !workspaceWindow || !projectId) return;
+    const region = findPanelRegion(panelId);
+    if (!region) return;
+    const current = workspaceWindow.regions[region].find(
+      (candidate) => candidate.id === panelId,
+    );
+    if (!current) return;
+
+    const editorFile: WorkspaceEditorFileDto = {
+      resource_id: opened.resourceId,
+      file_ref: opened.fileRef,
+      display_path: opened.displayPath,
+    };
+    if (
+      current.editor_file?.resource_id === editorFile.resource_id
+      && current.editor_file.file_ref === editorFile.file_ref
+      && current.editor_file.display_path === editorFile.display_path
+      && current.resource_targets?.[projectId] === opened.resourceId
+    ) {
+      return;
+    }
+
+    const resourceTargets = {
+      ...(current.resource_targets ?? {}),
+      [projectId]: opened.resourceId,
+    };
+    const regions = {
+      ...workspaceWindow.regions,
+      [region]: workspaceWindow.regions[region].map((candidate) =>
+        candidate.id === panelId
+          ? {
+              ...candidate,
+              resource_targets: resourceTargets,
+              editor_file: editorFile,
+            }
+          : candidate
+      ),
+    };
+    void persist({
       ...config,
       window: { ...workspaceWindow, regions },
     });
@@ -816,6 +1036,8 @@
         return "terminal";
       case "memory":
         return "panel-right";
+      case "forgeDiff":
+        return "file-diff";
       default:
         return "panel-top";
     }
@@ -1064,7 +1286,9 @@
         <EditorPanel
           projectId={selectedProject?.project_id ?? null}
           resourceId={effectivePanelResourceTarget(panel)}
-          requestedFileRef={editorFileRequests[panel.id] ?? null}
+          requestedFileRef={panel.editor_file?.file_ref ?? null}
+          requestedFilePath={panel.editor_file?.display_path ?? null}
+          onFileOpen={(opened) => persistEditorFile(panel.id, opened)}
         />
       </div>
     </div>
@@ -1089,6 +1313,15 @@
       task={selectedTask}
       onOpenEditor={(fileRef) => openFileInEditor(fileRef)}
       onReviewed={() => focusPanelKind("diff")}
+    />
+  {:else if panel.kind === "forgeDiff"}
+    <ForgeDiffPanel
+      projectId={selectedProject?.project_id ?? null}
+      resourceId={panel.forge_diff?.resource_id ?? null}
+      path={panel.forge_diff?.path ?? null}
+      scope={panel.forge_diff?.scope ?? "all"}
+      onOpenEditor={(fileRef, resourceId, path) =>
+        openFileInEditor(fileRef, resourceId, path)}
     />
   {:else if panel.kind === "memory"}
     <MemoryPanel projectId={selectedProject?.project_id ?? null} />

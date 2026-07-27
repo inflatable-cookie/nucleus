@@ -71,8 +71,15 @@ pub mod command_runtime_readiness;
 pub mod commands;
 mod editor_files;
 pub use editor_files::{
-    list_editor_files, read_editor_file, save_editor_file, EditorFileEntry, EditorFileSaveRequest,
-    EditorFileSnapshot,
+    create_editor_directory, create_editor_file, delete_editor_directory, delete_editor_file,
+    list_editor_directory, list_editor_files, read_editor_file, read_editor_file_at_path,
+    rename_editor_directory, rename_editor_file, save_editor_file, search_editor_files,
+    EditorDirectoryCreateRequest, EditorDirectoryDeleteReceipt, EditorDirectoryDeleteRequest,
+    EditorDirectoryEntry, EditorDirectoryEntryKind, EditorDirectoryReceipt,
+    EditorDirectoryRenameReceipt, EditorDirectoryRenameRequest, EditorFileCreateRequest,
+    EditorFileDeleteReceipt, EditorFileDeleteRequest, EditorFileEntry, EditorFileMoveReceipt,
+    EditorFileRenameRequest, EditorFileSaveRequest, EditorFileSnapshot, EditorFileWatchEvent,
+    EditorFileWatchEventSink, EditorFileWatchRuntime,
 };
 pub mod admission_gate;
 pub mod control_api;

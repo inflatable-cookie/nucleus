@@ -1,7 +1,9 @@
-use nucleus_local_store::SqliteBackend;
+use nucleus_core::RevisionId;
+use nucleus_local_store::{LocalStoreRecordPayload, RevisionExpectation, SqliteBackend};
 use nucleus_server::{
-    ControlQueryDto, ControlRequestBodyDto, ControlRequestEnvelopeDto, CONTROL_API_PROTOCOL_FAMILY,
-    CONTROL_API_PROTOCOL_VERSION_V1,
+    seed_local_project_with_resource_root, ControlQueryDto, ControlRequestBodyDto,
+    ControlRequestEnvelopeDto, LocalControlRequestHandler, LocalProjectSeed,
+    CONTROL_API_PROTOCOL_FAMILY, CONTROL_API_PROTOCOL_VERSION_V1,
 };
 
 use crate::DesktopState;
@@ -78,6 +80,79 @@ fn desktop_state_seeds_local_project_for_project_queries() {
     }
 
     let _ = std::fs::remove_file(database_path);
+}
+
+#[test]
+fn desktop_startup_repairs_the_legacy_local_resource_authority() {
+    let database_path = std::env::temp_dir().join(format!(
+        "nucleus-desktop-project-authority-repair-test-{}.sqlite",
+        std::process::id()
+    ));
+    let resource_root = std::env::temp_dir().join(format!(
+        "nucleus-desktop-project-authority-resource-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&database_path);
+    let _ = std::fs::remove_dir_all(&resource_root);
+    std::fs::create_dir_all(&resource_root).expect("resource root");
+
+    let backend = SqliteBackend::new(database_path.clone());
+    let handler = LocalControlRequestHandler::new(backend.clone(), None);
+    let mut record = seed_local_project_with_resource_root(
+        handler.state(),
+        LocalProjectSeed::nucleus_local(),
+        Some(resource_root.clone()),
+    )
+    .expect("legacy project seed");
+    record.revision_id = RevisionId("rev:legacy-local-authority".to_owned());
+    record.payload = LocalStoreRecordPayload {
+        media_type: Some("application/json".to_owned()),
+        bytes: serde_json::to_vec(&serde_json::json!({
+            "project_id": "project:nucleus-local",
+            "display_name": "Nucleus Local",
+            "status": "active",
+            "importance_level": "normal",
+            "repo_count": 1,
+            "primary_location": resource_root.to_string_lossy(),
+            "location_status": "present"
+        }))
+        .expect("legacy project payload"),
+    };
+    handler
+        .state()
+        .projects()
+        .put(record, RevisionExpectation::Any)
+        .expect("legacy project write");
+    drop(handler);
+
+    let state = DesktopState::new(backend);
+    let response = state
+        .submit_control_envelope(ControlRequestEnvelopeDto {
+            protocol_family: CONTROL_API_PROTOCOL_FAMILY.to_owned(),
+            protocol_version: CONTROL_API_PROTOCOL_VERSION_V1,
+            request_id: "desktop-request-project-authority-repair".to_owned(),
+            client_id: "desktop-client".to_owned(),
+            body: ControlRequestBodyDto::Query {
+                query: ControlQueryDto::State {
+                    query_id: "desktop-query-project-authority-repair".to_owned(),
+                    domain: nucleus_server::ControlStateDomainDto::Projects,
+                    scope: nucleus_server::ControlQueryScopeDto::List,
+                },
+            },
+        })
+        .expect("desktop project list");
+
+    assert!(matches!(
+        response.body,
+        nucleus_server::ControlResponseBodyDto::ProjectRecords { records }
+            if records.len() == 1
+                && records[0].resources.len() == 1
+                && records[0].authority_host_ref == "host:embedded-desktop"
+                && records[0].resources[0].authority_host_ref == "host:embedded-desktop"
+    ));
+
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_dir_all(resource_root);
 }
 
 #[test]

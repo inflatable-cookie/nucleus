@@ -68,6 +68,170 @@ fn panel_resource_targets_round_trip_per_project() {
 }
 
 #[test]
+fn schema_seven_project_store_gains_optional_editor_file_state() {
+    let raw = r#"{
+      "schema_version": 7,
+      "window": {"id": "window:primary", "placement": {"maximized": false}},
+      "project_layouts": {
+        "project:one": {
+          "layout": {
+            "left_center_ratio": 0.2,
+            "center_right_ratio": 0.74,
+            "center_stack_ratio": 0.74,
+            "right_stack_ratio": 0.74
+          },
+          "regions": {
+            "left": [],
+            "right_top": [],
+            "right_bottom": [],
+            "center_top": [{
+              "id": "panel:editor",
+              "kind": "editor",
+              "title": "Editor",
+              "closeable": true,
+              "movable": true,
+              "resource_targets": {"project:one": "resource:one"},
+              "allowed_regions": []
+            }],
+            "center_bottom": []
+          },
+          "active_panels": {"center_top": "panel:editor"}
+        }
+      }
+    }"#;
+
+    let (store, migrated) =
+        super::decode_workspace_ui_store(raw).expect("schema seven store decodes");
+    let normalized = super::normalize_workspace_ui_store(store);
+    let editor = &normalized.project_layouts["project:one"].regions.center_top[0];
+
+    assert!(migrated);
+    assert_eq!(normalized.schema_version, SCHEMA_VERSION);
+    assert_eq!(editor.editor_file, None);
+}
+
+#[test]
+fn editor_file_state_round_trips_and_is_removed_from_other_panel_kinds() {
+    let mut config = default_workspace_ui_config();
+    let editor = super::WorkspaceEditorFileDto {
+        resource_id: Some(" resource:one ".to_owned()),
+        file_ref: " file:src/lib.rs ".to_owned(),
+        display_path: Some(" src/lib.rs ".to_owned()),
+    };
+    config
+        .window
+        .regions
+        .center_top
+        .push(super::WorkspacePanelDto {
+            id: "panel:editor".to_owned(),
+            kind: "editor".to_owned(),
+            title: "Editor".to_owned(),
+            closeable: true,
+            movable: true,
+            resource_targets: std::collections::BTreeMap::new(),
+            editor_file: Some(editor.clone()),
+            forge_diff: None,
+            allowed_regions: vec![],
+        });
+    config
+        .window
+        .regions
+        .right_top
+        .push(super::WorkspacePanelDto {
+            id: "panel:memory".to_owned(),
+            kind: "memory".to_owned(),
+            title: "Memory".to_owned(),
+            closeable: true,
+            movable: true,
+            resource_targets: std::collections::BTreeMap::new(),
+            editor_file: Some(editor),
+            forge_diff: None,
+            allowed_regions: vec![],
+        });
+
+    let normalized = normalize_workspace_ui_config(config);
+    let restored = normalized
+        .window
+        .regions
+        .center_top
+        .iter()
+        .find(|panel| panel.kind == "editor")
+        .and_then(|panel| panel.editor_file.as_ref())
+        .expect("editor file remains");
+
+    assert_eq!(restored.resource_id.as_deref(), Some("resource:one"));
+    assert_eq!(restored.file_ref, "file:src/lib.rs");
+    assert_eq!(restored.display_path.as_deref(), Some("src/lib.rs"));
+    assert!(normalized.window.regions.right_top[0].editor_file.is_none());
+}
+
+#[test]
+fn forge_diff_state_round_trips_and_is_removed_from_other_panel_kinds() {
+    let mut config = default_workspace_ui_config();
+    let target = super::WorkspaceForgeDiffDto {
+        resource_id: " resource:one ".to_owned(),
+        path: " src/lib.rs ".to_owned(),
+        scope: " staged ".to_owned(),
+    };
+    config
+        .window
+        .regions
+        .center_top
+        .push(super::WorkspacePanelDto {
+            id: "panel:forge-diff".to_owned(),
+            kind: "forgeDiff".to_owned(),
+            title: "Changes".to_owned(),
+            closeable: true,
+            movable: true,
+            resource_targets: std::collections::BTreeMap::new(),
+            editor_file: None,
+            forge_diff: Some(target.clone()),
+            allowed_regions: vec![],
+        });
+    config
+        .window
+        .regions
+        .right_top
+        .push(super::WorkspacePanelDto {
+            id: "panel:memory".to_owned(),
+            kind: "memory".to_owned(),
+            title: "Memory".to_owned(),
+            closeable: true,
+            movable: true,
+            resource_targets: std::collections::BTreeMap::new(),
+            editor_file: None,
+            forge_diff: Some(target),
+            allowed_regions: vec![],
+        });
+
+    let normalized = normalize_workspace_ui_config(config);
+    let restored = normalized
+        .window
+        .regions
+        .center_top
+        .iter()
+        .find(|panel| panel.kind == "forgeDiff")
+        .and_then(|panel| panel.forge_diff.as_ref())
+        .expect("Forge diff remains");
+
+    assert_eq!(restored.resource_id, "resource:one");
+    assert_eq!(restored.path, "src/lib.rs");
+    assert_eq!(restored.scope, "staged");
+    assert!(normalized.window.regions.right_top[0].forge_diff.is_none());
+}
+
+#[test]
+fn older_forge_diff_targets_default_to_the_combined_scope() {
+    let target: super::WorkspaceForgeDiffDto = serde_json::from_value(serde_json::json!({
+        "resource_id": "resource:one",
+        "path": "src/lib.rs"
+    }))
+    .expect("legacy Forge diff");
+
+    assert_eq!(target.scope, "all");
+}
+
+#[test]
 fn empty_panel_resource_targets_serialize_as_an_object() {
     let config = default_workspace_ui_config();
     let value = serde_json::to_value(config).expect("encode config");
@@ -75,6 +239,14 @@ fn empty_panel_resource_targets_serialize_as_an_object() {
     assert_eq!(
         value["window"]["regions"]["center_top"][0]["resource_targets"],
         serde_json::json!({})
+    );
+    assert_eq!(
+        value["window"]["regions"]["center_top"][0]["editor_file"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        value["window"]["regions"]["center_top"][0]["forge_diff"],
+        serde_json::Value::Null
     );
 }
 
@@ -375,6 +547,8 @@ fn normalize_repairs_stale_diff_allowed_regions() {
                 "project:multi".to_owned(),
                 "resource:second".to_owned(),
             )]),
+            editor_file: None,
+            forge_diff: None,
             allowed_regions: vec!["center_top".to_owned(), "center_bottom".to_owned()],
         });
 
@@ -415,6 +589,8 @@ fn normalization_keeps_activity_left_and_workspace_tabs_in_main_regions() {
         closeable: true,
         movable: true,
         resource_targets: std::collections::BTreeMap::new(),
+        editor_file: None,
+        forge_diff: None,
         allowed_regions: vec!["left".to_owned()],
     });
     config
@@ -428,6 +604,8 @@ fn normalization_keeps_activity_left_and_workspace_tabs_in_main_regions() {
             closeable: false,
             movable: false,
             resource_targets: std::collections::BTreeMap::new(),
+            editor_file: None,
+            forge_diff: None,
             allowed_regions: vec!["right_bottom".to_owned()],
         });
 

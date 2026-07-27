@@ -464,3 +464,31 @@ Task attribution names the work-item execution window, not a forensic actor.
 Concurrent host writes are disclosed. Unsupported, binary, oversized,
 truncated, missing, expired, or partial evidence stays visible through compact
 states rather than being treated as clean or accepted.
+
+## Forge Working-Copy Surface
+
+Forge groups server-observed repository changes by project, repository, and
+staged or working state. A path with both index and working-tree changes
+appears in both state groups. Selecting either row opens the movable Changes
+panel at that exact comparison scope: staged changes compare index to HEAD,
+working changes compare the working tree to the index, and untracked text uses
+an admitted no-index comparison.
+
+Stage and Unstage are compact row actions over the server observation that
+rendered the group. The server, not Svelte, resolves the resource root,
+validates the status fingerprint and observed path, executes the bounded index
+mutation on the authority host, persists the idempotency receipt, and returns a
+fresh inspection. The UI replaces its repository observation from that result.
+
+Each state-group header may apply the same bounded action to every path in that
+observed group. A compact commit composer appears only when the repository has
+staged paths. Commit captures that index snapshot exactly; it never stages
+working changes. The server disables hooks, signing, prompts, and editor
+fallback, persists only a message digest and sanitized commit receipt, then
+returns fresh status. The message draft remains client-local and clears only
+after a confirmed commit.
+
+Task Diff remains evidence-scoped and does not consume Forge working-copy
+state. The Changes panel is read-only. Discard, hunk mutation, commit, push,
+publication, conflict editing, and forge-network actions remain absent except
+for the explicit bounded local commit control above.

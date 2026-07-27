@@ -319,6 +319,7 @@ shape.
 - `g05/002-workspace-sidebar-modes.md` - completed
 - `g05/003-swallowtail-application-proof-readiness.md` - completed; native
   pilot passed at the exact live ceiling
+- `g05/004-forge-working-copy-controls.md` - active
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -378,9 +379,8 @@ shape.
 
 ## Next Task
 
-Review the completed native pilot evidence and approve or reject Swallowtail
-card 042's read-only sustained Nucleus envelope: 50 planned turns, 55 attempts
-maximum, 5 launches, 10 provider sessions, 2 live children maximum, and 4
-hours. Exact provider rate, quota, usage, and billed-cost evidence is
-unavailable, so turn and time ceilings remain the consumption control.
-Writable task attempts remain excluded.
+Restart the native app and validate `g05/004-forge-working-copy-controls.md`:
+exercise Stage all, Unstage all, and a local commit while one file also has an
+unstaged edit. Confirm the commit captures only the staged content, the fresh
+status preserves the remaining edit, and the Forge interaction stays compact.
+Do not push, discard, or publish.

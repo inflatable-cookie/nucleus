@@ -7,6 +7,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::{GitDryRunRunnerBoundaryRecord, GitDryRunRunnerBoundaryStatus};
 
+mod working_copy;
+pub use working_copy::{
+    commit_scm_working_copy, inspect_scm_working_copy, mutate_scm_working_copy,
+    read_scm_working_copy_diff, ScmWorkingCopyChangeKind, ScmWorkingCopyCommitReceipt,
+    ScmWorkingCopyCommitRequest, ScmWorkingCopyCommitResult, ScmWorkingCopyDiff,
+    ScmWorkingCopyDiffRequest, ScmWorkingCopyDiffScope, ScmWorkingCopyFileStatus,
+    ScmWorkingCopyInspection, ScmWorkingCopyInspectionRequest, ScmWorkingCopyInspectionState,
+    ScmWorkingCopyMutationAction, ScmWorkingCopyMutationReceipt, ScmWorkingCopyMutationRequest,
+    ScmWorkingCopyMutationResult,
+};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitReadOnlyRunnerInput {
     pub handoff: GitDryRunRunnerBoundaryRecord,

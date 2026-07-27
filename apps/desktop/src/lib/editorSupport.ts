@@ -11,6 +11,7 @@ export const SUPPORTED_EDITOR_LANGUAGES = [
 ] as const;
 
 export type EditorFileSwitchAdmission = "confirm" | "ignore" | "open";
+export type ExternalEditorFileAction = "ignore" | "preserve_buffer" | "reload";
 
 export function filterEditorFiles<T extends { display_path: string }>(
   files: readonly T[],
@@ -35,8 +36,48 @@ export function isEditorFileConflict(message: string | null): boolean {
   return message?.toLocaleLowerCase().includes("editor file conflict") ?? false;
 }
 
+export function editorFileWatchTouchesPath(
+  changedPaths: readonly string[],
+  displayPath: string,
+): boolean {
+  const target = normalizeDisplayPath(displayPath);
+  return changedPaths.some((path) => {
+    const changed = normalizeDisplayPath(path);
+    return changed === "" || changed === target || target.startsWith(`${changed}/`);
+  });
+}
+
+export function classifyExternalEditorFileChange(
+  baselineRevision: string,
+  baselineContent: string,
+  buffer: string,
+  diskRevision: string,
+): ExternalEditorFileAction {
+  if (diskRevision === baselineRevision) return "ignore";
+  return buffer === baselineContent ? "reload" : "preserve_buffer";
+}
+
+export type EditorDraftRecovery = "discard" | "restore" | "conflict";
+
+export function classifyEditorDraftRecovery(
+  baseRevision: string,
+  baseContent: string,
+  draftContent: string,
+  diskRevision: string,
+  diskContent: string,
+): EditorDraftRecovery {
+  if (draftContent === baseContent || draftContent === diskContent) {
+    return "discard";
+  }
+  return baseRevision === diskRevision ? "restore" : "conflict";
+}
+
 export function isSupportedEditorLanguage(languageHint: string): boolean {
   return (SUPPORTED_EDITOR_LANGUAGES as readonly string[]).includes(languageHint);
+}
+
+function normalizeDisplayPath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
 }
 
 export async function loadEditorLanguage(languageHint: string): Promise<Extension> {

@@ -117,6 +117,10 @@ impl DesktopProfile {
         self.data_root.join("config").join("ui.json")
     }
 
+    pub fn editor_drafts_path(&self) -> PathBuf {
+        self.data_root.join("state").join("editor-drafts")
+    }
+
     pub fn chat_turn_timeout(&self) -> Duration {
         self.chat_turn_timeout
     }
@@ -159,6 +163,10 @@ mod tests {
             profile.workspace_ui_config_path(),
             Path::new("/Users/example/.nucleus/config/ui.json")
         );
+        assert_eq!(
+            profile.editor_drafts_path(),
+            Path::new("/Users/example/.nucleus/state/editor-drafts")
+        );
         assert_eq!(profile.chat_turn_timeout(), Duration::from_secs(180));
     }
 
@@ -183,6 +191,10 @@ mod tests {
         assert_eq!(
             profile.workspace_ui_config_path(),
             Path::new("/tmp/nucleus-proof/config/ui.json")
+        );
+        assert_eq!(
+            profile.editor_drafts_path(),
+            Path::new("/tmp/nucleus-proof/state/editor-drafts")
         );
         assert_eq!(profile.chat_turn_timeout(), Duration::from_millis(1250));
     }

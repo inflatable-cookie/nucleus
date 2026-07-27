@@ -19,12 +19,13 @@ use nucleus_server::{
     read_forge_status_check_refreshes, seed_local_memory_proposal, seed_local_planning_session,
     seed_local_project_with_resource_root, seed_local_research_run_brief, seed_local_task,
     write_command_evidence, ControlApiCodecError, ControlRequestEnvelopeDto,
-    ControlResponseBodyDto, ControlResponseEnvelopeDto, EditorFileEntry, EditorFileSaveRequest,
-    EditorFileSnapshot, ForgeCredentialStatusRefreshInput,
-    ForgeCredentialStatusRefreshPersistenceInput, ForgeNetworkCredentialKind,
-    ForgeNetworkCredentialResolutionBoundary, ForgeNetworkCredentialStatus,
-    ForgeNetworkExecutionCredentialRef, ForgeNetworkExecutionOperationFamily,
-    ForgePullRequestProvider, ForgePullRequestRefreshInput,
+    ControlResponseBodyDto, ControlResponseEnvelopeDto, EditorDirectoryEntry,
+    EditorFileCreateRequest, EditorFileDeleteReceipt, EditorFileDeleteRequest, EditorFileEntry,
+    EditorFileRenameRequest, EditorFileSaveRequest, EditorFileSnapshot, EditorFileWatchRuntime,
+    ForgeCredentialStatusRefreshInput, ForgeCredentialStatusRefreshPersistenceInput,
+    ForgeNetworkCredentialKind, ForgeNetworkCredentialResolutionBoundary,
+    ForgeNetworkCredentialStatus, ForgeNetworkExecutionCredentialRef,
+    ForgeNetworkExecutionOperationFamily, ForgePullRequestProvider, ForgePullRequestRefreshInput,
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
@@ -39,6 +40,10 @@ use nucleus_server::{
 
 mod browser_panel;
 mod desktop_profile;
+mod editor_directories;
+mod editor_drafts;
+mod editor_file_watch;
+mod scm_working_copy;
 mod terminal_panel;
 mod window_geometry;
 mod workspace_ui;
@@ -47,6 +52,8 @@ struct DesktopState {
     adapter: Arc<Mutex<TauriIpcControlCommandAdapter<SqliteBackend>>>,
     chat: Arc<Mutex<LocalCodexChatService>>,
     chat_cancellation: LocalCodexChatCancellationRegistry,
+    editor_drafts_path: PathBuf,
+    editor_file_watch: EditorFileWatchRuntime,
     server_state: ServerStateService<SqliteBackend>,
     startup_error: Option<String>,
     task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
@@ -69,27 +76,28 @@ fn desktop_startup_status(state: tauri::State<'_, DesktopState>) -> DesktopStart
     }
 }
 
-/// Seed local fixture state once: if the local project record already
-/// exists, the durable store is left untouched.
+/// Seed local fixture state once while still applying bounded migrations to
+/// an existing local project record.
 fn seed_fixture_state(
     handler: &LocalControlRequestHandler<SqliteBackend>,
     proof_fixture_root: Option<&Path>,
 ) -> Result<(), String> {
     let seed = LocalProjectSeed::nucleus_local();
-    let existing = handler
+    let project_exists = handler
         .state()
         .projects()
         .get(&nucleus_core::PersistenceRecordId(seed.project_id.clone()))
-        .map_err(|error| format!("startup storage probe failed: {error}"))?;
-    if existing.is_some() {
-        return Ok(());
-    }
+        .map_err(|error| format!("startup storage probe failed: {error}"))?
+        .is_some();
     seed_local_project_with_resource_root(
         handler.state(),
         seed,
         proof_fixture_root.map(Path::to_path_buf),
     )
     .map_err(|error| format!("startup seed failed at project: {error:?}"))?;
+    if project_exists {
+        return Ok(());
+    }
     seed_local_task(handler.state(), LocalTaskSeed::nucleus_local_bootstrap())
         .map_err(|error| format!("startup seed failed at task: {error:?}"))?;
     seed_local_command_evidence(handler.state())
@@ -130,20 +138,70 @@ async fn list_editor_files(
 }
 
 #[tauri::command]
+async fn search_editor_files(
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+    resource_id: Option<String>,
+    query: String,
+    limit: usize,
+) -> Result<Vec<EditorFileEntry>, String> {
+    let server_state = state.server_state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        nucleus_server::search_editor_files(
+            &server_state,
+            &project_id,
+            resource_id.as_deref(),
+            &query,
+            limit,
+        )
+    })
+    .await
+    .map_err(|_| "desktop editor search worker failed".to_owned())?
+}
+
+#[tauri::command]
+async fn list_editor_directory(
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+    resource_id: Option<String>,
+    directory_path: Option<String>,
+) -> Result<Vec<EditorDirectoryEntry>, String> {
+    let server_state = state.server_state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        nucleus_server::list_editor_directory(
+            &server_state,
+            &project_id,
+            resource_id.as_deref(),
+            directory_path.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| "desktop editor directory worker failed".to_owned())?
+}
+
+#[tauri::command]
 async fn read_editor_file(
     state: tauri::State<'_, DesktopState>,
     project_id: String,
     resource_id: Option<String>,
     file_ref: String,
+    display_path: Option<String>,
 ) -> Result<EditorFileSnapshot, String> {
     let server_state = state.server_state.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        nucleus_server::read_editor_file(
+    tauri::async_runtime::spawn_blocking(move || match display_path {
+        Some(display_path) => nucleus_server::read_editor_file_at_path(
             &server_state,
             &project_id,
             resource_id.as_deref(),
             &file_ref,
-        )
+            &display_path,
+        ),
+        None => nucleus_server::read_editor_file(
+            &server_state,
+            &project_id,
+            resource_id.as_deref(),
+            &file_ref,
+        ),
     })
     .await
     .map_err(|_| "desktop editor worker failed".to_owned())?
@@ -162,6 +220,69 @@ async fn save_editor_file(
     .map_err(|_| "desktop editor worker failed".to_owned())?
 }
 
+#[tauri::command]
+async fn create_editor_file(
+    state: tauri::State<'_, DesktopState>,
+    request: EditorFileCreateRequest,
+) -> Result<EditorFileSnapshot, String> {
+    let server_state = state.server_state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        nucleus_server::create_editor_file(&server_state, &request)
+    })
+    .await
+    .map_err(|_| "desktop editor create worker failed".to_owned())?
+}
+
+#[tauri::command]
+async fn rename_editor_file(
+    state: tauri::State<'_, DesktopState>,
+    request: EditorFileRenameRequest,
+) -> Result<EditorFileSnapshot, String> {
+    let server_state = state.server_state.clone();
+    let drafts_path = state.editor_drafts_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let renamed = nucleus_server::rename_editor_file(&server_state, &request)?;
+        if let Err(error) = editor_drafts::move_file_draft(
+            &drafts_path,
+            &request.project_id,
+            request
+                .resource_id
+                .as_deref()
+                .unwrap_or(&renamed.resource_id),
+            &request.file_ref,
+            &renamed,
+        ) {
+            eprintln!("move editor recovery draft after rename failed: {error}");
+        }
+        Ok(renamed)
+    })
+    .await
+    .map_err(|_| "desktop editor rename worker failed".to_owned())?
+}
+
+#[tauri::command]
+async fn delete_editor_file(
+    state: tauri::State<'_, DesktopState>,
+    request: EditorFileDeleteRequest,
+) -> Result<EditorFileDeleteReceipt, String> {
+    let server_state = state.server_state.clone();
+    let drafts_path = state.editor_drafts_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let deleted = nucleus_server::delete_editor_file(&server_state, &request)?;
+        if let Err(error) = editor_drafts::delete_file_draft(
+            &drafts_path,
+            &deleted.project_id,
+            &deleted.resource_id,
+            &deleted.file_ref,
+        ) {
+            eprintln!("delete editor recovery draft after file removal failed: {error}");
+        }
+        Ok(deleted)
+    })
+    .await
+    .map_err(|_| "desktop editor delete worker failed".to_owned())?
+}
+
 impl DesktopState {
     #[cfg(test)]
     fn new(backend: SqliteBackend) -> Self {
@@ -169,6 +290,7 @@ impl DesktopState {
             backend,
             LocalCodexChatService::default(),
             None,
+            PathBuf::from("target/nucleus-desktop-test/editor-drafts"),
             PathBuf::from("target/nucleus-desktop-test/ui.json"),
             None,
         )
@@ -180,6 +302,7 @@ impl DesktopState {
             backend,
             LocalCodexChatService::default(),
             None,
+            PathBuf::from("target/nucleus-desktop-test/editor-drafts"),
             PathBuf::from("target/nucleus-desktop-test/ui.json"),
             Some(proof_fixture_root),
         )
@@ -188,6 +311,7 @@ impl DesktopState {
     fn new_with_profile(
         backend: SqliteBackend,
         snapshot_root: PathBuf,
+        editor_drafts_path: PathBuf,
         workspace_ui_config_path: PathBuf,
         chat_turn_timeout: std::time::Duration,
         proof_fixture_root: Option<PathBuf>,
@@ -201,6 +325,7 @@ impl DesktopState {
                 chat_turn_timeout,
             ),
             Some(snapshot_store),
+            editor_drafts_path,
             workspace_ui_config_path,
             proof_fixture_root,
         )
@@ -210,6 +335,7 @@ impl DesktopState {
         backend: SqliteBackend,
         chat: LocalCodexChatService,
         task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
+        editor_drafts_path: PathBuf,
         workspace_ui_config_path: PathBuf,
         proof_fixture_root: Option<PathBuf>,
     ) -> Self {
@@ -222,6 +348,8 @@ impl DesktopState {
             adapter: Arc::new(Mutex::new(adapter)),
             chat: Arc::new(Mutex::new(chat)),
             chat_cancellation: LocalCodexChatCancellationRegistry::default(),
+            editor_drafts_path,
+            editor_file_watch: EditorFileWatchRuntime::default(),
             server_state,
             startup_error,
             task_review_snapshot_store,
@@ -681,6 +809,7 @@ pub fn run() {
         .prepare()
         .expect("Nucleus desktop profile should be writable");
     let workspace_ui_config_path = profile.workspace_ui_config_path();
+    let editor_drafts_path = profile.editor_drafts_path();
     let proof_fixture_root = profile.proof_fixture_root().map(Path::to_path_buf);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -688,6 +817,7 @@ pub fn run() {
         .manage(DesktopState::new_with_profile(
             SqliteBackend::new(profile.database_path()),
             profile.snapshot_path(),
+            editor_drafts_path,
             workspace_ui_config_path.clone(),
             profile.chat_turn_timeout(),
             proof_fixture_root,
@@ -716,9 +846,26 @@ pub fn run() {
             load_workspace_ui_config,
             save_workspace_ui_config,
             desktop_startup_status,
+            list_editor_directory,
             list_editor_files,
+            search_editor_files,
             read_editor_file,
             save_editor_file,
+            create_editor_file,
+            rename_editor_file,
+            delete_editor_file,
+            editor_directories::create_editor_directory,
+            editor_directories::rename_editor_directory,
+            editor_directories::delete_editor_directory,
+            editor_drafts::editor_draft_load,
+            editor_drafts::editor_draft_save,
+            editor_drafts::editor_draft_delete,
+            editor_file_watch::editor_file_watch_start,
+            editor_file_watch::editor_file_watch_stop,
+            scm_working_copy::inspect_scm_working_copies,
+            scm_working_copy::read_scm_working_copy_diff_command,
+            scm_working_copy::mutate_scm_working_copy_command,
+            scm_working_copy::commit_scm_working_copy_command,
             read_task_diff_overview,
             read_task_diff_file_patch,
             read_task_review_decisions,

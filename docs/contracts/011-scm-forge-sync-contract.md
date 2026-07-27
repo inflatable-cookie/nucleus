@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-16
+Updated: 2026-07-27
 Spec refs: `docs/specs/002-git-backed-project-management-state.md`
 
 ## Purpose
@@ -1187,6 +1187,90 @@ AI conflict-resolution proposals are reviewable repair plans. Mechanical
 conflict repairs may be applied under steward policy. Semantic conflict
 repairs require human approval. All applied repairs must retain sanitized audit
 evidence.
+
+## First Working-Copy Staging Control
+
+The first writable Forge control is limited to Git index staging and
+unstaging. It is an explicit operator action over paths already present in a
+fresh server-owned working-copy observation.
+
+Each request must include:
+
+- project and Git resource identity
+- `stage` or `unstage`
+- one or more exact observed paths
+- the expected working-copy status fingerprint
+- a stable idempotency key
+
+The authority host injects operator and execution-host identity. The server
+must resolve the exact resource root, verify that it is the resource authority
+host, re-inspect status, reject stale fingerprints, and verify every path is
+eligible for the requested transition before executing one bounded Git
+command. The client must not provide executable names, arguments, working
+directories, or raw paths outside the observed change set.
+
+`stage` may update the index from tracked, deleted, or untracked working-copy
+paths. `unstage` may reset exact staged paths back to the current HEAD or
+unborn-index baseline without changing working-tree content. A file with both
+staged and working changes may appear in both groups; staging it admits the
+newer working content, while unstaging it removes the staged selection and
+keeps the working content.
+
+Successful actions must produce a durable sanitized receipt binding the
+idempotency key to the request fingerprint, operator, execution host, paths,
+and before/after status fingerprints. Replays return the existing receipt and
+must not execute Git again. Reusing a key for another request is rejected.
+Command stdout, stderr, absolute resource paths, and raw index material are not
+persisted.
+
+This slice grants no authority to discard working changes, apply hunks, edit
+conflicts, switch refs, commit, capture, push, publish, open review requests,
+or call a forge. Those remain separately admitted actions.
+
+## First Working-Copy Commit Control
+
+The first live commit control is an explicit operator request to capture the
+already-staged Git index for one project resource. It is separate from the
+stopped commit-runner proof and does not imply task, Goal, publication, or
+change-request authority.
+
+Each request must include:
+
+- project and Git resource identity
+- a non-empty operator-authored commit message
+- the exact expected working-copy status fingerprint
+- a stable idempotency key
+
+The authority host injects operator and execution-host identity. The server
+must resolve the exact resource root, verify its authority host, re-inspect the
+working copy, reject stale fingerprints, require at least one staged path, and
+reject unresolved conflicts. It must commit the index only. It must not stage
+working-tree changes implicitly.
+
+The Git adapter must provide the message without shell interpolation or
+exposing it as a command-line argument. Repository hooks, external signing,
+interactive editors, and credential prompts must be disabled for this first
+slice. The client must not provide executable names, arguments, environment,
+working directories, author overrides, hook policy, or signing policy.
+
+A successful commit returns a fresh working-copy inspection and persists a
+sanitized idempotency receipt binding:
+
+- project, resource, operator, and execution host
+- the request fingerprint and message digest, not raw message text
+- the staged paths observed before execution
+- before and after status fingerprints
+- previous and resulting commit object ids
+
+Replays return the existing receipt without executing Git. Reusing a key for
+another request is rejected. Command stdout, stderr, raw commit messages,
+absolute paths, author identity, and repository configuration are not
+persisted.
+
+This slice grants no authority to amend, fix up, squash, merge, sign, run
+hooks, change author identity, stage additional content, discard changes,
+switch refs, push, publish, open review requests, mutate tasks, or call a
+forge.
 
 ## Observation Policy
 

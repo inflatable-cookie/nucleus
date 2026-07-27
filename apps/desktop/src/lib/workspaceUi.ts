@@ -7,7 +7,21 @@ export type WorkspacePanelDto = {
   closeable: boolean;
   movable: boolean;
   resource_targets: Record<string, string>;
+  editor_file: WorkspaceEditorFileDto | null;
+  forge_diff: WorkspaceForgeDiffDto | null;
   allowed_regions: RegionKey[];
+};
+
+export type WorkspaceEditorFileDto = {
+  resource_id: string | null;
+  file_ref: string;
+  display_path: string | null;
+};
+
+export type WorkspaceForgeDiffDto = {
+  resource_id: string;
+  path: string;
+  scope: "all" | "staged" | "working";
 };
 
 export type RegionKey =
@@ -59,6 +73,8 @@ const EMPTY_WORKSPACE_PANEL: WorkspacePanelDto = {
   closeable: false,
   movable: false,
   resource_targets: {},
+  editor_file: null,
+  forge_diff: null,
   allowed_regions: [],
 };
 
@@ -145,6 +161,8 @@ function panel(
     closeable,
     movable,
     resource_targets: {},
+    editor_file: null,
+    forge_diff: null,
     allowed_regions: allowedRegionsForKind(kind),
   };
 }
@@ -173,6 +191,8 @@ function panelLabelForKind(kind: string): string {
       return "Editor";
     case "diff":
       return "Diff";
+    case "forgeDiff":
+      return "Changes";
     case "memory":
       return "Memory";
     default:

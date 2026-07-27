@@ -31,6 +31,10 @@
   onMount(() => {
     const stored = window.localStorage.getItem(storageKey);
     if (isSidebarMode(stored)) activeMode = stored;
+    window.addEventListener("nucleus:reveal-editor-file", handleEditorFileReveal);
+    return () => {
+      window.removeEventListener("nucleus:reveal-editor-file", handleEditorFileReveal);
+    };
   });
 
   function selectMode(value: string): void {
@@ -44,6 +48,10 @@
       || value === "threads"
       || value === "files"
       || value === "forge";
+  }
+
+  function handleEditorFileReveal(): void {
+    selectMode("files");
   }
 </script>
 

@@ -1,18 +1,38 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use nucleus_local_store::LocalStoreBackend;
 use serde::{Deserialize, Serialize};
 
 use crate::project_file_policy::{
-    admitted_path, admitted_project_walk, MAX_ADMITTED_PROJECT_FILES, MAX_PROJECT_TEXT_FILE_BYTES,
+    admitted_path, admitted_project_directory_walk, admitted_project_walk,
+    MAX_ADMITTED_PROJECT_FILES, MAX_PROJECT_TEXT_FILE_BYTES,
 };
 use crate::project_resource_target::resolve_project_resource_target;
 use crate::ServerStateService;
 
+mod directories;
+mod mutations;
+mod watch;
+pub use directories::{
+    create_editor_directory, delete_editor_directory, rename_editor_directory,
+    EditorDirectoryCreateRequest, EditorDirectoryDeleteReceipt, EditorDirectoryDeleteRequest,
+    EditorDirectoryReceipt, EditorDirectoryRenameReceipt, EditorDirectoryRenameRequest,
+    EditorFileMoveReceipt,
+};
+pub use mutations::{create_editor_file, delete_editor_file, rename_editor_file};
+pub use watch::{EditorFileWatchEvent, EditorFileWatchEventSink, EditorFileWatchRuntime};
+
 const MAX_EDITOR_FILE_BYTES: u64 = MAX_PROJECT_TEXT_FILE_BYTES;
 const MAX_DISCOVERED_FILES: usize = MAX_ADMITTED_PROJECT_FILES;
+const MAX_EDITOR_SEARCH_RESULTS: usize = 200;
+const DISCOVERY_TTL: Duration = Duration::from_secs(2);
+type DiscoveryCache = HashMap<PathBuf, (Instant, Vec<EditorFileEntry>)>;
+static DISCOVERY_CACHE: OnceLock<Mutex<DiscoveryCache>> = OnceLock::new();
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EditorFileEntry {
@@ -21,6 +41,22 @@ pub struct EditorFileEntry {
     pub language_hint: String,
     pub byte_size: u64,
     pub writable: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditorDirectoryEntryKind {
+    Directory,
+    File,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EditorDirectoryEntry {
+    pub name: String,
+    pub display_path: String,
+    pub kind: EditorDirectoryEntryKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<EditorFileEntry>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -42,8 +78,47 @@ pub struct EditorFileSaveRequest {
     #[serde(default)]
     pub resource_id: Option<String>,
     pub file_ref: String,
+    #[serde(default)]
+    pub display_path: Option<String>,
     pub expected_content_revision: String,
     pub content: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EditorFileCreateRequest {
+    pub project_id: String,
+    #[serde(default)]
+    pub resource_id: Option<String>,
+    pub display_path: String,
+    #[serde(default)]
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EditorFileRenameRequest {
+    pub project_id: String,
+    #[serde(default)]
+    pub resource_id: Option<String>,
+    pub file_ref: String,
+    pub display_path: String,
+    pub target_display_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EditorFileDeleteRequest {
+    pub project_id: String,
+    #[serde(default)]
+    pub resource_id: Option<String>,
+    pub file_ref: String,
+    pub display_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EditorFileDeleteReceipt {
+    pub project_id: String,
+    pub resource_id: String,
+    pub file_ref: String,
+    pub display_path: String,
 }
 
 pub fn list_editor_files<B>(
@@ -58,6 +133,51 @@ where
     discover(&target.root)
 }
 
+pub fn search_editor_files<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+    resource_id: Option<&str>,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<EditorFileEntry>, String>
+where
+    B: LocalStoreBackend,
+{
+    let target = resolve_project_resource_target(state, project_id, resource_id)?;
+    let query = query.trim().to_lowercase();
+    let limit = limit.clamp(1, MAX_EDITOR_SEARCH_RESULTS);
+    let mut matches = cached_discover(&target.root)?
+        .into_iter()
+        .filter_map(|entry| {
+            let rank = editor_search_rank(&entry.display_path, &query)?;
+            Some((rank, entry))
+        })
+        .collect::<Vec<_>>();
+    matches.sort_by(|(left_rank, left), (right_rank, right)| {
+        left_rank
+            .cmp(right_rank)
+            .then_with(|| left.display_path.cmp(&right.display_path))
+    });
+    Ok(matches
+        .into_iter()
+        .take(limit)
+        .map(|(_, entry)| entry)
+        .collect())
+}
+
+pub fn list_editor_directory<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+    resource_id: Option<&str>,
+    directory_path: Option<&str>,
+) -> Result<Vec<EditorDirectoryEntry>, String>
+where
+    B: LocalStoreBackend,
+{
+    let target = resolve_project_resource_target(state, project_id, resource_id)?;
+    discover_directory(&target.root, directory_path)
+}
+
 pub fn read_editor_file<B>(
     state: &ServerStateService<B>,
     project_id: &str,
@@ -69,6 +189,21 @@ where
 {
     let target = resolve_project_resource_target(state, project_id, resource_id)?;
     let entry = resolve_entry(&target.root, file_ref)?;
+    snapshot(project_id, &target.resource_id, &target.root, &entry)
+}
+
+pub fn read_editor_file_at_path<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+    resource_id: Option<&str>,
+    file_ref: &str,
+    display_path: &str,
+) -> Result<EditorFileSnapshot, String>
+where
+    B: LocalStoreBackend,
+{
+    let target = resolve_project_resource_target(state, project_id, resource_id)?;
+    let entry = resolve_entry_at_path(&target.root, file_ref, display_path)?;
     snapshot(project_id, &target.resource_id, &target.root, &entry)
 }
 
@@ -88,7 +223,10 @@ where
         request.resource_id.as_deref(),
     )?;
     let root = target.root;
-    let entry = resolve_entry(&root, &request.file_ref)?;
+    let entry = match request.display_path.as_deref() {
+        Some(display_path) => resolve_entry_at_path(&root, &request.file_ref, display_path)?,
+        None => resolve_entry(&root, &request.file_ref)?,
+    };
     if !entry.writable {
         return Err("editor file is read-only".to_owned());
     }
@@ -156,6 +294,87 @@ fn discover(root: &Path) -> Result<Vec<EditorFileEntry>, String> {
     Ok(entries)
 }
 
+fn discover_directory(
+    root: &Path,
+    directory_path: Option<&str>,
+) -> Result<Vec<EditorDirectoryEntry>, String> {
+    let directory = resolve_directory(root, directory_path)?;
+    let mut entries = Vec::new();
+
+    for result in admitted_project_directory_walk(&directory) {
+        let entry =
+            result.map_err(|error| format!("editor directory discovery failed: {error}"))?;
+        if entry.path() == directory {
+            continue;
+        }
+        let Some(file_type) = entry.file_type() else {
+            continue;
+        };
+        let relative = entry
+            .path()
+            .strip_prefix(root)
+            .map_err(|_| "editor directory entry escaped the project root".to_owned())?;
+        let display_path = relative.to_string_lossy().replace('\\', "/");
+        let name = entry.file_name().to_string_lossy().into_owned();
+
+        if file_type.is_dir() {
+            entries.push(EditorDirectoryEntry {
+                name,
+                display_path,
+                kind: EditorDirectoryEntryKind::Directory,
+                file: None,
+            });
+        } else if file_type.is_file() {
+            let metadata = entry
+                .metadata()
+                .map_err(|error| format!("editor file metadata failed: {error}"))?;
+            if metadata.len() > MAX_EDITOR_FILE_BYTES || !is_text_file(entry.path())? {
+                continue;
+            }
+            entries.push(EditorDirectoryEntry {
+                name,
+                display_path: display_path.clone(),
+                kind: EditorDirectoryEntryKind::File,
+                file: Some(EditorFileEntry {
+                    file_ref: file_ref(&display_path),
+                    language_hint: language_hint(&display_path).to_owned(),
+                    display_path,
+                    byte_size: metadata.len(),
+                    writable: !metadata.permissions().readonly(),
+                }),
+            });
+        }
+
+        if entries.len() >= MAX_DISCOVERED_FILES {
+            break;
+        }
+    }
+
+    entries.sort_by(|left, right| {
+        let left_directory = left.kind == EditorDirectoryEntryKind::Directory;
+        let right_directory = right.kind == EditorDirectoryEntryKind::Directory;
+        right_directory
+            .cmp(&left_directory)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(entries)
+}
+
+fn resolve_directory(root: &Path, directory_path: Option<&str>) -> Result<PathBuf, String> {
+    let directory = match directory_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        Some(path) => admitted_path(root, path)?,
+        None => root.to_path_buf(),
+    };
+    if !directory.is_dir() {
+        return Err("editor directory is unavailable".to_owned());
+    }
+    Ok(directory)
+}
+
 fn resolve_entry(root: &Path, expected_ref: &str) -> Result<EditorFileEntry, String> {
     cached_discover(root)?
         .into_iter()
@@ -163,24 +382,65 @@ fn resolve_entry(root: &Path, expected_ref: &str) -> Result<EditorFileEntry, Str
         .ok_or_else(|| "editor file ref was not found in the admitted project files".to_owned())
 }
 
+fn resolve_entry_at_path(
+    root: &Path,
+    expected_ref: &str,
+    display_path: &str,
+) -> Result<EditorFileEntry, String> {
+    let relative = Path::new(display_path);
+    if relative.is_absolute() {
+        return Err("editor file path must be relative to the project resource".to_owned());
+    }
+    let directory_path = relative
+        .parent()
+        .and_then(Path::to_str)
+        .filter(|path| !path.is_empty());
+    discover_directory(root, directory_path)?
+        .into_iter()
+        .filter_map(|entry| entry.file)
+        .find(|entry| entry.display_path == display_path && entry.file_ref == expected_ref)
+        .ok_or_else(|| "editor file ref was not found in the admitted directory".to_owned())
+}
+
+pub(crate) fn admitted_editor_file_ref_at_path(root: &Path, display_path: &str) -> Option<String> {
+    let expected_ref = file_ref(display_path);
+    resolve_entry_at_path(root, &expected_ref, display_path)
+        .ok()
+        .map(|entry| entry.file_ref)
+}
+
+fn editor_search_rank(display_path: &str, query: &str) -> Option<(u8, usize, usize)> {
+    if query.is_empty() {
+        return Some((0, 0, display_path.len()));
+    }
+
+    let path = display_path.to_lowercase();
+    let name = path.rsplit('/').next().unwrap_or(path.as_str());
+    let (class, position) = if name == query {
+        (0, 0)
+    } else if name.starts_with(query) {
+        (1, 0)
+    } else if let Some(position) = name.find(query) {
+        (2, position)
+    } else if path.starts_with(query) {
+        (3, 0)
+    } else if let Some(position) = path.find(query) {
+        (4, position)
+    } else {
+        return None;
+    };
+    Some((class, position, display_path.len()))
+}
+
 /// Short-lived discovery cache: every open and save used to re-walk and
 /// re-probe the whole project. Entries expire quickly so external file
 /// changes still appear; saves go through `snapshot` re-reads regardless.
 fn cached_discover(root: &Path) -> Result<Vec<EditorFileEntry>, String> {
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-    use std::sync::Mutex;
-    use std::time::{Duration, Instant};
-
-    const DISCOVERY_TTL: Duration = Duration::from_secs(2);
-    static CACHE: Mutex<Option<HashMap<PathBuf, (Instant, Vec<EditorFileEntry>)>>> =
-        Mutex::new(None);
-
     let key = root.to_path_buf();
-    let mut guard = CACHE
+    let mut cache = DISCOVERY_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .map_err(|_| "editor discovery cache lock poisoned".to_owned())?;
-    let cache = guard.get_or_insert_with(HashMap::new);
     if let Some((at, entries)) = cache.get(&key) {
         if at.elapsed() < DISCOVERY_TTL {
             return Ok(entries.clone());
@@ -189,6 +449,15 @@ fn cached_discover(root: &Path) -> Result<Vec<EditorFileEntry>, String> {
     let entries = discover(root)?;
     cache.insert(key, (Instant::now(), entries.clone()));
     Ok(entries)
+}
+
+pub(crate) fn invalidate_editor_file_discovery(root: &Path) {
+    let Some(cache) = DISCOVERY_CACHE.get() else {
+        return;
+    };
+    if let Ok(mut cache) = cache.lock() {
+        cache.remove(root);
+    }
 }
 
 fn snapshot(
@@ -333,14 +602,30 @@ mod tests {
             .iter()
             .find(|file| file.display_path == "demo.rs")
             .expect("demo");
-        let opened =
-            read_editor_file(&state, "project:nucleus-local", None, &demo.file_ref).expect("read");
+        let opened = read_editor_file_at_path(
+            &state,
+            "project:nucleus-local",
+            None,
+            &demo.file_ref,
+            &demo.display_path,
+        )
+        .expect("direct admitted read");
+        assert!(read_editor_file_at_path(
+            &state,
+            "project:nucleus-local",
+            None,
+            &file_ref("ignored.rs"),
+            "ignored.rs",
+        )
+        .expect_err("ignored direct path")
+        .contains("admitted directory"));
         let saved = save_editor_file(
             &state,
             &EditorFileSaveRequest {
                 project_id: opened.project_id.clone(),
                 resource_id: Some(opened.resource_id.clone()),
                 file_ref: opened.file_ref.clone(),
+                display_path: Some(opened.display_path.clone()),
                 expected_content_revision: opened.content_revision.clone(),
                 content: "fn main() { println!(\"ok\"); }\n".to_owned(),
             },
@@ -354,12 +639,211 @@ mod tests {
                 project_id: opened.project_id,
                 resource_id: Some(opened.resource_id),
                 file_ref: opened.file_ref,
+                display_path: Some(opened.display_path),
                 expected_content_revision: opened.content_revision,
                 content: "stale".to_owned(),
             }
         )
         .expect_err("conflict")
         .contains("conflict"));
+    }
+
+    #[test]
+    fn directory_discovery_only_reads_the_requested_level() {
+        let (dir, state) = fixture();
+        fs::create_dir_all(dir.path().join("src/nested")).expect("nested directories");
+        fs::write(dir.path().join("README.md"), "root").expect("root file");
+        fs::write(dir.path().join("src/lib.rs"), "pub fn demo() {}\n").expect("child file");
+        fs::write(dir.path().join("src/nested/deep.rs"), "pub fn deep() {}\n").expect("deep file");
+        fs::write(dir.path().join("src/binary.bin"), b"a\0b").expect("binary file");
+
+        let root =
+            list_editor_directory(&state, "project:nucleus-local", None, None).expect("root");
+        assert!(root.iter().any(|entry| {
+            entry.kind == EditorDirectoryEntryKind::Directory && entry.display_path == "src"
+        }));
+        assert!(root.iter().any(|entry| {
+            entry.kind == EditorDirectoryEntryKind::File && entry.display_path == "README.md"
+        }));
+        assert!(!root.iter().any(|entry| entry.display_path == "src/lib.rs"));
+
+        let src =
+            list_editor_directory(&state, "project:nucleus-local", None, Some("src")).expect("src");
+        assert!(src.iter().any(|entry| {
+            entry.kind == EditorDirectoryEntryKind::Directory && entry.display_path == "src/nested"
+        }));
+        assert!(src.iter().any(|entry| {
+            entry.kind == EditorDirectoryEntryKind::File && entry.display_path == "src/lib.rs"
+        }));
+        assert!(!src.iter().any(|entry| matches!(
+            entry.display_path.as_str(),
+            "src/nested/deep.rs" | "src/binary.bin"
+        )));
+    }
+
+    #[test]
+    fn create_rename_and_delete_stay_inside_admitted_project_files() {
+        let (dir, state) = fixture();
+        fs::create_dir(dir.path().join("src")).expect("src");
+
+        let created = create_editor_file(
+            &state,
+            &EditorFileCreateRequest {
+                project_id: "project:nucleus-local".to_owned(),
+                resource_id: None,
+                display_path: "src/new.rs".to_owned(),
+                content: "pub fn new() {}\n".to_owned(),
+            },
+        )
+        .expect("create");
+        assert_eq!(created.display_path, "src/new.rs");
+        assert_eq!(created.content, "pub fn new() {}\n");
+        assert!(create_editor_file(
+            &state,
+            &EditorFileCreateRequest {
+                project_id: "project:nucleus-local".to_owned(),
+                resource_id: None,
+                display_path: "src/new.rs".to_owned(),
+                content: String::new(),
+            },
+        )
+        .expect_err("create collision")
+        .contains("exists"));
+
+        let renamed = rename_editor_file(
+            &state,
+            &EditorFileRenameRequest {
+                project_id: created.project_id.clone(),
+                resource_id: Some(created.resource_id.clone()),
+                file_ref: created.file_ref.clone(),
+                display_path: created.display_path.clone(),
+                target_display_path: "src/renamed.rs".to_owned(),
+            },
+        )
+        .expect("rename");
+        assert_eq!(renamed.display_path, "src/renamed.rs");
+        assert_ne!(renamed.file_ref, created.file_ref);
+        assert!(!dir.path().join("src/new.rs").exists());
+
+        let deleted = delete_editor_file(
+            &state,
+            &EditorFileDeleteRequest {
+                project_id: renamed.project_id.clone(),
+                resource_id: Some(renamed.resource_id.clone()),
+                file_ref: renamed.file_ref.clone(),
+                display_path: renamed.display_path.clone(),
+            },
+        )
+        .expect("delete");
+        assert_eq!(deleted.display_path, "src/renamed.rs");
+        assert!(!dir.path().join("src/renamed.rs").exists());
+
+        assert!(create_editor_file(
+            &state,
+            &EditorFileCreateRequest {
+                project_id: "project:nucleus-local".to_owned(),
+                resource_id: None,
+                display_path: "../escaped.txt".to_owned(),
+                content: String::new(),
+            },
+        )
+        .expect_err("parent traversal")
+        .contains("not admitted"));
+        assert!(create_editor_file(
+            &state,
+            &EditorFileCreateRequest {
+                project_id: "project:nucleus-local".to_owned(),
+                resource_id: None,
+                display_path: ".git/escaped.txt".to_owned(),
+                content: String::new(),
+            },
+        )
+        .expect_err("hard excluded path")
+        .contains("not admitted"));
+    }
+
+    #[test]
+    fn create_rename_and_delete_folders_return_editor_identity_changes() {
+        let (dir, state) = fixture();
+        fs::create_dir(dir.path().join("src")).expect("src");
+
+        let created = create_editor_directory(
+            &state,
+            &EditorDirectoryCreateRequest {
+                project_id: "project:nucleus-local".to_owned(),
+                resource_id: None,
+                display_path: "src/generated".to_owned(),
+            },
+        )
+        .expect("create folder");
+        assert_eq!(created.display_path, "src/generated");
+        fs::write(
+            dir.path().join("src/generated/demo.rs"),
+            "pub fn demo() {}\n",
+        )
+        .expect("nested file");
+
+        let renamed = rename_editor_directory(
+            &state,
+            &EditorDirectoryRenameRequest {
+                project_id: created.project_id.clone(),
+                resource_id: Some(created.resource_id.clone()),
+                display_path: created.display_path.clone(),
+                target_display_path: "src/moved".to_owned(),
+            },
+        )
+        .expect("rename folder");
+        assert_eq!(renamed.target_display_path, "src/moved");
+        assert_eq!(renamed.files.len(), 1);
+        assert_eq!(renamed.files[0].display_path, "src/generated/demo.rs");
+        assert_eq!(renamed.files[0].target_display_path, "src/moved/demo.rs");
+        assert_ne!(renamed.files[0].file_ref, renamed.files[0].target_file_ref);
+        assert!(dir.path().join("src/moved/demo.rs").exists());
+
+        let deleted = delete_editor_directory(
+            &state,
+            &EditorDirectoryDeleteRequest {
+                project_id: renamed.project_id,
+                resource_id: Some(renamed.resource_id),
+                display_path: renamed.target_display_path,
+            },
+        )
+        .expect("delete folder");
+        assert_eq!(deleted.files.len(), 1);
+        assert_eq!(deleted.files[0].display_path, "src/moved/demo.rs");
+        assert!(!dir.path().join("src/moved").exists());
+
+        assert!(create_editor_directory(
+            &state,
+            &EditorDirectoryCreateRequest {
+                project_id: "project:nucleus-local".to_owned(),
+                resource_id: None,
+                display_path: ".git/generated".to_owned(),
+            },
+        )
+        .expect_err("hard excluded folder")
+        .contains("not admitted"));
+    }
+
+    #[test]
+    fn quick_open_search_is_ranked_and_bounded() {
+        let (dir, state) = fixture();
+        fs::create_dir_all(dir.path().join("src/nested")).expect("directories");
+        fs::write(dir.path().join("src/app.rs"), "app").expect("app");
+        fs::write(dir.path().join("src/nested/app_helpers.rs"), "helpers").expect("helpers");
+        fs::write(dir.path().join("src/nested/my_app.rs"), "nested app").expect("nested app");
+        fs::write(dir.path().join("src/unrelated.rs"), "unrelated").expect("unrelated");
+
+        let matches =
+            search_editor_files(&state, "project:nucleus-local", None, "app", 2).expect("search");
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].display_path, "src/app.rs");
+        assert_eq!(matches[1].display_path, "src/nested/app_helpers.rs");
+
+        let empty =
+            search_editor_files(&state, "project:nucleus-local", None, "", 1).expect("empty");
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].display_path, "src/app.rs");
     }
 
     #[test]

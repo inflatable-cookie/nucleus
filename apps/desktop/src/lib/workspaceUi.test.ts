@@ -7,7 +7,7 @@ import {
 } from "./workspaceUi";
 
 const config: WorkspaceUiConfigDto = {
-  schema_version: 7,
+  schema_version: 10,
   window: {
     id: "window:primary",
     placement: { maximized: false },
@@ -51,6 +51,8 @@ describe("workspacePanelFor", () => {
     closeable: true,
     movable: true,
     resource_targets: {},
+    editor_file: null,
+    forge_diff: null,
     allowed_regions: ["center_top"],
   };
 

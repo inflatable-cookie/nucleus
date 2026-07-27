@@ -135,15 +135,25 @@ where
             encode_project_storage_record(&project),
         )
     } else {
-        let Some(resource) = decoded.resources.iter_mut().find(|resource| {
-            resource.resource_id == "resource:nucleus-local"
-                && resource.authority_host_ref == "host:local"
-        }) else {
+        let embedded_host_ref = project_from_seed(seed, None).authority_host_ref;
+        let mut repaired = false;
+        if decoded.authority_host_ref == "host:local" {
+            decoded.authority_host_ref = embedded_host_ref.clone();
+            repaired = true;
+        }
+        for resource in decoded
+            .resources
+            .iter_mut()
+            .filter(|resource| resource.authority_host_ref == "host:local")
+        {
+            resource.authority_host_ref = embedded_host_ref.clone();
+            repaired = true;
+        }
+        if !repaired {
             return Ok(None);
-        };
-        resource.authority_host_ref = decoded.authority_host_ref.clone();
+        }
         (
-            "rev:seed:resource-authority:1",
+            "rev:seed:resource-authority:2",
             encode_project_storage_payload(&decoded),
         )
     };
@@ -369,7 +379,7 @@ mod tests {
             seed_local_project(handler.state(), LocalProjectSeed::nucleus_local()).expect("repair");
         let decoded = decode_project_storage_record(&repaired.payload.bytes).expect("project");
 
-        assert_eq!(repaired.revision_id.0, "rev:seed:resource-authority:1");
+        assert_eq!(repaired.revision_id.0, "rev:seed:resource-authority:2");
         assert_eq!(
             decoded.resources[0].authority_host_ref,
             "host:embedded-desktop"

@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-25
+Updated: 2026-07-27
 
 ## Purpose
 
@@ -37,3 +37,4 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 - `002-workspace-sidebar-modes.md` - completed
 - `003-swallowtail-application-proof-readiness.md` - completed; all 12 native
   pilot outcomes passed at the exact 15-attempt and 6-session ceiling
+- `004-forge-working-copy-controls.md` - active

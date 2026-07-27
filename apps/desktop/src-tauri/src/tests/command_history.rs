@@ -80,6 +80,8 @@ fn desktop_command_history_uses_sanitized_dto_not_storage_payloads() {
         ))),
         chat: Arc::new(Mutex::new(LocalCodexChatService::default())),
         chat_cancellation: Default::default(),
+        editor_drafts_path: Default::default(),
+        editor_file_watch: Default::default(),
         server_state: ServerStateService::new(backend),
         startup_error: None,
         task_review_snapshot_store: None,

@@ -1,13 +1,20 @@
 <script lang="ts">
   import { Icon, Text } from "@poodle/svelte";
-  import { gitBranch, gitFork, refreshCw } from "@poodle/icons-lucide";
+  import { refreshCw } from "@poodle/icons-lucide";
   import { onMount } from "svelte";
   import {
     buildStateListQuery,
+    commitScmWorkingCopy,
+    inspectScmWorkingCopies,
+    mutateScmWorkingCopy,
     projectRecordsFromResponse,
     submitControlEnvelope,
     type ControlProjectRecordDto,
+    type ScmWorkingCopyFileStatus,
+    type ScmWorkingCopyInspection,
+    type ScmWorkingCopyMutationAction,
   } from "./control";
+  import ForgeRepositoryNode from "./ForgeRepositoryNode.svelte";
 
   let {
     selectedProjectId = $bindable(null),
@@ -16,8 +23,15 @@
   } = $props();
 
   let projects = $state<ControlProjectRecordDto[]>([]);
+  let inspections = $state<Record<string, ScmWorkingCopyInspection>>({});
+  let expandedRepositories = $state<Set<string>>(new Set());
   let loading = $state(false);
   let failure = $state<string | null>(null);
+  let mutationKey = $state<string | null>(null);
+  let mutationFailure = $state<string | null>(null);
+  let commitMessages = $state<Record<string, string>>({});
+  let repositoryNotices = $state<Record<string, string>>({});
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   const repositoryProjects = $derived(projects
     .map((project) => ({
@@ -28,9 +42,19 @@
   const repositoryCount = $derived(
     repositoryProjects.reduce((total, entry) => total + entry.repositories.length, 0),
   );
+  const changeCount = $derived(
+    Object.values(inspections).reduce((total, inspection) => total + inspection.files.length, 0),
+  );
 
   onMount(() => {
     void loadRepositories();
+    window.addEventListener("nucleus:editor-files-changed", scheduleStatusRefresh);
+    window.addEventListener("nucleus:scm-working-copy-changed", scheduleStatusRefresh);
+    return () => {
+      window.removeEventListener("nucleus:editor-files-changed", scheduleStatusRefresh);
+      window.removeEventListener("nucleus:scm-working-copy-changed", scheduleStatusRefresh);
+      if (refreshTimer) clearTimeout(refreshTimer);
+    };
   });
 
   async function loadRepositories(): Promise<void> {
@@ -38,28 +62,200 @@
     failure = null;
     try {
       const response = await submitControlEnvelope(buildStateListQuery("projects"));
-      projects = projectRecordsFromResponse(response);
+      const loadedProjects = projectRecordsFromResponse(response);
+      projects = loadedProjects;
+      await loadStatuses(loadedProjects);
     } catch (caught) {
       failure = caught instanceof Error ? caught.message : String(caught);
     } finally {
       loading = false;
     }
   }
+
+  async function loadStatuses(sourceProjects = projects): Promise<void> {
+    const requests = sourceProjects.flatMap((project) =>
+      project.resources
+        .filter((resource) =>
+          resource.kind === "git_repository"
+          && resource.location_status === "present"
+          && resource.locator_available
+        )
+        .map((resource) => ({
+          project_id: project.project_id,
+          resource_id: resource.resource_id,
+        }))
+    );
+    if (requests.length === 0) {
+      inspections = {};
+      return;
+    }
+    const results = await inspectScmWorkingCopies(requests);
+    inspections = Object.fromEntries(results.map((result) => [
+      repositoryKey(result.project_id, result.resource_id),
+      result,
+    ]));
+  }
+
+  function scheduleStatusRefresh(): void {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      void loadStatuses().catch((caught) => {
+        failure = caught instanceof Error ? caught.message : String(caught);
+      });
+    }, 250);
+  }
+
+  function repositoryKey(projectId: string, resourceId: string): string {
+    return `${projectId}:${resourceId}`;
+  }
+
+  function toggleRepository(projectId: string, resourceId: string): void {
+    const key = repositoryKey(projectId, resourceId);
+    const next = new Set(expandedRepositories);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    expandedRepositories = next;
+  }
+
+  function openChangedDiff(
+    projectId: string,
+    resourceId: string,
+    file: ScmWorkingCopyFileStatus,
+    scope: "staged" | "working",
+  ): void {
+    selectedProjectId = projectId;
+    window.dispatchEvent(new CustomEvent("nucleus:open-forge-diff", {
+      detail: {
+        projectId,
+        resourceId,
+        path: file.path,
+        scope,
+      },
+    }));
+  }
+
+  async function mutatePaths(
+    projectId: string,
+    resourceId: string,
+    inspection: ScmWorkingCopyInspection,
+    paths: string[],
+    action: ScmWorkingCopyMutationAction,
+  ): Promise<void> {
+    const statusFingerprint = inspection.status_fingerprint;
+    if (!statusFingerprint) {
+      mutationFailure = "Refresh the repository before changing its staging state.";
+      return;
+    }
+    const repository = repositoryKey(projectId, resourceId);
+    const operationKey = `${repository}:${action}:${paths.join("\0")}`;
+    mutationKey = operationKey;
+    mutationFailure = null;
+    repositoryNotices = { ...repositoryNotices, [repository]: "" };
+    try {
+      const result = await mutateScmWorkingCopy({
+        project_id: projectId,
+        resource_id: resourceId,
+        action,
+        paths,
+        expected_status_fingerprint: statusFingerprint,
+        idempotency_key: `forge:${action}:${crypto.randomUUID()}`,
+      });
+      inspections = {
+        ...inspections,
+        [repository]: result.inspection,
+      };
+      window.dispatchEvent(new CustomEvent("nucleus:scm-working-copy-changed", {
+        detail: {
+          project_id: projectId,
+          resource_id: resourceId,
+          paths,
+        },
+      }));
+    } catch (caught) {
+      mutationFailure = caught instanceof Error ? caught.message : String(caught);
+    } finally {
+      if (mutationKey === operationKey) mutationKey = null;
+    }
+  }
+
+  function setCommitMessage(repository: string, message: string): void {
+    commitMessages = { ...commitMessages, [repository]: message };
+  }
+
+  async function commitRepository(
+    projectId: string,
+    resourceId: string,
+    inspection: ScmWorkingCopyInspection,
+  ): Promise<void> {
+    const repository = repositoryKey(projectId, resourceId);
+    const message = commitMessages[repository] ?? "";
+    const statusFingerprint = inspection.status_fingerprint;
+    if (!statusFingerprint || !message.trim()) {
+      mutationFailure = "Refresh the repository and enter a commit message.";
+      return;
+    }
+    const operationKey = `${repository}:commit`;
+    mutationKey = operationKey;
+    mutationFailure = null;
+    repositoryNotices = { ...repositoryNotices, [repository]: "" };
+    try {
+      const result = await commitScmWorkingCopy({
+        project_id: projectId,
+        resource_id: resourceId,
+        message,
+        expected_status_fingerprint: statusFingerprint,
+        idempotency_key: `forge:commit:${crypto.randomUUID()}`,
+      });
+      inspections = { ...inspections, [repository]: result.inspection };
+      commitMessages = { ...commitMessages, [repository]: "" };
+      repositoryNotices = {
+        ...repositoryNotices,
+        [repository]: `Committed ${result.receipt.commit_oid.slice(0, 8)}`,
+      };
+      window.dispatchEvent(new CustomEvent("nucleus:scm-working-copy-changed", {
+        detail: {
+          project_id: projectId,
+          resource_id: resourceId,
+          paths: result.receipt.staged_paths,
+        },
+      }));
+    } catch (caught) {
+      mutationFailure = caught instanceof Error ? caught.message : String(caught);
+    } finally {
+      if (mutationKey === operationKey) mutationKey = null;
+    }
+  }
+
 </script>
 
 <section class="sidebar-view" aria-label="Forge">
   <header class="sidebar-view-head">
-    <span class="sidebar-dimmed">{loading ? "Loading" : `${repositoryCount} repositories`}</span>
-    <button type="button" aria-label="Refresh repositories" title="Refresh repositories" disabled={loading} onclick={() => void loadRepositories()}>
+    <span class="sidebar-dimmed">
+      {loading
+        ? "Loading"
+        : `${repositoryCount} ${repositoryCount === 1 ? "repository" : "repositories"}${changeCount > 0 ? ` · ${changeCount} changed` : ""}`}
+    </span>
+    <button
+      type="button"
+      aria-label="Refresh repositories"
+      title="Refresh repositories"
+      disabled={loading}
+      onclick={() => void loadRepositories()}
+    >
       <Icon icon={refreshCw} size="sm" />
     </button>
   </header>
 
   {#if failure}
     <div class="sidebar-message"><Text tone="danger">{failure}</Text></div>
-  {:else if !loading && repositoryProjects.length === 0}
+  {/if}
+  {#if mutationFailure}
+    <div class="sidebar-message"><Text tone="danger">{mutationFailure}</Text></div>
+  {/if}
+  {#if !failure && !loading && repositoryProjects.length === 0}
     <div class="sidebar-message"><span class="sidebar-dimmed">No Git resources are attached.</span></div>
-  {:else}
+  {:else if !failure}
     <div class="forge-list">
       {#each repositoryProjects as entry (entry.project.project_id)}
         <section class="forge-project" class:active={entry.project.project_id === selectedProjectId}>
@@ -72,20 +268,43 @@
             <span>{entry.project.display_name}</span>
             <small>{entry.project.status}</small>
           </button>
+
           {#each entry.repositories as repository (repository.resource_id)}
-            <div class="repository-row">
-              <Icon icon={gitFork} size="sm" />
-              <span>
-                <strong>{repository.display_name}</strong>
-                <small>{repository.location_status}</small>
-              </span>
-              {#if repository.default_branch}
-                <span class="branch-hint" title="Recorded default branch">
-                  <Icon icon={gitBranch} size="xs" />
-                  {repository.default_branch}
-                </span>
-              {/if}
-            </div>
+            {@const key = repositoryKey(entry.project.project_id, repository.resource_id)}
+            {@const inspection = inspections[key]}
+            {@const expanded = expandedRepositories.has(key)}
+            <ForgeRepositoryNode
+              {repository}
+              {inspection}
+              {expanded}
+              {mutationKey}
+              commitBusy={mutationKey === `${key}:commit`}
+              commitMessage={commitMessages[key] ?? ""}
+              notice={repositoryNotices[key] ?? ""}
+              onToggle={() => toggleRepository(entry.project.project_id, repository.resource_id)}
+              onOpen={(file, scope) =>
+                openChangedDiff(
+                  entry.project.project_id,
+                  repository.resource_id,
+                  file,
+                  scope,
+                )}
+              onMutate={(paths, action) =>
+                void mutatePaths(
+                  entry.project.project_id,
+                  repository.resource_id,
+                  inspection,
+                  paths,
+                  action,
+                )}
+              onCommitMessageChange={(message) => setCommitMessage(key, message)}
+              onCommit={() =>
+                void commitRepository(
+                  entry.project.project_id,
+                  repository.resource_id,
+                  inspection,
+                )}
+            />
           {/each}
         </section>
       {/each}
@@ -106,9 +325,7 @@
   }
 
   .sidebar-view-head,
-  .forge-project-head,
-  .repository-row,
-  .branch-hint {
+  .forge-project-head {
     display: flex;
     align-items: center;
   }
@@ -118,9 +335,9 @@
     gap: 0.75rem;
   }
 
-  .sidebar-dimmed {
-    color: var(--poodle-color-text-secondary);
-    opacity: var(--poodle-state-opacity-muted);
+  .sidebar-dimmed,
+  small {
+    color: var(--poodle-color-text-muted);
   }
 
   .sidebar-view-head button {
@@ -138,87 +355,45 @@
   .forge-list {
     display: grid;
     align-content: start;
-    gap: 0.5rem;
+    gap: 0.75rem;
     min-height: 0;
     overflow: auto;
   }
 
   .forge-project {
     display: grid;
-    gap: 0.25rem;
-    padding: 0.375rem;
-    border: 1px solid var(--poodle-color-border-subtle);
-    border-radius: var(--poodle-radius-control);
-  }
-
-  .forge-project.active {
-    border-color: var(--poodle-color-border-selected);
+    gap: 0.125rem;
+    min-width: 0;
   }
 
   .forge-project-head {
     justify-content: space-between;
     gap: 0.5rem;
-    padding: 0.125rem;
-    color: var(--poodle-color-text-secondary);
+    min-width: 0;
+    padding: 0.25rem 0.375rem;
+    color: var(--poodle-color-text-muted);
     text-align: left;
     border: 0;
     background: transparent;
-    opacity: var(--poodle-state-opacity-muted);
   }
 
-  .forge-project-head:hover:not(:disabled) {
-    color: var(--poodle-color-text-secondary);
-    opacity: 1;
-  }
-
+  .forge-project-head:hover:not(:disabled),
   .forge-project.active .forge-project-head {
     color: var(--poodle-color-text-primary);
-    opacity: 1;
   }
 
-  .repository-row {
-    gap: 0.5rem;
-    min-width: 0;
-    padding: 0.375rem;
-    color: var(--poodle-color-text-secondary);
-    background: var(--poodle-color-background-surface);
-    border-radius: var(--poodle-radius-control);
-    opacity: var(--poodle-state-opacity-muted);
-  }
-
-  .repository-row > span:not(.branch-hint) {
-    display: grid;
-    min-width: 0;
-    flex: 1;
-  }
-
-  strong,
   small {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  strong {
-    font-size: 0.75rem;
-  }
-
   small {
-    color: var(--poodle-color-text-secondary);
     font-size: 0.6875rem;
-  }
-
-  .branch-hint {
-    gap: 0.25rem;
-    max-width: 40%;
-    overflow: hidden;
-    color: var(--poodle-color-text-secondary);
-    font-size: 0.6875rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .sidebar-message {
-    padding: 0.75rem 0;
+    padding: 0.5rem 0.375rem;
+    font-size: 0.75rem;
   }
 </style>

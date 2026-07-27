@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 10;
 const MIN_WINDOW_WIDTH: u32 = 900;
 const MIN_WINDOW_HEIGHT: u32 = 620;
 const MAX_WINDOW_DIMENSION: u32 = 16_384;
@@ -112,7 +112,28 @@ pub struct WorkspacePanelDto {
     #[serde(default)]
     pub resource_targets: BTreeMap<String, String>,
     #[serde(default)]
+    pub editor_file: Option<WorkspaceEditorFileDto>,
+    #[serde(default)]
+    pub forge_diff: Option<WorkspaceForgeDiffDto>,
+    #[serde(default)]
     pub allowed_regions: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WorkspaceEditorFileDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_id: Option<String>,
+    pub file_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WorkspaceForgeDiffDto {
+    pub resource_id: String,
+    pub path: String,
+    #[serde(default = "default_forge_diff_scope")]
+    pub scope: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -375,16 +396,13 @@ fn decode_workspace_ui_store(raw: &str) -> Result<(WorkspaceUiStoreDto, bool), S
         .map_err(|error| format!("decode workspace UI config failed: {error}"))?;
     let is_legacy = value.get("surfaces").is_some();
 
-    if !is_legacy
-        && value
+    if !is_legacy && value.get("project_layouts").is_some() {
+        let stored_version = value
             .get("schema_version")
-            .and_then(serde_json::Value::as_u64)
-            == Some(u64::from(SCHEMA_VERSION))
-        && value.get("project_layouts").is_some()
-    {
+            .and_then(serde_json::Value::as_u64);
         let decoded = serde_json::from_value::<WorkspaceUiStoreDto>(value)
             .map_err(|error| format!("decode workspace UI config failed: {error}"))?;
-        return Ok((decoded, false));
+        return Ok((decoded, stored_version != Some(u64::from(SCHEMA_VERSION))));
     }
 
     if !is_legacy {
@@ -465,7 +483,71 @@ fn materialize_project_config(
 fn normalize_panels(panels: &mut Vec<WorkspacePanelDto>) {
     for panel in panels {
         panel.allowed_regions = allowed_regions_for_kind(&panel.kind);
+        panel.editor_file = if panel.kind == "editor" {
+            panel.editor_file.take().and_then(normalize_editor_file)
+        } else {
+            None
+        };
+        panel.forge_diff = if panel.kind == "forgeDiff" {
+            panel.forge_diff.take().and_then(normalize_forge_diff)
+        } else {
+            None
+        };
     }
+}
+
+fn normalize_editor_file(mut file: WorkspaceEditorFileDto) -> Option<WorkspaceEditorFileDto> {
+    file.resource_id = file
+        .resource_id
+        .map(|resource_id| resource_id.trim().to_owned())
+        .filter(|resource_id| !resource_id.is_empty());
+    file.file_ref = file.file_ref.trim().to_owned();
+    file.display_path = file
+        .display_path
+        .map(|display_path| display_path.trim().to_owned())
+        .filter(|display_path| !display_path.is_empty());
+
+    if file.file_ref.is_empty() || file.file_ref.len() > 512 {
+        return None;
+    }
+    if file
+        .resource_id
+        .as_ref()
+        .is_some_and(|resource_id| resource_id.len() > 512)
+    {
+        return None;
+    }
+    if file
+        .display_path
+        .as_ref()
+        .is_some_and(|display_path| display_path.len() > 4096)
+    {
+        return None;
+    }
+
+    Some(file)
+}
+
+fn normalize_forge_diff(mut diff: WorkspaceForgeDiffDto) -> Option<WorkspaceForgeDiffDto> {
+    diff.resource_id = diff.resource_id.trim().to_owned();
+    diff.path = diff.path.trim().to_owned();
+    diff.scope = match diff.scope.trim() {
+        "staged" => "staged".to_owned(),
+        "working" => "working".to_owned(),
+        _ => default_forge_diff_scope(),
+    };
+    if diff.resource_id.is_empty()
+        || diff.resource_id.len() > 512
+        || diff.path.is_empty()
+        || diff.path.len() > 4096
+    {
+        return None;
+    }
+    Some(diff)
+}
+
+fn default_forge_diff_scope() -> String {
+    "all".to_owned()
 }
 
 fn normalize_active_panels(project: &mut WorkspaceProjectLayoutDto) {
@@ -570,6 +652,8 @@ fn panel(id: &str, kind: &str, title: &str, closeable: bool, movable: bool) -> W
         closeable,
         movable,
         resource_targets: BTreeMap::new(),
+        editor_file: None,
+        forge_diff: None,
         allowed_regions: allowed_regions_for_kind(kind),
     }
 }

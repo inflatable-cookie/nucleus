@@ -4,6 +4,7 @@ export * from "./control/memory";
 export * from "./control/planningResearch";
 export * from "./control/productWorkflow";
 export * from "./control/responses";
+export * from "./control/scmWorkingCopy";
 export * from "./control/selectedTaskReviewDecision";
 export * from "./control/selectedTaskReviewDecisionEnvelope";
 export * from "./control/selectedTaskReviewNext";

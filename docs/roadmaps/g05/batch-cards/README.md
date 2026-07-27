@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-25
+Updated: 2026-07-27
 
 ## Ready Cards
 
@@ -19,3 +19,6 @@ Updated: 2026-07-25
 - `008-agent-chat-cancellation-and-terminal-truth.md`
 - `009-native-proof-selector-and-readiness.md`
 - `010-live-pilot-handoff.md`
+- `011-working-copy-observation-and-scoped-diffs.md`
+- `012-index-staging-controls.md`
+- `013-local-commit-control.md`
