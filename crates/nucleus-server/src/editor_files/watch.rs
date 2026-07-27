@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, Event, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
 use nucleus_local_store::LocalStoreBackend;
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,7 @@ use crate::ServerStateService;
 use super::invalidate_editor_file_discovery;
 
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(120);
+const SCM_POLL_INTERVAL: Duration = Duration::from_millis(750);
 const MAX_CHANGED_PATHS_PER_RESOURCE: usize = 256;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -50,13 +52,19 @@ pub struct EditorFileWatchRuntime {
 #[derive(Default)]
 struct EditorFileWatchRuntimeInner {
     next_subscription: AtomicU64,
-    subscriptions: Mutex<HashMap<String, RecommendedWatcher>>,
+    subscriptions: Mutex<HashMap<String, EditorFileWatchSubscription>>,
+}
+
+struct EditorFileWatchSubscription {
+    _file_watcher: RecommendedWatcher,
+    _scm_watcher: Option<PollWatcher>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct WatchTarget {
     resource_id: String,
     root: PathBuf,
+    scm_roots: Vec<PathBuf>,
 }
 
 impl EditorFileWatchRuntime {
@@ -80,8 +88,19 @@ impl EditorFileWatchRuntime {
             self.inner.next_subscription.fetch_add(1, Ordering::Relaxed)
         );
         let (event_sender, event_receiver) = mpsc::channel();
-        let mut watcher = notify::recommended_watcher(event_sender)
+        let mut watcher = notify::recommended_watcher(event_sender.clone())
             .map_err(|error| format!("editor file watch setup failed: {error}"))?;
+        let mut scm_watcher = targets
+            .iter()
+            .any(|target| !target.scm_roots.is_empty())
+            .then(|| {
+                PollWatcher::new(
+                    event_sender,
+                    Config::default().with_poll_interval(SCM_POLL_INTERVAL),
+                )
+                .map_err(|error| format!("SCM metadata watch setup failed: {error}"))
+            })
+            .transpose()?;
 
         for target in &targets {
             watcher
@@ -92,6 +111,26 @@ impl EditorFileWatchRuntime {
                         target.resource_id
                     )
                 })?;
+            if let Some(scm_watcher) = scm_watcher.as_mut() {
+                for scm_root in &target.scm_roots {
+                    scm_watcher
+                        .watch(scm_root, RecursiveMode::NonRecursive)
+                        .map_err(|error| {
+                            format!(
+                                "SCM metadata watch failed for {}: {error}",
+                                target.resource_id
+                            )
+                        })?;
+                    let refs = scm_root.join("refs");
+                    if refs.is_dir() {
+                        scm_watcher
+                            .watch(&refs, RecursiveMode::Recursive)
+                            .map_err(|error| {
+                                format!("SCM refs watch failed for {}: {error}", target.resource_id)
+                            })?;
+                    }
+                }
+            }
         }
         spawn_event_forwarder(
             event_receiver,
@@ -105,7 +144,13 @@ impl EditorFileWatchRuntime {
             .subscriptions
             .lock()
             .map_err(|_| "editor file watch registry lock poisoned".to_owned())?
-            .insert(subscription_id.clone(), watcher);
+            .insert(
+                subscription_id.clone(),
+                EditorFileWatchSubscription {
+                    _file_watcher: watcher,
+                    _scm_watcher: scm_watcher,
+                },
+            );
         Ok(subscription_id)
     }
 
@@ -220,12 +265,59 @@ fn scm_changed_targets(targets: &[WatchTarget], event_paths: &[PathBuf]) -> Vec<
         .iter()
         .filter(|target| {
             event_paths.iter().any(|path| {
-                path.strip_prefix(&target.root)
-                    .is_ok_and(|relative| relative.starts_with(".git"))
+                target
+                    .scm_roots
+                    .iter()
+                    .any(|scm_root| path.starts_with(scm_root))
+                    || path
+                        .strip_prefix(&target.root)
+                        .is_ok_and(|relative| relative.starts_with(".git"))
             })
         })
         .cloned()
         .collect()
+}
+
+fn resolve_scm_roots(root: &Path) -> Vec<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--absolute-git-dir"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C")
+        .current_dir(root)
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() || output.stdout.len() > 4096 {
+        return Vec::new();
+    }
+
+    let Ok(path) = String::from_utf8(output.stdout) else {
+        return Vec::new();
+    };
+    let git_dir = PathBuf::from(path.trim());
+    if git_dir.as_os_str().is_empty() {
+        return Vec::new();
+    }
+    let git_dir = std::fs::canonicalize(&git_dir).unwrap_or(git_dir);
+
+    let mut roots = vec![git_dir.clone()];
+    if let Ok(common_dir) = std::fs::read_to_string(git_dir.join("commondir")) {
+        let common_dir = common_dir.trim();
+        if !common_dir.is_empty() {
+            let common_dir = PathBuf::from(common_dir);
+            let common_dir = if common_dir.is_absolute() {
+                common_dir
+            } else {
+                git_dir.join(common_dir)
+            };
+            let common_dir = std::fs::canonicalize(&common_dir).unwrap_or(common_dir);
+            if common_dir != git_dir {
+                roots.push(common_dir);
+            }
+        }
+    }
+    roots
 }
 
 fn resolve_targets<B>(
@@ -245,6 +337,7 @@ where
                 resolve_project_resource_target(state, project_id, Some(resource_id.as_str()))?;
             Ok(WatchTarget {
                 resource_id: target.resource_id,
+                scm_roots: resolve_scm_roots(&target.root),
                 root: target.root,
             })
         })
@@ -292,10 +385,12 @@ mod tests {
             WatchTarget {
                 resource_id: "resource:one".to_owned(),
                 root: PathBuf::from("/workspace/one"),
+                scm_roots: vec![PathBuf::from("/workspace/one/.git")],
             },
             WatchTarget {
                 resource_id: "resource:two".to_owned(),
                 root: PathBuf::from("/workspace/two"),
+                scm_roots: vec![PathBuf::from("/workspace/two/.git")],
             },
         ];
         let changed = changed_paths_by_resource(
@@ -322,10 +417,12 @@ mod tests {
             WatchTarget {
                 resource_id: "resource:one".to_owned(),
                 root: PathBuf::from("/workspace/one"),
+                scm_roots: vec![PathBuf::from("/workspace/one/.git")],
             },
             WatchTarget {
                 resource_id: "resource:two".to_owned(),
                 root: PathBuf::from("/workspace/two"),
+                scm_roots: vec![PathBuf::from("/workspace/two/.git")],
             },
         ];
 
@@ -346,5 +443,65 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["resource:one"]
         );
+    }
+
+    #[test]
+    fn native_watcher_emits_scm_change_for_an_atomic_index_replacement() {
+        let root = tempfile::tempdir().expect("resource root");
+        let git_dir = root.path().join(".git");
+        std::fs::create_dir_all(&git_dir).expect("git directory");
+        std::fs::write(git_dir.join("index"), b"before").expect("initial index");
+
+        let (native_sender, native_receiver) = mpsc::channel();
+        let mut watcher = PollWatcher::new(
+            native_sender,
+            Config::default().with_poll_interval(Duration::from_millis(100)),
+        )
+        .expect("SCM metadata watcher");
+        watcher
+            .watch(&git_dir, RecursiveMode::NonRecursive)
+            .expect("watch SCM metadata root");
+
+        let (sink_sender, sink_receiver) = mpsc::channel();
+        spawn_event_forwarder(
+            native_receiver,
+            vec![WatchTarget {
+                resource_id: "resource:test".to_owned(),
+                root: root.path().to_path_buf(),
+                scm_roots: vec![git_dir.clone()],
+            }],
+            "subscription:test".to_owned(),
+            "project:test".to_owned(),
+            Arc::new(move |event| {
+                let _ = sink_sender.send(event);
+            }),
+        );
+
+        // PollWatcher records whole-second mtimes, so cross the timestamp boundary before
+        // replacing Git's index to exercise the same long-lived subscription used by the app.
+        std::thread::sleep(Duration::from_millis(1_200));
+        std::fs::write(git_dir.join("index.lock"), b"after").expect("replacement index");
+        std::fs::rename(git_dir.join("index.lock"), git_dir.join("index"))
+            .expect("atomic index replacement");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = sink_receiver
+                .recv_timeout(remaining)
+                .expect("SCM change event");
+            if matches!(
+                event,
+                EditorFileWatchEvent::ScmChanged {
+                    ref project_id,
+                    ref resource_id,
+                    ..
+                } if project_id == "project:test" && resource_id == "resource:test"
+            ) {
+                break;
+            }
+        }
+
+        drop(watcher);
     }
 }
