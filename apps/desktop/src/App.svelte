@@ -110,6 +110,12 @@
     if (event.kind === "failed") {
       console.warn(event.message);
     }
+    if (event.kind === "scm_changed") {
+      window.dispatchEvent(new CustomEvent("nucleus:scm-working-copy-changed", {
+        detail: event,
+      }));
+      return;
+    }
     window.dispatchEvent(new CustomEvent("nucleus:editor-files-changed", {
       detail: event,
     }));

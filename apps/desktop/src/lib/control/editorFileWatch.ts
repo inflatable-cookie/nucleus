@@ -9,6 +9,12 @@ export type EditorFileWatchEvent =
       paths: string[];
     }
   | {
+      kind: "scm_changed";
+      subscription_id: string;
+      project_id: string;
+      resource_id: string;
+    }
+  | {
       kind: "failed";
       subscription_id: string;
       project_id: string;
@@ -34,4 +40,3 @@ export async function watchEditorFiles(
     await invoke("editor_file_watch_stop", { subscriptionId });
   };
 }
-

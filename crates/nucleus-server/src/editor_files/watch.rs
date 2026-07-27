@@ -28,6 +28,11 @@ pub enum EditorFileWatchEvent {
         resource_id: String,
         paths: Vec<String>,
     },
+    ScmChanged {
+        subscription_id: String,
+        project_id: String,
+        resource_id: String,
+    },
     Failed {
         subscription_id: String,
         project_id: String,
@@ -124,11 +129,24 @@ fn spawn_event_forwarder(
     thread::spawn(move || {
         while let Ok(first) = receiver.recv() {
             let mut changed = BTreeMap::<String, (WatchTarget, BTreeSet<String>)>::new();
+            let mut scm_changed = BTreeMap::<String, WatchTarget>::new();
             let mut failures = BTreeSet::new();
-            merge_watch_result(first, &targets, &mut changed, &mut failures);
+            merge_watch_result(
+                first,
+                &targets,
+                &mut changed,
+                &mut scm_changed,
+                &mut failures,
+            );
             let disconnected = loop {
                 match receiver.recv_timeout(WATCH_DEBOUNCE) {
-                    Ok(result) => merge_watch_result(result, &targets, &mut changed, &mut failures),
+                    Ok(result) => merge_watch_result(
+                        result,
+                        &targets,
+                        &mut changed,
+                        &mut scm_changed,
+                        &mut failures,
+                    ),
                     Err(RecvTimeoutError::Timeout) => break false,
                     Err(RecvTimeoutError::Disconnected) => break true,
                 }
@@ -141,6 +159,13 @@ fn spawn_event_forwarder(
                     project_id: project_id.clone(),
                     resource_id: target.resource_id,
                     paths: paths.into_iter().collect(),
+                });
+            }
+            for target in scm_changed.into_values() {
+                sink(EditorFileWatchEvent::ScmChanged {
+                    subscription_id: subscription_id.clone(),
+                    project_id: project_id.clone(),
+                    resource_id: target.resource_id,
                 });
             }
             for failure in failures {
@@ -161,10 +186,14 @@ fn merge_watch_result(
     result: notify::Result<Event>,
     targets: &[WatchTarget],
     changed: &mut BTreeMap<String, (WatchTarget, BTreeSet<String>)>,
+    scm_changed: &mut BTreeMap<String, WatchTarget>,
     failures: &mut BTreeSet<String>,
 ) {
     match result {
         Ok(event) => {
+            for target in scm_changed_targets(targets, &event.paths) {
+                scm_changed.insert(target.resource_id.clone(), target);
+            }
             for (target, paths) in changed_paths_by_resource(targets, &event.paths) {
                 let pending = &mut changed
                     .entry(target.resource_id.clone())
@@ -184,6 +213,19 @@ fn merge_watch_result(
             failures.insert(format!("editor file watch failed: {error}"));
         }
     }
+}
+
+fn scm_changed_targets(targets: &[WatchTarget], event_paths: &[PathBuf]) -> Vec<WatchTarget> {
+    targets
+        .iter()
+        .filter(|target| {
+            event_paths.iter().any(|path| {
+                path.strip_prefix(&target.root)
+                    .is_ok_and(|relative| relative.starts_with(".git"))
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 fn resolve_targets<B>(
@@ -272,5 +314,37 @@ mod tests {
         assert_eq!(changed[0].1, vec!["src/lib.rs"]);
         assert_eq!(changed[1].0.resource_id, "resource:two");
         assert_eq!(changed[1].1, vec!["README.md"]);
+    }
+
+    #[test]
+    fn root_git_metadata_changes_are_classified_separately() {
+        let targets = vec![
+            WatchTarget {
+                resource_id: "resource:one".to_owned(),
+                root: PathBuf::from("/workspace/one"),
+            },
+            WatchTarget {
+                resource_id: "resource:two".to_owned(),
+                root: PathBuf::from("/workspace/two"),
+            },
+        ];
+
+        let changed = scm_changed_targets(
+            &targets,
+            &[
+                PathBuf::from("/workspace/one/.git/index"),
+                PathBuf::from("/workspace/one/.git/refs/heads/main"),
+                PathBuf::from("/workspace/two/src/lib.rs"),
+                PathBuf::from("/workspace/two/vendor/dependency/.git/index"),
+            ],
+        );
+
+        assert_eq!(
+            changed
+                .into_iter()
+                .map(|target| target.resource_id)
+                .collect::<Vec<_>>(),
+            vec!["resource:one"]
+        );
     }
 }

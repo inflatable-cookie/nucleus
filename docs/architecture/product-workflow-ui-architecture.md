@@ -488,6 +488,12 @@ fallback, persists only a message digest and sanitized commit receipt, then
 returns fresh status. The message draft remains client-local and clears only
 after a confirmed commit.
 
+The authority-host resource watcher treats root SCM metadata changes as
+working-copy invalidations. It emits no `.git` paths to Files or Editor and
+does not interpret provider state; Forge debounces the signal and requests a
+fresh server inspection. Changes made by another Git client therefore
+converge without permanent status polling.
+
 Task Diff remains evidence-scoped and does not consume Forge working-copy
 state. The Changes panel is read-only. Discard, hunk mutation, commit, push,
 publication, conflict editing, and forge-network actions remain absent except
