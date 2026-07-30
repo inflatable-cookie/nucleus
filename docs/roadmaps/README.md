@@ -320,6 +320,8 @@ shape.
 - `g05/003-swallowtail-application-proof-readiness.md` - completed; native
   pilot passed at the exact live ceiling
 - `g05/004-forge-working-copy-controls.md` - active
+- `g05/005-observable-agent-chat-transcript.md` - completed; deterministic and
+  authenticated native acceptance passed
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -379,8 +381,6 @@ shape.
 
 ## Next Task
 
-Restart the native app and validate `g05/004-forge-working-copy-controls.md`:
-exercise Stage all, Unstage all, and a local commit while one file also has an
-unstaged edit. Confirm the commit captures only the staged content, the fresh
-status preserves the remaining edit, and the Forge interaction stays compact.
-Do not push, discard, or publish.
+Operator selects the next g05 lane. No implementation card is ready.
+[Project-layout card 003](g05/batch-cards/003-project-layout-validation.md) and
+Forge native validation remain operator-held.

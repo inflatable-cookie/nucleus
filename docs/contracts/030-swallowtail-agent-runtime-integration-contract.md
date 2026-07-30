@@ -96,6 +96,13 @@ authoritative host user's home directory as a read-only context.
   at process start for bounded proof; zero, invalid, or longer values fail
   before provider work
 - event and callback streams are drained while the turn is active
+- each prepared Agent Chat operation must expose an `Available`
+  observable-activity profile before provider effects
+- the Nucleus adapter forwards only Swallowtail's bounded portable activity
+  observations with their runtime event sequence; it does not parse native
+  Codex event names or expose raw payloads
+- a consumer activity-projection failure requests turn cancellation and remains
+  distinct from provider failure
 - a Nucleus-owned thread-safe cancellation signal wakes the active adapter
   turn loop and requests cancellation through Swallowtail's turn handle
 - native cancellation is scoped by exact project and conversation identity and
@@ -139,6 +146,22 @@ The first slice preserves:
 - current `LocalCodexChatService` request, reply, history, and receipt shapes
 - current task/Goal portal semantics
 - current desktop behavior and stored schemas
+
+The later observable-activity slice is additive to stored session, turn, and
+message records. It adds separate activity records, sanitized turn status to
+history DTOs, and one caller-window live event. The terminal reply, callbacks,
+cancellation, receipts, and existing message history remain authoritative and
+do not move into Swallowtail.
+
+Provider item lifecycle and turn terminal status remain separate. Nucleus may
+use its durable cancelled, timed-out, or failed turn status to settle a
+still-open item in transcript presentation. It does not persist a synthetic
+portable activity observation or claim that the provider emitted an item
+completion.
+
+`nucleus-agent-protocol` may carry Swallowtail's provider-neutral
+`ActivityObservation` across the adapter boundary. It must not define a second
+portable activity vocabulary or expose provider-native payloads.
 
 The old Codex app-server transport is removed after focused and native parity
 proof. `nucleus-agent-protocol` remains the consumer facade until a later

@@ -7,3 +7,4 @@ repository.workspace = true
 
 [dependencies]
 serde_json = "1"
+swallowtail-runtime = { path = "../../../swallowtail/crates/swallowtail-runtime" }

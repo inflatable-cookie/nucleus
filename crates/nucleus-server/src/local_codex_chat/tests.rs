@@ -206,12 +206,14 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
     let mut task_tool = |_: &str, _: &str, _: &str, _| {
         Err::<TaskToolOutcome, _>("task tool should not be called in this smoke".to_owned())
     };
+    let mut ignore_activity = |_| Ok(());
     let first = session
         .send_turn(
             "Reply with exactly: first nucleus chat turn",
             CHAT_MODEL,
             CHAT_REASONING_EFFORT,
             nucleus_agent_protocol::AgentTurnCancellation::new(),
+            &mut ignore_activity,
             &mut task_tool,
         )
         .expect("first turn");
@@ -221,6 +223,7 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
             CHAT_MODEL,
             CHAT_REASONING_EFFORT,
             nucleus_agent_protocol::AgentTurnCancellation::new(),
+            &mut ignore_activity,
             &mut task_tool,
         )
         .expect("second turn");

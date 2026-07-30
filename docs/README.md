@@ -57,7 +57,11 @@ Chat deadlines, normal cancellation, exact terminal persistence, explicit
 Effigy proof selectors, and count-only read-only evidence. Swallowtail card
 041 then passed all 12 planned native outcomes at the exact 15-attempt and
 6-session ceiling after fixing 2 deterministic facade defects. Sustained live
-work and every writable attempt remain separately gated.
+work and every writable attempt remain separately gated. Roadmap g05.005 now
+carries Swallowtail's portable observable activity through Nucleus persistence
+and the desktop into Poodle's transcript components. Deterministic and
+authenticated native activity, grouping, scroll, cancellation, cleanup, and
+restart acceptance pass.
 
 Current planning artifacts:
 
@@ -88,6 +92,8 @@ Current planning artifacts:
 - `roadmaps/g04/050-swallowtail-task-execution-adoption.md`
 - `roadmaps/g05/001-project-scoped-workspace-layouts.md`
 - `roadmaps/g05/003-swallowtail-application-proof-readiness.md`
+- `roadmaps/g05/005-observable-agent-chat-transcript.md`
+- `logs/2026-07-30-observable-agent-chat-transcript.md`
 
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`

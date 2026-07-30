@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-27
+Updated: 2026-07-30
 
 ## Purpose
 
@@ -38,3 +38,6 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 - `003-swallowtail-application-proof-readiness.md` - completed; all 12 native
   pilot outcomes passed at the exact 15-attempt and 6-session ceiling
 - `004-forge-working-copy-controls.md` - active
+- `005-observable-agent-chat-transcript.md` - completed; deterministic and
+  authenticated native activity, grouping, scroll, cancellation, cleanup, and
+  restart acceptance passed

@@ -20,7 +20,11 @@ fn product_workspace_mounts_tasks_and_routes_chat_receipts_to_it() {
     assert!(chat.contains("active_goal_id: activeGoal?.goal_id ?? null"));
     assert!(chat.contains("retainedPendingConversations"));
     assert!(chat.contains("pending = retainedPendingConversations.has(conversationId)"));
-    assert!(chat.contains("void scrollToLatest();"));
+    assert!(chat.contains("AgentTranscript"));
+    assert!(chat.contains("agent-chat:activity"));
+    assert!(chat.contains("assembleAgentTranscript"));
+    assert!(chat.contains("expandedToolRuns"));
+    assert!(!chat.contains("thinking-dots"));
     assert!(chat.contains("const contextAttachments"));
     assert!(chat.contains("id: \"active-goal\""));
     assert!(chat.contains("id: \"active-task\""));

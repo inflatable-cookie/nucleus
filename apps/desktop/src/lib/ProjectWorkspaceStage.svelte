@@ -1074,7 +1074,7 @@
       </Surface>
     {:else if !config || !workspaceWindow}
       <Surface tone="canvas" border="none" padding="md" asRole="region" label="Workspace unavailable">
-        <Text tone="muted">Workspace unavailable</Text>
+        <Text tone={error ? "danger" : "muted"}>{error ?? "Workspace unavailable"}</Text>
       </Surface>
     {:else}
       <div class="window-body">

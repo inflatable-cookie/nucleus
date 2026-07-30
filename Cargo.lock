@@ -2344,6 +2344,7 @@ name = "nucleus-agent-protocol"
 version = "0.0.0"
 dependencies = [
  "serde_json",
+ "swallowtail-runtime",
 ]
 
 [[package]]
@@ -2506,6 +2507,7 @@ dependencies = [
  "serde",
  "serde_json",
  "similar",
+ "swallowtail-runtime",
  "tempfile",
  "toml 0.8.2",
  "ts-rs",

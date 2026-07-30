@@ -2,9 +2,17 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-27
+Updated: 2026-07-30
 
 ## Ready Cards
+
+- none
+
+## Planned Cards
+
+- none
+
+## Operator-Held Cards
 
 - `003-project-layout-validation.md`
 
@@ -22,3 +30,7 @@ Updated: 2026-07-27
 - `011-working-copy-observation-and-scoped-diffs.md`
 - `012-index-staging-controls.md`
 - `013-local-commit-control.md`
+- `014-agent-activity-projection-and-persistence.md`
+- `015-poodle-agent-transcript-adoption.md`
+- `016-observable-chat-focused-closeout.md`
+- `017-observable-chat-native-acceptance.md`

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use nucleus_command_policy::{
     CommandEvidence, CommandEvidenceId, CommandExecutionStatus, CommandOutputRetention,
@@ -427,6 +427,7 @@ async fn read_task_review_decisions(
 
 #[tauri::command]
 async fn send_agent_chat_message(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, DesktopState>,
     request: LocalCodexChatRequest,
 ) -> Result<LocalCodexChatReply, String> {
@@ -467,6 +468,11 @@ async fn send_agent_chat_message(
                     ControlResponseBodyDto::Error { reason, .. } => Err(reason),
                     _ => Err("task ledger command returned an unexpected response".to_owned()),
                 }
+            },
+            &mut |activity| {
+                window
+                    .emit("agent-chat:activity", activity)
+                    .map_err(|error| format!("agent chat activity delivery failed: {error}"))
             },
         )
     })

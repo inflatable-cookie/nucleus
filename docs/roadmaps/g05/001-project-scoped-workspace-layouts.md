@@ -43,7 +43,7 @@ width global.
 
 ## Batch Cards
 
-Ready:
+Operator-held:
 
 - `batch-cards/003-project-layout-validation.md`
 

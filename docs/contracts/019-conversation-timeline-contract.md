@@ -256,8 +256,57 @@ task record or task history.
 
 Task creation and update do not dispatch work or change lifecycle state.
 Unsupported callbacks, approvals, and tool names continue to fail closed.
-Structured user input, partial streaming deltas, and broader tool activity
-projection remain later additions.
+Structured user input remains a later addition.
+
+## Product Chat Observable Activity
+
+Product Agent Chat consumes Swallowtail's prepared observable-activity profile
+before provider effects and its `RuntimeEventKind::Activity` observations on
+the existing ordered turn stream.
+
+Nucleus persists assistant messages and work activity separately. Each durable
+activity observation retains:
+
+- conversation and canonical Nucleus turn identity
+- Swallowtail runtime operation and operation-local activity identity
+- runtime event sequence
+- portable activity kind, lifecycle phase, and status
+- assistant phase where applicable
+- disclosure strength
+- optional bounded provider label
+- optional callback, direct-tool, or provider-request correlation
+- content change, content stream, and bounded content where disclosed
+
+Provider activity references and raw provider envelopes are not required by
+the product projection. Activity content is task data, not diagnostic text.
+
+Repeated observations update one display activity by runtime operation plus
+operation-local activity id. Durable observations remain ordered evidence.
+Completion-only activity does not gain a synthetic start. Provider-unspecified
+assistant activity remains provider-unspecified. Namespaced unknown activity
+remains unknown.
+
+A completed final-assistant activity and the canonical assistant message remain
+separate records even when their text matches. Clients may deduplicate their
+presentation but must not use activity completion as turn terminal truth.
+
+Conversation history exposes the sanitized canonical turn id, ordinal, and
+terminal status separately from messages and activity. It does not expose the
+provider turn id or failure reason through this projection. When cancellation,
+timeout, or failure ends a turn before the provider supplies a terminal item
+update, clients may settle that still-open item for presentation from the
+canonical turn status and show a separate turn-terminal label. This is
+transcript reconstruction, not a synthetic Swallowtail activity observation.
+
+Reasoning activity is named only as a provider-intended readable reasoning
+summary. Nucleus does not claim hidden reasoning, chain-of-thought, model
+scratchpads, or provider-private continuation state.
+
+The product transcript maps the flat message and activity projection into
+Poodle's `AgentTranscript` item model. Poodle owns contiguous work grouping,
+collapse, windowing, bottom anchoring, and disclosure interaction. Nucleus owns
+the mapping, durable records, task and workflow receipts, product labels,
+retention, and UI policy.
 
 An Agent Chat turn may carry one optional active task id from the local
 workspace selection. The server must resolve the current task record and

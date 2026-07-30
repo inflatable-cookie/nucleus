@@ -6,15 +6,15 @@
 
 use futures_executor::block_on;
 use nucleus_agent_protocol::{
-    AgentLiveSession, AgentModelOption, AgentReasoningOption, AgentSessionRuntime,
-    AgentSessionStartRequest, AgentStartedSessionInfo, AgentToolCallHandler, AgentTurnFailure,
-    AgentTurnReply, AgentTurnRequest,
+    AgentActivityHandler, AgentLiveSession, AgentModelOption, AgentReasoningOption,
+    AgentSessionRuntime, AgentSessionStartRequest, AgentStartedSessionInfo, AgentToolCallHandler,
+    AgentTurnFailure, AgentTurnReply, AgentTurnRequest,
 };
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use swallowtail_adapter_codex::{CodexAppServerDriver, CodexSessionProfileInput};
-use swallowtail_core::ReasoningMode;
+use swallowtail_core::{ObservableActivityAvailability, ReasoningMode};
 use swallowtail_runtime::{
     HostServices, InteractiveSessionDriver, InteractiveSessionHandle, ModelCatalogDriver,
     OperationContent, RequestId, RuntimeFailure, RuntimeTurnId, ScopeId, SessionOptions,
@@ -82,6 +82,15 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
                 options,
             ))
             .map_err(preparation::error)?;
+        if prepared_session
+            .evidence()
+            .operation()
+            .observable_activity()
+            .availability()
+            != ObservableActivityAvailability::Available
+        {
+            return Err("Codex Agent Chat prepared without observable activity".to_owned());
+        }
         let (_, plan, open_request) = prepared_session.into_parts();
         let session = block_on(driver.open_session(plan, open_request, services.clone()))
             .map_err(runtime_error)?;
@@ -169,6 +178,7 @@ impl AgentLiveSession for SwallowtailCodexLiveSession {
     fn send_turn(
         &mut self,
         request: AgentTurnRequest,
+        on_activity: &mut AgentActivityHandler<'_>,
         on_tool_call: &mut AgentToolCallHandler<'_>,
     ) -> Result<AgentTurnReply, AgentTurnFailure> {
         if request.model != self.info.model
@@ -207,6 +217,7 @@ impl AgentLiveSession for SwallowtailCodexLiveSession {
             turn.as_mut(),
             &provider_turn_id,
             &request.cancellation,
+            on_activity,
             on_tool_call,
         ));
         let cleanup = block_on(turn.close());

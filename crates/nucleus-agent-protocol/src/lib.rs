@@ -3,6 +3,7 @@
 //! This crate names the durable boundary between nucleus and external coding
 //! harnesses. It intentionally does not implement provider behavior yet.
 
+pub mod activity;
 pub mod capabilities;
 pub mod codex;
 pub mod events;
@@ -14,6 +15,7 @@ pub mod sessions;
 pub mod task_execution;
 pub mod traits;
 
+pub use activity::{AgentActivityEvent, AgentActivityHandler};
 pub use capabilities::{AdapterCapabilities, CapabilitySupport};
 pub use codex::{
     codex_app_server_lifecycle_mappings, project_codex_app_server_fixture,

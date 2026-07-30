@@ -7,8 +7,8 @@
 
 use nucleus_agent_adapters::AgentAdapterRegistry;
 use nucleus_agent_protocol::{
-    AgentLiveSession, AgentSessionStartRequest, AgentToolCall, AgentTurnCancellation,
-    AgentTurnFailure, AgentTurnRequest,
+    AgentActivityHandler, AgentLiveSession, AgentSessionStartRequest, AgentToolCall,
+    AgentTurnCancellation, AgentTurnFailure, AgentTurnRequest,
 };
 use serde_json::Value;
 use std::time::Duration;
@@ -112,6 +112,7 @@ impl LocalCodexChatSession {
         model: &str,
         reasoning_effort: &str,
         cancellation: AgentTurnCancellation,
+        on_activity: &mut AgentActivityHandler<'_>,
         task_tool: &mut F,
     ) -> Result<LocalCodexChatReply, AgentTurnFailure>
     where
@@ -136,6 +137,7 @@ impl LocalCodexChatSession {
                 reasoning_effort: reasoning_effort.to_owned(),
                 cancellation,
             },
+            on_activity,
             &mut on_tool_call,
         )?;
 
@@ -144,6 +146,7 @@ impl LocalCodexChatSession {
             session_id: self.session_id.clone(),
             thread_id: info.provider_thread_id.clone(),
             turn_id: reply.turn_id,
+            timeline_turn_id: String::new(),
             model: info.model.clone(),
             reasoning_effort: info.reasoning_effort.clone(),
             assistant_message: reply.assistant_message,

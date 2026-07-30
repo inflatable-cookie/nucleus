@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-25
+Updated: 2026-07-30
 
 ## Active Contracts
 
@@ -26,7 +26,7 @@ Updated: 2026-07-25
 | `016-effigy-project-integration-contract.md` | draft | Optional project-level Effigy integration for workflow routing, validation, and native steward tooling. |
 | `017-engine-host-authority-contract.md` | draft-promoted-first-pass | Engine-first host forms, project authority maps, and multi-host authority rules. |
 | `018-orchestration-contract.md` | draft | Event-sourced command, event, projection, and replay spine. |
-| `019-conversation-timeline-contract.md` | draft | Canonical task, work item, session, thread, turn, message, activity, and provider-id mapping model. |
+| `019-conversation-timeline-contract.md` | draft-promoted-observable-activity | Canonical task, work item, session, thread, turn, message, observable activity, and provider-id mapping model. |
 | `020-runtime-receipt-contract.md` | draft | Durable receipts and progress events for runtime side effects. |
 | `021-checkpoint-diff-contract.md` | draft | Checkpoint and diff ownership across SCM, tasks, turns, and review workflows. |
 | `022-engine-orchestration-boundary-contract.md` | draft | Portable engine, orchestration, and host/server crate ownership boundary. |
@@ -37,7 +37,7 @@ Updated: 2026-07-25
 | `027-provider-auth-forge-execution-contract.md` | draft | Provider credential authority, network-write admission, idempotency, recovery, and sanitized forge execution evidence. |
 | `028-browser-panel-runtime-contract.md` | draft-promoted-first-pass | Desktop native child-webview trust, navigation, and panel lifecycle boundary. |
 | `029-terminal-panel-runtime-contract.md` | draft-promoted-first-pass | Host-routed terminal authority, protocol, PTY lifecycle, transport, and client rendering boundary. |
-| `030-swallowtail-agent-runtime-integration-contract.md` | draft-promoted-first-pass | Swallowtail-owned AI communication with Nucleus-owned sessions, tools, cancellation, deadlines, authority, persistence, and UI. |
+| `030-swallowtail-agent-runtime-integration-contract.md` | draft-promoted-observable-activity | Swallowtail-owned AI communication and portable activity with Nucleus-owned sessions, tools, cancellation, deadlines, authority, persistence, and UI. |
 | `031-swallowtail-task-execution-runtime-contract.md` | draft-promoted-first-pass | Nucleus task-executor port over explicit Swallowtail workspace access, outcomes, linkage, and cleanup. |
 
 ## Needed Contracts

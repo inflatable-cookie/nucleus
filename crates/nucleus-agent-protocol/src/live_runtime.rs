@@ -14,6 +14,8 @@ use std::sync::{
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
+use crate::AgentActivityHandler;
+
 /// Request to start (or resume) a provider-backed agent session.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentSessionStartRequest {
@@ -196,6 +198,7 @@ pub trait AgentLiveSession {
     fn send_turn(
         &mut self,
         request: AgentTurnRequest,
+        on_activity: &mut AgentActivityHandler<'_>,
         on_tool_call: &mut AgentToolCallHandler<'_>,
     ) -> Result<AgentTurnReply, AgentTurnFailure>;
 }

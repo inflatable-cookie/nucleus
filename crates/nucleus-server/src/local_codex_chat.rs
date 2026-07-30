@@ -21,7 +21,7 @@ mod task_workflow;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use nucleus_agent_protocol::{AgentTurnCancellation, AgentTurnFailure};
+use nucleus_agent_protocol::{AgentActivityEvent, AgentTurnCancellation, AgentTurnFailure};
 use nucleus_local_store::LocalStoreBackend;
 use serde::{Deserialize, Serialize};
 
@@ -41,8 +41,9 @@ pub use mandates::{
     WorkflowMandateStatus,
 };
 use persistence::{
-    canonical_turn_id, persist_session, persist_turn_completion, persist_turn_failure,
-    persist_turn_start, project_has_active_turn, read_history, read_session, ChatTurnFailureStatus,
+    canonical_turn_id, persist_activity, persist_session, persist_turn_completion,
+    persist_turn_failure, persist_turn_start, project_activity, project_has_active_turn,
+    read_history, read_session, ChatTurnFailureStatus,
 };
 #[cfg(test)]
 pub(crate) use persistence::{
@@ -51,7 +52,7 @@ pub(crate) use persistence::{
 };
 pub use persistence::{
     read_native_proof_evidence, ChatMessageRole, LocalCodexChatHistory,
-    LocalCodexChatThreadSummary, NativeProofEvidenceSummary, StoredChatMessage,
+    LocalCodexChatThreadSummary, NativeProofEvidenceSummary, StoredChatActivity, StoredChatMessage,
 };
 use runtime::{available_models, LocalCodexChatSession};
 use task_ledger::execute as execute_task_ledger;
@@ -122,6 +123,7 @@ pub struct LocalCodexChatReply {
     pub session_id: String,
     pub thread_id: String,
     pub turn_id: String,
+    pub timeline_turn_id: String,
     pub model: String,
     pub reasoning_effort: Option<String>,
     pub assistant_message: String,
@@ -226,24 +228,28 @@ impl LocalCodexChatService {
         B: LocalStoreBackend + Clone,
         F: FnMut(crate::control_api::ServerControlRequest) -> Result<(), String>,
     {
+        let mut ignore_activity = |_| Ok(());
         self.send_message_with_task_authoring_and_cancellation(
             state,
             request,
             AgentTurnCancellation::new(),
             execute,
+            &mut ignore_activity,
         )
     }
 
-    pub fn send_message_with_task_authoring_and_cancellation<B, F>(
+    pub fn send_message_with_task_authoring_and_cancellation<B, F, A>(
         &mut self,
         state: &ServerStateService<B>,
         request: LocalCodexChatRequest,
         cancellation: AgentTurnCancellation,
         execute: &mut F,
+        on_activity: &mut A,
     ) -> Result<LocalCodexChatReply, String>
     where
         B: LocalStoreBackend + Clone,
         F: FnMut(crate::control_api::ServerControlRequest) -> Result<(), String>,
+        A: FnMut(StoredChatActivity) -> Result<(), String>,
     {
         let message = request.message.trim();
         if message.is_empty() {
@@ -359,11 +365,22 @@ impl LocalCodexChatService {
             )?;
             return Err(error);
         }
-        let reply = match session.send_turn(
+        let mut project_and_forward_activity = |event: AgentActivityEvent| -> Result<(), String> {
+            let activity = project_activity(
+                &request.conversation_id,
+                &canonical_turn_id,
+                turn_count,
+                event,
+            );
+            persist_activity(state, &activity)?;
+            on_activity(activity)
+        };
+        let mut reply = match session.send_turn(
             &provider_message,
             &selected_model,
             &selected_reasoning_effort,
             cancellation,
+            &mut project_and_forward_activity,
             &mut task_tool,
         ) {
             Ok(reply) => reply,
@@ -396,6 +413,7 @@ impl LocalCodexChatService {
             &reply.task_receipts,
             &reply.workflow_receipts,
         )?;
+        reply.timeline_turn_id = canonical_turn_id;
 
         Ok(reply)
     }

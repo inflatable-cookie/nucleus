@@ -1,13 +1,14 @@
 use nucleus_agent_protocol::{
-    AgentToolCall, AgentToolCallHandler, AgentTurnCancellation, AgentTurnFailure,
+    AgentActivityEvent, AgentActivityHandler, AgentToolCall, AgentToolCallHandler,
+    AgentTurnCancellation, AgentTurnFailure,
 };
 use serde_json::Value;
 use std::future::poll_fn;
 use std::task::Poll;
 use swallowtail_runtime::{
     CallbackFailureKind, CallbackOperationId, CallbackPayload, CallbackRequest,
-    CallbackRequestKind, CallbackResponse, CallbackResult, CleanupOutcome, RuntimeFailure,
-    TerminalOutcome, TerminalStatus, TurnHandle,
+    CallbackRequestKind, CallbackResponse, CallbackResult, CleanupOutcome, RuntimeEvent,
+    RuntimeEventKind, RuntimeFailure, TerminalOutcome, TerminalStatus, TurnHandle,
 };
 
 use super::runtime_error;
@@ -19,7 +20,7 @@ enum TurnActivity {
     Callback(CallbackRequest),
     CallbackClosed,
     CallbackFailed(RuntimeFailure),
-    Event,
+    Event(RuntimeEvent),
     EventsClosed,
     EventFailed(RuntimeFailure),
     CancelRequested,
@@ -29,6 +30,7 @@ pub(super) async fn drive_turn(
     turn: &mut dyn TurnHandle,
     provider_turn_id: &str,
     cancellation: &AgentTurnCancellation,
+    on_activity: &mut AgentActivityHandler<'_>,
     on_tool_call: &mut AgentToolCallHandler<'_>,
 ) -> Result<TerminalOutcome, String> {
     let mut events = turn
@@ -72,7 +74,9 @@ pub(super) async fn drive_turn(
             }
             if events_open {
                 match events.as_mut().poll_next(context) {
-                    Poll::Ready(Some(Ok(_))) => return Poll::Ready(TurnActivity::Event),
+                    Poll::Ready(Some(Ok(event))) => {
+                        return Poll::Ready(TurnActivity::Event(event));
+                    }
                     Poll::Ready(Some(Err(error))) => {
                         return Poll::Ready(TurnActivity::EventFailed(error));
                     }
@@ -104,7 +108,11 @@ pub(super) async fn drive_turn(
                 callbacks_open = false;
                 first_stream_error.get_or_insert_with(|| runtime_error(error));
             }
-            TurnActivity::Event => {}
+            TurnActivity::Event(event) => {
+                if let Err(error) = forward_activity_event(&event, on_activity) {
+                    first_stream_error.get_or_insert(error);
+                }
+            }
             TurnActivity::EventsClosed => events_open = false,
             TurnActivity::EventFailed(error) => {
                 events_open = false;
@@ -120,6 +128,19 @@ pub(super) async fn drive_turn(
             let _ = turn.cancellation().request().await;
             cancellation_requested = true;
         }
+    }
+}
+
+fn forward_activity_event(
+    event: &RuntimeEvent,
+    on_activity: &mut AgentActivityHandler<'_>,
+) -> Result<(), String> {
+    match event.kind() {
+        RuntimeEventKind::Activity(observation) => on_activity(AgentActivityEvent::new(
+            event.sequence(),
+            observation.clone(),
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -219,9 +240,13 @@ pub(super) fn require_clean_turn(cleanup: CleanupOutcome) -> Result<(), AgentTur
 
 #[cfg(test)]
 mod tests {
-    use super::completed_output;
-    use nucleus_agent_protocol::AgentTurnFailure;
-    use swallowtail_runtime::{CleanupOutcome, TerminalOutcome, TerminalStatus};
+    use super::{completed_output, forward_activity_event};
+    use nucleus_agent_protocol::{AgentActivityEvent, AgentTurnFailure};
+    use swallowtail_runtime::{
+        ActivityDisclosure, ActivityId, ActivityKind, ActivityLifecyclePhase, ActivityObservation,
+        ActivityOperationId, ActivityStatus, CleanupOutcome, RuntimeEvent, RuntimeEventKind,
+        RuntimeRunId, TerminalOutcome, TerminalStatus,
+    };
 
     #[test]
     fn terminal_cancellation_and_deadline_remain_typed() {
@@ -239,5 +264,33 @@ mod tests {
             )),
             Err(AgentTurnFailure::TimedOut),
         );
+    }
+
+    #[test]
+    fn forwards_only_portable_activity_with_runtime_sequence() {
+        let observation = ActivityObservation::new(
+            ActivityId::new("task:1").expect("activity id"),
+            ActivityOperationId::Run(RuntimeRunId::new("run:1").expect("run id")),
+            ActivityKind::Task,
+            ActivityLifecyclePhase::Completed,
+            ActivityStatus::Completed,
+            None,
+            ActivityDisclosure::IdentityAndLifecycleOnly,
+        )
+        .expect("activity observation");
+        let activity = RuntimeEvent::new(9, RuntimeEventKind::Activity(observation));
+        let progress = RuntimeEvent::new(10, RuntimeEventKind::Progress);
+        let mut forwarded = Vec::<AgentActivityEvent>::new();
+        let mut handler = |event| {
+            forwarded.push(event);
+            Ok(())
+        };
+
+        forward_activity_event(&activity, &mut handler).expect("forward activity");
+        forward_activity_event(&progress, &mut handler).expect("ignore legacy event");
+
+        assert_eq!(forwarded.len(), 1);
+        assert_eq!(forwarded[0].sequence, 9);
+        assert_eq!(forwarded[0].observation.activity_id().as_str(), "task:1");
     }
 }

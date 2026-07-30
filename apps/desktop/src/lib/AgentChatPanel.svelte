@@ -3,6 +3,8 @@
 
   type ChatMessage = {
     id: string;
+    turnId: string;
+    sequence: number;
     role: "user" | "assistant";
     text: string;
     taskReceipts: import("./control/agentChat").TaskAuthoringReceipt[];
@@ -13,6 +15,14 @@
   // long sessions do not accumulate every conversation ever opened.
   const RETAINED_CONVERSATION_LIMIT = 32;
   const retainedMessages = new Map<string, ChatMessage[]>();
+  const retainedActivities = new Map<
+    string,
+    import("./control/agentChat").AgentChatActivity[]
+  >();
+  const retainedTurns = new Map<
+    string,
+    import("./agentChatTranscript").AgentTranscriptTurn[]
+  >();
   const retainedModels = new Map<string, string>();
   const retainedReasoningEfforts = new Map<string, string>();
   const retainedPendingConversations = new Set<string>();
@@ -44,9 +54,10 @@
 </script>
 
 <script lang="ts">
-  import { tick } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import {
     AgentChatInput,
+    AgentTranscript,
     Button,
     Icon,
     ModelPicker,
@@ -59,8 +70,16 @@
   import { messageSquareText } from "@poodle/icons-lucide";
   import TaskCreationReceipt from "./TaskCreationReceipt.svelte";
   import TaskWorkflowReceipt from "./TaskWorkflowReceipt.svelte";
+  import {
+    assembleAgentTranscript,
+    type AgentTranscriptTurn,
+  } from "./agentChatTranscript";
   import type { ControlGoalRecordDto, ControlTaskRecordDto } from "./control";
-  import type { TaskAuthoringReceipt, TaskWorkflowReceipt as WorkflowReceipt } from "./control/agentChat";
+  import type {
+    AgentChatActivity,
+    TaskAuthoringReceipt,
+    TaskWorkflowReceipt as WorkflowReceipt,
+  } from "./control/agentChat";
   import {
     cancelAgentChatTurn,
     listAgentChatModels,
@@ -88,6 +107,8 @@
 
   let activeConversationId = $state("");
   let messages = $state<ChatMessage[]>([]);
+  let activities = $state<AgentChatActivity[]>([]);
+  let turns = $state<AgentTranscriptTurn[]>([]);
   let draft = $state("");
   let pending = $state(false);
   let cancelRequested = $state(false);
@@ -96,7 +117,8 @@
   let model = $state(DEFAULT_MODEL);
   let reasoningEffort = $state(DEFAULT_REASONING_EFFORT);
   let modelCatalog = $state<AgentChatModelOption[]>(retainedModelCatalog ?? []);
-  let timeline = $state<HTMLElement | null>(null);
+  let expandedToolRuns = $state<string[]>([]);
+  let expandedToolCalls = $state<string[]>([]);
   let hydrationVersion = 0;
 
   const modelPickerAxes: ModelCapabilityAxis[] = [
@@ -163,20 +185,49 @@
       ? [{ id: "active-task", label: `Task · ${activeTask.title}`, kind: "task" }]
       : []),
   ]);
+  const transcriptItems = $derived.by(() =>
+    assembleAgentTranscript(
+      messages,
+      activities,
+      turns,
+      pending ? (cancelRequested ? "Cancelling…" : "Working…") : null,
+      conversationId,
+    ),
+  );
+  const receiptMessages = $derived(
+    messages.filter(
+      (message) => message.taskReceipts.length > 0 || message.workflowReceipts.length > 0,
+    ),
+  );
 
   $effect(() => {
     if (activeConversationId !== conversationId) {
       activeConversationId = conversationId;
       messages = retainedMessages.get(conversationId) ?? [];
+      activities = retainedActivities.get(conversationId) ?? [];
+      turns = retainedTurns.get(conversationId) ?? [];
       pending = retainedPendingConversations.has(conversationId);
       model = retainedModels.get(conversationId) ?? DEFAULT_MODEL;
       reasoningEffort = retainedReasoningEfforts.get(conversationId) ?? DEFAULT_REASONING_EFFORT;
-      void scrollToLatest();
       if (projectId) {
         void hydrateModelCatalog();
         void hydrateHistory(projectId, conversationId);
       }
     }
+  });
+
+  $effect(() => {
+    const unlisten = listen<AgentChatActivity>("agent-chat:activity", ({ payload }) => {
+      if (payload.conversation_id !== conversationId) {
+        return;
+      }
+      activities = [...activities, payload];
+      retain(retainedActivities, conversationId, activities);
+      adoptTimelineTurnId(payload.turn_id);
+    });
+    return () => {
+      void unlisten.then((stop) => stop());
+    };
   });
 
   async function hydrateHistory(nextProjectId: string, nextConversationId: string): Promise<void> {
@@ -190,12 +241,21 @@
       }
       messages = history.messages.map((message) => ({
         id: message.message_id,
+        turnId: message.turn_id,
+        sequence: message.sequence,
         role: message.role,
         text: message.text,
         taskReceipts: message.task_receipts,
         workflowReceipts: message.workflow_receipts,
       }));
+      activities = history.activities;
+      turns = history.turns.map((turn) => ({
+        turnId: turn.turn_id,
+        status: turn.status,
+      }));
       retain(retainedMessages, nextConversationId, messages);
+      retain(retainedActivities, nextConversationId, activities);
+      retain(retainedTurns, nextConversationId, turns);
       model = history.model ?? model;
       reasoningEffort = history.reasoning_effort ?? reasoningEffort;
       if (history.model) {
@@ -204,7 +264,6 @@
       if (history.reasoning_effort) {
         retain(retainedReasoningEfforts, nextConversationId, history.reasoning_effort);
       }
-      await scrollToLatest();
     } catch (caught) {
       if (version === hydrationVersion) {
         failure = caught instanceof Error ? caught.message : String(caught);
@@ -213,7 +272,6 @@
       if (version === hydrationVersion) {
         loadingHistory = false;
         pending = retainedPendingConversations.has(nextConversationId);
-        await scrollToLatest();
       }
     }
   }
@@ -232,6 +290,8 @@
     const optimisticMessageId = `user:${crypto.randomUUID()}`;
     appendMessage({
       id: optimisticMessageId,
+      turnId: `pending:${optimisticMessageId}`,
+      sequence: nextMessageSequence(),
       role: "user",
       text: message,
       taskReceipts: [],
@@ -255,8 +315,20 @@
       if (reply.reasoning_effort) {
         retain(retainedReasoningEfforts, conversationId, reply.reasoning_effort);
       }
+      messages = messages.map((message) =>
+        message.id === optimisticMessageId
+          ? {
+              ...message,
+              id: `message:${reply.timeline_turn_id}:user`,
+              turnId: reply.timeline_turn_id,
+            }
+          : message,
+      );
+      retain(retainedMessages, conversationId, messages);
       appendMessage({
-        id: reply.turn_id,
+        id: `message:${reply.timeline_turn_id}:assistant`,
+        turnId: reply.timeline_turn_id,
+        sequence: nextMessageSequence(),
         role: "assistant",
         text: reply.assistant_message,
         taskReceipts: reply.task_receipts,
@@ -268,16 +340,17 @@
         );
       }
     } catch (caught) {
+      const reason = caught instanceof Error ? caught.message : String(caught);
       if (!cancelRequested) {
         messages = messages.filter((message) => message.id !== optimisticMessageId);
         retain(retainedMessages, conversationId, messages);
       }
-      failure = caught instanceof Error ? caught.message : String(caught);
+      await hydrateHistory(projectId, conversationId);
+      failure = reason;
     } finally {
       retainedPendingConversations.delete(conversationId);
       pending = false;
       cancelRequested = false;
-      await scrollToLatest();
     }
   }
 
@@ -299,7 +372,28 @@
   function appendMessage(message: ChatMessage): void {
     messages = [...messages, message];
     retain(retainedMessages, conversationId, messages);
-    void scrollToLatest();
+  }
+
+  function adoptTimelineTurnId(turnId: string): void {
+    let changed = false;
+    messages = messages.map((message) => {
+      if (message.role !== "user" || !message.turnId.startsWith("pending:")) {
+        return message;
+      }
+      changed = true;
+      return {
+        ...message,
+        id: `message:${turnId}:user`,
+        turnId,
+      };
+    });
+    if (changed) {
+      retain(retainedMessages, conversationId, messages);
+    }
+  }
+
+  function nextMessageSequence(): number {
+    return messages.reduce((highest, message) => Math.max(highest, message.sequence), -1) + 1;
   }
 
   function openTaskReceipt(receipt: TaskAuthoringReceipt): void {
@@ -351,11 +445,6 @@
         detail: { projectId, taskId: receipt.task_id ?? receipt.current_task_id },
       }),
     );
-  }
-
-  async function scrollToLatest(): Promise<void> {
-    await tick();
-    timeline?.scrollTo({ top: timeline.scrollHeight, behavior: "smooth" });
   }
 
   async function hydrateModelCatalog(): Promise<void> {
@@ -410,13 +499,17 @@
       onClearActiveTask();
     }
   }
+
+  function toggle(values: string[], id: string): string[] {
+    return values.includes(id) ? values.filter((value) => value !== id) : [...values, id];
+  }
 </script>
 
 <section class="agent-chat" aria-label="Agent chat">
-  <div class="chat-timeline" bind:this={timeline} aria-live="polite">
-    {#if loadingHistory && messages.length === 0}
+  <div class="chat-timeline">
+    {#if loadingHistory && transcriptItems.length === 0}
       <div class="chat-empty"><Text tone="muted">Loading conversation…</Text></div>
-    {:else if messages.length === 0}
+    {:else if transcriptItems.length === 0}
       <div class="chat-empty">
         <span class="chat-empty-icon"><Icon icon={messageSquareText} size="md" /></span>
         <Text weight="semibold">Start a conversation</Text>
@@ -425,35 +518,46 @@
         </Text>
       </div>
     {:else}
-      <div class="message-list">
-        {#each messages as message (message.id)}
-          <article class:message-user={message.role === "user"} class="chat-message">
-            <Text size="sm" tone="muted">{message.role === "user" ? "You" : "Codex"}</Text>
-            <div class="message-copy">{message.text}</div>
-            {#each message.taskReceipts ?? [] as receipt}
-              <TaskCreationReceipt {receipt} onOpen={() => openTaskReceipt(receipt)} />
-            {/each}
-            {#each message.workflowReceipts ?? [] as receipt}
-              <TaskWorkflowReceipt {receipt} onOpen={() => openWorkflowReceipt(receipt)} />
-            {/each}
-          </article>
+      <div class="transcript-shell">
+        <AgentTranscript
+          items={transcriptItems}
+          autoScroll
+          size="sm"
+          density="compact"
+          ariaLabel="Agent conversation and activity"
+          expandedToolRuns={expandedToolRuns}
+          expandedToolCalls={expandedToolCalls}
+          onToolRunToggle={(id) =>
+            (expandedToolRuns = toggle(expandedToolRuns, id))}
+          onToolCallToggle={(id) =>
+            (expandedToolCalls = toggle(expandedToolCalls, id))}
+        />
+      </div>
+    {/if}
+
+    {#if pending}
+      <div class="pending-actions">
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={cancelRequested}
+          onClick={() => void cancelTurn()}
+        >
+          {cancelRequested ? "Cancelling…" : "Cancel"}
+        </Button>
+      </div>
+    {/if}
+
+    {#if receiptMessages.length > 0}
+      <div class="receipt-list" aria-label="Agent action receipts">
+        {#each receiptMessages as message (message.id)}
+          {#each message.taskReceipts as receipt}
+            <TaskCreationReceipt {receipt} onOpen={() => openTaskReceipt(receipt)} />
+          {/each}
+          {#each message.workflowReceipts as receipt}
+            <TaskWorkflowReceipt {receipt} onOpen={() => openWorkflowReceipt(receipt)} />
+          {/each}
         {/each}
-        {#if pending}
-          <article class="chat-message chat-message-pending">
-            <Text size="sm" tone="muted">Codex</Text>
-            <div class="thinking-dots" aria-label="Codex is working"><span></span><span></span><span></span></div>
-            <div class="pending-actions">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={cancelRequested}
-                onClick={() => void cancelTurn()}
-              >
-                {cancelRequested ? "Cancelling…" : "Cancel"}
-              </Button>
-            </div>
-          </article>
-        {/if}
       </div>
     {/if}
   </div>
@@ -524,8 +628,11 @@
 
   .chat-timeline {
     box-sizing: border-box;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    gap: 0.65rem;
     min-height: 0;
-    overflow: auto;
+    overflow: hidden;
     height: 100%;
     padding: clamp(1rem, 4vw, 3rem);
     padding-bottom: clamp(11rem, 24vh, 14rem);
@@ -542,6 +649,13 @@
     text-align: center;
   }
 
+  .transcript-shell {
+    width: min(48rem, 100%);
+    height: 100%;
+    min-height: 0;
+    margin: 0 auto;
+  }
+
   .chat-empty-icon {
     display: grid;
     place-items: center;
@@ -554,61 +668,25 @@
     background: var(--poodle-color-background-surface);
   }
 
-  .message-list {
+  .receipt-list {
+    position: relative;
+    z-index: 5;
     display: grid;
-    gap: 1.5rem;
+    gap: 0.55rem;
     width: min(48rem, 100%);
+    max-height: 10rem;
     margin: 0 auto;
-  }
-
-  .chat-message {
-    display: grid;
-    gap: 0.35rem;
-    max-width: 90%;
-  }
-
-  .message-user {
-    justify-self: end;
-    width: fit-content;
-    padding: 0.7rem 0.85rem;
-    border: 1px solid var(--poodle-color-border-subtle);
-    border-radius: var(--poodle-radius-surface);
-    background: var(--poodle-color-background-surface);
-  }
-
-  .message-copy {
-    color: var(--poodle-color-text-primary);
-    font-size: 0.875rem;
-    line-height: 1.55;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-
-  .chat-message-pending {
-    min-height: 2.5rem;
+    overflow: auto;
   }
 
   .pending-actions {
-    width: fit-content;
+    position: relative;
+    z-index: 5;
+    justify-self: end;
+    width: min(48rem, 100%);
+    margin: 0 auto;
+    text-align: right;
   }
-
-  .thinking-dots {
-    display: flex;
-    gap: 0.28rem;
-    align-items: center;
-    height: 1.25rem;
-  }
-
-  .thinking-dots span {
-    width: 0.35rem;
-    height: 0.35rem;
-    border-radius: 50%;
-    background: var(--poodle-color-text-secondary);
-    animation: pulse 1.2s infinite ease-in-out;
-  }
-
-  .thinking-dots span:nth-child(2) { animation-delay: 0.15s; }
-  .thinking-dots span:nth-child(3) { animation-delay: 0.3s; }
 
   .composer-float {
     position: absolute;
@@ -638,10 +716,5 @@
 
   @media (max-width: 36rem) {
     .chat-timeline { padding-bottom: 13rem; }
-  }
-
-  @keyframes pulse {
-    0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
-    30% { opacity: 1; transform: translateY(-0.15rem); }
   }
 </style>

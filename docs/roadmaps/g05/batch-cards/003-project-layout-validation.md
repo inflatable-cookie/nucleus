@@ -1,6 +1,6 @@
 # 003 Project Layout Validation
 
-Status: ready
+Status: operator-held
 Owner: Tom
 Updated: 2026-07-20
 Milestone: `../001-project-scoped-workspace-layouts.md`

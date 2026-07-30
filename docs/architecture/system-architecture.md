@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-07-20
+Updated: 2026-07-30
 Vision refs: `docs/vision/001-nucleus-product-vision.md`
 
 ## Top-Level Stack
@@ -53,6 +53,8 @@ Future clients may include:
   cleanup mechanics come from Swallowtail adapters; Nucleus retains host and
   product authority. Agent Chat uses the read-only session profile; Goal/task
   execution uses the separately registered bounded-workspace task runtime.
+  Agent Chat forwards Swallowtail's portable observable activity without a
+  second native-event mapping vocabulary.
 - `nucleus-native-harness`: first draft Nucleus-owned persona, session, event,
   tool, approval, model backend, and audit boundary types.
 - `nucleus-command-policy`: first draft command authority, sandbox, approval,
@@ -122,6 +124,15 @@ Common deployment shapes:
 
 Clients send commands and render state. They may cache for responsiveness, but
 must reconcile with the authoritative host for the affected domain.
+
+Product Agent Chat persists canonical messages and portable work activity as
+separate Nucleus records. The desktop caller receives the same activity after
+durable projection through one window-scoped event and reconstructs the flat
+Poodle transcript model. Poodle owns adjacent work grouping, collapse,
+windowing, and scroll presentation. Nucleus retains transcript ordering,
+receipts, product actions, retention, and recovery. Sanitized durable turn
+status settles still-open display activity after cancellation, timeout, or
+failure without rewriting Swallowtail observations.
 
 Hosts advertise protocol and capability records before clients assume a
 workflow is available. Advertisement can expose host form, connection mode,

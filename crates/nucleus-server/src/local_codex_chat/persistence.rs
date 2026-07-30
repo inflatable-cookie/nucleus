@@ -1,8 +1,13 @@
+use nucleus_agent_protocol::AgentActivityEvent;
 use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
 use nucleus_local_store::{
     LocalStoreBackend, LocalStoreRecord, LocalStoreRecordPayload, RevisionExpectation,
 };
 use serde::{Deserialize, Serialize};
+use swallowtail_runtime::{
+    ActivityAssistantPhase, ActivityContentChangeKind, ActivityContentStream, ActivityCorrelation,
+    ActivityDisclosure, ActivityKind, ActivityLifecyclePhase, ActivityOperationId, ActivityStatus,
+};
 
 use super::{TaskAuthoringReceipt, TaskWorkflowReceipt};
 use crate::ServerStateService;
@@ -10,6 +15,7 @@ use crate::ServerStateService;
 const SESSION_PREFIX: &str = "product-chat-session:";
 const TURN_PREFIX: &str = "product-chat-turn:";
 const MESSAGE_PREFIX: &str = "product-chat-message:";
+const ACTIVITY_PREFIX: &str = "product-chat-activity:";
 const THREAD_METADATA_PREFIX: &str = "product-chat-thread-metadata:";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -78,6 +84,28 @@ pub struct StoredChatMessage {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredChatActivity {
+    pub conversation_id: String,
+    pub turn_id: String,
+    pub turn_ordinal: u64,
+    pub runtime_operation_id: String,
+    pub activity_id: String,
+    pub sequence: u64,
+    pub kind: String,
+    pub kind_namespace: Option<String>,
+    pub lifecycle: String,
+    pub status: String,
+    pub assistant_phase: Option<String>,
+    pub disclosure: String,
+    pub label: Option<String>,
+    pub correlation_kind: Option<String>,
+    pub correlation_id: Option<String>,
+    pub content_change: Option<String>,
+    pub content_stream: Option<String>,
+    pub content: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatMessageRole {
     User,
@@ -92,7 +120,16 @@ pub struct LocalCodexChatHistory {
     pub thread_id: Option<String>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
+    pub turns: Vec<LocalCodexChatHistoryTurn>,
     pub messages: Vec<StoredChatMessage>,
+    pub activities: Vec<StoredChatActivity>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalCodexChatHistoryTurn {
+    pub turn_id: String,
+    pub ordinal: u64,
+    pub status: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -152,6 +189,16 @@ where
 {
     let session =
         read_session(state, conversation_id)?.filter(|session| session.project_id == project_id);
+    let mut turns = state
+        .agent_sessions()
+        .list()
+        .map_err(storage_error)?
+        .into_iter()
+        .filter(|record| record.id.0.starts_with(TURN_PREFIX))
+        .map(|record| decode::<StoredChatTurn>(&record.payload.bytes))
+        .collect::<Result<Vec<_>, _>>()?;
+    turns.retain(|turn| turn.conversation_id == conversation_id);
+    turns.sort_by_key(|turn| turn.ordinal);
     let mut messages = state
         .agent_sessions()
         .list()
@@ -162,6 +209,16 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     messages.retain(|message| message.conversation_id == conversation_id);
     messages.sort_by_key(|message| message.sequence);
+    let mut activities = state
+        .agent_sessions()
+        .list()
+        .map_err(storage_error)?
+        .into_iter()
+        .filter(|record| record.id.0.starts_with(ACTIVITY_PREFIX))
+        .map(|record| decode::<StoredChatActivity>(&record.payload.bytes))
+        .collect::<Result<Vec<_>, _>>()?;
+    activities.retain(|activity| activity.conversation_id == conversation_id);
+    activities.sort_by_key(|activity| (activity.turn_ordinal, activity.sequence));
 
     Ok(LocalCodexChatHistory {
         conversation_id: conversation_id.to_owned(),
@@ -174,8 +231,169 @@ where
         reasoning_effort: session
             .as_ref()
             .and_then(|session| session.reasoning_effort.clone()),
+        turns: turns
+            .into_iter()
+            .map(|turn| LocalCodexChatHistoryTurn {
+                turn_id: turn.turn_id,
+                ordinal: turn.ordinal,
+                status: turn.status,
+            })
+            .collect(),
         messages,
+        activities,
     })
+}
+
+pub fn project_activity(
+    conversation_id: &str,
+    turn_id: &str,
+    turn_ordinal: u64,
+    event: AgentActivityEvent,
+) -> StoredChatActivity {
+    let observation = event.observation;
+    let (runtime_kind, runtime_id) = match observation.operation_id() {
+        ActivityOperationId::Run(id) => ("run", id.as_str()),
+        ActivityOperationId::Turn(id) => ("turn", id.as_str()),
+    };
+    let (correlation_kind, correlation_id) = match observation.correlation() {
+        Some(ActivityCorrelation::Callback(id)) => {
+            (Some("callback".to_owned()), Some(id.as_str().to_owned()))
+        }
+        Some(ActivityCorrelation::DirectToolCall(id)) => (
+            Some("direct_tool_call".to_owned()),
+            Some(id.as_str().to_owned()),
+        ),
+        Some(ActivityCorrelation::ProviderRequest(id)) => (
+            Some("provider_request".to_owned()),
+            Some(id.as_provider_value().to_owned()),
+        ),
+        None => (None, None),
+    };
+    let content = observation.content();
+
+    StoredChatActivity {
+        conversation_id: conversation_id.to_owned(),
+        turn_id: turn_id.to_owned(),
+        turn_ordinal,
+        runtime_operation_id: format!("{runtime_kind}:{runtime_id}"),
+        activity_id: observation.activity_id().as_str().to_owned(),
+        sequence: event.sequence,
+        kind: activity_kind(observation.kind()).to_owned(),
+        kind_namespace: match observation.kind() {
+            ActivityKind::Unknown(namespace) => Some(namespace.as_str().to_owned()),
+            _ => None,
+        },
+        lifecycle: activity_lifecycle(observation.phase()).to_owned(),
+        status: activity_status(observation.status()).to_owned(),
+        assistant_phase: observation
+            .assistant_phase()
+            .map(activity_assistant_phase)
+            .map(str::to_owned),
+        disclosure: activity_disclosure(observation.disclosure()).to_owned(),
+        label: observation.label().map(|label| label.as_str().to_owned()),
+        correlation_kind,
+        correlation_id,
+        content_change: content.map(|content| activity_content_change(content.change()).to_owned()),
+        content_stream: content.map(|content| activity_content_stream(content.stream()).to_owned()),
+        content: content.map(|content| content.content().as_str().to_owned()),
+    }
+}
+
+pub fn persist_activity<B>(
+    state: &ServerStateService<B>,
+    activity: &StoredChatActivity,
+) -> Result<(), String>
+where
+    B: LocalStoreBackend,
+{
+    let identity = blake3::hash(activity.activity_id.as_bytes()).to_hex();
+    let record_id = PersistenceRecordId(format!(
+        "{ACTIVITY_PREFIX}{}:{}:{identity}",
+        activity.turn_id, activity.sequence
+    ));
+    put_json(
+        state,
+        record_id.clone(),
+        activity,
+        RevisionId(format!("rev:{}:observed", record_id.0)),
+        RevisionExpectation::Any,
+    )
+}
+
+fn activity_kind(kind: &ActivityKind) -> &'static str {
+    match kind {
+        ActivityKind::AssistantMessage => "assistant_message",
+        ActivityKind::ReasoningSummary => "reasoning_summary",
+        ActivityKind::Plan => "plan",
+        ActivityKind::CommandExecution => "command_execution",
+        ActivityKind::FileChange => "file_change",
+        ActivityKind::ProviderOwnedTool => "provider_owned_tool",
+        ActivityKind::ConsumerOwnedTool => "consumer_owned_tool",
+        ActivityKind::ExternalSearch => "external_search",
+        ActivityKind::ImageView => "image_view",
+        ActivityKind::SubagentOrCollaboration => "subagent_or_collaboration",
+        ActivityKind::ReviewTransition => "review_transition",
+        ActivityKind::ContextCompaction => "context_compaction",
+        ActivityKind::Task => "task",
+        ActivityKind::Hook => "hook",
+        ActivityKind::WarningOrError => "warning_or_error",
+        ActivityKind::Unknown(_) => "unknown",
+    }
+}
+
+fn activity_lifecycle(lifecycle: ActivityLifecyclePhase) -> &'static str {
+    match lifecycle {
+        ActivityLifecyclePhase::Started => "started",
+        ActivityLifecyclePhase::Updated => "updated",
+        ActivityLifecyclePhase::Completed => "completed",
+    }
+}
+
+fn activity_status(status: ActivityStatus) -> &'static str {
+    match status {
+        ActivityStatus::Pending => "pending",
+        ActivityStatus::InProgress => "in_progress",
+        ActivityStatus::Completed => "completed",
+        ActivityStatus::Failed => "failed",
+        ActivityStatus::Cancelled => "cancelled",
+    }
+}
+
+fn activity_assistant_phase(phase: ActivityAssistantPhase) -> &'static str {
+    match phase {
+        ActivityAssistantPhase::ProviderUnspecified => "provider_unspecified",
+        ActivityAssistantPhase::Intermediate => "intermediate",
+        ActivityAssistantPhase::Final => "final",
+    }
+}
+
+fn activity_disclosure(disclosure: ActivityDisclosure) -> &'static str {
+    match disclosure {
+        ActivityDisclosure::ProviderDisplayContent => "provider_display_content",
+        ActivityDisclosure::AdapterNormalizedSummary => "adapter_normalized_summary",
+        ActivityDisclosure::IdentityAndLifecycleOnly => "identity_and_lifecycle_only",
+        ActivityDisclosure::Unavailable => "unavailable",
+    }
+}
+
+fn activity_content_change(change: ActivityContentChangeKind) -> &'static str {
+    match change {
+        ActivityContentChangeKind::Delta => "delta",
+        ActivityContentChangeKind::ReplacementSnapshot => "replacement_snapshot",
+    }
+}
+
+fn activity_content_stream(stream: ActivityContentStream) -> &'static str {
+    match stream {
+        ActivityContentStream::IntermediateAssistantText => "intermediate_assistant_text",
+        ActivityContentStream::FinalAnswerText => "final_answer_text",
+        ActivityContentStream::ReasoningSummaryText => "reasoning_summary_text",
+        ActivityContentStream::PlanText => "plan_text",
+        ActivityContentStream::CommandOutput => "command_output",
+        ActivityContentStream::FileChangeOutput => "file_change_output",
+        ActivityContentStream::ProviderToolDisplay => "provider_tool_display",
+        ActivityContentStream::NormalizedSummary => "normalized_summary",
+    }
 }
 
 pub fn list_threads<B>(
@@ -636,7 +854,66 @@ fn storage_error(error: impl std::fmt::Debug) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nucleus_agent_protocol::AgentActivityEvent;
     use nucleus_local_store::SqliteBackend;
+    use swallowtail_runtime::{
+        ActivityContent, ActivityContentChangeKind, ActivityContentStream, ActivityContentUpdate,
+        ActivityId, ActivityLabel, ActivityObservation, OperationContent, RuntimeRunId,
+    };
+
+    #[test]
+    fn activity_projection_preserves_portable_reasoning_summary_evidence() {
+        let observation = ActivityObservation::new(
+            ActivityId::new("reasoning:1").expect("activity id"),
+            ActivityOperationId::Run(RuntimeRunId::new("run:1").expect("run id")),
+            ActivityKind::ReasoningSummary,
+            ActivityLifecyclePhase::Updated,
+            ActivityStatus::InProgress,
+            None,
+            ActivityDisclosure::ProviderDisplayContent,
+        )
+        .expect("observation")
+        .with_label(ActivityLabel::new("Reasoning summary").expect("label"))
+        .expect("label is valid")
+        .with_content(ActivityContentUpdate::new(
+            ActivityContentChangeKind::Delta,
+            ActivityContentStream::ReasoningSummaryText,
+            ActivityContent::new(
+                OperationContent::new("Checking the workspace").expect("content"),
+                128,
+            )
+            .expect("bounded content"),
+        ))
+        .expect("content is valid");
+
+        let activity = project_activity(
+            "conversation:1",
+            "turn:1",
+            1,
+            AgentActivityEvent::new(7, observation),
+        );
+
+        assert_eq!(activity.kind, "reasoning_summary");
+        assert_eq!(activity.kind_namespace, None);
+        assert_eq!(activity.lifecycle, "updated");
+        assert_eq!(activity.status, "in_progress");
+        assert_eq!(activity.label.as_deref(), Some("Reasoning summary"));
+        assert_eq!(activity.content_change.as_deref(), Some("delta"));
+        assert_eq!(
+            activity.content_stream.as_deref(),
+            Some("reasoning_summary_text")
+        );
+        assert_eq!(activity.content.as_deref(), Some("Checking the workspace"));
+        assert_eq!(activity.runtime_operation_id, "run:run:1");
+        assert_eq!(activity.sequence, 7);
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
+        persist_activity(&state, &activity).expect("persist activity");
+        let history =
+            read_history(&state, "project:1", "conversation:1").expect("read activity history");
+        assert_eq!(history.activities, vec![activity]);
+    }
 
     #[test]
     fn completed_chat_turn_survives_reopen_in_display_order() {
@@ -686,6 +963,8 @@ mod tests {
         let history =
             read_history(&reopened, "project:1", "project:1:panel:chat").expect("read history");
 
+        assert_eq!(history.turns.len(), 1);
+        assert_eq!(history.turns[0].status, "completed");
         assert_eq!(history.messages.len(), 2);
         assert_eq!(history.messages[0].role, ChatMessageRole::User);
         assert_eq!(history.messages[1].text, "Hi there");
@@ -858,6 +1137,7 @@ mod tests {
         .expect("fail");
 
         let history = read_history(&state, "project:1", "conversation:1").expect("history");
+        assert_eq!(history.turns[0].status, "failed");
         assert_eq!(history.messages.len(), 1);
         assert_eq!(history.messages[0].role, ChatMessageRole::User);
         assert_eq!(

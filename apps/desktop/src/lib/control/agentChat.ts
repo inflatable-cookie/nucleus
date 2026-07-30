@@ -28,6 +28,7 @@ export type AgentChatReply = {
   session_id: string;
   thread_id: string;
   turn_id: string;
+  timeline_turn_id: string;
   model: string;
   reasoning_effort: string | null;
   assistant_message: string;
@@ -83,6 +84,62 @@ export type AgentChatHistoryMessage = {
   workflow_receipts: TaskWorkflowReceipt[];
 };
 
+export type AgentChatHistoryTurn = {
+  turn_id: string;
+  ordinal: number;
+  status: "started" | "completed" | "cancelled" | "timed_out" | "failed";
+};
+
+export type AgentChatActivity = {
+  conversation_id: string;
+  turn_id: string;
+  turn_ordinal: number;
+  runtime_operation_id: string;
+  activity_id: string;
+  sequence: number;
+  kind:
+    | "assistant_message"
+    | "reasoning_summary"
+    | "plan"
+    | "command_execution"
+    | "file_change"
+    | "provider_owned_tool"
+    | "consumer_owned_tool"
+    | "external_search"
+    | "image_view"
+    | "subagent_or_collaboration"
+    | "review_transition"
+    | "context_compaction"
+    | "task"
+    | "hook"
+    | "warning_or_error"
+    | "unknown";
+  kind_namespace: string | null;
+  lifecycle: "started" | "updated" | "completed";
+  status: "pending" | "in_progress" | "completed" | "failed" | "cancelled";
+  assistant_phase: "provider_unspecified" | "intermediate" | "final" | null;
+  disclosure:
+    | "provider_display_content"
+    | "adapter_normalized_summary"
+    | "identity_and_lifecycle_only"
+    | "unavailable";
+  label: string | null;
+  correlation_kind: "callback" | "direct_tool_call" | "provider_request" | null;
+  correlation_id: string | null;
+  content_change: "delta" | "replacement_snapshot" | null;
+  content_stream:
+    | "intermediate_assistant_text"
+    | "final_answer_text"
+    | "reasoning_summary_text"
+    | "plan_text"
+    | "command_output"
+    | "file_change_output"
+    | "provider_tool_display"
+    | "normalized_summary"
+    | null;
+  content: string | null;
+};
+
 export type AgentChatHistory = {
   conversation_id: string;
   project_id: string;
@@ -90,7 +147,9 @@ export type AgentChatHistory = {
   thread_id: string | null;
   model: string | null;
   reasoning_effort: string | null;
+  turns: AgentChatHistoryTurn[];
   messages: AgentChatHistoryMessage[];
+  activities: AgentChatActivity[];
 };
 
 export type AgentChatThreadSummary = {
