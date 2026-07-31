@@ -31,8 +31,8 @@ serde_json = "1"
 similar = "3.1.1"
 swallowtail-runtime = { path = "../../../swallowtail/crates/swallowtail-runtime" }
 tempfile = "3"
-toml = "0.8"
-ts-rs = { version = "11", features = ["serde-compat", "no-serde-warnings"] }
+toml = "1.1"
+ts-rs = { version = "12", features = ["serde-compat", "no-serde-warnings"] }
 
 [dev-dependencies]
 nucleus-contract-fixtures = { path = "../nucleus-contract-fixtures" }
