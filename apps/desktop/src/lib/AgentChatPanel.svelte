@@ -19,12 +19,20 @@
     string,
     import("./control/agentChat").AgentChatActivity[]
   >();
+  const retainedQuestions = new Map<
+    string,
+    import("./control/agentChat").AgentChatQuestionExchange[]
+  >();
   const retainedTurns = new Map<
     string,
     import("./agentChatTranscript").AgentTranscriptTurn[]
   >();
   const retainedModels = new Map<string, string>();
   const retainedReasoningEfforts = new Map<string, string>();
+  const retainedHarnessModes = new Map<
+    string,
+    import("./control/agentChat").AgentChatHarnessMode
+  >();
   const retainedPendingConversations = new Set<string>();
 
   function retain<Value>(cache: Map<string, Value>, key: string, value: Value) {
@@ -41,6 +49,7 @@
 
   const DEFAULT_MODEL = "gpt-5.4-mini";
   const DEFAULT_REASONING_EFFORT = "low";
+  const DEFAULT_HARNESS_MODE = "normal";
   const REASONING_EFFORT_RANK: Readonly<Record<string, number>> = {
     ultra: 0,
     max: 1,
@@ -57,12 +66,15 @@
   import { listen } from "@tauri-apps/api/event";
   import {
     AgentChatInput,
+    AgentQuestion,
     AgentTranscript,
     Button,
     Icon,
     ModelPicker,
     Text,
     type AgentChatAttachment,
+    type AgentQuestionAnswer,
+    type AgentQuestionItem,
     type ModelCapabilityAxis,
     type ModelOption,
     type ModelSelection,
@@ -77,10 +89,13 @@
   import type { ControlGoalRecordDto, ControlTaskRecordDto } from "./control";
   import type {
     AgentChatActivity,
+    AgentChatHarnessMode,
+    AgentChatQuestionExchange,
     TaskAuthoringReceipt,
     TaskWorkflowReceipt as WorkflowReceipt,
   } from "./control/agentChat";
   import {
+    answerAgentChatQuestion,
     cancelAgentChatTurn,
     listAgentChatModels,
     loadAgentChatHistory,
@@ -108,6 +123,7 @@
   let activeConversationId = $state("");
   let messages = $state<ChatMessage[]>([]);
   let activities = $state<AgentChatActivity[]>([]);
+  let questions = $state<AgentChatQuestionExchange[]>([]);
   let turns = $state<AgentTranscriptTurn[]>([]);
   let draft = $state("");
   let pending = $state(false);
@@ -116,9 +132,15 @@
   let failure = $state<string | null>(null);
   let model = $state(DEFAULT_MODEL);
   let reasoningEffort = $state(DEFAULT_REASONING_EFFORT);
+  let harnessMode = $state<AgentChatHarnessMode>(DEFAULT_HARNESS_MODE);
   let modelCatalog = $state<AgentChatModelOption[]>(retainedModelCatalog ?? []);
   let expandedToolRuns = $state<string[]>([]);
   let expandedToolCalls = $state<string[]>([]);
+  let questionIndex = $state(0);
+  let questionSelections = $state<string[]>([]);
+  let collectedQuestionAnswers = $state<AgentQuestionAnswer[]>([]);
+  let answeringQuestion = $state(false);
+  let questionComponent = $state<{ submit: () => void } | null>(null);
   let hydrationVersion = 0;
 
   const modelPickerAxes: ModelCapabilityAxis[] = [
@@ -133,6 +155,16 @@
         },
       ],
       defaultValue: DEFAULT_REASONING_EFFORT,
+    },
+    {
+      key: "mode",
+      label: "Mode",
+      kind: "select",
+      options: [
+        { value: "normal", label: "Normal" },
+        { value: "plan", label: "Plan" },
+      ],
+      defaultValue: DEFAULT_HARNESS_MODE,
     },
   ];
   const modelPickerModels = $derived.by(() => {
@@ -155,6 +187,14 @@
             })),
           defaultValue: option.default_reasoning_effort,
         },
+        {
+          key: "mode",
+          options: [
+            { value: "normal", label: "Normal" },
+            { value: "plan", label: "Plan" },
+          ],
+          defaultValue: DEFAULT_HARNESS_MODE,
+        },
       ],
     }));
     if (!options.some((option) => option.value === model)) {
@@ -168,6 +208,14 @@
             options: [{ value: reasoningEffort, label: reasoningLabel(reasoningEffort) }],
             defaultValue: reasoningEffort,
           },
+          {
+            key: "mode",
+            options: [
+              { value: "normal", label: "Normal" },
+              { value: "plan", label: "Plan" },
+            ],
+            defaultValue: DEFAULT_HARNESS_MODE,
+          },
         ],
       });
     }
@@ -175,7 +223,7 @@
   });
   const modelSelection = $derived<ModelSelection>({
     model,
-    axes: { reasoning: reasoningEffort },
+    axes: { reasoning: reasoningEffort, mode: harnessMode },
   });
   const contextAttachments = $derived<AgentChatAttachment[]>([
     ...(activeGoal
@@ -192,7 +240,28 @@
       turns,
       pending ? (cancelRequested ? "Cancelling…" : "Working…") : null,
       conversationId,
+      questions,
     ),
+  );
+  const pendingQuestion = $derived(
+    questions.find((question) => question.status === "pending") ?? null,
+  );
+  const questionItems = $derived<AgentQuestionItem[]>(
+    pendingQuestion?.questions.map((question) => ({
+      id: question.question_id,
+      header: question.header || undefined,
+      prompt: question.prompt,
+      options: question.options.map((option) => ({
+        value: option.value,
+        label: option.label,
+        description: option.description ?? undefined,
+      })),
+      allowMultiple: question.kind === "multiple_choice",
+    })) ?? [],
+  );
+  const questionCanSubmit = $derived(
+    !answeringQuestion &&
+      (draft.trim().length > 0 || questionSelections.length > 0),
   );
   const receiptMessages = $derived(
     messages.filter(
@@ -205,10 +274,16 @@
       activeConversationId = conversationId;
       messages = retainedMessages.get(conversationId) ?? [];
       activities = retainedActivities.get(conversationId) ?? [];
+      questions = retainedQuestions.get(conversationId) ?? [];
       turns = retainedTurns.get(conversationId) ?? [];
       pending = retainedPendingConversations.has(conversationId);
+      questionIndex = 0;
+      questionSelections = [];
+      collectedQuestionAnswers = [];
+      answeringQuestion = false;
       model = retainedModels.get(conversationId) ?? DEFAULT_MODEL;
       reasoningEffort = retainedReasoningEfforts.get(conversationId) ?? DEFAULT_REASONING_EFFORT;
+      harnessMode = retainedHarnessModes.get(conversationId) ?? DEFAULT_HARNESS_MODE;
       if (projectId) {
         void hydrateModelCatalog();
         void hydrateHistory(projectId, conversationId);
@@ -224,6 +299,26 @@
       activities = [...activities, payload];
       retain(retainedActivities, conversationId, activities);
       adoptTimelineTurnId(payload.turn_id);
+    });
+    return () => {
+      void unlisten.then((stop) => stop());
+    };
+  });
+
+  $effect(() => {
+    const unlisten = listen<AgentChatQuestionExchange>("agent-chat:question", ({ payload }) => {
+      if (payload.conversation_id !== conversationId) {
+        return;
+      }
+      questions = [
+        ...questions.filter((question) => question.callback_id !== payload.callback_id),
+        payload,
+      ];
+      retain(retainedQuestions, conversationId, questions);
+      adoptTimelineTurnId(payload.turn_id);
+      questionIndex = 0;
+      questionSelections = [];
+      collectedQuestionAnswers = [];
     });
     return () => {
       void unlisten.then((stop) => stop());
@@ -249,20 +344,26 @@
         workflowReceipts: message.workflow_receipts,
       }));
       activities = history.activities;
+      questions = history.questions;
       turns = history.turns.map((turn) => ({
         turnId: turn.turn_id,
         status: turn.status,
       }));
       retain(retainedMessages, nextConversationId, messages);
       retain(retainedActivities, nextConversationId, activities);
+      retain(retainedQuestions, nextConversationId, questions);
       retain(retainedTurns, nextConversationId, turns);
       model = history.model ?? model;
       reasoningEffort = history.reasoning_effort ?? reasoningEffort;
+      harnessMode = history.harness_mode ?? harnessMode;
       if (history.model) {
         retain(retainedModels, nextConversationId, history.model);
       }
       if (history.reasoning_effort) {
         retain(retainedReasoningEfforts, nextConversationId, history.reasoning_effort);
+      }
+      if (history.harness_mode) {
+        retain(retainedHarnessModes, nextConversationId, history.harness_mode);
       }
     } catch (caught) {
       if (version === hydrationVersion) {
@@ -308,6 +409,7 @@
         active_task_id: activeTask?.task_id ?? null,
         model,
         reasoning_effort: reasoningEffort,
+        harness_mode: harnessMode,
       });
       model = reply.model;
       retain(retainedModels, conversationId, reply.model);
@@ -315,6 +417,8 @@
       if (reply.reasoning_effort) {
         retain(retainedReasoningEfforts, conversationId, reply.reasoning_effort);
       }
+      harnessMode = reply.harness_mode;
+      retain(retainedHarnessModes, conversationId, reply.harness_mode);
       messages = messages.map((message) =>
         message.id === optimisticMessageId
           ? {
@@ -351,6 +455,61 @@
       retainedPendingConversations.delete(conversationId);
       pending = false;
       cancelRequested = false;
+    }
+  }
+
+  function submitComposer(): void {
+    if (pendingQuestion) {
+      questionComponent?.submit();
+      return;
+    }
+    void submit();
+  }
+
+  async function answerQuestion(answer: AgentQuestionAnswer): Promise<void> {
+    if (!projectId || !pendingQuestion || answeringQuestion) {
+      return;
+    }
+    const nextAnswers = [...collectedQuestionAnswers, answer];
+    if (questionIndex + 1 < questionItems.length) {
+      collectedQuestionAnswers = nextAnswers;
+      questionIndex += 1;
+      questionSelections = [];
+      draft = "";
+      return;
+    }
+
+    answeringQuestion = true;
+    failure = null;
+    try {
+      const answered = await answerAgentChatQuestion({
+        project_id: projectId,
+        conversation_id: conversationId,
+        turn_id: pendingQuestion.turn_id,
+        callback_id: pendingQuestion.callback_id,
+        runtime_operation_id: pendingQuestion.runtime_operation_id,
+        event_sequence: pendingQuestion.event_sequence,
+        provider_request_ref: pendingQuestion.provider_request_ref,
+        answers: nextAnswers.map((item) => ({
+          question_id: item.questionId,
+          selected_option_ids: item.values,
+          text: item.outcome === "override" ? item.text : null,
+          skipped: item.outcome === "declined",
+        })),
+      });
+      questions = [
+        ...questions.filter((question) => question.callback_id !== answered.callback_id),
+        answered,
+      ];
+      retain(retainedQuestions, conversationId, questions);
+      questionIndex = 0;
+      questionSelections = [];
+      collectedQuestionAnswers = [];
+      draft = "";
+    } catch (caught) {
+      failure = caught instanceof Error ? caught.message : String(caught);
+    } finally {
+      answeringQuestion = false;
     }
   }
 
@@ -482,6 +641,12 @@
         ? selectedEffort
         : selected?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
     retain(retainedReasoningEfforts, conversationId, reasoningEffort);
+    const selectedMode = selection.axes.mode;
+    harnessMode =
+      selectedMode === "normal" || selectedMode === "plan"
+        ? selectedMode
+        : DEFAULT_HARNESS_MODE;
+    retain(retainedHarnessModes, conversationId, harnessMode);
   }
 
   function reasoningLabel(effort: string): string {
@@ -572,11 +737,28 @@
       minRows={2}
       maxRows={8}
       size="sm"
+      status={pendingQuestion ? "questioning" : pending ? "busy" : "idle"}
+      questionCanSubmit={questionCanSubmit}
       attachments={contextAttachments}
-      disabled={!projectId || pending || loadingHistory}
-      onSubmit={() => void submit()}
+      disabled={!projectId || loadingHistory || answeringQuestion}
+      onSubmit={submitComposer}
+      onStop={() => void cancelTurn()}
       onRemoveAttachment={removeContextAttachment}
     >
+      {#snippet question()}
+        <AgentQuestion
+          bind:this={questionComponent}
+          questions={questionItems}
+          activeIndex={questionIndex}
+          selections={questionSelections}
+          override={draft}
+          dismissible
+          size="sm"
+          density="compact"
+          onSelectionChange={(values) => (questionSelections = values)}
+          onSubmit={(answer) => void answerQuestion(answer)}
+        />
+      {/snippet}
       {#snippet toolbar()}
         <ModelPicker
           models={modelPickerModels}

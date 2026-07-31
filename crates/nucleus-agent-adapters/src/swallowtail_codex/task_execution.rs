@@ -219,9 +219,9 @@ async fn drive_task_turn(turn: &mut dyn TurnHandle) -> Result<TerminalOutcome, S
                     "task execution received an undeclared product tool call".to_owned()
                 });
             }
-            TaskTurnActivity::Callback(CallbackRequestKind::HarnessUiDialog(_)) => {
+            TaskTurnActivity::Callback(CallbackRequestKind::HarnessUserInput(_)) => {
                 first_stream_error.get_or_insert_with(|| {
-                    "task execution received an unsupported harness UI request".to_owned()
+                    "task execution received unsupported typed user input".to_owned()
                 });
             }
             TaskTurnActivity::CallbackClosed => callbacks_open = false,

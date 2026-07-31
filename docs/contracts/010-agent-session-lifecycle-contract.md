@@ -104,6 +104,56 @@ After restart or provider disconnect, each session must be marked as:
 Recovery state is explicit so clients can render uncertainty instead of
 pretending all harnesses support resume equally.
 
+## Effective Session Mode
+
+Agent Chat may request an explicit harness mode. The initial product values
+are:
+
+- normal
+- plan
+
+Harness mode is an immutable prepared-session property. It is not inferred
+from planning prose, `ActivityKind::Plan`, or a provider task-list snapshot.
+Changing mode follows the same replacement posture as changing model,
+reasoning effort, or working resource: Nucleus opens a newly prepared session,
+records the selected and effective mode, and supplies bounded transcript
+context rather than silently mutating the existing provider session.
+
+If the selected adapter cannot prepare the requested mode, session creation
+fails before provider effects. Nucleus must not pretend that a normal session
+is plan mode.
+
+## Typed User-Input Wait
+
+A provider user-input callback creates a turn-scoped wait state. Nucleus
+retains:
+
+- callback id
+- runtime operation and provider turn identity
+- provider request reference when supplied
+- provider event sequence
+- deadline or auto-resolution evidence when supplied
+- the exact portable Swallowtail question request
+- one terminal resolution: answered, declined, timed out, cancelled,
+  abandoned, or failed
+
+The pending request blocks the affected turn and composer, not the application.
+Transcript navigation, panel switching, scrolling, and exact turn cancellation
+remain available.
+
+The answer route must not require a mutex held by the waiting turn. A separately
+routed answer is validated against the pending portable request, accepted once,
+and resolved through the original Swallowtail callback responder. Duplicate,
+stale, mismatched, or post-terminal answers fail without changing the durable
+resolution.
+
+Cancellation, deadline expiry, provider terminal outcome, callback-stream
+closure, and session cleanup abandon any unresolved wait before the turn is
+closed. A process restart cannot restore an in-memory callback responder.
+Persisted unanswered requests therefore remain visible recovery evidence but
+become stale and unanswerable; Nucleus marks the interrupted turn honestly and
+does not replay or invent a provider response.
+
 ## Task Attempt Linkage
 
 Agent sessions may be linked from task agent attempts, but task history must not
@@ -308,5 +358,5 @@ control remain out of scope.
   ACP, first-pass Claude SDK/CLI, first-pass Kimi ACP, and first-pass Pi RPC.
 - Which lifecycle actions map cleanly across ACP, SDK, app-server, RPC, and
   CLI/PTY integrations.
-- How approval and user-input responses bind to active turns.
+- Cross-provider approval policy beyond typed user-input callbacks.
 - How session recovery integrates with the future storage backend.

@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-30
+Updated: 2026-07-31
 
 ## Purpose
 
@@ -41,3 +41,6 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 - `005-observable-agent-chat-transcript.md` - completed; deterministic and
   authenticated native activity, grouping, scroll, cancellation, cleanup, and
   restart acceptance passed
+- `006-interactive-agent-chat-sessions.md` - completed
+- `007-structured-provider-work.md` - active
+- `008-structured-agent-chat-acceptance.md` - planned

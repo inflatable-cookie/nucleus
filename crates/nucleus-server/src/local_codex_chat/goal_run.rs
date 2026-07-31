@@ -820,6 +820,7 @@ pub(super) mod tests {
                 provider_thread_id: "thread:goal-run".to_owned(),
                 model: "gpt-5.4-mini".to_owned(),
                 reasoning_effort: Some("low".to_owned()),
+                harness_mode: crate::local_codex_chat::LocalCodexChatHarnessMode::Normal,
                 adapter_id: "codex-app-server".to_owned(),
                 provider_instance_id: "codex:local-default".to_owned(),
                 turn_count: 1,

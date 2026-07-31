@@ -6,15 +6,16 @@
 
 use futures_executor::block_on;
 use nucleus_agent_protocol::{
-    AgentActivityHandler, AgentLiveSession, AgentModelOption, AgentReasoningOption,
-    AgentSessionRuntime, AgentSessionStartRequest, AgentStartedSessionInfo, AgentToolCallHandler,
-    AgentTurnFailure, AgentTurnReply, AgentTurnRequest,
+    AgentActivityHandler, AgentHarnessMode, AgentLiveSession, AgentModelOption,
+    AgentReasoningOption, AgentSessionRuntime, AgentSessionStartRequest, AgentStartedSessionInfo,
+    AgentToolCallHandler, AgentTurnFailure, AgentTurnReply, AgentTurnRequest,
+    AgentUserInputHandler,
 };
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use swallowtail_adapter_codex::{CodexAppServerDriver, CodexSessionProfileInput};
-use swallowtail_core::{ObservableActivityAvailability, ReasoningMode};
+use swallowtail_core::{HarnessMode, ObservableActivityAvailability, ReasoningMode};
 use swallowtail_runtime::{
     HostServices, InteractiveSessionDriver, InteractiveSessionHandle, ModelCatalogDriver,
     OperationContent, RequestId, RuntimeFailure, RuntimeTurnId, ScopeId, SessionOptions,
@@ -66,21 +67,27 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
         let services = host.services();
         let prepared = block_on(preparation::app_server(&host))?;
         let driver = CodexAppServerDriver::new(prepared.environment().clone());
-        let options = SessionOptions::default()
+        let mut options = SessionOptions::default()
             .with_developer_instructions(
                 OperationContent::new(request.developer_instructions)
                     .map_err(|error| error.to_string())?,
             )
             .with_reasoning_mode(reasoning)
             .with_tools(tools);
+        if request.harness_mode == AgentHarnessMode::Plan {
+            options = options.with_harness_mode(HarnessMode::Plan);
+        }
         let prepared_session = prepared
-            .prepare_read_only_session(CodexSessionProfileInput::new(
-                request_id("session")?,
-                preparation::model(&request.model)?,
-                host.working_resource().clone(),
-                None,
-                options,
-            ))
+            .prepare_read_only_session(
+                CodexSessionProfileInput::new(
+                    request_id("session")?,
+                    preparation::model(&request.model)?,
+                    host.working_resource().clone(),
+                    None,
+                    options,
+                )
+                .with_user_input_exchange(),
+            )
             .map_err(preparation::error)?;
         if prepared_session
             .evidence()
@@ -105,6 +112,7 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
                 provider_thread_id,
                 model: request.model,
                 reasoning_effort: Some(request.reasoning_effort),
+                harness_mode: request.harness_mode,
             },
             session: Some(session),
             services,
@@ -180,6 +188,7 @@ impl AgentLiveSession for SwallowtailCodexLiveSession {
         request: AgentTurnRequest,
         on_activity: &mut AgentActivityHandler<'_>,
         on_tool_call: &mut AgentToolCallHandler<'_>,
+        on_user_input: &mut AgentUserInputHandler<'_>,
     ) -> Result<AgentTurnReply, AgentTurnFailure> {
         if request.model != self.info.model
             || Some(request.reasoning_effort.as_str()) != self.info.reasoning_effort.as_deref()
@@ -219,6 +228,7 @@ impl AgentLiveSession for SwallowtailCodexLiveSession {
             &request.cancellation,
             on_activity,
             on_tool_call,
+            on_user_input,
         ));
         let cleanup = block_on(turn.close());
         let outcome = outcome?;
@@ -337,6 +347,7 @@ mod tests {
                 working_directory: "/not/used".to_owned(),
                 model: "gpt-5.4-mini".to_owned(),
                 reasoning_effort: "low".to_owned(),
+                harness_mode: AgentHarnessMode::Normal,
                 developer_instructions: "instructions".to_owned(),
                 dynamic_tools: Vec::new(),
                 resume_provider_thread_id: Some("thread:stored".to_owned()),
@@ -367,6 +378,7 @@ mod tests {
                 working_directory: working_directory.display().to_string(),
                 model: "gpt-5.4-mini".to_owned(),
                 reasoning_effort: "low".to_owned(),
+                harness_mode: AgentHarnessMode::Normal,
                 developer_instructions: "Nucleus integration smoke.".to_owned(),
                 dynamic_tools: vec![json!({
                     "type": "function",

@@ -1,6 +1,7 @@
 use nucleus_agent_protocol::{
     AgentActivityEvent, AgentActivityHandler, AgentToolCall, AgentToolCallHandler,
-    AgentTurnCancellation, AgentTurnFailure,
+    AgentTurnCancellation, AgentTurnFailure, AgentUserInputHandler, AgentUserInputRequest,
+    AgentUserInputWait,
 };
 use serde_json::Value;
 use std::future::poll_fn;
@@ -23,6 +24,7 @@ enum TurnActivity {
     Event(RuntimeEvent),
     EventsClosed,
     EventFailed(RuntimeFailure),
+    UserInputResolved(Result<swallowtail_runtime::HarnessUserInputResponse, String>),
     CancelRequested,
 }
 
@@ -32,6 +34,7 @@ pub(super) async fn drive_turn(
     cancellation: &AgentTurnCancellation,
     on_activity: &mut AgentActivityHandler<'_>,
     on_tool_call: &mut AgentToolCallHandler<'_>,
+    on_user_input: &mut AgentUserInputHandler<'_>,
 ) -> Result<TerminalOutcome, String> {
     let mut events = turn
         .take_events()
@@ -48,6 +51,7 @@ pub(super) async fn drive_turn(
     let mut callbacks_open = callback_requests.is_some();
     let mut first_stream_error = None;
     let mut cancellation_requested = false;
+    let mut pending_user_input: Option<(CallbackRequest, AgentUserInputWait)> = None;
 
     loop {
         let activity = poll_fn(|context| {
@@ -57,7 +61,12 @@ pub(super) async fn drive_turn(
             if !cancellation_requested && cancellation.poll_requested(context) == Poll::Ready(()) {
                 return Poll::Ready(TurnActivity::CancelRequested);
             }
-            if callbacks_open {
+            if let Some((_, wait)) = pending_user_input.as_mut() {
+                if let Poll::Ready(response) = wait.poll_response(context) {
+                    return Poll::Ready(TurnActivity::UserInputResolved(response));
+                }
+            }
+            if callbacks_open && pending_user_input.is_none() {
                 let callbacks = callback_requests
                     .as_mut()
                     .expect("open callback stream is present");
@@ -96,10 +105,46 @@ pub(super) async fn drive_turn(
                 return Ok(outcome);
             }
             TurnActivity::Callback(request) => {
-                let response = callback_response(&request, provider_turn_id, on_tool_call);
-                if let Some(responder) = &responder {
-                    if let Err(error) = responder.respond(response).await {
-                        first_stream_error.get_or_insert_with(|| runtime_error(error));
+                if matches!(request.kind(), CallbackRequestKind::HarnessUserInput(_)) {
+                    match on_user_input(AgentUserInputRequest {
+                        callback: request.clone(),
+                    }) {
+                        Ok(wait) => pending_user_input = Some((request, wait)),
+                        Err(error) => {
+                            first_stream_error.get_or_insert(error);
+                        }
+                    }
+                } else {
+                    let response = callback_response(&request, provider_turn_id, on_tool_call);
+                    if let Some(responder) = &responder {
+                        if let Err(error) = responder.respond(response).await {
+                            first_stream_error.get_or_insert_with(|| runtime_error(error));
+                        }
+                    }
+                }
+            }
+            TurnActivity::UserInputResolved(response) => {
+                let Some((request, _)) = pending_user_input.take() else {
+                    first_stream_error
+                        .get_or_insert_with(|| "typed user-input wait was not active".to_owned());
+                    continue;
+                };
+                match response {
+                    Ok(response) => {
+                        if let Some(responder) = &responder {
+                            if let Err(error) = responder
+                                .respond(CallbackResponse::for_request(
+                                    &request,
+                                    CallbackResult::UserInput(response),
+                                ))
+                                .await
+                            {
+                                first_stream_error.get_or_insert_with(|| runtime_error(error));
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        first_stream_error.get_or_insert(error);
                     }
                 }
             }
@@ -166,8 +211,8 @@ pub(super) fn callback_response(
         CallbackRequestKind::Extension(_) => {
             Err("unsupported provider callback extension".to_owned())
         }
-        CallbackRequestKind::HarnessUiDialog(_) => {
-            Err("unsupported harness UI callback".to_owned())
+        CallbackRequestKind::HarnessUserInput(_) => {
+            Err("unsupported typed user-input callback".to_owned())
         }
     };
     let result = match result {

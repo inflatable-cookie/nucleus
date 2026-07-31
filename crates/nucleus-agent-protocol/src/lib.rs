@@ -36,9 +36,11 @@ pub use identity::{
     AdapterIdentity, AuthenticationPreflight, ProviderDriverKind, TransportFamily, VersionDiscovery,
 };
 pub use live_runtime::{
-    AgentLiveSession, AgentModelOption, AgentReasoningOption, AgentSessionRuntime,
-    AgentSessionStartRequest, AgentStartedSessionInfo, AgentToolCall, AgentToolCallHandler,
-    AgentTurnCancellation, AgentTurnFailure, AgentTurnReply, AgentTurnRequest,
+    AgentHarnessMode, AgentLiveSession, AgentModelOption, AgentReasoningOption,
+    AgentSessionRuntime, AgentSessionStartRequest, AgentStartedSessionInfo, AgentToolCall,
+    AgentToolCallHandler, AgentTurnCancellation, AgentTurnFailure, AgentTurnReply,
+    AgentTurnRequest, AgentUserInputAnswerer, AgentUserInputHandler, AgentUserInputRequest,
+    AgentUserInputWait,
 };
 pub use routes::{
     ApiCompatibilityFamily, AuthSource, BillingAccountSource, ModelRoute, ModelRouteCapabilities,

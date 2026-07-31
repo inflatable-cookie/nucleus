@@ -639,6 +639,24 @@ deeply enough to inspect selectors, run health checks, plan validation, and
 summarize evidence into task readiness and task history proposals. Effigy
 knowledge is a tool capability, not hidden model intuition.
 
+Agent Chat consumes Swallowtail's portable session and activity model. Normal
+and harness plan mode are immutable prepared-session properties; a route change
+opens a new prepared session instead of mutating the running one.
+
+Typed provider questions use a Nucleus-owned rendezvous outside the serialized
+chat-session lock. The turn persists and emits the exact portable request, then
+waits on a one-shot answerer. The desktop answer command validates callback,
+turn, operation, provider-request, and question correlation, persists the
+accepted response, then wakes the waiting turn. Cancellation, timeout,
+termination, and restart settle the durable request without making stale
+answerers reusable.
+
+Observable activity persistence retains Swallowtail actor attribution,
+task-list snapshots, and subagent snapshots. Provider task lists remain
+transcript presentation data, not Nucleus Tasks. Operation-local child
+directory folding and navigation are a separate product projection over those
+portable snapshots and grant no child-control authority.
+
 ## Goals, Loops, And Next Task Selection
 
 Goals, tasks, work items, loops, and next tasks are separate concepts.

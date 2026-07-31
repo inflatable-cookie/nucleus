@@ -8,7 +8,7 @@
 use nucleus_agent_adapters::AgentAdapterRegistry;
 use nucleus_agent_protocol::{
     AgentActivityHandler, AgentLiveSession, AgentSessionStartRequest, AgentToolCall,
-    AgentTurnCancellation, AgentTurnFailure, AgentTurnRequest,
+    AgentTurnCancellation, AgentTurnFailure, AgentTurnRequest, AgentUserInputHandler,
 };
 use serde_json::Value;
 use std::time::Duration;
@@ -20,8 +20,8 @@ use super::task_authoring::{TaskAuthoringReceipt, TaskToolOutcome};
 use super::task_ledger::dynamic_tool_spec as task_ledger_spec;
 use super::task_workflow::{dynamic_tool_spec as task_workflow_spec, TaskWorkflowReceipt};
 use super::{
-    LocalCodexChatModelOption, LocalCodexChatReasoningOption, LocalCodexChatReply, CHAT_ADAPTER_ID,
-    CHAT_PROVIDER_INSTANCE_ID, CHAT_TASK_TOOLSET_VERSION,
+    LocalCodexChatHarnessMode, LocalCodexChatModelOption, LocalCodexChatReasoningOption,
+    LocalCodexChatReply, CHAT_ADAPTER_ID, CHAT_PROVIDER_INSTANCE_ID, CHAT_TASK_TOOLSET_VERSION,
 };
 use tool_calls::consolidate_task_receipts;
 
@@ -50,6 +50,12 @@ impl LocalCodexChatSession {
             provider_thread_id: info.provider_thread_id.clone(),
             model: info.model.clone(),
             reasoning_effort: info.reasoning_effort.clone(),
+            harness_mode: match info.harness_mode {
+                nucleus_agent_protocol::AgentHarnessMode::Normal => {
+                    LocalCodexChatHarnessMode::Normal
+                }
+                nucleus_agent_protocol::AgentHarnessMode::Plan => LocalCodexChatHarnessMode::Plan,
+            },
             adapter_id: CHAT_ADAPTER_ID.to_owned(),
             provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
             turn_count,
@@ -65,6 +71,7 @@ impl LocalCodexChatSession {
         migration_context: Option<&str>,
         model: &str,
         reasoning_effort: &str,
+        harness_mode: LocalCodexChatHarnessMode,
         turn_timeout: Duration,
     ) -> Result<Self, String> {
         let developer_instructions = migration_context.map_or_else(
@@ -79,6 +86,7 @@ impl LocalCodexChatSession {
             working_directory: project_root.to_owned(),
             model: model.to_owned(),
             reasoning_effort: reasoning_effort.to_owned(),
+            harness_mode: harness_mode.agent_mode(),
             developer_instructions,
             dynamic_tools: dynamic_tool_specs(),
             // Current Codex schema evidence cannot safely redeclare dynamic
@@ -101,9 +109,16 @@ impl LocalCodexChatSession {
         self.resource_id == resource_id
     }
 
-    pub(super) fn targets_route(&self, model: &str, reasoning_effort: &str) -> bool {
+    pub(super) fn targets_route(
+        &self,
+        model: &str,
+        reasoning_effort: &str,
+        harness_mode: LocalCodexChatHarnessMode,
+    ) -> bool {
         let info = self.live.info();
-        info.model == model && info.reasoning_effort.as_deref() == Some(reasoning_effort)
+        info.model == model
+            && info.reasoning_effort.as_deref() == Some(reasoning_effort)
+            && info.harness_mode == harness_mode.agent_mode()
     }
 
     pub(super) fn send_turn<F>(
@@ -113,6 +128,7 @@ impl LocalCodexChatSession {
         reasoning_effort: &str,
         cancellation: AgentTurnCancellation,
         on_activity: &mut AgentActivityHandler<'_>,
+        on_user_input: &mut AgentUserInputHandler<'_>,
         task_tool: &mut F,
     ) -> Result<LocalCodexChatReply, AgentTurnFailure>
     where
@@ -139,6 +155,7 @@ impl LocalCodexChatSession {
             },
             on_activity,
             &mut on_tool_call,
+            on_user_input,
         )?;
 
         let info = self.live.info();
@@ -149,6 +166,12 @@ impl LocalCodexChatSession {
             timeline_turn_id: String::new(),
             model: info.model.clone(),
             reasoning_effort: info.reasoning_effort.clone(),
+            harness_mode: match info.harness_mode {
+                nucleus_agent_protocol::AgentHarnessMode::Normal => {
+                    LocalCodexChatHarnessMode::Normal
+                }
+                nucleus_agent_protocol::AgentHarnessMode::Plan => LocalCodexChatHarnessMode::Plan,
+            },
             assistant_message: reply.assistant_message,
             task_receipts: consolidate_task_receipts(task_receipts),
             workflow_receipts,

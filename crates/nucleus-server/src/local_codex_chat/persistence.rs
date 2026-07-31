@@ -5,17 +5,21 @@ use nucleus_local_store::{
 };
 use serde::{Deserialize, Serialize};
 use swallowtail_runtime::{
-    ActivityAssistantPhase, ActivityContentChangeKind, ActivityContentStream, ActivityCorrelation,
-    ActivityDisclosure, ActivityKind, ActivityLifecyclePhase, ActivityOperationId, ActivityStatus,
+    ActivityActor, ActivityAssistantPhase, ActivityContentChangeKind, ActivityContentStream,
+    ActivityCorrelation, ActivityDisclosure, ActivityKind, ActivityLifecyclePhase,
+    ActivityOperationId, ActivityStatus, CallbackOperationId, HarnessUserInputChoiceMode,
+    HarnessUserInputQuestionKind, HarnessUserInputRequest, HarnessUserInputResponse,
+    SubagentParent, SubagentStatus, TaskListItemPriority, TaskListItemStatus,
 };
 
-use super::{TaskAuthoringReceipt, TaskWorkflowReceipt};
+use super::{LocalCodexChatHarnessMode, TaskAuthoringReceipt, TaskWorkflowReceipt};
 use crate::ServerStateService;
 
 const SESSION_PREFIX: &str = "product-chat-session:";
 const TURN_PREFIX: &str = "product-chat-turn:";
 const MESSAGE_PREFIX: &str = "product-chat-message:";
 const ACTIVITY_PREFIX: &str = "product-chat-activity:";
+const QUESTION_PREFIX: &str = "product-chat-question:";
 const THREAD_METADATA_PREFIX: &str = "product-chat-thread-metadata:";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -28,6 +32,8 @@ pub struct StoredChatSession {
     pub provider_thread_id: String,
     pub model: String,
     pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub harness_mode: LocalCodexChatHarnessMode,
     #[serde(default)]
     pub adapter_id: String,
     #[serde(default)]
@@ -103,6 +109,81 @@ pub struct StoredChatActivity {
     pub content_change: Option<String>,
     pub content_stream: Option<String>,
     pub content: Option<String>,
+    #[serde(default = "primary_actor_kind")]
+    pub actor_kind: String,
+    #[serde(default)]
+    pub actor_id: Option<String>,
+    #[serde(default)]
+    pub task_list: Option<Vec<StoredChatTaskListItem>>,
+    #[serde(default)]
+    pub subagents: Vec<StoredChatSubagent>,
+}
+
+fn primary_actor_kind() -> String {
+    "primary".to_owned()
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredChatTaskListItem {
+    pub content: String,
+    pub status: String,
+    pub priority: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredChatSubagent {
+    pub subagent_id: String,
+    pub parent_kind: String,
+    pub parent_id: Option<String>,
+    pub status: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub model: Option<String>,
+    pub reasoning: Option<String>,
+    pub background: Option<bool>,
+    pub originating_activity_ref: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredChatQuestionExchange {
+    pub conversation_id: String,
+    pub turn_id: String,
+    pub callback_id: String,
+    pub runtime_operation_id: String,
+    pub event_sequence: u64,
+    pub provider_request_ref: Option<String>,
+    pub deadline_ticks: Option<u64>,
+    pub auto_resolution_ms: Option<u64>,
+    pub status: String,
+    pub questions: Vec<StoredChatQuestion>,
+    #[serde(default)]
+    pub answers: Vec<StoredChatQuestionAnswer>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredChatQuestion {
+    pub question_id: String,
+    pub header: String,
+    pub prompt: String,
+    pub kind: String,
+    pub allow_other: bool,
+    pub options: Vec<StoredChatQuestionOption>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredChatQuestionOption {
+    pub value: String,
+    pub label: String,
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredChatQuestionAnswer {
+    pub question_id: String,
+    pub selected_option_ids: Vec<String>,
+    pub text: Option<String>,
+    pub skipped: bool,
+    pub redacted: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -120,9 +201,11 @@ pub struct LocalCodexChatHistory {
     pub thread_id: Option<String>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
+    pub harness_mode: Option<LocalCodexChatHarnessMode>,
     pub turns: Vec<LocalCodexChatHistoryTurn>,
     pub messages: Vec<StoredChatMessage>,
     pub activities: Vec<StoredChatActivity>,
+    pub questions: Vec<StoredChatQuestionExchange>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -141,6 +224,7 @@ pub struct LocalCodexChatThreadSummary {
     pub title: String,
     pub model: String,
     pub reasoning_effort: Option<String>,
+    pub harness_mode: LocalCodexChatHarnessMode,
     pub turn_count: u64,
     pub status: String,
 }
@@ -219,6 +303,16 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     activities.retain(|activity| activity.conversation_id == conversation_id);
     activities.sort_by_key(|activity| (activity.turn_ordinal, activity.sequence));
+    let mut questions = state
+        .agent_sessions()
+        .list()
+        .map_err(storage_error)?
+        .into_iter()
+        .filter(|record| record.id.0.starts_with(QUESTION_PREFIX))
+        .map(|record| decode::<StoredChatQuestionExchange>(&record.payload.bytes))
+        .collect::<Result<Vec<_>, _>>()?;
+    questions.retain(|question| question.conversation_id == conversation_id);
+    questions.sort_by_key(|question| question.event_sequence);
 
     Ok(LocalCodexChatHistory {
         conversation_id: conversation_id.to_owned(),
@@ -231,6 +325,7 @@ where
         reasoning_effort: session
             .as_ref()
             .and_then(|session| session.reasoning_effort.clone()),
+        harness_mode: session.as_ref().map(|session| session.harness_mode),
         turns: turns
             .into_iter()
             .map(|turn| LocalCodexChatHistoryTurn {
@@ -241,7 +336,223 @@ where
             .collect(),
         messages,
         activities,
+        questions,
     })
+}
+
+pub fn project_question(
+    conversation_id: &str,
+    turn_id: &str,
+    request: &nucleus_agent_protocol::AgentUserInputRequest,
+) -> Result<StoredChatQuestionExchange, String> {
+    let questions = request
+        .questions()
+        .ok_or_else(|| "Agent Chat callback is not typed user input".to_owned())?;
+    let runtime_operation_id = match request.callback.operation_id() {
+        CallbackOperationId::Turn(id) => format!("turn:{}", id.as_str()),
+        CallbackOperationId::Run(id) => format!("run:{}", id.as_str()),
+    };
+    Ok(StoredChatQuestionExchange {
+        conversation_id: conversation_id.to_owned(),
+        turn_id: turn_id.to_owned(),
+        callback_id: request.callback.callback_id().as_str().to_owned(),
+        runtime_operation_id,
+        event_sequence: request.callback.event_sequence(),
+        provider_request_ref: request
+            .callback
+            .provider_request_ref()
+            .map(|reference| reference.as_provider_value().to_owned()),
+        deadline_ticks: request
+            .callback
+            .deadline()
+            .map(|deadline| deadline.instant().ticks()),
+        auto_resolution_ms: questions.auto_resolution_ms(),
+        status: "pending".to_owned(),
+        questions: project_questions(questions),
+        answers: Vec::new(),
+    })
+}
+
+pub fn persist_question_pending<B>(
+    state: &ServerStateService<B>,
+    exchange: &StoredChatQuestionExchange,
+) -> Result<(), String>
+where
+    B: LocalStoreBackend,
+{
+    let record_id = question_record_id(&exchange.turn_id, &exchange.callback_id);
+    put_json(
+        state,
+        record_id.clone(),
+        exchange,
+        RevisionId(format!("rev:{}:pending", record_id.0)),
+        RevisionExpectation::MustNotExist,
+    )
+}
+
+pub fn persist_question_answer<B>(
+    state: &ServerStateService<B>,
+    turn_id: &str,
+    callback_id: &str,
+    request: &HarnessUserInputRequest,
+    response: &HarnessUserInputResponse,
+) -> Result<StoredChatQuestionExchange, String>
+where
+    B: LocalStoreBackend,
+{
+    let record_id = question_record_id(turn_id, callback_id);
+    let record = state
+        .agent_sessions()
+        .get(&record_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| "Agent Chat question record is missing".to_owned())?;
+    let mut exchange = decode::<StoredChatQuestionExchange>(&record.payload.bytes)?;
+    if exchange.status != "pending" {
+        return Err("Agent Chat question is already resolved".to_owned());
+    }
+    exchange.status = "answered".to_owned();
+    exchange.answers = project_answers(request, response);
+    put_json(
+        state,
+        record_id.clone(),
+        &exchange,
+        RevisionId(format!("rev:{}:answered", record_id.0)),
+        RevisionExpectation::Exact(record.revision_id),
+    )?;
+    Ok(exchange)
+}
+
+pub fn settle_pending_questions_for_turn<B>(
+    state: &ServerStateService<B>,
+    turn_id: &str,
+    status: &str,
+) -> Result<(), String>
+where
+    B: LocalStoreBackend,
+{
+    let records = state.agent_sessions().list().map_err(storage_error)?;
+    for record in records
+        .into_iter()
+        .filter(|record| record.id.0.starts_with(QUESTION_PREFIX))
+    {
+        let mut exchange = decode::<StoredChatQuestionExchange>(&record.payload.bytes)?;
+        if exchange.turn_id != turn_id || exchange.status != "pending" {
+            continue;
+        }
+        exchange.status = status.to_owned();
+        put_json(
+            state,
+            record.id.clone(),
+            &exchange,
+            RevisionId(format!("rev:{}:{status}", record.id.0)),
+            RevisionExpectation::Exact(record.revision_id),
+        )?;
+    }
+    Ok(())
+}
+
+pub fn recover_interrupted_chat_state<B>(state: &ServerStateService<B>) -> Result<(), String>
+where
+    B: LocalStoreBackend,
+{
+    let records = state.agent_sessions().list().map_err(storage_error)?;
+    let interrupted_turns = records
+        .iter()
+        .filter(|record| record.id.0.starts_with(TURN_PREFIX))
+        .map(|record| decode::<StoredChatTurn>(&record.payload.bytes).map(|turn| (record, turn)))
+        .collect::<Result<Vec<_>, _>>()?;
+    for (record, mut turn) in interrupted_turns {
+        if turn.status != "started" {
+            continue;
+        }
+        turn.status = "failed".to_owned();
+        turn.failure_reason = Some("Agent Chat runtime restarted during the turn".to_owned());
+        put_json(
+            state,
+            record.id.clone(),
+            &turn,
+            RevisionId(format!("rev:{}:restart", record.id.0)),
+            RevisionExpectation::Exact(record.revision_id.clone()),
+        )?;
+        settle_pending_questions_for_turn(state, &turn.turn_id, "abandoned")?;
+    }
+    Ok(())
+}
+
+fn project_questions(request: &HarnessUserInputRequest) -> Vec<StoredChatQuestion> {
+    request
+        .questions()
+        .map(|question| {
+            let (kind, allow_other) = match question.kind() {
+                HarnessUserInputQuestionKind::Choice {
+                    mode: HarnessUserInputChoiceMode::Single,
+                    allow_other,
+                } => ("single_choice", allow_other),
+                HarnessUserInputQuestionKind::Choice {
+                    mode: HarnessUserInputChoiceMode::Multiple,
+                    allow_other,
+                } => ("multiple_choice", allow_other),
+                HarnessUserInputQuestionKind::Text { secret: false } => ("text", false),
+                HarnessUserInputQuestionKind::Text { secret: true } => ("secret_text", false),
+            };
+            StoredChatQuestion {
+                question_id: question.id().as_str().to_owned(),
+                header: question.header().as_str().to_owned(),
+                prompt: question.prompt().as_str().to_owned(),
+                kind: kind.to_owned(),
+                allow_other,
+                options: question
+                    .options()
+                    .map(|option| StoredChatQuestionOption {
+                        value: option.id().as_str().to_owned(),
+                        label: option.label().as_str().to_owned(),
+                        description: option
+                            .description()
+                            .map(|description| description.as_str().to_owned()),
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
+}
+
+fn project_answers(
+    request: &HarnessUserInputRequest,
+    response: &HarnessUserInputResponse,
+) -> Vec<StoredChatQuestionAnswer> {
+    response
+        .answers()
+        .map(|answer| {
+            let secret = request
+                .questions()
+                .find(|question| question.id() == answer.question_id())
+                .is_some_and(|question| {
+                    matches!(
+                        question.kind(),
+                        HarnessUserInputQuestionKind::Text { secret: true }
+                    )
+                });
+            StoredChatQuestionAnswer {
+                question_id: answer.question_id().as_str().to_owned(),
+                selected_option_ids: answer
+                    .selected_options()
+                    .map(|id| id.as_str().to_owned())
+                    .collect(),
+                text: if secret {
+                    None
+                } else {
+                    answer.text().map(|text| text.as_str().to_owned())
+                },
+                skipped: answer.is_skipped(),
+                redacted: secret && answer.text().is_some(),
+            }
+        })
+        .collect()
+}
+
+fn question_record_id(turn_id: &str, callback_id: &str) -> PersistenceRecordId {
+    let identity = blake3::hash(callback_id.as_bytes()).to_hex();
+    PersistenceRecordId(format!("{QUESTION_PREFIX}{turn_id}:{identity}"))
 }
 
 pub fn project_activity(
@@ -270,6 +581,10 @@ pub fn project_activity(
         None => (None, None),
     };
     let content = observation.content();
+    let (actor_kind, actor_id) = match observation.actor() {
+        ActivityActor::Primary => ("primary".to_owned(), None),
+        ActivityActor::Subagent(id) => ("subagent".to_owned(), Some(id.as_str().to_owned())),
+    };
 
     StoredChatActivity {
         conversation_id: conversation_id.to_owned(),
@@ -296,6 +611,70 @@ pub fn project_activity(
         content_change: content.map(|content| activity_content_change(content.change()).to_owned()),
         content_stream: content.map(|content| activity_content_stream(content.stream()).to_owned()),
         content: content.map(|content| content.content().as_str().to_owned()),
+        actor_kind,
+        actor_id,
+        task_list: observation.task_list().map(|snapshot| {
+            snapshot
+                .items()
+                .map(|item| StoredChatTaskListItem {
+                    content: item.content().as_str().to_owned(),
+                    status: match item.status() {
+                        TaskListItemStatus::Pending => "pending",
+                        TaskListItemStatus::InProgress => "in_progress",
+                        TaskListItemStatus::Completed => "completed",
+                    }
+                    .to_owned(),
+                    priority: item
+                        .priority()
+                        .map(|priority| match priority {
+                            TaskListItemPriority::High => "high",
+                            TaskListItemPriority::Medium => "medium",
+                            TaskListItemPriority::Low => "low",
+                        })
+                        .map(str::to_owned),
+                })
+                .collect()
+        }),
+        subagents: observation
+            .subagents()
+            .map(|snapshot| {
+                let (parent_kind, parent_id) = match snapshot.parent() {
+                    SubagentParent::Operation => ("operation".to_owned(), None),
+                    SubagentParent::Subagent(id) => {
+                        ("subagent".to_owned(), Some(id.as_str().to_owned()))
+                    }
+                    SubagentParent::Unknown => ("unknown".to_owned(), None),
+                };
+                StoredChatSubagent {
+                    subagent_id: snapshot.id().as_str().to_owned(),
+                    parent_kind,
+                    parent_id,
+                    status: match snapshot.status() {
+                        SubagentStatus::Unknown => "unknown",
+                        SubagentStatus::Pending => "pending",
+                        SubagentStatus::Running => "running",
+                        SubagentStatus::Waiting => "waiting",
+                        SubagentStatus::Completed => "completed",
+                        SubagentStatus::Failed => "failed",
+                        SubagentStatus::Interrupted => "interrupted",
+                        SubagentStatus::Shutdown => "shutdown",
+                    }
+                    .to_owned(),
+                    label: snapshot.label().map(|label| label.as_str().to_owned()),
+                    description: snapshot
+                        .description()
+                        .map(|description| description.as_str().to_owned()),
+                    model: snapshot.model().map(|model| model.as_str().to_owned()),
+                    reasoning: snapshot
+                        .reasoning()
+                        .map(|reasoning| reasoning.as_str().to_owned()),
+                    background: snapshot.background(),
+                    originating_activity_ref: snapshot
+                        .originating_activity()
+                        .map(|reference| reference.as_provider_value().to_owned()),
+                }
+            })
+            .collect(),
     }
 }
 
@@ -457,6 +836,7 @@ where
                 title,
                 model: session.model,
                 reasoning_effort: session.reasoning_effort,
+                harness_mode: session.harness_mode,
                 turn_count: session.turn_count,
                 status,
             }
@@ -858,7 +1238,8 @@ mod tests {
     use nucleus_local_store::SqliteBackend;
     use swallowtail_runtime::{
         ActivityContent, ActivityContentChangeKind, ActivityContentStream, ActivityContentUpdate,
-        ActivityId, ActivityLabel, ActivityObservation, OperationContent, RuntimeRunId,
+        ActivityId, ActivityLabel, ActivityObservation, OperationContent, RuntimeRunId, SubagentId,
+        SubagentParent, SubagentSnapshot, TaskListItem, TaskListSnapshot,
     };
 
     #[test]
@@ -916,6 +1297,98 @@ mod tests {
     }
 
     #[test]
+    fn activity_projection_preserves_task_list_actor_and_subagent_structure() {
+        let child_id = SubagentId::new("child-1").expect("child id");
+        let plan_observation = ActivityObservation::new(
+            ActivityId::new("plan:1").expect("activity id"),
+            ActivityOperationId::Run(RuntimeRunId::new("run:1").expect("run id")),
+            ActivityKind::Plan,
+            ActivityLifecyclePhase::Updated,
+            ActivityStatus::InProgress,
+            None,
+            ActivityDisclosure::ProviderDisplayContent,
+        )
+        .expect("observation")
+        .with_task_list(
+            TaskListSnapshot::new(
+                [
+                    TaskListItem::new(
+                        OperationContent::new("Inspect").expect("content"),
+                        TaskListItemStatus::Completed,
+                    )
+                    .with_priority(TaskListItemPriority::High),
+                    TaskListItem::new(
+                        OperationContent::new("Apply").expect("content"),
+                        TaskListItemStatus::InProgress,
+                    ),
+                ],
+                4,
+                1024,
+            )
+            .expect("task list"),
+        )
+        .expect("task list accepted")
+        .with_actor(ActivityActor::Subagent(child_id.clone()));
+
+        let plan_activity = project_activity(
+            "conversation:1",
+            "turn:1",
+            1,
+            AgentActivityEvent::new(9, plan_observation),
+        );
+
+        assert_eq!(plan_activity.actor_kind, "subagent");
+        assert_eq!(plan_activity.actor_id.as_deref(), Some("child-1"));
+        assert_eq!(
+            plan_activity.task_list.as_ref().expect("task list")[0].status,
+            "completed"
+        );
+        assert_eq!(
+            plan_activity.task_list.as_ref().expect("task list")[0]
+                .priority
+                .as_deref(),
+            Some("high")
+        );
+
+        let collaboration_observation = ActivityObservation::new(
+            ActivityId::new("collaboration:1").expect("activity id"),
+            ActivityOperationId::Run(RuntimeRunId::new("run:1").expect("run id")),
+            ActivityKind::SubagentOrCollaboration,
+            ActivityLifecyclePhase::Updated,
+            ActivityStatus::InProgress,
+            None,
+            ActivityDisclosure::ProviderDisplayContent,
+        )
+        .expect("observation")
+        .with_subagents([SubagentSnapshot::new(
+            child_id,
+            SubagentParent::Unknown,
+            SubagentStatus::Running,
+        )])
+        .expect("subagent");
+        let collaboration_activity = project_activity(
+            "conversation:1",
+            "turn:1",
+            2,
+            AgentActivityEvent::new(10, collaboration_observation),
+        );
+
+        assert_eq!(collaboration_activity.subagents[0].parent_kind, "unknown");
+        assert_eq!(collaboration_activity.subagents[0].status, "running");
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
+        persist_activity(&state, &plan_activity).expect("persist plan activity");
+        persist_activity(&state, &collaboration_activity).expect("persist collaboration activity");
+        let history =
+            read_history(&state, "project:1", "conversation:1").expect("read activity history");
+        assert_eq!(
+            history.activities,
+            vec![plan_activity, collaboration_activity]
+        );
+    }
+
+    #[test]
     fn completed_chat_turn_survives_reopen_in_display_order() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let path = temp_dir.path().join("nucleus.sqlite");
@@ -928,6 +1401,7 @@ mod tests {
             provider_thread_id: "thread:1".to_owned(),
             model: "gpt-5.4-mini".to_owned(),
             reasoning_effort: Some("low".to_owned()),
+            harness_mode: LocalCodexChatHarnessMode::Normal,
             adapter_id: "codex-app-server".to_owned(),
             provider_instance_id: "codex:local-default".to_owned(),
             turn_count: 1,
@@ -1005,6 +1479,7 @@ mod tests {
             provider_thread_id: "thread:1".to_owned(),
             model: "model".to_owned(),
             reasoning_effort: None,
+            harness_mode: LocalCodexChatHarnessMode::Normal,
             adapter_id: "codex-app-server".to_owned(),
             provider_instance_id: "codex:local-default".to_owned(),
             turn_count: 1,
@@ -1042,6 +1517,7 @@ mod tests {
                     provider_thread_id: format!("provider-secret-{ordinal}"),
                     model: "model".to_owned(),
                     reasoning_effort: None,
+                    harness_mode: LocalCodexChatHarnessMode::Normal,
                     adapter_id: "codex-app-server".to_owned(),
                     provider_instance_id: "codex:local-default".to_owned(),
                     turn_count: 1,
@@ -1122,6 +1598,7 @@ mod tests {
             provider_thread_id: "thread:1".to_owned(),
             model: "model".to_owned(),
             reasoning_effort: None,
+            harness_mode: LocalCodexChatHarnessMode::Normal,
             adapter_id: "codex-app-server".to_owned(),
             provider_instance_id: "codex:local-default".to_owned(),
             turn_count: 1,
@@ -1158,6 +1635,7 @@ mod tests {
             provider_thread_id: "thread:active".to_owned(),
             model: "model".to_owned(),
             reasoning_effort: None,
+            harness_mode: LocalCodexChatHarnessMode::Normal,
             adapter_id: "codex-app-server".to_owned(),
             provider_instance_id: "codex:local-default".to_owned(),
             turn_count: 1,
@@ -1192,5 +1670,64 @@ mod tests {
         .expect("legacy session");
 
         assert_eq!(session.task_toolset_version, 0);
+        assert_eq!(session.harness_mode, LocalCodexChatHarnessMode::Normal);
+    }
+
+    #[test]
+    fn restart_abandons_pending_questions_and_fails_the_interrupted_turn() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("db.sqlite");
+        let state = ServerStateService::new(SqliteBackend::new(path.clone()));
+        let session = StoredChatSession {
+            conversation_id: "conversation:restart".to_owned(),
+            project_id: "project:restart".to_owned(),
+            resource_id: None,
+            session_id: "session:restart".to_owned(),
+            provider_thread_id: "thread:restart".to_owned(),
+            model: "gpt-5.4-mini".to_owned(),
+            reasoning_effort: Some("low".to_owned()),
+            harness_mode: LocalCodexChatHarnessMode::Normal,
+            adapter_id: "codex-app-server".to_owned(),
+            provider_instance_id: "codex:local-default".to_owned(),
+            turn_count: 1,
+            task_toolset_version: 5,
+        };
+        persist_turn_start(&state, session, "turn:restart", "Ask a question", None).expect("turn");
+        persist_question_pending(
+            &state,
+            &StoredChatQuestionExchange {
+                conversation_id: "conversation:restart".to_owned(),
+                turn_id: "turn:restart".to_owned(),
+                callback_id: "callback:restart".to_owned(),
+                runtime_operation_id: "turn:runtime:restart".to_owned(),
+                event_sequence: 3,
+                provider_request_ref: None,
+                deadline_ticks: None,
+                auto_resolution_ms: None,
+                status: "pending".to_owned(),
+                questions: vec![StoredChatQuestion {
+                    question_id: "question:restart".to_owned(),
+                    header: "Continue".to_owned(),
+                    prompt: "Continue?".to_owned(),
+                    kind: "single_choice".to_owned(),
+                    allow_other: false,
+                    options: vec![StoredChatQuestionOption {
+                        value: "yes".to_owned(),
+                        label: "Yes".to_owned(),
+                        description: None,
+                    }],
+                }],
+                answers: Vec::new(),
+            },
+        )
+        .expect("question");
+        drop(state);
+
+        let reopened = ServerStateService::new(SqliteBackend::new(path));
+        recover_interrupted_chat_state(&reopened).expect("recover");
+        let history =
+            read_history(&reopened, "project:restart", "conversation:restart").expect("history");
+        assert_eq!(history.turns[0].status, "failed");
+        assert_eq!(history.questions[0].status, "abandoned");
     }
 }

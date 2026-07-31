@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export type AgentChatHarnessMode = "normal" | "plan";
+
 export type AgentChatRequest = {
   conversation_id: string;
   project_id: string;
@@ -9,6 +11,60 @@ export type AgentChatRequest = {
   active_goal_id: string | null;
   model: string;
   reasoning_effort: string;
+  harness_mode: AgentChatHarnessMode;
+};
+
+export type AgentChatQuestionOption = {
+  value: string;
+  label: string;
+  description: string | null;
+};
+
+export type AgentChatQuestion = {
+  question_id: string;
+  header: string;
+  prompt: string;
+  kind: "single_choice" | "multiple_choice" | "text" | "secret_text";
+  allow_other: boolean;
+  options: AgentChatQuestionOption[];
+};
+
+export type AgentChatQuestionAnswer = {
+  question_id: string;
+  selected_option_ids: string[];
+  text: string | null;
+  skipped: boolean;
+  redacted: boolean;
+};
+
+export type AgentChatQuestionExchange = {
+  conversation_id: string;
+  turn_id: string;
+  callback_id: string;
+  runtime_operation_id: string;
+  event_sequence: number;
+  provider_request_ref: string | null;
+  deadline_ticks: number | null;
+  auto_resolution_ms: number | null;
+  status: "pending" | "answered" | "declined" | "abandoned" | "timed_out" | "cancelled" | "failed";
+  questions: AgentChatQuestion[];
+  answers: AgentChatQuestionAnswer[];
+};
+
+export type AgentChatQuestionAnswerRequest = {
+  project_id: string;
+  conversation_id: string;
+  turn_id: string;
+  callback_id: string;
+  runtime_operation_id: string;
+  event_sequence: number;
+  provider_request_ref: string | null;
+  answers: Array<{
+    question_id: string;
+    selected_option_ids: string[];
+    text: string | null;
+    skipped: boolean;
+  }>;
 };
 
 export type AgentChatModelOption = {
@@ -31,6 +87,7 @@ export type AgentChatReply = {
   timeline_turn_id: string;
   model: string;
   reasoning_effort: string | null;
+  harness_mode: AgentChatHarnessMode;
   assistant_message: string;
   task_receipts: TaskAuthoringReceipt[];
   workflow_receipts: TaskWorkflowReceipt[];
@@ -138,6 +195,33 @@ export type AgentChatActivity = {
     | "normalized_summary"
     | null;
   content: string | null;
+  actor_kind: "primary" | "subagent";
+  actor_id: string | null;
+  task_list: Array<{
+    content: string;
+    status: "pending" | "in_progress" | "completed";
+    priority: "high" | "medium" | "low" | null;
+  }> | null;
+  subagents: Array<{
+    subagent_id: string;
+    parent_kind: "operation" | "subagent" | "unknown";
+    parent_id: string | null;
+    status:
+      | "unknown"
+      | "pending"
+      | "running"
+      | "waiting"
+      | "completed"
+      | "failed"
+      | "interrupted"
+      | "shutdown";
+    label: string | null;
+    description: string | null;
+    model: string | null;
+    reasoning: string | null;
+    background: boolean | null;
+    originating_activity_ref: string | null;
+  }>;
 };
 
 export type AgentChatHistory = {
@@ -147,9 +231,11 @@ export type AgentChatHistory = {
   thread_id: string | null;
   model: string | null;
   reasoning_effort: string | null;
+  harness_mode: AgentChatHarnessMode | null;
   turns: AgentChatHistoryTurn[];
   messages: AgentChatHistoryMessage[];
   activities: AgentChatActivity[];
+  questions: AgentChatQuestionExchange[];
 };
 
 export type AgentChatThreadSummary = {
@@ -160,6 +246,7 @@ export type AgentChatThreadSummary = {
   title: string;
   model: string;
   reasoning_effort: string | null;
+  harness_mode: AgentChatHarnessMode;
   turn_count: number;
   status: string;
 };
@@ -176,6 +263,12 @@ export function cancelAgentChatTurn(
     projectId,
     conversationId,
   });
+}
+
+export function answerAgentChatQuestion(
+  request: AgentChatQuestionAnswerRequest,
+): Promise<AgentChatQuestionExchange> {
+  return invoke<AgentChatQuestionExchange>("answer_agent_chat_question", { request });
 }
 
 export function loadAgentChatHistory(

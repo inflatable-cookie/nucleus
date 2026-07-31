@@ -2,19 +2,20 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-30
+Updated: 2026-07-31
 
 ## Ready Cards
 
-- none
+- `024-subagent-directory-attribution-and-navigation.md`
 
 ## Planned Cards
 
-- none
+- `025-structured-agent-chat-deterministic-closeout.md`
 
 ## Operator-Held Cards
 
 - `003-project-layout-validation.md`
+- `026-structured-agent-chat-native-acceptance.md`
 
 ## Completed Cards
 
@@ -34,3 +35,9 @@ Updated: 2026-07-30
 - `015-poodle-agent-transcript-adoption.md`
 - `016-observable-chat-focused-closeout.md`
 - `017-observable-chat-native-acceptance.md`
+- `018-agent-chat-contract-and-callback-compatibility.md`
+- `019-typed-question-rendezvous-and-persistence.md`
+- `020-typed-question-desktop-composition.md`
+- `021-explicit-harness-plan-mode.md`
+- `022-portable-work-projection-persistence.md`
+- `023-structured-plan-and-task-list-presentation.md`

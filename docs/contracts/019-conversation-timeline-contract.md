@@ -131,6 +131,50 @@ Initial activity kinds:
 Activities may appear in client timelines, but clients must not infer that all
 activities are human-readable messages.
 
+## Provider Question Rule
+
+A typed provider question is a first-class timeline exchange, not a chat
+message, tool call, or parsed provider payload.
+
+The pending record retains the Nucleus conversation and turn ids plus
+Swallowtail callback, runtime operation, provider-request, event-sequence, and
+deadline correlation. Its question body is the exact portable
+`HarnessUserInputRequest`; Nucleus does not derive component ids or product
+context from question prose.
+
+The durable resolution retains the exact accepted answers and outcome. It is
+rendered as an answered-question transcript record after resolution. Pending
+questions remain separately queryable so the composer can enter questioning
+state. Exactly one resolution may be attached to one pending request.
+
+Secret-text answers are response data. They must not be persisted or replayed
+as visible transcript content. Durable records may retain only the redacted
+fact that the secret question was answered.
+
+## Provider Work Projection Rule
+
+Observable provider work keeps Swallowtail's portable structure:
+
+- actor attribution remains main, known child, or unknown
+- task-list snapshots retain ordered item content, status, and optional
+  priority
+- subagent snapshots are folded through one
+  `SubagentDirectoryProjection` per runtime operation
+- child parentage and status remain unknown when Swallowtail reports unknown
+
+Task-list snapshots replace the previous provider checklist for that activity.
+An empty snapshot clears it; omission does not. Provider checklist items have
+no durable Nucleus Task identity and grant no task creation, mutation,
+promotion, dispatch, or completion authority.
+
+The operation-local subagent directory preserves first-seen ordering, exact
+snapshot replacement, unknown placeholders, and actor-to-child attribution.
+Operation termination freezes the last observed directory without inventing
+child terminal states. Nucleus persists the bounded durable projection needed
+for child selection and transcript attribution; it does not expose spawn,
+steer, interrupt, resume, or delete controls unless a later authority contract
+admits them.
+
 ## Task Timeline Projection Rule
 
 The first implemented timeline projection is task-scoped and read-only.
@@ -255,8 +299,8 @@ receipt. It survives restart with conversation history and does not replace the
 task record or task history.
 
 Task creation and update do not dispatch work or change lifecycle state.
-Unsupported callbacks, approvals, and tool names continue to fail closed.
-Structured user input remains a later addition.
+Unsupported approvals, extensions, and tool names continue to fail closed.
+Typed user input follows the provider question rule above.
 
 ## Product Chat Observable Activity
 
@@ -276,6 +320,9 @@ activity observation retains:
 - optional bounded provider label
 - optional callback, direct-tool, or provider-request correlation
 - content change, content stream, and bounded content where disclosed
+- portable actor attribution
+- the complete optional provider task-list replacement snapshot
+- the complete optional subagent topology snapshot
 
 Provider activity references and raw provider envelopes are not required by
 the product projection. Activity content is task data, not diagnostic text.
@@ -307,6 +354,11 @@ Poodle's `AgentTranscript` item model. Poodle owns contiguous work grouping,
 collapse, windowing, bottom anchoring, and disclosure interaction. Nucleus owns
 the mapping, durable records, task and workflow receipts, product labels,
 retention, and UI policy.
+
+Plan activity, provider task-list snapshots, and child-attributed work receive
+structured presentation rather than being flattened into generic tool-call
+rows. This presentation remains provider work evidence. It does not create
+Nucleus planning artifacts, Goals, Tasks, or child-control authority.
 
 An Agent Chat turn may carry one optional active task id from the local
 workspace selection. The server must resolve the current task record and

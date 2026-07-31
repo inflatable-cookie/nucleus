@@ -1,6 +1,9 @@
 import type { TranscriptItem } from "@poodle/svelte";
 
-import type { AgentChatActivity } from "./control/agentChat";
+import type {
+  AgentChatActivity,
+  AgentChatQuestionExchange,
+} from "./control/agentChat";
 
 export type AgentTranscriptMessage = {
   id: string;
@@ -21,6 +24,7 @@ export function assembleAgentTranscript(
   turns: AgentTranscriptTurn[],
   activityLabel: string | null,
   conversationId: string,
+  questionExchanges: AgentChatQuestionExchange[] = [],
 ): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const sortedMessages = [...chatMessages].sort(
@@ -63,6 +67,8 @@ export function assembleAgentTranscript(
           turnStatusById.get(message.turnId),
         ),
       );
+      items.push(...answeredQuestionItems(message.turnId, questionExchanges));
+      items.push(...settledQuestionItems(message.turnId, questionExchanges));
       emittedTurns.add(message.turnId);
     } else {
       items.push({
@@ -96,6 +102,76 @@ export function assembleAgentTranscript(
   return items;
 }
 
+function settledQuestionItems(
+  turnId: string,
+  exchanges: AgentChatQuestionExchange[],
+): TranscriptItem[] {
+  return exchanges
+    .filter(
+      (exchange) =>
+        exchange.turn_id === turnId &&
+        exchange.status !== "pending" &&
+        exchange.status !== "answered",
+    )
+    .sort((left, right) => left.event_sequence - right.event_sequence)
+    .map((exchange) => ({
+      kind: "activity",
+      id: `${turnId}:${exchange.callback_id}:settled`,
+      label:
+        exchange.status === "timed_out"
+          ? "Question timed out"
+          : exchange.status === "cancelled"
+            ? "Question cancelled"
+            : exchange.status === "abandoned"
+              ? "Question expired after restart"
+              : "Question failed",
+    }));
+}
+
+function answeredQuestionItems(
+  turnId: string,
+  exchanges: AgentChatQuestionExchange[],
+): TranscriptItem[] {
+  return exchanges
+    .filter((exchange) => exchange.turn_id === turnId && exchange.status === "answered")
+    .sort((left, right) => left.event_sequence - right.event_sequence)
+    .flatMap((exchange) =>
+      exchange.questions.flatMap((question): TranscriptItem[] => {
+        const answer = exchange.answers.find(
+          (candidate) => candidate.question_id === question.question_id,
+        );
+        if (!answer) return [];
+        return [
+          {
+            kind: "answered-question",
+            id: `${turnId}:${exchange.callback_id}:${question.question_id}`,
+            question: {
+              id: question.question_id,
+              header: question.header || undefined,
+              prompt: question.prompt,
+              options: question.options.map((option) => ({
+                value: option.value,
+                label: option.label,
+                description: option.description ?? undefined,
+              })),
+              allowMultiple: question.kind === "multiple_choice",
+            },
+            answer: {
+              questionId: question.question_id,
+              outcome: answer.skipped
+                ? "declined"
+                : answer.text !== null || answer.redacted
+                  ? "override"
+                  : "selected",
+              values: answer.selected_option_ids,
+              text: answer.redacted ? "Answer hidden" : answer.text ?? "",
+            },
+          },
+        ];
+      }),
+    );
+}
+
 function assembleTurnActivity(
   turnId: string,
   observations: AgentChatActivity[],
@@ -106,6 +182,7 @@ function assembleTurnActivity(
     firstSequence: number;
     latest: AgentChatActivity;
     content: string;
+    taskList: AgentChatActivity["task_list"];
   };
   const heldById = new Map<string, HeldActivity>();
 
@@ -122,12 +199,16 @@ function assembleTurnActivity(
       firstSequence: held?.firstSequence ?? observation.sequence,
       latest: observation,
       content: nextContent,
+      taskList:
+        observation.task_list === null
+          ? held?.taskList ?? null
+          : observation.task_list,
     });
   }
 
   const activityItems = [...heldById.values()]
     .sort((left, right) => left.firstSequence - right.firstSequence)
-    .flatMap(({ latest, content }): TranscriptItem[] => {
+    .flatMap(({ latest, content, taskList }): TranscriptItem[] => {
       const id = `${turnId}:${latest.runtime_operation_id}:${latest.activity_id}`;
       const status = terminalActivityStatus(latest.status, turnStatus);
       if (latest.kind === "assistant_message") {
@@ -148,6 +229,30 @@ function assembleTurnActivity(
         ];
       }
 
+      if (taskList !== null) {
+        return [
+          {
+            kind: "message",
+            id,
+            role: "assistant",
+            markdown: providerTaskListMarkdown(latest, taskList),
+            isStreaming: status === "pending" || status === "in_progress",
+          },
+        ];
+      }
+
+      if (latest.kind === "plan" && content) {
+        return [
+          {
+            kind: "message",
+            id,
+            role: "assistant",
+            markdown: `${activityActorPrefix(latest)}${content}`,
+            isStreaming: status === "pending" || status === "in_progress",
+          },
+        ];
+      }
+
       return [
         {
           kind: "tool-call",
@@ -161,6 +266,27 @@ function assembleTurnActivity(
     });
   const terminalItem = terminalTurnItem(turnId, turnStatus);
   return terminalItem ? [...activityItems, terminalItem] : activityItems;
+}
+
+function providerTaskListMarkdown(
+  activity: AgentChatActivity,
+  items: NonNullable<AgentChatActivity["task_list"]>,
+): string {
+  const title = activity.label ?? (activity.kind === "plan" ? "Plan" : "Provider tasks");
+  const lines = items.map((item) => {
+    const marker =
+      item.status === "completed" ? "x" : item.status === "in_progress" ? "/" : " ";
+    const priority = item.priority ? ` · ${item.priority}` : "";
+    return `- [${marker}] ${item.content}${priority}`;
+  });
+  const body = lines.length > 0 ? lines.join("\n") : "_Checklist cleared._";
+  return `${activityActorPrefix(activity)}**${title}**\n\n${body}`;
+}
+
+function activityActorPrefix(activity: AgentChatActivity): string {
+  return activity.actor_kind === "subagent"
+    ? `**Child work${activity.actor_id ? ` · ${activity.actor_id}` : ""}**\n\n`
+    : "";
 }
 
 function terminalActivityStatus(

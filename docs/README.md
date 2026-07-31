@@ -62,6 +62,12 @@ carries Swallowtail's portable observable activity through Nucleus persistence
 and the desktop into Poodle's transcript components. Deterministic and
 authenticated native activity, grouping, scroll, cancellation, cleanup, and
 restart acceptance pass.
+Roadmaps g05.006 and g05.007 now extend that boundary with typed mid-turn
+questions, immutable normal/plan session selection, and lossless provider
+actor, task-list, and subagent snapshot persistence. Agent Chat composes
+questions through Poodle and presents provider plans and checklists without
+promoting them into Nucleus Tasks. Operation-local child directory folding and
+navigation are the current ready batch.
 
 Current planning artifacts:
 
@@ -93,6 +99,8 @@ Current planning artifacts:
 - `roadmaps/g05/001-project-scoped-workspace-layouts.md`
 - `roadmaps/g05/003-swallowtail-application-proof-readiness.md`
 - `roadmaps/g05/005-observable-agent-chat-transcript.md`
+- `roadmaps/g05/006-interactive-agent-chat-sessions.md`
+- `roadmaps/g05/007-structured-provider-work.md`
 - `logs/2026-07-30-observable-agent-chat-transcript.md`
 
 - `logs/2026-06-17-stocktake.md`

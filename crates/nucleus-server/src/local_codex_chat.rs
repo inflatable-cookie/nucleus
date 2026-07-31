@@ -8,6 +8,7 @@ mod goal_run;
 mod goal_update;
 mod mandates;
 mod persistence;
+mod questions;
 mod review_evidence;
 mod rework_context;
 mod runtime;
@@ -21,7 +22,9 @@ mod task_workflow;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use nucleus_agent_protocol::{AgentActivityEvent, AgentTurnCancellation, AgentTurnFailure};
+use nucleus_agent_protocol::{
+    AgentActivityEvent, AgentHarnessMode, AgentTurnCancellation, AgentTurnFailure,
+};
 use nucleus_local_store::LocalStoreBackend;
 use serde::{Deserialize, Serialize};
 
@@ -41,9 +44,10 @@ pub use mandates::{
     WorkflowMandateStatus,
 };
 use persistence::{
-    canonical_turn_id, persist_activity, persist_session, persist_turn_completion,
-    persist_turn_failure, persist_turn_start, project_activity, project_has_active_turn,
-    read_history, read_session, ChatTurnFailureStatus,
+    canonical_turn_id, persist_activity, persist_question_answer, persist_question_pending,
+    persist_session, persist_turn_completion, persist_turn_failure, persist_turn_start,
+    project_activity, project_has_active_turn, project_question, read_history, read_session,
+    settle_pending_questions_for_turn, ChatTurnFailureStatus,
 };
 #[cfg(test)]
 pub(crate) use persistence::{
@@ -51,9 +55,40 @@ pub(crate) use persistence::{
     persist_turn_start as persist_test_turn_start, StoredChatSession as TestStoredChatSession,
 };
 pub use persistence::{
-    read_native_proof_evidence, ChatMessageRole, LocalCodexChatHistory,
-    LocalCodexChatThreadSummary, NativeProofEvidenceSummary, StoredChatActivity, StoredChatMessage,
+    read_native_proof_evidence, recover_interrupted_chat_state, ChatMessageRole,
+    LocalCodexChatHistory, LocalCodexChatThreadSummary, NativeProofEvidenceSummary,
+    StoredChatActivity, StoredChatMessage, StoredChatQuestion, StoredChatQuestionAnswer,
+    StoredChatQuestionExchange, StoredChatQuestionOption, StoredChatSubagent,
+    StoredChatTaskListItem,
 };
+pub use questions::{
+    LocalCodexChatQuestionAnswer, LocalCodexChatQuestionAnswerRequest,
+    LocalCodexChatQuestionRegistry,
+};
+
+pub fn answer_local_codex_chat_question<B>(
+    state: &ServerStateService<B>,
+    registry: &LocalCodexChatQuestionRegistry,
+    request: LocalCodexChatQuestionAnswerRequest,
+) -> Result<StoredChatQuestionExchange, String>
+where
+    B: LocalStoreBackend,
+{
+    let turn_id = request.turn_id.clone();
+    let callback_id = request.callback_id.clone();
+    let mut persisted = None;
+    registry.answer_with(request, |question, response| {
+        persisted = Some(persist_question_answer(
+            state,
+            &turn_id,
+            &callback_id,
+            question,
+            response,
+        )?);
+        Ok(())
+    })?;
+    persisted.ok_or_else(|| "Agent Chat question answer was not persisted".to_owned())
+}
 use runtime::{available_models, LocalCodexChatSession};
 use task_ledger::execute as execute_task_ledger;
 
@@ -101,6 +136,25 @@ pub struct LocalCodexChatRequest {
     pub model: Option<String>,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub harness_mode: LocalCodexChatHarnessMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalCodexChatHarnessMode {
+    #[default]
+    Normal,
+    Plan,
+}
+
+impl LocalCodexChatHarnessMode {
+    fn agent_mode(self) -> AgentHarnessMode {
+        match self {
+            Self::Normal => AgentHarnessMode::Normal,
+            Self::Plan => AgentHarnessMode::Plan,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -126,6 +180,7 @@ pub struct LocalCodexChatReply {
     pub timeline_turn_id: String,
     pub model: String,
     pub reasoning_effort: Option<String>,
+    pub harness_mode: LocalCodexChatHarnessMode,
     pub assistant_message: String,
     pub task_receipts: Vec<TaskAuthoringReceipt>,
     pub workflow_receipts: Vec<TaskWorkflowReceipt>,
@@ -229,27 +284,34 @@ impl LocalCodexChatService {
         F: FnMut(crate::control_api::ServerControlRequest) -> Result<(), String>,
     {
         let mut ignore_activity = |_| Ok(());
+        let mut ignore_question = |_| Ok(());
+        let questions = LocalCodexChatQuestionRegistry::default();
         self.send_message_with_task_authoring_and_cancellation(
             state,
             request,
             AgentTurnCancellation::new(),
+            &questions,
             execute,
             &mut ignore_activity,
+            &mut ignore_question,
         )
     }
 
-    pub fn send_message_with_task_authoring_and_cancellation<B, F, A>(
+    pub fn send_message_with_task_authoring_and_cancellation<B, F, A, Q>(
         &mut self,
         state: &ServerStateService<B>,
         request: LocalCodexChatRequest,
         cancellation: AgentTurnCancellation,
+        questions: &LocalCodexChatQuestionRegistry,
         execute: &mut F,
         on_activity: &mut A,
+        on_question: &mut Q,
     ) -> Result<LocalCodexChatReply, String>
     where
         B: LocalStoreBackend + Clone,
         F: FnMut(crate::control_api::ServerControlRequest) -> Result<(), String>,
         A: FnMut(StoredChatActivity) -> Result<(), String>,
+        Q: FnMut(StoredChatQuestionExchange) -> Result<(), String>,
     {
         let message = request.message.trim();
         if message.is_empty() {
@@ -279,14 +341,18 @@ impl LocalCodexChatService {
         {
             return Err("chat conversation belongs to another project".to_owned());
         }
-        let (selected_model, selected_reasoning_effort) =
+        let (selected_model, selected_reasoning_effort, selected_harness_mode) =
             selected_route(&request, stored.as_ref())?;
         let existing_session_matches =
             self.sessions
                 .get(&request.conversation_id)
                 .is_some_and(|session| {
                     session.targets_resource(&target_resource_id)
-                        && session.targets_route(&selected_model, &selected_reasoning_effort)
+                        && session.targets_route(
+                            &selected_model,
+                            &selected_reasoning_effort,
+                            selected_harness_mode,
+                        )
                 });
         if self.sessions.contains_key(&request.conversation_id) && !existing_session_matches {
             self.sessions.remove(&request.conversation_id);
@@ -312,6 +378,7 @@ impl LocalCodexChatService {
                     migration_context.as_deref(),
                     &selected_model,
                     &selected_reasoning_effort,
+                    selected_harness_mode,
                     turn_timeout,
                 )?)
             }
@@ -375,12 +442,30 @@ impl LocalCodexChatService {
             persist_activity(state, &activity)?;
             on_activity(activity)
         };
+        let mut persist_and_forward_question =
+            |question: nucleus_agent_protocol::AgentUserInputRequest| {
+                let exchange =
+                    project_question(&request.conversation_id, &canonical_turn_id, &question)?;
+                let wait = questions.register(
+                    &request.project_id,
+                    &request.conversation_id,
+                    &canonical_turn_id,
+                    question,
+                )?;
+                if let Err(error) = persist_question_pending(state, &exchange) {
+                    drop(wait);
+                    return Err(error);
+                }
+                on_question(exchange)?;
+                Ok(wait)
+            };
         let mut reply = match session.send_turn(
             &provider_message,
             &selected_model,
             &selected_reasoning_effort,
             cancellation,
             &mut project_and_forward_activity,
+            &mut persist_and_forward_question,
             &mut task_tool,
         ) {
             Ok(reply) => reply,
@@ -392,10 +477,23 @@ impl LocalCodexChatService {
                     AgentTurnFailure::Failed(_) => ChatTurnFailureStatus::Failed,
                 };
                 let reason = error.to_string();
+                let question_status = match status {
+                    ChatTurnFailureStatus::Cancelled => "cancelled",
+                    ChatTurnFailureStatus::TimedOut => "timed_out",
+                    ChatTurnFailureStatus::Failed => "failed",
+                };
+                settle_pending_questions_for_turn(state, &canonical_turn_id, question_status)?;
+                questions.abandon_turn(
+                    &request.project_id,
+                    &request.conversation_id,
+                    &canonical_turn_id,
+                    &reason,
+                );
                 persist_turn_failure(state, &canonical_turn_id, status, &reason)?;
                 return Err(reason);
             }
         };
+        settle_pending_questions_for_turn(state, &canonical_turn_id, "abandoned")?;
         persist_session(
             state,
             &session.stored_session(
@@ -485,7 +583,7 @@ where
 fn selected_route(
     request: &LocalCodexChatRequest,
     stored: Option<&persistence::StoredChatSession>,
-) -> Result<(String, String), String> {
+) -> Result<(String, String, LocalCodexChatHarnessMode), String> {
     let model = normalize_route_value(request.model.as_deref(), "chat model")?
         .or_else(|| stored.map(|session| session.model.clone()))
         .unwrap_or_else(|| CHAT_MODEL.to_owned());
@@ -494,7 +592,7 @@ fn selected_route(
             .or_else(|| stored.and_then(|session| session.reasoning_effort.clone()))
             .unwrap_or_else(|| CHAT_REASONING_EFFORT.to_owned());
 
-    Ok((model, reasoning_effort))
+    Ok((model, reasoning_effort, request.harness_mode))
 }
 
 fn normalize_route_value(value: Option<&str>, label: &str) -> Result<Option<String>, String> {

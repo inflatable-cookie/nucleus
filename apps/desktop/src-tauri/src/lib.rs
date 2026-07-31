@@ -11,12 +11,13 @@ use nucleus_core::RevisionId;
 use nucleus_local_store::{RevisionExpectation, SqliteBackend};
 use nucleus_server::control_envelope_dto::ControlSelectedTaskReviewDecisionRecordDto;
 use nucleus_server::{
-    forge_credential_status_refresh, forge_pull_request_refresh, forge_repository_metadata_refresh,
-    forge_status_check_refresh, persist_forge_credential_status_refreshes,
-    persist_forge_pull_request_refreshes, persist_forge_repository_metadata_refreshes,
-    persist_forge_status_check_refreshes, read_forge_credential_status_refreshes,
-    read_forge_pull_request_refreshes, read_forge_repository_metadata_refreshes,
-    read_forge_status_check_refreshes, seed_local_memory_proposal, seed_local_planning_session,
+    answer_local_codex_chat_question, forge_credential_status_refresh, forge_pull_request_refresh,
+    forge_repository_metadata_refresh, forge_status_check_refresh,
+    persist_forge_credential_status_refreshes, persist_forge_pull_request_refreshes,
+    persist_forge_repository_metadata_refreshes, persist_forge_status_check_refreshes,
+    read_forge_credential_status_refreshes, read_forge_pull_request_refreshes,
+    read_forge_repository_metadata_refreshes, read_forge_status_check_refreshes,
+    recover_interrupted_chat_state, seed_local_memory_proposal, seed_local_planning_session,
     seed_local_project_with_resource_root, seed_local_research_run_brief, seed_local_task,
     write_command_evidence, ControlApiCodecError, ControlRequestEnvelopeDto,
     ControlResponseBodyDto, ControlResponseEnvelopeDto, EditorDirectoryEntry,
@@ -30,10 +31,11 @@ use nucleus_server::{
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
     ForgeStatusCheckRefreshScope, LocalCodexChatCancellationRegistry, LocalCodexChatHistory,
-    LocalCodexChatModelOption, LocalCodexChatReply, LocalCodexChatRequest, LocalCodexChatService,
-    LocalCodexChatThreadSummary, LocalControlRequestHandler, LocalMemoryProposalSeed,
-    LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed,
-    ServerStateService, TaskDiffFilePatchRequest, TaskDiffFilePatchResponse,
+    LocalCodexChatModelOption, LocalCodexChatQuestionAnswerRequest, LocalCodexChatQuestionRegistry,
+    LocalCodexChatReply, LocalCodexChatRequest, LocalCodexChatService, LocalCodexChatThreadSummary,
+    LocalControlRequestHandler, LocalMemoryProposalSeed, LocalPlanningSessionSeed,
+    LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed, ServerStateService,
+    StoredChatQuestionExchange, TaskDiffFilePatchRequest, TaskDiffFilePatchResponse,
     TaskDiffOverviewRequest, TaskDiffOverviewResponse, TaskReviewSnapshotStore,
     TauriIpcControlCommandAdapter, TerminalHostRuntime,
 };
@@ -52,6 +54,7 @@ struct DesktopState {
     adapter: Arc<Mutex<TauriIpcControlCommandAdapter<SqliteBackend>>>,
     chat: Arc<Mutex<LocalCodexChatService>>,
     chat_cancellation: LocalCodexChatCancellationRegistry,
+    chat_questions: LocalCodexChatQuestionRegistry,
     editor_drafts_path: PathBuf,
     editor_file_watch: EditorFileWatchRuntime,
     server_state: ServerStateService<SqliteBackend>,
@@ -341,13 +344,16 @@ impl DesktopState {
     ) -> Self {
         let server_state = ServerStateService::new(backend.clone());
         let handler = LocalControlRequestHandler::new(backend, None);
-        let startup_error = seed_fixture_state(&handler, proof_fixture_root.as_deref()).err();
+        let startup_error = seed_fixture_state(&handler, proof_fixture_root.as_deref())
+            .err()
+            .or_else(|| recover_interrupted_chat_state(&server_state).err());
         let adapter = TauriIpcControlCommandAdapter::fixture_backed(handler);
 
         Self {
             adapter: Arc::new(Mutex::new(adapter)),
             chat: Arc::new(Mutex::new(chat)),
             chat_cancellation: LocalCodexChatCancellationRegistry::default(),
+            chat_questions: LocalCodexChatQuestionRegistry::default(),
             editor_drafts_path,
             editor_file_watch: EditorFileWatchRuntime::default(),
             server_state,
@@ -436,6 +442,7 @@ async fn send_agent_chat_message(
         .begin(&request.project_id, &request.conversation_id)?;
     let cancellation = active_turn.cancellation();
     let chat = Arc::clone(&state.chat);
+    let chat_questions = state.chat_questions.clone();
     let adapter = Arc::clone(&state.adapter);
     let server_state = state.server_state.clone();
 
@@ -448,6 +455,7 @@ async fn send_agent_chat_message(
             &server_state,
             request,
             cancellation,
+            &chat_questions,
             &mut |control_request| {
                 let envelope = ControlRequestEnvelopeDto::try_from(&control_request)
                     .map_err(|error| error.reason)?;
@@ -474,6 +482,11 @@ async fn send_agent_chat_message(
                     .emit("agent-chat:activity", activity)
                     .map_err(|error| format!("agent chat activity delivery failed: {error}"))
             },
+            &mut |question| {
+                window
+                    .emit("agent-chat:question", question)
+                    .map_err(|error| format!("agent chat question delivery failed: {error}"))
+            },
         )
     })
     .await
@@ -486,9 +499,25 @@ fn cancel_agent_chat_turn(
     project_id: String,
     conversation_id: String,
 ) -> Result<bool, String> {
-    state
+    let cancelled = state
         .chat_cancellation
-        .request(&project_id, &conversation_id)
+        .request(&project_id, &conversation_id)?;
+    if cancelled {
+        state.chat_questions.abandon_conversation(
+            &project_id,
+            &conversation_id,
+            "Agent Chat turn was cancelled",
+        );
+    }
+    Ok(cancelled)
+}
+
+#[tauri::command]
+fn answer_agent_chat_question(
+    state: tauri::State<'_, DesktopState>,
+    request: LocalCodexChatQuestionAnswerRequest,
+) -> Result<StoredChatQuestionExchange, String> {
+    answer_local_codex_chat_question(&state.server_state, &state.chat_questions, request)
 }
 
 #[tauri::command]
@@ -845,6 +874,7 @@ pub fn run() {
             submit_control_envelope,
             send_agent_chat_message,
             cancel_agent_chat_turn,
+            answer_agent_chat_question,
             load_agent_chat_history,
             list_agent_chat_threads,
             rename_agent_chat_thread,

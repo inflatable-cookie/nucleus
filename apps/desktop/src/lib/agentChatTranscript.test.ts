@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import type { AgentChatActivity } from "./control/agentChat";
+import type {
+  AgentChatActivity,
+  AgentChatQuestionExchange,
+} from "./control/agentChat";
 import {
   assembleAgentTranscript,
   type AgentTranscriptMessage,
@@ -36,6 +39,10 @@ function activity(
     content_change: "delta",
     content_stream: "command_output",
     content: null,
+    actor_kind: "primary",
+    actor_id: null,
+    task_list: null,
+    subagents: [],
     ...overrides,
   };
 }
@@ -48,10 +55,101 @@ describe("agent chat transcript projection", () => {
 
     expect(panel).toContain("AgentTranscript");
     expect(panel).toContain('listen<AgentChatActivity>("agent-chat:activity"');
+    expect(panel).toContain('listen<AgentChatQuestionExchange>("agent-chat:question"');
+    expect(panel).toContain('status={pendingQuestion ? "questioning"');
+    expect(panel).toContain("answerAgentChatQuestion");
     expect(panel).toContain("cancelAgentChatTurn(projectId, conversationId)");
     expect(panel).toContain("await hydrateHistory(projectId, conversationId)");
     expect(panel).toContain("TaskCreationReceipt");
     expect(panel).toContain("TaskWorkflowReceipt");
+  });
+
+  test("replays one durable answered-question record without exposing secret text", () => {
+    const exchange: AgentChatQuestionExchange = {
+      conversation_id: "conversation:1",
+      turn_id: "turn:1",
+      callback_id: "callback:1",
+      runtime_operation_id: "turn:runtime:1",
+      event_sequence: 3,
+      provider_request_ref: "provider:request:1",
+      deadline_ticks: null,
+      auto_resolution_ms: null,
+      status: "answered",
+      questions: [
+        {
+          question_id: "secret",
+          header: "Credential",
+          prompt: "Enter the token",
+          kind: "secret_text",
+          allow_other: false,
+          options: [],
+        },
+      ],
+      answers: [
+        {
+          question_id: "secret",
+          selected_option_ids: [],
+          text: null,
+          skipped: false,
+          redacted: true,
+        },
+      ],
+    };
+    const items = assembleAgentTranscript(
+      [user],
+      [],
+      [],
+      null,
+      "conversation:1",
+      [exchange],
+    );
+
+    expect(items[1]).toMatchObject({
+      kind: "answered-question",
+      answer: {
+        outcome: "override",
+        text: "Answer hidden",
+      },
+    });
+  });
+
+  test("keeps a restarted unanswered question visible but unanswerable", () => {
+    const exchange: AgentChatQuestionExchange = {
+      conversation_id: "conversation:1",
+      turn_id: "turn:1",
+      callback_id: "callback:restart",
+      runtime_operation_id: "turn:runtime:1",
+      event_sequence: 3,
+      provider_request_ref: null,
+      deadline_ticks: null,
+      auto_resolution_ms: null,
+      status: "abandoned",
+      questions: [
+        {
+          question_id: "choice",
+          header: "Choose",
+          prompt: "Continue?",
+          kind: "single_choice",
+          allow_other: false,
+          options: [],
+        },
+      ],
+      answers: [],
+    };
+    const items = assembleAgentTranscript(
+      [user],
+      [],
+      [{ turnId: "turn:1", status: "failed" }],
+      null,
+      "conversation:1",
+      [exchange],
+    );
+
+    expect(items).toContainEqual({
+      kind: "activity",
+      id: "turn:1:callback:restart:settled",
+      label: "Question expired after restart",
+    });
   });
 
   test("assembles deltas and snapshots into one completion-only work item", () => {
@@ -103,6 +201,74 @@ describe("agent chat transcript projection", () => {
 
     expect(items).toHaveLength(3);
     expect(items[1].id).not.toBe(items[2].id);
+  });
+
+  test("presents provider task-list replacement with status priority and child attribution", () => {
+    const items = assembleAgentTranscript(
+      [user],
+      [
+        activity({
+          kind: "plan",
+          task_list: [
+            { content: "Old item", status: "pending", priority: null },
+          ],
+        }),
+        activity({
+          sequence: 2,
+          kind: "plan",
+          actor_kind: "subagent",
+          actor_id: "child-1",
+          task_list: [
+            { content: "Inspect", status: "completed", priority: "high" },
+            { content: "Apply", status: "in_progress", priority: "medium" },
+          ],
+        }),
+      ],
+      [],
+      null,
+      "conversation:1",
+    );
+
+    expect(items[1]).toMatchObject({
+      kind: "message",
+      role: "assistant",
+    });
+    expect(items[1]).toHaveProperty(
+      "markdown",
+      "**Child work · child-1**\n\n**Plan**\n\n- [x] Inspect · high\n- [/] Apply · medium",
+    );
+  });
+
+  test("task-list omission retains the snapshot and an empty replacement clears it", () => {
+    const items = assembleAgentTranscript(
+      [user],
+      [
+        activity({
+          kind: "task",
+          task_list: [
+            { content: "Retained", status: "in_progress", priority: null },
+          ],
+        }),
+        activity({
+          sequence: 2,
+          kind: "task",
+          task_list: null,
+        }),
+        activity({
+          sequence: 3,
+          kind: "task",
+          task_list: [],
+        }),
+      ],
+      [],
+      null,
+      "conversation:1",
+    );
+
+    expect(items[1]).toHaveProperty(
+      "markdown",
+      "**Provider tasks**\n\n_Checklist cleared._",
+    );
   });
 
   test("settles interrupted activity from durable turn truth", () => {

@@ -59,6 +59,11 @@ authoritative host user's home directory as a read-only context.
   resource selection stay unchanged
 - changing model, reasoning, or resource opens a fresh session with Nucleus's
   sanitized transcript migration context
+- changing explicit normal or plan harness mode opens a fresh session by the
+  same rule; Nucleus passes `SessionOptions::with_harness_mode` during
+  preparation and records selected and effective mode
+- plan harness mode, `ActivityKind::Plan`, and an open-ended planning
+  conversation are distinct and must not be inferred from one another
 - stored tool-enabled provider threads are not resumed until provider schema
   evidence permits safe tool redeclaration and Nucleus can retain the complete
   Swallowtail resume binding
@@ -68,6 +73,19 @@ authoritative host user's home directory as a read-only context.
   remain distinct
 - callback failure is returned to the provider without granting alternate
   execution authority
+
+Agent Chat opts into Swallowtail's prepared user-input exchange. A
+`CallbackRequestKind::HarnessUserInput` request is projected without
+provider-native parsing, persisted before display, and resolved through its
+original responder exactly once. Nucleus owns the safe rendezvous, durable wait
+state, desktop answer route, cancellation policy, and restart truth.
+Swallowtail owns request validation, provider correlation, response
+translation, callback lifecycle, and cleanup.
+
+Task execution keeps its current explicit unsupported/wait-state policy until
+its own contracts admit interactive answers. It must recognize the current
+portable callback variant and fail honestly rather than relying on a removed
+Swallowtail name.
 
 ## Lifecycle And Diagnostics
 
@@ -101,6 +119,13 @@ authoritative host user's home directory as a read-only context.
 - the Nucleus adapter forwards only Swallowtail's bounded portable activity
   observations with their runtime event sequence; it does not parse native
   Codex event names or expose raw payloads
+- Nucleus preserves each observation's actor, task-list replacement snapshot,
+  and subagent snapshot rather than flattening them to prose
+- Nucleus maintains one Swallowtail `SubagentDirectoryProjection` per runtime
+  operation and persists only the bounded product projection needed for child
+  attribution and navigation
+- provider task lists remain provider work evidence and never become durable
+  Nucleus Tasks by display alone
 - a consumer activity-projection failure requests turn cancellation and remains
   distinct from provider failure
 - a Nucleus-owned thread-safe cancellation signal wakes the active adapter
@@ -163,6 +188,11 @@ completion.
 `ActivityObservation` across the adapter boundary. It must not define a second
 portable activity vocabulary or expose provider-native payloads.
 
+The same rule applies to `HarnessUserInputRequest`,
+`HarnessUserInputResponse`, `TaskListSnapshot`, actor attribution, and
+subagent topology. Nucleus may add product correlation and persistence
+envelopes around these types; it must not fork their portable semantics.
+
 The old Codex app-server transport is removed after focused and native parity
 proof. `nucleus-agent-protocol` remains the consumer facade until a later
 contract decides whether it should narrow or disappear.
@@ -190,3 +220,9 @@ this Agent Chat slice.
 - no direct Codex app-server implementation remains in the live adapter crate
 - native Agent Chat acceptance passes before the legacy transport is declared
   removed
+- typed questions remain answerable while the rest of the UI stays responsive
+- duplicate, stale, cancelled, timed-out, restarted, and post-terminal answers
+  fail deterministically
+- selected and effective plan mode agree before provider effects
+- task-list status and priority survive persistence and replay
+- child attribution and unknown topology survive persistence and replay

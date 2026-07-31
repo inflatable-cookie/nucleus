@@ -165,6 +165,22 @@ A steering intervention must identify:
 Steering must not silently mutate task state, answer provider callbacks,
 cancel provider work, resume provider sessions, or perform tool execution.
 
+## Typed Callback Response Rule
+
+An operator answer to a pending `HarnessUserInput` callback is response routing,
+not steering and not a projected tool action.
+
+Nucleus may expose the portable Swallowtail questions, collect one typed answer
+set, and return it through the exact pending callback responder. The answer
+must retain callback, runtime operation, provider request, and turn
+correlation. It grants no tool, task, filesystem, child-control, or execution
+authority beyond the provider's typed question.
+
+Nucleus must not parse provider-native question payloads, invent a parallel
+question vocabulary, infer hidden context from prose, or answer on the
+operator's behalf unless a later explicit policy admits bounded
+auto-resolution.
+
 ## Visibility Rule
 
 Visible work forks are preferred for meaningful subagent work.
@@ -179,6 +195,11 @@ Nucleus may support:
 Private helpers must stay bounded. They must not hide material decisions,
 produce accepted task results, or mutate shared state without an admitted
 command.
+
+Provider-reported subagents are observational in the current product route.
+Nucleus may persist and navigate their portable topology and attributed
+activity. Observation does not grant direct spawn, steer, interrupt, resume,
+or deletion authority, and unknown parentage or status stays unknown.
 
 ## Capability Records
 

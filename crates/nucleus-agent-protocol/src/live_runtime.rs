@@ -9,12 +9,20 @@ use serde_json::Value;
 use std::fmt;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, Weak,
 };
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
+use swallowtail_runtime::{CallbackRequest, HarnessUserInputRequest, HarnessUserInputResponse};
 
 use crate::AgentActivityHandler;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AgentHarnessMode {
+    #[default]
+    Normal,
+    Plan,
+}
 
 /// Request to start (or resume) a provider-backed agent session.
 #[derive(Clone, Debug, PartialEq)]
@@ -22,6 +30,7 @@ pub struct AgentSessionStartRequest {
     pub working_directory: String,
     pub model: String,
     pub reasoning_effort: String,
+    pub harness_mode: AgentHarnessMode,
     pub developer_instructions: String,
     pub dynamic_tools: Vec<Value>,
     pub resume_provider_thread_id: Option<String>,
@@ -34,6 +43,7 @@ pub struct AgentStartedSessionInfo {
     pub provider_thread_id: String,
     pub model: String,
     pub reasoning_effort: Option<String>,
+    pub harness_mode: AgentHarnessMode,
 }
 
 /// One turn sent into a live session.
@@ -174,6 +184,164 @@ pub struct AgentToolCall {
 /// host's business.
 pub type AgentToolCallHandler<'a> = dyn FnMut(AgentToolCall) -> Result<String, String> + 'a;
 
+/// One portable provider question with its exact callback correlation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentUserInputRequest {
+    pub callback: CallbackRequest,
+}
+
+impl AgentUserInputRequest {
+    pub fn questions(&self) -> Option<&HarnessUserInputRequest> {
+        match self.callback.kind() {
+            swallowtail_runtime::CallbackRequestKind::HarnessUserInput(request) => Some(request),
+            _ => None,
+        }
+    }
+}
+
+enum AgentUserInputWaitState {
+    Pending,
+    Answered(HarnessUserInputResponse),
+    Abandoned(String),
+}
+
+struct AgentUserInputWaitInner {
+    request: HarnessUserInputRequest,
+    state: Mutex<AgentUserInputWaitState>,
+    waker: Mutex<Option<Waker>>,
+}
+
+/// Turn-owned half of a typed question rendezvous.
+pub struct AgentUserInputWait {
+    inner: Arc<AgentUserInputWaitInner>,
+}
+
+/// Separately routable answer half of a typed question rendezvous.
+#[derive(Clone)]
+pub struct AgentUserInputAnswerer {
+    inner: Weak<AgentUserInputWaitInner>,
+}
+
+impl AgentUserInputWait {
+    pub fn pending(request: HarnessUserInputRequest) -> (Self, AgentUserInputAnswerer) {
+        let inner = Arc::new(AgentUserInputWaitInner {
+            request,
+            state: Mutex::new(AgentUserInputWaitState::Pending),
+            waker: Mutex::new(None),
+        });
+        (
+            Self {
+                inner: Arc::clone(&inner),
+            },
+            AgentUserInputAnswerer {
+                inner: Arc::downgrade(&inner),
+            },
+        )
+    }
+
+    pub fn poll_response(
+        &mut self,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<HarnessUserInputResponse, String>> {
+        if let Ok(mut state) = self.inner.state.lock() {
+            match &*state {
+                AgentUserInputWaitState::Answered(_) => {
+                    let AgentUserInputWaitState::Answered(response) = std::mem::replace(
+                        &mut *state,
+                        AgentUserInputWaitState::Abandoned(
+                            "typed user-input response was already consumed".to_owned(),
+                        ),
+                    ) else {
+                        unreachable!()
+                    };
+                    return Poll::Ready(Ok(response));
+                }
+                AgentUserInputWaitState::Abandoned(reason) => {
+                    return Poll::Ready(Err(reason.clone()));
+                }
+                AgentUserInputWaitState::Pending => {}
+            }
+        } else {
+            return Poll::Ready(Err("typed user-input wait state is unavailable".to_owned()));
+        }
+        if let Ok(mut waker) = self.inner.waker.lock() {
+            *waker = Some(context.waker().clone());
+        }
+        Poll::Pending
+    }
+
+    pub fn abandon(&self, reason: impl Into<String>) {
+        if let Ok(mut state) = self.inner.state.lock() {
+            if matches!(*state, AgentUserInputWaitState::Pending) {
+                *state = AgentUserInputWaitState::Abandoned(reason.into());
+            }
+        }
+        if let Ok(mut waker) = self.inner.waker.lock() {
+            if let Some(waker) = waker.take() {
+                waker.wake();
+            }
+        }
+    }
+}
+
+impl Drop for AgentUserInputWait {
+    fn drop(&mut self) {
+        self.abandon("typed user-input request is no longer active");
+    }
+}
+
+impl AgentUserInputAnswerer {
+    pub fn respond(&self, response: HarnessUserInputResponse) -> Result<(), String> {
+        let inner = self
+            .inner
+            .upgrade()
+            .ok_or_else(|| "typed user-input request is stale".to_owned())?;
+        if !inner.request.accepts(&response) {
+            return Err("typed user-input response does not match the pending request".to_owned());
+        }
+        let mut state = inner
+            .state
+            .lock()
+            .map_err(|_| "typed user-input wait state is unavailable".to_owned())?;
+        if !matches!(*state, AgentUserInputWaitState::Pending) {
+            return Err("typed user-input request is already resolved".to_owned());
+        }
+        *state = AgentUserInputWaitState::Answered(response);
+        drop(state);
+        if let Ok(mut waker) = inner.waker.lock() {
+            if let Some(waker) = waker.take() {
+                waker.wake();
+            }
+        }
+        Ok(())
+    }
+
+    pub fn abandon(&self, reason: impl Into<String>) -> Result<(), String> {
+        let inner = self
+            .inner
+            .upgrade()
+            .ok_or_else(|| "typed user-input request is stale".to_owned())?;
+        let mut state = inner
+            .state
+            .lock()
+            .map_err(|_| "typed user-input wait state is unavailable".to_owned())?;
+        if !matches!(*state, AgentUserInputWaitState::Pending) {
+            return Err("typed user-input request is already resolved".to_owned());
+        }
+        *state = AgentUserInputWaitState::Abandoned(reason.into());
+        drop(state);
+        if let Ok(mut waker) = inner.waker.lock() {
+            if let Some(waker) = waker.take() {
+                waker.wake();
+            }
+        }
+        Ok(())
+    }
+}
+
+pub type AgentUserInputHandler<'a> =
+    dyn FnMut(AgentUserInputRequest) -> Result<AgentUserInputWait, String> + 'a;
+
 /// One model option a provider offers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentModelOption {
@@ -200,12 +368,13 @@ pub trait AgentLiveSession {
         request: AgentTurnRequest,
         on_activity: &mut AgentActivityHandler<'_>,
         on_tool_call: &mut AgentToolCallHandler<'_>,
+        on_user_input: &mut AgentUserInputHandler<'_>,
     ) -> Result<AgentTurnReply, AgentTurnFailure>;
 }
 
 #[cfg(test)]
 mod tests {
-    use super::AgentTurnCancellation;
+    use super::{AgentTurnCancellation, AgentUserInputWait};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -244,6 +413,51 @@ mod tests {
         assert!(cancellation.request());
         assert!(wake_flag.0.load(Ordering::Acquire));
         assert_eq!(cancellation.poll_requested(&mut context), Poll::Ready(()));
+    }
+
+    #[test]
+    fn typed_user_input_rendezvous_accepts_one_matching_response() {
+        use swallowtail_runtime::{
+            HarnessQuestionId, HarnessUserInputAnswer, HarnessUserInputQuestion,
+            HarnessUserInputQuestionKind, HarnessUserInputRequest, HarnessUserInputResponse,
+            OperationContent,
+        };
+
+        let question_id = HarnessQuestionId::new("choice").expect("question id");
+        let question = HarnessUserInputQuestion::new(
+            question_id.clone(),
+            OperationContent::new("Choice").expect("header"),
+            OperationContent::new("Choose").expect("prompt"),
+            HarnessUserInputQuestionKind::Text { secret: false },
+            [],
+        )
+        .expect("question");
+        let request = HarnessUserInputRequest::new([question], None, 1, 1, 1024).expect("request");
+        let (mut waiting, answerer) = AgentUserInputWait::pending(request);
+        let response = HarnessUserInputResponse::new(
+            [HarnessUserInputAnswer::selected(
+                question_id,
+                [],
+                Some(OperationContent::new("answer").expect("answer")),
+            )],
+            1,
+            1024,
+        )
+        .expect("response");
+
+        answerer.respond(response.clone()).expect("first answer");
+        assert!(answerer.respond(response).is_err());
+
+        struct Noop;
+        impl std::task::Wake for Noop {
+            fn wake(self: Arc<Self>) {}
+        }
+        let waker = Waker::from(Arc::new(Noop));
+        let mut context = Context::from_waker(&waker);
+        assert!(matches!(
+            waiting.poll_response(&mut context),
+            Poll::Ready(Ok(_))
+        ));
     }
 }
 

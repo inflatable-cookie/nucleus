@@ -23,6 +23,7 @@ fn chat_request_serializes_for_tauri_boundary() {
         active_goal_id: None,
         model: Some("gpt-5.4-mini".to_owned()),
         reasoning_effort: Some("low".to_owned()),
+        harness_mode: LocalCodexChatHarnessMode::Normal,
     };
     let value = serde_json::to_value(request).expect("serialize request");
     assert_eq!(value["conversation_id"], "panel:agent-chat");
@@ -31,6 +32,7 @@ fn chat_request_serializes_for_tauri_boundary() {
     assert_eq!(value["active_goal_id"], serde_json::Value::Null);
     assert_eq!(value["model"], "gpt-5.4-mini");
     assert_eq!(value["reasoning_effort"], "low");
+    assert_eq!(value["harness_mode"], "normal");
 }
 
 #[test]
@@ -41,7 +43,21 @@ fn chat_route_selection_uses_requested_values_and_rejects_invalid_slugs() {
 
     assert_eq!(
         selected_route(&request, None).expect("route"),
-        ("gpt-5.4-mini".to_owned(), "medium".to_owned())
+        (
+            "gpt-5.4-mini".to_owned(),
+            "medium".to_owned(),
+            LocalCodexChatHarnessMode::Normal,
+        )
+    );
+
+    request.harness_mode = LocalCodexChatHarnessMode::Plan;
+    assert_eq!(
+        selected_route(&request, None).expect("plan route"),
+        (
+            "gpt-5.4-mini".to_owned(),
+            "medium".to_owned(),
+            LocalCodexChatHarnessMode::Plan,
+        )
     );
 
     request.model = Some("gpt 5.4".to_owned());
@@ -200,6 +216,7 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
         None,
         CHAT_MODEL,
         CHAT_REASONING_EFFORT,
+        LocalCodexChatHarnessMode::Normal,
         CHAT_TURN_TIMEOUT,
     )
     .expect("start chat session");
@@ -207,6 +224,7 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
         Err::<TaskToolOutcome, _>("task tool should not be called in this smoke".to_owned())
     };
     let mut ignore_activity = |_| Ok(());
+    let mut reject_questions = |_| Err("question should not be asked in this smoke".to_owned());
     let first = session
         .send_turn(
             "Reply with exactly: first nucleus chat turn",
@@ -214,6 +232,7 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
             CHAT_REASONING_EFFORT,
             nucleus_agent_protocol::AgentTurnCancellation::new(),
             &mut ignore_activity,
+            &mut reject_questions,
             &mut task_tool,
         )
         .expect("first turn");
@@ -224,6 +243,7 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
             CHAT_REASONING_EFFORT,
             nucleus_agent_protocol::AgentTurnCancellation::new(),
             &mut ignore_activity,
+            &mut reject_questions,
             &mut task_tool,
         )
         .expect("second turn");
@@ -299,6 +319,7 @@ fn live_chat_receives_active_task_context_without_polluting_history() {
                 active_goal_id: None,
                 model: None,
                 reasoning_effort: None,
+                harness_mode: LocalCodexChatHarnessMode::Normal,
             },
         )
         .expect("active task turn");
@@ -327,6 +348,7 @@ fn durable_chat_reopens_with_transcript_context_after_service_restart() {
         active_goal_id: None,
         model: None,
         reasoning_effort: None,
+        harness_mode: LocalCodexChatHarnessMode::Normal,
     };
     let first = LocalCodexChatService::default()
         .send_message(&state, request("Reply with exactly: durable first"))
@@ -368,6 +390,7 @@ fn live_chat_authors_a_task_batch_without_dispatching_work() {
                 active_goal_id: None,
                 model: None,
                 reasoning_effort: None,
+                harness_mode: LocalCodexChatHarnessMode::Normal,
             },
             &mut |request| accepted(&mut handler, request),
         )
@@ -543,6 +566,7 @@ fn live_chat_creates_and_runs_a_two_task_goal_through_two_portals() {
                 active_goal_id: Some(goal.goal_id.clone()),
                 model: None,
                 reasoning_effort: None,
+                harness_mode: LocalCodexChatHarnessMode::Normal,
             },
             &mut |request| accepted(&mut handler, request),
         )
@@ -618,6 +642,7 @@ fn request(conversation: &str, message: &str) -> LocalCodexChatRequest {
         active_goal_id: None,
         model: None,
         reasoning_effort: None,
+        harness_mode: LocalCodexChatHarnessMode::Normal,
     }
 }
 
@@ -638,6 +663,7 @@ fn persist_legacy_session(
             provider_thread_id: format!("thread:{conversation}"),
             model: CHAT_MODEL.to_owned(),
             reasoning_effort: Some(CHAT_REASONING_EFFORT.to_owned()),
+            harness_mode: LocalCodexChatHarnessMode::Normal,
             adapter_id: CHAT_ADAPTER_ID.to_owned(),
             provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
             turn_count: 1,
