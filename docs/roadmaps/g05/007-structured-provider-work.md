@@ -1,6 +1,6 @@
 # 007 Structured Provider Work
 
-Status: active
+Status: completed
 Owner: Tom
 Created: 2026-07-31
 
@@ -28,8 +28,8 @@ authority separate.
 
 - [x] persist portable actor, task-list, and subagent snapshots
 - [x] preserve checklist item status, priority, order, replacement, and clear
-- [ ] maintain one operation-local `SubagentDirectoryProjection`
-- [ ] attribute and navigate main, child, and unknown work honestly
+- [x] maintain one operation-local `SubagentDirectoryProjection`
+- [x] attribute and navigate main, child, and unknown work honestly
 - [x] render structured plans and checklists without creating Nucleus Tasks
 
 ## Execution Plan
@@ -48,15 +48,15 @@ authority separate.
 
 ### Batch 7.3 — Child Directory And Navigation
 
-- [ ] Execute card 024.
-- [ ] Fold snapshots into one directory per operation.
-- [ ] Add durable child selection and attributed transcript filtering without
+- [x] Execute card 024.
+- [x] Fold snapshots into one directory per operation.
+- [x] Add durable child selection and attributed transcript filtering without
       control actions.
 
 ## Acceptance Criteria
 
 - [x] task-list status and priority survive restart
 - [x] omission does not clear and an empty snapshot does
-- [ ] child first-seen order and unknown fields survive restart
-- [ ] operation termination invents no child terminal state
-- [ ] no direct child-control affordance appears
+- [x] child first-seen order and unknown fields survive restart
+- [x] operation termination invents no child terminal state
+- [x] no direct child-control affordance appears

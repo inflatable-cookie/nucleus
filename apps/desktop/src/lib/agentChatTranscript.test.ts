@@ -56,6 +56,8 @@ describe("agent chat transcript projection", () => {
     expect(panel).toContain("AgentTranscript");
     expect(panel).toContain('listen<AgentChatActivity>("agent-chat:activity"');
     expect(panel).toContain('listen<AgentChatQuestionExchange>("agent-chat:question"');
+    expect(panel).toContain('"agent-chat:subagents"');
+    expect(panel).toContain("selectAgentChatActor");
     expect(panel).toContain('status={pendingQuestion ? "questioning"');
     expect(panel).toContain("answerAgentChatQuestion");
     expect(panel).toContain("cancelAgentChatTurn(projectId, conversationId)");
@@ -235,7 +237,7 @@ describe("agent chat transcript projection", () => {
     });
     expect(items[1]).toHaveProperty(
       "markdown",
-      "**Child work · child-1**\n\n**Plan**\n\n- [x] Inspect · high\n- [/] Apply · medium",
+      "**Child work · child-1**\n\n**Plan**\n\n- **Completed** · high priority — Inspect\n- **In progress** · medium priority — Apply",
     );
   });
 

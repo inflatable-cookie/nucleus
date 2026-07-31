@@ -1,6 +1,6 @@
 # 008 Structured Agent Chat Acceptance
 
-Status: planned
+Status: completed
 Owner: Tom
 Created: 2026-07-31
 
@@ -22,29 +22,45 @@ honest native evidence.
 
 ## Goals
 
-- [ ] pass focused Rust, desktop fixture, Svelte, and docs validation
-- [ ] exercise question, mode, checklist, and child scenarios deterministically
-- [ ] record unresolved provider-version and restart limits
-- [ ] gate authenticated native acceptance separately
+- [x] pass focused Rust, desktop fixture, Svelte, and docs validation
+- [x] exercise question, mode, checklist, and child scenarios deterministically
+- [x] record unresolved provider-version and restart limits
+- [x] gate authenticated native acceptance separately
 
 ## Execution Plan
 
 ### Batch 8.1 — Deterministic Closeout
 
-- [ ] Execute card 025.
-- [ ] Validate the complete lane without credentials or provider calls.
-- [ ] Record pre-existing Doctor structural debt separately.
+- [x] Execute card 025.
+- [x] Validate the complete lane without credentials or provider calls.
+- [x] Record pre-existing Doctor structural debt separately.
 
 ### Batch 8.2 — Native Acceptance
 
-- [ ] Execute card 026 only after explicit operator approval.
-- [ ] Run bounded question, plan-mode, task-list, and child-observation cases.
-- [ ] Record exact provider/version limitations and cleanup evidence.
+- [x] Start card 026 after explicit operator approval.
+- [x] Run bounded question, plan-mode, task-list, and child-observation cases.
+- [x] Confirm representation-aware request correlation through exact-turn
+  continuation.
+- [x] Record Codex `0.146.0` child lifecycle, attribution, restart, and terminal
+  cleanup evidence.
 
 ## Acceptance Criteria
 
-- [ ] focused deterministic selectors pass
-- [ ] `effigy check:rust` passes
-- [ ] no unrelated Doctor debt is misreported as this lane's regression
-- [ ] native evidence is either recorded or clearly operator-gated
+- [x] focused deterministic selectors pass
+- [x] `effigy check:rust` passes
+- [x] no unrelated Doctor debt is misreported as this lane's regression
+- [x] native evidence is recorded through the card's provider-mismatch stop
+  condition
 
+## Native Outcome
+
+Swallowtail's representation-aware request references and child lifecycle
+projection restored the full portable route. Plan mode, one typed question,
+exact-turn continuation, child attribution, child completion, root completion,
+restart-safe child selection, and cleanup passed in one bounded native case.
+
+Codex `0.146.0` deliberately rejects `update_plan` while harness Plan mode is
+active. A separate bounded Normal-mode case therefore proved authoritative
+task-list replacement, every status transition, null-priority preservation,
+persistence, restart replay, and explicit status presentation. No provider
+task list was promoted into the Nucleus Task domain.

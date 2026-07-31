@@ -19,7 +19,7 @@ use nucleus_server::{
     read_forge_repository_metadata_refreshes, read_forge_status_check_refreshes,
     recover_interrupted_chat_state, seed_local_memory_proposal, seed_local_planning_session,
     seed_local_project_with_resource_root, seed_local_research_run_brief, seed_local_task,
-    write_command_evidence, ControlApiCodecError, ControlRequestEnvelopeDto,
+    select_chat_actor, write_command_evidence, ControlApiCodecError, ControlRequestEnvelopeDto,
     ControlResponseBodyDto, ControlResponseEnvelopeDto, EditorDirectoryEntry,
     EditorFileCreateRequest, EditorFileDeleteReceipt, EditorFileDeleteRequest, EditorFileEntry,
     EditorFileRenameRequest, EditorFileSaveRequest, EditorFileSnapshot, EditorFileWatchRuntime,
@@ -30,14 +30,15 @@ use nucleus_server::{
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
-    ForgeStatusCheckRefreshScope, LocalCodexChatCancellationRegistry, LocalCodexChatHistory,
-    LocalCodexChatModelOption, LocalCodexChatQuestionAnswerRequest, LocalCodexChatQuestionRegistry,
-    LocalCodexChatReply, LocalCodexChatRequest, LocalCodexChatService, LocalCodexChatThreadSummary,
+    ForgeStatusCheckRefreshScope, LocalCodexChatActorSelectionRequest,
+    LocalCodexChatCancellationRegistry, LocalCodexChatHistory, LocalCodexChatModelOption,
+    LocalCodexChatQuestionAnswerRequest, LocalCodexChatQuestionRegistry, LocalCodexChatReply,
+    LocalCodexChatRequest, LocalCodexChatService, LocalCodexChatThreadSummary,
     LocalControlRequestHandler, LocalMemoryProposalSeed, LocalPlanningSessionSeed,
     LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed, ServerStateService,
-    StoredChatQuestionExchange, TaskDiffFilePatchRequest, TaskDiffFilePatchResponse,
-    TaskDiffOverviewRequest, TaskDiffOverviewResponse, TaskReviewSnapshotStore,
-    TauriIpcControlCommandAdapter, TerminalHostRuntime,
+    StoredChatActorSelection, StoredChatQuestionExchange, TaskDiffFilePatchRequest,
+    TaskDiffFilePatchResponse, TaskDiffOverviewRequest, TaskDiffOverviewResponse,
+    TaskReviewSnapshotStore, TauriIpcControlCommandAdapter, TerminalHostRuntime,
 };
 
 mod browser_panel;
@@ -477,10 +478,16 @@ async fn send_agent_chat_message(
                     _ => Err("task ledger command returned an unexpected response".to_owned()),
                 }
             },
-            &mut |activity| {
+            &mut |activity, directory| {
                 window
                     .emit("agent-chat:activity", activity)
-                    .map_err(|error| format!("agent chat activity delivery failed: {error}"))
+                    .map_err(|error| format!("agent chat activity delivery failed: {error}"))?;
+                if let Some(directory) = directory {
+                    window
+                        .emit("agent-chat:subagents", directory)
+                        .map_err(|error| format!("agent chat child delivery failed: {error}"))?;
+                }
+                Ok(())
             },
             &mut |question| {
                 window
@@ -518,6 +525,14 @@ fn answer_agent_chat_question(
     request: LocalCodexChatQuestionAnswerRequest,
 ) -> Result<StoredChatQuestionExchange, String> {
     answer_local_codex_chat_question(&state.server_state, &state.chat_questions, request)
+}
+
+#[tauri::command]
+fn select_agent_chat_actor(
+    state: tauri::State<'_, DesktopState>,
+    request: LocalCodexChatActorSelectionRequest,
+) -> Result<StoredChatActorSelection, String> {
+    select_chat_actor(&state.server_state, request)
 }
 
 #[tauri::command]
@@ -875,6 +890,7 @@ pub fn run() {
             send_agent_chat_message,
             cancel_agent_chat_turn,
             answer_agent_chat_question,
+            select_agent_chat_actor,
             load_agent_chat_history,
             list_agent_chat_threads,
             rename_agent_chat_thread,

@@ -23,6 +23,14 @@
     string,
     import("./control/agentChat").AgentChatQuestionExchange[]
   >();
+  const retainedSubagentDirectories = new Map<
+    string,
+    import("./control/agentChat").AgentChatSubagentDirectory[]
+  >();
+  const retainedActorSelections = new Map<
+    string,
+    import("./control/agentChat").AgentChatActorSelection
+  >();
   const retainedTurns = new Map<
     string,
     import("./agentChatTranscript").AgentTranscriptTurn[]
@@ -71,6 +79,7 @@
     Button,
     Icon,
     ModelPicker,
+    Select,
     Text,
     type AgentChatAttachment,
     type AgentQuestionAnswer,
@@ -84,13 +93,16 @@
   import TaskWorkflowReceipt from "./TaskWorkflowReceipt.svelte";
   import {
     assembleAgentTranscript,
+    filterAgentChatActivities,
     type AgentTranscriptTurn,
   } from "./agentChatTranscript";
   import type { ControlGoalRecordDto, ControlTaskRecordDto } from "./control";
   import type {
     AgentChatActivity,
+    AgentChatActorSelection,
     AgentChatHarnessMode,
     AgentChatQuestionExchange,
+    AgentChatSubagentDirectory,
     TaskAuthoringReceipt,
     TaskWorkflowReceipt as WorkflowReceipt,
   } from "./control/agentChat";
@@ -99,6 +111,7 @@
     cancelAgentChatTurn,
     listAgentChatModels,
     loadAgentChatHistory,
+    selectAgentChatActor,
     sendAgentChatMessage,
   } from "./control/agentChat";
 
@@ -124,6 +137,14 @@
   let messages = $state<ChatMessage[]>([]);
   let activities = $state<AgentChatActivity[]>([]);
   let questions = $state<AgentChatQuestionExchange[]>([]);
+  let subagentDirectories = $state<AgentChatSubagentDirectory[]>([]);
+  let actorSelection = $state<AgentChatActorSelection>({
+    project_id: "",
+    conversation_id: "",
+    kind: "all",
+    runtime_operation_id: null,
+    actor_id: null,
+  });
   let turns = $state<AgentTranscriptTurn[]>([]);
   let draft = $state("");
   let pending = $state(false);
@@ -156,16 +177,6 @@
       ],
       defaultValue: DEFAULT_REASONING_EFFORT,
     },
-    {
-      key: "mode",
-      label: "Mode",
-      kind: "select",
-      options: [
-        { value: "normal", label: "Normal" },
-        { value: "plan", label: "Plan" },
-      ],
-      defaultValue: DEFAULT_HARNESS_MODE,
-    },
   ];
   const modelPickerModels = $derived.by(() => {
     const options: ModelOption[] = modelCatalog.map((option) => ({
@@ -187,14 +198,6 @@
             })),
           defaultValue: option.default_reasoning_effort,
         },
-        {
-          key: "mode",
-          options: [
-            { value: "normal", label: "Normal" },
-            { value: "plan", label: "Plan" },
-          ],
-          defaultValue: DEFAULT_HARNESS_MODE,
-        },
       ],
     }));
     if (!options.some((option) => option.value === model)) {
@@ -208,14 +211,6 @@
             options: [{ value: reasoningEffort, label: reasoningLabel(reasoningEffort) }],
             defaultValue: reasoningEffort,
           },
-          {
-            key: "mode",
-            options: [
-              { value: "normal", label: "Normal" },
-              { value: "plan", label: "Plan" },
-            ],
-            defaultValue: DEFAULT_HARNESS_MODE,
-          },
         ],
       });
     }
@@ -223,7 +218,7 @@
   });
   const modelSelection = $derived<ModelSelection>({
     model,
-    axes: { reasoning: reasoningEffort, mode: harnessMode },
+    axes: { reasoning: reasoningEffort },
   });
   const contextAttachments = $derived<AgentChatAttachment[]>([
     ...(activeGoal
@@ -233,16 +228,48 @@
       ? [{ id: "active-task", label: `Task · ${activeTask.title}`, kind: "task" }]
       : []),
   ]);
+  const visibleActivities = $derived(
+    filterAgentChatActivities(activities, actorSelection),
+  );
   const transcriptItems = $derived.by(() =>
     assembleAgentTranscript(
       messages,
-      activities,
+      visibleActivities,
       turns,
       pending ? (cancelRequested ? "Cancelling…" : "Working…") : null,
       conversationId,
       questions,
     ),
   );
+  const actorChoices = $derived.by(() => [
+    {
+      value: "all",
+      label: "All work",
+      selection: actorSelectionFor("all"),
+    },
+    {
+      value: "primary",
+      label: "Main agent",
+      selection: actorSelectionFor("primary"),
+    },
+    ...subagentDirectories.flatMap((directory) =>
+      directory.subagents.map((subagent) => ({
+        value: childSelectionValue(directory.runtime_operation_id, subagent.subagent_id),
+        label: childSelectionLabel(directory, subagent),
+        selection: {
+          project_id: projectId ?? directory.project_id,
+          conversation_id: conversationId,
+          kind: "subagent" as const,
+          runtime_operation_id: directory.runtime_operation_id,
+          actor_id: subagent.subagent_id,
+        },
+      })),
+    ),
+  ]);
+  const actorOptions = $derived(
+    actorChoices.map(({ value, label }) => ({ value, label })),
+  );
+  const actorSelectionValue = $derived(selectionValue(actorSelection));
   const pendingQuestion = $derived(
     questions.find((question) => question.status === "pending") ?? null,
   );
@@ -275,6 +302,9 @@
       messages = retainedMessages.get(conversationId) ?? [];
       activities = retainedActivities.get(conversationId) ?? [];
       questions = retainedQuestions.get(conversationId) ?? [];
+      subagentDirectories = retainedSubagentDirectories.get(conversationId) ?? [];
+      actorSelection =
+        retainedActorSelections.get(conversationId) ?? actorSelectionFor("all");
       turns = retainedTurns.get(conversationId) ?? [];
       pending = retainedPendingConversations.has(conversationId);
       questionIndex = 0;
@@ -300,6 +330,32 @@
       retain(retainedActivities, conversationId, activities);
       adoptTimelineTurnId(payload.turn_id);
     });
+    return () => {
+      void unlisten.then((stop) => stop());
+    };
+  });
+
+  $effect(() => {
+    const unlisten = listen<AgentChatSubagentDirectory>(
+      "agent-chat:subagents",
+      ({ payload }) => {
+        if (payload.conversation_id !== conversationId) {
+          return;
+        }
+        subagentDirectories = [
+          ...subagentDirectories.filter(
+            (directory) =>
+              directory.runtime_operation_id !== payload.runtime_operation_id,
+          ),
+          payload,
+        ].sort(
+          (left, right) =>
+            left.turn_ordinal - right.turn_ordinal ||
+            left.first_sequence - right.first_sequence,
+        );
+        retain(retainedSubagentDirectories, conversationId, subagentDirectories);
+      },
+    );
     return () => {
       void unlisten.then((stop) => stop());
     };
@@ -345,6 +401,8 @@
       }));
       activities = history.activities;
       questions = history.questions;
+      subagentDirectories = history.subagent_directories;
+      actorSelection = history.actor_selection;
       turns = history.turns.map((turn) => ({
         turnId: turn.turn_id,
         status: turn.status,
@@ -352,6 +410,8 @@
       retain(retainedMessages, nextConversationId, messages);
       retain(retainedActivities, nextConversationId, activities);
       retain(retainedQuestions, nextConversationId, questions);
+      retain(retainedSubagentDirectories, nextConversationId, subagentDirectories);
+      retain(retainedActorSelections, nextConversationId, actorSelection);
       retain(retainedTurns, nextConversationId, turns);
       model = history.model ?? model;
       reasoningEffort = history.reasoning_effort ?? reasoningEffort;
@@ -641,11 +701,10 @@
         ? selectedEffort
         : selected?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
     retain(retainedReasoningEfforts, conversationId, reasoningEffort);
-    const selectedMode = selection.axes.mode;
-    harnessMode =
-      selectedMode === "normal" || selectedMode === "plan"
-        ? selectedMode
-        : DEFAULT_HARNESS_MODE;
+  }
+
+  function selectHarnessMode(nextMode: string): void {
+    harnessMode = nextMode === "plan" ? "plan" : DEFAULT_HARNESS_MODE;
     retain(retainedHarnessModes, conversationId, harnessMode);
   }
 
@@ -668,6 +727,60 @@
   function toggle(values: string[], id: string): string[] {
     return values.includes(id) ? values.filter((value) => value !== id) : [...values, id];
   }
+
+  async function chooseActor(value: string): Promise<void> {
+    const choice = actorChoices.find((candidate) => candidate.value === value);
+    if (!projectId || !choice || selectionValue(choice.selection) === actorSelectionValue) {
+      return;
+    }
+    const previous = actorSelection;
+    actorSelection = choice.selection;
+    retain(retainedActorSelections, conversationId, actorSelection);
+    failure = null;
+    try {
+      actorSelection = await selectAgentChatActor(choice.selection);
+      retain(retainedActorSelections, conversationId, actorSelection);
+    } catch (caught) {
+      actorSelection = previous;
+      retain(retainedActorSelections, conversationId, actorSelection);
+      failure = caught instanceof Error ? caught.message : String(caught);
+    }
+  }
+
+  function actorSelectionFor(kind: "all" | "primary"): AgentChatActorSelection {
+    return {
+      project_id: projectId ?? "",
+      conversation_id: conversationId,
+      kind,
+      runtime_operation_id: null,
+      actor_id: null,
+    };
+  }
+
+  function selectionValue(selection: AgentChatActorSelection): string {
+    return selection.kind === "subagent" && selection.runtime_operation_id && selection.actor_id
+      ? childSelectionValue(selection.runtime_operation_id, selection.actor_id)
+      : selection.kind;
+  }
+
+  function childSelectionValue(operationId: string, actorId: string): string {
+    return JSON.stringify([operationId, actorId]);
+  }
+
+  function childSelectionLabel(
+    directory: AgentChatSubagentDirectory,
+    subagent: AgentChatSubagentDirectory["subagents"][number],
+  ): string {
+    const name = subagent.label ?? subagent.subagent_id;
+    const uncertainty = [
+      subagent.status === "unknown" ? "status unknown" : subagent.status,
+      subagent.parent_kind === "unknown" ? "parent unknown" : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const operation = subagentDirectories.length > 1 ? ` · turn ${directory.turn_ordinal}` : "";
+    return `${name} · ${uncertainty}${operation}`;
+  }
 </script>
 
 <section class="agent-chat" aria-label="Agent chat">
@@ -684,19 +797,36 @@
       </div>
     {:else}
       <div class="transcript-shell">
-        <AgentTranscript
-          items={transcriptItems}
-          autoScroll
-          size="sm"
-          density="compact"
-          ariaLabel="Agent conversation and activity"
-          expandedToolRuns={expandedToolRuns}
-          expandedToolCalls={expandedToolCalls}
-          onToolRunToggle={(id) =>
-            (expandedToolRuns = toggle(expandedToolRuns, id))}
-          onToolCallToggle={(id) =>
-            (expandedToolCalls = toggle(expandedToolCalls, id))}
-        />
+        {#if subagentDirectories.length > 0}
+          <div class="actor-navigation">
+            <Text tone="muted" size="xs">Transcript</Text>
+            <Select
+              value={actorSelectionValue}
+              options={actorOptions}
+              variant="ghost"
+              size="xs"
+              native={false}
+              menuMinWidth="14rem"
+              ariaLabel="Attributed agent work"
+              onValueChange={(value) => void chooseActor(value)}
+            />
+          </div>
+        {/if}
+        <div class="transcript-content">
+          <AgentTranscript
+            items={transcriptItems}
+            autoScroll
+            size="sm"
+            density="compact"
+            ariaLabel="Agent conversation and activity"
+            expandedToolRuns={expandedToolRuns}
+            expandedToolCalls={expandedToolCalls}
+            onToolRunToggle={(id) =>
+              (expandedToolRuns = toggle(expandedToolRuns, id))}
+            onToolCallToggle={(id) =>
+              (expandedToolCalls = toggle(expandedToolCalls, id))}
+          />
+        </div>
       </div>
     {/if}
 
@@ -760,17 +890,29 @@
         />
       {/snippet}
       {#snippet toolbar()}
-        <ModelPicker
-          models={modelPickerModels}
-          axes={modelPickerAxes}
-          value={modelSelection}
-          ariaLabel="Chat model and reasoning"
-          showModelDescriptions={false}
-          emphasis="subdued"
-          size="sm"
-          disabled={pending || loadingHistory}
-          onChange={selectModelRoute}
-        />
+        <div class="chat-route-controls">
+          <ModelPicker
+            models={modelPickerModels}
+            axes={modelPickerAxes}
+            value={modelSelection}
+            ariaLabel="Chat model and reasoning"
+            showModelDescriptions={false}
+            emphasis="subdued"
+            size="sm"
+            disabled={pending || loadingHistory}
+            onChange={selectModelRoute}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            pressed={harnessMode === "plan"}
+            ariaLabel={`Harness mode: ${harnessMode === "plan" ? "Plan" : "Normal"}`}
+            disabled={pending || loadingHistory}
+            onPressedChange={(pressed) => selectHarnessMode(pressed ? "plan" : "normal")}
+          >
+            {harnessMode === "plan" ? "Plan" : "Normal"}
+          </Button>
+        </div>
       {/snippet}
     </AgentChatInput>
   </div>
@@ -785,6 +927,13 @@
     min-width: 0;
     min-height: 0;
     background: var(--poodle-color-background-canvas);
+  }
+
+  .chat-route-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
   }
 
   .agent-chat::after {
@@ -832,10 +981,27 @@
   }
 
   .transcript-shell {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     width: min(48rem, 100%);
     height: 100%;
     min-height: 0;
     margin: 0 auto;
+  }
+
+  .actor-navigation {
+    position: relative;
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.25rem;
+    min-height: 2rem;
+    padding-bottom: 0.35rem;
+  }
+
+  .transcript-content {
+    min-height: 0;
   }
 
   .chat-empty-icon {

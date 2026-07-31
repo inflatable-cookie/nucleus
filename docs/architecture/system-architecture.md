@@ -653,9 +653,11 @@ answerers reusable.
 
 Observable activity persistence retains Swallowtail actor attribution,
 task-list snapshots, and subagent snapshots. Provider task lists remain
-transcript presentation data, not Nucleus Tasks. Operation-local child
-directory folding and navigation are a separate product projection over those
-portable snapshots and grant no child-control authority.
+transcript presentation data, not Nucleus Tasks. Nucleus folds every exact
+runtime operation through one Swallowtail `SubagentDirectoryProjection`, then
+persists the current first-seen directory and operator selection. Transcript
+navigation can select primary or exact operation-local child activity, but it
+grants no child-control authority and invents no terminal child state.
 
 ## Goals, Loops, And Next Task Selection
 

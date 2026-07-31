@@ -323,8 +323,9 @@ shape.
 - `g05/005-observable-agent-chat-transcript.md` - completed; deterministic and
   authenticated native acceptance passed
 - `g05/006-interactive-agent-chat-sessions.md` - completed
-- `g05/007-structured-provider-work.md` - active
-- `g05/008-structured-agent-chat-acceptance.md` - planned
+- `g05/007-structured-provider-work.md` - completed
+- `g05/008-structured-agent-chat-acceptance.md` - completed; deterministic and
+  authenticated structured Agent Chat acceptance passed
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -384,9 +385,6 @@ shape.
 
 ## Next Task
 
-Execute
-[card 024](g05/batch-cards/024-subagent-directory-attribution-and-navigation.md):
-fold portable child snapshots into one operation-local directory and add
-read-only attributed transcript navigation.
-Project-layout card 003, Forge native validation, and structured Agent Chat
-native card 026 remain operator-held.
+Operator intent checkpoint: select the next g05 consolidation lane after
+structured Agent Chat acceptance. Project-layout card 003 and Forge native
+validation remain operator-held.

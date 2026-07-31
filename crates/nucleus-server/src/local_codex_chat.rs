@@ -12,6 +12,8 @@ mod questions;
 mod review_evidence;
 mod rework_context;
 mod runtime;
+mod subagent_directory;
+mod subagent_selection;
 mod task_authoring;
 mod task_execution;
 mod task_inspection;
@@ -64,6 +66,12 @@ pub use persistence::{
 pub use questions::{
     LocalCodexChatQuestionAnswer, LocalCodexChatQuestionAnswerRequest,
     LocalCodexChatQuestionRegistry,
+};
+pub use subagent_directory::StoredChatSubagentDirectory;
+use subagent_directory::{persist_subagent_directory, ChatSubagentDirectories};
+pub use subagent_selection::{
+    select_chat_actor, LocalCodexChatActorSelectionKind, LocalCodexChatActorSelectionRequest,
+    StoredChatActorSelection,
 };
 
 pub fn answer_local_codex_chat_question<B>(
@@ -283,7 +291,7 @@ impl LocalCodexChatService {
         B: LocalStoreBackend + Clone,
         F: FnMut(crate::control_api::ServerControlRequest) -> Result<(), String>,
     {
-        let mut ignore_activity = |_| Ok(());
+        let mut ignore_activity = |_, _| Ok(());
         let mut ignore_question = |_| Ok(());
         let questions = LocalCodexChatQuestionRegistry::default();
         self.send_message_with_task_authoring_and_cancellation(
@@ -310,7 +318,7 @@ impl LocalCodexChatService {
     where
         B: LocalStoreBackend + Clone,
         F: FnMut(crate::control_api::ServerControlRequest) -> Result<(), String>,
-        A: FnMut(StoredChatActivity) -> Result<(), String>,
+        A: FnMut(StoredChatActivity, Option<StoredChatSubagentDirectory>) -> Result<(), String>,
         Q: FnMut(StoredChatQuestionExchange) -> Result<(), String>,
     {
         let message = request.message.trim();
@@ -432,7 +440,15 @@ impl LocalCodexChatService {
             )?;
             return Err(error);
         }
+        let mut subagent_directories = ChatSubagentDirectories::default();
         let mut project_and_forward_activity = |event: AgentActivityEvent| -> Result<(), String> {
+            let directory = subagent_directories.observe(
+                &request.project_id,
+                &request.conversation_id,
+                &canonical_turn_id,
+                turn_count,
+                &event,
+            )?;
             let activity = project_activity(
                 &request.conversation_id,
                 &canonical_turn_id,
@@ -440,7 +456,10 @@ impl LocalCodexChatService {
                 event,
             );
             persist_activity(state, &activity)?;
-            on_activity(activity)
+            if let Some(directory) = &directory {
+                persist_subagent_directory(state, directory)?;
+            }
+            on_activity(activity, directory)
         };
         let mut persist_and_forward_question =
             |question: nucleus_agent_protocol::AgentUserInputRequest| {

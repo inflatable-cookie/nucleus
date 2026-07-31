@@ -66,8 +66,13 @@ Roadmaps g05.006 and g05.007 now extend that boundary with typed mid-turn
 questions, immutable normal/plan session selection, and lossless provider
 actor, task-list, and subagent snapshot persistence. Agent Chat composes
 questions through Poodle and presents provider plans and checklists without
-promoting them into Nucleus Tasks. Operation-local child directory folding and
-navigation are the current ready batch.
+promoting them into Nucleus Tasks. Operation-local child directory folding,
+durable selection, and attributed transcript navigation now pass deterministic
+acceptance. Authenticated native acceptance now passes Plan selection, typed
+question presentation, durable answer recording, exact-turn continuation,
+child lifecycle attribution, root/child cleanup, restart-safe child selection,
+and a separate Normal-mode portable task-list case. Explicit item statuses
+survive persistence and render without inventing absent provider priority.
 
 Current planning artifacts:
 
@@ -101,6 +106,8 @@ Current planning artifacts:
 - `roadmaps/g05/005-observable-agent-chat-transcript.md`
 - `roadmaps/g05/006-interactive-agent-chat-sessions.md`
 - `roadmaps/g05/007-structured-provider-work.md`
+- `roadmaps/g05/008-structured-agent-chat-acceptance.md`
+- `logs/2026-07-31-interactive-structured-agent-chat.md`
 - `logs/2026-07-30-observable-agent-chat-transcript.md`
 
 - `logs/2026-06-17-stocktake.md`

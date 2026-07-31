@@ -2,6 +2,7 @@ import type { TranscriptItem } from "@poodle/svelte";
 
 import type {
   AgentChatActivity,
+  AgentChatActorSelection,
   AgentChatQuestionExchange,
 } from "./control/agentChat";
 
@@ -17,6 +18,24 @@ export type AgentTranscriptTurn = {
   turnId: string;
   status: "started" | "completed" | "cancelled" | "timed_out" | "failed";
 };
+
+export function filterAgentChatActivities(
+  observations: AgentChatActivity[],
+  selection: AgentChatActorSelection,
+): AgentChatActivity[] {
+  if (selection.kind === "all") {
+    return observations;
+  }
+  if (selection.kind === "primary") {
+    return observations.filter((activity) => activity.actor_kind === "primary");
+  }
+  return observations.filter(
+    (activity) =>
+      activity.actor_kind === "subagent" &&
+      activity.runtime_operation_id === selection.runtime_operation_id &&
+      activity.actor_id === selection.actor_id,
+  );
+}
 
 export function assembleAgentTranscript(
   chatMessages: AgentTranscriptMessage[],
@@ -274,10 +293,14 @@ function providerTaskListMarkdown(
 ): string {
   const title = activity.label ?? (activity.kind === "plan" ? "Plan" : "Provider tasks");
   const lines = items.map((item) => {
-    const marker =
-      item.status === "completed" ? "x" : item.status === "in_progress" ? "/" : " ";
-    const priority = item.priority ? ` · ${item.priority}` : "";
-    return `- [${marker}] ${item.content}${priority}`;
+    const status =
+      item.status === "completed"
+        ? "Completed"
+        : item.status === "in_progress"
+          ? "In progress"
+          : "Pending";
+    const priority = item.priority ? ` · ${item.priority} priority` : "";
+    return `- **${status}**${priority} — ${item.content}`;
   });
   const body = lines.length > 0 ? lines.join("\n") : "_Checklist cleared._";
   return `${activityActorPrefix(activity)}**${title}**\n\n${body}`;

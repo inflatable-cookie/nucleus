@@ -224,6 +224,31 @@ export type AgentChatActivity = {
   }>;
 };
 
+export type AgentChatSubagent = AgentChatActivity["subagents"][number];
+
+export type AgentChatSubagentDirectory = {
+  project_id: string;
+  conversation_id: string;
+  turn_id: string;
+  turn_ordinal: number;
+  runtime_operation_id: string;
+  first_sequence: number;
+  last_sequence: number;
+  subagents: AgentChatSubagent[];
+};
+
+export type AgentChatActorSelectionKind = "all" | "primary" | "subagent";
+
+export type AgentChatActorSelection = {
+  project_id: string;
+  conversation_id: string;
+  kind: AgentChatActorSelectionKind;
+  runtime_operation_id: string | null;
+  actor_id: string | null;
+};
+
+export type AgentChatActorSelectionRequest = AgentChatActorSelection;
+
 export type AgentChatHistory = {
   conversation_id: string;
   project_id: string;
@@ -236,6 +261,8 @@ export type AgentChatHistory = {
   messages: AgentChatHistoryMessage[];
   activities: AgentChatActivity[];
   questions: AgentChatQuestionExchange[];
+  subagent_directories: AgentChatSubagentDirectory[];
+  actor_selection: AgentChatActorSelection;
 };
 
 export type AgentChatThreadSummary = {
@@ -269,6 +296,12 @@ export function answerAgentChatQuestion(
   request: AgentChatQuestionAnswerRequest,
 ): Promise<AgentChatQuestionExchange> {
   return invoke<AgentChatQuestionExchange>("answer_agent_chat_question", { request });
+}
+
+export function selectAgentChatActor(
+  request: AgentChatActorSelectionRequest,
+): Promise<AgentChatActorSelection> {
+  return invoke<AgentChatActorSelection>("select_agent_chat_actor", { request });
 }
 
 export function loadAgentChatHistory(

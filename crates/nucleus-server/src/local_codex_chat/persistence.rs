@@ -6,12 +6,16 @@ use nucleus_local_store::{
 use serde::{Deserialize, Serialize};
 use swallowtail_runtime::{
     ActivityActor, ActivityAssistantPhase, ActivityContentChangeKind, ActivityContentStream,
-    ActivityCorrelation, ActivityDisclosure, ActivityKind, ActivityLifecyclePhase,
-    ActivityOperationId, ActivityStatus, CallbackOperationId, HarnessUserInputChoiceMode,
-    HarnessUserInputQuestionKind, HarnessUserInputRequest, HarnessUserInputResponse,
-    SubagentParent, SubagentStatus, TaskListItemPriority, TaskListItemStatus,
+    ActivityCorrelation, ActivityDisclosure, ActivityKind, ActivityLifecyclePhase, ActivityStatus,
+    CallbackOperationId, HarnessUserInputChoiceMode, HarnessUserInputQuestionKind,
+    HarnessUserInputRequest, HarnessUserInputResponse, TaskListItemPriority, TaskListItemStatus,
 };
 
+use super::subagent_directory::{
+    operation_id_string, project_subagent_snapshot, read_subagent_directories,
+    StoredChatSubagentDirectory,
+};
+use super::subagent_selection::{read_chat_actor_selection, StoredChatActorSelection};
 use super::{LocalCodexChatHarnessMode, TaskAuthoringReceipt, TaskWorkflowReceipt};
 use crate::ServerStateService;
 
@@ -206,6 +210,8 @@ pub struct LocalCodexChatHistory {
     pub messages: Vec<StoredChatMessage>,
     pub activities: Vec<StoredChatActivity>,
     pub questions: Vec<StoredChatQuestionExchange>,
+    pub subagent_directories: Vec<StoredChatSubagentDirectory>,
+    pub actor_selection: StoredChatActorSelection,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -313,6 +319,8 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     questions.retain(|question| question.conversation_id == conversation_id);
     questions.sort_by_key(|question| question.event_sequence);
+    let subagent_directories = read_subagent_directories(state, project_id, conversation_id)?;
+    let actor_selection = read_chat_actor_selection(state, project_id, conversation_id)?;
 
     Ok(LocalCodexChatHistory {
         conversation_id: conversation_id.to_owned(),
@@ -337,6 +345,8 @@ where
         messages,
         activities,
         questions,
+        subagent_directories,
+        actor_selection,
     })
 }
 
@@ -562,10 +572,6 @@ pub fn project_activity(
     event: AgentActivityEvent,
 ) -> StoredChatActivity {
     let observation = event.observation;
-    let (runtime_kind, runtime_id) = match observation.operation_id() {
-        ActivityOperationId::Run(id) => ("run", id.as_str()),
-        ActivityOperationId::Turn(id) => ("turn", id.as_str()),
-    };
     let (correlation_kind, correlation_id) = match observation.correlation() {
         Some(ActivityCorrelation::Callback(id)) => {
             (Some("callback".to_owned()), Some(id.as_str().to_owned()))
@@ -590,7 +596,7 @@ pub fn project_activity(
         conversation_id: conversation_id.to_owned(),
         turn_id: turn_id.to_owned(),
         turn_ordinal,
-        runtime_operation_id: format!("{runtime_kind}:{runtime_id}"),
+        runtime_operation_id: operation_id_string(observation.operation_id()),
         activity_id: observation.activity_id().as_str().to_owned(),
         sequence: event.sequence,
         kind: activity_kind(observation.kind()).to_owned(),
@@ -637,43 +643,7 @@ pub fn project_activity(
         }),
         subagents: observation
             .subagents()
-            .map(|snapshot| {
-                let (parent_kind, parent_id) = match snapshot.parent() {
-                    SubagentParent::Operation => ("operation".to_owned(), None),
-                    SubagentParent::Subagent(id) => {
-                        ("subagent".to_owned(), Some(id.as_str().to_owned()))
-                    }
-                    SubagentParent::Unknown => ("unknown".to_owned(), None),
-                };
-                StoredChatSubagent {
-                    subagent_id: snapshot.id().as_str().to_owned(),
-                    parent_kind,
-                    parent_id,
-                    status: match snapshot.status() {
-                        SubagentStatus::Unknown => "unknown",
-                        SubagentStatus::Pending => "pending",
-                        SubagentStatus::Running => "running",
-                        SubagentStatus::Waiting => "waiting",
-                        SubagentStatus::Completed => "completed",
-                        SubagentStatus::Failed => "failed",
-                        SubagentStatus::Interrupted => "interrupted",
-                        SubagentStatus::Shutdown => "shutdown",
-                    }
-                    .to_owned(),
-                    label: snapshot.label().map(|label| label.as_str().to_owned()),
-                    description: snapshot
-                        .description()
-                        .map(|description| description.as_str().to_owned()),
-                    model: snapshot.model().map(|model| model.as_str().to_owned()),
-                    reasoning: snapshot
-                        .reasoning()
-                        .map(|reasoning| reasoning.as_str().to_owned()),
-                    background: snapshot.background(),
-                    originating_activity_ref: snapshot
-                        .originating_activity()
-                        .map(|reference| reference.as_provider_value().to_owned()),
-                }
-            })
+            .map(project_subagent_snapshot)
             .collect(),
     }
 }
@@ -1181,7 +1151,7 @@ where
     )
 }
 
-fn put_json<B, T>(
+pub(super) fn put_json<B, T>(
     state: &ServerStateService<B>,
     id: PersistenceRecordId,
     value: &T,
@@ -1220,14 +1190,14 @@ fn thread_metadata_record_id(conversation_id: &str) -> PersistenceRecordId {
     PersistenceRecordId(format!("{THREAD_METADATA_PREFIX}{conversation_id}"))
 }
 
-fn decode<T>(bytes: &[u8]) -> Result<T, String>
+pub(super) fn decode<T>(bytes: &[u8]) -> Result<T, String>
 where
     T: for<'de> Deserialize<'de>,
 {
     serde_json::from_slice(bytes).map_err(|error| error.to_string())
 }
 
-fn storage_error(error: impl std::fmt::Debug) -> String {
+pub(super) fn storage_error(error: impl std::fmt::Debug) -> String {
     format!("chat persistence failed: {error:?}")
 }
 
@@ -1238,8 +1208,9 @@ mod tests {
     use nucleus_local_store::SqliteBackend;
     use swallowtail_runtime::{
         ActivityContent, ActivityContentChangeKind, ActivityContentStream, ActivityContentUpdate,
-        ActivityId, ActivityLabel, ActivityObservation, OperationContent, RuntimeRunId, SubagentId,
-        SubagentParent, SubagentSnapshot, TaskListItem, TaskListSnapshot,
+        ActivityId, ActivityLabel, ActivityObservation, ActivityOperationId, OperationContent,
+        RuntimeRunId, SubagentId, SubagentParent, SubagentSnapshot, SubagentStatus, TaskListItem,
+        TaskListSnapshot,
     };
 
     #[test]

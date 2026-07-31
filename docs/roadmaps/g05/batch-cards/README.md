@@ -6,16 +6,19 @@ Updated: 2026-07-31
 
 ## Ready Cards
 
-- `024-subagent-directory-attribution-and-navigation.md`
+- none
 
 ## Planned Cards
 
-- `025-structured-agent-chat-deterministic-closeout.md`
+- none
 
 ## Operator-Held Cards
 
 - `003-project-layout-validation.md`
-- `026-structured-agent-chat-native-acceptance.md`
+
+## Paused Cards
+
+- none
 
 ## Completed Cards
 
@@ -41,3 +44,6 @@ Updated: 2026-07-31
 - `021-explicit-harness-plan-mode.md`
 - `022-portable-work-projection-persistence.md`
 - `023-structured-plan-and-task-list-presentation.md`
+- `024-subagent-directory-attribution-and-navigation.md`
+- `025-structured-agent-chat-deterministic-closeout.md`
+- `026-structured-agent-chat-native-acceptance.md`

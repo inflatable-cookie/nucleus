@@ -42,5 +42,7 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
   authenticated native activity, grouping, scroll, cancellation, cleanup, and
   restart acceptance passed
 - `006-interactive-agent-chat-sessions.md` - completed
-- `007-structured-provider-work.md` - active
-- `008-structured-agent-chat-acceptance.md` - planned
+- `007-structured-provider-work.md` - completed
+- `008-structured-agent-chat-acceptance.md` - completed; authenticated Plan,
+  typed-question, child lifecycle, restart navigation, and separate Normal-mode
+  portable task-list acceptance passed
