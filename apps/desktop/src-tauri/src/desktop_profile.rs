@@ -334,6 +334,8 @@ fn xdg_absolute(name: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
     use longhorn_config::TargetPlatform;
+    use std::fs;
+    use tempfile::tempdir;
 
     fn facts(platform: TargetPlatform) -> PlatformDirectoryFacts {
         match platform {
@@ -440,6 +442,87 @@ mod tests {
         );
         assert_eq!(profile.chat_turn_timeout(), Duration::from_millis(1250));
         assert_eq!(profile.profile_id(), "portable-v1");
+    }
+
+    #[test]
+    fn fresh_portable_profile_restarts_with_the_same_layout() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("portable");
+        let home = temp.path().join("home");
+        let first = DesktopProfile::from_values(
+            facts(TargetPlatform::MacOs),
+            Some(root.as_os_str()),
+            None,
+            None,
+            &home,
+        )
+        .expect("first profile");
+        first.prepare().expect("prepare first profile");
+        let second = DesktopProfile::from_values(
+            facts(TargetPlatform::MacOs),
+            Some(root.as_os_str()),
+            None,
+            None,
+            &home,
+        )
+        .expect("restart profile");
+
+        assert_eq!(second.profile_id(), "portable-v1");
+        assert_eq!(second.layout_digest(), first.layout_digest());
+        assert_eq!(second.database_path(), first.database_path());
+        assert_eq!(second.workspace_ui_paths(), first.workspace_ui_paths());
+        assert!(second.storage_roots().config().is_dir());
+        assert!(second.storage_roots().data().is_dir());
+        assert!(second.storage_roots().state().is_dir());
+    }
+
+    #[test]
+    fn legacy_profile_restart_reuses_the_committed_receipt_and_retains_source() {
+        let temp = tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let legacy_ui = home.join(".nucleus/config/ui.json");
+        fs::create_dir_all(legacy_ui.parent().unwrap()).expect("legacy config root");
+        fs::write(
+            &legacy_ui,
+            r#"{
+              "schema_version": 10,
+              "window": {
+                "id": "window:primary",
+                "placement": {"display_id":"display:main","maximized":false}
+              },
+              "project_layouts": {}
+            }"#,
+        )
+        .expect("legacy UI");
+        let facts = PlatformDirectoryFacts::complete(
+            TargetPlatform::MacOs,
+            temp.path().join("native/config"),
+            temp.path().join("native/data"),
+            temp.path().join("native/state"),
+            temp.path().join("native/cache"),
+            temp.path().join("native/log"),
+            temp.path().join("native/runtime"),
+        );
+
+        let first = DesktopProfile::from_values(facts.clone(), None, None, None, &home)
+            .expect("legacy import startup");
+        let first_receipt = first
+            .legacy_import_receipt()
+            .cloned()
+            .expect("legacy import receipt");
+        let layout_before = fs::read(first.workspace_ui_paths().project_layouts())
+            .expect("migrated project layouts");
+        let second =
+            DesktopProfile::from_values(facts, None, None, None, &home).expect("legacy restart");
+
+        assert_eq!(second.legacy_import_receipt(), Some(&first_receipt));
+        assert_eq!(second.layout_digest(), first.layout_digest());
+        assert_eq!(
+            fs::read(second.workspace_ui_paths().project_layouts())
+                .expect("restarted project layouts"),
+            layout_before
+        );
+        assert!(!fs::read(&legacy_ui).expect("retained legacy UI").is_empty());
     }
 
     #[test]

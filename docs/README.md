@@ -75,6 +75,10 @@ and a separate Normal-mode portable task-list case. Explicit item statuses
 survive persistence and render without inventing absent provider priority.
 Native operator acceptance now confirms distinct layouts survive project
 switching and a previously unseen project opens with Agent Chat only.
+The Longhorn desktop migration is now closed: storage, the protected primary
+window, registered project layouts, renderer reconciliation, and native Browser
+islands use shared mechanisms. Nucleus retains product and Browser policy and
+does not depend on Longhorn Surface hosting.
 
 Current planning artifacts:
 
@@ -111,6 +115,7 @@ Current planning artifacts:
 - `roadmaps/g05/008-structured-agent-chat-acceptance.md`
 - `logs/2026-07-31-interactive-structured-agent-chat.md`
 - `logs/2026-07-30-observable-agent-chat-transcript.md`
+- `logs/2026-08-01-longhorn-desktop-migration-closeout.md`
 
 - `logs/2026-06-17-stocktake.md`
 - `logs/2026-06-17-g02-rollover.md`
