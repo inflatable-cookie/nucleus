@@ -205,7 +205,10 @@
     padding: 10px 12px;
   }
 
-  .terminal-viewport :global(.xterm-viewport) { scrollbar-width: thin; }
+  .terminal-viewport :global(.xterm .xterm-viewport) {
+    background-color: #0d1013;
+    scrollbar-width: thin;
+  }
 
   .terminal-failure {
     position: absolute;
