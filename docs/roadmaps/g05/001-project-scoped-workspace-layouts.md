@@ -1,8 +1,8 @@
 # 001 Project-Scoped Workspace Layouts
 
-Status: active
+Status: complete
 Owner: Tom
-Updated: 2026-07-20
+Updated: 2026-08-01
 
 ## Purpose
 
@@ -24,7 +24,7 @@ width global.
   split sizing to the selected project.
 - [x] Migrate the current global layout once and give previously unseen projects
   a single Agent Chat panel.
-- [ ] Validate restart persistence, project isolation, rapid switching, and the
+- [x] Validate restart persistence, project isolation, rapid switching, and the
   minimal new-project shape.
 
 ## Goals
@@ -43,11 +43,8 @@ width global.
 
 ## Batch Cards
 
-Operator-held:
-
-- `batch-cards/003-project-layout-validation.md`
-
 Completed:
 
 - `batch-cards/001-project-layout-store-and-migration.md`
 - `batch-cards/002-project-layout-desktop-binding.md`
+- `batch-cards/003-project-layout-validation.md`

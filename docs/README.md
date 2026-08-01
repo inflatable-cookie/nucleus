@@ -73,6 +73,8 @@ question presentation, durable answer recording, exact-turn continuation,
 child lifecycle attribution, root/child cleanup, restart-safe child selection,
 and a separate Normal-mode portable task-list case. Explicit item statuses
 survive persistence and render without inventing absent provider priority.
+Native operator acceptance now confirms distinct layouts survive project
+switching and a previously unseen project opens with Agent Chat only.
 
 Current planning artifacts:
 

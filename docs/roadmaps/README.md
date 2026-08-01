@@ -315,7 +315,8 @@ shape.
 - `g04/048-roadmap-residue-archival.md` - superseded
 - `g04/049-swallowtail-agent-chat-adoption.md` - completed
 - `g04/050-swallowtail-task-execution-adoption.md` - completed
-- `g05/001-project-scoped-workspace-layouts.md` - active
+- `g05/001-project-scoped-workspace-layouts.md` - completed; native project
+  isolation and Agent Chat-only new-project defaults accepted
 - `g05/002-workspace-sidebar-modes.md` - completed
 - `g05/003-swallowtail-application-proof-readiness.md` - completed; native
   pilot passed at the exact live ceiling
@@ -386,5 +387,5 @@ shape.
 ## Next Task
 
 Operator intent checkpoint: select the next g05 consolidation lane after
-structured Agent Chat acceptance. Project-layout card 003 and Forge native
-validation remain operator-held.
+structured Agent Chat acceptance. Forge native validation remains
+operator-held.

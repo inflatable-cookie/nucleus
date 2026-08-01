@@ -1,8 +1,8 @@
 # 003 Project Layout Validation
 
-Status: operator-held
+Status: complete
 Owner: Tom
-Updated: 2026-07-20
+Updated: 2026-08-01
 Milestone: `../001-project-scoped-workspace-layouts.md`
 Auto-start next card: no
 
@@ -14,8 +14,15 @@ app before moving further inward.
 ## Acceptance
 
 - [x] automated persistence, migration, desktop, and docs checks pass
-- [ ] operator confirms two projects retain visibly different layouts
-- [ ] operator confirms a new project opens with Agent Chat only
+- [x] operator confirms two projects retain visibly different layouts
+- [x] operator confirms a new project opens with Agent Chat only
+
+## Operator Evidence
+
+- Cross-project layout retention accepted in native use.
+- A newly created, previously unseen project opened with exactly one Agent
+  Chat panel and no optional panel.
+- No stop condition was observed.
 
 ## Stop Conditions
 

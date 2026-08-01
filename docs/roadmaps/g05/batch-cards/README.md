@@ -14,7 +14,7 @@ Updated: 2026-07-31
 
 ## Operator-Held Cards
 
-- `003-project-layout-validation.md`
+- none
 
 ## Paused Cards
 
@@ -24,6 +24,7 @@ Updated: 2026-07-31
 
 - `001-project-layout-store-and-migration.md`
 - `002-project-layout-desktop-binding.md`
+- `003-project-layout-validation.md`
 - `004-sidebar-tab-shell-and-projects.md`
 - `005-threads-and-files-foundation.md`
 - `006-forge-overview-and-validation.md`
