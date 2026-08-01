@@ -87,10 +87,7 @@ fn desktop_command_history_uses_sanitized_dto_not_storage_payloads() {
         startup_error: None,
         task_review_snapshot_store: None,
         terminal: Default::default(),
-        workspace_ui_paths: crate::workspace_ui::WorkspaceUiPaths::new(
-            Default::default(),
-            Default::default(),
-        ),
+        workspace_ui: crate::test_workspace_ui_runtime(),
         storage_profile_id: "test-v1".to_owned(),
         storage_layout_digest: "test-layout".to_owned(),
         legacy_import_receipt: None,

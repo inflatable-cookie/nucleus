@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager};
@@ -63,7 +65,7 @@ struct DesktopState {
     startup_error: Option<String>,
     task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
     terminal: TerminalHostRuntime,
-    workspace_ui_paths: workspace_ui::WorkspaceUiPaths,
+    workspace_ui: Arc<workspace_ui::WorkspaceUiRuntime>,
     storage_profile_id: String,
     storage_layout_digest: String,
     legacy_import_receipt: Option<storage_migration::LegacyImportReceipt>,
@@ -313,10 +315,7 @@ impl DesktopState {
             LocalCodexChatService::default(),
             None,
             PathBuf::from("target/nucleus-desktop-test/editor-drafts"),
-            workspace_ui::WorkspaceUiPaths::new(
-                PathBuf::from("target/nucleus-desktop-test/window-placement.json"),
-                PathBuf::from("target/nucleus-desktop-test/project-layouts.json"),
-            ),
+            test_workspace_ui_runtime(),
             None,
             "test-v1".to_owned(),
             "test-layout".to_owned(),
@@ -331,10 +330,7 @@ impl DesktopState {
             LocalCodexChatService::default(),
             None,
             PathBuf::from("target/nucleus-desktop-test/editor-drafts"),
-            workspace_ui::WorkspaceUiPaths::new(
-                PathBuf::from("target/nucleus-desktop-test/window-placement.json"),
-                PathBuf::from("target/nucleus-desktop-test/project-layouts.json"),
-            ),
+            test_workspace_ui_runtime(),
             Some(proof_fixture_root),
             "test-v1".to_owned(),
             "test-layout".to_owned(),
@@ -346,7 +342,7 @@ impl DesktopState {
         backend: SqliteBackend,
         snapshot_root: PathBuf,
         editor_drafts_path: PathBuf,
-        workspace_ui_paths: workspace_ui::WorkspaceUiPaths,
+        workspace_ui: Arc<workspace_ui::WorkspaceUiRuntime>,
         chat_turn_timeout: std::time::Duration,
         proof_fixture_root: Option<PathBuf>,
         storage_profile_id: String,
@@ -363,7 +359,7 @@ impl DesktopState {
             ),
             Some(snapshot_store),
             editor_drafts_path,
-            workspace_ui_paths,
+            workspace_ui,
             proof_fixture_root,
             storage_profile_id,
             storage_layout_digest,
@@ -376,7 +372,7 @@ impl DesktopState {
         chat: LocalCodexChatService,
         task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
         editor_drafts_path: PathBuf,
-        workspace_ui_paths: workspace_ui::WorkspaceUiPaths,
+        workspace_ui: Arc<workspace_ui::WorkspaceUiRuntime>,
         proof_fixture_root: Option<PathBuf>,
         storage_profile_id: String,
         storage_layout_digest: String,
@@ -400,7 +396,7 @@ impl DesktopState {
             startup_error,
             task_review_snapshot_store,
             terminal: TerminalHostRuntime::default(),
-            workspace_ui_paths,
+            workspace_ui,
             storage_profile_id,
             storage_layout_digest,
             legacy_import_receipt,
@@ -419,6 +415,43 @@ impl DesktopState {
 
         adapter.submit_control_envelope(request)
     }
+}
+
+#[cfg(test)]
+fn test_workspace_ui_runtime() -> Arc<workspace_ui::WorkspaceUiRuntime> {
+    static RUNTIME: OnceLock<Arc<workspace_ui::WorkspaceUiRuntime>> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            let root = std::env::current_dir()
+                .expect("desktop test current directory")
+                .join("target/nucleus-desktop-test/workspace-ui");
+            let config = root.join("config");
+            let data = root.join("data");
+            let state = root.join("state");
+            let cache = root.join("cache");
+            let runtime = root.join("runtime");
+            let log = root.join("logs");
+            let backup = root.join("backups");
+            for path in [&config, &data, &state, &cache, &runtime, &log, &backup] {
+                std::fs::create_dir_all(path).expect("desktop test storage root");
+            }
+            let roots = longhorn_config::StorageRoots::new(
+                &config, &data, &state, &cache, &runtime, &log, &backup,
+            )
+            .expect("desktop test storage roots");
+            let paths = workspace_ui::WorkspaceUiPaths::new(
+                state.join("window-placement.json"),
+                config.join("project-layouts.json"),
+                config.join("project-panel-presentations.json"),
+                backup.join("legacy-project-layouts.json"),
+                backup.join("legacy-project-layouts.receipt.json"),
+            );
+            Arc::new(
+                workspace_ui::WorkspaceUiRuntime::new(roots, &paths)
+                    .expect("desktop test workspace UI runtime"),
+            )
+        })
+        .clone()
 }
 
 #[tauri::command]
@@ -879,31 +912,30 @@ async fn submit_control_envelope(
 }
 
 #[tauri::command]
-fn load_workspace_ui_config(
+async fn load_workspace_ui_config(
     state: tauri::State<'_, DesktopState>,
     window: tauri::State<'_, window_host::NucleusWindowRuntime>,
     project_id: String,
 ) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
-    workspace_ui::load_workspace_ui_config(
-        &state.workspace_ui_paths,
-        &project_id,
-        window.placement_dto()?,
-    )
+    let runtime = state.workspace_ui.clone();
+    let placement = window.placement_dto()?;
+    tauri::async_runtime::spawn_blocking(move || runtime.load(&project_id, placement))
+        .await
+        .map_err(|_| "desktop layout load worker failed".to_owned())?
 }
 
 #[tauri::command]
-fn save_workspace_ui_config(
+async fn save_workspace_ui_config(
     state: tauri::State<'_, DesktopState>,
     window: tauri::State<'_, window_host::NucleusWindowRuntime>,
     project_id: String,
     config: workspace_ui::WorkspaceUiConfigDto,
 ) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
-    workspace_ui::save_workspace_ui_config(
-        &state.workspace_ui_paths,
-        &project_id,
-        config,
-        window.placement_dto()?,
-    )
+    let runtime = state.workspace_ui.clone();
+    let placement = window.placement_dto()?;
+    tauri::async_runtime::spawn_blocking(move || runtime.save(&project_id, config, placement))
+        .await
+        .map_err(|_| "desktop layout mutation worker failed".to_owned())?
 }
 
 #[tauri::command]
@@ -923,6 +955,13 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             profile.prepare().map_err(std::io::Error::other)?;
             let workspace_ui_paths = profile.workspace_ui_paths();
+            let workspace_ui = Arc::new(
+                workspace_ui::WorkspaceUiRuntime::new(
+                    profile.storage_roots().clone(),
+                    &workspace_ui_paths,
+                )
+                .map_err(std::io::Error::other)?,
+            );
             app.set_theme(Some(tauri::Theme::Dark));
             if let Some(window) = app.get_webview_window("main") {
                 window.set_theme(Some(tauri::Theme::Dark))?;
@@ -932,7 +971,7 @@ pub fn run() {
                 SqliteBackend::new(profile.database_path()),
                 profile.snapshot_path(),
                 profile.editor_drafts_path(),
-                workspace_ui_paths,
+                workspace_ui,
                 profile.chat_turn_timeout(),
                 profile.proof_fixture_root().map(Path::to_path_buf),
                 profile.profile_id().to_owned(),

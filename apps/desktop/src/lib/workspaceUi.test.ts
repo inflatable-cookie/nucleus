@@ -7,7 +7,8 @@ import {
 } from "./workspaceUi";
 
 const config: WorkspaceUiConfigDto = {
-  schema_version: 10,
+  schema_version: 11,
+  layout_revision: 7,
   window: {
     id: "window:primary",
     placement: { maximized: false },

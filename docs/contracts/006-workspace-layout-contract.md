@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-07-20
+Updated: 2026-08-01
 
 ## Purpose
 
@@ -17,10 +17,10 @@ project repository like tasks, project metadata, planning docs, or other
 shared management files.
 
 Desktop persistence is split between `state/window-placement.json` and
-`config/project-layouts.json` below the selected Longhorn storage profile.
-Global display/window records should be keyed by client profile. Per-project
-panel layout records should be keyed by client profile, project id, and panel
-layout id.
+the registered `config/project-layouts.json` domain below the selected
+Longhorn storage profile. Product presentation metadata lives separately in
+`config/project-panel-presentations.json`. Project layouts are deterministic
+containers keyed from project id inside one local layout document.
 
 These JSON files are local client state, not project state. If the client state
 store moves to SQLite later, they become import/export or migration sources
@@ -77,6 +77,11 @@ The local client profile owns:
 - global window fallback display order
 - per-project panel layout rules
 - local layout persistence and recovery state
+
+Longhorn owns structural layout definitions, validation, expected-revision
+mutation, normalization, and registered publication. Nucleus supplies the
+five-region schema, product panel registry, project-to-container identity,
+minimal seed policy, presentation metadata, and runtime cleanup.
 
 The authoritative engine host owns:
 
@@ -152,11 +157,11 @@ A maximized window retains its last normal bounds rather than replacing them
 with maximized bounds.
 
 The native host owns restore and capture. It restores before first show,
-coalesces move and resize writes, and flushes current placement on close. Each
-geometry write merges into the latest config under the same local file lock as
-panel-layout writes. Geometry persistence must not overwrite concurrent region
-or panel changes. Renderer-originated workspace saves preserve the current
-host-owned placement rather than accepting placement fields from the client.
+coalesces move and resize writes, and flushes current placement on close.
+Window placement and project layout publish through separate registered
+domains and files. A write to either domain cannot rewrite the other. The
+renderer receives host-owned placement for composition, but project-layout
+publication never accepts it as layout authority.
 
 Native monitor names are not canonical hardware ids. The first display key is
 a recovery hint composed from name, physical origin, and size. Stable hardware
@@ -189,10 +194,10 @@ remains separate and is not a general workspace-tab destination.
 The initial region set is:
 
 - `left`: project/activity navigation and active-work awareness
-- `centerTop`: primary workspace panels and the default task panel dock
-- `centerBottom`: secondary workspace panels
-- `rightTop`: contextual panels by default, or any moved workspace tab
-- `rightBottom`: secondary side workspace panels
+- `center_top`: primary workspace panels and the default task panel dock
+- `center_bottom`: secondary workspace panels
+- `right_top`: contextual panels by default, or any moved workspace tab
+- `right_bottom`: secondary side workspace panels
 
 Arbitrary VS Code-style split trees are not the first default. They may exist
 later as a power-user feature, but the first model should be semantic and
@@ -213,8 +218,8 @@ mirrors Loophole's `PanelDefinition.allowedRegions` model:
 
 - each panel has a default region
 - each panel has an explicit allowed-region list
-- every workspace panel kind allows `centerTop`, `centerBottom`, `rightTop`, and
-  `rightBottom`
+- every workspace panel kind allows `center_top`, `center_bottom`, `right_top`,
+  and `right_bottom`
 - project/activity panel kinds remain restricted to `left`
 - same-region tab reorder preserves the panel's region
 - cross-region drag is accepted only when the target region is allowed
@@ -225,12 +230,12 @@ mirrors Loophole's `PanelDefinition.allowedRegions` model:
 - rejected drops must not mutate local layout state
 - closeability, movability, and system-panel status are separate flags
 
-The desktop persists this as `allowed_regions` on project-keyed local panel
-records in `config/project-layouts.json`. Native window placement remains one
-global record. Schema v7 migrates the former single panel layout into a
-one-time candidate claimed by the first project loaded after upgrade; other
-previously unseen projects receive the minimal Agent Chat-only layout. This is
-a bring-up representation of the same policy shape, not the final server API.
+The registered panel-definition policy, not each stored panel record, owns
+allowed placement, closeability, movability, and instance count. Raw schemas
+1 through 10 migrate backup-first into the registered layout domain. A former
+single layout becomes a one-time pending candidate claimed by the first
+project loaded after upgrade; other unseen projects receive the minimal Agent
+Chat-only layout.
 
 Closeable panels must have a recovery path. In the first product shell, the
 header `+` menu creates fresh panel instances for known panel kinds such as
@@ -251,7 +256,7 @@ They are stored per project and must not be committed into project
 repositories by default.
 
 The minimal layout for a project without a retained local layout contains one
-Agent Chat panel in `centerTop`. Tasks, Terminal, Browser, Editor, Diff, and
+Agent Chat panel in `center_top`. Tasks, Terminal, Browser, Editor, Diff, and
 Memory are added only when requested. The default must not be inferred from
 another project's current tabs.
 
@@ -514,52 +519,28 @@ own display placement.
 
 ## Current Rust Surface
 
-`nucleus-workspaces` now contains the first draft of:
+The desktop host registers the exact Nucleus shape with `longhorn-layout` and
+persists it through `longhorn-layout-config`:
 
-- `WorkspaceLayoutId`
-- `ProjectPanelLayoutId`
-- `ClientProfileId`
-- `DisplayId`
-- `WindowId`
-- `WindowInstanceId`
-- `HostWindowId`
-- `DisplayArrangementSignature`
-- `PanelId`
-- `PanelKey`
-- display inventory, availability, bounds, arrangement, and scale hints
-- workspace window placement records
-- runtime host window instance records
-- pure window planning and display fallback helpers
-- Nucleus region ids
-- per-project window/region panel placement rules
-- selected-task shell seed rules
-- local-only global shell layout and per-project panel layout record families
-- `WorkspaceLayout`
-- `WorkspaceLayoutStatus`
-- `ClientScope`
-- `WorkspaceTimestamps`
-- `Panel`
-- `PanelKind`
-- `SplitDirection`
-- `PanelSizeHint`
+- regions: `left`, `center_top`, `center_bottom`, `right_top`, `right_bottom`
+- sizing slots: `left-center`, `center-right`, `center-stack`, `right-stack`
+- project-keyed deterministic containers
+- product panel definitions, including Tasks as `OnePerContainer`
+- expected-revision create, close, activate, reorder, move, and resize
+- backup-first schemas 1 through 10 import
+- one Agent Chat seed for a new project
 
-The workspace-model types above are domain types and pure planning helpers;
-they do not themselves implement rendering, layout migration, local SQLite
-codecs, resource control, or client synchronization. The first editor is now
-realized separately through a Rust host file boundary and a client CodeMirror
-adapter. Terminal process control, browser control, language-server
-integration, plugin execution, and SCM mutation remain outside this contract's
-realized workspace-model surface.
+Titles, external panel ids, resource targets, editor file refs, and forge diff
+refs live in the Nucleus-owned panel-presentation domain. Terminal sessions,
+browser webviews, panel bodies, and cleanup remain runtime concerns. They do
+not enter Longhorn layout documents.
 
-The current Rust surface now distinguishes shared project management
-projection files from local client layout records, and separates global shell
-layout records from per-project panel layout records at the type boundary.
-Actual local storage backend integration, schema migration, conflict handling,
-and UI configuration remain future work.
+`nucleus-workspaces` now retains only server-facing product planning records.
+Its unused local display, window, region, project-panel, planning, and local
+persistence modules were removed. It is not desktop layout authority.
 
 ## Research Gaps
 
-- Exact panel tree validation rules beyond selected-task shell seed rules.
 - Whether to extract a shared windowing dependency later if Loophole and
   Nucleus both need one maintained implementation.
 - How canonical display ids are minted and repaired across Tauri, web, and

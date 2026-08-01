@@ -138,6 +138,18 @@ impl DesktopProfile {
                 .storage_roots()
                 .config()
                 .join("project-layouts.json"),
+            self.layout
+                .storage_roots()
+                .config()
+                .join("project-panel-presentations.json"),
+            self.layout
+                .storage_roots()
+                .backup()
+                .join("nucleus-project-layout-card098-v1.json"),
+            self.layout
+                .storage_roots()
+                .backup()
+                .join("nucleus-project-layout-card098-v1.receipt.json"),
         )
     }
 
@@ -383,6 +395,10 @@ mod tests {
             )
             .expect("platform profile");
             assert_eq!(profile.workspace_ui_paths().project_layouts(), Path::new(expected_config).join("project-layouts.json"));
+            assert_eq!(
+                profile.workspace_ui_paths().panel_presentations(),
+                Path::new(expected_config).join("project-panel-presentations.json")
+            );
             assert_eq!(profile.database_path(), Path::new(expected_database));
             assert_eq!(profile.profile_id(), "platform-native-v1");
         }
@@ -413,6 +429,10 @@ mod tests {
         assert_eq!(
             profile.workspace_ui_paths().project_layouts(),
             Path::new("/tmp/nucleus-proof/config/project-layouts.json")
+        );
+        assert_eq!(
+            profile.workspace_ui_paths().panel_presentations(),
+            Path::new("/tmp/nucleus-proof/config/project-panel-presentations.json")
         );
         assert_eq!(
             profile.editor_drafts_path(),

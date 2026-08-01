@@ -206,17 +206,13 @@ No live provider call belongs to the readiness implementation.
   secret-bearing files. Read-only inspection is now available through server
   query/control DTO, `nucleusd query research-run-briefs`, and Effigy, returning
   sanitized counts and refs only.
-- `nucleus-workspaces`: first draft modular workspace layout and local
-  workspace hosting types. It models the simplified
-  display/window/region/panel hierarchy at the Rust type and pure helper level:
-  display inventory, window placement, display fallback planning, Nucleus
-  regions, per-project window panel rules, selected-task shell seed rules, and
-  local-only global shell / project panel layout record families. The desktop
-  now realizes a local native child-webview Browser panel outside this crate.
-  Terminal panel authority and protocol are defined in contract `029`; the
-  first host PTY runtime remains outside this layout crate. Workspace SQLite
-  codecs, migrations, browser automation, SCM resource execution, sync, and
-  Aura-style configuration UI remain out of scope.
+- `nucleus-workspaces`: server-facing product workspace planning records only.
+  The unused local display, window, region, per-project placement, fallback
+  planner, and persistence types were removed during the Longhorn cutover.
+  Desktop structure now resolves through registered `longhorn-layout` and
+  `longhorn-layout-config` authority. Nucleus retains its product panel
+  registry, project scope mapping, presentation/resource bindings, and runtime
+  cleanup outside the shared document.
 - `nucleus-server::terminal_runtime`: first embedded-host terminal session
   runtime. It resolves the project root on the host, spawns the host shell with
   `portable-pty`, streams byte output, retains bounded reconnect output, and

@@ -74,8 +74,11 @@ Future clients may include:
   task seeds, and projection boundaries later.
 - `nucleus-research`: deep research runs, questions, source records,
   observations, synthesis, confidence, gaps, and projection boundaries later.
-- `nucleus-workspaces`: persisted display, window, region, and panel layout
-  state.
+- `longhorn-layout` and `longhorn-layout-config`: desktop structural layout
+  authority, expected-revision mutation, registered persistence, and legacy
+  import for project-keyed Nucleus containers.
+- `nucleus-workspaces`: retained server-facing product planning records only;
+  it is not local desktop layout authority.
 - `nucleus-orchestration`: event-sourced command, event, projection, replay,
   receipt, and deterministic projection mechanics.
 - `nucleus-engine`: portable domain execution, authority checks, command

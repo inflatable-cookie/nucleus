@@ -1,89 +1,220 @@
-use super::{
-    decode_workspace_ui_config, normalize_workspace_ui_config, preserve_host_owned_placement,
+use std::collections::BTreeMap;
+use std::fs;
+
+use longhorn_config::StorageRoots;
+use tempfile::TempDir;
+
+use super::dto::{
+    WorkspacePanelDto, WorkspaceUiConfigDto, WorkspaceUiPaths, WorkspaceWindowPlacementDto,
 };
-use crate::workspace_ui::{default_workspace_ui_config, SCHEMA_VERSION};
+use super::legacy::split_legacy_workspace_ui_document;
+use super::registry::{definition_registry, REGION_IDS, SIZING_SLOT_IDS};
+use super::WorkspaceUiRuntime;
+
+struct Fixture {
+    _temp: TempDir,
+    roots: StorageRoots,
+    paths: WorkspaceUiPaths,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let temp = TempDir::new().unwrap();
+        let config = temp.path().join("config");
+        let data = temp.path().join("data");
+        let state = temp.path().join("state");
+        let cache = temp.path().join("cache");
+        let runtime = temp.path().join("runtime");
+        let log = temp.path().join("logs");
+        let backup = temp.path().join("backups");
+        for path in [&config, &data, &state, &cache, &runtime, &log, &backup] {
+            fs::create_dir_all(path).unwrap();
+        }
+        let roots =
+            StorageRoots::new(&config, &data, &state, &cache, &runtime, &log, &backup).unwrap();
+        let paths = WorkspaceUiPaths::new(
+            state.join("window-placement.json"),
+            config.join("project-layouts.json"),
+            config.join("project-panel-presentations.json"),
+            backup.join("legacy-project-layouts.json"),
+            backup.join("legacy-project-layouts.receipt.json"),
+        );
+        Self {
+            _temp: temp,
+            roots,
+            paths,
+        }
+    }
+
+    fn runtime(&self) -> WorkspaceUiRuntime {
+        WorkspaceUiRuntime::new(self.roots.clone(), &self.paths).unwrap()
+    }
+}
 
 #[test]
-fn default_config_has_primary_window_and_five_region_shape() {
-    let config = default_workspace_ui_config();
-
-    assert_eq!(config.schema_version, SCHEMA_VERSION);
-    assert_eq!(config.window.id, "window:primary");
-    assert_eq!(config.window.regions.left.len(), 0);
-    assert_eq!(config.window.regions.right_top.len(), 0);
-    assert_eq!(config.window.regions.right_bottom.len(), 0);
-    assert_eq!(config.window.regions.center_top.len(), 1);
-    assert_eq!(config.window.regions.center_top[0].kind, "agentChat");
-    assert_eq!(config.window.regions.center_bottom.len(), 0);
-    assert_eq!(config.window.layout, super::default_workspace_layout());
+fn registry_matches_the_accepted_five_region_four_slot_shape() {
+    let registry = definition_registry().unwrap();
+    let schema = registry.schemas().next().unwrap();
     assert_eq!(
-        config.window.regions.center_top[0].allowed_regions,
-        vec![
-            "center_top".to_string(),
-            "center_bottom".to_string(),
-            "right_top".to_string(),
-            "right_bottom".to_string(),
-        ]
+        schema
+            .regions()
+            .iter()
+            .map(|region| region.id().as_str())
+            .collect::<Vec<_>>(),
+        REGION_IDS
     );
     assert_eq!(
-        config
-            .window
-            .active_panels
-            .get("center_top")
-            .map(String::as_str),
-        Some("panel:agent-chat")
+        schema
+            .sizing_slots()
+            .iter()
+            .map(|slot| slot.id().as_str())
+            .collect::<Vec<_>>(),
+        SIZING_SLOT_IDS
+    );
+    assert_eq!(schema.sizing_slots()[0].default().millionths(), 200_000);
+    assert_eq!(schema.sizing_slots()[1].default().millionths(), 740_000);
+    let tasks = registry
+        .panel_definitions()
+        .find(|definition| definition.id().as_str() == "panel:tasks")
+        .unwrap();
+    assert!(matches!(
+        tasks.instance_policy(),
+        longhorn_layout::PanelInstancePolicy::OnePerContainer
+    ));
+}
+
+#[test]
+fn projects_keep_distinct_layouts_and_new_projects_seed_only_agent_chat() {
+    let fixture = Fixture::new();
+    let runtime = fixture.runtime();
+    let placement = WorkspaceWindowPlacementDto::default();
+    let mut first = runtime.load("project:first", placement.clone()).unwrap();
+    assert_agent_chat_only(&first);
+    first.window.regions.right_top.push(panel(
+        "window:primary:panel:terminal:1",
+        "terminal",
+        "Terminal",
+        Some(("project:first", "resource:first")),
+    ));
+    first.window.active_panels.insert(
+        "right_top".to_owned(),
+        "window:primary:panel:terminal:1".to_owned(),
+    );
+    first.window.layout.center_right_ratio = 0.61;
+    let saved_first = runtime
+        .save("project:first", first, placement.clone())
+        .unwrap();
+
+    let mut second = runtime.load("project:second", placement.clone()).unwrap();
+    assert_agent_chat_only(&second);
+    second.window.regions.center_bottom.push(panel(
+        "window:primary:panel:browser:1",
+        "browser",
+        "Browser",
+        None,
+    ));
+    second.window.active_panels.insert(
+        "center_bottom".to_owned(),
+        "window:primary:panel:browser:1".to_owned(),
+    );
+    second.window.layout.center_stack_ratio = 0.55;
+    runtime
+        .save("project:second", second, placement.clone())
+        .unwrap();
+
+    let restored_first = runtime.load("project:first", placement).unwrap();
+    assert_eq!(restored_first.window.regions.right_top.len(), 1);
+    assert!(restored_first.window.regions.center_bottom.is_empty());
+    assert_eq!(restored_first.window.layout.center_right_ratio, 0.61);
+    assert_eq!(
+        restored_first.window.active_panels.get("right_top"),
+        Some(&"window:primary:panel:terminal:1".to_owned())
+    );
+    assert!(restored_first.layout_revision > saved_first.layout_revision);
+}
+
+#[test]
+fn stale_and_invalid_saves_preserve_the_layout_document_and_revision() {
+    let fixture = Fixture::new();
+    let runtime = fixture.runtime();
+    let placement = WorkspaceWindowPlacementDto::default();
+    let stale = runtime.load("project:one", placement.clone()).unwrap();
+    let mut current = stale.clone();
+    current.window.regions.center_bottom.push(panel(
+        "panel:terminal",
+        "terminal",
+        "Terminal",
+        None,
+    ));
+    runtime
+        .save("project:one", current, placement.clone())
+        .unwrap();
+    let before = fs::read(fixture.paths.project_layouts()).unwrap();
+
+    assert!(runtime
+        .save("project:one", stale, placement.clone())
+        .is_err());
+    assert_eq!(fs::read(fixture.paths.project_layouts()).unwrap(), before);
+
+    let mut invalid = runtime.load("project:one", placement.clone()).unwrap();
+    invalid.window.regions.right_bottom.push(panel(
+        "panel:unknown",
+        "unknownKind",
+        "Unknown",
+        None,
+    ));
+    assert!(runtime.save("project:one", invalid, placement).is_err());
+    assert_eq!(fs::read(fixture.paths.project_layouts()).unwrap(), before);
+
+    let mut invalid_active = runtime
+        .load("project:one", WorkspaceWindowPlacementDto::default())
+        .unwrap();
+    invalid_active
+        .window
+        .active_panels
+        .insert("right_bottom".to_owned(), "panel:terminal".to_owned());
+    assert!(runtime
+        .save(
+            "project:one",
+            invalid_active,
+            WorkspaceWindowPlacementDto::default(),
+        )
+        .is_err());
+    assert_eq!(fs::read(fixture.paths.project_layouts()).unwrap(), before);
+}
+
+#[test]
+fn layout_publication_never_rewrites_the_window_domain() {
+    let fixture = Fixture::new();
+    let runtime = fixture.runtime();
+    let window_bytes = br#"{"domain":"nucleus.window-placement","sentinel":true}"#;
+    fs::write(fixture.paths.window_placement(), window_bytes).unwrap();
+    let placement = WorkspaceWindowPlacementDto::default();
+    let mut config = runtime.load("project:one", placement.clone()).unwrap();
+    config.window.layout.right_stack_ratio = 0.62;
+    runtime.save("project:one", config, placement).unwrap();
+
+    assert_eq!(
+        fs::read(fixture.paths.window_placement()).unwrap(),
+        window_bytes
     );
 }
 
 #[test]
-fn panel_resource_targets_round_trip_per_project() {
-    let mut store = super::default_workspace_ui_store();
-    super::ensure_project_layout(&mut store, "project:one");
-    let panel = store
-        .project_layouts
-        .get_mut("project:one")
-        .expect("project layout")
-        .regions
-        .center_top
-        .first_mut()
-        .expect("workspace panel");
-    panel.resource_targets = std::collections::BTreeMap::from([
-        ("project:one".to_owned(), "resource:alpha".to_owned()),
-        ("project:two".to_owned(), "resource:beta".to_owned()),
-    ]);
-
-    let raw = serde_json::to_string(&store).expect("encode config");
-    let (decoded, migrated) = super::decode_workspace_ui_store(&raw).expect("decode config");
-    let restored = &decoded.project_layouts["project:one"].regions.center_top[0].resource_targets;
-
-    assert!(!migrated);
-    assert_eq!(
-        restored.get("project:one").map(String::as_str),
-        Some("resource:alpha")
-    );
-    assert_eq!(
-        restored.get("project:two").map(String::as_str),
-        Some("resource:beta")
-    );
-}
-
-#[test]
-fn schema_seven_project_store_gains_optional_editor_file_state() {
-    let raw = r#"{
-      "schema_version": 7,
-      "window": {"id": "window:primary", "placement": {"maximized": false}},
+fn migration_backs_up_raw_state_and_separates_product_presentations() {
+    let fixture = Fixture::new();
+    let source = br#"{
+      "schema_version": 10,
       "project_layouts": {
         "project:one": {
           "layout": {
             "left_center_ratio": 0.2,
-            "center_right_ratio": 0.74,
+            "center_right_ratio": 0.63,
             "center_stack_ratio": 0.74,
             "right_stack_ratio": 0.74
           },
           "regions": {
             "left": [],
-            "right_top": [],
-            "right_bottom": [],
             "center_top": [{
               "id": "panel:editor",
               "kind": "editor",
@@ -91,672 +222,137 @@ fn schema_seven_project_store_gains_optional_editor_file_state() {
               "closeable": true,
               "movable": true,
               "resource_targets": {"project:one": "resource:one"},
+              "editor_file": {"resource_id": "resource:one", "file_ref": "src/main.rs", "display_path": "src/main.rs"},
               "allowed_regions": []
             }],
-            "center_bottom": []
+            "center_bottom": [],
+            "right_top": [],
+            "right_bottom": []
           },
           "active_panels": {"center_top": "panel:editor"}
         }
       }
     }"#;
+    fs::write(fixture.paths.project_layouts(), source).unwrap();
 
-    let (store, migrated) =
-        super::decode_workspace_ui_store(raw).expect("schema seven store decodes");
-    let normalized = super::normalize_workspace_ui_store(store);
-    let editor = &normalized.project_layouts["project:one"].regions.center_top[0];
-
-    assert!(migrated);
-    assert_eq!(normalized.schema_version, SCHEMA_VERSION);
-    assert_eq!(editor.editor_file, None);
-}
-
-#[test]
-fn editor_file_state_round_trips_and_is_removed_from_other_panel_kinds() {
-    let mut config = default_workspace_ui_config();
-    let editor = super::WorkspaceEditorFileDto {
-        resource_id: Some(" resource:one ".to_owned()),
-        file_ref: " file:src/lib.rs ".to_owned(),
-        display_path: Some(" src/lib.rs ".to_owned()),
-    };
-    config
-        .window
-        .regions
-        .center_top
-        .push(super::WorkspacePanelDto {
-            id: "panel:editor".to_owned(),
-            kind: "editor".to_owned(),
-            title: "Editor".to_owned(),
-            closeable: true,
-            movable: true,
-            resource_targets: std::collections::BTreeMap::new(),
-            editor_file: Some(editor.clone()),
-            forge_diff: None,
-            allowed_regions: vec![],
-        });
-    config
-        .window
-        .regions
-        .right_top
-        .push(super::WorkspacePanelDto {
-            id: "panel:memory".to_owned(),
-            kind: "memory".to_owned(),
-            title: "Memory".to_owned(),
-            closeable: true,
-            movable: true,
-            resource_targets: std::collections::BTreeMap::new(),
-            editor_file: Some(editor),
-            forge_diff: None,
-            allowed_regions: vec![],
-        });
-
-    let normalized = normalize_workspace_ui_config(config);
-    let restored = normalized
-        .window
-        .regions
-        .center_top
-        .iter()
-        .find(|panel| panel.kind == "editor")
-        .and_then(|panel| panel.editor_file.as_ref())
-        .expect("editor file remains");
-
-    assert_eq!(restored.resource_id.as_deref(), Some("resource:one"));
-    assert_eq!(restored.file_ref, "file:src/lib.rs");
-    assert_eq!(restored.display_path.as_deref(), Some("src/lib.rs"));
-    assert!(normalized.window.regions.right_top[0].editor_file.is_none());
-}
-
-#[test]
-fn forge_diff_state_round_trips_and_is_removed_from_other_panel_kinds() {
-    let mut config = default_workspace_ui_config();
-    let target = super::WorkspaceForgeDiffDto {
-        resource_id: " resource:one ".to_owned(),
-        path: " src/lib.rs ".to_owned(),
-        scope: " staged ".to_owned(),
-    };
-    config
-        .window
-        .regions
-        .center_top
-        .push(super::WorkspacePanelDto {
-            id: "panel:forge-diff".to_owned(),
-            kind: "forgeDiff".to_owned(),
-            title: "Changes".to_owned(),
-            closeable: true,
-            movable: true,
-            resource_targets: std::collections::BTreeMap::new(),
-            editor_file: None,
-            forge_diff: Some(target.clone()),
-            allowed_regions: vec![],
-        });
-    config
-        .window
-        .regions
-        .right_top
-        .push(super::WorkspacePanelDto {
-            id: "panel:memory".to_owned(),
-            kind: "memory".to_owned(),
-            title: "Memory".to_owned(),
-            closeable: true,
-            movable: true,
-            resource_targets: std::collections::BTreeMap::new(),
-            editor_file: None,
-            forge_diff: Some(target),
-            allowed_regions: vec![],
-        });
-
-    let normalized = normalize_workspace_ui_config(config);
-    let restored = normalized
-        .window
-        .regions
-        .center_top
-        .iter()
-        .find(|panel| panel.kind == "forgeDiff")
-        .and_then(|panel| panel.forge_diff.as_ref())
-        .expect("Forge diff remains");
-
-    assert_eq!(restored.resource_id, "resource:one");
-    assert_eq!(restored.path, "src/lib.rs");
-    assert_eq!(restored.scope, "staged");
-    assert!(normalized.window.regions.right_top[0].forge_diff.is_none());
-}
-
-#[test]
-fn older_forge_diff_targets_default_to_the_combined_scope() {
-    let target: super::WorkspaceForgeDiffDto = serde_json::from_value(serde_json::json!({
-        "resource_id": "resource:one",
-        "path": "src/lib.rs"
-    }))
-    .expect("legacy Forge diff");
-
-    assert_eq!(target.scope, "all");
-}
-
-#[test]
-fn empty_panel_resource_targets_serialize_as_an_object() {
-    let config = default_workspace_ui_config();
-    let value = serde_json::to_value(config).expect("encode config");
-
+    let runtime = fixture.runtime();
+    let loaded = runtime
+        .load("project:one", WorkspaceWindowPlacementDto::default())
+        .unwrap();
+    assert_eq!(loaded.window.layout.center_right_ratio, 0.63);
+    assert_eq!(loaded.window.regions.center_top[0].id, "panel:editor");
     assert_eq!(
-        value["window"]["regions"]["center_top"][0]["resource_targets"],
-        serde_json::json!({})
+        loaded.window.regions.center_top[0]
+            .resource_targets
+            .get("project:one"),
+        Some(&"resource:one".to_owned())
     );
     assert_eq!(
-        value["window"]["regions"]["center_top"][0]["editor_file"],
-        serde_json::Value::Null
+        fs::read(fixture.paths.legacy_layout_backup()).unwrap(),
+        source
     );
-    assert_eq!(
-        value["window"]["regions"]["center_top"][0]["forge_diff"],
-        serde_json::Value::Null
-    );
+    assert!(fixture.paths.layout_migration_receipt().exists());
+
+    let layout = fs::read_to_string(fixture.paths.project_layouts()).unwrap();
+    assert!(layout.contains("nucleus.project-layouts"));
+    assert!(!layout.contains("resource:one"));
+    assert!(!layout.contains("src/main.rs"));
+    assert!(!layout.contains("\"title\""));
+    let presentations = fs::read_to_string(fixture.paths.panel_presentations()).unwrap();
+    assert!(presentations.contains("resource:one"));
+    assert!(presentations.contains("src/main.rs"));
 }
 
 #[test]
-fn task_panel_is_closeable_and_normalized_to_one_instance() {
-    let mut config = default_workspace_ui_config();
-    config.window.regions.center_top.push(super::panel(
-        "panel:tasks",
-        "tasks",
-        "Tasks",
-        false,
-        true,
-    ));
-    let mut duplicate = config.window.regions.center_top[1].clone();
-    config.window.regions.center_top[1].closeable = false;
-    duplicate.id = "panel:tasks:duplicate".to_owned();
-    config.window.regions.right_bottom.push(duplicate);
-
-    let normalized = normalize_workspace_ui_config(config);
-    let task_panels = normalized
-        .window
-        .regions
-        .center_top
-        .iter()
-        .chain(normalized.window.regions.center_bottom.iter())
-        .chain(normalized.window.regions.right_top.iter())
-        .chain(normalized.window.regions.right_bottom.iter())
-        .filter(|panel| panel.kind == "tasks")
-        .collect::<Vec<_>>();
-
-    assert_eq!(task_panels.len(), 1);
-    assert_eq!(task_panels[0].id, "panel:tasks");
-    assert!(task_panels[0].closeable);
-}
-
-#[test]
-fn legacy_config_flattens_the_active_surface_into_the_primary_window() {
-    let raw = r#"{
-          "schema_version": 1,
-          "active_surface_id": "surface:second",
-          "surfaces": [
-            {
-              "id": "surface:main",
-              "title": "Main",
-              "kind": "workspace",
-              "layout": {"left_center_ratio": 0.2, "center_right_ratio": 0.7, "center_stack_ratio": 0.7},
-              "regions": {"left": [], "right": [], "center_top": [], "center_bottom": []}
+fn pending_single_layout_is_claimed_once_then_new_projects_seed_minimally() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.paths.project_layouts(),
+        br#"{
+          "schema_version": 6,
+          "window": {
+            "id": "window:primary",
+            "layout": {
+              "left_center_ratio": 0.2,
+              "center_right_ratio": 0.7,
+              "center_stack_ratio": 0.6,
+              "right_stack_ratio": 0.8
             },
-            {
-              "id": "surface:second",
-              "title": "Second",
-              "kind": "workspace",
-              "layout": {"left_center_ratio": 0.3, "center_right_ratio": 0.6, "center_stack_ratio": 0.5},
-              "regions": {
-                "left": [],
-                "right": [],
-                "center_top": [{"id":"panel:editor","kind":"editor","title":"Editor","closeable":true,"movable":true,"allowed_regions":[]}],
-                "center_bottom": []
-              }
-            }
-          ]
-        }"#;
-
-    let (config, migrated) = decode_workspace_ui_config(raw).expect("legacy config migrates");
-    let normalized = normalize_workspace_ui_config(config);
-
-    assert!(migrated);
-    assert_eq!(normalized.schema_version, SCHEMA_VERSION);
-    assert_eq!(normalized.window.id, "window:primary");
-    assert_eq!(
-        normalized.window.placement,
-        super::WorkspaceWindowPlacementDto::default()
-    );
-    assert_eq!(normalized.window.layout.left_center_ratio, 0.3);
-    assert_eq!(normalized.window.regions.center_top[0].kind, "editor");
-    assert_eq!(
-        normalized.window.regions.center_top[0].allowed_regions,
-        vec![
-            "center_top".to_string(),
-            "center_bottom".to_string(),
-            "right_top".to_string(),
-            "right_bottom".to_string(),
-        ]
-    );
-}
-
-#[test]
-fn schema_two_config_gains_empty_native_window_placement() {
-    let raw = r#"{
-          "schema_version": 2,
-          "window": {
-            "id": "window:primary",
-            "layout": {"left_center_ratio": 0.2, "center_right_ratio": 0.74, "center_stack_ratio": 0.74},
-            "regions": {"left": [], "right": [], "center_top": [], "center_bottom": []}
-          }
-        }"#;
-
-    let (config, migrated) = decode_workspace_ui_config(raw).expect("schema two decodes");
-    let normalized = normalize_workspace_ui_config(config);
-
-    assert!(migrated);
-    assert_eq!(normalized.schema_version, SCHEMA_VERSION);
-    assert_eq!(
-        normalized.window.placement,
-        super::WorkspaceWindowPlacementDto::default()
-    );
-    assert!(normalized.window.regions.right_top.is_empty());
-    assert!(normalized.window.regions.right_bottom.is_empty());
-    assert_eq!(normalized.window.layout.right_stack_ratio, 0.74);
-}
-
-#[test]
-fn schema_three_right_region_migrates_to_right_top() {
-    let raw = r#"{
-          "schema_version": 3,
-          "window": {
-            "id": "window:primary",
-            "placement": {"maximized": false},
-            "layout": {"left_center_ratio": 0.2, "center_right_ratio": 0.74, "center_stack_ratio": 0.6},
             "regions": {
               "left": [],
-              "right": [{"id":"panel:context","kind":"context","title":"Context","closeable":true,"movable":true,"allowed_regions":["right"]}],
-              "center_top": [],
-              "center_bottom": []
-            }
-          }
-        }"#;
-
-    let (config, migrated) = decode_workspace_ui_config(raw).expect("schema three decodes");
-    let normalized = normalize_workspace_ui_config(config);
-
-    assert!(migrated);
-    assert_eq!(normalized.window.regions.right_top.len(), 1);
-    assert!(normalized.window.regions.right_bottom.is_empty());
-    assert_eq!(normalized.window.regions.right_top[0].kind, "memory");
-    assert_eq!(normalized.window.regions.right_top[0].title, "Memory");
-    assert_eq!(normalized.window.regions.right_top[0].id, "panel:context");
-    assert_eq!(normalized.window.layout.right_stack_ratio, 0.74);
-    assert_eq!(
-        normalized.window.regions.right_top[0].allowed_regions,
-        vec![
-            "center_top".to_string(),
-            "center_bottom".to_string(),
-            "right_top".to_string(),
-            "right_bottom".to_string(),
-        ]
-    );
-}
-
-#[test]
-fn schema_four_context_panel_migrates_to_memory_in_place() {
-    let raw = r#"{
-          "schema_version": 4,
-          "window": {
-            "id": "window:primary",
-            "placement": {"maximized": false},
-            "layout": {"left_center_ratio": 0.2, "center_right_ratio": 0.74, "center_stack_ratio": 0.6, "right_stack_ratio": 0.5},
-            "regions": {
-              "left": [],
+              "center_top": [{"id":"panel:terminal","kind":"terminal","title":"Terminal","closeable":true,"movable":true,"allowed_regions":[]}],
+              "center_bottom": [],
               "right_top": [],
-              "right_bottom": [{"id":"window:primary:panel:context:42","kind":"context","title":"Context","closeable":true,"movable":true,"allowed_regions":["center_top","center_bottom","right_top","right_bottom"]}],
-              "center_top": [],
-              "center_bottom": []
-            }
+              "right_bottom": []
+            },
+            "active_panels": {"center_top":"panel:terminal"}
           }
-        }"#;
-
-    let (config, migrated) = decode_workspace_ui_config(raw).expect("schema four decodes");
-    let normalized = normalize_workspace_ui_config(config);
-    let panel = &normalized.window.regions.right_bottom[0];
-
-    assert!(migrated);
-    assert_eq!(panel.id, "window:primary:panel:context:42");
-    assert_eq!(panel.kind, "memory");
-    assert_eq!(panel.title, "Memory");
-    assert!(panel.closeable);
-    assert!(panel.movable);
+        }"#,
+    )
+    .unwrap();
+    let runtime = fixture.runtime();
+    let claimed = runtime
+        .load("project:first", WorkspaceWindowPlacementDto::default())
+        .unwrap();
+    assert_eq!(claimed.window.regions.center_top[0].kind, "terminal");
+    let new_project = runtime
+        .load("project:second", WorkspaceWindowPlacementDto::default())
+        .unwrap();
+    assert_agent_chat_only(&new_project);
 }
 
 #[test]
-fn schema_five_and_six_single_layouts_become_pending_project_layouts() {
-    for schema_version in [5, 6] {
+fn schemas_one_through_current_split_into_the_same_pending_shape() {
+    for schema_version in 1..=10 {
         let raw = format!(
             r#"{{
-                  "schema_version": {schema_version},
-                  "window": {{
-                    "id": "window:primary",
-                    "placement": {{"display_id":"display:main","maximized":false}},
-                    "layout": {{"left_center_ratio":0.2,"center_right_ratio":0.61,"center_stack_ratio":0.74,"right_stack_ratio":0.74}},
-                    "regions": {{
-                      "left": [],
-                      "right_top": [],
-                      "right_bottom": [],
-                      "center_top": [{{"id":"panel:agent-chat","kind":"agentChat","title":"Agent Chat","closeable":true,"movable":true,"resource_targets":{{}},"allowed_regions":[]}}],
-                      "center_bottom": []
-                    }}
-                  }}
-                }}"#
+              "schema_version": {schema_version},
+              "window": {{
+                "id": "window:primary",
+                "regions": {{
+                  "left": [],
+                  "center_top": [{{"id":"panel:agent-chat","kind":"agentChat","title":"Agent Chat","closeable":true,"movable":true,"allowed_regions":[]}}],
+                  "center_bottom": [],
+                  "right_top": [],
+                  "right_bottom": []
+                }}
+              }}
+            }}"#
         );
-
-        let (store, migrated) =
-            super::decode_workspace_ui_store(&raw).expect("single layout migrates");
-
-        assert!(migrated);
-        assert!(store.project_layouts.is_empty());
-        assert_eq!(
-            store
-                .pending_legacy_layout
-                .as_ref()
-                .expect("pending layout")
-                .layout
-                .center_right_ratio,
-            0.61
-        );
-        assert_eq!(
-            store.window.placement.display_id.as_deref(),
-            Some("display:main")
-        );
+        let (_, projects) = split_legacy_workspace_ui_document(raw.as_bytes()).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&projects).unwrap();
+        assert_eq!(value["schema_version"], 10);
+        assert!(value["pending_legacy_layout"].is_object());
     }
 }
 
-#[test]
-fn placement_normalization_repairs_dimensions_and_display_id() {
-    let mut config = default_workspace_ui_config();
-    config.window.placement = super::WorkspaceWindowPlacementDto {
-        display_id: Some("  display:main  ".to_owned()),
-        normal_bounds: Some(super::WorkspaceWindowBoundsDto {
-            x: -100,
-            y: 40,
-            width: 100,
-            height: 99_999,
-        }),
-        maximized: true,
-    };
-
-    let normalized = normalize_workspace_ui_config(config);
-    let bounds = normalized.window.placement.normal_bounds.unwrap();
-
-    assert_eq!(
-        normalized.window.placement.display_id.as_deref(),
-        Some("display:main")
-    );
-    assert_eq!(bounds.width, super::MIN_WINDOW_WIDTH);
-    assert_eq!(bounds.height, super::MAX_WINDOW_DIMENSION);
-    assert!(normalized.window.placement.maximized);
+fn assert_agent_chat_only(config: &WorkspaceUiConfigDto) {
+    let panels = [
+        &config.window.regions.left,
+        &config.window.regions.center_top,
+        &config.window.regions.center_bottom,
+        &config.window.regions.right_top,
+        &config.window.regions.right_bottom,
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    assert_eq!(panels.len(), 1);
+    assert_eq!(panels[0].kind, "agentChat");
 }
 
-#[test]
-fn renderer_config_save_preserves_host_owned_placement() {
-    let mut current = default_workspace_ui_config();
-    current.window.placement = super::WorkspaceWindowPlacementDto {
-        display_id: Some("display:current".to_owned()),
-        normal_bounds: Some(super::WorkspaceWindowBoundsDto {
-            x: 20,
-            y: 30,
-            width: 1200,
-            height: 800,
-        }),
-        maximized: false,
-    };
-    let mut requested = default_workspace_ui_config();
-    requested.window.placement.display_id = Some("display:stale".to_owned());
-    requested.window.layout.left_center_ratio = 0.4;
-
-    preserve_host_owned_placement(&mut requested, &current);
-
-    assert_eq!(requested.window.placement, current.window.placement);
-    assert_eq!(requested.window.layout.left_center_ratio, 0.4);
-}
-
-#[test]
-fn workspace_panels_can_move_to_all_main_regions() {
-    assert_eq!(
-        super::allowed_regions_for_kind("diff"),
-        vec![
-            "center_top".to_string(),
-            "center_bottom".to_string(),
-            "right_top".to_string(),
-            "right_bottom".to_string(),
-        ]
-    );
-}
-
-#[test]
-fn normalize_repairs_stale_diff_allowed_regions() {
-    let mut config = default_workspace_ui_config();
-    config
-        .window
-        .regions
-        .center_top
-        .push(super::WorkspacePanelDto {
-            id: "panel:diff".to_owned(),
-            kind: "diff".to_owned(),
-            title: "Diff".to_owned(),
-            closeable: true,
-            movable: true,
-            resource_targets: std::collections::BTreeMap::from([(
-                "project:multi".to_owned(),
-                "resource:second".to_owned(),
-            )]),
-            editor_file: None,
-            forge_diff: None,
-            allowed_regions: vec!["center_top".to_owned(), "center_bottom".to_owned()],
-        });
-
-    let normalized = normalize_workspace_ui_config(config);
-    let panel = normalized
-        .window
-        .regions
-        .center_top
-        .iter()
-        .find(|panel| panel.kind == "diff")
-        .expect("diff panel should remain in center top");
-
-    assert_eq!(
-        panel.allowed_regions,
-        vec![
-            "center_top".to_string(),
-            "center_bottom".to_string(),
-            "right_top".to_string(),
-            "right_bottom".to_string(),
-        ]
-    );
-    assert_eq!(
-        panel
-            .resource_targets
-            .get("project:multi")
-            .map(String::as_str),
-        Some("resource:second")
-    );
-}
-
-#[test]
-fn normalization_keeps_activity_left_and_workspace_tabs_in_main_regions() {
-    let mut config = default_workspace_ui_config();
-    config.window.regions.left.push(super::WorkspacePanelDto {
-        id: "panel:legacy-left-editor".to_owned(),
-        kind: "editor".to_owned(),
-        title: "Editor".to_owned(),
+fn panel(id: &str, kind: &str, title: &str, resource: Option<(&str, &str)>) -> WorkspacePanelDto {
+    WorkspacePanelDto {
+        id: id.to_owned(),
+        kind: kind.to_owned(),
+        title: title.to_owned(),
         closeable: true,
         movable: true,
-        resource_targets: std::collections::BTreeMap::new(),
+        resource_targets: resource
+            .map(|(project, resource)| BTreeMap::from([(project.to_owned(), resource.to_owned())]))
+            .unwrap_or_default(),
         editor_file: None,
         forge_diff: None,
-        allowed_regions: vec!["left".to_owned()],
-    });
-    config
-        .window
-        .regions
-        .right_bottom
-        .push(super::WorkspacePanelDto {
-            id: "panel:activity".to_owned(),
-            kind: "activity".to_owned(),
-            title: "Activity".to_owned(),
-            closeable: false,
-            movable: false,
-            resource_targets: std::collections::BTreeMap::new(),
-            editor_file: None,
-            forge_diff: None,
-            allowed_regions: vec!["right_bottom".to_owned()],
-        });
-
-    let normalized = normalize_workspace_ui_config(config);
-
-    assert!(normalized
-        .window
-        .regions
-        .center_top
-        .iter()
-        .any(|panel| panel.id == "panel:legacy-left-editor"));
-    assert!(normalized
-        .window
-        .regions
-        .left
-        .iter()
-        .any(|panel| panel.id == "panel:activity"));
-    assert!(normalized.window.regions.right_bottom.is_empty());
-}
-
-#[test]
-fn migrated_single_layout_is_claimed_once() {
-    let mut legacy = default_workspace_ui_config();
-    legacy.window.layout.center_right_ratio = 0.42;
-    legacy.window.regions.right_top.push(super::panel(
-        "panel:legacy-editor",
-        "editor",
-        "Editor",
-        true,
-        true,
-    ));
-    let mut store = super::migrate_single_layout(legacy);
-
-    assert!(super::ensure_project_layout(&mut store, "project:first"));
-    assert!(super::ensure_project_layout(&mut store, "project:second"));
-
-    let first =
-        super::materialize_project_config(&store, "project:first").expect("first project config");
-    let second =
-        super::materialize_project_config(&store, "project:second").expect("second project config");
-    assert_eq!(first.window.layout.center_right_ratio, 0.42);
-    assert!(first
-        .window
-        .regions
-        .right_top
-        .iter()
-        .any(|panel| panel.id == "panel:legacy-editor"));
-    assert_eq!(second.window.regions.center_top.len(), 1);
-    assert_eq!(second.window.regions.center_top[0].kind, "agentChat");
-    assert!(second.window.regions.right_top.is_empty());
-    assert!(store.pending_legacy_layout.is_none());
-}
-
-#[test]
-fn project_layout_updates_do_not_cross_project_boundary() {
-    let mut store = super::default_workspace_ui_store();
-    super::ensure_project_layout(&mut store, "project:one");
-    super::ensure_project_layout(&mut store, "project:two");
-    let mut first =
-        super::materialize_project_config(&store, "project:one").expect("first project config");
-    first.window.layout.center_stack_ratio = 0.35;
-    first.window.regions.center_bottom.push(super::panel(
-        "panel:terminal",
-        "terminal",
-        "Terminal",
-        true,
-        true,
-    ));
-    first
-        .window
-        .active_panels
-        .insert("center_bottom".to_owned(), "panel:terminal".to_owned());
-
-    super::apply_project_config(&mut store, "project:one", first);
-
-    let first = super::materialize_project_config(&store, "project:one")
-        .expect("updated first project config");
-    let second = super::materialize_project_config(&store, "project:two")
-        .expect("unchanged second project config");
-    assert_eq!(first.window.layout.center_stack_ratio, 0.35);
-    assert_eq!(first.window.regions.center_bottom.len(), 1);
-    assert_eq!(
-        first
-            .window
-            .active_panels
-            .get("center_bottom")
-            .map(String::as_str),
-        Some("panel:terminal")
-    );
-    assert_eq!(second.window.layout, super::default_workspace_layout());
-    assert!(second.window.regions.center_bottom.is_empty());
-    assert!(!second.window.active_panels.contains_key("center_bottom"));
-}
-
-#[test]
-fn project_layout_save_cannot_replace_global_window_placement() {
-    let mut store = super::default_workspace_ui_store();
-    store.window.placement.display_id = Some("display:host".to_owned());
-    super::ensure_project_layout(&mut store, "project:one");
-    let mut config =
-        super::materialize_project_config(&store, "project:one").expect("project config");
-    config.window.placement.display_id = Some("display:renderer".to_owned());
-
-    super::apply_project_config(&mut store, "project:one", config);
-
-    assert_eq!(
-        store.window.placement.display_id.as_deref(),
-        Some("display:host")
-    );
-}
-
-#[test]
-fn split_runtime_domains_mutate_independently() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let paths = super::WorkspaceUiPaths::new(
-        temp.path().join("state/window-placement.json"),
-        temp.path().join("config/project-layouts.json"),
-    );
-    let host_placement = super::WorkspaceWindowPlacementDto {
-        display_id: Some("display:one".to_owned()),
-        normal_bounds: Some(super::WorkspaceWindowBoundsDto {
-            x: 10,
-            y: 20,
-            width: 1200,
-            height: 800,
-        }),
-        maximized: false,
-    };
-    let mut config = super::load_workspace_ui_config(&paths, "project:one", host_placement.clone())
-        .expect("load split workspace config");
-    config.window.layout.center_right_ratio = 0.51;
-    config.window.placement.display_id = Some("display:renderer".to_owned());
-    super::save_workspace_ui_config(&paths, "project:one", config, host_placement.clone())
-        .expect("save project layout");
-    let projects_before = std::fs::read(paths.project_layouts()).expect("project bytes");
-
-    assert_eq!(
-        std::fs::read(paths.project_layouts()).expect("project bytes after placement"),
-        projects_before
-    );
-    let restored = super::load_workspace_ui_config(&paths, "project:one", host_placement)
-        .expect("reload split workspace config");
-    assert_eq!(restored.window.layout.center_right_ratio, 0.51);
-    assert_eq!(
-        restored.window.placement.display_id.as_deref(),
-        Some("display:one")
-    );
-}
-
-#[test]
-fn future_combined_ui_schema_is_rejected_without_rewrite() {
-    let raw = br#"{"schema_version":999,"window":{"id":"window:primary"}}"#;
-    assert!(super::split_legacy_workspace_ui_document(raw).is_err());
+        allowed_regions: Vec::new(),
+    }
 }

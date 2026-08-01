@@ -2272,6 +2272,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "longhorn-layout"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "serde",
+]
+
+[[package]]
+name = "longhorn-layout-config"
+version = "0.1.0"
+dependencies = [
+ "longhorn-config",
+ "longhorn-core",
+ "longhorn-layout",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "longhorn-tauri-config"
 version = "0.1.0"
 dependencies = [
@@ -2509,6 +2528,8 @@ dependencies = [
  "longhorn-config",
  "longhorn-core",
  "longhorn-display",
+ "longhorn-layout",
+ "longhorn-layout-config",
  "longhorn-tauri-config",
  "longhorn-tauri-windowing",
  "longhorn-windowing",
@@ -2540,7 +2561,6 @@ dependencies = [
  "nucleus-projects",
  "nucleus-scm-forge",
  "nucleus-tasks",
- "nucleus-workspaces",
  "serde",
  "serde_json",
  "toml 1.1.4+spec-1.1.0",

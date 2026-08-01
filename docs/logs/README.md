@@ -4,6 +4,7 @@ Logs record meaningful decisions, evidence, and closeouts.
 
 ## Current Logs
 
+- `2026-08-01-longhorn-project-layout-cutover.md`
 - `2026-08-01-project-layout-operator-acceptance.md`
 - `2026-08-01-longhorn-storage-cutover.md`
 - `2026-07-31-interactive-structured-agent-chat.md`

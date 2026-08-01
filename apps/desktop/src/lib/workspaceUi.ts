@@ -63,6 +63,7 @@ export type WorkspaceLayoutDto = {
 
 export type WorkspaceUiConfigDto = {
   schema_version: number;
+  layout_revision: number;
   window: WorkspaceWindowDto;
 };
 

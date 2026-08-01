@@ -56,6 +56,10 @@
   let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingLayoutConfig: WorkspaceUiConfigDto | null = null;
   let pendingLayoutProjectId: string | null = null;
+  let workspaceOperationQueue: Promise<unknown> = Promise.resolve();
+  let authoritativeLayoutRevision: number | null = null;
+  let saveSequence = 0;
+  const latestSaveSequenceByProject = new Map<string, number>();
   let draggedPanelId = $state<string | null>(null);
   let panelDropTargetsVisible = $state(false);
   let dropTargetRegion = $state<RegionKey | null>(null);
@@ -220,7 +224,10 @@
     }
 
     try {
-      const loaded = await loadWorkspaceUiConfig(projectId);
+      const loaded = await enqueueWorkspaceOperation(() =>
+        loadWorkspaceUiConfig(projectId),
+      );
+      authoritativeLayoutRevision = loaded.layout_revision;
       if (sequence === loadSequence && selectedProject?.project_id === projectId) {
         config = loaded;
         configProjectId = projectId;
@@ -242,10 +249,16 @@
     nextConfig = mergePendingLayout(nextConfig, projectId);
     config = nextConfig;
     error = null;
+    const sequence = ++saveSequence;
+    latestSaveSequenceByProject.set(projectId, sequence);
 
     try {
-      const saved = await saveWorkspaceUiConfig(projectId, nextConfig);
-      if (configProjectId === projectId && selectedProject?.project_id === projectId) {
+      const saved = await persistWorkspaceConfig(projectId, nextConfig);
+      if (
+        configProjectId === projectId
+        && selectedProject?.project_id === projectId
+        && latestSaveSequenceByProject.get(projectId) === sequence
+      ) {
         config = saved;
       }
     } catch (caught) {
@@ -286,11 +299,43 @@
     if (configProjectId === projectId) {
       config = nextConfig;
     }
-    void saveWorkspaceUiConfig(projectId, nextConfig).catch((caught) => {
-      if (configProjectId === projectId) {
-        error = formatError(caught);
-      }
+    const sequence = ++saveSequence;
+    latestSaveSequenceByProject.set(projectId, sequence);
+    void persistWorkspaceConfig(projectId, nextConfig)
+      .then((saved) => {
+        if (
+          configProjectId === projectId
+          && selectedProject?.project_id === projectId
+          && latestSaveSequenceByProject.get(projectId) === sequence
+        ) {
+          config = saved;
+        }
+      })
+      .catch((caught) => {
+        if (configProjectId === projectId) {
+          error = formatError(caught);
+        }
+      });
+  }
+
+  async function persistWorkspaceConfig(
+    projectId: string,
+    nextConfig: WorkspaceUiConfigDto,
+  ): Promise<WorkspaceUiConfigDto> {
+    return enqueueWorkspaceOperation(async () => {
+      const saved = await saveWorkspaceUiConfig(projectId, {
+        ...nextConfig,
+        layout_revision: authoritativeLayoutRevision ?? nextConfig.layout_revision,
+      });
+      authoritativeLayoutRevision = saved.layout_revision;
+      return saved;
     });
+  }
+
+  function enqueueWorkspaceOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = workspaceOperationQueue.then(operation);
+    workspaceOperationQueue = result.catch(() => undefined);
+    return result;
   }
 
   function mergePendingLayout(

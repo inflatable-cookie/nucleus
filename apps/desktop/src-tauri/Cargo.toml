@@ -17,6 +17,8 @@ tauri-build = { version = "2.6.3", features = [] }
 longhorn-config = { path = "../../../../longhorn/crates/longhorn-config" }
 longhorn-core = { path = "../../../../longhorn/crates/longhorn-core" }
 longhorn-display = { path = "../../../../longhorn/crates/longhorn-display" }
+longhorn-layout = { path = "../../../../longhorn/crates/longhorn-layout" }
+longhorn-layout-config = { path = "../../../../longhorn/crates/longhorn-layout-config" }
 longhorn-tauri-config = { path = "../../../../longhorn/crates/longhorn-tauri-config" }
 longhorn-tauri-windowing = { path = "../../../../longhorn/crates/longhorn-tauri-windowing" }
 longhorn-windowing = { path = "../../../../longhorn/crates/longhorn-windowing" }
