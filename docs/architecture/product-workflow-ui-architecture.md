@@ -130,8 +130,9 @@ The desktop may start with one native window. Stable window identity leaves
 room for multi-display and multi-window placement without adding another
 container layer.
 
-The first desktop implementation persists local window layout at
-`~/.nucleus/config/ui.json`. This is local UI state, never project projection.
+The desktop persists global native placement in the selected Longhorn state
+root and project-keyed layout in the selected config root. Both are local UI
+state, never project projection.
 
 The initial region vocabulary is fixed to `left`, `centerTop`, `centerBottom`,
 `rightTop`, and `rightBottom`. The four main regions form a semantic two-column
@@ -255,14 +256,12 @@ The desktop Rust host restores and captures native window geometry. The
 renderer receives placement in the workspace UI DTO only so normal config
 round trips preserve it; it does not query monitors or position the window.
 
-One schema-v7 `ui.json` remains authority for global primary-window placement
-and project-keyed region composition, active tabs, and split ratios.
-Geometry-only writes reload and merge against current config under one process
-lock. This prevents asynchronous resize persistence from reverting panel
-changes. Project layout saves ignore renderer placement changes and preserve
-the latest host-owned geometry. Schema v7 retains the former single project
-layout as a one-time migration candidate instead of cloning it into every
-project.
+`state/window-placement.json` is the global primary-window authority.
+`config/project-layouts.json` owns project-keyed region composition, active
+tabs, and split ratios. Geometry and project writes use separate documents and
+cannot overwrite one another. The legacy combined `ui.json` is split once by
+the receipted storage migration; its former single project layout remains a
+one-time candidate instead of being cloned into every project.
 
 During a splitter drag, the splitter owns transient geometry. The renderer
 commits the final ratio on mouse release, with a short quiet-period fallback
@@ -325,9 +324,10 @@ composer into a runtime console:
 - advanced provider ids, lifecycle fields, and proof diagnostics stay out of
   the normal chat panel
 
-An explicit Nucleus desktop data root may isolate database, review snapshots,
-and UI layout for development and proof runs. It does not repoint the host home
-or provider configuration. The normal desktop default remains `~/.nucleus`.
+An explicit Nucleus portable root may isolate database, review snapshots, and
+UI layout for development and proof runs. It does not repoint the host home or
+provider configuration. Normal desktop storage uses platform-native roots with
+canonical leaf `com.inflatablecookie.nucleus`.
 
 The first task interaction inside Agent Chat is agent-authored task creation.
 The agent may create one standalone task or a Goal with a longer task runway

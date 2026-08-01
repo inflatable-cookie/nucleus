@@ -1,13 +1,13 @@
 #!/bin/sh
 set -eu
 
-proof_root=${NUCLEUS_DESKTOP_DATA_ROOT-}
+proof_root=${NUCLEUS_DESKTOP_PORTABLE_ROOT-}
 case "$proof_root" in
   /*) ;;
-  *) echo "NUCLEUS_DESKTOP_DATA_ROOT must be an explicit absolute path" >&2; exit 2 ;;
+  *) echo "NUCLEUS_DESKTOP_PORTABLE_ROOT must be an explicit absolute path" >&2; exit 2 ;;
 esac
 if [ -e "$proof_root" ] && [ ! -d "$proof_root" ]; then
-  echo "NUCLEUS_DESKTOP_DATA_ROOT must identify a directory" >&2
+  echo "NUCLEUS_DESKTOP_PORTABLE_ROOT must identify a directory" >&2
   exit 2
 fi
 

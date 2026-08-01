@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,31 @@ const MIN_WINDOW_HEIGHT: u32 = 620;
 const MAX_WINDOW_DIMENSION: u32 = 16_384;
 
 static CONFIG_IO_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+const WINDOW_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceUiPaths {
+    window_placement: PathBuf,
+    project_layouts: PathBuf,
+}
+
+impl WorkspaceUiPaths {
+    pub fn new(window_placement: PathBuf, project_layouts: PathBuf) -> Self {
+        Self {
+            window_placement,
+            project_layouts,
+        }
+    }
+
+    pub fn window_placement(&self) -> &Path {
+        &self.window_placement
+    }
+
+    pub fn project_layouts(&self) -> &Path {
+        &self.project_layouts
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WorkspaceUiConfigDto {
@@ -34,6 +59,21 @@ pub struct WorkspaceWindowDto {
 struct WorkspaceUiStoreDto {
     schema_version: u32,
     window: WorkspaceHostWindowDto,
+    #[serde(default)]
+    project_layouts: BTreeMap<String, WorkspaceProjectLayoutDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_legacy_layout: Option<WorkspaceProjectLayoutDto>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+struct WorkspaceWindowStoreDto {
+    schema_version: u32,
+    window: WorkspaceHostWindowDto,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+struct WorkspaceProjectLayoutsStoreDto {
+    schema_version: u32,
     #[serde(default)]
     project_layouts: BTreeMap<String, WorkspaceProjectLayoutDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -151,55 +191,92 @@ struct LegacyWorkspaceSurfaceDto {
 }
 
 pub fn load_workspace_ui_config(
-    path: &Path,
+    paths: &WorkspaceUiPaths,
     project_id: &str,
 ) -> Result<WorkspaceUiConfigDto, String> {
     validate_project_id(project_id)?;
     let _guard = config_io_lock()?;
-    let mut store = load_workspace_ui_store_unlocked(path)?;
-    let changed = ensure_project_layout(&mut store, project_id);
+    let window = load_workspace_window_store_unlocked(paths.window_placement())?;
+    let mut projects = load_workspace_project_store_unlocked(paths.project_layouts())?;
+    let changed = ensure_project_layouts(&mut projects, project_id);
 
     if changed {
-        write_workspace_ui_store(path, &store)?;
+        write_workspace_project_store(paths.project_layouts(), &projects)?;
     }
 
-    materialize_project_config(&store, project_id)
+    materialize_split_project_config(&window, &projects, project_id)
 }
 
 pub fn load_workspace_window_placement(path: &Path) -> Result<WorkspaceWindowPlacementDto, String> {
     let _guard = config_io_lock()?;
-    Ok(load_workspace_ui_store_unlocked(path)?.window.placement)
+    Ok(load_workspace_window_store_unlocked(path)?.window.placement)
 }
 
-fn load_workspace_ui_store_unlocked(path: &Path) -> Result<WorkspaceUiStoreDto, String> {
+fn load_workspace_window_store_unlocked(path: &Path) -> Result<WorkspaceWindowStoreDto, String> {
     if !path.exists() {
-        let store = default_workspace_ui_store();
-        write_workspace_ui_store(path, &store)?;
+        let store = default_workspace_window_store();
+        write_workspace_window_store(path, &store)?;
         return Ok(store);
     }
 
-    let raw = fs::read_to_string(&path)
-        .map_err(|error| format!("read workspace UI config failed: {error}"))?;
-    let (decoded, migrated) = decode_workspace_ui_store(&raw)?;
-    let normalized = normalize_workspace_ui_store(decoded);
-    if migrated {
-        write_workspace_ui_store(path, &normalized)?;
+    let raw = fs::read_to_string(path)
+        .map_err(|error| format!("read workspace window state failed: {error}"))?;
+    let mut store = serde_json::from_str::<WorkspaceWindowStoreDto>(&raw)
+        .map_err(|error| format!("decode workspace window state failed: {error}"))?;
+    if store.schema_version > WINDOW_SCHEMA_VERSION {
+        return Err(format!(
+            "workspace window state schema {} is newer than supported schema {WINDOW_SCHEMA_VERSION}",
+            store.schema_version
+        ));
+    }
+    let changed = store.schema_version != WINDOW_SCHEMA_VERSION;
+    store.schema_version = WINDOW_SCHEMA_VERSION;
+    store.window.placement = normalize_window_placement(store.window.placement);
+    if changed {
+        write_workspace_window_store(path, &store)?;
+    }
+    Ok(store)
+}
+
+fn load_workspace_project_store_unlocked(
+    path: &Path,
+) -> Result<WorkspaceProjectLayoutsStoreDto, String> {
+    if !path.exists() {
+        let store = default_workspace_project_store();
+        write_workspace_project_store(path, &store)?;
+        return Ok(store);
     }
 
-    Ok(normalized)
+    let raw = fs::read_to_string(path)
+        .map_err(|error| format!("read workspace project layouts failed: {error}"))?;
+    let store = serde_json::from_str::<WorkspaceProjectLayoutsStoreDto>(&raw)
+        .map_err(|error| format!("decode workspace project layouts failed: {error}"))?;
+    if store.schema_version > SCHEMA_VERSION {
+        return Err(format!(
+            "workspace project layout schema {} is newer than supported schema {SCHEMA_VERSION}",
+            store.schema_version
+        ));
+    }
+    let changed = store.schema_version != SCHEMA_VERSION;
+    let store = normalize_workspace_project_store(store);
+    if changed {
+        write_workspace_project_store(path, &store)?;
+    }
+    Ok(store)
 }
 
 pub fn save_workspace_ui_config(
-    path: &Path,
+    paths: &WorkspaceUiPaths,
     project_id: &str,
     config: WorkspaceUiConfigDto,
 ) -> Result<WorkspaceUiConfigDto, String> {
     validate_project_id(project_id)?;
     let _guard = config_io_lock()?;
-    let mut store = load_workspace_ui_store_unlocked(path)?;
-    apply_project_config(&mut store, project_id, config);
-    write_workspace_ui_store(path, &store)?;
-    materialize_project_config(&store, project_id)
+    let window = load_workspace_window_store_unlocked(paths.window_placement())?;
+    let mut projects = load_workspace_project_store_unlocked(paths.project_layouts())?;
+    apply_split_project_config(&mut projects, project_id, config);
+    write_workspace_project_store(paths.project_layouts(), &projects)?;
+    materialize_split_project_config(&window, &projects, project_id)
 }
 
 pub fn update_workspace_window_placement(
@@ -207,7 +284,7 @@ pub fn update_workspace_window_placement(
     placement: WorkspaceWindowPlacementDto,
 ) -> Result<(), String> {
     let _guard = config_io_lock()?;
-    let mut store = load_workspace_ui_store_unlocked(path)?;
+    let mut store = load_workspace_window_store_unlocked(path)?;
     let placement = normalize_window_placement(placement);
 
     store.window.placement.display_id = placement.display_id;
@@ -216,25 +293,52 @@ pub fn update_workspace_window_placement(
         store.window.placement.normal_bounds = placement.normal_bounds;
     }
 
-    write_workspace_ui_store(path, &normalize_workspace_ui_store(store))
+    store.schema_version = WINDOW_SCHEMA_VERSION;
+    write_workspace_window_store(path, &store)
 }
 
-fn write_workspace_ui_store(path: &Path, store: &WorkspaceUiStoreDto) -> Result<(), String> {
+fn write_workspace_window_store(
+    path: &Path,
+    store: &WorkspaceWindowStoreDto,
+) -> Result<(), String> {
+    write_json(path, store, "workspace window state")
+}
+
+fn write_workspace_project_store(
+    path: &Path,
+    store: &WorkspaceProjectLayoutsStoreDto,
+) -> Result<(), String> {
+    write_json(path, store, "workspace project layouts")
+}
+
+fn write_json(path: &Path, value: &impl Serialize, label: &str) -> Result<(), String> {
     let parent = path
         .parent()
-        .ok_or_else(|| "workspace UI config path has no parent".to_owned())?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("create workspace UI config dir failed: {error}"))?;
-
-    let encoded = serde_json::to_string_pretty(store)
-        .map_err(|error| format!("encode workspace UI config failed: {error}"))?;
+        .ok_or_else(|| format!("{label} path has no parent"))?;
+    fs::create_dir_all(parent).map_err(|error| format!("create {label} dir failed: {error}"))?;
+    let encoded = serde_json::to_string_pretty(value)
+        .map_err(|error| format!("encode {label} failed: {error}"))?;
     fs::write(path, format!("{encoded}\n"))
-        .map_err(|error| format!("write workspace UI config failed: {error}"))
+        .map_err(|error| format!("write {label} failed: {error}"))
 }
 
 fn normalize_workspace_ui_store(mut store: WorkspaceUiStoreDto) -> WorkspaceUiStoreDto {
     store.schema_version = SCHEMA_VERSION;
     store.window.placement = normalize_window_placement(store.window.placement);
+    store.project_layouts = store
+        .project_layouts
+        .into_iter()
+        .filter(|(project_id, _)| !project_id.trim().is_empty())
+        .map(|(project_id, layout)| (project_id, normalize_project_layout(layout)))
+        .collect();
+    store.pending_legacy_layout = store.pending_legacy_layout.map(normalize_project_layout);
+    store
+}
+
+fn normalize_workspace_project_store(
+    mut store: WorkspaceProjectLayoutsStoreDto,
+) -> WorkspaceProjectLayoutsStoreDto {
+    store.schema_version = SCHEMA_VERSION;
     store.project_layouts = store
         .project_layouts
         .into_iter()
@@ -360,6 +464,7 @@ fn validate_project_id(project_id: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(test)]
 fn ensure_project_layout(store: &mut WorkspaceUiStoreDto, project_id: &str) -> bool {
     if store.project_layouts.contains_key(project_id) {
         return false;
@@ -375,8 +480,39 @@ fn ensure_project_layout(store: &mut WorkspaceUiStoreDto, project_id: &str) -> b
     true
 }
 
+fn ensure_project_layouts(store: &mut WorkspaceProjectLayoutsStoreDto, project_id: &str) -> bool {
+    if store.project_layouts.contains_key(project_id) {
+        return false;
+    }
+    let layout = store
+        .pending_legacy_layout
+        .take()
+        .unwrap_or_else(default_project_layout);
+    store
+        .project_layouts
+        .insert(project_id.to_owned(), normalize_project_layout(layout));
+    true
+}
+
+#[cfg(test)]
 fn apply_project_config(
     store: &mut WorkspaceUiStoreDto,
+    project_id: &str,
+    config: WorkspaceUiConfigDto,
+) {
+    store.project_layouts.insert(
+        project_id.to_owned(),
+        normalize_project_layout(WorkspaceProjectLayoutDto {
+            layout: config.window.layout,
+            regions: config.window.regions,
+            active_panels: config.window.active_panels,
+        }),
+    );
+    store.pending_legacy_layout = None;
+}
+
+fn apply_split_project_config(
+    store: &mut WorkspaceProjectLayoutsStoreDto,
     project_id: &str,
     config: WorkspaceUiConfigDto,
 ) {
@@ -394,15 +530,21 @@ fn apply_project_config(
 fn decode_workspace_ui_store(raw: &str) -> Result<(WorkspaceUiStoreDto, bool), String> {
     let value = serde_json::from_str::<serde_json::Value>(raw)
         .map_err(|error| format!("decode workspace UI config failed: {error}"))?;
+    let stored_version = value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "workspace UI config schema_version is required".to_owned())?;
+    if stored_version > u64::from(SCHEMA_VERSION) {
+        return Err(format!(
+            "workspace UI config schema {stored_version} is newer than supported schema {SCHEMA_VERSION}"
+        ));
+    }
     let is_legacy = value.get("surfaces").is_some();
 
     if !is_legacy && value.get("project_layouts").is_some() {
-        let stored_version = value
-            .get("schema_version")
-            .and_then(serde_json::Value::as_u64);
         let decoded = serde_json::from_value::<WorkspaceUiStoreDto>(value)
             .map_err(|error| format!("decode workspace UI config failed: {error}"))?;
-        return Ok((decoded, stored_version != Some(u64::from(SCHEMA_VERSION))));
+        return Ok((decoded, stored_version != u64::from(SCHEMA_VERSION)));
     }
 
     if !is_legacy {
@@ -443,6 +585,32 @@ fn decode_workspace_ui_store(raw: &str) -> Result<(WorkspaceUiStoreDto, bool), S
     ))
 }
 
+pub fn split_legacy_workspace_ui_document(raw: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let raw = std::str::from_utf8(raw)
+        .map_err(|error| format!("workspace UI config is not UTF-8: {error}"))?;
+    let (store, _) = decode_workspace_ui_store(raw)?;
+    let store = normalize_workspace_ui_store(store);
+    let window = WorkspaceWindowStoreDto {
+        schema_version: WINDOW_SCHEMA_VERSION,
+        window: store.window,
+    };
+    let projects = WorkspaceProjectLayoutsStoreDto {
+        schema_version: SCHEMA_VERSION,
+        project_layouts: store.project_layouts,
+        pending_legacy_layout: store.pending_legacy_layout,
+    };
+    let window = serde_json::to_vec_pretty(&window)
+        .map_err(|error| format!("encode migrated window state failed: {error}"))?;
+    let projects = serde_json::to_vec_pretty(&projects)
+        .map_err(|error| format!("encode migrated project layouts failed: {error}"))?;
+    Ok((with_newline(window), with_newline(projects)))
+}
+
+fn with_newline(mut bytes: Vec<u8>) -> Vec<u8> {
+    bytes.push(b'\n');
+    bytes
+}
+
 fn migrate_single_layout(config: WorkspaceUiConfigDto) -> WorkspaceUiStoreDto {
     WorkspaceUiStoreDto {
         schema_version: SCHEMA_VERSION,
@@ -459,6 +627,7 @@ fn migrate_single_layout(config: WorkspaceUiConfigDto) -> WorkspaceUiStoreDto {
     }
 }
 
+#[cfg(test)]
 fn materialize_project_config(
     store: &WorkspaceUiStoreDto,
     project_id: &str,
@@ -473,6 +642,27 @@ fn materialize_project_config(
         window: WorkspaceWindowDto {
             id: store.window.id.clone(),
             placement: store.window.placement.clone(),
+            layout: project.layout.clone(),
+            regions: project.regions.clone(),
+            active_panels: project.active_panels.clone(),
+        },
+    })
+}
+
+fn materialize_split_project_config(
+    window: &WorkspaceWindowStoreDto,
+    projects: &WorkspaceProjectLayoutsStoreDto,
+    project_id: &str,
+) -> Result<WorkspaceUiConfigDto, String> {
+    let project = projects
+        .project_layouts
+        .get(project_id)
+        .ok_or_else(|| format!("workspace layout is missing for project {project_id}"))?;
+    Ok(WorkspaceUiConfigDto {
+        schema_version: SCHEMA_VERSION,
+        window: WorkspaceWindowDto {
+            id: window.window.id.clone(),
+            placement: window.window.placement.clone(),
             layout: project.layout.clone(),
             regions: project.regions.clone(),
             active_panels: project.active_panels.clone(),
@@ -587,6 +777,7 @@ fn clamp_ratio(value: f64) -> f64 {
     }
 }
 
+#[cfg(test)]
 fn default_workspace_ui_store() -> WorkspaceUiStoreDto {
     WorkspaceUiStoreDto {
         schema_version: SCHEMA_VERSION,
@@ -594,6 +785,24 @@ fn default_workspace_ui_store() -> WorkspaceUiStoreDto {
             id: "window:primary".to_owned(),
             placement: WorkspaceWindowPlacementDto::default(),
         },
+        project_layouts: BTreeMap::new(),
+        pending_legacy_layout: None,
+    }
+}
+
+fn default_workspace_window_store() -> WorkspaceWindowStoreDto {
+    WorkspaceWindowStoreDto {
+        schema_version: WINDOW_SCHEMA_VERSION,
+        window: WorkspaceHostWindowDto {
+            id: "window:primary".to_owned(),
+            placement: WorkspaceWindowPlacementDto::default(),
+        },
+    }
+}
+
+fn default_workspace_project_store() -> WorkspaceProjectLayoutsStoreDto {
+    WorkspaceProjectLayoutsStoreDto {
+        schema_version: SCHEMA_VERSION,
         project_layouts: BTreeMap::new(),
         pending_legacy_layout: None,
     }

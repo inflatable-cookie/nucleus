@@ -25,7 +25,10 @@ fn run() -> Result<(), String> {
     if !data_root.is_dir() {
         return Err("native proof evidence data root must already exist".to_owned());
     }
-    let database_path = data_root.join("state").join("nucleus.sqlite");
+    let database_path = data_root
+        .join("data")
+        .join("databases")
+        .join("nucleus.sqlite");
     if !database_path.is_file() {
         return Err("native proof evidence database does not exist".to_owned());
     }

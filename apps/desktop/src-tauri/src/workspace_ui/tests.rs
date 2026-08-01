@@ -716,3 +716,50 @@ fn project_layout_save_cannot_replace_global_window_placement() {
         Some("display:host")
     );
 }
+
+#[test]
+fn split_runtime_domains_mutate_independently() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let paths = super::WorkspaceUiPaths::new(
+        temp.path().join("state/window-placement.json"),
+        temp.path().join("config/project-layouts.json"),
+    );
+    let mut config = super::load_workspace_ui_config(&paths, "project:one")
+        .expect("load split workspace config");
+    config.window.layout.center_right_ratio = 0.51;
+    super::save_workspace_ui_config(&paths, "project:one", config).expect("save project layout");
+    let projects_before = std::fs::read(paths.project_layouts()).expect("project bytes");
+
+    super::update_workspace_window_placement(
+        paths.window_placement(),
+        super::WorkspaceWindowPlacementDto {
+            display_id: Some("display:one".to_owned()),
+            normal_bounds: Some(super::WorkspaceWindowBoundsDto {
+                x: 10,
+                y: 20,
+                width: 1200,
+                height: 800,
+            }),
+            maximized: false,
+        },
+    )
+    .expect("save window placement");
+
+    assert_eq!(
+        std::fs::read(paths.project_layouts()).expect("project bytes after placement"),
+        projects_before
+    );
+    let restored = super::load_workspace_ui_config(&paths, "project:one")
+        .expect("reload split workspace config");
+    assert_eq!(restored.window.layout.center_right_ratio, 0.51);
+    assert_eq!(
+        restored.window.placement.display_id.as_deref(),
+        Some("display:one")
+    );
+}
+
+#[test]
+fn future_combined_ui_schema_is_rejected_without_rewrite() {
+    let raw = br#"{"schema_version":999,"window":{"id":"window:primary"}}"#;
+    assert!(super::split_legacy_workspace_ui_document(raw).is_err());
+}

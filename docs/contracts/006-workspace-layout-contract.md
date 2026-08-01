@@ -16,15 +16,15 @@ Workspace layout state is local client state. It is not committed to the
 project repository like tasks, project metadata, planning docs, or other
 shared management files.
 
-The first desktop bring-up persistence target is
-`~/.nucleus/config/ui.json`. Global display/window records should be keyed by
-client profile. Per-project panel layout records should be keyed by client
-profile, project id, and panel layout id.
+Desktop persistence is split between `state/window-placement.json` and
+`config/project-layouts.json` below the selected Longhorn storage profile.
+Global display/window records should be keyed by client profile. Per-project
+panel layout records should be keyed by client profile, project id, and panel
+layout id.
 
-This JSON file is local client state, not project state. It is acceptable as
-the first authority while the desktop shell is still proving the layout model.
-If the client state store moves to SQLite later, this file should become an
-import/export or migration source rather than competing authority.
+These JSON files are local client state, not project state. If the client state
+store moves to SQLite later, they become import/export or migration sources
+rather than competing authority.
 
 Future sync of layout preferences may exist, but it must be explicit user
 preference sync. It must not become part of the default project-management
@@ -138,8 +138,8 @@ Each window should expose:
 Concrete native window handles are runtime-local and must not become persisted
 workspace identity.
 
-The first native desktop persists one primary-window placement record in
-`~/.nucleus/config/ui.json` beside its regions and split ratios. The record
+The native desktop persists one primary-window placement record in
+`state/window-placement.json`, separate from regions and split ratios. The record
 contains a best-effort display identity, normal unmaximized outer bounds in
 physical pixels, and maximized state.
 
@@ -226,7 +226,7 @@ mirrors Loophole's `PanelDefinition.allowedRegions` model:
 - closeability, movability, and system-panel status are separate flags
 
 The desktop persists this as `allowed_regions` on project-keyed local panel
-records in `~/.nucleus/config/ui.json`. Native window placement remains one
+records in `config/project-layouts.json`. Native window placement remains one
 global record. Schema v7 migrates the former single panel layout into a
 one-time candidate claimed by the first project loaded after upgrade; other
 previously unseen projects receive the minimal Agent Chat-only layout. This is
@@ -246,7 +246,7 @@ the window layout record:
 - `center_stack_ratio`
 - `right_stack_ratio`
 
-These ratios are client-local preferences below `~/.nucleus/config/ui.json`.
+These ratios are client-local preferences in `config/project-layouts.json`.
 They are stored per project and must not be committed into project
 repositories by default.
 

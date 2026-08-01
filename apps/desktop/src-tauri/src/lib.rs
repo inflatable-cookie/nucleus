@@ -47,6 +47,7 @@ mod editor_directories;
 mod editor_drafts;
 mod editor_file_watch;
 mod scm_working_copy;
+mod storage_migration;
 mod terminal_panel;
 mod window_geometry;
 mod workspace_ui;
@@ -62,7 +63,10 @@ struct DesktopState {
     startup_error: Option<String>,
     task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
     terminal: TerminalHostRuntime,
-    workspace_ui_config_path: PathBuf,
+    workspace_ui_paths: workspace_ui::WorkspaceUiPaths,
+    storage_profile_id: String,
+    storage_layout_digest: String,
+    legacy_import_receipt: Option<storage_migration::LegacyImportReceipt>,
 }
 
 /// Startup posture reported to the UI: storage posture, seeding outcome.
@@ -70,6 +74,9 @@ struct DesktopState {
 struct DesktopStartupStatus {
     fixture_backed: bool,
     startup_error: Option<String>,
+    storage_profile_id: String,
+    storage_layout_digest: String,
+    legacy_import_receipt: Option<storage_migration::LegacyImportReceipt>,
 }
 
 #[tauri::command]
@@ -77,6 +84,9 @@ fn desktop_startup_status(state: tauri::State<'_, DesktopState>) -> DesktopStart
     DesktopStartupStatus {
         fixture_backed: true,
         startup_error: state.startup_error.clone(),
+        storage_profile_id: state.storage_profile_id.clone(),
+        storage_layout_digest: state.storage_layout_digest.clone(),
+        legacy_import_receipt: state.legacy_import_receipt.clone(),
     }
 }
 
@@ -295,7 +305,13 @@ impl DesktopState {
             LocalCodexChatService::default(),
             None,
             PathBuf::from("target/nucleus-desktop-test/editor-drafts"),
-            PathBuf::from("target/nucleus-desktop-test/ui.json"),
+            workspace_ui::WorkspaceUiPaths::new(
+                PathBuf::from("target/nucleus-desktop-test/window-placement.json"),
+                PathBuf::from("target/nucleus-desktop-test/project-layouts.json"),
+            ),
+            None,
+            "test-v1".to_owned(),
+            "test-layout".to_owned(),
             None,
         )
     }
@@ -307,8 +323,14 @@ impl DesktopState {
             LocalCodexChatService::default(),
             None,
             PathBuf::from("target/nucleus-desktop-test/editor-drafts"),
-            PathBuf::from("target/nucleus-desktop-test/ui.json"),
+            workspace_ui::WorkspaceUiPaths::new(
+                PathBuf::from("target/nucleus-desktop-test/window-placement.json"),
+                PathBuf::from("target/nucleus-desktop-test/project-layouts.json"),
+            ),
             Some(proof_fixture_root),
+            "test-v1".to_owned(),
+            "test-layout".to_owned(),
+            None,
         )
     }
 
@@ -316,9 +338,12 @@ impl DesktopState {
         backend: SqliteBackend,
         snapshot_root: PathBuf,
         editor_drafts_path: PathBuf,
-        workspace_ui_config_path: PathBuf,
+        workspace_ui_paths: workspace_ui::WorkspaceUiPaths,
         chat_turn_timeout: std::time::Duration,
         proof_fixture_root: Option<PathBuf>,
+        storage_profile_id: String,
+        storage_layout_digest: String,
+        legacy_import_receipt: Option<storage_migration::LegacyImportReceipt>,
     ) -> Self {
         let snapshot_store = TaskReviewSnapshotStore::new(snapshot_root)
             .expect("local task review snapshot store should be writable");
@@ -330,8 +355,11 @@ impl DesktopState {
             ),
             Some(snapshot_store),
             editor_drafts_path,
-            workspace_ui_config_path,
+            workspace_ui_paths,
             proof_fixture_root,
+            storage_profile_id,
+            storage_layout_digest,
+            legacy_import_receipt,
         )
     }
 
@@ -340,8 +368,11 @@ impl DesktopState {
         chat: LocalCodexChatService,
         task_review_snapshot_store: Option<TaskReviewSnapshotStore>,
         editor_drafts_path: PathBuf,
-        workspace_ui_config_path: PathBuf,
+        workspace_ui_paths: workspace_ui::WorkspaceUiPaths,
         proof_fixture_root: Option<PathBuf>,
+        storage_profile_id: String,
+        storage_layout_digest: String,
+        legacy_import_receipt: Option<storage_migration::LegacyImportReceipt>,
     ) -> Self {
         let server_state = ServerStateService::new(backend.clone());
         let handler = LocalControlRequestHandler::new(backend, None);
@@ -361,10 +392,14 @@ impl DesktopState {
             startup_error,
             task_review_snapshot_store,
             terminal: TerminalHostRuntime::default(),
-            workspace_ui_config_path,
+            workspace_ui_paths,
+            storage_profile_id,
+            storage_layout_digest,
+            legacy_import_receipt,
         }
     }
 
+    #[cfg(test)]
     fn submit_control_envelope(
         &self,
         request: ControlRequestEnvelopeDto,
@@ -840,7 +875,7 @@ fn load_workspace_ui_config(
     state: tauri::State<'_, DesktopState>,
     project_id: String,
 ) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
-    workspace_ui::load_workspace_ui_config(&state.workspace_ui_config_path, &project_id)
+    workspace_ui::load_workspace_ui_config(&state.workspace_ui_paths, &project_id)
 }
 
 #[tauri::command]
@@ -849,35 +884,36 @@ fn save_workspace_ui_config(
     project_id: String,
     config: workspace_ui::WorkspaceUiConfigDto,
 ) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
-    workspace_ui::save_workspace_ui_config(&state.workspace_ui_config_path, &project_id, config)
+    workspace_ui::save_workspace_ui_config(&state.workspace_ui_paths, &project_id, config)
 }
 
 pub fn run() {
-    let profile = desktop_profile::DesktopProfile::from_environment()
-        .expect("invalid Nucleus desktop profile");
-    profile
-        .prepare()
-        .expect("Nucleus desktop profile should be writable");
-    let workspace_ui_config_path = profile.workspace_ui_config_path();
-    let editor_drafts_path = profile.editor_drafts_path();
-    let proof_fixture_root = profile.proof_fixture_root().map(Path::to_path_buf);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(DesktopState::new_with_profile(
-            SqliteBackend::new(profile.database_path()),
-            profile.snapshot_path(),
-            editor_drafts_path,
-            workspace_ui_config_path.clone(),
-            profile.chat_turn_timeout(),
-            proof_fixture_root,
-        ))
         .setup(move |app| {
+            let (facts, home) = desktop_profile::host_storage_facts(app.handle())?;
+            let profile = desktop_profile::DesktopProfile::from_environment(facts, &home)
+                .map_err(std::io::Error::other)?;
+            profile.prepare().map_err(std::io::Error::other)?;
+            let workspace_ui_paths = profile.workspace_ui_paths();
+            let window_placement_path = workspace_ui_paths.window_placement().to_path_buf();
+            app.manage(DesktopState::new_with_profile(
+                SqliteBackend::new(profile.database_path()),
+                profile.snapshot_path(),
+                profile.editor_drafts_path(),
+                workspace_ui_paths,
+                profile.chat_turn_timeout(),
+                profile.proof_fixture_root().map(Path::to_path_buf),
+                profile.profile_id().to_owned(),
+                profile.layout_digest().to_owned(),
+                profile.legacy_import_receipt().cloned(),
+            ));
             app.set_theme(Some(tauri::Theme::Dark));
             if let Some(window) = app.get_webview_window("main") {
                 window.set_theme(Some(tauri::Theme::Dark))?;
                 if let Err(error) =
-                    window_geometry::restore_and_track(&window, workspace_ui_config_path.clone())
+                    window_geometry::restore_and_track(&window, window_placement_path.clone())
                 {
                     eprintln!("restore native window placement failed: {error}");
                 }
