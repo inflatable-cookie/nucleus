@@ -49,7 +49,7 @@ mod editor_file_watch;
 mod scm_working_copy;
 mod storage_migration;
 mod terminal_panel;
-mod window_geometry;
+mod window_host;
 mod workspace_ui;
 
 struct DesktopState {
@@ -74,16 +74,24 @@ struct DesktopState {
 struct DesktopStartupStatus {
     fixture_backed: bool,
     startup_error: Option<String>,
+    window_restore_complete: bool,
     storage_profile_id: String,
     storage_layout_digest: String,
     legacy_import_receipt: Option<storage_migration::LegacyImportReceipt>,
 }
 
 #[tauri::command]
-fn desktop_startup_status(state: tauri::State<'_, DesktopState>) -> DesktopStartupStatus {
+fn desktop_startup_status(
+    state: tauri::State<'_, DesktopState>,
+    window: tauri::State<'_, window_host::NucleusWindowRuntime>,
+) -> DesktopStartupStatus {
     DesktopStartupStatus {
         fixture_backed: true,
-        startup_error: state.startup_error.clone(),
+        startup_error: state
+            .startup_error
+            .clone()
+            .or_else(|| window.restore_error()),
+        window_restore_complete: window.initial_restore_complete(),
         storage_profile_id: state.storage_profile_id.clone(),
         storage_layout_digest: state.storage_layout_digest.clone(),
         legacy_import_receipt: state.legacy_import_receipt.clone(),
@@ -873,22 +881,40 @@ async fn submit_control_envelope(
 #[tauri::command]
 fn load_workspace_ui_config(
     state: tauri::State<'_, DesktopState>,
+    window: tauri::State<'_, window_host::NucleusWindowRuntime>,
     project_id: String,
 ) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
-    workspace_ui::load_workspace_ui_config(&state.workspace_ui_paths, &project_id)
+    workspace_ui::load_workspace_ui_config(
+        &state.workspace_ui_paths,
+        &project_id,
+        window.placement_dto()?,
+    )
 }
 
 #[tauri::command]
 fn save_workspace_ui_config(
     state: tauri::State<'_, DesktopState>,
+    window: tauri::State<'_, window_host::NucleusWindowRuntime>,
     project_id: String,
     config: workspace_ui::WorkspaceUiConfigDto,
 ) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
-    workspace_ui::save_workspace_ui_config(&state.workspace_ui_paths, &project_id, config)
+    workspace_ui::save_workspace_ui_config(
+        &state.workspace_ui_paths,
+        &project_id,
+        config,
+        window.placement_dto()?,
+    )
+}
+
+#[tauri::command]
+fn desktop_window_page_ready(
+    window: tauri::State<'_, window_host::NucleusWindowRuntime>,
+) -> Result<longhorn_tauri_windowing::WindowRevealReceipt, String> {
+    window.mark_page_ready()
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
@@ -897,7 +923,11 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             profile.prepare().map_err(std::io::Error::other)?;
             let workspace_ui_paths = profile.workspace_ui_paths();
-            let window_placement_path = workspace_ui_paths.window_placement().to_path_buf();
+            app.set_theme(Some(tauri::Theme::Dark));
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_theme(Some(tauri::Theme::Dark))?;
+            }
+            window_host::install(app, &profile).map_err(std::io::Error::other)?;
             app.manage(DesktopState::new_with_profile(
                 SqliteBackend::new(profile.database_path()),
                 profile.snapshot_path(),
@@ -909,16 +939,6 @@ pub fn run() {
                 profile.layout_digest().to_owned(),
                 profile.legacy_import_receipt().cloned(),
             ));
-            app.set_theme(Some(tauri::Theme::Dark));
-            if let Some(window) = app.get_webview_window("main") {
-                window.set_theme(Some(tauri::Theme::Dark))?;
-                if let Err(error) =
-                    window_geometry::restore_and_track(&window, window_placement_path.clone())
-                {
-                    eprintln!("restore native window placement failed: {error}");
-                }
-                window.show()?;
-            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -934,6 +954,7 @@ pub fn run() {
             load_workspace_ui_config,
             save_workspace_ui_config,
             desktop_startup_status,
+            desktop_window_page_ready,
             list_editor_directory,
             list_editor_files,
             search_editor_files,
@@ -970,8 +991,13 @@ pub fn run() {
             terminal_panel::terminal_close_for_panel,
             terminal_panel::terminal_close_for_project
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run nucleus desktop");
+        .build(tauri::generate_context!())
+        .expect("failed to build nucleus desktop");
+    app.run(|app, event| {
+        if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+            window_host::teardown(app);
+        }
+    });
 }
 
 #[cfg(test)]

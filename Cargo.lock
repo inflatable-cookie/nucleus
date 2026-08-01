@@ -2264,12 +2264,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "longhorn-display"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "serde",
+]
+
+[[package]]
 name = "longhorn-tauri-config"
 version = "0.1.0"
 dependencies = [
  "longhorn-config",
  "serde",
  "tauri",
+]
+
+[[package]]
+name = "longhorn-tauri-windowing"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "longhorn-display",
+ "longhorn-windowing",
+ "serde",
+ "tauri",
+]
+
+[[package]]
+name = "longhorn-windowing"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "longhorn-display",
+ "serde",
+]
+
+[[package]]
+name = "longhorn-windowing-config"
+version = "0.1.0"
+dependencies = [
+ "longhorn-config",
+ "longhorn-core",
+ "longhorn-tauri-windowing",
 ]
 
 [[package]]
@@ -2471,7 +2508,11 @@ version = "0.0.0"
 dependencies = [
  "longhorn-config",
  "longhorn-core",
+ "longhorn-display",
  "longhorn-tauri-config",
+ "longhorn-tauri-windowing",
+ "longhorn-windowing",
+ "longhorn-windowing-config",
  "nucleus-command-policy",
  "nucleus-core",
  "nucleus-local-store",

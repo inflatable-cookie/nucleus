@@ -16,7 +16,11 @@ tauri-build = { version = "2.6.3", features = [] }
 [dependencies]
 longhorn-config = { path = "../../../../longhorn/crates/longhorn-config" }
 longhorn-core = { path = "../../../../longhorn/crates/longhorn-core" }
+longhorn-display = { path = "../../../../longhorn/crates/longhorn-display" }
 longhorn-tauri-config = { path = "../../../../longhorn/crates/longhorn-tauri-config" }
+longhorn-tauri-windowing = { path = "../../../../longhorn/crates/longhorn-tauri-windowing" }
+longhorn-windowing = { path = "../../../../longhorn/crates/longhorn-windowing" }
+longhorn-windowing-config = { path = "../../../../longhorn/crates/longhorn-windowing-config" }
 nucleus-command-policy = { path = "../../../crates/nucleus-command-policy" }
 nucleus-core = { path = "../../../crates/nucleus-core" }
 nucleus-local-store = { path = "../../../crates/nucleus-local-store" }

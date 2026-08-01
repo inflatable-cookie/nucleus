@@ -5,7 +5,7 @@ use std::time::Duration;
 use longhorn_config::{
     inspect_storage_bootstrap, resolve_storage_bootstrap_paths, resolve_storage_layout,
     PlatformDirectoryFacts, ResolvedStorageLayout, StorageBootstrapOrigin, StorageBootstrapState,
-    StorageIdentity, StorageLayoutRequest, StorageProfile, StorageProfileSelection,
+    StorageIdentity, StorageLayoutRequest, StorageProfile, StorageProfileSelection, StorageRoots,
 };
 use longhorn_tauri_config::{platform_directory_facts, TauriDirectorySnapshot};
 use tauri::Manager;
@@ -139,6 +139,24 @@ impl DesktopProfile {
                 .config()
                 .join("project-layouts.json"),
         )
+    }
+
+    pub fn storage_roots(&self) -> &StorageRoots {
+        self.layout.storage_roots()
+    }
+
+    pub fn legacy_window_placement_backup_path(&self) -> PathBuf {
+        self.layout
+            .storage_roots()
+            .backup()
+            .join("nucleus-window-placement-card097-v1.json")
+    }
+
+    pub fn legacy_window_placement_receipt_path(&self) -> PathBuf {
+        self.layout
+            .storage_roots()
+            .backup()
+            .join("nucleus-window-placement-card097-v1.receipt.json")
     }
 
     pub fn editor_drafts_path(&self) -> PathBuf {

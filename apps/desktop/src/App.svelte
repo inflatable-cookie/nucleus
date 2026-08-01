@@ -43,15 +43,18 @@
   ]);
 
   onMount(() => {
-    void invoke<{ fixture_backed: boolean; startup_error: string | null }>(
-      "desktop_startup_status",
-    )
-      .then((status) => {
+    void Promise.all([
+      invoke<{ fixture_backed: boolean; startup_error: string | null }>(
+        "desktop_startup_status",
+      ),
+      invoke("desktop_window_page_ready"),
+    ])
+      .then(([status]) => {
         fixturePosture = status.fixture_backed;
         startupError = status.startup_error;
       })
       .catch((error) => {
-        startupError = `startup status unavailable: ${String(error)}`;
+        startupError = `desktop startup unavailable: ${String(error)}`;
       });
     const storedRatio = Number.parseFloat(
       window.localStorage.getItem(projectRailRatioStorageKey) ?? "",

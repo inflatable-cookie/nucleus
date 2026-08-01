@@ -193,10 +193,10 @@ struct LegacyWorkspaceSurfaceDto {
 pub fn load_workspace_ui_config(
     paths: &WorkspaceUiPaths,
     project_id: &str,
+    placement: WorkspaceWindowPlacementDto,
 ) -> Result<WorkspaceUiConfigDto, String> {
     validate_project_id(project_id)?;
     let _guard = config_io_lock()?;
-    let window = load_workspace_window_store_unlocked(paths.window_placement())?;
     let mut projects = load_workspace_project_store_unlocked(paths.project_layouts())?;
     let changed = ensure_project_layouts(&mut projects, project_id);
 
@@ -204,38 +204,7 @@ pub fn load_workspace_ui_config(
         write_workspace_project_store(paths.project_layouts(), &projects)?;
     }
 
-    materialize_split_project_config(&window, &projects, project_id)
-}
-
-pub fn load_workspace_window_placement(path: &Path) -> Result<WorkspaceWindowPlacementDto, String> {
-    let _guard = config_io_lock()?;
-    Ok(load_workspace_window_store_unlocked(path)?.window.placement)
-}
-
-fn load_workspace_window_store_unlocked(path: &Path) -> Result<WorkspaceWindowStoreDto, String> {
-    if !path.exists() {
-        let store = default_workspace_window_store();
-        write_workspace_window_store(path, &store)?;
-        return Ok(store);
-    }
-
-    let raw = fs::read_to_string(path)
-        .map_err(|error| format!("read workspace window state failed: {error}"))?;
-    let mut store = serde_json::from_str::<WorkspaceWindowStoreDto>(&raw)
-        .map_err(|error| format!("decode workspace window state failed: {error}"))?;
-    if store.schema_version > WINDOW_SCHEMA_VERSION {
-        return Err(format!(
-            "workspace window state schema {} is newer than supported schema {WINDOW_SCHEMA_VERSION}",
-            store.schema_version
-        ));
-    }
-    let changed = store.schema_version != WINDOW_SCHEMA_VERSION;
-    store.schema_version = WINDOW_SCHEMA_VERSION;
-    store.window.placement = normalize_window_placement(store.window.placement);
-    if changed {
-        write_workspace_window_store(path, &store)?;
-    }
-    Ok(store)
+    materialize_split_project_config(placement, &projects, project_id)
 }
 
 fn load_workspace_project_store_unlocked(
@@ -269,39 +238,14 @@ pub fn save_workspace_ui_config(
     paths: &WorkspaceUiPaths,
     project_id: &str,
     config: WorkspaceUiConfigDto,
+    placement: WorkspaceWindowPlacementDto,
 ) -> Result<WorkspaceUiConfigDto, String> {
     validate_project_id(project_id)?;
     let _guard = config_io_lock()?;
-    let window = load_workspace_window_store_unlocked(paths.window_placement())?;
     let mut projects = load_workspace_project_store_unlocked(paths.project_layouts())?;
     apply_split_project_config(&mut projects, project_id, config);
     write_workspace_project_store(paths.project_layouts(), &projects)?;
-    materialize_split_project_config(&window, &projects, project_id)
-}
-
-pub fn update_workspace_window_placement(
-    path: &Path,
-    placement: WorkspaceWindowPlacementDto,
-) -> Result<(), String> {
-    let _guard = config_io_lock()?;
-    let mut store = load_workspace_window_store_unlocked(path)?;
-    let placement = normalize_window_placement(placement);
-
-    store.window.placement.display_id = placement.display_id;
-    store.window.placement.maximized = placement.maximized;
-    if placement.normal_bounds.is_some() {
-        store.window.placement.normal_bounds = placement.normal_bounds;
-    }
-
-    store.schema_version = WINDOW_SCHEMA_VERSION;
-    write_workspace_window_store(path, &store)
-}
-
-fn write_workspace_window_store(
-    path: &Path,
-    store: &WorkspaceWindowStoreDto,
-) -> Result<(), String> {
-    write_json(path, store, "workspace window state")
+    materialize_split_project_config(placement, &projects, project_id)
 }
 
 fn write_workspace_project_store(
@@ -650,7 +594,7 @@ fn materialize_project_config(
 }
 
 fn materialize_split_project_config(
-    window: &WorkspaceWindowStoreDto,
+    placement: WorkspaceWindowPlacementDto,
     projects: &WorkspaceProjectLayoutsStoreDto,
     project_id: &str,
 ) -> Result<WorkspaceUiConfigDto, String> {
@@ -661,8 +605,8 @@ fn materialize_split_project_config(
     Ok(WorkspaceUiConfigDto {
         schema_version: SCHEMA_VERSION,
         window: WorkspaceWindowDto {
-            id: window.window.id.clone(),
-            placement: window.window.placement.clone(),
+            id: "window:primary".to_owned(),
+            placement,
             layout: project.layout.clone(),
             regions: project.regions.clone(),
             active_panels: project.active_panels.clone(),
@@ -787,16 +731,6 @@ fn default_workspace_ui_store() -> WorkspaceUiStoreDto {
         },
         project_layouts: BTreeMap::new(),
         pending_legacy_layout: None,
-    }
-}
-
-fn default_workspace_window_store() -> WorkspaceWindowStoreDto {
-    WorkspaceWindowStoreDto {
-        schema_version: WINDOW_SCHEMA_VERSION,
-        window: WorkspaceHostWindowDto {
-            id: "window:primary".to_owned(),
-            placement: WorkspaceWindowPlacementDto::default(),
-        },
     }
 }
 

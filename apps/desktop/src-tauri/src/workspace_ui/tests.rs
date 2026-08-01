@@ -724,32 +724,29 @@ fn split_runtime_domains_mutate_independently() {
         temp.path().join("state/window-placement.json"),
         temp.path().join("config/project-layouts.json"),
     );
-    let mut config = super::load_workspace_ui_config(&paths, "project:one")
+    let host_placement = super::WorkspaceWindowPlacementDto {
+        display_id: Some("display:one".to_owned()),
+        normal_bounds: Some(super::WorkspaceWindowBoundsDto {
+            x: 10,
+            y: 20,
+            width: 1200,
+            height: 800,
+        }),
+        maximized: false,
+    };
+    let mut config = super::load_workspace_ui_config(&paths, "project:one", host_placement.clone())
         .expect("load split workspace config");
     config.window.layout.center_right_ratio = 0.51;
-    super::save_workspace_ui_config(&paths, "project:one", config).expect("save project layout");
+    config.window.placement.display_id = Some("display:renderer".to_owned());
+    super::save_workspace_ui_config(&paths, "project:one", config, host_placement.clone())
+        .expect("save project layout");
     let projects_before = std::fs::read(paths.project_layouts()).expect("project bytes");
-
-    super::update_workspace_window_placement(
-        paths.window_placement(),
-        super::WorkspaceWindowPlacementDto {
-            display_id: Some("display:one".to_owned()),
-            normal_bounds: Some(super::WorkspaceWindowBoundsDto {
-                x: 10,
-                y: 20,
-                width: 1200,
-                height: 800,
-            }),
-            maximized: false,
-        },
-    )
-    .expect("save window placement");
 
     assert_eq!(
         std::fs::read(paths.project_layouts()).expect("project bytes after placement"),
         projects_before
     );
-    let restored = super::load_workspace_ui_config(&paths, "project:one")
+    let restored = super::load_workspace_ui_config(&paths, "project:one", host_placement)
         .expect("reload split workspace config");
     assert_eq!(restored.window.layout.center_right_ratio, 0.51);
     assert_eq!(
