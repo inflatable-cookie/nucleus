@@ -7,6 +7,9 @@ export default defineConfig({
   resolve: {
     preserveSymlinks: true,
   },
+  optimizeDeps: {
+    exclude: ["@longhorn/svelte", "@longhorn/native-content-svelte"],
+  },
   server: {
     strictPort: true,
     port: 1420,

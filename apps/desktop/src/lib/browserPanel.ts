@@ -1,78 +1,60 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Webview } from "@tauri-apps/api/webview";
+import { listen } from "@tauri-apps/api/event";
+import type { EventTransport } from "@longhorn/core";
+import { NativeContentClient } from "@longhorn/native-content";
+import { createTauriNativeContentPort } from "@longhorn/native-content/tauri";
 
 export const DEFAULT_BROWSER_URL = "https://example.com";
 
-export interface BrowserViewportBounds {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export interface BrowserRuntimeEvent {
-  label: string;
+  islandId: string;
   url: string;
   loading: boolean | null;
   notice: string | null;
 }
 
-export function browserWebviewLabel(panelId: string): string {
-  const safePanelId = panelId.replace(/[^a-zA-Z0-9\-/:_]/g, "-");
-  return `nucleus-browser-${safePanelId}`;
+export function browserIslandId(panelId: string): string {
+  const safePanelId = panelId.replace(/[^a-zA-Z0-9\-/:_.]/g, "-");
+  return `island:nucleus-browser:${safePanelId}`;
 }
 
-export async function findBrowserWebview(panelId: string): Promise<Webview | null> {
-  return Webview.getByLabel(browserWebviewLabel(panelId));
+export function createBrowserNativeContentClient(panelId: string): NativeContentClient {
+  const islandId = browserIslandId(panelId);
+  let requestSequence = 0;
+  const transport: EventTransport = {
+    invoke: (command, args) => invoke(command, args),
+    listen: async (event, listener) => {
+      const unlisten = await listen<unknown>(event, ({ payload }) => listener(payload));
+      return unlisten;
+    },
+  };
+  return new NativeContentClient(
+    createTauriNativeContentPort({
+      transport,
+      nextRequestId: () => {
+        requestSequence += 1;
+        return `request:nucleus-browser:${requestSequence}`;
+      },
+    }),
+    islandId,
+  );
 }
 
-export async function ensureBrowserWebview(
-  panelId: string,
-  url: string,
-  bounds: BrowserViewportBounds,
-): Promise<string> {
-  return invoke<string>("browser_panel_ensure", {
-    label: browserWebviewLabel(panelId),
-    url,
-    bounds,
-  });
+export async function destroyBrowserIsland(panelId: string): Promise<void> {
+  return invoke("browser_panel_destroy", { islandId: browserIslandId(panelId) });
 }
 
-export async function positionBrowserWebview(
-  panelId: string,
-  bounds: BrowserViewportBounds,
-): Promise<void> {
-  return invoke("browser_panel_set_bounds", {
-    label: browserWebviewLabel(panelId),
-    bounds,
-  });
-}
-
-export async function hideBrowserWebview(webview: Webview | null): Promise<void> {
-  await webview?.hide();
+export async function hideBrowserIslandForUnmount(panelId: string): Promise<void> {
+  return invoke("browser_panel_hide_for_unmount", { islandId: browserIslandId(panelId) });
 }
 
 export async function resetBrowserCursor(panelId: string): Promise<void> {
-  return invoke("browser_panel_reset_cursor", {
-    label: browserWebviewLabel(panelId),
-  });
+  return invoke("browser_panel_reset_cursor", { islandId: browserIslandId(panelId) });
 }
 
-export async function showBrowserWebview(webview: Webview): Promise<void> {
-  await webview.show();
-}
-
-export async function destroyBrowserWebview(panelId: string): Promise<void> {
-  const webview = await findBrowserWebview(panelId);
-  if (webview) {
-    await resetBrowserCursor(panelId);
-  }
-  await webview?.close();
-}
-
-export async function navigateBrowserWebview(panelId: string, url: string): Promise<string> {
+export async function navigateBrowserIsland(panelId: string, url: string): Promise<string> {
   return invoke<string>("browser_panel_navigate", {
-    label: browserWebviewLabel(panelId),
+    islandId: browserIslandId(panelId),
     url,
   });
 }
@@ -82,13 +64,13 @@ export async function runBrowserAction(
   action: "back" | "forward" | "reload",
 ): Promise<void> {
   return invoke("browser_panel_action", {
-    label: browserWebviewLabel(panelId),
+    islandId: browserIslandId(panelId),
     action,
   });
 }
 
 export async function readBrowserUrl(panelId: string): Promise<string> {
   return invoke<string>("browser_panel_current_url", {
-    label: browserWebviewLabel(panelId),
+    islandId: browserIslandId(panelId),
   });
 }

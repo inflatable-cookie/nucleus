@@ -41,9 +41,6 @@
             "core:default",
             "core:window:allow-start-dragging",
             "core:window:allow-set-theme",
-            "core:webview:allow-webview-hide",
-            "core:webview:allow-webview-show",
-            "core:webview:allow-webview-close",
             "dialog:allow-open",
             "opener:allow-open-url",
             "opener:allow-default-urls"

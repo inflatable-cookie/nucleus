@@ -1,23 +1,23 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { Icon, Text } from "@poodle/svelte";
   import { arrowLeft, arrowRight, externalLink, rotateCw } from "@poodle/icons-lucide";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import type { Webview } from "@tauri-apps/api/webview";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
+    NativeContentSession,
+    nativeContentViewport,
+    resolveNativeContentVisibility,
+  } from "@longhorn/native-content-svelte";
+  import {
     DEFAULT_BROWSER_URL,
-    browserWebviewLabel,
-    ensureBrowserWebview,
-    findBrowserWebview,
-    hideBrowserWebview,
-    navigateBrowserWebview,
-    positionBrowserWebview,
+    browserIslandId,
+    createBrowserNativeContentClient,
+    hideBrowserIslandForUnmount,
+    navigateBrowserIsland,
     readBrowserUrl,
     resetBrowserCursor,
     runBrowserAction,
-    showBrowserWebview,
-    type BrowserViewportBounds,
     type BrowserRuntimeEvent,
   } from "./browserPanel";
   import {
@@ -26,155 +26,140 @@
     type NativePanelOverlayEventDetail,
   } from "./nativePanelVisibility";
 
-  let { panelId }: { panelId: string } = $props();
+  let { panelId, active }: { panelId: string; active: boolean } = $props();
+  const stablePanelId = untrack(() => panelId);
+
+  const session = new NativeContentSession({
+    client: createBrowserNativeContentClient(stablePanelId),
+    scale: browserScale(),
+    visibility: { state: "hidden", reason: "nucleus:unmounted" },
+    focus: "unchanged",
+    inputRouting: "native_direct",
+  });
 
   let viewport = $state<HTMLDivElement | null>(null);
   let address = $state(DEFAULT_BROWSER_URL);
   let failure = $state<string | null>(null);
   let notice = $state<string | null>(null);
   let loading = $state(true);
-  let webview: Webview | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let syncFrame: number | null = null;
   let mounted = false;
+  let viewportReady = false;
   let workspaceVisible = true;
   const openOverlays = new Set<string>();
-  let nativeVisible = false;
-  let lastBounds: BrowserViewportBounds | null = null;
   let unlistenRuntime: UnlistenFn | null = null;
+
+  $effect(() => {
+    const status = session.status;
+    if (status.kind === "failed") failure = formatError(status.error);
+    else if (status.kind === "rejected") failure = status.rejection.message;
+    if (session.snapshot?.observed.readiness === "ready") loading = false;
+  });
+
+  $effect(() => {
+    if (active) queueViewportSync();
+    else syncVisibility();
+  });
 
   onMount(() => {
     mounted = true;
-    resizeObserver = new ResizeObserver(queueBoundsSync);
-    if (viewport) {
-      resizeObserver.observe(viewport);
-    }
-    window.addEventListener("resize", queueBoundsSync);
+    resizeObserver = new ResizeObserver(queueViewportSync);
+    if (viewport) resizeObserver.observe(viewport);
+    window.addEventListener("resize", queueViewportSync);
+    window.addEventListener("mouseup", showAfterWorkspaceInteraction);
+    window.addEventListener("pointerup", showAfterWorkspaceInteraction);
     window.addEventListener("nucleus:native-panels-hide", hideForWorkspaceInteraction);
     window.addEventListener("nucleus:native-panels-show", showAfterWorkspaceInteraction);
     window.addEventListener(NATIVE_PANEL_OVERLAY_EVENT, handleOverlayVisibility);
-    void mountWebview();
+
+    syncViewport();
+    void startSession();
 
     return () => {
       mounted = false;
+      viewportReady = false;
       resizeObserver?.disconnect();
-      window.removeEventListener("resize", queueBoundsSync);
+      window.removeEventListener("resize", queueViewportSync);
+      window.removeEventListener("mouseup", showAfterWorkspaceInteraction);
+      window.removeEventListener("pointerup", showAfterWorkspaceInteraction);
       window.removeEventListener("nucleus:native-panels-hide", hideForWorkspaceInteraction);
       window.removeEventListener("nucleus:native-panels-show", showAfterWorkspaceInteraction);
       window.removeEventListener(NATIVE_PANEL_OVERLAY_EVENT, handleOverlayVisibility);
-      if (syncFrame !== null) {
-        cancelAnimationFrame(syncFrame);
-      }
+      if (syncFrame !== null) cancelAnimationFrame(syncFrame);
       unlistenRuntime?.();
-      setNativeBrowserViewportGeometry(panelId, null);
-      nativeVisible = false;
-      void resetBrowserCursor(panelId).catch(() => undefined);
-      void hideBrowserWebview(webview).catch(() => undefined);
+      setNativeBrowserViewportGeometry(stablePanelId, null);
+      session.setVisibilityPolicy({ state: "hidden", reason: "nucleus:unmounted" });
+      void hideBrowserIslandForUnmount(stablePanelId).then(() => session.stop()).catch((error) => {
+        failure = formatError(error);
+      });
+      void resetBrowserCursor(stablePanelId).catch(() => undefined);
     };
   });
 
-  onDestroy(() => {
-    mounted = false;
-  });
-
-  async function mountWebview(): Promise<void> {
+  async function startSession(): Promise<void> {
     loading = true;
     failure = null;
     try {
-      const bounds = viewportBounds();
-      if (!bounds) {
-        throw new Error("browser viewport is not ready");
-      }
-
       unlistenRuntime = await listen<BrowserRuntimeEvent>(
         "nucleus://browser-state",
         handleRuntimeState,
       );
-      const existingWebview = await findBrowserWebview(panelId);
-      address = await ensureBrowserWebview(panelId, DEFAULT_BROWSER_URL, bounds);
-      webview = existingWebview ?? await findBrowserWebview(panelId);
-      if (!webview) {
-        throw new Error("browser view was not created");
-      }
-      if (existingWebview) {
-        loading = false;
-      }
-
       if (!mounted) {
-        await hideBrowserWebview(webview);
+        unlistenRuntime();
+        unlistenRuntime = null;
         return;
       }
-      await positionBrowserWebview(panelId, bounds);
-      lastBounds = bounds;
-      if (canShowNativeView()) {
-        await showBrowserWebview(webview);
-        nativeVisible = true;
-      }
-    } catch (caught) {
-      failure = formatError(caught);
+      await session.start();
+      queueViewportSync();
+    } catch (error) {
+      failure = formatError(error);
       loading = false;
     }
   }
 
-  function queueBoundsSync(): void {
-    if (syncFrame !== null) {
-      cancelAnimationFrame(syncFrame);
-    }
+  function queueViewportSync(): void {
+    if (syncFrame !== null) return;
     syncFrame = requestAnimationFrame(() => {
       syncFrame = null;
-      void syncBounds();
+      syncViewport();
     });
   }
 
-  async function syncBounds(): Promise<void> {
-    if (!webview || !canShowNativeView() || !mounted) {
-      return;
-    }
-    const bounds = viewportBounds();
-    if (!bounds) {
-      nativeVisible = false;
-      await hideBrowserWebview(webview).catch(() => undefined);
-      return;
-    }
-    if (!sameBounds(lastBounds, bounds)) {
-      try {
-        await positionBrowserWebview(panelId, bounds);
-      } catch (caught) {
-        failure = formatError(caught);
-        return;
-      }
-      lastBounds = bounds;
-    }
-    if (canShowNativeView() && mounted && !nativeVisible) {
-      await showBrowserWebview(webview).catch((caught) => {
-        failure = formatError(caught);
-      });
-      nativeVisible = true;
-    }
-  }
-
-  function viewportBounds(): BrowserViewportBounds | null {
+  function syncViewport(): void {
+    session.setScale(browserScale());
     const rect = viewport?.getBoundingClientRect();
-    if (!rect || rect.width < 1 || rect.height < 1) {
-      setNativeBrowserViewportGeometry(panelId, null);
-      return null;
+    viewportReady = Boolean(rect && rect.width >= 1 && rect.height >= 1);
+    if (!rect || !viewportReady) {
+      setNativeBrowserViewportGeometry(stablePanelId, null);
+    } else {
+      setNativeBrowserViewportGeometry(stablePanelId, {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        left: rect.left,
+      });
+      try {
+        session.refreshViewport();
+      } catch (error) {
+        failure = formatError(error);
+      }
     }
-    setNativeBrowserViewportGeometry(panelId, {
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height,
-      top: rect.top,
-      right: rect.right,
-      bottom: rect.bottom,
-      left: rect.left,
-    });
-    return {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.max(1, Math.round(rect.width)),
-      height: Math.max(1, Math.round(rect.height)),
-    };
+    syncVisibility();
+  }
+
+  function syncVisibility(): void {
+    session.setVisibilityPolicy(resolveNativeContentVisibility([
+      { reason: "nucleus:unmounted", active: !mounted },
+      { reason: "nucleus:inactive-panel", active: !active },
+      { reason: "nucleus:empty-viewport", active: !viewportReady },
+      { reason: "nucleus:workspace-gesture", active: !workspaceVisible },
+      { reason: "nucleus:overlay", active: openOverlays.size > 0 },
+    ]));
   }
 
   async function navigate(): Promise<void> {
@@ -182,9 +167,9 @@
     notice = null;
     loading = true;
     try {
-      address = await navigateBrowserWebview(panelId, address);
-    } catch (caught) {
-      failure = formatError(caught);
+      address = await navigateBrowserIsland(stablePanelId, address);
+    } catch (error) {
+      failure = formatError(error);
       loading = false;
     }
   }
@@ -193,19 +178,18 @@
     failure = null;
     notice = null;
     try {
-      await runBrowserAction(panelId, action);
-    } catch (caught) {
-      failure = formatError(caught);
+      await runBrowserAction(stablePanelId, action);
+    } catch (error) {
+      failure = formatError(error);
     }
   }
 
   async function openExternally(): Promise<void> {
     failure = null;
     try {
-      const currentUrl = await readBrowserUrl(panelId);
-      await openUrl(currentUrl);
-    } catch (caught) {
-      failure = formatError(caught);
+      await openUrl(await readBrowserUrl(stablePanelId));
+    } catch (error) {
+      failure = formatError(error);
     }
   }
 
@@ -217,69 +201,46 @@
   }
 
   function handleRuntimeState(event: { payload: BrowserRuntimeEvent }): void {
-    if (event.payload.label !== browserWebviewLabel(panelId)) {
-      return;
-    }
+    if (event.payload.islandId !== browserIslandId(stablePanelId)) return;
     if (event.payload.loading !== null) {
       address = event.payload.url;
       loading = event.payload.loading;
     }
-    if (event.payload.notice) {
-      notice = event.payload.notice;
-    } else if (event.payload.loading === true) {
-      notice = null;
-    }
+    if (event.payload.notice) notice = event.payload.notice;
+    else if (event.payload.loading === true) notice = null;
   }
 
   function hideForWorkspaceInteraction(): void {
     workspaceVisible = false;
-    nativeVisible = false;
-    void resetBrowserCursor(panelId).catch(() => undefined);
-    void hideBrowserWebview(webview).catch(() => undefined);
+    syncVisibility();
+    void resetBrowserCursor(stablePanelId).catch(() => undefined);
   }
 
   function showAfterWorkspaceInteraction(): void {
     workspaceVisible = true;
-    if (!webview || !mounted || !canShowNativeView()) {
-      return;
-    }
-    queueBoundsSync();
+    queueViewportSync();
   }
 
   function handleOverlayVisibility(event: Event): void {
     const detail = (event as CustomEvent<NativePanelOverlayEventDetail>).detail;
     if (!detail?.id) return;
-    const shouldHide = detail.open && (!detail.panelIds || detail.panelIds.includes(panelId));
+    const shouldHide = detail.open && (!detail.panelIds || detail.panelIds.includes(stablePanelId));
     if (shouldHide) {
       openOverlays.add(detail.id);
-      nativeVisible = false;
-      void resetBrowserCursor(panelId).catch(() => undefined);
-      void hideBrowserWebview(webview).catch(() => undefined);
-      return;
+      void resetBrowserCursor(stablePanelId).catch(() => undefined);
+    } else {
+      openOverlays.delete(detail.id);
     }
-    openOverlays.delete(detail.id);
-    if (canShowNativeView()) queueBoundsSync();
+    syncVisibility();
   }
 
-  function canShowNativeView(): boolean {
-    return workspaceVisible && openOverlays.size === 0;
+  function browserScale(): number {
+    const ratio = globalThis.devicePixelRatio;
+    return Math.max(1, Math.round((Number.isFinite(ratio) ? ratio : 1) * 1000));
   }
 
-  function formatError(caught: unknown): string {
-    return caught instanceof Error ? caught.message : String(caught);
-  }
-
-  function sameBounds(
-    left: BrowserViewportBounds | null,
-    right: BrowserViewportBounds,
-  ): boolean {
-    return Boolean(
-      left &&
-        left.x === right.x &&
-        left.y === right.y &&
-        left.width === right.width &&
-        left.height === right.height,
-    );
+  function formatError(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 </script>
 
@@ -324,6 +285,7 @@
   <div
     class="browser-viewport"
     bind:this={viewport}
+    use:nativeContentViewport={session}
     aria-label="Browser content"
   ></div>
 </section>

@@ -16,7 +16,7 @@
   import PanelResourceTargetControl from "./PanelResourceTargetControl.svelte";
   import TaskListPanel from "./TaskListPanel.svelte";
   import TerminalPanel from "./TerminalPanel.svelte";
-  import { destroyBrowserWebview } from "./browserPanel";
+  import { destroyBrowserIsland } from "./browserPanel";
   import { closeTerminalPanel } from "./terminalClient";
   import type {
     ControlGoalRecordDto,
@@ -377,7 +377,7 @@
 
   function cleanUpClosedPanel(panel: WorkspacePanelPresentation): void {
     if (panel.kind === "browser") {
-      void destroyBrowserWebview(panel.external_id).catch((error) => session?.reportError(error));
+      void destroyBrowserIsland(panel.external_id).catch((error) => session?.reportError(error));
     } else if (panel.kind === "terminal" && selectedProject?.project_id) {
       void closeTerminalPanel(selectedProject.project_id, panel.external_id)
         .catch((error) => session?.reportError(error));
@@ -402,6 +402,11 @@
 
   function panelFromContext(context: PanelRenderContext): WorkspacePanelPresentation | null {
     return session?.panel(context.instance.id) ?? null;
+  }
+
+  function panelIsVisible(regionId: RegionId, panelInstanceId: string): boolean {
+    const region = container?.regions.find((candidate) => candidate.region_id === regionId);
+    return region?.active_panel_instance_id === panelInstanceId && region.collapsed !== true;
   }
 
   function resolvePanel(instance: { id: string }) {
@@ -604,14 +609,14 @@
       >
         {#snippet body(context)}
           {@const panel = panelFromContext(context)}
-          {#if panel}{@render PanelBody(panel)}{/if}
+          {#if panel}{@render PanelBody(panel, panelIsVisible(regionId, context.instance.id))}{/if}
         {/snippet}
       </LayoutDockRegion>
     </section>
   {/if}
 {/snippet}
 
-{#snippet PanelBody(panel: WorkspacePanelPresentation)}
+{#snippet PanelBody(panel: WorkspacePanelPresentation, active: boolean)}
   {#if panel.kind === "agentChat"}
     <div class="resource-panel-shell">
       {@render ResourceTargetControl(panel)}
@@ -649,7 +654,7 @@
       </div>
     </div>
   {:else if panel.kind === "browser"}
-    <BrowserPanel panelId={panel.external_id} />
+    <BrowserPanel panelId={panel.external_id} {active} />
   {:else if panel.kind === "terminal"}
     <div class="resource-panel-shell">
       {@render ResourceTargetControl(panel)}

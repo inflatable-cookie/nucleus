@@ -19,7 +19,9 @@ longhorn-core = { path = "../../../../longhorn/crates/longhorn-core" }
 longhorn-display = { path = "../../../../longhorn/crates/longhorn-display" }
 longhorn-layout = { path = "../../../../longhorn/crates/longhorn-layout" }
 longhorn-layout-config = { path = "../../../../longhorn/crates/longhorn-layout-config" }
+longhorn-native-content = { path = "../../../../longhorn/crates/longhorn-native-content" }
 longhorn-tauri-config = { path = "../../../../longhorn/crates/longhorn-tauri-config" }
+longhorn-tauri-native-content-child-view = { path = "../../../../longhorn/crates/longhorn-tauri-native-content-child-view" }
 longhorn-tauri-windowing = { path = "../../../../longhorn/crates/longhorn-tauri-windowing" }
 longhorn-windowing = { path = "../../../../longhorn/crates/longhorn-windowing" }
 longhorn-windowing-config = { path = "../../../../longhorn/crates/longhorn-windowing-config" }

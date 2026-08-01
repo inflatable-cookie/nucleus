@@ -2291,10 +2291,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "longhorn-native-content"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "serde",
+]
+
+[[package]]
 name = "longhorn-tauri-config"
 version = "0.1.0"
 dependencies = [
  "longhorn-config",
+ "serde",
+ "tauri",
+]
+
+[[package]]
+name = "longhorn-tauri-native-content-child-view"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "longhorn-native-content",
  "serde",
  "tauri",
 ]
@@ -2530,7 +2548,9 @@ dependencies = [
  "longhorn-display",
  "longhorn-layout",
  "longhorn-layout-config",
+ "longhorn-native-content",
  "longhorn-tauri-config",
+ "longhorn-tauri-native-content-child-view",
  "longhorn-tauri-windowing",
  "longhorn-windowing",
  "longhorn-windowing-config",

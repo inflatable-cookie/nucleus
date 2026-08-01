@@ -17,6 +17,8 @@
         "@lezer/highlight": "^1.2.3",
         "@longhorn/core": "file:../../../longhorn/packages/core",
         "@longhorn/layout": "file:../../../longhorn/packages/layout",
+        "@longhorn/native-content": "file:../../../longhorn/packages/native-content",
+        "@longhorn/native-content-svelte": "file:../../../longhorn/packages/native-content-svelte",
         "@longhorn/poodle": "file:../../../longhorn/packages/poodle",
         "@longhorn/svelte": "file:../../../longhorn/packages/svelte",
         "@poodle/headless": "file:../../../poodle/packages/core",
@@ -48,6 +50,8 @@
   "overrides": {
     "@longhorn/core": "file:../../../longhorn/packages/core",
     "@longhorn/layout": "file:../../../longhorn/packages/layout",
+    "@longhorn/native-content": "file:../../../longhorn/packages/native-content",
+    "@longhorn/native-content-svelte": "file:../../../longhorn/packages/native-content-svelte",
     "@longhorn/poodle": "file:../../../longhorn/packages/poodle",
     "@longhorn/svelte": "file:../../../longhorn/packages/svelte",
     "@poodle/headless": "file:../../../poodle/packages/core",
@@ -153,6 +157,10 @@
     "@longhorn/core": ["@longhorn/core@file:../../../longhorn/packages/core", {}],
 
     "@longhorn/layout": ["@longhorn/layout@file:../../../longhorn/packages/layout", {}],
+
+    "@longhorn/native-content": ["@longhorn/native-content@file:../../../longhorn/packages/native-content", { "dependencies": { "@longhorn/core": "0.1.0" } }],
+
+    "@longhorn/native-content-svelte": ["@longhorn/native-content-svelte@file:../../../longhorn/packages/native-content-svelte", { "dependencies": { "@longhorn/native-content": "0.1.0" }, "peerDependencies": { "svelte": ">=5.38.6 <6" } }],
 
     "@longhorn/poodle": ["@longhorn/poodle@file:../../../longhorn/packages/poodle", { "dependencies": { "@longhorn/layout": "0.1.0", "@longhorn/svelte": "0.1.0" }, "peerDependencies": { "@longhorn/transfer": "0.1.0", "@poodle/svelte": "0.1.0", "svelte": ">=5.38.6 <6" }, "optionalPeers": ["@longhorn/transfer"] }],
 
@@ -499,6 +507,10 @@
     "xmlchars": ["xmlchars@2.2.0", "", {}, "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw=="],
 
     "zimmerframe": ["zimmerframe@1.1.4", "", {}, "sha512-B58NGBEoc8Y9MWWCQGl/gq9xBCe4IiKM0a2x7GZdQKOW5Exr8S1W24J6OgM1njK8xCRGvAJIL/MxXHf6SkmQKQ=="],
+
+    "@longhorn/native-content/@longhorn/core": ["@longhorn/core@file:../../../longhorn/packages/core", {}],
+
+    "@longhorn/native-content-svelte/@longhorn/native-content": ["@longhorn/native-content@file:../../../longhorn/packages/native-content", {}],
 
     "@longhorn/poodle/@longhorn/layout": ["@longhorn/layout@file:../../../longhorn/packages/layout", {}],
 

@@ -1001,6 +1001,7 @@ pub fn run() {
                 window.set_theme(Some(tauri::Theme::Dark))?;
             }
             window_host::install(app, &profile).map_err(std::io::Error::other)?;
+            browser_panel::install(app);
             app.manage(DesktopState::new_with_profile(
                 SqliteBackend::new(profile.database_path()),
                 profile.snapshot_path(),
@@ -1053,8 +1054,12 @@ pub fn run() {
             read_task_diff_overview,
             read_task_diff_file_patch,
             read_task_review_decisions,
-            browser_panel::browser_panel_ensure,
-            browser_panel::browser_panel_set_bounds,
+            browser_panel::longhorn_native_content_connect,
+            browser_panel::longhorn_native_content_snapshot,
+            browser_panel::longhorn_native_content_update_desired,
+            browser_panel::longhorn_native_content_decide_size,
+            browser_panel::browser_panel_destroy,
+            browser_panel::browser_panel_hide_for_unmount,
             browser_panel::browser_panel_reset_cursor,
             browser_panel::browser_panel_navigate,
             browser_panel::browser_panel_action,
@@ -1070,6 +1075,7 @@ pub fn run() {
         .expect("failed to build nucleus desktop");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+            app.state::<browser_panel::BrowserPanelRuntime>().teardown();
             window_host::teardown(app);
         }
     });

@@ -26,6 +26,8 @@
     "@lezer/highlight": "^1.2.3",
     "@longhorn/core": "file:../../../longhorn/packages/core",
     "@longhorn/layout": "file:../../../longhorn/packages/layout",
+    "@longhorn/native-content": "file:../../../longhorn/packages/native-content",
+    "@longhorn/native-content-svelte": "file:../../../longhorn/packages/native-content-svelte",
     "@longhorn/poodle": "file:../../../longhorn/packages/poodle",
     "@longhorn/svelte": "file:../../../longhorn/packages/svelte",
     "@poodle/headless": "file:../../../poodle/packages/core",
@@ -55,6 +57,8 @@
   "overrides": {
     "@longhorn/core": "file:../../../longhorn/packages/core",
     "@longhorn/layout": "file:../../../longhorn/packages/layout",
+    "@longhorn/native-content": "file:../../../longhorn/packages/native-content",
+    "@longhorn/native-content-svelte": "file:../../../longhorn/packages/native-content-svelte",
     "@longhorn/poodle": "file:../../../longhorn/packages/poodle",
     "@longhorn/svelte": "file:../../../longhorn/packages/svelte",
     "@poodle/headless": "file:../../../poodle/packages/core",

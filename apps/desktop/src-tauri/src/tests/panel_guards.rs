@@ -104,10 +104,14 @@ fn native_browser_yields_to_toolbar_and_modal_overlays() {
         .contains("setNativePanelOverlayVisibility(projectManagerOverlayId, projectManagerOpen)"));
     assert!(browser.contains("NATIVE_PANEL_OVERLAY_EVENT"));
     assert!(browser.contains("setNativeBrowserViewportGeometry"));
-    assert!(browser.contains("detail.panelIds.includes(panelId)"));
+    assert!(browser.contains("detail.panelIds.includes(stablePanelId)"));
     assert!(browser.contains("openOverlays.add(detail.id)"));
     assert!(browser.contains("openOverlays.delete(detail.id)"));
-    assert!(browser.contains("canShowNativeView()"));
+    assert!(browser.contains("resolveNativeContentVisibility"));
+    assert!(browser.contains("use:nativeContentViewport={session}"));
+    assert!(browser.contains("nucleus:workspace-gesture"));
+    assert!(browser.contains("nucleus:overlay"));
+    assert!(!browser.contains("@tauri-apps/api/webview"));
     assert!(visibility.contains("nucleus:native-panel-overlay"));
     assert!(visibility.contains("rectanglesIntersect"));
     assert!(visibility.contains("export function setNativePanelOverlayVisibility"));
