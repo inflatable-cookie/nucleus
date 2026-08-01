@@ -417,26 +417,35 @@ impl UiTransitionAdapter {
                 ]))
             }
             UiEndpoint::Split { window, projects } => {
-                match (fs::read(window), fs::read(projects)) {
-                    (Err(left), Err(right))
-                        if left.kind() == std::io::ErrorKind::NotFound
-                            && right.kind() == std::io::ErrorKind::NotFound =>
-                    {
-                        Ok(None)
-                    }
-                    (window_result, projects_result) => Ok(Some(vec![
+                let window = read_optional_payload(window, "ui-window-read")?;
+                let projects = read_optional_payload(projects, "ui-projects-read")?;
+                if window.is_none() && projects.is_none() {
+                    Ok(None)
+                } else {
+                    Ok(Some(vec![
                         (
                             "project-layouts.json".to_owned(),
-                            projects_result.unwrap_or_else(|_| b"<absent>".to_vec()),
+                            projects.unwrap_or_else(|| b"<absent>".to_vec()),
                         ),
                         (
                             "window-placement.json".to_owned(),
-                            window_result.unwrap_or_else(|_| b"<absent>".to_vec()),
+                            window.unwrap_or_else(|| b"<absent>".to_vec()),
                         ),
-                    ])),
+                    ]))
                 }
             }
         }
+    }
+}
+
+fn read_optional_payload(
+    path: &Path,
+    failure_code: &'static str,
+) -> Result<Option<Vec<u8>>, BackupAdapterError> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(failure(failure_code)),
     }
 }
 
