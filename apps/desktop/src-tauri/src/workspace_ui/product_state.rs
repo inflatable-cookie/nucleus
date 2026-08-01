@@ -9,8 +9,9 @@ use serde_json::Value;
 
 use super::dto::{
     default_forge_diff_scope, WorkspaceEditorFileDto, WorkspaceForgeDiffDto, WorkspacePanelDto,
+    WorkspacePanelPresentationDto, WorkspacePanelPresentationInputDto,
 };
-use super::registry::{default_title, panel_instance_id};
+use super::registry::{default_title, kind_for_definition, panel_instance_id};
 
 pub const DOMAIN_ID: &str = "nucleus.panel-presentations";
 pub const DOMAIN_FILE: &str = "project-panel-presentations.json";
@@ -93,6 +94,40 @@ impl PanelPresentation {
                 forge_diff: None,
             },
         ))
+    }
+
+    pub fn from_input(
+        project_id: &str,
+        input: &WorkspacePanelPresentationInputDto,
+    ) -> Result<(String, Self), String> {
+        let panel = WorkspacePanelDto {
+            id: input.external_id.clone(),
+            kind: input.kind.clone(),
+            title: input.title.clone(),
+            closeable: false,
+            movable: false,
+            resource_targets: input.resource_targets.clone(),
+            editor_file: input.editor_file.clone(),
+            forge_diff: input.forge_diff.clone(),
+            allowed_regions: Vec::new(),
+        };
+        Self::from_panel(project_id, &panel)
+    }
+
+    pub fn project(
+        &self,
+        panel_instance_id: &str,
+        definition_id: &longhorn_core::PanelDefinitionId,
+    ) -> Result<WorkspacePanelPresentationDto, String> {
+        Ok(WorkspacePanelPresentationDto {
+            panel_instance_id: panel_instance_id.to_owned(),
+            external_id: self.external_id.clone(),
+            kind: kind_for_definition(definition_id)?.to_owned(),
+            title: self.title.clone(),
+            resource_targets: self.resource_targets.clone(),
+            editor_file: self.editor_file.clone(),
+            forge_diff: self.forge_diff.clone(),
+        })
     }
 }
 

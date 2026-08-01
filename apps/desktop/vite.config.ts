@@ -4,6 +4,9 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [svelte()],
   clearScreen: false,
+  resolve: {
+    preserveSymlinks: true,
+  },
   server: {
     strictPort: true,
     port: 1420,

@@ -44,18 +44,24 @@ fn agent_chat_exposes_exact_active_turn_cancellation() {
 }
 
 #[test]
-fn product_workspace_uses_window_regions_without_surface_tabs() {
+fn product_workspace_uses_checked_longhorn_regions_without_surfaces() {
     let workspace = include_str!("../../../src/lib/ProjectWorkspaceStage.svelte");
-    let config = include_str!("../../../src/lib/workspaceUi.ts");
+    let client = include_str!("../../../src/lib/workspaceLayout.ts");
+    let session = include_str!("../../../src/lib/workspaceLayout.svelte.ts");
 
-    assert!(workspace.contains("workspaceWindowForProject("));
-    assert!(workspace.contains("type WorkspaceWindowDto"));
+    assert!(workspace.contains("LayoutDockRegion"));
+    assert!(workspace.contains("LayoutSplitView"));
+    assert!(workspace.contains("WorkspaceLayoutSession"));
     assert!(workspace.contains("class=\"window-body\""));
     assert!(!workspace.contains("Workspace surfaces"));
     assert!(!workspace.contains("createWorkspaceSurface"));
     assert!(!workspace.contains("active_surface_id"));
-    assert!(config.contains("window: WorkspaceWindowDto"));
-    assert!(!config.contains("WorkspaceSurfaceDto"));
+    assert!(!workspace.contains("application/x-"));
+    assert!(!workspace.contains(".poodle-"));
+    assert!(client.contains("CheckedSnapshotConnection"));
+    assert!(client.contains("mutate_workspace_layout"));
+    assert!(session.contains("LayoutState"));
+    assert!(session.contains("createPoodleLayoutBinding"));
 }
 
 #[test]
@@ -90,12 +96,14 @@ fn native_browser_yields_to_toolbar_and_modal_overlays() {
     let diff = include_str!("../../../src/lib/DiffPanel.svelte");
     let editor = include_str!("../../../src/lib/EditorPanel.svelte");
 
-    assert!(app.contains("setNativePanelOverlayIntersection(projectDetailsOverlayId, open"));
-    assert!(app.contains("setNativePanelOverlayIntersection(newPanelOverlayId, open"));
+    assert!(app.contains("setNativePanelOverlayOpen(projectDetailsOverlayId, open"));
+    assert!(app.contains("updateNativePanelOverlayGeometry(projectDetailsOverlayId, change"));
+    assert!(app.contains("setNativePanelOverlayOpen(newPanelOverlayId, open"));
+    assert!(app.contains("updateNativePanelOverlayGeometry(newPanelOverlayId, change"));
     assert!(project_rail
         .contains("setNativePanelOverlayVisibility(projectManagerOverlayId, projectManagerOpen)"));
     assert!(browser.contains("NATIVE_PANEL_OVERLAY_EVENT"));
-    assert!(browser.contains("data-native-browser-viewport"));
+    assert!(browser.contains("setNativeBrowserViewportGeometry"));
     assert!(browser.contains("detail.panelIds.includes(panelId)"));
     assert!(browser.contains("openOverlays.add(detail.id)"));
     assert!(browser.contains("openOverlays.delete(detail.id)"));
@@ -103,7 +111,9 @@ fn native_browser_yields_to_toolbar_and_modal_overlays() {
     assert!(visibility.contains("nucleus:native-panel-overlay"));
     assert!(visibility.contains("rectanglesIntersect"));
     assert!(visibility.contains("export function setNativePanelOverlayVisibility"));
-    assert!(visibility.contains("nativeBrowserPanelId"));
+    assert!(visibility.contains("OverlaySurfaceGeometryChange"));
+    assert!(!visibility.contains("querySelector"));
+    assert!(!visibility.contains("poodle-popover__surface"));
     assert!(!agent_chat.contains("nativePanelVisibility"));
     assert!(!diff.contains("nativePanelVisibility"));
     assert!(!editor.contains("nativePanelVisibility"));

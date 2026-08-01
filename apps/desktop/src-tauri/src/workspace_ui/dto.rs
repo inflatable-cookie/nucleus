@@ -3,7 +3,79 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub const DTO_SCHEMA_VERSION: u32 = 11;
+use longhorn_layout::{
+    LayoutDocument, LayoutMutationReceipt, LayoutMutationRejection, LayoutMutationRequest,
+    LayoutSchemaDefinition, PanelDefinition,
+};
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspacePanelPresentationInputDto {
+    pub external_id: String,
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub resource_targets: BTreeMap<String, String>,
+    #[serde(default)]
+    pub editor_file: Option<WorkspaceEditorFileDto>,
+    #[serde(default)]
+    pub forge_diff: Option<WorkspaceForgeDiffDto>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspacePanelPresentationDto {
+    pub panel_instance_id: String,
+    pub external_id: String,
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub resource_targets: BTreeMap<String, String>,
+    #[serde(default)]
+    pub editor_file: Option<WorkspaceEditorFileDto>,
+    #[serde(default)]
+    pub forge_diff: Option<WorkspaceForgeDiffDto>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct WorkspaceLayoutSnapshotDto {
+    pub projection_revision: u64,
+    pub project_id: String,
+    pub container_id: String,
+    pub document: LayoutDocument,
+    pub schemas: Vec<LayoutSchemaDefinition>,
+    pub panel_definitions: Vec<PanelDefinition>,
+    pub panels: Vec<WorkspacePanelPresentationDto>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceLayoutMutationDto {
+    pub request: LayoutMutationRequest,
+    #[serde(default)]
+    pub create_panel: Option<WorkspacePanelPresentationInputDto>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum WorkspaceLayoutDispatchResultDto {
+    Committed { receipt: LayoutMutationReceipt },
+    Rejected { rejection: LayoutMutationRejection },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct WorkspaceLayoutMutationResponseDto {
+    pub result: WorkspaceLayoutDispatchResultDto,
+    pub snapshot: WorkspaceLayoutSnapshotDto,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct WorkspacePreparedPanelDto {
+    pub panel_instance_id: String,
+    pub panel_definition_id: String,
+    pub region_id: String,
+    pub presentation: WorkspacePanelPresentationInputDto,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceUiPaths {
@@ -50,24 +122,6 @@ impl WorkspaceUiPaths {
     pub fn layout_migration_receipt(&self) -> &Path {
         &self.layout_migration_receipt
     }
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct WorkspaceUiConfigDto {
-    pub schema_version: u32,
-    pub layout_revision: u64,
-    pub window: WorkspaceWindowDto,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct WorkspaceWindowDto {
-    pub id: String,
-    #[serde(default)]
-    pub placement: WorkspaceWindowPlacementDto,
-    pub layout: WorkspaceLayoutDto,
-    pub regions: WorkspaceRegionsDto,
-    #[serde(default)]
-    pub active_panels: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

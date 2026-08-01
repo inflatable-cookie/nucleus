@@ -2,9 +2,12 @@
   "extends": "./tsconfig.node.json",
   "compilerOptions": {
     "allowJs": false,
+    "allowImportingTsExtensions": true,
     "checkJs": false,
     "isolatedModules": true,
     "moduleResolution": "bundler",
+    "noEmit": true,
+    "preserveSymlinks": true,
     "strict": true,
     "target": "ES2022",
     "verbatimModuleSyntax": true

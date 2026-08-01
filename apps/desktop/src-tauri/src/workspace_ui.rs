@@ -6,7 +6,8 @@ mod registry;
 mod runtime;
 
 pub use dto::{
-    WorkspaceUiConfigDto, WorkspaceUiPaths, WorkspaceWindowBoundsDto, WorkspaceWindowPlacementDto,
+    WorkspaceLayoutMutationDto, WorkspaceLayoutMutationResponseDto, WorkspaceLayoutSnapshotDto,
+    WorkspacePanelPresentationInputDto, WorkspacePreparedPanelDto, WorkspaceUiPaths,
 };
 pub use legacy::split_legacy_workspace_ui_document;
 pub use runtime::WorkspaceUiRuntime;

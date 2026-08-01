@@ -19,16 +19,14 @@ use longhorn_tauri_windowing::{
 };
 use longhorn_windowing::{
     resolve_window_placement, restore_window_placement, ApplyGeneration, DesiredWindow,
-    HostWindowHandle, PlacementPolicy, ProtectedPrimaryPolicy, SavedWindowPlacement,
-    WindowDiffInput, WindowLifecycleDuration, WindowLifecyclePolicy, WindowPlacementConfig,
+    HostWindowHandle, PlacementPolicy, ProtectedPrimaryPolicy, WindowDiffInput,
+    WindowLifecycleDuration, WindowLifecyclePolicy, WindowPlacementConfig,
     WindowPlacementResolution, WindowRole,
 };
 use longhorn_windowing_config::ConfigWindowPlacementSink;
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::desktop_profile::DesktopProfile;
-use crate::workspace_ui::{WorkspaceWindowBoundsDto, WorkspaceWindowPlacementDto};
-
 mod domain;
 mod migration;
 
@@ -53,15 +51,6 @@ pub struct NucleusWindowRuntime {
 impl NucleusWindowRuntime {
     fn next_generation(&self) -> ApplyGeneration {
         ApplyGeneration::new(self.generation.fetch_add(1, Ordering::Relaxed) + 1)
-    }
-
-    pub fn placement_dto(&self) -> Result<WorkspaceWindowPlacementDto, String> {
-        let state = load_state(&self.sink)?;
-        Ok(state
-            .placements
-            .get(PRIMARY_WINDOW_ID)
-            .map(saved_placement_dto)
-            .unwrap_or_default())
     }
 
     pub fn mark_page_ready(&self) -> Result<WindowRevealReceipt, String> {
@@ -382,23 +371,6 @@ fn load_state(sink: &PlacementSink) -> Result<NucleusWindowState, String> {
         other => Err(format!(
             "Nucleus window placement domain requires recovery: {other:?}"
         )),
-    }
-}
-
-fn saved_placement_dto(saved: &SavedWindowPlacement) -> WorkspaceWindowPlacementDto {
-    let placement = saved.normal_placement();
-    WorkspaceWindowPlacementDto {
-        display_id: saved
-            .display()
-            .display_id()
-            .map(|display_id| display_id.as_str().to_owned()),
-        normal_bounds: Some(WorkspaceWindowBoundsDto {
-            x: placement.outer_origin().x().get(),
-            y: placement.outer_origin().y().get(),
-            width: placement.inner_size().width(),
-            height: placement.inner_size().height(),
-        }),
-        maximized: saved.is_maximized(),
     }
 }
 

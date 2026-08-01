@@ -911,31 +911,65 @@ async fn submit_control_envelope(
     })?
 }
 
+const WORKSPACE_LAYOUT_CHANGED_EVENT: &str = "nucleus://workspace-layout";
+
 #[tauri::command]
-async fn load_workspace_ui_config(
+async fn workspace_layout_snapshot(
     state: tauri::State<'_, DesktopState>,
-    window: tauri::State<'_, window_host::NucleusWindowRuntime>,
     project_id: String,
-) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
+) -> Result<workspace_ui::WorkspaceLayoutSnapshotDto, String> {
     let runtime = state.workspace_ui.clone();
-    let placement = window.placement_dto()?;
-    tauri::async_runtime::spawn_blocking(move || runtime.load(&project_id, placement))
+    tauri::async_runtime::spawn_blocking(move || runtime.snapshot(&project_id))
         .await
-        .map_err(|_| "desktop layout load worker failed".to_owned())?
+        .map_err(|_| "desktop layout snapshot worker failed".to_owned())?
 }
 
 #[tauri::command]
-async fn save_workspace_ui_config(
+async fn prepare_workspace_panel(
     state: tauri::State<'_, DesktopState>,
-    window: tauri::State<'_, window_host::NucleusWindowRuntime>,
     project_id: String,
-    config: workspace_ui::WorkspaceUiConfigDto,
-) -> Result<workspace_ui::WorkspaceUiConfigDto, String> {
+    presentation: workspace_ui::WorkspacePanelPresentationInputDto,
+) -> Result<workspace_ui::WorkspacePreparedPanelDto, String> {
     let runtime = state.workspace_ui.clone();
-    let placement = window.placement_dto()?;
-    tauri::async_runtime::spawn_blocking(move || runtime.save(&project_id, config, placement))
+    tauri::async_runtime::spawn_blocking(move || runtime.prepare_panel(&project_id, presentation))
         .await
-        .map_err(|_| "desktop layout mutation worker failed".to_owned())?
+        .map_err(|_| "desktop panel preparation worker failed".to_owned())?
+}
+
+#[tauri::command]
+async fn mutate_workspace_layout(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+    mutation: workspace_ui::WorkspaceLayoutMutationDto,
+) -> Result<workspace_ui::WorkspaceLayoutMutationResponseDto, String> {
+    let runtime = state.workspace_ui.clone();
+    let response =
+        tauri::async_runtime::spawn_blocking(move || runtime.dispatch(&project_id, mutation))
+            .await
+            .map_err(|_| "desktop layout command worker failed".to_owned())??;
+    app.emit(WORKSPACE_LAYOUT_CHANGED_EVENT, response.snapshot.clone())
+        .map_err(|error| format!("emit desktop layout snapshot failed: {error}"))?;
+    Ok(response)
+}
+
+#[tauri::command]
+async fn update_workspace_panel_presentation(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+    panel_instance_id: String,
+    presentation: workspace_ui::WorkspacePanelPresentationInputDto,
+) -> Result<workspace_ui::WorkspaceLayoutSnapshotDto, String> {
+    let runtime = state.workspace_ui.clone();
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        runtime.update_panel_presentation(&project_id, &panel_instance_id, presentation)
+    })
+    .await
+    .map_err(|_| "desktop panel presentation worker failed".to_owned())??;
+    app.emit(WORKSPACE_LAYOUT_CHANGED_EVENT, snapshot.clone())
+        .map_err(|error| format!("emit desktop layout snapshot failed: {error}"))?;
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -990,8 +1024,10 @@ pub fn run() {
             list_agent_chat_threads,
             rename_agent_chat_thread,
             list_agent_chat_models,
-            load_workspace_ui_config,
-            save_workspace_ui_config,
+            workspace_layout_snapshot,
+            prepare_workspace_panel,
+            mutate_workspace_layout,
+            update_workspace_panel_presentation,
             desktop_startup_status,
             desktop_window_page_ready,
             list_editor_directory,

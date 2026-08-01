@@ -22,6 +22,7 @@
   } from "./browserPanel";
   import {
     NATIVE_PANEL_OVERLAY_EVENT,
+    setNativeBrowserViewportGeometry,
     type NativePanelOverlayEventDetail,
   } from "./nativePanelVisibility";
 
@@ -65,6 +66,7 @@
         cancelAnimationFrame(syncFrame);
       }
       unlistenRuntime?.();
+      setNativeBrowserViewportGeometry(panelId, null);
       nativeVisible = false;
       void resetBrowserCursor(panelId).catch(() => undefined);
       void hideBrowserWebview(webview).catch(() => undefined);
@@ -154,8 +156,19 @@
   function viewportBounds(): BrowserViewportBounds | null {
     const rect = viewport?.getBoundingClientRect();
     if (!rect || rect.width < 1 || rect.height < 1) {
+      setNativeBrowserViewportGeometry(panelId, null);
       return null;
     }
+    setNativeBrowserViewportGeometry(panelId, {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      left: rect.left,
+    });
     return {
       x: Math.round(rect.left),
       y: Math.round(rect.top),
@@ -236,8 +249,8 @@
   function handleOverlayVisibility(event: Event): void {
     const detail = (event as CustomEvent<NativePanelOverlayEventDetail>).detail;
     if (!detail?.id) return;
-    if (detail.open) {
-      if (detail.panelIds && !detail.panelIds.includes(panelId)) return;
+    const shouldHide = detail.open && (!detail.panelIds || detail.panelIds.includes(panelId));
+    if (shouldHide) {
       openOverlays.add(detail.id);
       nativeVisible = false;
       void resetBrowserCursor(panelId).catch(() => undefined);
@@ -312,8 +325,6 @@
     class="browser-viewport"
     bind:this={viewport}
     aria-label="Browser content"
-    data-native-browser-viewport
-    data-native-browser-panel-id={panelId}
   ></div>
 </section>
 

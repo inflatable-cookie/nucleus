@@ -2,10 +2,13 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use longhorn_config::StorageRoots;
+use longhorn_core::{LayoutRequestId, SizingSlotId};
+use longhorn_layout::{LayoutMutationCommand, LayoutMutationRequest, LayoutRatio};
 use tempfile::TempDir;
 
 use super::dto::{
-    WorkspacePanelDto, WorkspaceUiConfigDto, WorkspaceUiPaths, WorkspaceWindowPlacementDto,
+    WorkspaceLayoutDispatchResultDto, WorkspaceLayoutSnapshotDto,
+    WorkspacePanelPresentationInputDto, WorkspaceUiPaths,
 };
 use super::legacy::split_legacy_workspace_ui_document;
 use super::registry::{definition_registry, REGION_IDS, SIZING_SLOT_IDS};
@@ -87,100 +90,97 @@ fn registry_matches_the_accepted_five_region_four_slot_shape() {
 fn projects_keep_distinct_layouts_and_new_projects_seed_only_agent_chat() {
     let fixture = Fixture::new();
     let runtime = fixture.runtime();
-    let placement = WorkspaceWindowPlacementDto::default();
-    let mut first = runtime.load("project:first", placement.clone()).unwrap();
+    let first = runtime.snapshot("project:first").unwrap();
     assert_agent_chat_only(&first);
-    first.window.regions.right_top.push(panel(
-        "window:primary:panel:terminal:1",
+    create_panel(
+        &runtime,
+        "project:first",
+        "panel:terminal:first",
         "terminal",
-        "Terminal",
+        "right_top",
         Some(("project:first", "resource:first")),
-    ));
-    first.window.active_panels.insert(
-        "right_top".to_owned(),
-        "window:primary:panel:terminal:1".to_owned(),
     );
-    first.window.layout.center_right_ratio = 0.61;
-    let saved_first = runtime
-        .save("project:first", first, placement.clone())
-        .unwrap();
+    let saved_first = set_ratio(&runtime, "project:first", "center-right", 610_000);
 
-    let mut second = runtime.load("project:second", placement.clone()).unwrap();
+    let second = runtime.snapshot("project:second").unwrap();
     assert_agent_chat_only(&second);
-    second.window.regions.center_bottom.push(panel(
-        "window:primary:panel:browser:1",
+    create_panel(
+        &runtime,
+        "project:second",
+        "panel:browser:second",
         "browser",
-        "Browser",
+        "center_bottom",
         None,
-    ));
-    second.window.active_panels.insert(
-        "center_bottom".to_owned(),
-        "window:primary:panel:browser:1".to_owned(),
     );
-    second.window.layout.center_stack_ratio = 0.55;
-    runtime
-        .save("project:second", second, placement.clone())
-        .unwrap();
+    set_ratio(&runtime, "project:second", "center-stack", 550_000);
 
-    let restored_first = runtime.load("project:first", placement).unwrap();
-    assert_eq!(restored_first.window.regions.right_top.len(), 1);
-    assert!(restored_first.window.regions.center_bottom.is_empty());
-    assert_eq!(restored_first.window.layout.center_right_ratio, 0.61);
-    assert_eq!(
-        restored_first.window.active_panels.get("right_top"),
-        Some(&"window:primary:panel:terminal:1".to_owned())
-    );
-    assert!(restored_first.layout_revision > saved_first.layout_revision);
+    let restored_first = runtime.snapshot("project:first").unwrap();
+    assert_eq!(region_ids(&restored_first, "right_top").len(), 1);
+    assert!(region_ids(&restored_first, "center_bottom").is_empty());
+    assert_eq!(slot_ratio(&restored_first, "center-right"), 610_000);
+    assert!(restored_first.document.revision().get() > saved_first);
 }
 
 #[test]
-fn stale_and_invalid_saves_preserve_the_layout_document_and_revision() {
+fn stale_rejections_and_invalid_scope_preserve_the_layout_document() {
     let fixture = Fixture::new();
     let runtime = fixture.runtime();
-    let placement = WorkspaceWindowPlacementDto::default();
-    let stale = runtime.load("project:one", placement.clone()).unwrap();
-    let mut current = stale.clone();
-    current.window.regions.center_bottom.push(panel(
+    let stale = runtime.snapshot("project:one").unwrap();
+    create_panel(
+        &runtime,
+        "project:one",
         "panel:terminal",
         "terminal",
-        "Terminal",
+        "center_bottom",
         None,
-    ));
-    runtime
-        .save("project:one", current, placement.clone())
-        .unwrap();
+    );
     let before = fs::read(fixture.paths.project_layouts()).unwrap();
-
-    assert!(runtime
-        .save("project:one", stale, placement.clone())
-        .is_err());
-    assert_eq!(fs::read(fixture.paths.project_layouts()).unwrap(), before);
-
-    let mut invalid = runtime.load("project:one", placement.clone()).unwrap();
-    invalid.window.regions.right_bottom.push(panel(
-        "panel:unknown",
-        "unknownKind",
-        "Unknown",
-        None,
-    ));
-    assert!(runtime.save("project:one", invalid, placement).is_err());
-    assert_eq!(fs::read(fixture.paths.project_layouts()).unwrap(), before);
-
-    let mut invalid_active = runtime
-        .load("project:one", WorkspaceWindowPlacementDto::default())
-        .unwrap();
-    invalid_active
-        .window
-        .active_panels
-        .insert("right_bottom".to_owned(), "panel:terminal".to_owned());
-    assert!(runtime
-        .save(
+    let request = LayoutMutationRequest::new(
+        LayoutRequestId::new("request:test:stale").unwrap(),
+        stale.document.revision(),
+        LayoutMutationCommand::SetSizingSlot {
+            container_id: longhorn_core::LayoutContainerId::new(stale.container_id).unwrap(),
+            sizing_slot_id: SizingSlotId::new("center-stack").unwrap(),
+            ratio: LayoutRatio::from_millionths(600_000).unwrap(),
+        },
+    );
+    let response = runtime
+        .dispatch(
             "project:one",
-            invalid_active,
-            WorkspaceWindowPlacementDto::default(),
+            super::dto::WorkspaceLayoutMutationDto {
+                request,
+                create_panel: None,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        response.result,
+        WorkspaceLayoutDispatchResultDto::Rejected { .. }
+    ));
+    assert_eq!(fs::read(fixture.paths.project_layouts()).unwrap(), before);
+
+    assert!(runtime
+        .prepare_panel("project:one", panel_input("bad", "unknownKind", None))
+        .is_err());
+    let other = runtime.snapshot("project:two").unwrap();
+    let request = LayoutMutationRequest::new(
+        LayoutRequestId::new("request:test:cross-scope").unwrap(),
+        other.document.revision(),
+        LayoutMutationCommand::SetSizingSlot {
+            container_id: longhorn_core::LayoutContainerId::new(other.container_id).unwrap(),
+            sizing_slot_id: SizingSlotId::new("center-stack").unwrap(),
+            ratio: LayoutRatio::from_millionths(600_000).unwrap(),
+        },
+    );
+    assert!(runtime
+        .dispatch(
+            "project:one",
+            super::dto::WorkspaceLayoutMutationDto {
+                request,
+                create_panel: None,
+            },
         )
         .is_err());
-    assert_eq!(fs::read(fixture.paths.project_layouts()).unwrap(), before);
 }
 
 #[test]
@@ -189,15 +189,76 @@ fn layout_publication_never_rewrites_the_window_domain() {
     let runtime = fixture.runtime();
     let window_bytes = br#"{"domain":"nucleus.window-placement","sentinel":true}"#;
     fs::write(fixture.paths.window_placement(), window_bytes).unwrap();
-    let placement = WorkspaceWindowPlacementDto::default();
-    let mut config = runtime.load("project:one", placement.clone()).unwrap();
-    config.window.layout.right_stack_ratio = 0.62;
-    runtime.save("project:one", config, placement).unwrap();
-
+    runtime.snapshot("project:one").unwrap();
+    set_ratio(&runtime, "project:one", "right-stack", 620_000);
     assert_eq!(
         fs::read(fixture.paths.window_placement()).unwrap(),
         window_bytes
     );
+}
+
+#[test]
+fn exact_panel_commands_keep_product_presentation_in_step_with_layout() {
+    let fixture = Fixture::new();
+    let runtime = fixture.runtime();
+    create_panel(
+        &runtime,
+        "project:one",
+        "panel:browser:one",
+        "browser",
+        "center_bottom",
+        None,
+    );
+    let created = runtime.snapshot("project:one").unwrap();
+    let panel = created
+        .panels
+        .iter()
+        .find(|panel| panel.external_id == "panel:browser:one")
+        .unwrap();
+    let mut changed = panel_input("panel:browser:one", "browser", None);
+    changed.title = "Research Browser".to_owned();
+    let updated = runtime
+        .update_panel_presentation("project:one", &panel.panel_instance_id, changed)
+        .unwrap();
+    assert_eq!(
+        updated
+            .panels
+            .iter()
+            .find(|candidate| candidate.panel_instance_id == panel.panel_instance_id)
+            .unwrap()
+            .title,
+        "Research Browser"
+    );
+
+    let request = LayoutMutationRequest::new(
+        LayoutRequestId::new("request:test:close-browser").unwrap(),
+        updated.document.revision(),
+        LayoutMutationCommand::ClosePanel {
+            panel_instance_id: longhorn_core::PanelInstanceId::new(&panel.panel_instance_id)
+                .unwrap(),
+        },
+    );
+    let closed = runtime
+        .dispatch(
+            "project:one",
+            super::dto::WorkspaceLayoutMutationDto {
+                request,
+                create_panel: None,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        closed.result,
+        WorkspaceLayoutDispatchResultDto::Committed { .. }
+    ));
+    assert!(closed
+        .snapshot
+        .panels
+        .iter()
+        .all(|candidate| candidate.panel_instance_id != panel.panel_instance_id));
+    assert!(!fs::read_to_string(fixture.paths.panel_presentations())
+        .unwrap()
+        .contains("panel:browser:one"));
 }
 
 #[test]
@@ -236,15 +297,11 @@ fn migration_backs_up_raw_state_and_separates_product_presentations() {
     fs::write(fixture.paths.project_layouts(), source).unwrap();
 
     let runtime = fixture.runtime();
-    let loaded = runtime
-        .load("project:one", WorkspaceWindowPlacementDto::default())
-        .unwrap();
-    assert_eq!(loaded.window.layout.center_right_ratio, 0.63);
-    assert_eq!(loaded.window.regions.center_top[0].id, "panel:editor");
+    let loaded = runtime.snapshot("project:one").unwrap();
+    assert_eq!(slot_ratio(&loaded, "center-right"), 630_000);
+    assert_eq!(loaded.panels[0].external_id, "panel:editor");
     assert_eq!(
-        loaded.window.regions.center_top[0]
-            .resource_targets
-            .get("project:one"),
+        loaded.panels[0].resource_targets.get("project:one"),
         Some(&"resource:one".to_owned())
     );
     assert_eq!(
@@ -291,13 +348,9 @@ fn pending_single_layout_is_claimed_once_then_new_projects_seed_minimally() {
     )
     .unwrap();
     let runtime = fixture.runtime();
-    let claimed = runtime
-        .load("project:first", WorkspaceWindowPlacementDto::default())
-        .unwrap();
-    assert_eq!(claimed.window.regions.center_top[0].kind, "terminal");
-    let new_project = runtime
-        .load("project:second", WorkspaceWindowPlacementDto::default())
-        .unwrap();
+    let claimed = runtime.snapshot("project:first").unwrap();
+    assert_eq!(claimed.panels[0].kind, "terminal");
+    let new_project = runtime.snapshot("project:second").unwrap();
     assert_agent_chat_only(&new_project);
 }
 
@@ -326,33 +379,124 @@ fn schemas_one_through_current_split_into_the_same_pending_shape() {
     }
 }
 
-fn assert_agent_chat_only(config: &WorkspaceUiConfigDto) {
-    let panels = [
-        &config.window.regions.left,
-        &config.window.regions.center_top,
-        &config.window.regions.center_bottom,
-        &config.window.regions.right_top,
-        &config.window.regions.right_bottom,
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
-    assert_eq!(panels.len(), 1);
-    assert_eq!(panels[0].kind, "agentChat");
+fn create_panel(
+    runtime: &WorkspaceUiRuntime,
+    project_id: &str,
+    external_id: &str,
+    kind: &str,
+    region_id: &str,
+    resource: Option<(&str, &str)>,
+) {
+    let input = panel_input(external_id, kind, resource);
+    let prepared = runtime.prepare_panel(project_id, input.clone()).unwrap();
+    let snapshot = runtime.snapshot(project_id).unwrap();
+    let insertion_index = region_ids(&snapshot, region_id).len() as u32;
+    let request = LayoutMutationRequest::new(
+        LayoutRequestId::new(format!("request:test:create:{external_id}")).unwrap(),
+        snapshot.document.revision(),
+        LayoutMutationCommand::CreatePanel {
+            panel_instance_id: longhorn_core::PanelInstanceId::new(prepared.panel_instance_id)
+                .unwrap(),
+            panel_definition_id: longhorn_core::PanelDefinitionId::new(
+                prepared.panel_definition_id,
+            )
+            .unwrap(),
+            container_id: longhorn_core::LayoutContainerId::new(snapshot.container_id).unwrap(),
+            region_id: longhorn_core::RegionId::new(region_id).unwrap(),
+            insertion_index,
+        },
+    );
+    let response = runtime
+        .dispatch(
+            project_id,
+            super::dto::WorkspaceLayoutMutationDto {
+                request,
+                create_panel: Some(input),
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        response.result,
+        WorkspaceLayoutDispatchResultDto::Committed { .. }
+    ));
 }
 
-fn panel(id: &str, kind: &str, title: &str, resource: Option<(&str, &str)>) -> WorkspacePanelDto {
-    WorkspacePanelDto {
-        id: id.to_owned(),
+fn set_ratio(runtime: &WorkspaceUiRuntime, project_id: &str, slot: &str, value: u32) -> u64 {
+    let snapshot = runtime.snapshot(project_id).unwrap();
+    let request = LayoutMutationRequest::new(
+        LayoutRequestId::new(format!("request:test:ratio:{project_id}:{slot}:{value}")).unwrap(),
+        snapshot.document.revision(),
+        LayoutMutationCommand::SetSizingSlot {
+            container_id: longhorn_core::LayoutContainerId::new(snapshot.container_id).unwrap(),
+            sizing_slot_id: SizingSlotId::new(slot).unwrap(),
+            ratio: LayoutRatio::from_millionths(value).unwrap(),
+        },
+    );
+    let response = runtime
+        .dispatch(
+            project_id,
+            super::dto::WorkspaceLayoutMutationDto {
+                request,
+                create_panel: None,
+            },
+        )
+        .unwrap();
+    match response.result {
+        WorkspaceLayoutDispatchResultDto::Committed { receipt } => {
+            receipt.committed_revision().get()
+        }
+        WorkspaceLayoutDispatchResultDto::Rejected { rejection } => panic!("{rejection}"),
+    }
+}
+
+fn assert_agent_chat_only(snapshot: &WorkspaceLayoutSnapshotDto) {
+    assert_eq!(snapshot.panels.len(), 1);
+    assert_eq!(snapshot.panels[0].kind, "agentChat");
+}
+
+fn region_ids<'a>(
+    snapshot: &'a WorkspaceLayoutSnapshotDto,
+    region_id: &str,
+) -> &'a [longhorn_core::PanelInstanceId] {
+    snapshot
+        .document
+        .container(&longhorn_core::LayoutContainerId::new(&snapshot.container_id).unwrap())
+        .unwrap()
+        .region(&longhorn_core::RegionId::new(region_id).unwrap())
+        .unwrap()
+        .panel_instance_ids()
+}
+
+fn slot_ratio(snapshot: &WorkspaceLayoutSnapshotDto, slot: &str) -> u32 {
+    snapshot
+        .document
+        .container(&longhorn_core::LayoutContainerId::new(&snapshot.container_id).unwrap())
+        .unwrap()
+        .sizing_slot(&SizingSlotId::new(slot).unwrap())
+        .unwrap()
+        .ratio()
+        .millionths()
+}
+
+fn panel_input(
+    external_id: &str,
+    kind: &str,
+    resource: Option<(&str, &str)>,
+) -> WorkspacePanelPresentationInputDto {
+    WorkspacePanelPresentationInputDto {
+        external_id: external_id.to_owned(),
         kind: kind.to_owned(),
-        title: title.to_owned(),
-        closeable: true,
-        movable: true,
+        title: match kind {
+            "agentChat" => "Agent Chat",
+            "terminal" => "Terminal",
+            "browser" => "Browser",
+            _ => "Panel",
+        }
+        .to_owned(),
         resource_targets: resource
             .map(|(project, resource)| BTreeMap::from([(project.to_owned(), resource.to_owned())]))
             .unwrap_or_default(),
         editor_file: None,
         forge_diff: None,
-        allowed_regions: Vec::new(),
     }
 }

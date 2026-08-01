@@ -9,7 +9,6 @@ use longhorn_layout::{
     PlacementSelector, RegionDefinition, RegionState, SizingSlotDefinition, SizingSlotState,
 };
 
-pub const PRIMARY_WINDOW_ID: &str = "window:primary";
 pub const SCHEMA_ID: &str = "schema:nucleus";
 pub const PENDING_PROJECT_SCOPE: &str = "migration:pending-project";
 pub const REGION_IDS: [&str; 5] = [

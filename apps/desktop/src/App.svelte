@@ -13,7 +13,8 @@
   import { beginWindowDrag } from "./lib/windowChrome";
   import {
     createNativePanelOverlayId,
-    setNativePanelOverlayIntersection,
+    setNativePanelOverlayOpen,
+    updateNativePanelOverlayGeometry,
   } from "./lib/nativePanelVisibility";
 
   let startupError = $state<string | null>(null);
@@ -27,8 +28,6 @@
   let projectRailPrimaryCollapsed = $state(false);
   let projectRailSecondaryCollapsed = $state(false);
   let openPanelKinds = $state<string[]>([]);
-  let projectDetailsOverlayRoot = $state<HTMLElement | null>(null);
-  let newPanelOverlayRoot = $state<HTMLElement | null>(null);
   const projectDetailsOverlayId = createNativePanelOverlayId("project-details");
   const newPanelOverlayId = createNativePanelOverlayId("new-panel");
   const projectRailRatioStorageKey = "nucleus:desktop:project-rail-ratio";
@@ -146,7 +145,7 @@
 
   function beginSplitResize(event: MouseEvent): void {
     const target = event.target instanceof Element ? event.target : null;
-    if (!target?.closest(".poodle-resize-handle") || splitResizeActive) {
+    if (!target?.closest('[role="separator"]') || splitResizeActive) {
       return;
     }
 
@@ -244,14 +243,15 @@
         >
           <div class="titlebar-lead" data-tauri-drag-region>
             <div class="titlebar-title-block" data-tauri-drag-region>
-              <div class="titlebar-title-line" bind:this={projectDetailsOverlayRoot}>
+              <div class="titlebar-title-line">
                 <h1>{selectedProject?.display_name ?? "Nucleus"}</h1>
                 <Popover
                   placement="bottom-start"
                   initialFocus="content"
                   ariaLabel="Project details"
                   surfaceMinWidth="18rem"
-                  onOpenChange={(open) => setNativePanelOverlayIntersection(projectDetailsOverlayId, open, projectDetailsOverlayRoot)}
+                  onOpenChange={(open) => setNativePanelOverlayOpen(projectDetailsOverlayId, open)}
+                  onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(projectDetailsOverlayId, change)}
                 >
                   {#snippet trigger()}
                     <span
@@ -307,13 +307,14 @@
           <div class="titlebar-drag-lane" aria-hidden="true" data-tauri-drag-region>
           </div>
 
-          <div class="titlebar-actions" data-no-window-drag bind:this={newPanelOverlayRoot}>
+          <div class="titlebar-actions" data-no-window-drag>
             <Menu
               items={newPanelItems}
               ariaLabel="New workspace panel"
               placement="bottom-end"
               onAction={createWorkspacePanel}
-              onOpenChange={(open) => setNativePanelOverlayIntersection(newPanelOverlayId, open, newPanelOverlayRoot)}
+              onOpenChange={(open) => setNativePanelOverlayOpen(newPanelOverlayId, open)}
+              onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(newPanelOverlayId, change)}
             >
               {#snippet trigger()}
                 <IconButton

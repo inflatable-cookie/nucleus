@@ -1,6 +1,17 @@
+import type {
+  OverlaySurfaceGeometry,
+  OverlaySurfaceGeometryChange,
+  OverlayViewportRect,
+} from "@poodle/svelte";
+
 let nextOverlayId = 0;
-let nextMeasurementId = 0;
-const pendingMeasurements = new Map<string, number>();
+
+const geometryOverlays = new Map<string, {
+  open: boolean;
+  surfaces: Map<string, OverlaySurfaceGeometry>;
+  lastPanelIds: string[];
+}>();
+const browserViewports = new Map<string, OverlayViewportRect>();
 
 export const NATIVE_PANEL_OVERLAY_EVENT = "nucleus:native-panel-overlay";
 
@@ -15,38 +26,30 @@ export function createNativePanelOverlayId(prefix: string): string {
   return `${prefix}:${nextOverlayId}`;
 }
 
-export function setNativePanelOverlayIntersection(
+export function setNativePanelOverlayOpen(id: string, open: boolean): void {
+  const state = overlayState(id);
+  state.open = open;
+  if (!open) state.surfaces.clear();
+  publishGeometryOverlay(id, state);
+}
+
+export function updateNativePanelOverlayGeometry(
   id: string,
-  open: boolean,
-  overlayRoot?: HTMLElement | null,
+  change: OverlaySurfaceGeometryChange,
 ): void {
-  if (!open || !overlayRoot) {
-    setNativePanelOverlayVisibility(id, open);
-    return;
-  }
+  const state = overlayState(id);
+  if (change.type === "upsert") state.surfaces.set(change.surface.surfaceId, change.surface);
+  else state.surfaces.delete(change.surfaceId);
+  publishGeometryOverlay(id, state);
+}
 
-  nextMeasurementId += 1;
-  const measurementId = nextMeasurementId;
-  pendingMeasurements.set(id, measurementId);
-  requestAnimationFrame(() => {
-    if (pendingMeasurements.get(id) !== measurementId) {
-      return;
-    }
-    pendingMeasurements.delete(id);
-
-    const overlay = overlayRoot.querySelector<HTMLElement>(
-      '.poodle-popover__surface, [role="menu"]',
-    );
-    const overlayRect = overlay?.getBoundingClientRect();
-    const panelIds = overlayRect
-      ? Array.from(document.querySelectorAll<HTMLElement>("[data-native-browser-viewport]"))
-          .filter((viewport) => rectanglesIntersect(overlayRect, viewport.getBoundingClientRect()))
-          .map((viewport) => viewport.dataset.nativeBrowserPanelId)
-          .filter((panelId): panelId is string => Boolean(panelId))
-      : [];
-
-    dispatchNativePanelOverlay(id, panelIds.length > 0, panelIds);
-  });
+export function setNativeBrowserViewportGeometry(
+  panelId: string,
+  rect: OverlayViewportRect | null,
+): void {
+  if (rect) browserViewports.set(panelId, rect);
+  else browserViewports.delete(panelId);
+  for (const [id, state] of geometryOverlays) publishGeometryOverlay(id, state);
 }
 
 export function setNativePanelOverlayVisibility(
@@ -54,11 +57,43 @@ export function setNativePanelOverlayVisibility(
   open: boolean,
   panelIds?: string[],
 ): void {
-  pendingMeasurements.delete(id);
   dispatchNativePanelOverlay(id, open, panelIds);
 }
 
-function rectanglesIntersect(a: DOMRect, b: DOMRect): boolean {
+export function resetNativePanelGeometryForTests(): void {
+  geometryOverlays.clear();
+  browserViewports.clear();
+}
+
+function overlayState(id: string) {
+  let state = geometryOverlays.get(id);
+  if (!state) {
+    state = { open: false, surfaces: new Map(), lastPanelIds: [] };
+    geometryOverlays.set(id, state);
+  }
+  return state;
+}
+
+function publishGeometryOverlay(
+  id: string,
+  state: ReturnType<typeof overlayState>,
+): void {
+  const panelIds = state.open
+    ? [...browserViewports]
+        .filter(([, viewport]) =>
+          [...state.surfaces.values()].some(
+            (surface) => surface.visible && rectanglesIntersect(surface.rect, viewport),
+          ),
+        )
+        .map(([panelId]) => panelId)
+        .sort()
+    : [];
+  if (sameIds(panelIds, state.lastPanelIds)) return;
+  state.lastPanelIds = panelIds;
+  dispatchNativePanelOverlay(id, panelIds.length > 0, panelIds);
+}
+
+function rectanglesIntersect(a: OverlayViewportRect, b: OverlayViewportRect): boolean {
   return a.width > 0
     && a.height > 0
     && b.width > 0
@@ -67,6 +102,10 @@ function rectanglesIntersect(a: DOMRect, b: DOMRect): boolean {
     && a.right > b.left
     && a.top < b.bottom
     && a.bottom > b.top;
+}
+
+function sameIds(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function dispatchNativePanelOverlay(id: string, open: boolean, panelIds?: string[]): void {
