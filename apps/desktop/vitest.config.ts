@@ -7,6 +7,19 @@ export default defineConfig({
     conditions: ["browser"],
     preserveSymlinks: true,
   },
+  ssr: {
+    noExternal: [
+      "@longhorn/settings",
+      "@longhorn/operation",
+      "@longhorn/notifications",
+      "@longhorn/config",
+      "@poodle/headless",
+      "@poodle/icons-lucide",
+      "@poodle/styles",
+      "@poodle/svelte",
+      "@poodle/svelte-tokens",
+    ],
+  },
   test: {
     environment: "jsdom",
     include: ["src/**/*.vitest.ts"],

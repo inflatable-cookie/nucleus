@@ -32,13 +32,18 @@
     WorkspacePanelPresentation,
     WorkspacePanelPresentationInput,
   } from "./workspaceLayout";
+  import type { AgentChatDefaults } from "./settings/client";
 
   let {
     selectedProject,
+    agentChatDefaults,
     onOpenPanelKindsChange,
+    onCommandContextChange,
   }: {
     selectedProject: ControlProjectRecordDto | null;
+    agentChatDefaults: AgentChatDefaults;
     onOpenPanelKindsChange?: (kinds: string[]) => void;
+    onCommandContextChange?: (kind: string | null) => void;
   } = $props();
 
   let session = $state.raw<WorkspaceLayoutSession | null>(null);
@@ -48,6 +53,7 @@
   let selectedGoal = $state<ControlGoalRecordDto | null>(null);
   let panelConversationIds = $state<Record<string, string>>({});
   let layoutDragActive = $state(false);
+  let commandActiveRegionId = $state<RegionId | null>(null);
   let panelSequence = 0;
   let pendingThreadOpen = $state<{
     projectId: string;
@@ -114,6 +120,15 @@
   });
 
   $effect(() => {
+    const region = container?.regions.find(({ region_id }) => region_id === commandActiveRegionId)
+      ?? container?.regions.find(({ active_panel_instance_id }) => active_panel_instance_id !== null);
+    const activePanel = snapshot?.panels.find(
+      ({ panel_instance_id }) => panel_instance_id === region?.active_panel_instance_id,
+    );
+    onCommandContextChange?.(activePanel?.kind ?? null);
+  });
+
+  $effect(() => {
     const request = pendingThreadOpen;
     if (!request || request.projectId !== selectedProject?.project_id || !snapshot) return;
     pendingThreadOpen = null;
@@ -146,6 +161,7 @@
     window.addEventListener("nucleus:open-file", handleOpenFile);
     window.addEventListener("nucleus:open-forge-diff", handleOpenForgeDiff);
     window.addEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
+    window.addEventListener("nucleus:command-close-active-panel", closeCommandActivePanel);
     return () => {
       window.removeEventListener("nucleus:create-workspace-panel", handleCreateWorkspacePanel);
       window.removeEventListener("nucleus:open-task", handleOpenTask);
@@ -153,6 +169,7 @@
       window.removeEventListener("nucleus:open-file", handleOpenFile);
       window.removeEventListener("nucleus:open-forge-diff", handleOpenForgeDiff);
       window.removeEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
+      window.removeEventListener("nucleus:command-close-active-panel", closeCommandActivePanel);
     };
   });
 
@@ -161,6 +178,12 @@
       ? event.detail.kind
       : null;
     if (kind) void addPanel(kind);
+  }
+
+  function closeCommandActivePanel(): void {
+    const region = container?.regions.find(({ region_id }) => region_id === commandActiveRegionId)
+      ?? container?.regions.find(({ active_panel_instance_id }) => active_panel_instance_id !== null);
+    if (region?.active_panel_instance_id) session?.binding?.close(region.active_panel_instance_id);
   }
 
   function handleOpenTask(event: Event): void {
@@ -593,7 +616,12 @@
 
 {#snippet RegionShell(label: string, edge: "left" | "right" | "top" | "bottom", regionId: RegionId)}
   {#if binding && snapshot && session}
-    <section class="region-cell" aria-label={`${label} region`}>
+    <section
+      class="region-cell"
+      aria-label={`${label} region`}
+      onpointerdown={() => (commandActiveRegionId = regionId)}
+      onfocusin={() => (commandActiveRegionId = regionId)}
+    >
       <LayoutDockRegion
         {binding}
         containerId={snapshot.container_id}
@@ -627,6 +655,7 @@
           resourceId={effectivePanelResourceTarget(panel)}
           activeTask={selectedTask}
           activeGoal={selectedGoal}
+          {agentChatDefaults}
           onClearActiveTask={() => (selectedTaskId = null)}
           onClearActiveGoal={() => (selectedGoalId = null)}
         />

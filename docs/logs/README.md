@@ -4,6 +4,22 @@ Logs record meaningful decisions, evidence, and closeouts.
 
 ## Current Logs
 
+- `2026-08-02-host-selected-backup-export.md`
+- `2026-08-02-grouped-custom-adapter-restore-gate.md`
+- `2026-08-02-longhorn-secondary-systems-closeout.md`
+- `2026-08-02-local-control-bridge-alignment.md`
+- `2026-08-02-backup-inventory-and-restore-gate.md`
+- `2026-08-02-notification-ledger-and-attention.md`
+- `2026-08-02-cross-panel-operation-catalogue.md`
+- `2026-08-02-command-palette-and-keybinding-acceptance.md`
+- `2026-08-02-keymap-persistence-and-resolution.md`
+- `2026-08-02-command-catalogue-and-admission.md`
+- `2026-08-02-provider-product-settings-closeout.md`
+- `2026-08-02-credential-reference-settings.md`
+- `2026-08-02-provider-model-settings.md`
+- `2026-08-02-longhorn-settings-shell-implementation.md`
+- `2026-08-01-longhorn-consumer-admission-closeout.md`
+- `2026-08-01-longhorn-secondary-system-roadmap-compilation.md`
 - `2026-08-01-longhorn-desktop-migration-closeout.md`
 - `2026-08-01-longhorn-project-layout-cutover.md`
 - `2026-08-01-project-layout-operator-acceptance.md`

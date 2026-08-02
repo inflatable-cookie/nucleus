@@ -15,11 +15,16 @@
         "@codemirror/state": "^6.7.1",
         "@codemirror/view": "^6.43.7",
         "@lezer/highlight": "^1.2.3",
+        "@longhorn/commands": "file:../../../longhorn/packages/commands",
+        "@longhorn/config": "file:../../../longhorn/packages/config",
         "@longhorn/core": "file:../../../longhorn/packages/core",
         "@longhorn/layout": "file:../../../longhorn/packages/layout",
         "@longhorn/native-content": "file:../../../longhorn/packages/native-content",
         "@longhorn/native-content-svelte": "file:../../../longhorn/packages/native-content-svelte",
+        "@longhorn/notifications": "file:../../../longhorn/packages/notifications",
+        "@longhorn/operation": "file:../../../longhorn/packages/operation",
         "@longhorn/poodle": "file:../../../longhorn/packages/poodle",
+        "@longhorn/settings": "file:../../../longhorn/packages/settings",
         "@longhorn/svelte": "file:../../../longhorn/packages/svelte",
         "@poodle/headless": "file:../../../poodle/packages/core",
         "@poodle/icons-lucide": "file:../../../poodle/packages/svelte/icons-lucide",
@@ -48,11 +53,16 @@
     },
   },
   "overrides": {
+    "@longhorn/commands": "file:../../../longhorn/packages/commands",
+    "@longhorn/config": "file:../../../longhorn/packages/config",
     "@longhorn/core": "file:../../../longhorn/packages/core",
     "@longhorn/layout": "file:../../../longhorn/packages/layout",
     "@longhorn/native-content": "file:../../../longhorn/packages/native-content",
     "@longhorn/native-content-svelte": "file:../../../longhorn/packages/native-content-svelte",
+    "@longhorn/notifications": "file:../../../longhorn/packages/notifications",
+    "@longhorn/operation": "file:../../../longhorn/packages/operation",
     "@longhorn/poodle": "file:../../../longhorn/packages/poodle",
+    "@longhorn/settings": "file:../../../longhorn/packages/settings",
     "@longhorn/svelte": "file:../../../longhorn/packages/svelte",
     "@poodle/headless": "file:../../../poodle/packages/core",
     "@poodle/icons-lucide": "file:../../../poodle/packages/svelte/icons-lucide",
@@ -154,6 +164,10 @@
 
     "@lezer/rust": ["@lezer/rust@1.0.2", "", { "dependencies": { "@lezer/common": "^1.2.0", "@lezer/highlight": "^1.0.0", "@lezer/lr": "^1.0.0" } }, "sha512-Lz5sIPBdF2FUXcWeCu1//ojFAZqzTQNRga0aYv6dYXqJqPfMdCAI0NzajWUd4Xijj1IKJLtjoXRPMvTKWBcqKg=="],
 
+    "@longhorn/commands": ["@longhorn/commands@file:../../../longhorn/packages/commands", { "peerDependencies": { "@poodle/svelte": "0.1.0", "svelte": ">=5.38.6 <6" }, "optionalPeers": ["@poodle/svelte", "svelte"] }],
+
+    "@longhorn/config": ["@longhorn/config@file:../../../longhorn/packages/config", { "dependencies": { "@longhorn/core": "0.1.0" }, "peerDependencies": { "@poodle/svelte": "0.1.0", "svelte": ">=5.38.6 <6" }, "optionalPeers": ["@poodle/svelte", "svelte"] }],
+
     "@longhorn/core": ["@longhorn/core@file:../../../longhorn/packages/core", {}],
 
     "@longhorn/layout": ["@longhorn/layout@file:../../../longhorn/packages/layout", {}],
@@ -162,7 +176,13 @@
 
     "@longhorn/native-content-svelte": ["@longhorn/native-content-svelte@file:../../../longhorn/packages/native-content-svelte", { "dependencies": { "@longhorn/native-content": "0.1.0" }, "peerDependencies": { "svelte": ">=5.38.6 <6" } }],
 
+    "@longhorn/notifications": ["@longhorn/notifications@file:../../../longhorn/packages/notifications", { "dependencies": { "@longhorn/core": "0.1.0" }, "peerDependencies": { "@poodle/svelte": "0.1.0", "svelte": ">=5.38.6 <6" }, "optionalPeers": ["@poodle/svelte", "svelte"] }],
+
+    "@longhorn/operation": ["@longhorn/operation@file:../../../longhorn/packages/operation", { "dependencies": { "@longhorn/core": "0.1.0" }, "peerDependencies": { "@longhorn/bridge": "0.1.0", "@poodle/svelte": "0.1.0", "svelte": ">=5.38.6 <6" }, "optionalPeers": ["@longhorn/bridge", "@poodle/svelte", "svelte"] }],
+
     "@longhorn/poodle": ["@longhorn/poodle@file:../../../longhorn/packages/poodle", { "dependencies": { "@longhorn/layout": "0.1.0", "@longhorn/svelte": "0.1.0" }, "peerDependencies": { "@longhorn/transfer": "0.1.0", "@poodle/svelte": "0.1.0", "svelte": ">=5.38.6 <6" }, "optionalPeers": ["@longhorn/transfer"] }],
+
+    "@longhorn/settings": ["@longhorn/settings@file:../../../longhorn/packages/settings", { "dependencies": { "@longhorn/core": "0.1.0" }, "peerDependencies": { "@poodle/svelte": "0.1.0", "svelte": ">=5.38.6 <6" }, "optionalPeers": ["@poodle/svelte", "svelte"] }],
 
     "@longhorn/svelte": ["@longhorn/svelte@file:../../../longhorn/packages/svelte", { "dependencies": { "@longhorn/core": "0.1.0" }, "peerDependencies": { "@longhorn/layout": "0.1.0", "@longhorn/surface-transfer": "0.1.0", "@longhorn/surfaces": "0.1.0", "@longhorn/transfer": "0.1.0", "svelte": ">=5.38.6 <=5.56.8" }, "optionalPeers": ["@longhorn/layout", "@longhorn/surface-transfer", "@longhorn/surfaces", "@longhorn/transfer"] }],
 
@@ -508,15 +528,23 @@
 
     "zimmerframe": ["zimmerframe@1.1.4", "", {}, "sha512-B58NGBEoc8Y9MWWCQGl/gq9xBCe4IiKM0a2x7GZdQKOW5Exr8S1W24J6OgM1njK8xCRGvAJIL/MxXHf6SkmQKQ=="],
 
+    "@longhorn/config/@longhorn/core": ["@longhorn/core@file:../../../longhorn/packages/core", {}],
+
     "@longhorn/native-content/@longhorn/core": ["@longhorn/core@file:../../../longhorn/packages/core", {}],
 
     "@longhorn/native-content-svelte/@longhorn/native-content": ["@longhorn/native-content@file:../../../longhorn/packages/native-content", {}],
+
+    "@longhorn/notifications/@longhorn/core": ["@longhorn/core@file:../../../longhorn/packages/core", {}],
+
+    "@longhorn/operation/@longhorn/core": ["@longhorn/core@file:../../../longhorn/packages/core", {}],
 
     "@longhorn/poodle/@longhorn/layout": ["@longhorn/layout@file:../../../longhorn/packages/layout", {}],
 
     "@longhorn/poodle/@longhorn/svelte": ["@longhorn/svelte@file:../../../longhorn/packages/svelte", {}],
 
     "@longhorn/poodle/@poodle/svelte": ["@poodle/svelte@file:../../../poodle/packages/svelte/components", {}],
+
+    "@longhorn/settings/@longhorn/core": ["@longhorn/core@file:../../../longhorn/packages/core", {}],
 
     "@longhorn/svelte/@longhorn/core": ["@longhorn/core@file:../../../longhorn/packages/core", {}],
 

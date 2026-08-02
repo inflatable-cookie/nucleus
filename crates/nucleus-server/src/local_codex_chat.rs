@@ -1,6 +1,7 @@
 //! Local Codex-backed product chat with durable Nucleus timeline records.
 
 mod cancellation;
+mod credentials;
 mod goal_authoring;
 mod goal_execution;
 mod goal_inspection;
@@ -31,6 +32,15 @@ use nucleus_local_store::LocalStoreBackend;
 use serde::{Deserialize, Serialize};
 
 pub use cancellation::{ActiveLocalCodexChatTurn, LocalCodexChatCancellationRegistry};
+pub use credentials::{
+    request_action as request_local_codex_credential_action, LocalCodexCredentialAction,
+    LocalCodexCredentialActionAvailability, LocalCodexCredentialActionCapability,
+    LocalCodexCredentialActionCode, LocalCodexCredentialActionOutcome,
+    LocalCodexCredentialActionReceipt, LocalCodexCredentialActionRequest,
+    LocalCodexCredentialActionUnavailableReason, LocalCodexCredentialEvidencePosture,
+    LocalCodexCredentialMechanism, LocalCodexCredentialOwnership, LocalCodexCredentialStatus,
+    LocalCodexCredentialSummary, LocalCodexEntitlementMetering,
+};
 pub use goal_execution::{
     execute_goal_run, GoalRunExecutionRecord, GoalRunExecutionRequest, GoalRunExecutionStatus,
     GoalTaskExecutionRecord,
@@ -181,6 +191,18 @@ pub struct LocalCodexChatReasoningOption {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalCodexChatProviderSummary {
+    pub provider_instance_id: String,
+    pub adapter_id: String,
+    pub display_name: String,
+    pub harness_name: String,
+    pub authentication_posture: String,
+    pub credential: LocalCodexCredentialSummary,
+    pub model_discovery: String,
+    pub models: Vec<LocalCodexChatModelOption>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LocalCodexChatReply {
     pub session_id: String,
     pub thread_id: String,
@@ -213,6 +235,31 @@ impl Default for LocalCodexChatService {
 impl LocalCodexChatService {
     pub fn available_models() -> Result<Vec<LocalCodexChatModelOption>, String> {
         available_models()
+    }
+
+    pub fn provider_summary() -> LocalCodexChatProviderSummary {
+        match available_models() {
+            Ok(models) => LocalCodexChatProviderSummary {
+                provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
+                adapter_id: CHAT_ADAPTER_ID.to_owned(),
+                display_name: "Local Codex".to_owned(),
+                harness_name: "Codex app-server".to_owned(),
+                authentication_posture: "provider_managed".to_owned(),
+                credential: credentials::summary(),
+                model_discovery: "available".to_owned(),
+                models,
+            },
+            Err(_) => LocalCodexChatProviderSummary {
+                provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
+                adapter_id: CHAT_ADAPTER_ID.to_owned(),
+                display_name: "Local Codex".to_owned(),
+                harness_name: "Codex app-server".to_owned(),
+                authentication_posture: "provider_managed".to_owned(),
+                credential: credentials::summary(),
+                model_discovery: "unavailable".to_owned(),
+                models: Vec::new(),
+            },
+        }
     }
 
     pub fn with_task_review_snapshot_store(store: crate::TaskReviewSnapshotStore) -> Self {

@@ -14,14 +14,27 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
+longhorn-command = { path = "../../../../longhorn/crates/longhorn-command" }
+longhorn-command-config = { path = "../../../../longhorn/crates/longhorn-command-config" }
+longhorn-command-settings = { path = "../../../../longhorn/crates/longhorn-command-settings" }
+longhorn-bridge = { path = "../../../../longhorn/crates/longhorn-bridge" }
 longhorn-config = { path = "../../../../longhorn/crates/longhorn-config" }
 longhorn-core = { path = "../../../../longhorn/crates/longhorn-core" }
 longhorn-display = { path = "../../../../longhorn/crates/longhorn-display" }
 longhorn-layout = { path = "../../../../longhorn/crates/longhorn-layout" }
 longhorn-layout-config = { path = "../../../../longhorn/crates/longhorn-layout-config" }
 longhorn-native-content = { path = "../../../../longhorn/crates/longhorn-native-content" }
+longhorn-operation = { path = "../../../../longhorn/crates/longhorn-operation" }
+longhorn-notifications = { path = "../../../../longhorn/crates/longhorn-notifications" }
+longhorn-settings = { path = "../../../../longhorn/crates/longhorn-settings" }
+longhorn-settings-config = { path = "../../../../longhorn/crates/longhorn-settings-config" }
 longhorn-tauri-config = { path = "../../../../longhorn/crates/longhorn-tauri-config" }
+longhorn-tauri-bridge = { path = "../../../../longhorn/crates/longhorn-tauri-bridge" }
+longhorn-tauri-command = { path = "../../../../longhorn/crates/longhorn-tauri-command" }
 longhorn-tauri-native-content-child-view = { path = "../../../../longhorn/crates/longhorn-tauri-native-content-child-view" }
+longhorn-tauri-operation = { path = "../../../../longhorn/crates/longhorn-tauri-operation" }
+longhorn-tauri-notifications = { path = "../../../../longhorn/crates/longhorn-tauri-notifications" }
+longhorn-tauri-settings = { path = "../../../../longhorn/crates/longhorn-tauri-settings" }
 longhorn-tauri-windowing = { path = "../../../../longhorn/crates/longhorn-tauri-windowing" }
 longhorn-windowing = { path = "../../../../longhorn/crates/longhorn-windowing" }
 longhorn-windowing-config = { path = "../../../../longhorn/crates/longhorn-windowing-config" }
@@ -32,9 +45,11 @@ nucleus-server = { path = "../../../crates/nucleus-server" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40", features = ["backup", "bundled"] }
+time = { version = "0.3", features = ["formatting"] }
 tauri = { version = "2.11.5", features = ["unstable"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tempfile = "3"
 
 [dev-dependencies]
+tauri = { version = "2.11.5", features = ["test"] }

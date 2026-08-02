@@ -13,9 +13,11 @@
   let {
     selectedProjectId = $bindable(null),
     selectedProject = $bindable(null),
+    selectedConversationId = $bindable(null),
   }: {
     selectedProjectId: string | null;
     selectedProject: ControlProjectRecordDto | null;
+    selectedConversationId: string | null;
   } = $props();
 
   const storageKey = "nucleus:desktop:sidebar-mode";
@@ -26,14 +28,21 @@
     { value: "forge", label: "Forge", icon: gitBranch },
   ];
   let activeMode = $state<SidebarMode>("projects");
-  let selectedConversationId = $state<string | null>(null);
 
   onMount(() => {
     const stored = window.localStorage.getItem(storageKey);
     if (isSidebarMode(stored)) activeMode = stored;
     window.addEventListener("nucleus:reveal-editor-file", handleEditorFileReveal);
+    window.addEventListener("nucleus:command-show-projects", showProjects);
+    window.addEventListener("nucleus:command-show-threads", showThreads);
+    window.addEventListener("nucleus:command-show-files", showFiles);
+    window.addEventListener("nucleus:command-show-forge", showForge);
     return () => {
       window.removeEventListener("nucleus:reveal-editor-file", handleEditorFileReveal);
+      window.removeEventListener("nucleus:command-show-projects", showProjects);
+      window.removeEventListener("nucleus:command-show-threads", showThreads);
+      window.removeEventListener("nucleus:command-show-files", showFiles);
+      window.removeEventListener("nucleus:command-show-forge", showForge);
     };
   });
 
@@ -53,6 +62,11 @@
   function handleEditorFileReveal(): void {
     selectMode("files");
   }
+
+  function showProjects(): void { selectMode("projects"); }
+  function showThreads(): void { selectMode("threads"); }
+  function showFiles(): void { selectMode("files"); }
+  function showForge(): void { selectMode("forge"); }
 </script>
 
 <section class="workspace-sidebar" aria-label="Workspace sidebar">

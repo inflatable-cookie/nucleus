@@ -327,6 +327,19 @@ shape.
 - `g05/007-structured-provider-work.md` - completed
 - `g05/008-structured-agent-chat-acceptance.md` - completed; deterministic and
   authenticated structured Agent Chat acceptance passed
+- `g05/009-longhorn-secondary-system-admission.md` - completed
+- `g05/010-longhorn-settings-shell.md` - completed
+- `g05/011-provider-and-product-settings.md` - completed
+- `g05/012-command-catalogue-keymaps-and-palette.md` - completed
+- `g05/013-cross-panel-operation-catalogue.md` - completed
+- `g05/014-notification-ledger-and-attention.md` - completed
+- `g05/015-backup-restore-and-recovery-controls.md` - backup capture, inventory,
+  retention, and host-selected export implemented; restore paused
+- `g05/016-optional-backend-bridge-alignment.md` - local alignment and
+  consumer-native invocation completed; production remote transport gated
+- `g05/017-secondary-window-panel-transfer.md` - conditional-paused
+- `g05/018-longhorn-adoption-closeout-and-deferrals.md` - paused at recovery
+  and operator gates
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -386,6 +399,9 @@ shape.
 
 ## Next Task
 
-Operator intent checkpoint: select the next g05 consolidation lane after
-structured Agent Chat acceptance. Forge native validation remains
-operator-held.
+Hold at the explicit g05 gate. Resume card 046 only after Longhorn publishes a
+grouped failure-atomic custom-adapter restore transaction; then implement the
+Nucleus boot-time quiescence and restart handoff. Card 050 still needs a remote
+pairing/session contract and topology selection. Cards 051-053 still need a
+concrete secondary-window workflow. No autonomous card remains ready. Forge
+native validation remains operator-held.

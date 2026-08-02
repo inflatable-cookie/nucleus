@@ -36,6 +36,7 @@ use nucleus_server::{
     LocalCodexChatCancellationRegistry, LocalCodexChatHistory, LocalCodexChatModelOption,
     LocalCodexChatQuestionAnswerRequest, LocalCodexChatQuestionRegistry, LocalCodexChatReply,
     LocalCodexChatRequest, LocalCodexChatService, LocalCodexChatThreadSummary,
+    LocalCodexCredentialActionReceipt, LocalCodexCredentialActionRequest,
     LocalControlRequestHandler, LocalMemoryProposalSeed, LocalPlanningSessionSeed,
     LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed, ServerStateService,
     StoredChatActorSelection, StoredChatQuestionExchange, TaskDiffFilePatchRequest,
@@ -43,12 +44,18 @@ use nucleus_server::{
     TaskReviewSnapshotStore, TauriIpcControlCommandAdapter, TerminalHostRuntime,
 };
 
+mod bridge;
 mod browser_panel;
+mod commands;
+mod config_operations;
 mod desktop_profile;
 mod editor_directories;
 mod editor_drafts;
 mod editor_file_watch;
+mod notifications;
+mod operations;
 mod scm_working_copy;
+mod settings;
 mod storage_migration;
 mod terminal_panel;
 mod window_host;
@@ -674,6 +681,21 @@ async fn list_agent_chat_models() -> Result<Vec<LocalCodexChatModelOption>, Stri
         .map_err(|error| format!("agent chat model worker failed: {error}"))?
 }
 
+#[tauri::command]
+async fn agent_chat_provider_summary(
+) -> Result<nucleus_server::LocalCodexChatProviderSummary, String> {
+    tauri::async_runtime::spawn_blocking(LocalCodexChatService::provider_summary)
+        .await
+        .map_err(|error| format!("agent chat provider summary worker failed: {error}"))
+}
+
+#[tauri::command]
+fn agent_chat_credential_action(
+    request: LocalCodexCredentialActionRequest,
+) -> LocalCodexCredentialActionReceipt {
+    nucleus_server::request_local_codex_credential_action(request)
+}
+
 fn seed_local_command_evidence(
     state: &nucleus_server::ServerStateService<SqliteBackend>,
 ) -> nucleus_local_store::LocalStoreResult<nucleus_local_store::LocalStoreRecord> {
@@ -979,6 +1001,10 @@ fn desktop_window_page_ready(
     window.mark_page_ready()
 }
 
+fn desktop_context<R: tauri::Runtime>() -> tauri::Context<R> {
+    tauri::generate_context!()
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1002,7 +1028,17 @@ pub fn run() {
             }
             window_host::install(app, &profile).map_err(std::io::Error::other)?;
             browser_panel::install(app);
-            app.manage(DesktopState::new_with_profile(
+            commands::install(app, profile.storage_roots().clone())
+                .map_err(std::io::Error::other)?;
+            notifications::install(
+                app,
+                profile.storage_roots().state().join("notifications.json"),
+            )
+            .map_err(std::io::Error::other)?;
+            operations::install(app).map_err(std::io::Error::other)?;
+            config_operations::install(app, profile.clone()).map_err(std::io::Error::other)?;
+            settings::install(app, profile.settings_roots()).map_err(std::io::Error::other)?;
+            let desktop_state = DesktopState::new_with_profile(
                 SqliteBackend::new(profile.database_path()),
                 profile.snapshot_path(),
                 profile.editor_drafts_path(),
@@ -1012,7 +1048,10 @@ pub fn run() {
                 profile.profile_id().to_owned(),
                 profile.layout_digest().to_owned(),
                 profile.legacy_import_receipt().cloned(),
-            ));
+            );
+            bridge::install(app, Arc::clone(&desktop_state.adapter))
+                .map_err(std::io::Error::other)?;
+            app.manage(desktop_state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1025,6 +1064,8 @@ pub fn run() {
             list_agent_chat_threads,
             rename_agent_chat_thread,
             list_agent_chat_models,
+            agent_chat_provider_summary,
+            agent_chat_credential_action,
             workspace_layout_snapshot,
             prepare_workspace_panel,
             mutate_workspace_layout,
@@ -1064,6 +1105,39 @@ pub fn run() {
             browser_panel::browser_panel_navigate,
             browser_panel::browser_panel_action,
             browser_panel::browser_panel_current_url,
+            longhorn_tauri_command::longhorn_command_catalogue,
+            longhorn_tauri_command::longhorn_command_keymap,
+            longhorn_tauri_command::longhorn_command_keymap_preview,
+            longhorn_tauri_command::longhorn_command_keymap_commit,
+            longhorn_tauri_command::longhorn_command_keymap_reset,
+            longhorn_tauri_operation::longhorn_operation_snapshot,
+            longhorn_tauri_operation::longhorn_operation_mutate,
+            longhorn_tauri_operation::longhorn_operation_cancel,
+            longhorn_tauri_notifications::longhorn_notifications_snapshot,
+            longhorn_tauri_notifications::longhorn_notifications_mutate,
+            longhorn_tauri_config::longhorn_config_snapshot,
+            longhorn_tauri_config::longhorn_config_storage_inspect,
+            longhorn_tauri_config::longhorn_config_storage_execute,
+            longhorn_tauri_config::longhorn_config_storage_recover,
+            longhorn_tauri_config::longhorn_config_storage_cleanup,
+            longhorn_tauri_config::longhorn_config_backup_create,
+            config_operations::export::longhorn_config_backup_export,
+            longhorn_tauri_config::longhorn_config_backup_retention,
+            longhorn_tauri_config::longhorn_config_restore_inspect,
+            longhorn_tauri_config::longhorn_config_restore_plan,
+            longhorn_tauri_config::longhorn_config_restore_execute,
+            longhorn_tauri_config::longhorn_config_restore_adapter_execute,
+            longhorn_tauri_config::longhorn_config_restore_recover,
+            longhorn_tauri_bridge::longhorn_bridge_hello,
+            longhorn_tauri_bridge::longhorn_bridge_authority,
+            longhorn_tauri_bridge::longhorn_bridge_query,
+            longhorn_tauri_bridge::longhorn_bridge_command,
+            longhorn_tauri_bridge::longhorn_bridge_cancel,
+            longhorn_tauri_bridge::longhorn_bridge_resync,
+            settings::longhorn_settings_registry,
+            settings::longhorn_settings_load,
+            settings::longhorn_settings_apply,
+            settings::longhorn_settings_reset,
             terminal_panel::terminal_open_or_attach,
             terminal_panel::terminal_write,
             terminal_panel::terminal_resize,
@@ -1071,7 +1145,7 @@ pub fn run() {
             terminal_panel::terminal_close_for_panel,
             terminal_panel::terminal_close_for_project
         ])
-        .build(tauri::generate_context!())
+        .build(desktop_context())
         .expect("failed to build nucleus desktop");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::ExitRequested { .. }) {

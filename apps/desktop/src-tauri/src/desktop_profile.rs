@@ -7,11 +7,18 @@ use longhorn_config::{
     PlatformDirectoryFacts, ResolvedStorageLayout, StorageBootstrapOrigin, StorageBootstrapState,
     StorageIdentity, StorageLayoutRequest, StorageProfile, StorageProfileSelection, StorageRoots,
 };
-use longhorn_tauri_config::{platform_directory_facts, TauriDirectorySnapshot};
-use tauri::Manager;
 
 use crate::storage_migration::{self, LegacyImportReceipt, LegacyImportRequest};
 use crate::workspace_ui::WorkspaceUiPaths;
+
+mod host;
+mod validation;
+
+pub use host::host_storage_facts;
+use validation::{
+    create_directory, parse_chat_timeout, parse_fixture_root, resolve_selected_layout,
+    validate_portable_root,
+};
 
 pub const CANONICAL_APPLICATION_ID: &str = "com.inflatablecookie.nucleus";
 const PORTABLE_ROOT_ENV: &str = "NUCLEUS_DESKTOP_PORTABLE_ROOT";
@@ -157,6 +164,10 @@ impl DesktopProfile {
         self.layout.storage_roots()
     }
 
+    pub fn storage_diagnostic(&self) -> longhorn_config::StorageLayoutDiagnostic {
+        self.layout.diagnostic()
+    }
+
     pub fn legacy_window_placement_backup_path(&self) -> PathBuf {
         self.layout
             .storage_roots()
@@ -173,6 +184,10 @@ impl DesktopProfile {
 
     pub fn editor_drafts_path(&self) -> PathBuf {
         self.layout.storage_roots().state().join("editor-drafts")
+    }
+
+    pub fn settings_roots(&self) -> StorageRoots {
+        self.layout.storage_roots().clone()
     }
 
     pub fn chat_turn_timeout(&self) -> Duration {
@@ -196,358 +211,5 @@ impl DesktopProfile {
     }
 }
 
-fn resolve_selected_layout(
-    identity: StorageIdentity,
-    facts: PlatformDirectoryFacts,
-    selection: &StorageProfileSelection,
-) -> Result<ResolvedStorageLayout, String> {
-    let mut request = StorageLayoutRequest::new(identity, facts).with_profile(selection.profile());
-    if let Some(root) = selection.explicit_root() {
-        request = request.with_portable_root(root);
-    }
-    resolve_storage_layout(&request)
-        .map_err(|error| format!("resolve Nucleus storage profile failed: {error}"))
-}
-
-fn validate_portable_root(value: &OsStr) -> Result<PathBuf, String> {
-    let root = PathBuf::from(value);
-    if root.as_os_str().is_empty() {
-        return Err(format!("{PORTABLE_ROOT_ENV} must not be empty"));
-    }
-    if !root.is_absolute() {
-        return Err(format!("{PORTABLE_ROOT_ENV} must be an absolute path"));
-    }
-    if root.exists() && !root.is_dir() {
-        return Err(format!("{PORTABLE_ROOT_ENV} does not identify a directory"));
-    }
-    Ok(root)
-}
-
-fn parse_chat_timeout(value: Option<&OsStr>) -> Result<u64, String> {
-    let timeout = match value {
-        Some(value) => value
-            .to_str()
-            .ok_or_else(|| format!("{CHAT_TIMEOUT_ENV} must be valid UTF-8"))?
-            .parse::<u64>()
-            .map_err(|_| format!("{CHAT_TIMEOUT_ENV} must be an integer number of milliseconds"))?,
-        None => DEFAULT_CHAT_TIMEOUT_MS,
-    };
-    if !(1..=DEFAULT_CHAT_TIMEOUT_MS).contains(&timeout) {
-        return Err(format!(
-            "{CHAT_TIMEOUT_ENV} must be between 1 and {DEFAULT_CHAT_TIMEOUT_MS}"
-        ));
-    }
-    Ok(timeout)
-}
-
-fn parse_fixture_root(
-    value: Option<&OsStr>,
-    configured_root: Option<&OsStr>,
-) -> Result<Option<PathBuf>, String> {
-    match value {
-        Some(_) if configured_root.is_none() => Err(format!(
-            "{PROOF_FIXTURE_ROOT_ENV} requires an explicit {PORTABLE_ROOT_ENV}"
-        )),
-        Some(root) => {
-            let root = PathBuf::from(root);
-            if !root.is_absolute() {
-                return Err(format!("{PROOF_FIXTURE_ROOT_ENV} must be an absolute path"));
-            }
-            if !root.is_dir() || !root.join(".git").is_dir() {
-                return Err(format!(
-                    "{PROOF_FIXTURE_ROOT_ENV} must identify an existing Git repository"
-                ));
-            }
-            Ok(Some(root))
-        }
-        None => Ok(None),
-    }
-}
-
-fn create_directory(path: &Path, label: &str) -> Result<(), String> {
-    std::fs::create_dir_all(path).map_err(|error| format!("create {label} failed: {error}"))?;
-    if !path.is_dir() {
-        return Err(format!("{label} is not a directory"));
-    }
-    Ok(())
-}
-
-pub fn host_storage_facts(
-    app: &tauri::AppHandle,
-) -> Result<(PlatformDirectoryFacts, PathBuf), String> {
-    let paths = app.path();
-    let home = paths
-        .home_dir()
-        .map_err(|error| format!("resolve desktop home directory failed: {error}"))?;
-    #[cfg(target_os = "macos")]
-    let snapshot = TauriDirectorySnapshot::MacOs {
-        local_data_dir: paths
-            .local_data_dir()
-            .map_err(|error| format!("resolve local data directory failed: {error}"))?,
-        cache_dir: paths
-            .cache_dir()
-            .map_err(|error| format!("resolve cache directory failed: {error}"))?,
-        home_dir: home.clone(),
-        temp_dir: paths
-            .temp_dir()
-            .map_err(|error| format!("resolve temporary directory failed: {error}"))?,
-    };
-    #[cfg(target_os = "windows")]
-    let snapshot = TauriDirectorySnapshot::Windows {
-        local_data_dir: paths
-            .local_data_dir()
-            .map_err(|error| format!("resolve local data directory failed: {error}"))?,
-        temp_dir: paths
-            .temp_dir()
-            .map_err(|error| format!("resolve temporary directory failed: {error}"))?,
-    };
-    #[cfg(target_os = "linux")]
-    let snapshot = TauriDirectorySnapshot::Linux {
-        config_dir: paths
-            .config_dir()
-            .map_err(|error| format!("resolve config directory failed: {error}"))?,
-        local_data_dir: paths
-            .local_data_dir()
-            .map_err(|error| format!("resolve local data directory failed: {error}"))?,
-        state_dir: xdg_absolute("XDG_STATE_HOME")?,
-        cache_dir: paths
-            .cache_dir()
-            .map_err(|error| format!("resolve cache directory failed: {error}"))?,
-        runtime_dir: xdg_absolute("XDG_RUNTIME_DIR")?,
-    };
-    Ok((platform_directory_facts(snapshot), home))
-}
-
-#[cfg(target_os = "linux")]
-fn xdg_absolute(name: &str) -> Result<PathBuf, String> {
-    let path = std::env::var_os(name)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| format!("{name} is required for the platform-native storage profile"))?;
-    if !path.is_absolute() {
-        return Err(format!("{name} must be an absolute path"));
-    }
-    Ok(path)
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use longhorn_config::TargetPlatform;
-    use std::fs;
-    use tempfile::tempdir;
-
-    fn facts(platform: TargetPlatform) -> PlatformDirectoryFacts {
-        match platform {
-            TargetPlatform::MacOs => PlatformDirectoryFacts::complete(
-                platform,
-                "/Users/example/Library/Application Support",
-                "/Users/example/Library/Application Support",
-                "/Users/example/Library/Application Support",
-                "/Users/example/Library/Caches",
-                "/Users/example/Library/Logs",
-                "/private/tmp",
-            ),
-            TargetPlatform::Windows => PlatformDirectoryFacts::complete(
-                platform,
-                "/windows/LocalAppData",
-                "/windows/LocalAppData",
-                "/windows/LocalAppData",
-                "/windows/LocalAppData",
-                "/windows/LocalAppData",
-                "/windows/Temp",
-            ),
-            TargetPlatform::Linux => PlatformDirectoryFacts::complete(
-                platform,
-                "/home/example/.config",
-                "/home/example/.local/share",
-                "/home/example/.local/state",
-                "/home/example/.cache",
-                "/home/example/.local/state",
-                "/run/user/1000",
-            ),
-        }
-    }
-
-    #[test]
-    fn canonical_identity_drives_all_three_platform_defaults() {
-        for (platform, expected_config, expected_database) in [
-            (
-                TargetPlatform::MacOs,
-                "/Users/example/Library/Application Support/com.inflatablecookie.nucleus/config",
-                "/Users/example/Library/Application Support/com.inflatablecookie.nucleus/data/databases/nucleus.sqlite",
-            ),
-            (
-                TargetPlatform::Windows,
-                "/windows/LocalAppData/com.inflatablecookie.nucleus/config",
-                "/windows/LocalAppData/com.inflatablecookie.nucleus/data/databases/nucleus.sqlite",
-            ),
-            (
-                TargetPlatform::Linux,
-                "/home/example/.config/com.inflatablecookie.nucleus",
-                "/home/example/.local/share/com.inflatablecookie.nucleus/databases/nucleus.sqlite",
-            ),
-        ] {
-            let profile = DesktopProfile::from_values(
-                facts(platform),
-                None,
-                None,
-                None,
-                Path::new("/nonexistent/nucleus-profile-test"),
-            )
-            .expect("platform profile");
-            assert_eq!(profile.workspace_ui_paths().project_layouts(), Path::new(expected_config).join("project-layouts.json"));
-            assert_eq!(
-                profile.workspace_ui_paths().panel_presentations(),
-                Path::new(expected_config).join("project-panel-presentations.json")
-            );
-            assert_eq!(profile.database_path(), Path::new(expected_database));
-            assert_eq!(profile.profile_id(), "platform-native-v1");
-        }
-    }
-
-    #[test]
-    fn portable_profile_isolates_every_desktop_owned_path() {
-        let profile = DesktopProfile::from_values(
-            facts(TargetPlatform::MacOs),
-            Some(OsStr::new("/tmp/nucleus-proof")),
-            Some(OsStr::new("1250")),
-            None,
-            Path::new("/Users/example"),
-        )
-        .expect("portable profile");
-        assert_eq!(
-            profile.database_path(),
-            Path::new("/tmp/nucleus-proof/data/databases/nucleus.sqlite")
-        );
-        assert_eq!(
-            profile.snapshot_path(),
-            Path::new("/tmp/nucleus-proof/state/task-review-snapshots")
-        );
-        assert_eq!(
-            profile.workspace_ui_paths().window_placement(),
-            Path::new("/tmp/nucleus-proof/state/window-placement.json")
-        );
-        assert_eq!(
-            profile.workspace_ui_paths().project_layouts(),
-            Path::new("/tmp/nucleus-proof/config/project-layouts.json")
-        );
-        assert_eq!(
-            profile.workspace_ui_paths().panel_presentations(),
-            Path::new("/tmp/nucleus-proof/config/project-panel-presentations.json")
-        );
-        assert_eq!(
-            profile.editor_drafts_path(),
-            Path::new("/tmp/nucleus-proof/state/editor-drafts")
-        );
-        assert_eq!(profile.chat_turn_timeout(), Duration::from_millis(1250));
-        assert_eq!(profile.profile_id(), "portable-v1");
-    }
-
-    #[test]
-    fn fresh_portable_profile_restarts_with_the_same_layout() {
-        let temp = tempdir().expect("tempdir");
-        let root = temp.path().join("portable");
-        let home = temp.path().join("home");
-        let first = DesktopProfile::from_values(
-            facts(TargetPlatform::MacOs),
-            Some(root.as_os_str()),
-            None,
-            None,
-            &home,
-        )
-        .expect("first profile");
-        first.prepare().expect("prepare first profile");
-        let second = DesktopProfile::from_values(
-            facts(TargetPlatform::MacOs),
-            Some(root.as_os_str()),
-            None,
-            None,
-            &home,
-        )
-        .expect("restart profile");
-
-        assert_eq!(second.profile_id(), "portable-v1");
-        assert_eq!(second.layout_digest(), first.layout_digest());
-        assert_eq!(second.database_path(), first.database_path());
-        assert_eq!(second.workspace_ui_paths(), first.workspace_ui_paths());
-        assert!(second.storage_roots().config().is_dir());
-        assert!(second.storage_roots().data().is_dir());
-        assert!(second.storage_roots().state().is_dir());
-    }
-
-    #[test]
-    fn legacy_profile_restart_reuses_the_committed_receipt_and_retains_source() {
-        let temp = tempdir().expect("tempdir");
-        let home = temp.path().join("home");
-        let legacy_ui = home.join(".nucleus/config/ui.json");
-        fs::create_dir_all(legacy_ui.parent().unwrap()).expect("legacy config root");
-        fs::write(
-            &legacy_ui,
-            r#"{
-              "schema_version": 10,
-              "window": {
-                "id": "window:primary",
-                "placement": {"display_id":"display:main","maximized":false}
-              },
-              "project_layouts": {}
-            }"#,
-        )
-        .expect("legacy UI");
-        let facts = PlatformDirectoryFacts::complete(
-            TargetPlatform::MacOs,
-            temp.path().join("native/config"),
-            temp.path().join("native/data"),
-            temp.path().join("native/state"),
-            temp.path().join("native/cache"),
-            temp.path().join("native/log"),
-            temp.path().join("native/runtime"),
-        );
-
-        let first = DesktopProfile::from_values(facts.clone(), None, None, None, &home)
-            .expect("legacy import startup");
-        let first_receipt = first
-            .legacy_import_receipt()
-            .cloned()
-            .expect("legacy import receipt");
-        let layout_before = fs::read(first.workspace_ui_paths().project_layouts())
-            .expect("migrated project layouts");
-        let second =
-            DesktopProfile::from_values(facts, None, None, None, &home).expect("legacy restart");
-
-        assert_eq!(second.legacy_import_receipt(), Some(&first_receipt));
-        assert_eq!(second.layout_digest(), first.layout_digest());
-        assert_eq!(
-            fs::read(second.workspace_ui_paths().project_layouts())
-                .expect("restarted project layouts"),
-            layout_before
-        );
-        assert!(!fs::read(&legacy_ui).expect("retained legacy UI").is_empty());
-    }
-
-    #[test]
-    fn explicit_invalid_values_do_not_fall_back() {
-        let result = DesktopProfile::from_values(
-            facts(TargetPlatform::MacOs),
-            Some(OsStr::new("relative")),
-            None,
-            None,
-            Path::new("/Users/example"),
-        );
-        assert_eq!(
-            result.unwrap_err(),
-            format!("{PORTABLE_ROOT_ENV} must be an absolute path")
-        );
-        let result = DesktopProfile::from_values(
-            facts(TargetPlatform::MacOs),
-            Some(OsStr::new("/tmp/nucleus-proof")),
-            Some(OsStr::new("0")),
-            None,
-            Path::new("/Users/example"),
-        );
-        assert_eq!(
-            result.unwrap_err(),
-            format!("{CHAT_TIMEOUT_ENV} must be between 1 and 180000")
-        );
-    }
-}
+mod tests;

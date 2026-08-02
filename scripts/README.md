@@ -9,7 +9,8 @@ Default policy:
 - use TypeScript with Bun only when repo-owned automation is needed
 - use shell only for thin glue
 
-## Next Task
+## Checks
 
-Keep this directory empty until a check cannot be expressed through native
-Effigy or Cargo surfaces.
+- `verify-longhorn-consumer-boundary.ts` packs the selected private Longhorn
+  renderer graph, installs it with the admitted Poodle artifacts outside all
+  workspaces, checks the Rust graph, and emits sanitized consumer evidence.

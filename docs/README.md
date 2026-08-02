@@ -79,6 +79,41 @@ The Longhorn desktop migration is now closed: storage, the protected primary
 window, registered project layouts, renderer reconciliation, and native Browser
 islands use shared mechanisms. Nucleus retains product and Browser policy and
 does not depend on Longhorn Surface hosting.
+The next g05 sequence admits further Longhorn mechanisms behind a strict
+consumer boundary. It starts by decomposing retained migration adapters, then
+adds a sparse Settings shell, provider and product settings, commands and
+keymaps, cross-panel operations, retained notifications, and backup/recovery.
+Local bridge alignment follows. Production remote transport and secondary
+window transfer stay gated by missing product contracts. Hosted Surfaces,
+generic history, isolated/backing native content, native notifications, and
+offline queues remain explicit non-adoptions.
+The admission batch is complete. Nucleus now owns a repeatable private-artifact
+consumer check, and storage/profile/layout integration is split into focused
+modules. The Settings registry, typed config authority, sparse modal, lazy
+consumer pages, staged/immediate sessions, and multi-webview Tauri adapter are
+implemented. Deterministic and native acceptance pass, including shared-domain
+sibling refresh, reset, and restart. Settings now also show the configured
+local Codex instance and model discovery, and persist new-session model,
+reasoning, and harness-mode defaults without rewriting existing sessions.
+Opaque credential posture and lifecycle requests are now visible without
+credential material; provider-managed Codex actions return explicit no-effect
+receipts. Settings acceptance is closed with an intentionally sparse product
+registry: General, Appearance, and Agent & models are the only pages backed by
+durable user-preference schemas. Keybindings, Storage, and Backups are
+capability-bound shared operational pages. Native narrow-window and restart
+proof passes. The
+current command catalogue registers 27 semantic actions behind rooted contexts,
+coded product availability, fresh Longhorn admission, and a typed Nucleus
+executor port. Command ids remain separate from product routes and transport
+ids. The default physical-key preset and durable sparse overrides now resolve
+per platform with explicit conflicts, reserved chords, input ownership,
+digest-bound mutation, reset, and restart behavior. The compact command palette,
+keybindings, cross-panel operations, retained attention, explicit backup
+capture and host-selected export, and local control bridge are now composed.
+Restore stops at the missing grouped custom-adapter transaction plus Nucleus
+quiescence and restart-handoff authority gap; remote transport and secondary windows retain
+their contract and product gates. Formal adoption closeout waits for safe
+recovery acceptance and the operator checkpoint.
 
 Current planning artifacts:
 
@@ -113,6 +148,20 @@ Current planning artifacts:
 - `roadmaps/g05/006-interactive-agent-chat-sessions.md`
 - `roadmaps/g05/007-structured-provider-work.md`
 - `roadmaps/g05/008-structured-agent-chat-acceptance.md`
+- `contracts/032-longhorn-desktop-systems-integration-contract.md`
+- `roadmaps/g05/009-longhorn-secondary-system-admission.md`
+- `roadmaps/g05/010-longhorn-settings-shell.md`
+- `roadmaps/g05/011-provider-and-product-settings.md`
+- `roadmaps/g05/012-command-catalogue-keymaps-and-palette.md`
+- `roadmaps/g05/013-cross-panel-operation-catalogue.md`
+- `roadmaps/g05/014-notification-ledger-and-attention.md`
+- `roadmaps/g05/015-backup-restore-and-recovery-controls.md`
+- `roadmaps/g05/016-optional-backend-bridge-alignment.md`
+- `roadmaps/g05/017-secondary-window-panel-transfer.md`
+- `roadmaps/g05/018-longhorn-adoption-closeout-and-deferrals.md`
+- `logs/2026-08-01-longhorn-secondary-system-roadmap-compilation.md`
+- `logs/2026-08-01-longhorn-consumer-admission-closeout.md`
+- `logs/2026-08-02-longhorn-settings-shell-implementation.md`
 - `logs/2026-07-31-interactive-structured-agent-chat.md`
 - `logs/2026-07-30-observable-agent-chat-transcript.md`
 - `logs/2026-08-01-longhorn-desktop-migration-closeout.md`

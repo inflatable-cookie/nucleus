@@ -50,9 +50,11 @@
     void loadRepositories();
     window.addEventListener("nucleus:editor-files-changed", scheduleStatusRefresh);
     window.addEventListener("nucleus:scm-working-copy-changed", scheduleStatusRefresh);
+    window.addEventListener("nucleus:command-forge-refresh", commandRefreshForge);
     return () => {
       window.removeEventListener("nucleus:editor-files-changed", scheduleStatusRefresh);
       window.removeEventListener("nucleus:scm-working-copy-changed", scheduleStatusRefresh);
+      window.removeEventListener("nucleus:command-forge-refresh", commandRefreshForge);
       if (refreshTimer) clearTimeout(refreshTimer);
     };
   });
@@ -70,6 +72,10 @@
     } finally {
       loading = false;
     }
+  }
+
+  function commandRefreshForge(): void {
+    void loadRepositories();
   }
 
   async function loadStatuses(sourceProjects = projects): Promise<void> {

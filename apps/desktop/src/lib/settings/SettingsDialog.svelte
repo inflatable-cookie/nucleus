@@ -1,0 +1,46 @@
+<script lang="ts">
+  import { SettingsShell } from "@longhorn/settings/poodle";
+  import type {
+    SettingsPageRenderContext,
+    SettingsPageRenderer,
+    SettingsSession,
+  } from "@longhorn/settings/svelte";
+  import type { CommandSession } from "@longhorn/commands/svelte";
+  import { createNucleusSettingsSession } from "./client";
+  import LazySettingsPage from "./pages/LazySettingsPage.svelte";
+
+  interface Props {
+    onOpenChange: (open: boolean) => void;
+    session?: SettingsSession;
+    commandSession?: CommandSession;
+  }
+
+  let { onOpenChange, session: suppliedSession, commandSession }: Props = $props();
+  let open = $state(true);
+  const ownedSession = createNucleusSettingsSession(
+    () => onOpenChange(false),
+    (error) => console.warn("settings session failed", error),
+  );
+  const session = $derived(suppliedSession ?? ownedSession);
+
+  function resolveRenderer(): SettingsPageRenderer {
+    return settingsPage;
+  }
+</script>
+
+{#snippet settingsPage(context: SettingsPageRenderContext)}
+  <LazySettingsPage {context} {commandSession} />
+{/snippet}
+
+<SettingsShell
+  {session}
+  host="modal"
+  bind:open
+  title="Settings"
+  ariaLabel="Nucleus settings"
+  resolveRenderer={resolveRenderer}
+  onOpenChange={(next) => {
+    open = next;
+    if (!next) onOpenChange(false);
+  }}
+/>

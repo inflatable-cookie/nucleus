@@ -80,6 +80,86 @@ export type AgentChatReasoningOption = {
   description: string;
 };
 
+export type AgentChatProviderSummary = {
+  provider_instance_id: string;
+  adapter_id: string;
+  display_name: string;
+  harness_name: string;
+  authentication_posture: "provider_managed";
+  credential: AgentChatCredentialSummary;
+  model_discovery: "available" | "unavailable";
+  models: AgentChatModelOption[];
+};
+
+export type AgentChatCredentialAction = "setup" | "repair" | "revoke";
+
+export type AgentChatCredentialSummary = {
+  access_profile_ref: string;
+  credential_ref: string | null;
+  mechanism:
+    | "interactive_oauth"
+    | "device_oauth"
+    | "api_key"
+    | "automation_token"
+    | "workload_identity"
+    | "cloud_provider_identity"
+    | "gateway_helper"
+    | "unauthenticated"
+    | "local_unauthenticated"
+    | "provider_specific";
+  entitlement_metering:
+    | "subscription_allowance"
+    | "prepaid_credits"
+    | "bundled_credits"
+    | "pay_as_you_go"
+    | "cloud_account_billing"
+    | "local_compute"
+    | "unknown"
+    | "provider_specific";
+  ownership: "nucleus_host" | "provider_managed" | "external_manager";
+  status:
+    | "unknown"
+    | "ready"
+    | "missing"
+    | "expired"
+    | "revoked"
+    | "permission_denied"
+    | "requires_user_action"
+    | "unsupported";
+  evidence_posture: "caller_asserted" | "host_observed" | "provider_observed" | "unknown";
+  actions: Array<{
+    action: AgentChatCredentialAction;
+    availability: "available" | "unavailable";
+    unavailable_reason:
+      | "provider_managed_lifecycle"
+      | "missing_credential_reference"
+      | "unsupported"
+      | null;
+  }>;
+};
+
+export type AgentChatCredentialActionRequest = {
+  request_id: string;
+  provider_instance_id: string;
+  credential_ref: string | null;
+  action: AgentChatCredentialAction;
+};
+
+export type AgentChatCredentialActionReceipt = {
+  request_id: string | null;
+  provider_instance_id: string;
+  credential_ref: string | null;
+  action: AgentChatCredentialAction;
+  outcome: "completed" | "unavailable" | "rejected";
+  code:
+    | "provider_managed_lifecycle"
+    | "missing_credential_reference"
+    | "provider_mismatch"
+    | "credential_reference_mismatch"
+    | "invalid_request";
+  changed: boolean;
+};
+
 export type AgentChatReply = {
   session_id: string;
   thread_id: string;
@@ -332,4 +412,14 @@ export function renameAgentChatThread(
 
 export function listAgentChatModels(): Promise<AgentChatModelOption[]> {
   return invoke<AgentChatModelOption[]>("list_agent_chat_models");
+}
+
+export function loadAgentChatProviderSummary(): Promise<AgentChatProviderSummary> {
+  return invoke<AgentChatProviderSummary>("agent_chat_provider_summary");
+}
+
+export function requestAgentChatCredentialAction(
+  request: AgentChatCredentialActionRequest,
+): Promise<AgentChatCredentialActionReceipt> {
+  return invoke<AgentChatCredentialActionReceipt>("agent_chat_credential_action", { request });
 }

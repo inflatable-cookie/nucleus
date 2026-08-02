@@ -2,8 +2,16 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { Icon, IconButton, Menu, Popover, SplitView, type MenuItem } from "@poodle/svelte";
-  import { info, plus } from "@poodle/icons-lucide";
+  import { info, plus, settings as settingsIcon } from "@poodle/icons-lucide";
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
+  import CommandPalette from "./lib/commands/CommandPalette.svelte";
+  import { NucleusCommandRuntime } from "./lib/commands/runtime.svelte";
+  import OperationPopover from "./lib/operations/OperationPopover.svelte";
+  import { createNucleusOperationSession } from "./lib/operations/runtime.svelte";
+  import NotificationPopover from "./lib/notifications/NotificationPopover.svelte";
+  import { NotificationToastHost } from "@longhorn/notifications/poodle";
+  import { createNucleusNotificationSession } from "./lib/notifications/runtime.svelte";
+  import SettingsDialog from "./lib/settings/SettingsDialog.svelte";
   import WorkspaceSidebar from "./lib/WorkspaceSidebar.svelte";
   import type { ControlProjectRecordDto } from "./lib/control";
   import {
@@ -14,13 +22,23 @@
   import {
     createNativePanelOverlayId,
     setNativePanelOverlayOpen,
+    setNativePanelOverlayVisibility,
     updateNativePanelOverlayGeometry,
   } from "./lib/nativePanelVisibility";
+  import {
+    watchDesktopPreferences,
+    type AgentChatDefaults,
+    type DesktopPreferencesProjection,
+  } from "./lib/settings/client";
 
   let startupError = $state<string | null>(null);
   let fixturePosture = $state(false);
   let selectedProjectId = $state<string | null>(null);
   let selectedProject = $state<ControlProjectRecordDto | null>(null);
+  let selectedConversationId = $state<string | null>(null);
+  let activePanelKind = $state<string | null>(null);
+  let editorDirty = $state(false);
+  let agentTurnRunning = $state(false);
   let projectRailRatio = $state(0.18);
   let pendingProjectRailRatio: number | null = null;
   let projectRailPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -28,8 +46,25 @@
   let projectRailPrimaryCollapsed = $state(false);
   let projectRailSecondaryCollapsed = $state(false);
   let openPanelKinds = $state<string[]>([]);
+  let settingsOpen = $state(false);
+  let interfaceDensity = $state<"compact" | "comfortable">("compact");
+  let showFixtureStatus = $state(true);
+  let agentChatDefaults = $state<AgentChatDefaults>({
+    model: "gpt-5.4-mini",
+    reasoningEffort: "low",
+    harnessMode: "normal",
+  });
   const projectDetailsOverlayId = createNativePanelOverlayId("project-details");
   const newPanelOverlayId = createNativePanelOverlayId("new-panel");
+  const settingsOverlayId = createNativePanelOverlayId("settings");
+  const commandPaletteOverlayId = createNativePanelOverlayId("command-palette");
+  const operationsOverlayId = createNativePanelOverlayId("operations");
+  const notificationsOverlayId = createNativePanelOverlayId("notifications");
+  const commandRuntime = new NucleusCommandRuntime({
+    openSettings: () => (settingsOpen = true),
+  });
+  const operationSession = createNucleusOperationSession();
+  const notificationSession = createNucleusNotificationSession(commandRuntime.session);
   const projectRailRatioStorageKey = "nucleus:desktop:project-rail-ratio";
   const newPanelItems = $derived<MenuItem[]>([
     { value: "agentChat", label: "Agent Chat" },
@@ -42,6 +77,9 @@
   ]);
 
   onMount(() => {
+    void commandRuntime.session.start();
+    void operationSession.start();
+    void notificationSession.start();
     void Promise.all([
       invoke<{ fixture_backed: boolean; startup_error: string | null }>(
         "desktop_startup_status",
@@ -66,15 +104,59 @@
     window.addEventListener("mouseup", commitProjectRailResize);
     window.addEventListener("mouseup", finishSplitResize);
     window.addEventListener("blur", finishSplitResize);
+    window.addEventListener("nucleus:editor-command-state", handleEditorCommandState);
+    window.addEventListener("nucleus:agent-turn-command-state", handleAgentTurnCommandState);
 
     return () => {
+      void commandRuntime.session.stop();
+      void operationSession.stop();
+      void notificationSession.stop();
       window.removeEventListener("mousedown", beginSplitResize, true);
       window.removeEventListener("mouseup", commitProjectRailResize);
       window.removeEventListener("mouseup", finishSplitResize);
       window.removeEventListener("blur", finishSplitResize);
+      window.removeEventListener("nucleus:editor-command-state", handleEditorCommandState);
+      window.removeEventListener("nucleus:agent-turn-command-state", handleAgentTurnCommandState);
       commitProjectRailResize();
       finishSplitResize();
     };
+  });
+
+  onMount(() => {
+    let disposed = false;
+    let stop: (() => void | Promise<void>) | null = null;
+    void watchDesktopPreferences(
+      applyDesktopPreferences,
+      (error) => console.warn("desktop settings unavailable", error),
+    ).then((watchStop) => {
+      if (disposed) void watchStop();
+      else stop = watchStop;
+    }).catch((error) => {
+      if (!disposed) console.warn("desktop settings listener unavailable", error);
+    });
+    return () => {
+      disposed = true;
+      void stop?.();
+    };
+  });
+
+  $effect(() => {
+    setNativePanelOverlayVisibility(settingsOverlayId, settingsOpen);
+  });
+
+  $effect(() => {
+    setNativePanelOverlayVisibility(commandPaletteOverlayId, commandRuntime.session.open);
+  });
+
+  $effect(() => {
+    commandRuntime.updateFacts({
+      selectedProjectId: selectedProject?.project_id ?? null,
+      activePanelKind,
+      openPanelKinds,
+      activeThread: selectedConversationId !== null,
+      editorDirty,
+      agentTurnRunning,
+    });
   });
 
   $effect(() => {
@@ -132,6 +214,20 @@
         detail: { kind },
       }),
     );
+  }
+
+  function handleEditorCommandState(event: Event): void {
+    editorDirty = event instanceof CustomEvent && event.detail?.dirty === true;
+  }
+
+  function handleAgentTurnCommandState(event: Event): void {
+    agentTurnRunning = event instanceof CustomEvent && event.detail?.running === true;
+  }
+
+  function applyDesktopPreferences(preferences: DesktopPreferencesProjection): void {
+    showFixtureStatus = preferences.showFixtureStatus;
+    interfaceDensity = preferences.density;
+    agentChatDefaults = preferences.agent;
   }
 
   function resizeProjectRail(ratio: number) {
@@ -194,7 +290,7 @@
 <main
   class="app-root"
   data-theme="cobalt"
-  data-density="compact"
+  data-density={interfaceDensity}
   data-control-size="sm"
   data-poodle-theme-root
 >
@@ -204,7 +300,7 @@
       be empty until storage is writable.
     </div>
   {/if}
-  {#if fixturePosture}
+  {#if fixturePosture && showFixtureStatus}
     <div class="posture-badge" title="This build serves fixture-backed local state; no live server is connected.">
       fixture-backed
     </div>
@@ -227,7 +323,11 @@
   >
     {#snippet primary()}
       <aside class="project-rail" aria-label="Project panel">
-        <WorkspaceSidebar bind:selectedProjectId bind:selectedProject />
+        <WorkspaceSidebar
+          bind:selectedProjectId
+          bind:selectedProject
+          bind:selectedConversationId
+        />
       </aside>
     {/snippet}
 
@@ -308,6 +408,23 @@
           </div>
 
           <div class="titlebar-actions" data-no-window-drag>
+            <NotificationPopover
+              session={notificationSession}
+              onOpenChange={(open) => setNativePanelOverlayOpen(notificationsOverlayId, open)}
+              onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(notificationsOverlayId, change)}
+            />
+            <OperationPopover
+              session={operationSession}
+              onOpenChange={(open) => setNativePanelOverlayOpen(operationsOverlayId, open)}
+              onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(operationsOverlayId, change)}
+            />
+            <IconButton
+              variant="secondary"
+              icon={settingsIcon}
+              ariaLabel="Settings"
+              tooltip="Settings"
+              onClick={() => (settingsOpen = true)}
+            />
             <Menu
               items={newPanelItems}
               ariaLabel="New workspace panel"
@@ -332,13 +449,28 @@
           <section class="workspace-stage" aria-label="Workspace">
             <ProjectWorkspaceStage
               {selectedProject}
+              {agentChatDefaults}
               onOpenPanelKindsChange={(kinds) => (openPanelKinds = kinds)}
+              onCommandContextChange={(kind) => (activePanelKind = kind)}
             />
           </section>
         </div>
       </div>
     {/snippet}
   </SplitView>
+  {#if settingsOpen}
+    <SettingsDialog
+      commandSession={commandRuntime.session}
+      onOpenChange={(open) => (settingsOpen = open)}
+    />
+  {/if}
+  <CommandPalette session={commandRuntime.session} />
+  <NotificationToastHost
+    session={notificationSession}
+    autoDismissMs={6000}
+    stickyTones={["danger"]}
+    placement="bottom-end"
+  />
 </main>
 
 <style>

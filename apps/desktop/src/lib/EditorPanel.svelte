@@ -80,6 +80,12 @@
   const conflict = $derived(isEditorFileConflict(error));
 
   $effect(() => {
+    window.dispatchEvent(new CustomEvent("nucleus:editor-command-state", {
+      detail: { dirty },
+    }));
+  });
+
+  $effect(() => {
     projectId;
     resourceId;
     untrack(resetEditor);
@@ -104,12 +110,16 @@
     window.addEventListener("nucleus:editor-file-deleted", handleEditorFileDeleted);
     window.addEventListener("nucleus:editor-directory-renamed", handleEditorDirectoryRenamed);
     window.addEventListener("nucleus:editor-directory-deleted", handleEditorDirectoryDeleted);
+    window.addEventListener("nucleus:command-editor-quick-open", commandQuickOpen);
+    window.addEventListener("nucleus:command-editor-save", commandSave);
     return () => {
       window.removeEventListener("nucleus:editor-files-changed", handleEditorFilesChanged);
       window.removeEventListener("nucleus:editor-file-renamed", handleEditorFileRenamed);
       window.removeEventListener("nucleus:editor-file-deleted", handleEditorFileDeleted);
       window.removeEventListener("nucleus:editor-directory-renamed", handleEditorDirectoryRenamed);
       window.removeEventListener("nucleus:editor-directory-deleted", handleEditorDirectoryDeleted);
+      window.removeEventListener("nucleus:command-editor-quick-open", commandQuickOpen);
+      window.removeEventListener("nucleus:command-editor-save", commandSave);
     };
   });
 
@@ -129,6 +139,14 @@
     draftError = null;
     draftRecovered = false;
     clearExternalFileState();
+  }
+
+  function commandQuickOpen(): void {
+    if (projectId && !loading) quickOpen = true;
+  }
+
+  function commandSave(): void {
+    if (dirty) void save();
   }
 
   function handleBufferChange(content: string): void {

@@ -97,6 +97,7 @@
     type AgentTranscriptTurn,
   } from "./agentChatTranscript";
   import type { ControlGoalRecordDto, ControlTaskRecordDto } from "./control";
+  import type { AgentChatDefaults } from "./settings/client";
   import type {
     AgentChatActivity,
     AgentChatActorSelection,
@@ -121,6 +122,7 @@
     resourceId = null,
     activeGoal,
     activeTask,
+    agentChatDefaults,
     onClearActiveGoal,
     onClearActiveTask,
   }: {
@@ -129,6 +131,7 @@
     resourceId?: string | null;
     activeGoal: ControlGoalRecordDto | null;
     activeTask: ControlTaskRecordDto | null;
+    agentChatDefaults: AgentChatDefaults;
     onClearActiveGoal: () => void;
     onClearActiveTask: () => void;
   } = $props();
@@ -163,6 +166,23 @@
   let answeringQuestion = $state(false);
   let questionComponent = $state<{ submit: () => void } | null>(null);
   let hydrationVersion = 0;
+  let historyOwnsRoute = $state(false);
+
+  $effect(() => {
+    window.dispatchEvent(new CustomEvent("nucleus:agent-turn-command-state", {
+      detail: { running: pending },
+    }));
+  });
+
+  $effect(() => {
+    const handleCommandCancel = () => {
+      if (pending) void cancelTurn();
+    };
+    window.addEventListener("nucleus:command-cancel-agent-turn", handleCommandCancel);
+    return () => {
+      window.removeEventListener("nucleus:command-cancel-agent-turn", handleCommandCancel);
+    };
+  });
 
   const modelPickerAxes: ModelCapabilityAxis[] = [
     {
@@ -311,13 +331,30 @@
       questionSelections = [];
       collectedQuestionAnswers = [];
       answeringQuestion = false;
-      model = retainedModels.get(conversationId) ?? DEFAULT_MODEL;
-      reasoningEffort = retainedReasoningEfforts.get(conversationId) ?? DEFAULT_REASONING_EFFORT;
-      harnessMode = retainedHarnessModes.get(conversationId) ?? DEFAULT_HARNESS_MODE;
+      historyOwnsRoute = false;
+      model = retainedModels.get(conversationId) ?? agentChatDefaults.model;
+      reasoningEffort = retainedReasoningEfforts.get(conversationId)
+        ?? agentChatDefaults.reasoningEffort;
+      harnessMode = retainedHarnessModes.get(conversationId) ?? agentChatDefaults.harnessMode;
       if (projectId) {
         void hydrateModelCatalog();
         void hydrateHistory(projectId, conversationId);
       }
+    }
+  });
+
+  $effect(() => {
+    const defaults = agentChatDefaults;
+    if (
+      activeConversationId === conversationId
+      && !historyOwnsRoute
+      && !retainedModels.has(conversationId)
+      && !retainedReasoningEfforts.has(conversationId)
+      && !retainedHarnessModes.has(conversationId)
+    ) {
+      model = defaults.model;
+      reasoningEffort = defaults.reasoningEffort;
+      harnessMode = defaults.harnessMode;
     }
   });
 
@@ -407,6 +444,9 @@
         turnId: turn.turn_id,
         status: turn.status,
       }));
+      historyOwnsRoute = Boolean(
+        history.model || history.reasoning_effort || history.harness_mode,
+      );
       retain(retainedMessages, nextConversationId, messages);
       retain(retainedActivities, nextConversationId, activities);
       retain(retainedQuestions, nextConversationId, questions);
@@ -675,16 +715,6 @@
     try {
       retainedModelCatalog = await modelCatalogRequest;
       modelCatalog = retainedModelCatalog;
-      const selected = modelCatalog.find((option) => option.model === model);
-      if (!selected) {
-        const fallback = modelCatalog.find((option) => option.model === DEFAULT_MODEL) ?? modelCatalog[0];
-        if (fallback) {
-          model = fallback.model;
-          reasoningEffort = fallback.default_reasoning_effort;
-          retain(retainedModels, conversationId, model);
-          retain(retainedReasoningEfforts, conversationId, reasoningEffort);
-        }
-      }
     } catch {
       modelCatalogRequest = null;
     }

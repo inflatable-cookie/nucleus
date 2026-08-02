@@ -2244,6 +2244,44 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
+name = "longhorn-bridge"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "serde",
+]
+
+[[package]]
+name = "longhorn-command"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "longhorn-command-config"
+version = "0.1.0"
+dependencies = [
+ "longhorn-command",
+ "longhorn-config",
+ "longhorn-core",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "longhorn-command-settings"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "longhorn-settings",
+]
+
+[[package]]
 name = "longhorn-config"
 version = "0.1.0"
 dependencies = [
@@ -2299,6 +2337,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "longhorn-notifications"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "serde",
+]
+
+[[package]]
+name = "longhorn-operation"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "serde",
+]
+
+[[package]]
+name = "longhorn-settings"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "longhorn-settings-config"
+version = "0.1.0"
+dependencies = [
+ "longhorn-config",
+ "longhorn-core",
+ "longhorn-settings",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "longhorn-tauri-bridge"
+version = "0.1.0"
+dependencies = [
+ "longhorn-bridge",
+ "longhorn-core",
+ "serde",
+ "serde_json",
+ "tauri",
+]
+
+[[package]]
+name = "longhorn-tauri-command"
+version = "0.1.0"
+dependencies = [
+ "longhorn-command-config",
+ "serde",
+ "tauri",
+]
+
+[[package]]
 name = "longhorn-tauri-config"
 version = "0.1.0"
 dependencies = [
@@ -2313,6 +2409,35 @@ version = "0.1.0"
 dependencies = [
  "longhorn-core",
  "longhorn-native-content",
+ "serde",
+ "tauri",
+]
+
+[[package]]
+name = "longhorn-tauri-notifications"
+version = "0.1.0"
+dependencies = [
+ "longhorn-notifications",
+ "serde",
+ "tauri",
+]
+
+[[package]]
+name = "longhorn-tauri-operation"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "longhorn-operation",
+ "serde",
+ "tauri",
+]
+
+[[package]]
+name = "longhorn-tauri-settings"
+version = "0.1.0"
+dependencies = [
+ "longhorn-core",
+ "longhorn-settings",
  "serde",
  "tauri",
 ]
@@ -2543,14 +2668,27 @@ version = "0.0.0"
 name = "nucleus-desktop"
 version = "0.0.0"
 dependencies = [
+ "longhorn-bridge",
+ "longhorn-command",
+ "longhorn-command-config",
+ "longhorn-command-settings",
  "longhorn-config",
  "longhorn-core",
  "longhorn-display",
  "longhorn-layout",
  "longhorn-layout-config",
  "longhorn-native-content",
+ "longhorn-notifications",
+ "longhorn-operation",
+ "longhorn-settings",
+ "longhorn-settings-config",
+ "longhorn-tauri-bridge",
+ "longhorn-tauri-command",
  "longhorn-tauri-config",
  "longhorn-tauri-native-content-child-view",
+ "longhorn-tauri-notifications",
+ "longhorn-tauri-operation",
+ "longhorn-tauri-settings",
  "longhorn-tauri-windowing",
  "longhorn-windowing",
  "longhorn-windowing-config",
@@ -2566,6 +2704,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tempfile",
+ "time",
 ]
 
 [[package]]

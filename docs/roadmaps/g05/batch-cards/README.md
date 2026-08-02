@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-31
+Updated: 2026-08-02
 
 ## Ready Cards
 
@@ -18,7 +18,22 @@ Updated: 2026-07-31
 
 ## Paused Cards
 
-- none
+- `050-production-remote-transport-gate.md` — needs a promoted Nucleus remote
+  host pairing/session contract and selected production topology
+- `051-secondary-window-product-gate.md` — needs an operator-selected
+  secondary-window workflow
+- `045-backup-inventory-and-capture.md` — capture and host-selected export pass
+- `046-restore-and-recovery.md` — waits for grouped custom-adapter restore plus
+  Nucleus boot-time quiescence and restart handoff
+- `047-backup-recovery-settings-acceptance.md` — backup is composed; recovery
+  waits for card 046
+- `049-local-bridge-composition.md` — consumer-native local composition and
+  Tauri invocation pass
+- `052-surface-free-panel-transfer.md` — waits for card 051
+- `053-secondary-window-native-acceptance.md` — waits for card 052
+- `054-longhorn-adoption-conformance-closeout.md` — waits for card 047
+- `055-longhorn-deferral-and-g05-checkpoint.md` — waits for card 054 and the
+  operator checkpoint
 
 ## Completed Cards
 
@@ -48,3 +63,22 @@ Updated: 2026-07-31
 - `024-subagent-directory-attribution-and-navigation.md`
 - `025-structured-agent-chat-deterministic-closeout.md`
 - `026-structured-agent-chat-native-acceptance.md`
+- `027-longhorn-consumer-admission.md`
+- `028-retained-adapter-decomposition.md`
+- `029-secondary-system-conformance-baseline.md`
+- `030-settings-registry-and-authority.md`
+- `031-settings-dialog-and-session.md`
+- `032-settings-shell-acceptance.md`
+- `033-provider-and-model-settings.md`
+- `034-credential-reference-settings.md`
+- `035-product-settings-and-acceptance.md`
+- `036-command-catalogue-and-admission.md`
+- `037-keymap-persistence-and-resolution.md`
+- `038-command-palette-and-acceptance.md`
+- `039-operation-authority-mapping.md`
+- `040-operation-session-and-presentation.md`
+- `041-operation-catalogue-acceptance.md`
+- `042-notification-ledger-and-projector.md`
+- `043-notification-presentation-and-actions.md`
+- `044-notification-acceptance.md`
+- `048-bridge-authority-reconciliation.md`

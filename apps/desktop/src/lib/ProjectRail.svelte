@@ -394,17 +394,52 @@
     void loadProjectThreads();
   }
 
+  function selectedProjectRecord(): ControlProjectRecordDto | null {
+    return projects.find(({ project_id }) => project_id === selectedProjectId) ?? null;
+  }
+
+  function commandCreateProject(): void { creating = true; }
+  function commandManageProjects(): void { projectManagerOpen = true; }
+  function commandRenameProject(): void {
+    const project = selectedProjectRecord();
+    if (project) void beginProjectRename(project, "rail");
+  }
+  function commandManageResources(): void {
+    const project = selectedProjectRecord();
+    if (project) handleProjectAction(project, "resources", "rail");
+  }
+  function commandParkProject(): void {
+    const project = selectedProjectRecord();
+    if (project) void mutateProject(project, "park");
+  }
+  function commandArchiveProject(): void {
+    const project = selectedProjectRecord();
+    if (project) void mutateProject(project, "archive");
+  }
+
   onMount(() => {
     refreshProjectRail();
     window.addEventListener("nucleus:manage-project-resources", handleManageProjectResources);
     window.addEventListener("nucleus:projects-changed", refreshProjectRail);
     window.addEventListener("nucleus:threads-changed", refreshProjectRail);
+    window.addEventListener("nucleus:command-create-project", commandCreateProject);
+    window.addEventListener("nucleus:command-manage-projects", commandManageProjects);
+    window.addEventListener("nucleus:command-rename-project", commandRenameProject);
+    window.addEventListener("nucleus:command-manage-project-resources", commandManageResources);
+    window.addEventListener("nucleus:command-park-project", commandParkProject);
+    window.addEventListener("nucleus:command-archive-project", commandArchiveProject);
   });
 
   onDestroy(() => {
     window.removeEventListener("nucleus:manage-project-resources", handleManageProjectResources);
     window.removeEventListener("nucleus:projects-changed", refreshProjectRail);
     window.removeEventListener("nucleus:threads-changed", refreshProjectRail);
+    window.removeEventListener("nucleus:command-create-project", commandCreateProject);
+    window.removeEventListener("nucleus:command-manage-projects", commandManageProjects);
+    window.removeEventListener("nucleus:command-rename-project", commandRenameProject);
+    window.removeEventListener("nucleus:command-manage-project-resources", commandManageResources);
+    window.removeEventListener("nucleus:command-park-project", commandParkProject);
+    window.removeEventListener("nucleus:command-archive-project", commandArchiveProject);
     setNativePanelOverlayVisibility(projectManagerOverlayId, false);
   });
 </script>

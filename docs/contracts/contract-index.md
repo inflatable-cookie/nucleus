@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-07-30
+Updated: 2026-08-01
 
 ## Active Contracts
 
@@ -39,6 +39,7 @@ Updated: 2026-07-30
 | `029-terminal-panel-runtime-contract.md` | draft-promoted-first-pass | Host-routed terminal authority, protocol, PTY lifecycle, transport, and client rendering boundary. |
 | `030-swallowtail-agent-runtime-integration-contract.md` | draft-promoted-observable-activity | Swallowtail-owned AI communication and portable activity with Nucleus-owned sessions, tools, cancellation, deadlines, authority, persistence, and UI. |
 | `031-swallowtail-task-execution-runtime-contract.md` | draft-promoted-first-pass | Nucleus task-executor port over explicit Swallowtail workspace access, outcomes, linkage, and cleanup. |
+| `032-longhorn-desktop-systems-integration-contract.md` | active | Nucleus consumer boundary for adopted Longhorn settings plus later commands, operations, notifications, recovery, bridge, and conditional transfer systems. |
 
 ## Needed Contracts
 
@@ -77,6 +78,8 @@ When it overlaps focused contracts, the focused contract owns the durable rule:
   preservation rules.
 - `031` owns the Swallowtail-backed task-executor port, exact access profile,
   outcome mapping, and retained Nucleus workflow authority.
+- `032` owns additional Longhorn desktop-system adoption, retained Nucleus
+  product authority, artifact evidence, and explicit deferrals.
 - `011`, `008`, and `002` own SCM/forge, storage, and harness-adapter rules.
 
 Source refs:

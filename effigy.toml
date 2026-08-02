@@ -107,6 +107,7 @@ allowlist_file = "docs/policy/vision-next-task-verbs.txt"
 "desktop:test" = "cd apps/desktop && bun run test"
 "desktop:bindings" = "TS_RS_EXPORT_DIR=$PWD/apps/desktop/src/lib/control/generated cargo test -p nucleus-server export_bindings"
 "desktop:build" = "cd apps/desktop && bun run build"
+"check:longhorn-consumer" = "bun scripts/verify-longhorn-consumer-boundary.ts"
 "dev" = [
   { task = "desktop:dev" },
 ]
@@ -118,6 +119,7 @@ allowlist_file = "docs/policy/vision-next-task-verbs.txt"
 "qa" = [
   { task = "qa:docs" },
   { task = "qa:northstar" },
+  { task = "check:longhorn-consumer" },
   { task = "check:rust" },
   { task = "test:rust" },
   { task = "server:smoke" },

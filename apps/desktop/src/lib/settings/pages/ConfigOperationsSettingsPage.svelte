@@ -1,0 +1,23 @@
+<script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
+  import type { EventTransport } from "@longhorn/core";
+  import { ConfigOperationsClient } from "@longhorn/config";
+  import { BackupSettingsPage, StorageSettingsPage } from "@longhorn/config/poodle";
+
+  let { rendererId }: { rendererId: string } = $props();
+  const transport: EventTransport = {
+    invoke: (command, arguments_) => invoke(command, arguments_),
+    listen: async (event, listener) => {
+      const unlisten = await listen<unknown>(event, ({ payload }) => listener(payload));
+      return unlisten;
+    },
+  };
+  const client = new ConfigOperationsClient(transport);
+</script>
+
+{#if rendererId === "longhorn:config.storage"}
+  <StorageSettingsPage {client} />
+{:else}
+  <BackupSettingsPage {client} />
+{/if}
