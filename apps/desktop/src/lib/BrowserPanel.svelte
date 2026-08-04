@@ -101,6 +101,8 @@
     loading = true;
     failure = null;
     try {
+      unlistenRuntime?.();
+      unlistenRuntime = null;
       unlistenRuntime = await listen<BrowserRuntimeEvent>(
         "nucleus://browser-state",
         handleRuntimeState,
@@ -274,10 +276,16 @@
     class="browser-status"
     class:browser-status--visible={Boolean(failure) || Boolean(notice)}
     class:browser-status--error={Boolean(failure)}
-    role={failure ? "alert" : undefined}
+    role={failure ? "alert" : notice ? "status" : undefined}
+    aria-live={failure ? "assertive" : notice ? "polite" : undefined}
   >
     {#if failure}
-      <Text size="xs" tone="danger">{failure}</Text>
+      <div class="browser-status-content">
+        <Text size="xs" tone="danger">{failure}</Text>
+        <button type="button" class="browser-status-action" onclick={() => void startSession()}>
+          Retry
+        </button>
+      </div>
     {:else if notice}
       <Text size="xs" tone="muted">{notice}</Text>
     {/if}
@@ -372,6 +380,30 @@
 
   .browser-status--error {
     background: color-mix(in srgb, var(--poodle-color-status-danger) 7%, transparent);
+  }
+
+  .browser-status-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .browser-status-action {
+    flex: 0 0 auto;
+    padding: 0.15rem 0.4rem;
+    color: var(--poodle-color-text-secondary);
+    font: inherit;
+    font-size: 0.6875rem;
+    border: 1px solid var(--poodle-color-border-subtle);
+    border-radius: var(--poodle-radius-control);
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .browser-status-action:hover {
+    color: var(--poodle-color-text-primary);
+    background: var(--poodle-color-background-elevated);
   }
 
   .browser-viewport {

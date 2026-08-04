@@ -10,6 +10,8 @@ use serde_json::Value;
 pub(super) struct DesktopPreferences {
     pub(super) show_fixture_status: Option<bool>,
     pub(super) density: Option<String>,
+    pub(super) default_provider_instance_id: Option<String>,
+    pub(super) default_provider_id: Option<String>,
     pub(super) default_model: Option<String>,
     pub(super) default_reasoning_effort: Option<String>,
     pub(super) default_harness_mode: Option<String>,
@@ -70,6 +72,14 @@ impl ConfigDomain for DesktopPreferencesDomain {
             ));
         }
         for (label, route_value) in [
+            (
+                "default provider instance",
+                value.default_provider_instance_id.as_deref(),
+            ),
+            (
+                "default model provider",
+                value.default_provider_id.as_deref(),
+            ),
             ("default model", value.default_model.as_deref()),
             (
                 "default reasoning effort",
@@ -123,6 +133,7 @@ fn valid_route_value(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+            character.is_ascii_alphanumeric()
+                || matches!(character, '-' | '_' | '.' | ':' | '/' | '@')
         })
 }

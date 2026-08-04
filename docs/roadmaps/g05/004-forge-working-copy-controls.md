@@ -1,6 +1,6 @@
 # 004 Forge Working-Copy Controls
 
-Status: active
+Status: completed
 Owner: Tom
 Updated: 2026-07-27
 
@@ -20,7 +20,7 @@ expanding into a full Git client.
 - [x] Add live working-copy status and scoped staged or working diffs.
 - [x] Add exact-path and repository-group Stage or Unstage controls.
 - [x] Add an explicit local commit composer over the staged index.
-- [ ] Validate the native workflow and compact interaction shape.
+- [x] Validate the native workflow and compact interaction shape.
 
 ## Acceptance Criteria
 
@@ -30,7 +30,7 @@ expanding into a full Git client.
 - [x] commit captures only staged content and returns a sanitized receipt
 - [x] hooks, signing, prompts, automatic staging, push, discard, task mutation,
   and forge effects remain blocked
-- [ ] operator confirms the Forge interaction remains visually sparse
+- [x] operator confirms the Forge interaction remains visually sparse
 
 ## Batch Cards
 

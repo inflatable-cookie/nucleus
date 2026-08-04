@@ -14,8 +14,7 @@ use swallowtail_adapter_codex::{
 use swallowtail_core::ReasoningMode;
 use swallowtail_runtime::{
     CallbackRequestKind, CleanupOutcome, InteractiveSessionDriver, OperationContent,
-    RuntimeFailure, RuntimeTurnId, SessionOptions, TerminalOutcome, TerminalStatus, TurnHandle,
-    TurnRequest,
+    RuntimeFailure, SessionOptions, TerminalOutcome, TerminalStatus, TurnHandle, TurnRequest,
 };
 
 use super::{host, preparation, request_id, runtime_error};
@@ -56,7 +55,7 @@ impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {
             )
             .with_reasoning_mode(reasoning);
         let prompt = OperationContent::new(request.prompt).map_err(|error| error.to_string())?;
-        let runtime_turn_id = task_turn_id()?;
+        let runtime_turn_id = super::runtime_turn_id("task")?;
         let prepared_session = prepared
             .prepare_bounded_workspace_session(CodexSessionProfileInput::new(
                 request_id("task-session")?,
@@ -340,14 +339,6 @@ fn cleanup_label(cleanup: &CleanupOutcome) -> &'static str {
         CleanupOutcome::Failed(_) => "failed",
         CleanupOutcome::NotApplicable => "not_applicable",
     }
-}
-
-fn task_turn_id() -> Result<RuntimeTurnId, String> {
-    RuntimeTurnId::new(format!(
-        "nucleus-task-turn-{}",
-        super::REQUEST_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ))
-    .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

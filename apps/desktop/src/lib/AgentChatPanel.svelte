@@ -41,6 +41,11 @@
     string,
     import("./control/agentChat").AgentChatHarnessMode
   >();
+  const retainedProviderInstances = new Map<string, string>();
+  const retainedProviderInstanceRevisions = new Map<string, string>();
+  const retainedProtocolFacades = new Map<string, string>();
+  const retainedProviderIds = new Map<string, string | null>();
+  const retainedDrafts = new Map<string, string>();
   const retainedPendingConversations = new Set<string>();
 
   function retain<Value>(cache: Map<string, Value>, key: string, value: Value) {
@@ -52,8 +57,10 @@
       cache.delete(oldest);
     }
   }
-  let retainedModelCatalog: AgentChatModelOption[] | null = null;
-  let modelCatalogRequest: Promise<AgentChatModelOption[]> | null = null;
+  let retainedProviderCatalogue:
+    import("./control/agentChat").AgentChatProviderCatalogue | null = null;
+  let providerCatalogueRequest:
+    Promise<import("./control/agentChat").AgentChatProviderCatalogue> | null = null;
 
   const DEFAULT_MODEL = "gpt-5.4-mini";
   const DEFAULT_REASONING_EFFORT = "low";
@@ -72,6 +79,7 @@
 
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
+  import { onDestroy } from "svelte";
   import {
     AgentChatInput,
     AgentQuestion,
@@ -104,17 +112,27 @@
     AgentChatHarnessMode,
     AgentChatQuestionExchange,
     AgentChatSubagentDirectory,
+    AgentChatProviderCatalogue,
     TaskAuthoringReceipt,
     TaskWorkflowReceipt as WorkflowReceipt,
   } from "./control/agentChat";
   import {
     answerAgentChatQuestion,
     cancelAgentChatTurn,
-    listAgentChatModels,
+    loadAgentChatProviderCatalogue,
     loadAgentChatHistory,
     selectAgentChatActor,
     sendAgentChatMessage,
   } from "./control/agentChat";
+  import {
+    mergePreparedReworkDraft,
+    type AgentChatDraftRequest,
+  } from "./reviewRework";
+  import {
+    modelRouteKey,
+    selectableProviderInstances,
+    shouldShowProviderSelector,
+  } from "./providerSelection";
 
   let {
     conversationId,
@@ -125,6 +143,9 @@
     agentChatDefaults,
     onClearActiveGoal,
     onClearActiveTask,
+    onConversationActive,
+    draftRequest = null,
+    onDraftRequestConsumed,
   }: {
     conversationId: string;
     projectId: string | null;
@@ -134,6 +155,9 @@
     agentChatDefaults: AgentChatDefaults;
     onClearActiveGoal: () => void;
     onClearActiveTask: () => void;
+    onConversationActive?: () => void;
+    draftRequest?: AgentChatDraftRequest | null;
+    onDraftRequestConsumed?: (requestId: number) => void;
   } = $props();
 
   let activeConversationId = $state("");
@@ -157,7 +181,14 @@
   let model = $state(DEFAULT_MODEL);
   let reasoningEffort = $state(DEFAULT_REASONING_EFFORT);
   let harnessMode = $state<AgentChatHarnessMode>(DEFAULT_HARNESS_MODE);
-  let modelCatalog = $state<AgentChatModelOption[]>(retainedModelCatalog ?? []);
+  let providerInstanceId = $state("");
+  let providerInstanceRevision = $state("");
+  let protocolFacadeId = $state("");
+  let providerId = $state<string | null>(null);
+  let providerCatalogue = $state<AgentChatProviderCatalogue>(
+    retainedProviderCatalogue ?? { instances: [] },
+  );
+  let modelCatalog = $state<AgentChatModelOption[]>([]);
   let expandedToolRuns = $state<string[]>([]);
   let expandedToolCalls = $state<string[]>([]);
   let questionIndex = $state(0);
@@ -167,11 +198,41 @@
   let questionComponent = $state<{ submit: () => void } | null>(null);
   let hydrationVersion = 0;
   let historyOwnsRoute = $state(false);
+  let appliedDraftRequestId = $state(0);
 
   $effect(() => {
     window.dispatchEvent(new CustomEvent("nucleus:agent-turn-command-state", {
       detail: { running: pending },
     }));
+  });
+
+  $effect(() => {
+    const request = draftRequest;
+    if (
+      !request
+      || request.requestId === appliedDraftRequestId
+      || request.projectId !== projectId
+      || request.taskId !== activeTask?.task_id
+    ) return;
+    const currentDraft = activeConversationId === conversationId
+      ? draft
+      : retainedDrafts.get(conversationId) ?? draft;
+    setDraft(mergePreparedReworkDraft(currentDraft, request.text));
+    appliedDraftRequestId = request.requestId;
+    onDraftRequestConsumed?.(request.requestId);
+  });
+
+  function setDraft(next: string): void {
+    draft = next;
+    retain(retainedDrafts, conversationId, next);
+  }
+
+  function retainDraft(next: string): void {
+    retain(retainedDrafts, conversationId, next);
+  }
+
+  onDestroy(() => {
+    retain(retainedDrafts, activeConversationId || conversationId, draft);
   });
 
   $effect(() => {
@@ -200,7 +261,7 @@
   ];
   const modelPickerModels = $derived.by(() => {
     const options: ModelOption[] = modelCatalog.map((option) => ({
-      value: option.model,
+      value: modelRouteKey(option),
       label: option.display_name,
       icon: "sparkles",
       axes: [
@@ -220,9 +281,10 @@
         },
       ],
     }));
-    if (!options.some((option) => option.value === model)) {
+    const selectedRouteKey = modelRouteKey({ model, provider_id: providerId });
+    if (!options.some((option) => option.value === selectedRouteKey)) {
       options.unshift({
-        value: model,
+        value: selectedRouteKey,
         label: model,
         icon: "sparkles",
         axes: [
@@ -237,9 +299,18 @@
     return options;
   });
   const modelSelection = $derived<ModelSelection>({
-    model,
+    model: modelRouteKey({ model, provider_id: providerId }),
     axes: { reasoning: reasoningEffort },
   });
+  const readyProviderInstances = $derived(
+    selectableProviderInstances(providerCatalogue),
+  );
+  const providerOptions = $derived(
+    readyProviderInstances.map((instance) => ({
+      value: instance.provider_instance_id,
+      label: instance.display_name,
+    })),
+  );
   const contextAttachments = $derived<AgentChatAttachment[]>([
     ...(activeGoal
       ? [{ id: "active-goal", label: `Goal · ${activeGoal.title}`, kind: "goal" }]
@@ -318,6 +389,7 @@
 
   $effect(() => {
     if (activeConversationId !== conversationId) {
+      if (activeConversationId) retain(retainedDrafts, activeConversationId, draft);
       activeConversationId = conversationId;
       messages = retainedMessages.get(conversationId) ?? [];
       activities = retainedActivities.get(conversationId) ?? [];
@@ -326,6 +398,7 @@
       actorSelection =
         retainedActorSelections.get(conversationId) ?? actorSelectionFor("all");
       turns = retainedTurns.get(conversationId) ?? [];
+      draft = retainedDrafts.get(conversationId) ?? "";
       pending = retainedPendingConversations.has(conversationId);
       questionIndex = 0;
       questionSelections = [];
@@ -336,8 +409,13 @@
       reasoningEffort = retainedReasoningEfforts.get(conversationId)
         ?? agentChatDefaults.reasoningEffort;
       harnessMode = retainedHarnessModes.get(conversationId) ?? agentChatDefaults.harnessMode;
+      providerInstanceId = retainedProviderInstances.get(conversationId)
+        ?? agentChatDefaults.providerInstanceId;
+      providerInstanceRevision = retainedProviderInstanceRevisions.get(conversationId) ?? "";
+      protocolFacadeId = retainedProtocolFacades.get(conversationId) ?? "";
+      providerId = retainedProviderIds.get(conversationId) ?? agentChatDefaults.providerId;
       if (projectId) {
-        void hydrateModelCatalog();
+        void hydrateProviderCatalogue();
         void hydrateHistory(projectId, conversationId);
       }
     }
@@ -355,6 +433,8 @@
       model = defaults.model;
       reasoningEffort = defaults.reasoningEffort;
       harnessMode = defaults.harnessMode;
+      providerInstanceId = defaults.providerInstanceId;
+      providerId = defaults.providerId;
     }
   });
 
@@ -445,7 +525,7 @@
         status: turn.status,
       }));
       historyOwnsRoute = Boolean(
-        history.model || history.reasoning_effort || history.harness_mode,
+        history.provider_instance_id || history.model || history.reasoning_effort || history.harness_mode,
       );
       retain(retainedMessages, nextConversationId, messages);
       retain(retainedActivities, nextConversationId, activities);
@@ -454,6 +534,11 @@
       retain(retainedActorSelections, nextConversationId, actorSelection);
       retain(retainedTurns, nextConversationId, turns);
       model = history.model ?? model;
+      providerInstanceId = history.provider_instance_id ?? providerInstanceId;
+      providerInstanceRevision = history.provider_instance_revision
+        ?? providerInstanceRevision;
+      protocolFacadeId = history.protocol_facade_id ?? protocolFacadeId;
+      providerId = history.provider_id ?? providerId;
       reasoningEffort = history.reasoning_effort ?? reasoningEffort;
       harnessMode = history.harness_mode ?? harnessMode;
       if (history.model) {
@@ -465,6 +550,21 @@
       if (history.harness_mode) {
         retain(retainedHarnessModes, nextConversationId, history.harness_mode);
       }
+      if (history.provider_instance_id) {
+        retain(retainedProviderInstances, nextConversationId, history.provider_instance_id);
+      }
+      if (history.provider_instance_revision) {
+        retain(
+          retainedProviderInstanceRevisions,
+          nextConversationId,
+          history.provider_instance_revision,
+        );
+      }
+      if (history.protocol_facade_id) {
+        retain(retainedProtocolFacades, nextConversationId, history.protocol_facade_id);
+      }
+      retain(retainedProviderIds, nextConversationId, history.provider_id);
+      applySelectedProvider();
     } catch (caught) {
       if (version === hydrationVersion) {
         failure = caught instanceof Error ? caught.message : String(caught);
@@ -483,11 +583,13 @@
       return;
     }
 
+    onConversationActive?.();
+
     failure = null;
     pending = true;
     cancelRequested = false;
     retainedPendingConversations.add(conversationId);
-    draft = "";
+    setDraft("");
     const optimisticMessageId = `user:${crypto.randomUUID()}`;
     appendMessage({
       id: optimisticMessageId,
@@ -507,11 +609,27 @@
         message,
         active_goal_id: activeGoal?.goal_id ?? null,
         active_task_id: activeTask?.task_id ?? null,
+        provider_instance_id: providerInstanceId || null,
+        provider_instance_revision: providerInstanceRevision || null,
+        protocol_facade_id: protocolFacadeId || null,
+        provider_id: providerId,
         model,
         reasoning_effort: reasoningEffort,
         harness_mode: harnessMode,
       });
       model = reply.model;
+      providerInstanceId = reply.provider_instance_id;
+      providerInstanceRevision = reply.provider_instance_revision;
+      protocolFacadeId = reply.protocol_facade_id;
+      providerId = reply.provider_id;
+      retain(retainedProviderInstances, conversationId, providerInstanceId);
+      retain(
+        retainedProviderInstanceRevisions,
+        conversationId,
+        providerInstanceRevision,
+      );
+      retain(retainedProtocolFacades, conversationId, protocolFacadeId);
+      retain(retainedProviderIds, conversationId, providerId);
       retain(retainedModels, conversationId, reply.model);
       reasoningEffort = reply.reasoning_effort ?? reasoningEffort;
       if (reply.reasoning_effort) {
@@ -543,6 +661,7 @@
           new CustomEvent("nucleus:tasks-changed", { detail: { projectId } }),
         );
       }
+      window.dispatchEvent(new CustomEvent("nucleus:threads-changed"));
     } catch (caught) {
       const reason = caught instanceof Error ? caught.message : String(caught);
       if (!cancelRequested) {
@@ -575,7 +694,7 @@
       collectedQuestionAnswers = nextAnswers;
       questionIndex += 1;
       questionSelections = [];
-      draft = "";
+      setDraft("");
       return;
     }
 
@@ -605,7 +724,7 @@
       questionIndex = 0;
       questionSelections = [];
       collectedQuestionAnswers = [];
-      draft = "";
+      setDraft("");
     } catch (caught) {
       failure = caught instanceof Error ? caught.message : String(caught);
     } finally {
@@ -706,25 +825,69 @@
     );
   }
 
-  async function hydrateModelCatalog(): Promise<void> {
-    if (retainedModelCatalog) {
-      modelCatalog = retainedModelCatalog;
+  async function hydrateProviderCatalogue(): Promise<void> {
+    if (retainedProviderCatalogue) {
+      providerCatalogue = retainedProviderCatalogue;
+      applySelectedProvider();
       return;
     }
-    modelCatalogRequest ??= listAgentChatModels();
+    providerCatalogueRequest ??= loadAgentChatProviderCatalogue();
     try {
-      retainedModelCatalog = await modelCatalogRequest;
-      modelCatalog = retainedModelCatalog;
+      retainedProviderCatalogue = await providerCatalogueRequest;
+      providerCatalogue = retainedProviderCatalogue;
+      applySelectedProvider();
     } catch {
-      modelCatalogRequest = null;
+      providerCatalogueRequest = null;
     }
   }
 
+  function applySelectedProvider(): void {
+    const ready = providerCatalogue.instances.filter(
+      (instance) => instance.selection_readiness === "ready",
+    );
+    const selected = providerCatalogue.instances.find(
+      (instance) => instance.provider_instance_id === providerInstanceId,
+    ) ?? (ready.length === 1 ? ready[0] : null);
+    if (!selected) {
+      modelCatalog = [];
+      return;
+    }
+    providerInstanceId = selected.provider_instance_id;
+    providerInstanceRevision = selected.instance_revision;
+    protocolFacadeId = selected.protocol_facade_id;
+    modelCatalog = selected.models;
+    const selectedModel = modelCatalog.find(
+      (option) => option.model === model && option.provider_id === providerId,
+    ) ?? modelCatalog.find((option) => option.model === model);
+    if (!selectedModel && modelCatalog.length > 0) {
+      model = modelCatalog[0].model;
+      providerId = modelCatalog[0].provider_id;
+      reasoningEffort = modelCatalog[0].default_reasoning_effort;
+    } else if (selectedModel) {
+      providerId = selectedModel.provider_id;
+    }
+  }
+
+  function selectProviderInstance(value: string): void {
+    providerInstanceId = value;
+    applySelectedProvider();
+    retain(retainedProviderInstances, conversationId, providerInstanceId);
+    retain(retainedProviderInstanceRevisions, conversationId, providerInstanceRevision);
+    retain(retainedProtocolFacades, conversationId, protocolFacadeId);
+    retain(retainedProviderIds, conversationId, providerId);
+    retain(retainedModels, conversationId, model);
+    retain(retainedReasoningEfforts, conversationId, reasoningEffort);
+  }
+
   function selectModelRoute(selection: ModelSelection): void {
-    const nextModel = selection.model;
+    const selected = modelCatalog.find(
+      (option) => modelRouteKey(option) === selection.model,
+    );
+    const nextModel = selected?.model ?? selection.model;
     model = nextModel;
     retain(retainedModels, conversationId, model);
-    const selected = modelCatalog.find((option) => option.model === nextModel);
+    providerId = selected?.provider_id ?? null;
+    retain(retainedProviderIds, conversationId, providerId);
     const selectedEffort = selection.axes.reasoning;
     reasoningEffort =
       typeof selectedEffort === "string"
@@ -889,62 +1052,77 @@
 
   <div class="composer-float">
     {#if failure}<div class="chat-error" role="alert">{failure}</div>{/if}
-    <AgentChatInput
-      bind:value={draft}
-      placeholder={projectId ? "Ask Nucleus anything" : "Select a project first"}
-      ariaLabel="Message Codex"
-      submitLabel="Send message"
-      minRows={2}
-      maxRows={8}
-      size="sm"
-      status={pendingQuestion ? "questioning" : pending ? "busy" : "idle"}
-      questionCanSubmit={questionCanSubmit}
-      attachments={contextAttachments}
-      disabled={!projectId || loadingHistory || answeringQuestion}
-      onSubmit={submitComposer}
-      onStop={() => void cancelTurn()}
-      onRemoveAttachment={removeContextAttachment}
-    >
-      {#snippet question()}
-        <AgentQuestion
-          bind:this={questionComponent}
-          questions={questionItems}
-          activeIndex={questionIndex}
-          selections={questionSelections}
-          override={draft}
-          dismissible
-          size="sm"
-          density="compact"
-          onSelectionChange={(values) => (questionSelections = values)}
-          onSubmit={(answer) => void answerQuestion(answer)}
-        />
-      {/snippet}
-      {#snippet toolbar()}
-        <div class="chat-route-controls">
-          <ModelPicker
-            models={modelPickerModels}
-            axes={modelPickerAxes}
-            value={modelSelection}
-            ariaLabel="Chat model and reasoning"
-            showModelDescriptions={false}
-            emphasis="subdued"
+    {#key appliedDraftRequestId}
+      <AgentChatInput
+        bind:value={draft}
+        placeholder={projectId ? "Ask Nucleus anything" : "Select a project first"}
+        ariaLabel="Message Codex"
+        submitLabel="Send message"
+        minRows={2}
+        maxRows={8}
+        size="sm"
+        status={pendingQuestion ? "questioning" : pending ? "busy" : "idle"}
+        questionCanSubmit={questionCanSubmit}
+        attachments={contextAttachments}
+        disabled={!projectId || loadingHistory || answeringQuestion}
+        onSubmit={submitComposer}
+        onStop={() => void cancelTurn()}
+        onValueChange={retainDraft}
+        onRemoveAttachment={removeContextAttachment}
+      >
+        {#snippet question()}
+          <AgentQuestion
+            bind:this={questionComponent}
+            questions={questionItems}
+            activeIndex={questionIndex}
+            selections={questionSelections}
+            override={draft}
+            dismissible
             size="sm"
-            disabled={pending || loadingHistory}
-            onChange={selectModelRoute}
+            density="compact"
+            onSelectionChange={(values) => (questionSelections = values)}
+            onSubmit={(answer) => void answerQuestion(answer)}
           />
-          <Button
-            variant="ghost"
-            size="sm"
-            pressed={harnessMode === "plan"}
-            ariaLabel={`Harness mode: ${harnessMode === "plan" ? "Plan" : "Normal"}`}
-            disabled={pending || loadingHistory}
-            onPressedChange={(pressed) => selectHarnessMode(pressed ? "plan" : "normal")}
-          >
-            {harnessMode === "plan" ? "Plan" : "Normal"}
-          </Button>
-        </div>
-      {/snippet}
-    </AgentChatInput>
+        {/snippet}
+        {#snippet toolbar()}
+          <div class="chat-route-controls">
+            {#if shouldShowProviderSelector(providerCatalogue)}
+              <Select
+                value={providerInstanceId}
+                options={providerOptions}
+                variant="ghost"
+                size="sm"
+                native={false}
+                ariaLabel="Agent provider"
+                disabled={pending || loadingHistory}
+                onValueChange={selectProviderInstance}
+              />
+            {/if}
+            <ModelPicker
+              models={modelPickerModels}
+              axes={modelPickerAxes}
+              value={modelSelection}
+              ariaLabel="Chat model and reasoning"
+              showModelDescriptions={false}
+              emphasis="subdued"
+              size="sm"
+              disabled={pending || loadingHistory}
+              onChange={selectModelRoute}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              pressed={harnessMode === "plan"}
+              ariaLabel={`Harness mode: ${harnessMode === "plan" ? "Plan" : "Normal"}`}
+              disabled={pending || loadingHistory}
+              onPressedChange={(pressed) => selectHarnessMode(pressed ? "plan" : "normal")}
+            >
+              {harnessMode === "plan" ? "Plan" : "Normal"}
+            </Button>
+          </div>
+        {/snippet}
+      </AgentChatInput>
+    {/key}
   </div>
 </section>
 
@@ -957,6 +1135,8 @@
     min-width: 0;
     min-height: 0;
     background: var(--poodle-color-background-canvas);
+    container-name: agent-chat-panel;
+    container-type: inline-size;
   }
 
   .chat-route-controls {
@@ -995,7 +1175,7 @@
     min-height: 0;
     overflow: hidden;
     height: 100%;
-    padding: clamp(1rem, 4vw, 3rem);
+    padding: clamp(1rem, 4cqi, 3rem);
     padding-bottom: clamp(11rem, 24vh, 14rem);
   }
 
@@ -1069,12 +1249,12 @@
   .composer-float {
     position: absolute;
     z-index: 5;
-    right: clamp(0.75rem, 3vw, 2rem);
-    bottom: clamp(0.75rem, 2vw, 1.35rem);
-    left: clamp(0.75rem, 3vw, 2rem);
+    right: clamp(0.75rem, 3cqi, 2rem);
+    bottom: clamp(0.75rem, 2cqi, 1.35rem);
+    left: clamp(0.75rem, 3cqi, 2rem);
     display: grid;
     gap: 0.45rem;
-    width: min(48rem, calc(100% - clamp(1.5rem, 6vw, 4rem)));
+    width: min(48rem, calc(100% - clamp(1.5rem, 6cqi, 4rem)));
     margin: 0 auto;
   }
 
@@ -1092,7 +1272,7 @@
     background: var(--poodle-color-background-surface);
   }
 
-  @media (max-width: 36rem) {
+  @container agent-chat-panel (max-width: 36rem) {
     .chat-timeline { padding-bottom: 13rem; }
   }
 </style>

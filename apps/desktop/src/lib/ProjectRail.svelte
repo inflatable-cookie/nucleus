@@ -1,7 +1,7 @@
 <script lang="ts">
   import {
+    Button,
     Dialog,
-    EditableLabel,
     Icon,
     Menu,
     SegmentedControl,
@@ -299,21 +299,6 @@
     }
   }
 
-  async function commitProjectName(
-    project: ControlProjectRecordDto,
-    value: string,
-  ): Promise<void> {
-    const displayName = value.trim();
-    if (
-      !displayName
-      || displayName === project.display_name
-      || mutatingProjectId
-    ) {
-      return;
-    }
-    await mutateProject(project, "rename", displayName);
-  }
-
   async function mutateProject(
     project: ControlProjectRecordDto,
     action: "rename" | "park" | "archive" | "restore" | "delete" | "promote",
@@ -446,7 +431,15 @@
 
 <section class="project-rail-list" aria-label="Projects">
   <header class="project-rail-head">
-    <span class="sidebar-dimmed">{projectCountLabel}</span>
+    <span class="sidebar-dimmed" role="status" aria-live="polite" aria-label={projectCountLabel}>
+      {#if loading || failure}
+        {projectCountLabel}
+      {:else}
+        {namedProjects.length}<span class="project-count-kind">
+          project{namedProjects.length === 1 ? "" : "s"}</span
+        >
+      {/if}
+    </span>
     <div class="project-rail-actions">
       <button class="icon-button" type="button" aria-label="New project" onclick={() => (creating = true)}>
         <Icon icon={plus} size="sm" />
@@ -583,15 +576,16 @@
   {/if}
 
   {#if mutationFailure}
-    <div class="rail-message rail-message-error"><Text tone="danger">{mutationFailure}</Text></div>
+    <div class="rail-message rail-message-error" role="alert"><Text tone="danger">{mutationFailure}</Text></div>
   {/if}
 
   {#if failure}
-    <div class="rail-message rail-message-error">
+    <div class="rail-message rail-message-error" role="alert">
       <Text tone="danger">{failure}</Text>
+      <Button variant="secondary" size="xs" onClick={refreshProjectRail}>Retry</Button>
     </div>
   {:else if loading && projects.length === 0}
-    <div class="rail-message">
+    <div class="rail-message" role="status" aria-live="polite">
       <span class="sidebar-dimmed">Loading projects.</span>
     </div>
   {:else if namedProjects.length === 0}
@@ -623,11 +617,7 @@
             >
               <span class="project-node-icon" aria-hidden="true"><Icon icon={folder} size="sm" /></span>
             </button>
-            <span
-              class="project-name"
-              onpointerdown={() => selectProject(project.project_id)}
-              onfocusin={() => selectProject(project.project_id)}
-            >
+            <div class="project-name">
               {#if renamingProjectId === project.project_id && renamingSurface === "rail"}
                 <input
                   class="project-name-input"
@@ -639,17 +629,18 @@
                   onkeydown={(event) => handleRenameKeydown(event, project)}
                 />
               {:else}
-                <EditableLabel
-                  value={project.display_name}
-                  ariaLabel={`Rename ${project.display_name}`}
-                  activationMode="doubleClick"
-                  variant="flush"
-                  maxLength={80}
+                <button
+                  class="project-name-select"
+                  type="button"
                   disabled={mutatingProjectId !== null}
-                  onCommit={({ value }) => void commitProjectName(project, value)}
-                />
+                  aria-current={active ? "true" : undefined}
+                  onclick={() => selectProject(project.project_id)}
+                  ondblclick={() => void beginProjectRename(project, "rail")}
+                >
+                  {project.display_name}
+                </button>
               {/if}
-            </span>
+            </div>
             <Menu
               items={projectMenuItems(project)}
               ariaLabel={`Project actions for ${project.display_name}`}
@@ -669,7 +660,10 @@
               {#if loadingThreads && threads.length === 0}
                 <div class="project-thread-message">Loading threads.</div>
               {:else if threadFailure}
-                <div class="project-thread-message project-thread-error">{threadFailure}</div>
+                <div class="project-thread-message project-thread-error" role="alert">
+                  <span>{threadFailure}</span>
+                  <Button variant="secondary" size="xs" onClick={() => void loadProjectThreads()}>Retry</Button>
+                </div>
               {:else}
                 {#each associatedThreads as thread (thread.conversation_id)}
                   <button
@@ -706,6 +700,7 @@
 
 <style>
   .project-rail-list {
+    container-type: inline-size;
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
@@ -722,6 +717,22 @@
     justify-content: space-between;
     gap: 0.75rem;
     min-width: 0;
+  }
+
+  .project-rail-head > .sidebar-dimmed {
+    flex: 0 0 auto;
+    width: max-content;
+    white-space: nowrap;
+  }
+
+  .project-count-kind {
+    margin-left: 0.25rem;
+  }
+
+  @container (max-width: 12.5rem) {
+    .project-count-kind {
+      display: none;
+    }
   }
 
   .sidebar-dimmed {
@@ -1009,23 +1020,23 @@
     opacity: 1;
   }
 
-  .project-name :global(.poodle-editable-label),
-  .project-name :global(.poodle-editable-label__display),
-  .project-name :global(.poodle-editable-label__input) {
+  .project-name-select {
     width: 100%;
     min-width: 0;
-  }
-
-  .project-name :global(.poodle-editable-label__display) {
-    justify-content: flex-start;
+    padding: 0;
+    overflow: hidden;
     color: inherit;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
     font: inherit;
   }
 
-  .project-name :global(.poodle-editable-label__text) {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .project-name-select:disabled {
+    cursor: default;
   }
 
   .project-thread-list {

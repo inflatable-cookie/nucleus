@@ -1,36 +1,29 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { IconButton, Text } from "@poodle/svelte";
+  import { Button, IconButton, Text } from "@poodle/svelte";
   import { refreshCw } from "@poodle/icons-lucide";
-  import {
-    buildStateListQuery,
-    goalRecordsFromResponse,
-    submitControlEnvelope,
-    taskRecordsFromResponse,
-    type ControlGoalRecordDto,
-    type ControlTaskRecordDto,
-  } from "./control";
+  import type { ControlGoalRecordDto, ControlTaskRecordDto } from "./control";
 
   let {
     selectedProjectId,
-    taskRefreshToken = 0,
+    goals,
+    tasks,
+    loading = false,
+    failure = null,
+    onRefresh,
+    onSelectionChange,
     selectedGoalId = $bindable(null),
-    selectedGoal = $bindable(null),
     selectedTaskId = $bindable(null),
-    selectedTask = $bindable(null),
   }: {
     selectedProjectId: string | null;
-    taskRefreshToken?: number;
+    goals: ControlGoalRecordDto[];
+    tasks: ControlTaskRecordDto[];
+    loading?: boolean;
+    failure?: string | null;
+    onRefresh?: () => void;
+    onSelectionChange?: (goalId: string | null, taskId: string | null) => void;
     selectedGoalId: string | null;
-    selectedGoal?: ControlGoalRecordDto | null;
     selectedTaskId: string | null;
-    selectedTask?: ControlTaskRecordDto | null;
   } = $props();
-
-  let loading = $state(false);
-  let goals = $state<ControlGoalRecordDto[]>([]);
-  let tasks = $state<ControlTaskRecordDto[]>([]);
-  let failure = $state<string | null>(null);
 
   const visibleGoals = $derived(
     goals
@@ -82,59 +75,16 @@
       : 0,
   );
 
-  $effect(() => {
-    selectedProjectId;
-    taskRefreshToken;
-    void loadWork();
-  });
-
-  $effect(() => {
-    selectedGoal = selectedGoalRecord;
-    selectedTask = selectedTaskRecord;
-  });
-
-  onMount(() => {
-    const refreshAfterAuthoring = (event: Event) => {
-      const changedProjectId = (event as CustomEvent<{ projectId: string }>).detail.projectId;
-      if (!selectedProjectId || changedProjectId === selectedProjectId) {
-        void loadWork();
-      }
-    };
-    window.addEventListener("nucleus:tasks-changed", refreshAfterAuthoring);
-    return () => window.removeEventListener("nucleus:tasks-changed", refreshAfterAuthoring);
-  });
-
-  async function loadWork(): Promise<void> {
-    loading = true;
-    failure = null;
-    try {
-      const [taskResponse, goalResponse] = await Promise.all([
-        submitControlEnvelope(buildStateListQuery("tasks")),
-        submitControlEnvelope(buildStateListQuery("goals")),
-      ]);
-      tasks = taskRecordsFromResponse(taskResponse);
-      goals = goalRecordsFromResponse(goalResponse);
-      if (selectedTaskId && !tasks.some((task) => task.task_id === selectedTaskId)) {
-        selectedTaskId = null;
-      }
-      if (selectedGoalId && !goals.some((goal) => goal.goal_id === selectedGoalId)) {
-        selectedGoalId = null;
-      }
-    } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
-    } finally {
-      loading = false;
-    }
-  }
-
   function selectGoal(goalId: string): void {
     selectedGoalId = goalId;
     selectedTaskId = null;
+    onSelectionChange?.(goalId, null);
   }
 
   function selectTask(taskId: string, goalId: string | null): void {
     selectedGoalId = goalId;
     selectedTaskId = taskId;
+    onSelectionChange?.(goalId, taskId);
   }
 </script>
 
@@ -152,15 +102,18 @@
       icon={refreshCw}
       ariaLabel="Refresh goals and tasks"
       tooltip="Refresh goals and tasks"
-      onClick={loadWork}
+      onClick={() => onRefresh?.()}
       disabled={loading}
     />
   </header>
 
   {#if failure}
-    <div class="panel-message panel-error" role="alert">{failure}</div>
+    <div class="panel-message panel-error" role="alert">
+      <span>{failure}</span>
+      <Button variant="secondary" size="xs" onClick={() => onRefresh?.()}>Retry</Button>
+    </div>
   {:else if loading && tasks.length === 0 && goals.length === 0}
-    <div class="panel-message"><Text tone="muted">Loading work…</Text></div>
+    <div class="panel-message" role="status" aria-live="polite"><Text tone="muted">Loading work…</Text></div>
   {:else if visibleTasks.length === 0 && visibleGoals.length === 0}
     <div class="panel-message">
       <Text weight="semibold">No work yet</Text>
@@ -322,7 +275,7 @@
 {/snippet}
 
 <style>
-  .tasks-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--poodle-color-text-secondary); background: var(--poodle-color-background-canvas); }
+  .tasks-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--poodle-color-text-secondary); background: var(--poodle-color-background-canvas); container-name: tasks-panel; container-type: inline-size; }
   .tasks-header { display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 1rem; border-bottom: 1px solid var(--poodle-color-border-subtle); }
   h1, h2, h3, h4, p { margin: 0; }
   h1 { color: var(--poodle-color-text-secondary); font-size: 0.95rem; }
@@ -344,7 +297,7 @@
   .ungrouped-heading { display: flex; justify-content: space-between; padding: 0.5rem 0.7rem 0.25rem; color: var(--poodle-color-text-tertiary); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
   .readiness-dot { width: 0.38rem; height: 0.38rem; border-radius: 50%; background: var(--poodle-color-text-tertiary); }
   .readiness-dot.ready { background: var(--poodle-color-status-success); }
-  .task-detail { min-width: 0; overflow: auto; padding: clamp(1rem, 3vw, 2rem); }
+  .task-detail { min-width: 0; overflow: auto; padding: clamp(1rem, 3cqi, 2rem); }
   .detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
   .eyebrow { display: block; margin-bottom: 0.3rem; color: var(--poodle-color-text-secondary); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; }
   .parent-goal { margin-top: 0.3rem; }
@@ -365,5 +318,8 @@
   code { color: var(--poodle-color-text-secondary); font-size: 0.72rem; overflow-wrap: anywhere; }
   .panel-message, .detail-empty { display: grid; place-content: center; justify-items: center; gap: 0.4rem; min-height: 100%; padding: 2rem; text-align: center; }
   .panel-error { color: var(--poodle-color-status-danger); }
-  @media (max-width: 720px) { .tasks-body { grid-template-columns: minmax(11rem, 0.85fr) minmax(15rem, 1.15fr); } }
+  @container tasks-panel (max-width: 34rem) {
+    .tasks-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(8rem, 40%) minmax(0, 1fr); }
+    .task-list { border-right: 0; border-bottom: 1px solid var(--poodle-color-border-subtle); }
+  }
 </style>

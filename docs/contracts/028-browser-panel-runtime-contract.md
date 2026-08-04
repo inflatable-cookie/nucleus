@@ -76,6 +76,13 @@ The trusted toolbar provides:
 Control failures stay in the trusted chrome. Remote pages must not be allowed
 to spoof those failures as Nucleus messages.
 
+The Browser panel is not project-resource targeted in this runtime. A URL is
+not a resource membership and the native child always belongs to the local
+desktop host. Normal readiness stays quiet apart from the existing load
+indicator. Start or recovery failure stays in trusted chrome and may offer one
+retry of the exact panel child; retry must not create a second island, reset
+the project layout, or fall back to the system browser.
+
 ## Deferred Surface
 
 The first slice does not promise:

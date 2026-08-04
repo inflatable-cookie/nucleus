@@ -34,7 +34,7 @@ automation bridge still cannot attach to the hidden-restored development
 window and reports `cgWindowNotFound`, so visual save-sheet observation remains
 deferred to card 047's isolated native acceptance.
 
-## Next Task
+## Recorded Follow-Up
 
 Card 046 defines and implements restore as a restart-safe offline transaction.
 The live SQLite owner must never coexist with publication of restored database

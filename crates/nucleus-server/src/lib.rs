@@ -104,6 +104,7 @@ pub mod local_read_only_spawn_smoke;
 pub mod local_sandbox_backend;
 pub mod local_transport;
 pub mod management_projection_state;
+mod memory_display;
 pub mod memory_proposal_review_command;
 pub mod memory_proposal_review_diagnostics;
 pub mod memory_proposal_review_persistence;

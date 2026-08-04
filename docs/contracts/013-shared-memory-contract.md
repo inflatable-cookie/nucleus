@@ -174,6 +174,25 @@ The first panel does not accept, reject, edit, archive, supersede, project, or
 extract memories. Those controls require a separate product-action lane over
 the existing server admission and review boundaries.
 
+### Product Display Content
+
+The project Memory list may expose a stored sanitized title and summary when
+the record sensitivity is `public project` or `internal project`.
+
+- title is trimmed and bounded to 160 Unicode scalar values
+- summary is trimmed and bounded to 600 Unicode scalar values
+- truncation is explicit in the read model
+- empty display fields remain absent
+- `user-private`, `secret-adjacent`, and `restricted` content is absent and the
+  read model marks it redacted
+- proposal detail, accepted-memory detail, review notes, source payloads, raw
+  transcripts, and provider material never enter the list projection
+
+The display fields come only from the server-owned stored title and sanitized
+summary. The client must not derive them from ids, refs, linked Tasks,
+transcripts, documents, or provider payloads. Displaying proposal content does
+not accept it or grant review authority.
+
 ## Out Of Scope
 
 - vector database selection

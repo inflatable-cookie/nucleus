@@ -41,32 +41,68 @@ pub(crate) fn resolve_optional_project_resource_target<B>(
 where
     B: LocalStoreBackend,
 {
+    let project = load_project(state, project_id)?;
+    resolve_record_target(&project, explicit_resource_id)
+}
+
+pub(crate) fn resolve_optional_project_resource_target_on_host<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+    explicit_resource_id: Option<&str>,
+    authority_host_ref: &str,
+) -> Result<Option<ResolvedProjectResourceTarget>, String>
+where
+    B: LocalStoreBackend,
+{
+    let project = load_project(state, project_id)?;
+    resolve_record_target_on_host(&project, explicit_resource_id, Some(authority_host_ref))
+}
+
+fn load_project<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+) -> Result<ProjectStorageRecord, String>
+where
+    B: LocalStoreBackend,
+{
     let record = state
         .projects()
         .get(&PersistenceRecordId(project_id.to_owned()))
         .map_err(|error| format!("project lookup failed: {error:?}"))?
         .ok_or_else(|| format!("project not found: {project_id}"))?;
-    let project = decode_project_storage_record(&record.payload.bytes)
-        .map_err(|error| format!("project record decode failed: {}", error.reason))?;
-    resolve_record_target(&project, explicit_resource_id)
+    decode_project_storage_record(&record.payload.bytes)
+        .map_err(|error| format!("project record decode failed: {}", error.reason))
 }
 
 fn resolve_record_target(
     project: &ProjectStorageRecord,
     explicit_resource_id: Option<&str>,
 ) -> Result<Option<ResolvedProjectResourceTarget>, String> {
+    resolve_record_target_on_host(project, explicit_resource_id, None)
+}
+
+fn resolve_record_target_on_host(
+    project: &ProjectStorageRecord,
+    explicit_resource_id: Option<&str>,
+    authority_host_ref: Option<&str>,
+) -> Result<Option<ResolvedProjectResourceTarget>, String> {
     if let Some(resource_id) = explicit_resource_id.filter(|value| !value.trim().is_empty()) {
         let resource = project
             .resource(resource_id)
             .ok_or_else(|| format!("project resource target not found: {resource_id}"))?;
-        return resolve_resource(resource, None).map(Some);
+        return resolve_resource_on_host(resource, None, authority_host_ref).map(Some);
     }
 
     if let Some(default) = project.default_working_resource.as_ref() {
         let resource = project
             .resource(&default.resource_id)
             .ok_or_else(|| "project default working resource is not attached".to_owned())?;
-        return resolve_resource(resource, default.relative_working_directory.as_deref()).map(Some);
+        return resolve_resource_on_host(
+            resource,
+            default.relative_working_directory.as_deref(),
+            authority_host_ref,
+        )
+        .map(Some);
     }
 
     let candidates = project
@@ -75,12 +111,38 @@ fn resolve_record_target(
         .filter(|resource| resource.role == ProjectResourceStorageRole::Working)
         .collect::<Vec<_>>();
     match candidates.as_slice() {
-        [] => Ok(None),
-        [resource] => resolve_resource(resource, None).map(Some),
+        [] => {
+            if let Some(current_host) = authority_host_ref {
+                ensure_authority_host(&project.authority_host_ref, current_host)?;
+            }
+            Ok(None)
+        }
+        [resource] => resolve_resource_on_host(resource, None, authority_host_ref).map(Some),
         _ => Err(
             "project has multiple working resources and no target; choose a resource for this panel or task"
                 .to_owned(),
         ),
+    }
+}
+
+fn resolve_resource_on_host(
+    resource: &ProjectResourceStorageRecord,
+    relative_working_directory: Option<&str>,
+    authority_host_ref: Option<&str>,
+) -> Result<ResolvedProjectResourceTarget, String> {
+    if let Some(current_host) = authority_host_ref {
+        ensure_authority_host(&resource.authority_host_ref, current_host)?;
+    }
+    resolve_resource(resource, relative_working_directory)
+}
+
+fn ensure_authority_host(expected: &str, current: &str) -> Result<(), String> {
+    if expected == current {
+        Ok(())
+    } else {
+        Err(format!(
+            "working resource must run on authority host {expected}; current host is {current}"
+        ))
     }
 }
 
@@ -301,6 +363,25 @@ mod tests {
         assert!(error.contains("project resource is unavailable"));
         assert_eq!(moved.resources[0].resource_id, "resource:remote");
         assert_eq!(moved.resources[0].authority_host_ref, "host:remote-builder");
+    }
+
+    #[test]
+    fn host_bounded_resolution_rejects_remote_authority_before_path_access() {
+        let root = tempfile::tempdir().expect("root");
+        let mut remote = working_resource("resource:remote", root.path());
+        remote.authority_host_ref = "host:remote-builder".to_owned();
+        remote.current_locator = Some(root.path().join("not-local").to_string_lossy().into_owned());
+        let record = project(vec![remote]);
+
+        let error = resolve_record_target_on_host(
+            &record,
+            Some("resource:remote"),
+            Some("host:embedded-desktop"),
+        )
+        .expect_err("remote authority");
+
+        assert!(error.contains("authority host host:remote-builder"));
+        assert!(!error.contains("unavailable"));
     }
 
     #[test]

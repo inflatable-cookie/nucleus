@@ -58,6 +58,14 @@ transport loss detach the view. They do not close the session.
 Explicit panel close closes the session and its process tree. Host shutdown
 also closes hosted sessions.
 
+The session snapshot is the authority for the host identity shown by the
+client. The resource record selects a route; it is not proof that a session is
+connected there. Healthy embedded-local sessions add no permanent status bar.
+Opening, failure, and a successfully attached non-local host may be shown as
+compact panel-local status. Retry reopens or reattaches the same project,
+panel, and resource target and must not silently choose a different target or
+host.
+
 ## Protocol
 
 The product-facing terminal client stays low-cardinality:
@@ -100,6 +108,13 @@ the same session operations and event semantics.
 
 The first host runtime uses `portable-pty`. The first renderer uses
 `@xterm/xterm` plus `@xterm/addon-fit`.
+
+The embedded adapter admits only targets assigned to
+`host:embedded-desktop`. It checks host identity before resolving a locator or
+starting a PTY. A non-local resource or resource-free project fails with its
+required host instead of touching that locator locally or using the desktop
+home-directory fallback. A later remote transport replaces this adapter at the
+same terminal protocol boundary.
 
 Initial shell rules:
 

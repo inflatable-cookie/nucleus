@@ -159,6 +159,12 @@ shows project-scoped accepted memories and memory proposals from existing
 sanitized read models. It is an inspector, not a general context drawer and not
 a mutation surface. Goal and Task focus remains in Agent Chat and Tasks.
 
+The product Memory read model now carries a bounded display title and summary
+for public-project and internal-project records. More sensitive records retain
+identity and lifecycle metadata but redact display content. The compact panel
+leads with readable context; internal ids, actors, reference counts, retention,
+and supersession remain secondary details.
+
 ## Retired Proof Debt
 
 The proof modal, its proof-only panels, and their source-inspection guards were
@@ -277,6 +283,31 @@ pending ratio before it saves.
 Poodle's resize handle coalesces raw mouse movement to one update per animation
 frame. `SplitView` measures its container once at gesture start and reuses that
 geometry until release, avoiding synchronous layout reads in the move loop.
+
+## Shell Quality Projection
+
+Accessibility, responsive adaptation, and failure presentation are one shell
+quality boundary rather than separate panel features.
+
+Poodle owns primitive keyboard, focus, selected-state, dialog, menu, tab, and
+splitter behavior. Nucleus composes those primitives around product state. It
+does not recreate semantic controls with event-bearing spans or divs.
+
+The native window owns viewport-level titlebar adaptation. Regions and panels
+adapt against their own containers because a narrow panel can sit inside a wide
+window. Container-relative presentation may wrap or suppress secondary copy,
+but it cannot rewrite persisted region sizing or remove a primary action.
+
+Failure state remains with the component that can recover it:
+
+- workspace connection failures stay in the workspace stage
+- panel open and resource failures stay in the panel
+- query failures stay with the list or record view that issued the query
+- cross-panel operation failures may additionally enter the retained operation
+  and notification projections
+
+Retry replays the exact bounded operation. It does not become fallback routing,
+resource selection, panel creation, or durable mutation authority.
 
 The first monitor key is best-effort native metadata, not durable hardware
 identity. Restore validates every placement against current work areas and

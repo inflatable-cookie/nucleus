@@ -47,6 +47,7 @@ pub struct TaskDiffFileDto {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TaskDiffOverviewResponse {
     pub diff_id: String,
+    pub resource_id: Option<String>,
     pub summary: String,
     pub counts: TaskDiffCountsDto,
     pub coverage: String,
@@ -82,9 +83,13 @@ pub struct TaskDiffFilePatchResponse {
     pub attribution_notice: Option<String>,
 }
 
-pub(super) fn overview(diff: &EngineDiffSummaryRecord) -> TaskDiffOverviewResponse {
+pub(super) fn overview(
+    diff: &EngineDiffSummaryRecord,
+    resource_id: Option<String>,
+) -> TaskDiffOverviewResponse {
     TaskDiffOverviewResponse {
         diff_id: diff.diff_id.0.clone(),
+        resource_id,
         summary: diff.summary.clone(),
         counts: TaskDiffCountsDto {
             added: diff.counts.added,

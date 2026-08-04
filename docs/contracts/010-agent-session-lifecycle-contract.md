@@ -12,6 +12,17 @@ implementation begins.
 Agent sessions are nucleus records. Provider-native session ids are retained,
 but they do not replace nucleus session ids.
 
+The new-session selection identity is the exact configured runtime adapter,
+provider-instance id and revision, protocol facade id, optional catalogue provider id,
+model id, reasoning selection, harness mode, and working resource. Changing
+any selected dimension closes the in-memory route binding and prepares a fresh
+session. Existing durable transcript history is retained as Nucleus context;
+the old provider session is never rewritten to claim the new route.
+
+Selection must resolve against the latest admitted configured-provider
+catalogue. Unknown and `NotReady` instances, models outside the selected
+instance, and stale instance revision, facade, or provider identity fail before provider effects.
+
 ## Session Identity
 
 Each agent session must expose:
@@ -19,6 +30,7 @@ Each agent session must expose:
 - stable nucleus session id
 - adapter id
 - provider instance id
+- provider instance revision
 - provider session id where available
 - lifecycle state
 - recovery state

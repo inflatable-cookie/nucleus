@@ -122,7 +122,12 @@ fn fixture(before: &[u8], after: &[u8]) -> Fixture {
 #[test]
 fn overview_is_metadata_only_and_patch_is_lineage_authorized() {
     let fixture = fixture(b"old\n", b"new\n");
-    let overview = read_task_diff_overview(&fixture.state, &fixture.request).expect("overview");
+    let overview = read_task_diff_overview(&fixture.state, Some(&fixture.store), &fixture.request)
+        .expect("overview");
+    assert_eq!(
+        overview.resource_id.as_deref(),
+        Some("resource:nucleus-local")
+    );
     assert_eq!(overview.files.len(), 1);
     assert_eq!(overview.files[0].display_path, "demo.txt");
     assert!(!serde_json::to_string(&overview)
@@ -141,9 +146,28 @@ fn overview_is_metadata_only_and_patch_is_lineage_authorized() {
 
     let mut mismatched = fixture.request.clone();
     mismatched.task_id = "task:other".to_owned();
-    assert!(read_task_diff_overview(&fixture.state, &mismatched)
-        .expect_err("lineage mismatch")
-        .contains("lineage"));
+    assert!(
+        read_task_diff_overview(&fixture.state, Some(&fixture.store), &mismatched)
+            .expect_err("lineage mismatch")
+            .contains("lineage")
+    );
+}
+
+#[test]
+fn overview_resource_identity_requires_exact_snapshot_agreement() {
+    assert_eq!(
+        shared_resource_id(Some("resource:one"), Some("resource:one")).expect("matching"),
+        Some("resource:one".to_owned()),
+    );
+    assert_eq!(
+        shared_resource_id(Some("resource:one"), None).expect("unknown"),
+        None
+    );
+    assert!(
+        shared_resource_id(Some("resource:one"), Some("resource:two"))
+            .expect_err("mismatch")
+            .contains("lineage mismatch")
+    );
 }
 
 #[test]

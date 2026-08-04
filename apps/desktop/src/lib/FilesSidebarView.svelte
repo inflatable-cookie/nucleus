@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Icon, Menu, Text, type MenuItem } from "@poodle/svelte";
+  import { Button, Icon, Menu, Text, type MenuItem } from "@poodle/svelte";
   import { chevronRight, ellipsis, file, folder, refreshCw } from "@poodle/icons-lucide";
   import { onMount, tick, untrack } from "svelte";
   import type { ControlProjectRecordDto, ControlProjectResourceRecordDto } from "./control";
@@ -778,6 +778,16 @@
   function formatError(caught: unknown): string {
     return caught instanceof Error ? caught.message : String(caught);
   }
+
+  function retryResourceRoot(tree: ResourceTree): void {
+    if (!selectedProject) return;
+    void loadResourceRoot(tree, loadSequence, selectedProject.project_id);
+  }
+
+  function retryDirectory(tree: ResourceTree, node: LazyFileTreeNode): void {
+    if (!selectedProject) return;
+    void loadDirectoryChildren(tree, node, loadSequence, selectedProject.project_id);
+  }
 </script>
 
 <section bind:this={sidebarElement} class="sidebar-view" aria-label="Files">
@@ -789,13 +799,13 @@
   </header>
 
   {#if mutationFailure}
-    <div class="mutation-error"><Text tone="danger">{mutationFailure}</Text></div>
+    <div class="mutation-error" role="alert"><Text tone="danger">{mutationFailure}</Text></div>
   {/if}
 
   {#if !selectedProject}
     <div class="sidebar-message"><span class="sidebar-dimmed">Select a project to browse files.</span></div>
   {:else if loading && resourceTrees.length === 0}
-    <div class="sidebar-message"><span class="sidebar-dimmed">Loading files.</span></div>
+    <div class="sidebar-message" role="status" aria-live="polite"><span class="sidebar-dimmed">Loading files.</span></div>
   {:else if availableResources.length === 0}
     <div class="sidebar-message"><span class="sidebar-dimmed">This project has no available working resources.</span></div>
   {:else}
@@ -847,9 +857,12 @@
           {/if}
           {#if tree.expanded}
             {#if tree.loading && tree.nodes === null}
-              <div class="resource-message"><span class="sidebar-dimmed">Loading.</span></div>
+              <div class="resource-message" role="status"><span class="sidebar-dimmed">Loading.</span></div>
             {:else if tree.error}
-              <div class="resource-message"><Text tone="danger">{tree.error}</Text></div>
+              <div class="resource-message" role="alert">
+                <Text tone="danger">{tree.error}</Text>
+                <Button variant="secondary" size="xs" onClick={() => retryResourceRoot(tree)}>Retry</Button>
+              </div>
             {:else if tree.nodes?.length === 0}
               <div class="resource-message"><span class="sidebar-dimmed">No admitted text files.</span></div>
             {:else if tree.nodes}
@@ -911,9 +924,12 @@
         {/if}
         {#if node.expanded}
           {#if node.loading && node.children === null}
-            <div class="tree-message">Loading.</div>
+            <div class="tree-message" role="status">Loading.</div>
           {:else if node.error}
-            <div class="tree-message tree-error">{node.error}</div>
+            <div class="tree-message tree-error" role="alert">
+              <span>{node.error}</span>
+              <Button variant="secondary" size="xs" onClick={() => retryDirectory(tree, node)}>Retry</Button>
+            </div>
           {:else if node.children?.length === 0}
             <div class="tree-message">Empty.</div>
           {:else if node.children}

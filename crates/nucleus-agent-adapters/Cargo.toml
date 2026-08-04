@@ -13,3 +13,4 @@ swallowtail-adapter-codex = { path = "../../../swallowtail/crates/swallowtail-ad
 swallowtail-core = { path = "../../../swallowtail/crates/swallowtail-core" }
 swallowtail-host-local = { path = "../../../swallowtail/crates/swallowtail-host-local" }
 swallowtail-runtime = { path = "../../../swallowtail/crates/swallowtail-runtime" }
+uuid = { version = "1", features = ["v4"] }

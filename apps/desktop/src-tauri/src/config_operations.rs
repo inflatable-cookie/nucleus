@@ -27,12 +27,14 @@ use crate::desktop_profile::{DesktopProfile, CANONICAL_APPLICATION_ID};
 
 mod backup_domains;
 pub(crate) mod export;
+pub(crate) mod restore;
 mod retention;
 
 const CALLER_LABEL: &str = "main";
 const MAX_SCAN_ENTRIES: usize = 1_024;
 
 pub(crate) fn install(app: &tauri::App, profile: DesktopProfile) -> Result<(), String> {
+    restore::commands::install(app, profile.clone());
     let export_targets = Arc::new(export::ExportTargetInbox::default());
     let authority = NucleusConfigOperationsAuthority::new(profile, Arc::clone(&export_targets))?;
     let service: Arc<dyn ConfigOperationsCommandService> =

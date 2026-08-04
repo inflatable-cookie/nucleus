@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { EditableLabel, Icon, Text } from "@poodle/svelte";
+  import { Button, EditableLabel, Icon, Text } from "@poodle/svelte";
   import { messageCircle, plus, refreshCw } from "@poodle/icons-lucide";
   import { onMount } from "svelte";
   import {
@@ -44,6 +44,8 @@
 
   onMount(() => {
     void loadThreads();
+    window.addEventListener("nucleus:threads-changed", loadThreads);
+    return () => window.removeEventListener("nucleus:threads-changed", loadThreads);
   });
 
   async function loadThreads(): Promise<void> {
@@ -214,7 +216,7 @@
 
 <section class="sidebar-view" aria-label="Threads">
   <header class="sidebar-view-head">
-    <span class="sidebar-dimmed">{loading ? "Loading" : `${threadCount} active`}</span>
+    <span class="sidebar-dimmed" role="status" aria-live="polite">{loading ? "Loading" : `${threadCount} active`}</span>
     <div class="sidebar-view-actions">
       <button type="button" aria-label="New chat" title="New chat" disabled={creating} onclick={() => void newChat()}>
         <Icon icon={plus} size="sm" />
@@ -226,7 +228,10 @@
   </header>
 
   {#if failure}
-    <div class="sidebar-message"><Text tone="danger">{failure}</Text></div>
+    <div class="sidebar-message" role="alert">
+      <Text tone="danger">{failure}</Text>
+      <Button variant="secondary" size="xs" onClick={() => void loadThreads()}>Retry</Button>
+    </div>
   {:else if !loading && threadCount === 0}
     <div class="sidebar-message"><span class="sidebar-dimmed">No active threads.</span></div>
   {:else}

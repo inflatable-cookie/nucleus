@@ -20,9 +20,8 @@ use crate::ServerControlError;
 #[test]
 fn admitted_memory_persists_with_sanitized_receipt() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
-    let state = ServerStateService::new(nucleus_local_store::SqliteBackend::new(
-        temp_dir.path().join("nucleus.sqlite"),
-    ));
+    let path = temp_dir.path().join("nucleus.sqlite");
+    let state = ServerStateService::new(nucleus_local_store::SqliteBackend::new(&path));
 
     let receipt = persist_accepted_memory_admission(
         &state,
@@ -67,6 +66,15 @@ fn admitted_memory_persists_with_sanitized_receipt() {
         accepted.source_proposal_id.as_deref(),
         Some("memory-proposal:1")
     );
+
+    drop(state);
+    let reopened = ServerStateService::new(nucleus_local_store::SqliteBackend::new(path));
+    let restarted = reopened
+        .shared_memory()
+        .get(&PersistenceRecordId("memory:1".to_owned()))
+        .expect("read accepted memory after restart")
+        .expect("accepted memory survives restart");
+    assert_eq!(restarted.payload.bytes, stored.payload.bytes);
 }
 
 #[test]

@@ -8,11 +8,14 @@ use tempfile::TempDir;
 
 use super::dto::{
     WorkspaceLayoutDispatchResultDto, WorkspaceLayoutSnapshotDto,
-    WorkspacePanelPresentationInputDto, WorkspaceUiPaths,
+    WorkspacePanelPresentationInputDto, WorkspaceProjectContextDto, WorkspaceUiPaths,
 };
 use super::legacy::split_legacy_workspace_ui_document;
+use super::product_state::PanelPresentationState;
 use super::registry::{definition_registry, REGION_IDS, SIZING_SLOT_IDS};
 use super::WorkspaceUiRuntime;
+
+mod persistence;
 
 struct Fixture {
     _temp: TempDir,
@@ -84,181 +87,6 @@ fn registry_matches_the_accepted_five_region_four_slot_shape() {
         tasks.instance_policy(),
         longhorn_layout::PanelInstancePolicy::OnePerContainer
     ));
-}
-
-#[test]
-fn projects_keep_distinct_layouts_and_new_projects_seed_only_agent_chat() {
-    let fixture = Fixture::new();
-    let runtime = fixture.runtime();
-    let first = runtime.snapshot("project:first").unwrap();
-    assert_agent_chat_only(&first);
-    create_panel(
-        &runtime,
-        "project:first",
-        "panel:terminal:first",
-        "terminal",
-        "right_top",
-        Some(("project:first", "resource:first")),
-    );
-    let saved_first = set_ratio(&runtime, "project:first", "center-right", 610_000);
-
-    let second = runtime.snapshot("project:second").unwrap();
-    assert_agent_chat_only(&second);
-    create_panel(
-        &runtime,
-        "project:second",
-        "panel:browser:second",
-        "browser",
-        "center_bottom",
-        None,
-    );
-    set_ratio(&runtime, "project:second", "center-stack", 550_000);
-
-    let restored_first = runtime.snapshot("project:first").unwrap();
-    assert_eq!(region_ids(&restored_first, "right_top").len(), 1);
-    assert!(region_ids(&restored_first, "center_bottom").is_empty());
-    assert_eq!(slot_ratio(&restored_first, "center-right"), 610_000);
-    assert!(restored_first.document.revision().get() > saved_first);
-}
-
-#[test]
-fn stale_rejections_and_invalid_scope_preserve_the_layout_document() {
-    let fixture = Fixture::new();
-    let runtime = fixture.runtime();
-    let stale = runtime.snapshot("project:one").unwrap();
-    create_panel(
-        &runtime,
-        "project:one",
-        "panel:terminal",
-        "terminal",
-        "center_bottom",
-        None,
-    );
-    let before = fs::read(fixture.paths.project_layouts()).unwrap();
-    let request = LayoutMutationRequest::new(
-        LayoutRequestId::new("request:test:stale").unwrap(),
-        stale.document.revision(),
-        LayoutMutationCommand::SetSizingSlot {
-            container_id: longhorn_core::LayoutContainerId::new(stale.container_id).unwrap(),
-            sizing_slot_id: SizingSlotId::new("center-stack").unwrap(),
-            ratio: LayoutRatio::from_millionths(600_000).unwrap(),
-        },
-    );
-    let response = runtime
-        .dispatch(
-            "project:one",
-            super::dto::WorkspaceLayoutMutationDto {
-                request,
-                create_panel: None,
-            },
-        )
-        .unwrap();
-    assert!(matches!(
-        response.result,
-        WorkspaceLayoutDispatchResultDto::Rejected { .. }
-    ));
-    assert_eq!(fs::read(fixture.paths.project_layouts()).unwrap(), before);
-
-    assert!(runtime
-        .prepare_panel("project:one", panel_input("bad", "unknownKind", None))
-        .is_err());
-    let other = runtime.snapshot("project:two").unwrap();
-    let request = LayoutMutationRequest::new(
-        LayoutRequestId::new("request:test:cross-scope").unwrap(),
-        other.document.revision(),
-        LayoutMutationCommand::SetSizingSlot {
-            container_id: longhorn_core::LayoutContainerId::new(other.container_id).unwrap(),
-            sizing_slot_id: SizingSlotId::new("center-stack").unwrap(),
-            ratio: LayoutRatio::from_millionths(600_000).unwrap(),
-        },
-    );
-    assert!(runtime
-        .dispatch(
-            "project:one",
-            super::dto::WorkspaceLayoutMutationDto {
-                request,
-                create_panel: None,
-            },
-        )
-        .is_err());
-}
-
-#[test]
-fn layout_publication_never_rewrites_the_window_domain() {
-    let fixture = Fixture::new();
-    let runtime = fixture.runtime();
-    let window_bytes = br#"{"domain":"nucleus.window-placement","sentinel":true}"#;
-    fs::write(fixture.paths.window_placement(), window_bytes).unwrap();
-    runtime.snapshot("project:one").unwrap();
-    set_ratio(&runtime, "project:one", "right-stack", 620_000);
-    assert_eq!(
-        fs::read(fixture.paths.window_placement()).unwrap(),
-        window_bytes
-    );
-}
-
-#[test]
-fn exact_panel_commands_keep_product_presentation_in_step_with_layout() {
-    let fixture = Fixture::new();
-    let runtime = fixture.runtime();
-    create_panel(
-        &runtime,
-        "project:one",
-        "panel:browser:one",
-        "browser",
-        "center_bottom",
-        None,
-    );
-    let created = runtime.snapshot("project:one").unwrap();
-    let panel = created
-        .panels
-        .iter()
-        .find(|panel| panel.external_id == "panel:browser:one")
-        .unwrap();
-    let mut changed = panel_input("panel:browser:one", "browser", None);
-    changed.title = "Research Browser".to_owned();
-    let updated = runtime
-        .update_panel_presentation("project:one", &panel.panel_instance_id, changed)
-        .unwrap();
-    assert_eq!(
-        updated
-            .panels
-            .iter()
-            .find(|candidate| candidate.panel_instance_id == panel.panel_instance_id)
-            .unwrap()
-            .title,
-        "Research Browser"
-    );
-
-    let request = LayoutMutationRequest::new(
-        LayoutRequestId::new("request:test:close-browser").unwrap(),
-        updated.document.revision(),
-        LayoutMutationCommand::ClosePanel {
-            panel_instance_id: longhorn_core::PanelInstanceId::new(&panel.panel_instance_id)
-                .unwrap(),
-        },
-    );
-    let closed = runtime
-        .dispatch(
-            "project:one",
-            super::dto::WorkspaceLayoutMutationDto {
-                request,
-                create_panel: None,
-            },
-        )
-        .unwrap();
-    assert!(matches!(
-        closed.result,
-        WorkspaceLayoutDispatchResultDto::Committed { .. }
-    ));
-    assert!(closed
-        .snapshot
-        .panels
-        .iter()
-        .all(|candidate| candidate.panel_instance_id != panel.panel_instance_id));
-    assert!(!fs::read_to_string(fixture.paths.panel_presentations())
-        .unwrap()
-        .contains("panel:browser:one"));
 }
 
 #[test]
@@ -498,5 +326,6 @@ fn panel_input(
             .unwrap_or_default(),
         editor_file: None,
         forge_diff: None,
+        conversation_id: None,
     }
 }

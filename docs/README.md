@@ -109,11 +109,46 @@ ids. The default physical-key preset and durable sparse overrides now resolve
 per platform with explicit conflicts, reserved chords, input ownership,
 digest-bound mutation, reset, and restart behavior. The compact command palette,
 keybindings, cross-panel operations, retained attention, explicit backup
-capture and host-selected export, and local control bridge are now composed.
-Restore stops at the missing grouped custom-adapter transaction plus Nucleus
-quiescence and restart-handoff authority gap; remote transport and secondary windows retain
-their contract and product gates. Formal adoption closeout waits for safe
-recovery acceptance and the operator checkpoint.
+capture, host-selected export, exact seven-domain grouped restore, and the local
+control bridge are now composed. Restore carries present/absent target and
+rollback evidence, deletes absent file and SQLite targets inside the grouped
+transaction, and runs before product authorities open. Remote transport and
+secondary windows retain their contract and product gates. Implemented-lane
+adoption conformance and isolated native restore acceptance pass. The
+operator product checkpoint passes. Roadmap g05.020 now completes one local
+project working context across Goal, Task, Agent Chat, Diff, Projects, and
+Threads without adding normal-path shell controls. Goal and Task focus survives
+Tasks closure, project switching, and restart; Agent Chat panel conversation
+attachments remain local presentation state rather than product authority.
+Roadmap g05.021 now closes the Editor, task-attributed Diff, durable review, and
+Agent Chat rework loop. Diff carries exact snapshot resource identity, refuses
+unknown lineage, and exposes one compact Address changes action. That action
+retains the selected Task and any existing draft, appends a bounded prompt, and
+waits for an explicit operator send. Deterministic and isolated native
+acceptance pass without authenticated provider work.
+Roadmap g05.022 now closes Terminal, Browser, resource targeting, and runtime
+host status as one sparse shell lane. Terminal uses the same exact effective
+resource in panel chrome and host invocation, reports only confirmed non-local
+host identity, and rejects remote authority before touching local paths.
+Browser remains a local URL-driven native child with bounded panel-local retry.
+Current-bundle native acceptance confirms Terminal and Browser body switching,
+theme-aligned Terminal output, Browser return, toolbar overlay admission, and
+active-panel restart restoration.
+Roadmap g05.023 now closes bounded Memory, provider selection, session defaults,
+and advanced-control placement. Accepted and proposed Memory remain distinct
+and read-only; restricted content is redacted and technical evidence stays
+behind Details. Nucleus assembles Swallowtail's configured-provider-instance
+catalogue, projects only safe identity and readiness, keeps model and reasoning
+options route-scoped, and replaces immutable sessions when provider, model,
+reasoning, harness, or resource identity changes. One ready provider adds no
+selector. Multiple ready providers use the same explicit Settings and composer
+selection path. Credential, destructive, and diagnostic controls remain behind
+deliberate Settings, menu, confirmation, or disclosure entry points.
+Roadmap g05.024 closes the first shell-inward pass around semantic
+interaction, container-relative panel layout, and bounded local recovery. It
+does not add a focus manager, durable breakpoint state, generic retry executor,
+or global status chrome. Supported-minimum native acceptance keeps project,
+Agent Chat, and Tasks controls usable without normal-chrome horizontal scroll.
 
 Current planning artifacts:
 
@@ -159,6 +194,13 @@ Current planning artifacts:
 - `roadmaps/g05/016-optional-backend-bridge-alignment.md`
 - `roadmaps/g05/017-secondary-window-panel-transfer.md`
 - `roadmaps/g05/018-longhorn-adoption-closeout-and-deferrals.md`
+- `roadmaps/g05/019-shell-context-cohesion.md`
+- `roadmaps/g05/020-shared-work-context.md`
+- `roadmaps/g05/021-editor-diff-review-rework-cohesion.md`
+- `roadmaps/g05/022-terminal-browser-resource-host-cohesion.md`
+- `logs/2026-08-04-terminal-browser-resource-host-cohesion.md`
+- `logs/2026-08-03-shell-context-cohesion.md`
+- `logs/2026-08-03-shared-work-context.md`
 - `logs/2026-08-01-longhorn-secondary-system-roadmap-compilation.md`
 - `logs/2026-08-01-longhorn-consumer-admission-closeout.md`
 - `logs/2026-08-02-longhorn-settings-shell-implementation.md`

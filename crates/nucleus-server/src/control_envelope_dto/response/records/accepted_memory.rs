@@ -13,6 +13,10 @@ use crate::accepted_memory_projection::{
 pub struct ControlAcceptedMemorySummaryDto {
     pub memory_id: String,
     pub source_proposal_id: Option<String>,
+    pub display_title: Option<String>,
+    pub display_summary: Option<String>,
+    pub display_redacted: bool,
+    pub display_truncated: bool,
     pub scope: String,
     pub kind: String,
     pub status: String,
@@ -112,6 +116,10 @@ impl From<&AcceptedMemorySummary> for ControlAcceptedMemorySummaryDto {
         Self {
             memory_id: summary.memory_id.clone(),
             source_proposal_id: summary.source_proposal_id.clone(),
+            display_title: summary.display_title.clone(),
+            display_summary: summary.display_summary.clone(),
+            display_redacted: summary.display_redacted,
+            display_truncated: summary.display_truncated,
             scope: scope_dto(&summary.scope),
             kind: kind_dto(&summary.kind),
             status: status_dto(&summary.status),

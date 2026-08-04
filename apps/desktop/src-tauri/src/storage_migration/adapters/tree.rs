@@ -9,7 +9,8 @@ use longhorn_config::{
     BackupAdapterCaptureRequest, BackupAdapterError, BackupAdapterId, BackupAdapterInspectRequest,
     BackupAdapterPayload, BackupAdapterRelativePath, BackupAdapterRestoreOutcome,
     BackupAdapterRestoreParticipation, BackupAdapterRestorePreview, BackupAdapterRestoreRequest,
-    DomainDescriptor, Sha256Digest, StorageTransitionAdapter, StorageTransitionGuard,
+    BackupAdapterStateEvidence, BackupSourceState, DomainDescriptor, Sha256Digest,
+    StorageTransitionAdapter, StorageTransitionGuard,
 };
 use tempfile::tempdir_in;
 
@@ -79,10 +80,13 @@ impl BackupAdapter for TreeTransitionAdapter {
         &self,
         request: BackupAdapterInspectRequest<'_>,
     ) -> Result<BackupAdapterRestorePreview, BackupAdapterError> {
+        if request.source_state() != BackupSourceState::Present {
+            return Err(failure("tree-source-state"));
+        }
         let entries = tree_payloads(&request)?;
         Ok(BackupAdapterRestorePreview::new(
-            payload_digest(&entries),
-            self.current_evidence(request.descriptor())?,
+            BackupAdapterStateEvidence::present(payload_digest(&entries)),
+            BackupAdapterStateEvidence::from_optional(self.current_evidence(request.descriptor())?),
         ))
     }
     fn restore(
@@ -93,7 +97,7 @@ impl BackupAdapter for TreeTransitionAdapter {
             return Err(failure("tree-target-occupied"));
         }
         let entries = tree_payloads(request.inspect())?;
-        if payload_digest(&entries) != *request.preview().target_evidence() {
+        if Some(&payload_digest(&entries)) != request.preview().target_evidence().sha256() {
             return Err(failure("tree-preview"));
         }
         let parent = self.root.parent().ok_or_else(|| failure("tree-parent"))?;

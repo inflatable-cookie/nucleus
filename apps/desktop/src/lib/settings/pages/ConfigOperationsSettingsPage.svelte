@@ -4,6 +4,7 @@
   import type { EventTransport } from "@longhorn/core";
   import { ConfigOperationsClient } from "@longhorn/config";
   import { BackupSettingsPage, StorageSettingsPage } from "@longhorn/config/poodle";
+  import NucleusRestoreSettingsPage from "./NucleusRestoreSettingsPage.svelte";
 
   let { rendererId }: { rendererId: string } = $props();
   const transport: EventTransport = {
@@ -18,6 +19,8 @@
 
 {#if rendererId === "longhorn:config.storage"}
   <StorageSettingsPage {client} />
+{:else if rendererId === "longhorn:config.restore"}
+  <NucleusRestoreSettingsPage />
 {:else}
   <BackupSettingsPage {client} />
 {/if}

@@ -3,25 +3,31 @@
   import { Button, RadioGroup, Select, Text } from "@poodle/svelte";
   import type { SettingsPageRenderContext } from "@longhorn/settings/svelte";
   import {
-    loadAgentChatProviderSummary,
+    loadAgentChatProviderCatalogue,
     requestAgentChatCredentialAction,
     type AgentChatCredentialAction,
     type AgentChatCredentialActionReceipt,
     type AgentChatModelOption,
-    type AgentChatProviderSummary,
+    type AgentChatProviderCatalogue,
   } from "../../control/agentChat";
   import {
     AGENT_SCOPE_ID,
     AGENT_UNIT_ID,
     DEFAULT_HARNESS_MODE_ENTRY_ID,
     DEFAULT_MODEL_ENTRY_ID,
+    DEFAULT_PROVIDER_ID_ENTRY_ID,
+    DEFAULT_PROVIDER_INSTANCE_ENTRY_ID,
     DEFAULT_REASONING_ENTRY_ID,
   } from "../client";
+  import {
+    modelRouteKey,
+    selectableProviderInstances,
+    shouldShowProviderSelector,
+  } from "../../providerSelection";
 
   let { context }: { context: SettingsPageRenderContext } = $props();
-  let modelCatalog = $state<AgentChatModelOption[]>([]);
-  let providerSummary = $state<AgentChatProviderSummary | null>(null);
-  let catalogStatus = $state<"loading" | "available" | "unavailable">("loading");
+  let providerCatalogue = $state<AgentChatProviderCatalogue | null>(null);
+  let loadingCatalogue = $state(true);
   let credentialBusy = $state(false);
   let credentialReceipt = $state<AgentChatCredentialActionReceipt | null>(null);
   let credentialRequestSequence = 0;
@@ -35,6 +41,29 @@
     stringDraft("defaultModel")
       ?? effectiveString(DEFAULT_MODEL_ENTRY_ID, "gpt-5.4-mini"),
   );
+  const providerInstanceId = $derived(
+    stringDraft("defaultProviderInstanceId")
+      ?? effectiveString(DEFAULT_PROVIDER_INSTANCE_ENTRY_ID, "codex:local-default"),
+  );
+  const providerId = $derived(
+    stringDraft("defaultProviderId")
+      ?? effectiveNullableString(DEFAULT_PROVIDER_ID_ENTRY_ID),
+  );
+  const providerSummary = $derived(
+    providerCatalogue?.instances.find(
+      (instance) => instance.provider_instance_id === providerInstanceId,
+    ) ?? null,
+  );
+  const readyProviders = $derived(
+    providerCatalogue ? selectableProviderInstances(providerCatalogue) : [],
+  );
+  const providerOptions = $derived(
+    readyProviders.map((instance) => ({
+      value: instance.provider_instance_id,
+      label: instance.display_name,
+    })),
+  );
+  const modelCatalog = $derived<AgentChatModelOption[]>(providerSummary?.models ?? []);
   const reasoningEffort = $derived(
     stringDraft("defaultReasoningEffort")
       ?? effectiveString(DEFAULT_REASONING_ENTRY_ID, "low"),
@@ -46,15 +75,18 @@
       : "normal",
   );
   const selectedModel = $derived(
-    modelCatalog.find((candidate) => candidate.model === model) ?? null,
+    modelCatalog.find(
+      (candidate) => candidate.model === model && candidate.provider_id === providerId,
+    ) ?? modelCatalog.find((candidate) => candidate.model === model) ?? null,
   );
   const modelOptions = $derived.by(() => {
     const options = modelCatalog.map((candidate) => ({
-      value: candidate.model,
+      value: modelRouteKey(candidate),
       label: candidate.display_name,
     }));
-    if (!options.some((option) => option.value === model)) {
-      options.unshift({ value: model, label: `${model} (unavailable)` });
+    const routeKey = modelRouteKey({ model, provider_id: providerId });
+    if (!options.some((option) => option.value === routeKey)) {
+      options.unshift({ value: routeKey, label: `${model} (unavailable)` });
     }
     return options;
   });
@@ -76,15 +108,14 @@
 
   onMount(() => {
     let current = true;
-    void loadAgentChatProviderSummary()
-      .then((summary) => {
+    void loadAgentChatProviderCatalogue()
+      .then((catalogue) => {
         if (!current) return;
-        providerSummary = summary;
-        modelCatalog = summary.models;
-        catalogStatus = summary.model_discovery;
+        providerCatalogue = catalogue;
+        loadingCatalogue = false;
       })
       .catch(() => {
-        if (current) catalogStatus = "unavailable";
+        if (current) loadingCatalogue = false;
       });
     return () => {
       current = false;
@@ -101,19 +132,41 @@
     return typeof value === "string" && value.length > 0 ? value : null;
   }
 
+  function effectiveNullableString(entryId: string): string | null {
+    const value = snapshot?.values.find(({ entryId: id }) => id === entryId)?.effective.value;
+    return typeof value === "string" && value.length > 0 ? value : null;
+  }
+
   function change(next: {
-    model?: string;
+    providerInstanceId?: string;
+    modelRoute?: string;
     reasoningEffort?: string;
     harnessMode?: "normal" | "plan";
   }): void {
-    const nextModel = next.model ?? model;
-    const catalogModel = modelCatalog.find((candidate) => candidate.model === nextModel);
+    const nextProviderId = next.providerInstanceId ?? providerInstanceId;
+    const nextProvider = providerCatalogue?.instances.find(
+      (instance) => instance.provider_instance_id === nextProviderId,
+    );
+    const selectedRoute = nextProvider?.models.find(
+      (candidate) => modelRouteKey(candidate) === next.modelRoute,
+    );
+    const nextModel = selectedRoute?.model
+      ?? (next.providerInstanceId ? nextProvider?.models[0]?.model : null)
+      ?? model;
+    const catalogModel = selectedRoute
+      ?? nextProvider?.models.find(
+        (candidate) => candidate.model === nextModel && candidate.provider_id === providerId,
+      )
+      ?? nextProvider?.models.find((candidate) => candidate.model === nextModel)
+      ?? modelCatalog.find((candidate) => candidate.model === nextModel);
     void context.change(AGENT_UNIT_ID, {
       codecVersion: 1,
       value: {
+        defaultProviderInstanceId: nextProviderId,
+        defaultProviderId: catalogModel?.provider_id ?? null,
         defaultModel: nextModel,
         defaultReasoningEffort: next.reasoningEffort
-          ?? (next.model ? catalogModel?.default_reasoning_effort : null)
+          ?? (next.modelRoute ? catalogModel?.default_reasoning_effort : null)
           ?? reasoningEffort,
         defaultHarnessMode: next.harnessMode ?? harnessMode,
       },
@@ -131,7 +184,7 @@
   }
 
   async function requestCredentialAction(action: AgentChatCredentialAction): Promise<void> {
-    if (!providerSummary || credentialBusy) return;
+    if (!providerSummary?.credential || credentialBusy) return;
     credentialBusy = true;
     credentialReceipt = null;
     credentialRequestSequence += 1;
@@ -148,7 +201,7 @@
   }
 
   function credentialMechanismLabel(): string {
-    if (!providerSummary) return "Authentication";
+    if (!providerSummary?.credential) return "Authentication";
     const credential = providerSummary.credential;
     if (credential.mechanism === "interactive_oauth"
       && credential.entitlement_metering === "subscription_allowance") {
@@ -174,20 +227,49 @@
       <Text weight="medium">{providerSummary?.display_name ?? "Configured provider"}</Text>
       {#if providerSummary}
         <Text tone="muted" size="sm">
-          {providerSummary.provider_instance_id} · {providerSummary.harness_name}
+          {providerSummary.harness_name}
         </Text>
       {/if}
     </div>
     <Text tone="muted" size="sm">
-      {catalogStatus === "loading"
+      {loadingCatalogue
         ? "Checking model availability…"
-        : catalogStatus === "available"
+        : providerSummary?.model_catalogue_state === "available"
           ? `${modelCatalog.length} models available through provider-managed login`
           : "Model discovery unavailable; existing sessions are unchanged"}
     </Text>
+    {#if providerSummary}
+      <details class="provider-details">
+        <summary>Technical details</summary>
+        <dl>
+          <div><dt>Instance</dt><dd>{providerSummary.provider_instance_id}</dd></div>
+          <div><dt>Revision</dt><dd>{providerSummary.instance_revision}</dd></div>
+          <div><dt>Driver</dt><dd>{providerSummary.driver_id}</dd></div>
+          <div><dt>Facade</dt><dd>{providerSummary.protocol_facade_id}</dd></div>
+        </dl>
+      </details>
+    {/if}
   </section>
 
-  {#if providerSummary}
+  {#if providerCatalogue && shouldShowProviderSelector(providerCatalogue)}
+    <section class="settings-field">
+      <div>
+        <Text weight="medium">Default provider</Text>
+        <Text tone="muted" size="sm">Used when a new Agent Chat session is prepared.</Text>
+      </div>
+      <Select
+        value={providerInstanceId}
+        options={providerOptions}
+        native={false}
+        size="sm"
+        ariaLabel="Default agent provider"
+        disabled={context.busy}
+        onValueChange={(value) => change({ providerInstanceId: value })}
+      />
+    </section>
+  {/if}
+
+  {#if providerSummary?.credential}
     <section class="credential-card" aria-label="Provider credential">
       <div>
         <Text weight="medium">{credentialMechanismLabel()}</Text>
@@ -225,19 +307,32 @@
     </section>
   {/if}
 
+  {#if providerCatalogue && providerCatalogue.instances.length > 1}
+    <section class="provider-inventory" aria-label="Provider instances">
+      {#each providerCatalogue.instances as instance (instance.provider_instance_id)}
+        <div class="provider-inventory-row">
+          <Text size="sm">{instance.display_name}</Text>
+          <Text tone="muted" size="xs">
+            {instance.harness_name} · {instance.selection_readiness.replace("_", " ")}
+          </Text>
+        </div>
+      {/each}
+    </section>
+  {/if}
+
   <section class="settings-field">
     <div>
       <Text weight="medium">Default model</Text>
       <Text tone="muted" size="sm">Used when a new Agent Chat session is prepared.</Text>
     </div>
     <Select
-      value={model}
+      value={modelRouteKey({ model, provider_id: providerId })}
       options={modelOptions}
       native={false}
       size="sm"
       ariaLabel="Default agent model"
       disabled={context.busy}
-      onValueChange={(value) => change({ model: value })}
+      onValueChange={(value) => change({ modelRoute: value })}
     />
   </section>
 
@@ -279,6 +374,8 @@
     variant="ghost"
     disabled={context.busy}
     onClick={() => void context.requestReset(AGENT_UNIT_ID, [
+      DEFAULT_PROVIDER_INSTANCE_ENTRY_ID,
+      DEFAULT_PROVIDER_ID_ENTRY_ID,
       DEFAULT_MODEL_ENTRY_ID,
       DEFAULT_REASONING_ENTRY_ID,
       DEFAULT_HARNESS_MODE_ENTRY_ID,
@@ -309,4 +406,12 @@
     flex-wrap: wrap;
     gap: 0.25rem;
   }
+  .provider-details { color: var(--poodle-color-text-secondary); font-size: 0.72rem; }
+  .provider-details summary { width: fit-content; cursor: pointer; }
+  .provider-details dl { display: grid; gap: 0.35rem; margin: 0.5rem 0 0; }
+  .provider-details dl div { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: 0.5rem; }
+  .provider-details dt { color: var(--poodle-color-text-tertiary); }
+  .provider-details dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  .provider-inventory { display: grid; gap: 0.25rem; }
+  .provider-inventory-row { display: grid; gap: 0.1rem; padding: 0.5rem 0; border-top: 1px solid var(--poodle-color-border-subtle); }
 </style>

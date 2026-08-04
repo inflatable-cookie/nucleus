@@ -11,6 +11,10 @@ use crate::memory_proposals_projection::{
 #[ts(export)]
 pub struct ControlMemoryProposalSummaryDto {
     pub proposal_id: String,
+    pub display_title: Option<String>,
+    pub display_summary: Option<String>,
+    pub display_redacted: bool,
+    pub display_truncated: bool,
     pub scope: String,
     pub kind: String,
     pub status: String,
@@ -76,6 +80,10 @@ impl From<&MemoryProposalSummary> for ControlMemoryProposalSummaryDto {
     fn from(summary: &MemoryProposalSummary) -> Self {
         Self {
             proposal_id: summary.proposal_id.clone(),
+            display_title: summary.display_title.clone(),
+            display_summary: summary.display_summary.clone(),
+            display_redacted: summary.display_redacted,
+            display_truncated: summary.display_truncated,
             scope: scope_dto(&summary.scope),
             kind: kind_dto(&summary.kind),
             status: status_dto(&summary.status),

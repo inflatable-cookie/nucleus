@@ -42,6 +42,12 @@ pub struct StoredChatSession {
     pub adapter_id: String,
     #[serde(default)]
     pub provider_instance_id: String,
+    #[serde(default)]
+    pub provider_instance_revision: String,
+    #[serde(default)]
+    pub protocol_facade_id: String,
+    #[serde(default)]
+    pub provider_id: Option<String>,
     pub turn_count: u64,
     #[serde(default)]
     pub task_toolset_version: u32,
@@ -203,6 +209,10 @@ pub struct LocalCodexChatHistory {
     pub project_id: String,
     pub session_id: Option<String>,
     pub thread_id: Option<String>,
+    pub provider_instance_id: Option<String>,
+    pub provider_instance_revision: Option<String>,
+    pub protocol_facade_id: Option<String>,
+    pub provider_id: Option<String>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
     pub harness_mode: Option<LocalCodexChatHarnessMode>,
@@ -329,6 +339,18 @@ where
         thread_id: session
             .as_ref()
             .map(|session| session.provider_thread_id.clone()),
+        provider_instance_id: session
+            .as_ref()
+            .map(|session| session.provider_instance_id.clone()),
+        provider_instance_revision: session
+            .as_ref()
+            .map(|session| session.provider_instance_revision.clone()),
+        protocol_facade_id: session
+            .as_ref()
+            .map(|session| session.protocol_facade_id.clone()),
+        provider_id: session
+            .as_ref()
+            .and_then(|session| session.provider_id.clone()),
         model: session.as_ref().map(|session| session.model.clone()),
         reasoning_effort: session
             .as_ref()
@@ -572,6 +594,7 @@ pub fn project_activity(
     event: AgentActivityEvent,
 ) -> StoredChatActivity {
     let observation = event.observation;
+    let activity_key = observation.key();
     let (correlation_kind, correlation_id) = match observation.correlation() {
         Some(ActivityCorrelation::Callback(id)) => {
             (Some("callback".to_owned()), Some(id.as_str().to_owned()))
@@ -596,8 +619,8 @@ pub fn project_activity(
         conversation_id: conversation_id.to_owned(),
         turn_id: turn_id.to_owned(),
         turn_ordinal,
-        runtime_operation_id: operation_id_string(observation.operation_id()),
-        activity_id: observation.activity_id().as_str().to_owned(),
+        runtime_operation_id: operation_id_string(activity_key.operation_id()),
+        activity_id: activity_key.activity_id().as_str().to_owned(),
         sequence: event.sequence,
         kind: activity_kind(observation.kind()).to_owned(),
         kind_namespace: match observation.kind() {
@@ -655,11 +678,7 @@ pub fn persist_activity<B>(
 where
     B: LocalStoreBackend,
 {
-    let identity = blake3::hash(activity.activity_id.as_bytes()).to_hex();
-    let record_id = PersistenceRecordId(format!(
-        "{ACTIVITY_PREFIX}{}:{}:{identity}",
-        activity.turn_id, activity.sequence
-    ));
+    let record_id = activity_record_id(activity);
     put_json(
         state,
         record_id.clone(),
@@ -667,6 +686,14 @@ where
         RevisionId(format!("rev:{}:observed", record_id.0)),
         RevisionExpectation::Any,
     )
+}
+
+fn activity_record_id(activity: &StoredChatActivity) -> PersistenceRecordId {
+    let mut identity = blake3::Hasher::new();
+    identity.update(activity.runtime_operation_id.as_bytes());
+    identity.update(&[0]);
+    identity.update(activity.activity_id.as_bytes());
+    PersistenceRecordId(format!("{ACTIVITY_PREFIX}{}", identity.finalize().to_hex()))
 }
 
 fn activity_kind(kind: &ActivityKind) -> &'static str {
@@ -1206,6 +1233,7 @@ mod tests {
     use super::*;
     use nucleus_agent_protocol::AgentActivityEvent;
     use nucleus_local_store::SqliteBackend;
+    use swallowtail_core::ProviderActivityRef;
     use swallowtail_runtime::{
         ActivityContent, ActivityContentChangeKind, ActivityContentStream, ActivityContentUpdate,
         ActivityId, ActivityLabel, ActivityObservation, ActivityOperationId, OperationContent,
@@ -1265,6 +1293,88 @@ mod tests {
         let history =
             read_history(&state, "project:1", "conversation:1").expect("read activity history");
         assert_eq!(history.activities, vec![activity]);
+    }
+
+    #[test]
+    fn activity_projection_upserts_by_portable_key_and_separates_operations() {
+        let observation = |operation: &str,
+                           phase: ActivityLifecyclePhase,
+                           status: ActivityStatus| {
+            ActivityObservation::new(
+                ActivityId::new("provider-item:shared").expect("activity id"),
+                ActivityOperationId::Run(
+                    RuntimeRunId::new(operation).expect("runtime operation id"),
+                ),
+                ActivityKind::CommandExecution,
+                phase,
+                status,
+                None,
+                ActivityDisclosure::IdentityAndLifecycleOnly,
+            )
+            .expect("activity observation")
+            .with_provider_activity_ref(
+                ProviderActivityRef::new("provider-item:shared").expect("provider activity ref"),
+            )
+        };
+        let first_started = project_activity(
+            "conversation:1",
+            "turn:1",
+            1,
+            AgentActivityEvent::new(
+                1,
+                observation(
+                    "operation:one",
+                    ActivityLifecyclePhase::Started,
+                    ActivityStatus::InProgress,
+                ),
+            ),
+        );
+        let first_completed = project_activity(
+            "conversation:1",
+            "turn:1",
+            1,
+            AgentActivityEvent::new(
+                2,
+                observation(
+                    "operation:one",
+                    ActivityLifecyclePhase::Completed,
+                    ActivityStatus::Completed,
+                ),
+            ),
+        );
+        let second_started = project_activity(
+            "conversation:1",
+            "turn:1",
+            1,
+            AgentActivityEvent::new(
+                3,
+                observation(
+                    "operation:two",
+                    ActivityLifecyclePhase::Started,
+                    ActivityStatus::InProgress,
+                ),
+            ),
+        );
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
+        persist_activity(&state, &first_started).expect("persist first start");
+        persist_activity(&state, &first_completed).expect("upsert first completion");
+        persist_activity(&state, &second_started).expect("persist second operation");
+
+        let history =
+            read_history(&state, "project:1", "conversation:1").expect("read activity history");
+        assert_eq!(history.activities.len(), 2);
+        assert_eq!(history.activities[0], first_completed);
+        assert_eq!(history.activities[1], second_started);
+        assert_eq!(
+            history.activities[0].activity_id,
+            history.activities[1].activity_id
+        );
+        assert_ne!(
+            history.activities[0].runtime_operation_id,
+            history.activities[1].runtime_operation_id
+        );
     }
 
     #[test]
@@ -1375,6 +1485,9 @@ mod tests {
             harness_mode: LocalCodexChatHarnessMode::Normal,
             adapter_id: "codex-app-server".to_owned(),
             provider_instance_id: "codex:local-default".to_owned(),
+            provider_instance_revision: "1".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            provider_id: None,
             turn_count: 1,
             task_toolset_version: 1,
         };
@@ -1453,6 +1566,9 @@ mod tests {
             harness_mode: LocalCodexChatHarnessMode::Normal,
             adapter_id: "codex-app-server".to_owned(),
             provider_instance_id: "codex:local-default".to_owned(),
+            provider_instance_revision: "1".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            provider_id: None,
             turn_count: 1,
             task_toolset_version: 5,
         };
@@ -1491,6 +1607,9 @@ mod tests {
                     harness_mode: LocalCodexChatHarnessMode::Normal,
                     adapter_id: "codex-app-server".to_owned(),
                     provider_instance_id: "codex:local-default".to_owned(),
+                    provider_instance_revision: "1".to_owned(),
+                    protocol_facade_id: "codex-app-server-v2".to_owned(),
+                    provider_id: None,
                     turn_count: 1,
                     task_toolset_version: 5,
                 },
@@ -1572,6 +1691,9 @@ mod tests {
             harness_mode: LocalCodexChatHarnessMode::Normal,
             adapter_id: "codex-app-server".to_owned(),
             provider_instance_id: "codex:local-default".to_owned(),
+            provider_instance_revision: "1".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            provider_id: None,
             turn_count: 1,
             task_toolset_version: 4,
         };
@@ -1609,6 +1731,9 @@ mod tests {
             harness_mode: LocalCodexChatHarnessMode::Normal,
             adapter_id: "codex-app-server".to_owned(),
             provider_instance_id: "codex:local-default".to_owned(),
+            provider_instance_revision: "1".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            provider_id: None,
             turn_count: 1,
             task_toolset_version: 5,
         };
@@ -1660,6 +1785,9 @@ mod tests {
             harness_mode: LocalCodexChatHarnessMode::Normal,
             adapter_id: "codex-app-server".to_owned(),
             provider_instance_id: "codex:local-default".to_owned(),
+            provider_instance_revision: "1".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            provider_id: None,
             turn_count: 1,
             task_toolset_version: 5,
         };

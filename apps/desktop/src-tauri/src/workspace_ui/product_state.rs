@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::dto::{
     default_forge_diff_scope, WorkspaceEditorFileDto, WorkspaceForgeDiffDto, WorkspacePanelDto,
-    WorkspacePanelPresentationDto, WorkspacePanelPresentationInputDto,
+    WorkspacePanelPresentationDto, WorkspacePanelPresentationInputDto, WorkspaceProjectContextDto,
 };
 use super::registry::{default_title, kind_for_definition, panel_instance_id};
 
@@ -22,6 +22,8 @@ const SCHEMA_VERSION: u32 = 1;
 pub struct PanelPresentationState {
     #[serde(default)]
     pub projects: BTreeMap<String, BTreeMap<String, PanelPresentation>>,
+    #[serde(default)]
+    pub contexts: BTreeMap<String, WorkspaceProjectContextDto>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -35,6 +37,8 @@ pub struct PanelPresentation {
     pub editor_file: Option<WorkspaceEditorFileDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forge_diff: Option<WorkspaceForgeDiffDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
 }
 
 impl PanelPresentation {
@@ -77,6 +81,7 @@ impl PanelPresentation {
                 resource_targets,
                 editor_file,
                 forge_diff,
+                conversation_id: None,
             },
         ))
     }
@@ -92,6 +97,7 @@ impl PanelPresentation {
                 resource_targets: BTreeMap::new(),
                 editor_file: None,
                 forge_diff: None,
+                conversation_id: None,
             },
         ))
     }
@@ -111,7 +117,15 @@ impl PanelPresentation {
             forge_diff: input.forge_diff.clone(),
             allowed_regions: Vec::new(),
         };
-        Self::from_panel(project_id, &panel)
+        let (id, mut presentation) = Self::from_panel(project_id, &panel)?;
+        presentation.conversation_id = match (&*input.kind, input.conversation_id.as_deref()) {
+            ("agentChat", value) => normalize_optional_ref(value, "conversation id")?,
+            (_, None) => None,
+            (_, Some(_)) => {
+                return Err("conversation attachment is only valid for Agent Chat".to_owned())
+            }
+        };
+        Ok((id, presentation))
     }
 
     pub fn project(
@@ -119,14 +133,19 @@ impl PanelPresentation {
         panel_instance_id: &str,
         definition_id: &longhorn_core::PanelDefinitionId,
     ) -> Result<WorkspacePanelPresentationDto, String> {
+        let kind = kind_for_definition(definition_id)?;
+        if kind != "agentChat" && self.conversation_id.is_some() {
+            return Err("conversation attachment is only valid for Agent Chat".to_owned());
+        }
         Ok(WorkspacePanelPresentationDto {
             panel_instance_id: panel_instance_id.to_owned(),
             external_id: self.external_id.clone(),
-            kind: kind_for_definition(definition_id)?.to_owned(),
+            kind: kind.to_owned(),
             title: self.title.clone(),
             resource_targets: self.resource_targets.clone(),
             editor_file: self.editor_file.clone(),
             forge_diff: self.forge_diff.clone(),
+            conversation_id: self.conversation_id.clone(),
         })
     }
 }
@@ -203,6 +222,9 @@ impl ConfigDomain for PanelPresentationDomain {
                 validate_record(record).map_err(|detail| issue(&detail))?;
             }
         }
+        for (project_id, context) in &value.contexts {
+            validate_project_context(project_id, context).map_err(|detail| issue(&detail))?;
+        }
         Ok(())
     }
 
@@ -241,7 +263,51 @@ fn validate_record(record: &PanelPresentation) -> Result<(), String> {
     if let Some(diff) = record.forge_diff.clone() {
         normalize_forge_diff(diff)?;
     }
+    normalize_optional_ref(record.conversation_id.as_deref(), "conversation id")?;
     Ok(())
+}
+
+pub(super) fn normalize_project_context(
+    project_id: &str,
+    mut context: WorkspaceProjectContextDto,
+) -> Result<WorkspaceProjectContextDto, String> {
+    validate_project_context(project_id, &context)?;
+    context.selected_goal_id =
+        normalize_optional_ref(context.selected_goal_id.as_deref(), "selected Goal id")?;
+    context.selected_task_id =
+        normalize_optional_ref(context.selected_task_id.as_deref(), "selected Task id")?;
+    context.active_conversation_id = normalize_optional_ref(
+        context.active_conversation_id.as_deref(),
+        "active conversation id",
+    )?;
+    Ok(context)
+}
+
+fn validate_project_context(
+    project_id: &str,
+    context: &WorkspaceProjectContextDto,
+) -> Result<(), String> {
+    if project_id.trim().is_empty() || project_id.len() > 512 {
+        return Err("workspace context project id is invalid".to_owned());
+    }
+    normalize_optional_ref(context.selected_goal_id.as_deref(), "selected Goal id")?;
+    normalize_optional_ref(context.selected_task_id.as_deref(), "selected Task id")?;
+    normalize_optional_ref(
+        context.active_conversation_id.as_deref(),
+        "active conversation id",
+    )?;
+    Ok(())
+}
+
+fn normalize_optional_ref(value: Option<&str>, label: &str) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() || value.len() > 512 {
+        return Err(format!("{label} must contain 1..=512 bytes"));
+    }
+    Ok(Some(value.to_owned()))
 }
 
 fn normalize_resource_targets(

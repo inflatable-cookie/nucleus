@@ -35,7 +35,7 @@ mod adapters;
 mod domain;
 mod registry;
 
-const GENERATION: SettingsRegistryGeneration = SettingsRegistryGeneration::new(3);
+const GENERATION: SettingsRegistryGeneration = SettingsRegistryGeneration::new(4);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(1);
 const MODULE_ID: &str = "nucleus:desktop-settings";
 const SECTION_ID: &str = "nucleus:application";
@@ -55,6 +55,8 @@ const AGENT_UNIT_ID: &str = "nucleus:agent-preferences";
 const FIXTURE_STATUS_ENTRY_ID: &str = "nucleus:show-fixture-status";
 const DENSITY_ENTRY_ID: &str = "nucleus:interface-density";
 const DEFAULT_MODEL_ENTRY_ID: &str = "nucleus:default-agent-model";
+const DEFAULT_PROVIDER_INSTANCE_ENTRY_ID: &str = "nucleus:default-agent-provider";
+const DEFAULT_PROVIDER_ID_ENTRY_ID: &str = "nucleus:default-model-provider";
 const DEFAULT_REASONING_ENTRY_ID: &str = "nucleus:default-agent-reasoning";
 const DEFAULT_HARNESS_MODE_ENTRY_ID: &str = "nucleus:default-harness-mode";
 

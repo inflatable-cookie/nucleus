@@ -26,6 +26,7 @@ export type TaskDiffFile = {
 
 export type TaskDiffOverview = {
   diff_id: string;
+  resource_id: string | null;
   summary: string;
   counts: TaskDiffCounts;
   coverage: "complete" | "partial" | "unavailable";

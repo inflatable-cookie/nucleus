@@ -320,9 +320,10 @@ shape.
 - `g05/002-workspace-sidebar-modes.md` - completed
 - `g05/003-swallowtail-application-proof-readiness.md` - completed; native
   pilot passed at the exact live ceiling
-- `g05/004-forge-working-copy-controls.md` - active
-- `g05/005-observable-agent-chat-transcript.md` - completed; deterministic and
-  authenticated native acceptance passed
+- `g05/004-forge-working-copy-controls.md` - completed; native compact
+  interaction acceptance passes
+- `g05/005-observable-agent-chat-transcript.md` - completed; portable
+  `ActivityKey` persistence adoption passes focused acceptance
 - `g05/006-interactive-agent-chat-sessions.md` - completed
 - `g05/007-structured-provider-work.md` - completed
 - `g05/008-structured-agent-chat-acceptance.md` - completed; deterministic and
@@ -333,13 +334,25 @@ shape.
 - `g05/012-command-catalogue-keymaps-and-palette.md` - completed
 - `g05/013-cross-panel-operation-catalogue.md` - completed
 - `g05/014-notification-ledger-and-attention.md` - completed
-- `g05/015-backup-restore-and-recovery-controls.md` - backup capture, inventory,
-  retention, and host-selected export implemented; restore paused
+- `g05/015-backup-restore-and-recovery-controls.md` - completed
 - `g05/016-optional-backend-bridge-alignment.md` - local alignment and
   consumer-native invocation completed; production remote transport gated
 - `g05/017-secondary-window-panel-transfer.md` - conditional-paused
-- `g05/018-longhorn-adoption-closeout-and-deferrals.md` - paused at recovery
-  and operator gates
+- `g05/018-longhorn-adoption-closeout-and-deferrals.md` - completed
+- `g05/019-shell-context-cohesion.md` - completed; native switching and sparse
+  recovery pass
+- `g05/020-shared-work-context.md` - completed; local Goal, Task, and active
+  conversation focus now survives panel closure, project switching, and restart
+- `g05/021-editor-diff-review-rework-cohesion.md` - completed; exact review
+  resource navigation and explicit Agent Chat rework preparation pass
+- `g05/022-terminal-browser-resource-host-cohesion.md` - completed; exact
+  resource targeting and sparse panel-local host recovery pass native use
+- `g05/023-memory-provider-and-advanced-control-cohesion.md` - completed;
+  project Memory, provider-scoped defaults, fresh-session routing, and sparse
+  advanced-control placement pass focused acceptance
+- `g05/024-shell-accessibility-responsive-and-failure-cohesion.md` - completed;
+  semantic interaction, container-relative panels, bounded local recovery, and
+  supported-minimum native acceptance pass
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -399,9 +412,5 @@ shape.
 
 ## Next Task
 
-Hold at the explicit g05 gate. Resume card 046 only after Longhorn publishes a
-grouped failure-atomic custom-adapter restore transaction; then implement the
-Nucleus boot-time quiescence and restart handoff. Card 050 still needs a remote
-pairing/session contract and topology selection. Cards 051-053 still need a
-concrete secondary-window workflow. No autonomous card remains ready. Forge
-native validation remains operator-held.
+Operator checkpoint: use the completed portable activity-key adoption and
+select the next bounded g05 product priority.

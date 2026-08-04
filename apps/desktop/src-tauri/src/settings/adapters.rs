@@ -14,7 +14,8 @@ use serde_json::{json, Value};
 use super::domain::DesktopPreferences;
 use super::{
     entry_id, rejection, DEFAULT_HARNESS_MODE_ENTRY_ID, DEFAULT_MODEL_ENTRY_ID,
-    DEFAULT_REASONING_ENTRY_ID, DENSITY_ENTRY_ID, FIXTURE_STATUS_ENTRY_ID,
+    DEFAULT_PROVIDER_ID_ENTRY_ID, DEFAULT_PROVIDER_INSTANCE_ENTRY_ID, DEFAULT_REASONING_ENTRY_ID,
+    DENSITY_ENTRY_ID, FIXTURE_STATUS_ENTRY_ID,
 };
 
 pub(super) struct GeneralPreferencesAdapter;
@@ -182,6 +183,8 @@ pub(super) struct AgentPreferencesAdapter;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(super) struct AgentPreferencesIntent {
+    default_provider_instance_id: String,
+    default_provider_id: Option<String>,
     default_model: String,
     default_reasoning_effort: String,
     default_harness_mode: String,
@@ -196,6 +199,19 @@ impl SettingsConfigAdapter<DesktopPreferences> for AgentPreferencesAdapter {
     ) -> Result<SettingsConfigProjection, SettingsConfigProjectionError> {
         SettingsConfigProjection::new(
             vec![
+                projection(
+                    DEFAULT_PROVIDER_INSTANCE_ENTRY_ID,
+                    value
+                        .default_provider_instance_id
+                        .as_ref()
+                        .map(|value| json!(value)),
+                    json!("codex:local-default"),
+                ),
+                projection(
+                    DEFAULT_PROVIDER_ID_ENTRY_ID,
+                    value.default_provider_id.as_ref().map(|value| json!(value)),
+                    Value::Null,
+                ),
                 projection(
                     DEFAULT_MODEL_ENTRY_ID,
                     value.default_model.as_ref().map(|value| json!(value)),
@@ -239,7 +255,12 @@ impl SettingsConfigAdapter<DesktopPreferences> for AgentPreferencesAdapter {
         intent: &Self::Intent,
         _projection: &SettingsConfigProjection,
     ) -> Result<(), SettingsRejection> {
-        if valid_route_value(&intent.default_model)
+        if valid_route_value(&intent.default_provider_instance_id)
+            && intent
+                .default_provider_id
+                .as_deref()
+                .is_none_or(valid_route_value)
+            && valid_route_value(&intent.default_model)
             && valid_route_value(&intent.default_reasoning_effort)
             && matches!(intent.default_harness_mode.as_str(), "normal" | "plan")
         {
@@ -254,6 +275,8 @@ impl SettingsConfigAdapter<DesktopPreferences> for AgentPreferencesAdapter {
         current: &mut DesktopPreferences,
         intent: &Self::Intent,
     ) -> Result<(), SettingsRejection> {
+        current.default_provider_instance_id = Some(intent.default_provider_instance_id.clone());
+        current.default_provider_id = intent.default_provider_id.clone();
         current.default_model = Some(intent.default_model.clone());
         current.default_reasoning_effort = Some(intent.default_reasoning_effort.clone());
         current.default_harness_mode = Some(intent.default_harness_mode.clone());
@@ -274,6 +297,12 @@ impl SettingsConfigAdapter<DesktopPreferences> for AgentPreferencesAdapter {
         }
         if entry_ids.contains(&entry_id(DEFAULT_MODEL_ENTRY_ID)) {
             current.default_model = None;
+        }
+        if entry_ids.contains(&entry_id(DEFAULT_PROVIDER_INSTANCE_ENTRY_ID)) {
+            current.default_provider_instance_id = None;
+        }
+        if entry_ids.contains(&entry_id(DEFAULT_PROVIDER_ID_ENTRY_ID)) {
+            current.default_provider_id = None;
         }
         if entry_ids.contains(&entry_id(DEFAULT_REASONING_ENTRY_ID)) {
             current.default_reasoning_effort = None;
@@ -297,6 +326,8 @@ impl SettingsConfigAdapter<DesktopPreferences> for AgentPreferencesAdapter {
 
 fn agent_entry_ids() -> Vec<SettingsEntryId> {
     vec![
+        entry_id(DEFAULT_PROVIDER_INSTANCE_ENTRY_ID),
+        entry_id(DEFAULT_PROVIDER_ID_ENTRY_ID),
         entry_id(DEFAULT_MODEL_ENTRY_ID),
         entry_id(DEFAULT_REASONING_ENTRY_ID),
         entry_id(DEFAULT_HARNESS_MODE_ENTRY_ID),
@@ -307,7 +338,8 @@ fn valid_route_value(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+            character.is_ascii_alphanumeric()
+                || matches!(character, '-' | '_' | '.' | ':' | '/' | '@')
         })
 }
 

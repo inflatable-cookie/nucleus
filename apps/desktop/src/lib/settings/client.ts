@@ -24,10 +24,14 @@ export const AGENT_UNIT_ID = "nucleus:agent-preferences";
 export const FIXTURE_STATUS_ENTRY_ID = "nucleus:show-fixture-status";
 export const DENSITY_ENTRY_ID = "nucleus:interface-density";
 export const DEFAULT_MODEL_ENTRY_ID = "nucleus:default-agent-model";
+export const DEFAULT_PROVIDER_INSTANCE_ENTRY_ID = "nucleus:default-agent-provider";
+export const DEFAULT_PROVIDER_ID_ENTRY_ID = "nucleus:default-model-provider";
 export const DEFAULT_REASONING_ENTRY_ID = "nucleus:default-agent-reasoning";
 export const DEFAULT_HARNESS_MODE_ENTRY_ID = "nucleus:default-harness-mode";
 
 export interface AgentChatDefaults {
+  readonly providerInstanceId: string;
+  readonly providerId: string | null;
   readonly model: string;
   readonly reasoningEffort: string;
   readonly harnessMode: "normal" | "plan";
@@ -71,11 +75,22 @@ export async function loadDesktopPreferences(
     showFixtureStatus: booleanValue(general, FIXTURE_STATUS_ENTRY_ID, true),
     density: densityValue(appearance),
     agent: {
+      providerInstanceId: stringValue(
+        agent,
+        DEFAULT_PROVIDER_INSTANCE_ENTRY_ID,
+        "codex:local-default",
+      ),
+      providerId: nullableStringValue(agent, DEFAULT_PROVIDER_ID_ENTRY_ID),
       model: stringValue(agent, DEFAULT_MODEL_ENTRY_ID, "gpt-5.4-mini"),
       reasoningEffort: stringValue(agent, DEFAULT_REASONING_ENTRY_ID, "low"),
       harnessMode: harnessModeValue(agent),
     },
   };
+}
+
+function nullableStringValue(snapshot: SettingsScopeSnapshot, entryId: string): string | null {
+  const value = snapshot.values.find(({ entryId: id }) => id === entryId)?.effective.value;
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 export async function watchDesktopPreferences(

@@ -79,11 +79,23 @@ fn editor_panel_constrains_codemirror_to_the_panel_scroll_region() {
 #[test]
 fn diff_panel_shows_the_persisted_current_review_note() {
     let panel = include_str!("../../../src/lib/DiffPanel.svelte");
+    let workspace = include_str!("../../../src/lib/ProjectWorkspaceStage.svelte");
+    let chat = include_str!("../../../src/lib/AgentChatPanel.svelte");
 
     assert!(panel.contains("readTaskReviewDecisions"));
     assert!(panel.contains("reviewNext.evidence.review_refs"));
     assert!(panel.contains("currentReview.reason_summary"));
     assert!(panel.contains("Needs changes"));
+    assert!(panel.contains("Address changes"));
+    assert!(panel.contains("overview?.resource_id"));
+    assert!(workspace.contains("prepareSelectedTaskRework"));
+    assert!(workspace.contains("pendingAgentChatDraft"));
+    assert!(workspace.contains("{#key activePanelInstanceId}"));
+    assert!(workspace.contains("activePanelsByRegion"));
+    assert!(workspace.contains("activePanelInstanceId: string | null"));
+    assert!(chat.contains("mergePreparedReworkDraft"));
+    assert!(chat.contains("retainedDrafts"));
+    assert!(chat.contains("onDestroy"));
 }
 
 #[test]
@@ -124,10 +136,31 @@ fn native_browser_yields_to_toolbar_and_modal_overlays() {
 }
 
 #[test]
+fn terminal_and_browser_keep_runtime_recovery_sparse_and_panel_local() {
+    let terminal = include_str!("../../../src/lib/TerminalPanel.svelte");
+    let terminal_presentation = include_str!("../../../src/lib/terminalPresentation.ts");
+    let browser = include_str!("../../../src/lib/BrowserPanel.svelte");
+
+    assert!(terminal.contains("terminalStatusPresentation"));
+    assert!(terminal.contains("--poodle-color-background-canvas"));
+    assert!(terminal.contains("onclick={retryOpen}"));
+    assert!(terminal_presentation.contains("session.authoritativeHostId"));
+    assert!(terminal_presentation.contains("host:embedded-desktop"));
+    assert!(browser.contains("class=\"browser-status-action\""));
+    assert!(browser.contains("onclick={() => void startSession()}"));
+    assert!(browser.contains("unlistenRuntime?.()"));
+    assert!(!browser.contains("PanelResourceTargetControl"));
+}
+
+#[test]
 fn proper_tasks_panel_groups_canonical_goal_membership_without_run_controls() {
     let component = include_str!("../../../src/lib/TaskListPanel.svelte");
+    let workspace = include_str!("../../../src/lib/ProjectWorkspaceStage.svelte");
 
-    assert!(component.contains("buildStateListQuery(\"goals\")"));
+    assert!(workspace.contains("buildStateListQuery(\"goals\")"));
+    assert!(component.contains("selectedProjectId"));
+    assert!(component.contains("goals: ControlGoalRecordDto[]"));
+    assert!(component.contains("tasks: ControlTaskRecordDto[]"));
     assert!(component.contains("goal.ordered_task_refs"));
     assert!(component.contains("Ungrouped"));
     assert!(component.contains("selectedGoalId"));
@@ -149,6 +182,11 @@ fn memory_panel_composes_read_only_accepted_and_proposed_memory() {
     assert!(panel.contains("queryMemoryProposals"));
     assert!(panel.contains("Accepted"));
     assert!(panel.contains("Proposed"));
+    assert!(panel.contains("display_title"));
+    assert!(panel.contains("display_summary"));
+    assert!(panel.contains("display_redacted"));
+    assert!(panel.contains("Content is unavailable at this sensitivity"));
+    assert!(!panel.contains("<h1>Memory</h1>"));
     assert!(client.contains("buildAcceptedMemoryQuery"));
     assert!(!panel.contains("acceptMemory"));
     assert!(!panel.contains("rejectMemory"));

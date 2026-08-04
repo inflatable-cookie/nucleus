@@ -82,6 +82,16 @@ mod tests {
             projection.proposals[0].proposal_id,
             "memory-proposal:nucleus"
         );
+        assert_eq!(
+            projection.proposals[0].display_title.as_deref(),
+            Some("Hidden from query")
+        );
+        assert_eq!(
+            projection.proposals[0].display_summary.as_deref(),
+            Some("Hidden from query")
+        );
+        assert!(!projection.proposals[0].display_redacted);
+        assert!(!format!("{projection:?}").contains("detail"));
         assert_eq!(projection.source_counts.proposal_records, 1);
         assert!(!projection.client_can_mutate);
         assert!(!projection.provider_execution_available);

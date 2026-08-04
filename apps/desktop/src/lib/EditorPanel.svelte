@@ -968,7 +968,7 @@
 </div>
 
 <style>
-  .editor-surface { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+  .editor-surface { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; container-name: editor-panel; container-type: inline-size; }
   .editor-surface :global(.poodle-surface) { width: 100%; height: 100%; min-height: 0; overflow: hidden; }
   .editor-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; }
   .editor-toolbar { min-height: 2.5rem; padding: 0.35rem 0.55rem; display: flex; gap: 0.5rem; align-items: center; border-bottom: 1px solid var(--poodle-color-border-subtle); }
@@ -1004,7 +1004,7 @@
   .plain-text-note { position: absolute; right: 0.7rem; bottom: 0.55rem; pointer-events: none; }
   .editor-empty { height: 100%; display: grid; place-items: center; }
 
-  @media (max-width: 38rem) {
+  @container editor-panel (max-width: 38rem) {
     .editor-toolbar :global(.poodle-popover) { max-width: 55%; }
     .status { display: none; }
     .comparison-panes { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }

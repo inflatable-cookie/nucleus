@@ -1,6 +1,6 @@
 # 018 Longhorn Adoption Closeout And Deferrals
 
-Status: paused at recovery and operator gates
+Status: completed
 Owner: Tom
 Created: 2026-08-01
 
@@ -30,41 +30,41 @@ authority.
 
 ## Goals
 
-- [ ] verify every adopted package against one exact clean Longhorn source
-- [ ] prove no duplicate or superseded Nucleus mechanism remains active
-- [ ] record conditional and rejected systems explicitly
-- [ ] select the next g05 inward consolidation lane
+- [x] verify every adopted package against one exact clean Longhorn source
+- [x] prove no duplicate or superseded Nucleus mechanism remains active
+- [x] record conditional and rejected systems explicitly
+- [x] select the next g05 inward consolidation lane
 
 ## Execution Plan
 
 ### Batch 18.1 — Artifact And Authority Closeout
 
-- [ ] Execute card 054 after the implemented adoption lanes settle.
-- [ ] run dependency, capability, restart, rollback, and duplicate-authority
+- [x] Execute card 054 after the implemented adoption lanes settle.
+- [x] run dependency, capability, restart, rollback, and duplicate-authority
   audits
-- [ ] record remaining adapter structural debt honestly
+- [x] record remaining adapter structural debt honestly
 
 ### Batch 18.2 — Deferrals And Reassessment
 
-- [ ] Execute card 055.
-- [ ] retain hosted Surfaces, generic history, isolated windows, backing
+- [x] Execute card 055.
+- [x] retain hosted Surfaces, generic history, isolated windows, backing
   surfaces, native notifications, and offline queues as explicit non-adoptions
-- [ ] reassess bridge and transfer gates without promoting them by inertia
+- [x] reassess bridge and transfer gates without promoting them by inertia
 
 ### Batch 18.3 — Product Checkpoint
 
-- [ ] perform one end-to-end operator pass through Settings, commands,
+- [x] perform one end-to-end operator pass through Settings, commands,
   background work, attention, and recovery
-- [ ] update g05 currentness and choose the next consolidation direction
+- [x] update g05 currentness and choose the next consolidation direction
 - [ ] do not roll generations
 
 ## Acceptance Criteria
 
-- [ ] shared mechanism and product authority are distinguishable in code and UI
-- [ ] exact produced artifacts install without duplicate framework runtimes
-- [ ] Doctor structural debt is no worse than the admitted baseline
-- [ ] deferred systems have concrete resume conditions
-- [ ] one clear g05 next task remains
+- [x] shared mechanism and product authority are distinguishable in code and UI
+- [x] exact produced artifacts install without duplicate framework runtimes
+- [x] Doctor structural debt is no worse than the admitted baseline
+- [x] deferred systems have concrete resume conditions
+- [x] one clear g05 next task remains
 
 ## Batch Cards
 
@@ -75,6 +75,6 @@ authority.
 
 Implemented lanes, including consumer-native local bridge invocation, pass the
 exact-source, artifact, authority, structural, docs, and diff-hygiene audit.
-Formal closeout still depends on recovery acceptance from card 047. The final
-product checkpoint also remains an operator action. Remote transport and
-secondary windows retain their explicit gates.
+Recovery acceptance, implemented-lane conformance, and the native product
+checkpoint pass. The operator selected shell context cohesion as roadmap 019.
+Remote transport and secondary windows retain their explicit gates.

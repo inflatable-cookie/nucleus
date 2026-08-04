@@ -18,9 +18,10 @@ shared management files.
 
 Desktop persistence is split between `state/window-placement.json` and
 the registered `config/project-layouts.json` domain below the selected
-Longhorn storage profile. Product presentation metadata lives separately in
-`config/project-panel-presentations.json`. Project layouts are deterministic
-containers keyed from project id inside one local layout document.
+Longhorn storage profile. Product presentation metadata and project-local
+working focus live separately in `config/project-panel-presentations.json`.
+Project layouts are deterministic containers keyed from project id inside one
+local layout document.
 
 These JSON files are local client state, not project state. If the client state
 store moves to SQLite later, they become import/export or migration sources
@@ -103,6 +104,11 @@ Those are local client profile state, not transient renderer state.
 
 The renderer also does not own server-managed resources or project
 management state.
+
+The local workspace presentation domain may retain references to those durable
+records so a project can restore its working focus. Those references are not a
+second Goal, Task, conversation, or authority model. The authoritative host
+still resolves current records before use.
 
 ## Display Model
 
@@ -260,6 +266,31 @@ Agent Chat panel in `center_top`. Tasks, Terminal, Browser, Editor, Diff, and
 Memory are added only when requested. The default must not be inferred from
 another project's current tabs.
 
+## Project Switch And Recovery Semantics
+
+Changing the selected project creates a hard renderer epoch boundary.
+
+- the previous project's panel tree stops rendering and receiving input before
+  the next project layout is presented
+- panel-launcher availability and active-command context clear while the next
+  project layout loads; they must never describe the previous project
+- rapid project changes are latest-selection-wins; a late snapshot or mutation
+  result from an older project epoch must not become visible
+- the global shell, project rail, and project selection remain usable while a
+  project layout loads, reconnects, or fails
+- a successful switch restores only the selected project's panels, active tabs,
+  region placement, and sizing
+
+An all-panels-closed layout is valid retained state. Loading it must not silently
+reseed Agent Chat or copy another project's layout. The empty workspace presents
+one direct `Open Agent Chat` recovery action; the header `+` menu remains the
+secondary route to all known panel kinds.
+
+A failed layout connection remains a workspace-local failure. Retry reconnects
+the selected project's exact registered layout. It must not reset, replace, or
+repair persisted layout data without a separate host-owned recovery contract.
+Selecting another project remains available during failure.
+
 ## Chat-Led Task Model
 
 Nucleus is chat-led and task-backed, not task-screen-led.
@@ -293,6 +324,45 @@ Agent chat rules:
 - active task/thread state should be visible through project/activity panels
   even when the task panel is not open
 
+## Project Working Context
+
+Each project may retain one local working-context projection alongside panel
+presentation metadata:
+
+- optional selected Goal id
+- optional selected Task id
+- optional active conversation id
+
+Each Agent Chat panel may also retain its own optional conversation attachment.
+The project-level conversation id identifies the last selected thread; the
+panel attachment identifies which thread that panel presents. Neither creates
+a durable conversation-to-Goal or conversation-to-Task binding.
+
+The working-context projection is local client state. It survives panel close,
+project switching, and desktop restart, but is not committed into project
+management state. Goal and Task records, conversation history, and lifecycle
+authority remain server-owned.
+
+Selection rules:
+
+- selecting a Goal clears Task focus unless a contained Task is selected at
+  the same time
+- selecting a grouped Task records both its Goal and Task ids
+- selecting an ungrouped Task clears Goal focus
+- clearing a composer chip updates the same project working context used by
+  Tasks and Diff
+- a missing, deleted, or cross-project record is cleared when the owning panel
+  resolves current server state; stale client fields never become turn context
+- selecting a thread from Projects or Threads activates an Agent Chat panel,
+  updates that panel's conversation attachment, and updates the same active
+  conversation highlight in both sidebar views
+- activating another attached Agent Chat panel updates the project-level active
+  conversation without rewriting either conversation
+
+The workspace stage owns one reactive projection of this state. Individual
+panels consume it; they do not keep competing selected Goal, Task, or active
+conversation stores.
+
 The first Agent Chat composer is one floating surface centered over the bottom
 of its timeline. It keeps the message field primary and places only model,
 reasoning, selected-context, and send controls in the normal path. Selected
@@ -303,6 +373,51 @@ advanced controls do not become a permanent footer.
 The timeline must reserve enough bottom space for the floating composer at its
 largest normal height. Composer controls must remain usable when the panel is
 narrow; secondary controls may wrap without introducing horizontal scrolling.
+
+## Shell Accessibility And Responsive-State Rules
+
+Workspace interaction must remain usable without a pointer and without relying
+on the outer window width as a proxy for panel width.
+
+- interactive shell affordances use native controls or Poodle primitives with
+  their documented semantics; static elements do not receive click, pointer,
+  key, or focus handlers to imitate controls
+- every pointer-only convenience, including double-click rename, retains a
+  keyboard-reachable route through the same row, menu, or explicit action
+- tabs, menus, dialogs, editable labels, and splitters retain their Poodle
+  keyboard and focus behavior; Nucleus does not add a competing focus model
+- focus remains visible and returns to a stable owning control after a dialog,
+  inline edit, or transient menu closes
+- selected project, thread, tab, and panel state uses native selected/current
+  semantics where the component contract provides them
+
+Panels adapt to their own rendered container. A panel can be narrow inside a
+wide native window, so panel and region composition must use container queries
+or measured panel state rather than viewport media queries. The outer titlebar
+may use a viewport query because it belongs to the native window.
+
+- chrome, forms, and primary actions must not require horizontal scrolling
+- content that is intrinsically horizontal, including terminals, unified diffs,
+  and editor text, may keep its own bounded scroll surface
+- primary actions remain visible at the narrow supported size; secondary copy
+  may truncate, wrap, or move behind an existing menu or disclosure
+- panel roots and intermediate flex/grid containers keep `min-width: 0` and
+  `min-height: 0` where needed to prevent accidental layout expansion
+- responsive adaptation is presentation state and is never persisted as a new
+  layout authority
+
+Loading, empty, failed, and recovery states stay local to the smallest owning
+surface.
+
+- loading and successful background updates use polite status semantics
+- a newly actionable failure uses alert semantics once; retained diagnostics do
+  not repeatedly announce on every render
+- a retry repeats the exact failed read, connection, or panel-local open; it
+  does not create another panel, choose another resource, or mutate durable state
+- failure copy leads with the operator-relevant outcome. Technical identifiers
+  and raw diagnostics stay behind existing details or diagnostic surfaces
+- healthy state remains quiet. Global banners and toasts are reserved for
+  failures whose ownership or required action is genuinely cross-panel
 
 Closeable and movable workspace tabs include tasks, terminal, browser, editor,
 diff, research, logs, and similar resource views. Tasks differs only by being a
@@ -378,6 +493,14 @@ Terminal panels attach to host-managed resources. Browser panels use the local
 native child-webview runtime defined by
 `028-browser-panel-runtime-contract.md`; their remote content remains outside
 the trusted bundled client.
+
+Resource target presentation is conditional panel chrome, not another region
+or permanent workspace bar. Agent Chat, Editor, and Terminal may expose the
+same compact selector when target choice or repair is material. Browser does
+not show that selector: its URL is not a project resource and its first runtime
+is explicitly local. A normal healthy local host stays visually quiet. A panel
+may show bounded connecting, failed, or non-local host evidence inside its own
+chrome, using the host-confirmed runtime identity rather than a client guess.
 
 Text editor and code editor panels are project workspace tools, not a
 replacement for durable project state. The server owns file identity,
@@ -474,6 +597,19 @@ exact work-item revision plus checkpoint/diff evidence refs. These actions do
 not edit source, complete the task, publish SCM state, or imply merge. Open in
 Editor may focus or create the existing Editor panel for the selected safe file
 ref; it must not introduce editor-internal tabs or a permanent file explorer.
+
+Diff-to-Editor navigation must preserve the source snapshot's project resource
+id and safe display path as well as its opaque file ref. A multi-resource
+project must not resolve a reviewed file against the default or first resource
+merely because the client dropped the evidence resource identity.
+
+After a durable Needs changes decision, Diff may expose one compact
+`Address changes` action. The action focuses or creates an Agent Chat panel,
+keeps the selected Task in the shared project working context, and prepares a
+bounded rework prompt in the composer. It must not submit the prompt, start a
+turn, run a task, or treat the review decision as execution authority. Existing
+composer text is preserved. The operator sending the prepared message is the
+fresh conversation mandate required by the task workflow contract.
 
 The first Diff panel does not stage, revert, apply hunks, resolve merge
 conflicts, commit, push, publish, or send patch content to an agent/model.

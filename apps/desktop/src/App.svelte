@@ -50,6 +50,8 @@
   let interfaceDensity = $state<"compact" | "comfortable">("compact");
   let showFixtureStatus = $state(true);
   let agentChatDefaults = $state<AgentChatDefaults>({
+    providerInstanceId: "codex:local-default",
+    providerId: null,
     model: "gpt-5.4-mini",
     reasoningEffort: "low",
     harnessMode: "normal",
@@ -146,6 +148,12 @@
 
   $effect(() => {
     setNativePanelOverlayVisibility(commandPaletteOverlayId, commandRuntime.session.open);
+  });
+
+  $effect(() => {
+    selectedProject?.project_id;
+    openPanelKinds = [];
+    activePanelKind = null;
   });
 
   $effect(() => {
@@ -447,12 +455,15 @@
 
         <div class="product-shell">
           <section class="workspace-stage" aria-label="Workspace">
-            <ProjectWorkspaceStage
-              {selectedProject}
-              {agentChatDefaults}
-              onOpenPanelKindsChange={(kinds) => (openPanelKinds = kinds)}
-              onCommandContextChange={(kind) => (activePanelKind = kind)}
-            />
+            {#key selectedProject?.project_id ?? "no-project"}
+              <ProjectWorkspaceStage
+                {selectedProject}
+                bind:selectedConversationId
+                {agentChatDefaults}
+                onOpenPanelKindsChange={(kinds) => (openPanelKinds = kinds)}
+                onCommandContextChange={(kind) => (activePanelKind = kind)}
+              />
+            {/key}
           </section>
         </div>
       </div>
@@ -659,8 +670,13 @@
     right: 0;
     z-index: 100;
     padding: 6px 12px;
-    background: #5c1a1a;
-    color: #ffd7d7;
+    color: var(--poodle-color-text-danger);
+    border-bottom: 1px solid var(--poodle-color-status-danger);
+    background: color-mix(
+      in srgb,
+      var(--poodle-color-status-danger) 16%,
+      var(--poodle-color-background-elevated)
+    );
     font-size: 12px;
   }
 

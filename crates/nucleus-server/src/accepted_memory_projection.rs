@@ -11,6 +11,7 @@ use crate::accepted_memory_projection_counts::{
     confidence_counts, kind_counts, retention_counts, scope_counts, sensitivity_counts,
     status_counts,
 };
+use crate::memory_display::project_memory_display;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceptedMemoryProjection {
@@ -41,6 +42,10 @@ pub enum AcceptedMemoryProjectionRecord {
 pub struct AcceptedMemorySummary {
     pub memory_id: String,
     pub source_proposal_id: Option<String>,
+    pub display_title: Option<String>,
+    pub display_summary: Option<String>,
+    pub display_redacted: bool,
+    pub display_truncated: bool,
     pub scope: AcceptedMemorySummaryScope,
     pub kind: AcceptedMemorySummaryKind,
     pub status: AcceptedMemorySummaryStatus,
@@ -223,9 +228,18 @@ impl AcceptedMemoryProjection {
 
 impl From<&AcceptedMemoryStorageRecord> for AcceptedMemorySummary {
     fn from(record: &AcceptedMemoryStorageRecord) -> Self {
+        let display = project_memory_display(
+            &record.title,
+            accepted_memory_summary(&record.body),
+            &record.sensitivity,
+        );
         Self {
             memory_id: record.memory_id.clone(),
             source_proposal_id: record.source_proposal_id.clone(),
+            display_title: display.title,
+            display_summary: display.summary,
+            display_redacted: display.redacted,
+            display_truncated: display.truncated,
             scope: AcceptedMemorySummaryScope::from(&record.scope),
             kind: AcceptedMemorySummaryKind::from(&record.kind),
             status: AcceptedMemorySummaryStatus::from(&record.status),
@@ -241,6 +255,13 @@ impl From<&AcceptedMemoryStorageRecord> for AcceptedMemorySummary {
             supersedes_count: record.supersession.supersedes.len(),
             superseded_by_count: record.supersession.superseded_by.len(),
         }
+    }
+}
+
+fn accepted_memory_summary(body: &nucleus_memory::AcceptedMemoryStorageBody) -> &str {
+    match body {
+        nucleus_memory::AcceptedMemoryStorageBody::Summary { summary, .. }
+        | nucleus_memory::AcceptedMemoryStorageBody::StructuredRef { summary, .. } => summary,
     }
 }
 

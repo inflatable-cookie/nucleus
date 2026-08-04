@@ -1,6 +1,6 @@
 # 054 Longhorn Adoption Conformance Closeout
 
-Status: paused after implemented-lane conformance; waits for card 047
+Status: completed
 Owner: Tom
 Created: 2026-08-01
 Milestone: `../018-longhorn-adoption-closeout-and-deferrals.md`
@@ -29,18 +29,18 @@ authority ownership, lifecycle, restart, rollback, and structural health.
 
 - cards 050 and 051–053 may remain paused and must not be implied complete
 
-## Pause Evidence
+## Evidence
 
-Cards 029, 032, 035, 038, 041, 044, 048, and 049 are complete. Card 047 cannot
-close until Longhorn provides grouped custom-adapter restore and Nucleus
-provides boot-time quiescence plus a durable restart handoff. Conformance has
-passed for every implemented lane, but the adoption closeout must not be
-marked complete while recovery acceptance remains absent.
+Cards 029, 032, 035, 038, 041, 044, 046–049 are complete. Grouped restore
+preserves explicit target and rollback absence through boot execution and
+recovery. Card 047's isolated native proof committed the exact seven-domain
+plan, applied archived absences as deletion, projected its durable receipt, and
+left no pending request or journal.
 
 The expanded consumer verifier passes at exact clean Longhorn commit
-`3032545b3284d3af7f976a88827bb8c8f5c94513`. It covers commands, config,
+`03a654baa0296e46eb201339fb12e05aadf9515c`. It covers commands, config,
 operations, notifications, bridge, settings, layout, windowing, and native
-content packages and crates. Its bridge lifecycle evidence now points to the
-consumer-native Tauri invocation fixture. Splitting backup retention from the
+content packages and crates. Its lifecycle evidence now includes exact grouped
+restore before product authorities. Splitting backup retention from the
 authority returned Doctor to the admitted 26 oversized-file error baseline;
 the remaining structural debt stays outside this lane.

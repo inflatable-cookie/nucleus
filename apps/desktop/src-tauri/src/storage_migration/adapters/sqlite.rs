@@ -8,8 +8,8 @@ use longhorn_config::{
     BackupAdapterCaptureRequest, BackupAdapterConsistencyGroup, BackupAdapterError,
     BackupAdapterId, BackupAdapterInspectRequest, BackupAdapterPayload, BackupAdapterRelativePath,
     BackupAdapterRestoreOutcome, BackupAdapterRestoreParticipation, BackupAdapterRestorePreview,
-    BackupAdapterRestoreRequest, DomainDescriptor, Sha256Digest, StorageTransitionAdapter,
-    StorageTransitionGuard,
+    BackupAdapterRestoreRequest, BackupAdapterStateEvidence, BackupSourceState, DomainDescriptor,
+    Sha256Digest, StorageTransitionAdapter, StorageTransitionGuard,
 };
 use rusqlite::{Connection, OpenFlags, MAIN_DB};
 use tempfile::{tempdir, tempdir_in};
@@ -87,13 +87,16 @@ impl BackupAdapter for SqliteTransitionAdapter {
         &self,
         request: BackupAdapterInspectRequest<'_>,
     ) -> Result<BackupAdapterRestorePreview, BackupAdapterError> {
+        if request.source_state() != BackupSourceState::Present {
+            return Err(failure("sqlite-source-state"));
+        }
         let [payload] = request.payloads() else {
             return Err(failure("sqlite-payload"));
         };
         validate_database_bytes(payload.bytes())?;
         Ok(BackupAdapterRestorePreview::new(
-            Sha256Digest::from_bytes(payload.bytes()),
-            self.current_evidence(request.descriptor())?,
+            BackupAdapterStateEvidence::present(Sha256Digest::from_bytes(payload.bytes())),
+            BackupAdapterStateEvidence::from_optional(self.current_evidence(request.descriptor())?),
         ))
     }
     fn restore(
@@ -126,7 +129,7 @@ impl BackupAdapter for SqliteTransitionAdapter {
         let evidence = self
             .current_evidence(request.inspect().descriptor())?
             .ok_or_else(|| failure("sqlite-verify"))?;
-        if evidence != *request.preview().target_evidence() {
+        if Some(&evidence) != request.preview().target_evidence().sha256() {
             return Err(failure("sqlite-evidence"));
         }
         Ok(BackupAdapterRestoreOutcome::Verified { evidence })

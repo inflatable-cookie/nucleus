@@ -10,7 +10,7 @@ use longhorn_settings::{
 use longhorn_settings_config::{
     register_config_operations_settings, BACKUP_CREATE_CAPABILITY_ID, BACKUP_EXPORT_CAPABILITY_ID,
     BACKUP_INVENTORY_CAPABILITY_ID, BACKUP_RETENTION_CAPABILITY_ID,
-    STORAGE_DIAGNOSTICS_CAPABILITY_ID,
+    RESTORE_INSPECTION_CAPABILITY_ID, STORAGE_DIAGNOSTICS_CAPABILITY_ID,
 };
 
 use super::*;
@@ -100,6 +100,7 @@ pub(super) fn build_registry() -> Result<SettingsRegistry, String> {
             capability_id(BACKUP_CREATE_CAPABILITY_ID),
             capability_id(BACKUP_EXPORT_CAPABILITY_ID),
             capability_id(BACKUP_RETENTION_CAPABILITY_ID),
+            capability_id(RESTORE_INSPECTION_CAPABILITY_ID),
         ])
         .map_err(registry_error)
 }

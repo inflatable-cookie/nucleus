@@ -22,6 +22,10 @@ fn response_envelope_dto_serializes_accepted_memory_without_bodies_or_effects() 
                 memories: vec![AcceptedMemorySummary {
                     memory_id: "memory:nucleus:1".to_owned(),
                     source_proposal_id: Some("memory-proposal:nucleus:1".to_owned()),
+                    display_title: Some("Use server-owned memory".to_owned()),
+                    display_summary: Some("Keep shared context portable.".to_owned()),
+                    display_redacted: false,
+                    display_truncated: false,
                     scope: AcceptedMemorySummaryScope::Project,
                     kind: AcceptedMemorySummaryKind::Decision,
                     status: AcceptedMemorySummaryStatus::Accepted,
@@ -98,6 +102,9 @@ fn response_envelope_dto_serializes_accepted_memory_without_bodies_or_effects() 
         } if project_id == "project:nucleus"
             && memories.len() == 1
             && memories[0].memory_id == "memory:nucleus:1"
+            && memories[0].display_title.as_deref() == Some("Use server-owned memory")
+            && memories[0].display_summary.as_deref() == Some("Keep shared context portable.")
+            && !memories[0].display_redacted
             && source_counts.accepted_records == 1
             && source_counts.skipped_records == 2
             && !client_can_mutate
@@ -106,7 +113,7 @@ fn response_envelope_dto_serializes_accepted_memory_without_bodies_or_effects() 
             && !provider_sync_available
     ));
     assert!(json.contains("\"type\":\"accepted_memory\""));
-    assert!(!json.contains("Hidden accepted summary"));
+    assert!(json.contains("Keep shared context portable."));
     assert!(!json.contains("raw_transcript"));
     assert!(!json.contains("provider_payload"));
     assert!(!json.contains("private_memory_body"));

@@ -12,11 +12,11 @@ use std::time::Duration;
 use swallowtail_adapter_codex::{CodexAppServerDriver, CodexSessionProfileInput};
 use swallowtail_core::ReasoningMode;
 use swallowtail_runtime::{
-    CleanupOutcome, InteractiveSessionDriver, OperationContent, RuntimeFailure, RuntimeTurnId,
-    SessionOptions, TerminalOutcome, TerminalStatus, TurnHandle, TurnRequest,
+    CleanupOutcome, InteractiveSessionDriver, OperationContent, RuntimeFailure, SessionOptions,
+    TerminalOutcome, TerminalStatus, TurnHandle, TurnRequest,
 };
 
-use super::{host, preparation, request_id, runtime_error, REQUEST_SEQUENCE};
+use super::{host, preparation, request_id, runtime_error, runtime_turn_id};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CodexReadOnlySmokeStatus {
@@ -99,7 +99,7 @@ pub fn run_codex_read_only_smoke(
     let turn = block_on(
         session.start_turn(
             TurnRequest::new(
-                diagnostic_turn_id()?,
+                runtime_turn_id("diagnostic")?,
                 OperationContent::new(prompt).map_err(|error| error.to_string())?,
             )
             .with_deadline(deadline),
@@ -356,14 +356,6 @@ fn cleanup_label(cleanup: &CleanupOutcome) -> &'static str {
         CleanupOutcome::Failed(_) => "failed",
         CleanupOutcome::NotApplicable => "not_applicable",
     }
-}
-
-fn diagnostic_turn_id() -> Result<RuntimeTurnId, String> {
-    RuntimeTurnId::new(format!(
-        "nucleus-diagnostic-turn-{}",
-        REQUEST_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ))
-    .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

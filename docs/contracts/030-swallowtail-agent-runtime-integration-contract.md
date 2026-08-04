@@ -27,12 +27,33 @@ Nucleus continues to own:
 
 No Swallowtail crate may depend on a Nucleus crate or persist Nucleus records.
 
+## Configured Provider Instances
+
+Swallowtail Contract 047 owns the portable configured-provider-instance
+catalogue and its admission rules. Each Nucleus runtime adapter prepares its
+exact facade and model-catalogue route, supplies the bound catalogue outcome,
+and returns one admitted instance record. The Nucleus runtime registry
+assembles those records into one Swallowtail catalogue and retains only the
+registry adapter binding needed to start the selected route.
+
+Nucleus may serialize a product projection of that catalogue. It must preserve
+configured instance, revision, facade, provider, model, readiness, and safe
+credential-posture truth. Product display names and ordering may be added, but
+TypeScript must not infer identities, route capabilities, authentication, or
+readiness. Target references, credential references, raw probes, operation
+handles, and provider payloads remain absent.
+
+Catalogue assembly and refresh are read-only preparation work. The catalogue
+does not select a provider, run a session, choose defaults, retry, fail over,
+or grant provider effects.
+
 ## First Adoption Slice
 
-The first slice replaces the `codex-app-server` implementation behind the
-existing `AgentSessionRuntime` and `AgentLiveSession` facade. The registry id,
-server chat service, Tauri commands, TypeScript DTOs, prompts, and two Nucleus
-tool portals remain unchanged.
+The first slice replaced the `codex-app-server` implementation behind the
+existing `AgentSessionRuntime` and `AgentLiveSession` facade. The configured-
+provider catalogue adoption later replaced the model-only Tauri query with one
+safe Nucleus product projection of the Swallowtail catalogue. Prompts and the
+two Nucleus tool portals remain independent of provider selection.
 
 The development workspace may use sibling path dependencies. Version or
 revision pinning begins when Swallowtail and its consumers enter versioned
@@ -62,6 +83,9 @@ authoritative host user's home directory as a read-only context.
 - changing explicit normal or plan harness mode opens a fresh session by the
   same rule; Nucleus passes `SessionOptions::with_harness_mode` during
   preparation and records selected and effective mode
+- changing configured provider instance or protocol facade opens a fresh
+  session by the same rule; the selected instance must be `Ready` in the
+  current admitted catalogue and the selected model must belong to it
 - plan harness mode, `ActivityKind::Plan`, and an open-ended planning
   conversation are distinct and must not be inferred from one another
 - stored tool-enabled provider threads are not resumed until provider schema
@@ -187,6 +211,14 @@ completion.
 `nucleus-agent-protocol` may carry Swallowtail's provider-neutral
 `ActivityObservation` across the adapter boundary. It must not define a second
 portable activity vocabulary or expose provider-native payloads.
+
+Durable Nucleus activity projections use `ActivityObservation::key()` without
+reconstructing, rewriting, or parsing provider identity. One portable key
+upserts one retained activity row; equal provider or activity references under
+different runtime operations remain separate. Nucleus supplies run and turn
+ids that remain unique for as long as an earlier retained projection can refer
+to them. Conversation, provider-thread, canonical turn, and transcript-message
+identity stay Nucleus-owned and do not become aliases for `ActivityKey`.
 
 The same rule applies to `HarnessUserInputRequest`,
 `HarnessUserInputResponse`, `TaskListSnapshot`, actor attribution, and

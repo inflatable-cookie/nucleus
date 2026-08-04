@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-08-02
+Updated: 2026-08-04
 
 ## Purpose
 
@@ -40,10 +40,11 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 - `002-workspace-sidebar-modes.md` - completed
 - `003-swallowtail-application-proof-readiness.md` - completed; all 12 native
   pilot outcomes passed at the exact 15-attempt and 6-session ceiling
-- `004-forge-working-copy-controls.md` - active
+- `004-forge-working-copy-controls.md` - completed; native compact interaction
+  acceptance passes
 - `005-observable-agent-chat-transcript.md` - completed; deterministic and
-  authenticated native activity, grouping, scroll, cancellation, cleanup, and
-  restart acceptance passed
+  authenticated native acceptance plus portable `ActivityKey` persistence
+  adoption pass
 - `006-interactive-agent-chat-sessions.md` - completed
 - `007-structured-provider-work.md` - completed
 - `008-structured-agent-chat-acceptance.md` - completed; authenticated Plan,
@@ -62,15 +63,29 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
   projects into one bounded, redacted cross-panel catalogue
 - `014-notification-ledger-and-attention.md` - completed; failed host work now
   reaches one finite retained ledger, restrained toast host, and toolbar popover
-- `015-backup-restore-and-recovery-controls.md` - backup capture, inventory,
-  retention, host-selected export, and Settings composition implemented;
-  restore paused at explicit shared and host-authority gates
+- `015-backup-restore-and-recovery-controls.md` - completed; grouped restore,
+  exact absence, restart recovery, Settings, and isolated native acceptance pass
 - `016-optional-backend-bridge-alignment.md` - local authority, composition,
   and consumer-native invocation completed; production remote transport gated
 - `017-secondary-window-panel-transfer.md` - conditional-paused until the
   operator selects a concrete secondary-window workflow
-- `018-longhorn-adoption-closeout-and-deferrals.md` - paused behind recovery
-  acceptance and the operator product checkpoint
+- `018-longhorn-adoption-closeout-and-deferrals.md` - completed
+- `019-shell-context-cohesion.md` - completed; native switching and sparse
+  recovery pass
+- `020-shared-work-context.md` - completed; local context authority, cross-panel
+  Goal/Task focus, conversation attachment, and native restart acceptance
+- `021-editor-diff-review-rework-cohesion.md` - completed; exact review-resource
+  navigation and an explicit operator-submitted rework handoff pass native use
+- `022-terminal-browser-resource-host-cohesion.md` - completed; Terminal and
+  Browser now share sparse panel-local recovery, exact resource selection, and
+  native active-body and restart evidence without making Browser resource-backed
+  or adding global status chrome
+- `023-memory-provider-and-advanced-control-cohesion.md` - completed; Memory,
+  provider-scoped defaults, fresh-session routing, and advanced-control
+  placement pass focused acceptance
+- `024-shell-accessibility-responsive-and-failure-cohesion.md` - completed;
+  semantic project interaction, container-relative movable panels, local
+  recovery, and supported-minimum native acceptance pass
 
 The secondary-system sequence starts with structural admission, then Settings
 as the first product-facing lane. Hosted Surfaces, generic history,
@@ -91,9 +106,31 @@ Cards 038-044 and 048 are complete. Commands, operations, retained attention,
 and local bridge authority now share Longhorn mechanisms while Nucleus keeps
 product authority, redaction, DTOs, and semantic action admission. Card 045
 now provides safe backup capture, inventory, host-selected export, retention,
-and Settings composition. Cards 046-047 remain paused until Longhorn provides
-grouped failure-atomic custom-adapter restore and Nucleus provides boot-time
-quiescence plus a durable restart handoff. Card 049 now has consumer-native
-Tauri invocation parity. Remote transport and secondary windows
-remain paused. Formal closeout waits for recovery acceptance and an operator
-product checkpoint.
+and Settings composition. Longhorn now provides grouped failure-atomic
+custom-adapter restore with explicit present/absent target and rollback
+evidence. Card 046 is complete with boot-time quiescence, a durable restart
+handoff, exact grouped adapters, deletion and rollback fixtures, active Restore
+Settings, and durable receipts. Card 047's isolated native acceptance committed
+the exact seven-domain plan and applied archived absences as deletion. Card 049
+has consumer-native Tauri invocation parity. Remote transport and secondary
+windows remain paused. Implemented-lane conformance and the native product
+checkpoint are closed. Shell context cohesion now passes deterministic and
+native acceptance. Roadmap 020 is complete. Goal, Task, Agent Chat, Diff,
+Projects, and Threads now consume one local project working context without new
+visible shell chrome. Roadmap 021 is complete. Editor navigation now requires
+exact snapshot resource lineage, while Needs changes prepares a draft-preserving
+Agent Chat rework handoff without adding another workflow surface or starting
+provider work. Roadmap 022 is complete. Durable resource choice remains
+separate from runtime-confirmed host evidence; Browser stays local, URL-driven,
+and outside project-resource targeting. Terminal fails closed when its selected
+resource belongs to a different authority host, uses one effective target
+projection from visible chrome through host invocation, and keeps healthy
+embedded state quiet. Deterministic and isolated native acceptance pass,
+including active Terminal/Browser body switching and restart restoration.
+Roadmap 023 is complete. Bounded Memory content survives project switching and
+restart. Nucleus consumes Swallowtail's consumer-assembled configured-provider-
+instance catalogue, keeps model and reasoning options route-scoped, and opens a
+fresh session when immutable route identity changes. One ready provider remains
+quiet; multiple ready providers expose an explicit selector. Technical,
+credential, destructive, and diagnostic controls retain deliberate Settings,
+menu, confirmation, or disclosure placement.

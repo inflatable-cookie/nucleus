@@ -20,6 +20,8 @@ pub struct WorkspacePanelPresentationInputDto {
     pub editor_file: Option<WorkspaceEditorFileDto>,
     #[serde(default)]
     pub forge_diff: Option<WorkspaceForgeDiffDto>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -35,6 +37,19 @@ pub struct WorkspacePanelPresentationDto {
     pub editor_file: Option<WorkspaceEditorFileDto>,
     #[serde(default)]
     pub forge_diff: Option<WorkspaceForgeDiffDto>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceProjectContextDto {
+    #[serde(default)]
+    pub selected_goal_id: Option<String>,
+    #[serde(default)]
+    pub selected_task_id: Option<String>,
+    #[serde(default)]
+    pub active_conversation_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -46,6 +61,7 @@ pub struct WorkspaceLayoutSnapshotDto {
     pub schemas: Vec<LayoutSchemaDefinition>,
     pub panel_definitions: Vec<PanelDefinition>,
     pub panels: Vec<WorkspacePanelPresentationDto>,
+    pub context: WorkspaceProjectContextDto,
 }
 
 #[derive(Clone, Debug, Deserialize)]

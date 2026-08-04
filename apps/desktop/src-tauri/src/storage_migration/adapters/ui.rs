@@ -8,7 +8,8 @@ use longhorn_config::{
     BackupAdapterCaptureRequest, BackupAdapterError, BackupAdapterId, BackupAdapterInspectRequest,
     BackupAdapterPayload, BackupAdapterRelativePath, BackupAdapterRestoreOutcome,
     BackupAdapterRestoreParticipation, BackupAdapterRestorePreview, BackupAdapterRestoreRequest,
-    DomainDescriptor, Sha256Digest, StorageTransitionAdapter, StorageTransitionGuard,
+    BackupAdapterStateEvidence, BackupSourceState, DomainDescriptor, Sha256Digest,
+    StorageTransitionAdapter, StorageTransitionGuard,
 };
 use tempfile::NamedTempFile;
 
@@ -131,10 +132,13 @@ impl BackupAdapter for UiTransitionAdapter {
         &self,
         request: BackupAdapterInspectRequest<'_>,
     ) -> Result<BackupAdapterRestorePreview, BackupAdapterError> {
+        if request.source_state() != BackupSourceState::Present {
+            return Err(failure("ui-source-state"));
+        }
         let payloads = ui_payloads(&request)?;
         Ok(BackupAdapterRestorePreview::new(
-            payload_digest(&payloads),
-            self.current_evidence(request.descriptor())?,
+            BackupAdapterStateEvidence::present(payload_digest(&payloads)),
+            BackupAdapterStateEvidence::from_optional(self.current_evidence(request.descriptor())?),
         ))
     }
     fn restore(
@@ -145,7 +149,7 @@ impl BackupAdapter for UiTransitionAdapter {
             return Err(failure("ui-target"));
         };
         let payloads = ui_payloads(request.inspect())?;
-        if payload_digest(&payloads) != *request.preview().target_evidence() {
+        if Some(&payload_digest(&payloads)) != request.preview().target_evidence().sha256() {
             return Err(failure("ui-preview"));
         }
         let project_bytes = payload(&payloads, "project-layouts.json")?;

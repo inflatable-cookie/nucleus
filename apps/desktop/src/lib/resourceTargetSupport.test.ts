@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { ControlProjectRecordDto, ControlProjectResourceRecordDto } from "./control";
-import { resourceTargetPresentation } from "./resourceTargetSupport";
+import {
+  effectiveResourceTarget,
+  resourceTargetPresentation,
+} from "./resourceTargetSupport";
 
 describe("resourceTargetPresentation", () => {
   test("keeps zero and one healthy resource quiet", () => {
@@ -48,6 +51,31 @@ describe("resourceTargetPresentation", () => {
     expect(mixed.showSelector).toBe(true);
     expect(mixed.selectedResourceId).toBe("resource:unavailable");
     expect(mixed.repairCount).toBe(1);
+  });
+
+  test("uses the same exact target for panel presentation and host requests", () => {
+    const targetProject = project([
+      resource("resource:available"),
+      resource("resource:broken", "repair_required"),
+    ]);
+
+    expect(effectiveResourceTarget(targetProject, "resource:broken")).toBe("resource:broken");
+    expect(
+      resourceTargetPresentation(targetProject, "resource:broken").selectedResourceId,
+    ).toBe("resource:broken");
+
+    targetProject.default_working_resource_id = "resource:broken";
+    expect(effectiveResourceTarget(targetProject, null)).toBe("resource:broken");
+    expect(resourceTargetPresentation(targetProject, null).selectedResourceId).toBe(
+      "resource:broken",
+    );
+  });
+
+  test("does not choose by order when more than one healthy target is available", () => {
+    const ambiguous = project([resource("resource:one"), resource("resource:two")]);
+
+    expect(effectiveResourceTarget(ambiguous, null)).toBeNull();
+    expect(resourceTargetPresentation(ambiguous, null).selectedResourceId).toBeNull();
   });
 });
 

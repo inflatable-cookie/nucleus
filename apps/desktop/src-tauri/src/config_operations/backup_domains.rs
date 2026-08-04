@@ -1,26 +1,43 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use longhorn_config::{
     encode_backup_archive, publish_operational_backup, BackupAdapter, BackupAdapterCapabilities,
     BackupAdapterCapture, BackupAdapterCaptureMode, BackupAdapterCaptureRequest,
-    BackupAdapterConsistencyGroup, BackupAdapterError, BackupAdapterId,
-    BackupAdapterInspectRequest, BackupAdapterPayload, BackupAdapterRelativePath,
-    BackupAdapterRestoreOutcome, BackupAdapterRestoreParticipation, BackupAdapterRestorePreview,
-    BackupAdapterRestoreRequest, BackupApplication, BackupArchiveFileName, BackupArchiveLimits,
-    BackupCaptureOptions, BackupCatalog, BackupExclusionReason, BackupKind, BackupLimits,
-    BackupMetadata, BackupOperationalRoot, BackupProducer, BackupPublicationOptions, BackupScope,
-    ConfigDomain, ConfigStore, CoordinationAuthority, DomainDescriptor, DomainFilePath,
-    DomainIssue, DurabilityRequirement, MigrationStep, Sha256Digest, StorageClass, StorageRoots,
+    BackupAdapterConsistencyGroup, BackupAdapterError, BackupAdapterGroupedApplyRequest,
+    BackupAdapterGroupedRestore, BackupAdapterGroupedStageRequest,
+    BackupAdapterGroupedVerifyRequest, BackupAdapterId, BackupAdapterInspectRequest,
+    BackupAdapterPayload, BackupAdapterRelativePath, BackupAdapterRestoreOutcome,
+    BackupAdapterRestoreParticipation, BackupAdapterRestorePreview, BackupAdapterRestoreRequest,
+    BackupAdapterRestoreStage, BackupAdapterStateEvidence, BackupApplication,
+    BackupArchiveFileName, BackupArchiveInspection, BackupArchiveLimits, BackupCaptureOptions,
+    BackupCatalog, BackupKind, BackupLimits, BackupMetadata, BackupOperationalRoot, BackupProducer,
+    BackupPublicationOptions, BackupScope, BackupSourceState, ConfigDomain, ConfigStore,
+    CoordinationAuthority, DomainDescriptor, DomainFilePath, DomainIssue, DurabilityRequirement,
+    MigrationStep, RestoreAdapterGroupExecutionOptions, RestoreAdapterGroupExecutionReceipt,
+    RestoreAdapterGroupRecoveryReceipt, Sha256Digest, StorageClass, StorageRoots,
 };
 use longhorn_core::{DomainId, SchemaVersion};
-use rusqlite::{Connection, MAIN_DB};
 use serde_json::Value;
+
+use self::{file::FileCaptureAdapter, sqlite::SqliteCaptureAdapter};
+
+mod file;
+mod grouped;
+mod sqlite;
+#[cfg(test)]
+mod tests;
+
+pub(super) use grouped::{
+    execute as execute_grouped_restore, prepare as prepare_grouped_restore,
+    recover as recover_grouped_restore,
+};
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_DOMAIN_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 192 * 1024 * 1024;
+const PRODUCER_ID: &str = "longhorn-config";
+const PRODUCER_VERSION: &str = "0.1.0";
 
 pub(super) fn sequence(local: u64) -> u64 {
     let now = time::OffsetDateTime::now_utc()
@@ -29,6 +46,7 @@ pub(super) fn sequence(local: u64) -> u64 {
     u64::try_from(now).unwrap_or(u64::MAX).saturating_add(local)
 }
 
+#[derive(Clone, Debug)]
 pub(super) struct BackupSources {
     pub database: PathBuf,
     pub preferences: PathBuf,
@@ -70,9 +88,8 @@ pub(super) fn capture(
         &archive_id,
         BackupKind::Operational,
         &created_at,
-        BackupApplication::new("com.inflatablecookie.nucleus", env!("CARGO_PKG_VERSION"))
-            .map_err(|error| error.to_string())?,
-        BackupProducer::new("longhorn-config", "0.1.0").map_err(|error| error.to_string())?,
+        application()?,
+        producer()?,
     )
     .map_err(|error| error.to_string())?;
     let snapshot = store
@@ -80,11 +97,7 @@ pub(super) fn capture(
             &catalog,
             &BackupScope::AllRegistered,
             metadata,
-            BackupCaptureOptions::new(
-                LOCK_TIMEOUT,
-                BackupLimits::new(MAX_DOMAIN_BYTES, MAX_TOTAL_BYTES)
-                    .map_err(|error| error.to_string())?,
-            ),
+            BackupCaptureOptions::new(LOCK_TIMEOUT, backup_limits()?),
         )
         .map_err(|error| error.to_string())?;
     let archive = encode_backup_archive(&snapshot, BackupArchiveLimits::default())
@@ -180,18 +193,23 @@ impl ConfigDomain for OpaqueDomain {
     fn descriptor(&self) -> &DomainDescriptor {
         &self.descriptor
     }
+
     fn default_value(&self) -> Self::Value {
         Value::Null
     }
+
     fn decode(&self, value: Value) -> Result<Self::Value, DomainIssue> {
         Ok(value)
     }
+
     fn encode(&self, value: &Self::Value) -> Result<Value, DomainIssue> {
         Ok(value.clone())
     }
+
     fn validate(&self, _value: &Self::Value) -> Result<(), DomainIssue> {
         Ok(())
     }
+
     fn validate_raw(
         &self,
         _schema_version: SchemaVersion,
@@ -199,6 +217,7 @@ impl ConfigDomain for OpaqueDomain {
     ) -> Result<(), DomainIssue> {
         Ok(())
     }
+
     fn migrate_one(
         &self,
         _from: SchemaVersion,
@@ -208,173 +227,26 @@ impl ConfigDomain for OpaqueDomain {
     }
 }
 
-struct FileCaptureAdapter {
-    id: BackupAdapterId,
-    capabilities: BackupAdapterCapabilities,
-    path: PathBuf,
+fn application() -> Result<BackupApplication, String> {
+    BackupApplication::new("com.inflatablecookie.nucleus", env!("CARGO_PKG_VERSION"))
+        .map_err(|error| error.to_string())
 }
 
-impl FileCaptureAdapter {
-    fn new(id: &str, path: PathBuf) -> Result<Self, String> {
-        Ok(Self {
-            id: BackupAdapterId::new(id).map_err(|error| error.to_string())?,
-            capabilities: capture_only_capabilities(id)?,
-            path,
-        })
-    }
+fn producer() -> Result<BackupProducer, String> {
+    BackupProducer::new(PRODUCER_ID, PRODUCER_VERSION).map_err(|error| error.to_string())
 }
 
-impl BackupAdapter for FileCaptureAdapter {
-    fn id(&self) -> &BackupAdapterId {
-        &self.id
-    }
-    fn capabilities(&self) -> &BackupAdapterCapabilities {
-        &self.capabilities
-    }
-
-    fn capture(
-        &self,
-        request: BackupAdapterCaptureRequest<'_>,
-    ) -> Result<BackupAdapterCapture, BackupAdapterError> {
-        if !self.path.exists() {
-            return Ok(BackupAdapterCapture::Absent);
-        }
-        let bytes = fs::read(&self.path).map_err(|_| adapter_error("file-read"))?;
-        if bytes.len() > request.limits().max_domain_bytes() {
-            return Err(adapter_error("file-size"));
-        }
-        Ok(BackupAdapterCapture::Present {
-            source_schema_version: request.descriptor().schema_version(),
-            payloads: vec![BackupAdapterPayload::new(
-                BackupAdapterRelativePath::new("document.bin")
-                    .map_err(|_| adapter_error("file-path"))?,
-                bytes,
-            )],
-        })
-    }
-
-    fn inspect(
-        &self,
-        request: BackupAdapterInspectRequest<'_>,
-    ) -> Result<BackupAdapterRestorePreview, BackupAdapterError> {
-        let payload = only_payload(&request)?;
-        let current = self
-            .path
-            .is_file()
-            .then(|| fs::read(&self.path).map(|bytes| Sha256Digest::from_bytes(&bytes)))
-            .transpose()
-            .map_err(|_| adapter_error("file-inspect"))?;
-        Ok(BackupAdapterRestorePreview::new(
-            Sha256Digest::from_bytes(payload),
-            current,
-        ))
-    }
-
-    fn restore(
-        &self,
-        _request: BackupAdapterRestoreRequest<'_>,
-    ) -> Result<BackupAdapterRestoreOutcome, BackupAdapterError> {
-        Err(BackupAdapterError::Unavailable)
-    }
+fn backup_limits() -> Result<BackupLimits, String> {
+    BackupLimits::new(MAX_DOMAIN_BYTES, MAX_TOTAL_BYTES).map_err(|error| error.to_string())
 }
 
-struct SqliteCaptureAdapter {
-    id: BackupAdapterId,
-    capabilities: BackupAdapterCapabilities,
-    path: PathBuf,
-}
-
-impl SqliteCaptureAdapter {
-    fn new(path: PathBuf) -> Result<Self, String> {
-        Ok(Self {
-            id: BackupAdapterId::new("nucleus-sqlite-online-v1")
-                .map_err(|error| error.to_string())?,
-            capabilities: capture_only_capabilities("nucleus-sqlite")?,
-            path,
-        })
-    }
-
-    fn snapshot_bytes(&self) -> Result<Vec<u8>, BackupAdapterError> {
-        if !self.path.exists() {
-            return Ok(Vec::new());
-        }
-        let temporary =
-            tempfile::NamedTempFile::new().map_err(|_| adapter_error("sqlite-stage"))?;
-        let source = Connection::open(&self.path).map_err(|_| adapter_error("sqlite-open"))?;
-        source
-            .backup(MAIN_DB, temporary.path(), None)
-            .map_err(|_| adapter_error("sqlite-backup"))?;
-        validate_sqlite(temporary.path())?;
-        fs::read(temporary.path()).map_err(|_| adapter_error("sqlite-read"))
-    }
-}
-
-impl BackupAdapter for SqliteCaptureAdapter {
-    fn id(&self) -> &BackupAdapterId {
-        &self.id
-    }
-    fn capabilities(&self) -> &BackupAdapterCapabilities {
-        &self.capabilities
-    }
-
-    fn capture(
-        &self,
-        request: BackupAdapterCaptureRequest<'_>,
-    ) -> Result<BackupAdapterCapture, BackupAdapterError> {
-        if !self.path.exists() {
-            return Ok(BackupAdapterCapture::Absent);
-        }
-        let bytes = self.snapshot_bytes()?;
-        if bytes.len() > request.limits().max_domain_bytes() {
-            return Err(adapter_error("sqlite-size"));
-        }
-        Ok(BackupAdapterCapture::Present {
-            source_schema_version: request.descriptor().schema_version(),
-            payloads: vec![BackupAdapterPayload::new(
-                BackupAdapterRelativePath::new("nucleus.sqlite")
-                    .map_err(|_| adapter_error("sqlite-path"))?,
-                bytes,
-            )],
-        })
-    }
-
-    fn inspect(
-        &self,
-        request: BackupAdapterInspectRequest<'_>,
-    ) -> Result<BackupAdapterRestorePreview, BackupAdapterError> {
-        let payload = only_payload(&request)?;
-        let current = self
-            .path
-            .is_file()
-            .then(|| {
-                self.snapshot_bytes()
-                    .map(|bytes| Sha256Digest::from_bytes(&bytes))
-            })
-            .transpose()?;
-        Ok(BackupAdapterRestorePreview::new(
-            Sha256Digest::from_bytes(payload),
-            current,
-        ))
-    }
-
-    fn restore(
-        &self,
-        _request: BackupAdapterRestoreRequest<'_>,
-    ) -> Result<BackupAdapterRestoreOutcome, BackupAdapterError> {
-        Err(BackupAdapterError::Unavailable)
-    }
-}
-
-fn capture_only_capabilities(group: &str) -> Result<BackupAdapterCapabilities, String> {
+fn grouped_capabilities(group: &str) -> Result<BackupAdapterCapabilities, String> {
     Ok(BackupAdapterCapabilities::new(
         BackupAdapterCaptureMode::ExternalSnapshot(
             BackupAdapterConsistencyGroup::new(group, "nucleus-bounded-snapshot")
                 .map_err(|error| error.to_string())?,
         ),
-        BackupAdapterRestoreParticipation::Excluded(
-            BackupExclusionReason::new("restore-not-yet-admitted")
-                .map_err(|error| error.to_string())?,
-        ),
+        BackupAdapterRestoreParticipation::GroupedFailureAtomic,
     ))
 }
 
@@ -385,18 +257,6 @@ fn only_payload<'a>(
         return Err(adapter_error("payload-count"));
     };
     Ok(payload.bytes())
-}
-
-fn validate_sqlite(path: &Path) -> Result<(), BackupAdapterError> {
-    let connection = Connection::open(path).map_err(|_| adapter_error("sqlite-validate-open"))?;
-    let result: String = connection
-        .query_row("PRAGMA quick_check", [], |row| row.get(0))
-        .map_err(|_| adapter_error("sqlite-quick-check"))?;
-    if result == "ok" {
-        Ok(())
-    } else {
-        Err(adapter_error("sqlite-invalid"))
-    }
 }
 
 fn adapter_error(code: &str) -> BackupAdapterError {

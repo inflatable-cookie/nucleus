@@ -176,6 +176,18 @@ const lifecycleEvidence = [
     "selected_operational_archive_exports_the_exact_snapshot_as_user_export",
   ],
   [
+    "apps/desktop/src-tauri/src/config_operations/restore/tests.rs",
+    "scheduled_group_restores_all_seven_domains_before_authorities_open",
+  ],
+  [
+    "apps/desktop/src-tauri/src/config_operations/backup_domains/tests.rs",
+    "grouped_absent_targets_delete_file_and_sqlite_at_boot",
+  ],
+  [
+    "apps/desktop/src-tauri/src/config_operations/backup_domains/tests.rs",
+    "boot_catalog_rolls_an_applied_domain_back_to_absence_after_interruption",
+  ],
+  [
     "apps/desktop/src-tauri/src/bridge/tests.rs",
     "registered_tauri_commands_preserve_direct_local_bridge_semantics",
   ],
@@ -217,14 +229,14 @@ console.log(
         commands: "commands::{catalogue,keymap,runtime}",
         operations: "operations",
         notifications: "notifications",
-        backup: "config_operations::{authority,backup_domains,export}",
+        backup: "config_operations::{authority,backup_domains,export,restore}",
         localBridge: "bridge",
       },
       productAuthority: {
         owner: "Nucleus",
         contract: "docs/contracts/032-longhorn-desktop-systems-integration-contract.md",
         nextEdge:
-          "grouped custom-adapter restore plus Nucleus boot-time quiescence and restart handoff",
+          "operator product checkpoint and next-lane selection",
       },
       lifecycleEvidence: lifecycleEvidence.map(([path, evidence]) => ({ path, evidence })),
     },

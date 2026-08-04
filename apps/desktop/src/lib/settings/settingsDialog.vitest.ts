@@ -25,15 +25,32 @@ vi.mock("@tauri-apps/api/core", () => ({
         changed: false,
       };
     }
-    if (command !== "agent_chat_provider_summary") {
+    if (command !== "agent_chat_provider_catalogue") {
       throw new Error(`unexpected Tauri command ${command}`);
     }
-    return {
+    return { instances: [{
       provider_instance_id: "codex:local-default",
-      adapter_id: "codex-app-server",
+      instance_revision: "1",
+      runtime_adapter_id: "codex-app-server",
+      driver_id: "swallowtail.codex.app-server",
+      integration_family: "codex",
+      transport_family: "stdio-json-rpc",
+      protocol_facade_id: "codex-app-server-v2",
       display_name: "Local Codex",
       harness_name: "Codex app-server",
-      authentication_posture: "provider_managed",
+      ownership: "host_owned_persistent",
+      selection_readiness: "ready",
+      credential_posture: {
+        profile_id: "nucleus.codex.oauth",
+        mechanism: "interactive_oauth",
+        credential_state: "ready",
+        entitlement_metering: "subscription_allowance",
+        entitlement_state: "available",
+        endpoint_authorization: "allowed",
+        runtime_readiness: "ready",
+        support_authority: "provider_supported",
+        evidence_provenance: "observed",
+      },
       credential: {
         access_profile_ref: "nucleus.codex.oauth",
         credential_ref: null,
@@ -48,8 +65,10 @@ vi.mock("@tauri-apps/api/core", () => ({
           unavailable_reason: "provider_managed_lifecycle",
         })),
       },
-      model_discovery: "available",
+      model_catalogue_state: "available",
+      model_catalogue_diagnostic: null,
       models: [{
+        provider_id: null,
         model: "gpt-5.4-mini",
         display_name: "GPT-5.4 Mini",
         description: "",
@@ -59,7 +78,7 @@ vi.mock("@tauri-apps/api/core", () => ({
           { reasoning_effort: "low", description: "" },
         ],
       }],
-    };
+    }] };
   }),
 }));
 
@@ -145,7 +164,9 @@ test("Agent settings show provider readiness and stage explicit session defaults
   await fireEvent.click(screen.getByRole("button", { name: "Agent & models" }));
   await screen.findByTestId("settings-agent-provider-page");
   await screen.findByText("1 models available through provider-managed login");
-  expect(screen.getByText("codex:local-default · Codex app-server")).toBeTruthy();
+  expect(screen.getByText("Codex app-server")).toBeTruthy();
+  expect(screen.queryByLabelText("Default agent provider")).toBeNull();
+  expect(screen.getByText("Technical details")).toBeTruthy();
   expect(screen.getByText("ChatGPT subscription · Interactive OAuth")).toBeTruthy();
   expect(screen.getByText(/Nucleus stores no credential value or reference/)).toBeTruthy();
   expect(screen.getByLabelText("Default agent model")).toBeTruthy();

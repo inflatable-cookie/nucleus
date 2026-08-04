@@ -176,6 +176,7 @@ The read request contains:
 The response may contain:
 
 - baseline and target checkpoint refs
+- the optional exact project resource id shared by those source snapshots
 - safe project-relative display path and opaque file ref
 - added, modified, deleted, or metadata-only change kind
 - bounded unified text patch
@@ -191,6 +192,11 @@ payloads must never enter the response.
 Patch generation is read-only. It must not mutate source files, snapshots, SCM
 state, task state, or review state. Patch content is not sent to an agent or
 model unless a later explicit, separately admitted context action allows it.
+
+When source snapshots carry a resource id, the task-diff overview must preserve
+it for downstream file navigation. Unknown resource identity remains unknown;
+the host or client must not substitute another project resource and call it the
+reviewed file.
 
 ## SCM Work Item Linkage
 

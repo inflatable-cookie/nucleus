@@ -33,6 +33,7 @@ fn registry_composes_nucleus_pages_with_shared_keybindings_and_typed_units() {
             longhorn_command_settings::KEYBINDING_SETTINGS_PAGE_ID,
             longhorn_settings_config::STORAGE_SETTINGS_PAGE_ID,
             longhorn_settings_config::BACKUP_SETTINGS_PAGE_ID,
+            longhorn_settings_config::RESTORE_SETTINGS_PAGE_ID,
         ]
     );
     assert_eq!(snapshot.modules.len(), 3);
@@ -168,7 +169,13 @@ fn agent_defaults_are_typed_persisted_and_reset_without_route_fallback() {
             .iter()
             .map(|value| value.effective.value().clone())
             .collect::<Vec<_>>(),
-        [json!("gpt-5.4-mini"), json!("low"), json!("normal")]
+        [
+            json!("gpt-5.4-mini"),
+            json!("codex:local-default"),
+            json!("low"),
+            json!("normal"),
+            json!(null)
+        ]
     );
 
     let applied = authority
@@ -182,6 +189,8 @@ fn agent_defaults_are_typed_persisted_and_reset_without_route_fallback() {
                 scope_id: scope_id(AGENT_SCOPE_ID),
                 authority: original.authority,
                 intent: opaque(json!({
+                    "defaultProviderInstanceId": "codex:local-default",
+                    "defaultProviderId": null,
                     "defaultModel": "gpt-5.6-codex",
                     "defaultReasoningEffort": "high",
                     "defaultHarnessMode": "plan"
@@ -198,16 +207,21 @@ fn agent_defaults_are_typed_persisted_and_reset_without_route_fallback() {
             .iter()
             .map(|value| value.effective.value().clone())
             .collect::<Vec<_>>(),
-        [json!("gpt-5.6-codex"), json!("high"), json!("plan")]
+        [
+            json!("gpt-5.6-codex"),
+            json!("codex:local-default"),
+            json!("high"),
+            json!("plan"),
+            json!(null)
+        ]
     );
 
     drop(authority);
     let mut restarted = fixture.authority();
     let persisted = fixture.load(&mut restarted, AGENT_SCOPE_ID);
-    assert!(persisted
-        .values
-        .iter()
-        .all(|value| value.configured.is_some()));
+    assert!(persisted.values.iter().all(|value| {
+        value.entry_id == entry_id(DEFAULT_PROVIDER_ID_ENTRY_ID) || value.configured.is_some()
+    }));
 
     let reset = restarted
         .reset(
@@ -220,6 +234,8 @@ fn agent_defaults_are_typed_persisted_and_reset_without_route_fallback() {
                 scope_id: scope_id(AGENT_SCOPE_ID),
                 authority: persisted.authority,
                 entry_ids: vec![
+                    entry_id(DEFAULT_PROVIDER_INSTANCE_ENTRY_ID),
+                    entry_id(DEFAULT_PROVIDER_ID_ENTRY_ID),
                     entry_id(DEFAULT_MODEL_ENTRY_ID),
                     entry_id(DEFAULT_REASONING_ENTRY_ID),
                     entry_id(DEFAULT_HARNESS_MODE_ENTRY_ID),
@@ -252,6 +268,8 @@ fn provider_managed_revoke_stays_secret_free_and_preserves_restart_state() {
                 scope_id: scope_id(AGENT_SCOPE_ID),
                 authority: original.authority,
                 intent: opaque(json!({
+                    "defaultProviderInstanceId": "codex:local-default",
+                    "defaultProviderId": null,
                     "defaultModel": "gpt-5.4-mini",
                     "defaultReasoningEffort": "high",
                     "defaultHarnessMode": "plan"

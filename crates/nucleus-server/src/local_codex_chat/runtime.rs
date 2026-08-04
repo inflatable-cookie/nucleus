@@ -20,8 +20,8 @@ use super::task_authoring::{TaskAuthoringReceipt, TaskToolOutcome};
 use super::task_ledger::dynamic_tool_spec as task_ledger_spec;
 use super::task_workflow::{dynamic_tool_spec as task_workflow_spec, TaskWorkflowReceipt};
 use super::{
-    LocalCodexChatHarnessMode, LocalCodexChatModelOption, LocalCodexChatReasoningOption,
-    LocalCodexChatReply, CHAT_ADAPTER_ID, CHAT_PROVIDER_INSTANCE_ID, CHAT_TASK_TOOLSET_VERSION,
+    LocalCodexChatHarnessMode, LocalCodexChatReply, SelectedAgentChatRoute,
+    CHAT_TASK_TOOLSET_VERSION,
 };
 use tool_calls::consolidate_task_receipts;
 
@@ -56,8 +56,11 @@ impl LocalCodexChatSession {
                 }
                 nucleus_agent_protocol::AgentHarnessMode::Plan => LocalCodexChatHarnessMode::Plan,
             },
-            adapter_id: CHAT_ADAPTER_ID.to_owned(),
-            provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
+            adapter_id: info.adapter_id.clone(),
+            provider_instance_id: info.provider_instance_id.clone(),
+            provider_instance_revision: info.provider_instance_revision.clone(),
+            protocol_facade_id: info.protocol_facade_id.clone(),
+            provider_id: info.provider_id.clone(),
             turn_count,
             task_toolset_version: CHAT_TASK_TOOLSET_VERSION,
         }
@@ -69,9 +72,7 @@ impl LocalCodexChatSession {
         resource_id: &str,
         stored: Option<&StoredChatSession>,
         migration_context: Option<&str>,
-        model: &str,
-        reasoning_effort: &str,
-        harness_mode: LocalCodexChatHarnessMode,
+        route: &SelectedAgentChatRoute,
         turn_timeout: Duration,
     ) -> Result<Self, String> {
         let developer_instructions = migration_context.map_or_else(
@@ -82,19 +83,24 @@ impl LocalCodexChatSession {
                 )
             },
         );
-        let live = chat_runtime()?.start_session(AgentSessionStartRequest {
-            working_directory: project_root.to_owned(),
-            model: model.to_owned(),
-            reasoning_effort: reasoning_effort.to_owned(),
-            harness_mode: harness_mode.agent_mode(),
-            developer_instructions,
-            dynamic_tools: dynamic_tool_specs(),
-            // Current Codex schema evidence cannot safely redeclare dynamic
-            // tools on thread/resume. Nucleus supplies transcript context and
-            // opens fresh instead of resuming from a provider id alone.
-            resume_provider_thread_id: None,
-            turn_timeout,
-        })?;
+        let live =
+            chat_runtime(&route.runtime_adapter_id)?.start_session(AgentSessionStartRequest {
+                working_directory: project_root.to_owned(),
+                provider_instance_id: route.provider_instance_id.clone(),
+                provider_instance_revision: route.provider_instance_revision.clone(),
+                protocol_facade_id: route.protocol_facade_id.clone(),
+                provider_id: route.provider_id.clone(),
+                model: route.model.clone(),
+                reasoning_effort: route.reasoning_effort.clone(),
+                harness_mode: route.harness_mode.agent_mode(),
+                developer_instructions,
+                dynamic_tools: dynamic_tool_specs(),
+                // Current Codex schema evidence cannot safely redeclare dynamic
+                // tools on thread/resume. Nucleus supplies transcript context and
+                // opens fresh instead of resuming from a provider id alone.
+                resume_provider_thread_id: None,
+                turn_timeout,
+            })?;
 
         Ok(Self {
             session_id: stored
@@ -109,16 +115,16 @@ impl LocalCodexChatSession {
         self.resource_id == resource_id
     }
 
-    pub(super) fn targets_route(
-        &self,
-        model: &str,
-        reasoning_effort: &str,
-        harness_mode: LocalCodexChatHarnessMode,
-    ) -> bool {
+    pub(super) fn targets_route(&self, route: &SelectedAgentChatRoute) -> bool {
         let info = self.live.info();
-        info.model == model
-            && info.reasoning_effort.as_deref() == Some(reasoning_effort)
-            && info.harness_mode == harness_mode.agent_mode()
+        info.adapter_id == route.runtime_adapter_id
+            && info.provider_instance_id == route.provider_instance_id
+            && info.provider_instance_revision == route.provider_instance_revision
+            && info.protocol_facade_id == route.protocol_facade_id
+            && info.provider_id == route.provider_id
+            && info.model == route.model
+            && info.reasoning_effort.as_deref() == Some(route.reasoning_effort.as_str())
+            && info.harness_mode == route.harness_mode.agent_mode()
     }
 
     pub(super) fn send_turn<F>(
@@ -164,6 +170,10 @@ impl LocalCodexChatSession {
             thread_id: info.provider_thread_id.clone(),
             turn_id: reply.turn_id,
             timeline_turn_id: String::new(),
+            provider_instance_id: info.provider_instance_id.clone(),
+            provider_instance_revision: info.provider_instance_revision.clone(),
+            protocol_facade_id: info.protocol_facade_id.clone(),
+            provider_id: info.provider_id.clone(),
             model: info.model.clone(),
             reasoning_effort: info.reasoning_effort.clone(),
             harness_mode: match info.harness_mode {
@@ -180,29 +190,9 @@ impl LocalCodexChatSession {
 }
 
 fn chat_runtime(
+    adapter_id: &str,
 ) -> Result<std::sync::Arc<dyn nucleus_agent_protocol::AgentSessionRuntime + Send + Sync>, String> {
-    AgentAdapterRegistry::with_builtin_adapters().runtime(CHAT_ADAPTER_ID)
-}
-
-pub(super) fn available_models() -> Result<Vec<LocalCodexChatModelOption>, String> {
-    Ok(chat_runtime()?
-        .model_catalog()?
-        .into_iter()
-        .map(|option| LocalCodexChatModelOption {
-            model: option.model,
-            display_name: option.display_name,
-            description: option.description,
-            default_reasoning_effort: option.default_reasoning_effort,
-            supported_reasoning_efforts: option
-                .supported_reasoning_efforts
-                .into_iter()
-                .map(|effort| LocalCodexChatReasoningOption {
-                    reasoning_effort: effort.reasoning_effort,
-                    description: effort.description,
-                })
-                .collect(),
-        })
-        .collect())
+    AgentAdapterRegistry::with_builtin_adapters().runtime(adapter_id)
 }
 
 fn dynamic_tool_specs() -> Vec<Value> {
@@ -212,6 +202,29 @@ fn dynamic_tool_specs() -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nucleus_agent_protocol::{
+        AgentHarnessMode, AgentStartedSessionInfo, AgentToolCallHandler, AgentTurnReply,
+    };
+
+    struct FixtureLiveSession {
+        info: AgentStartedSessionInfo,
+    }
+
+    impl AgentLiveSession for FixtureLiveSession {
+        fn info(&self) -> &AgentStartedSessionInfo {
+            &self.info
+        }
+
+        fn send_turn(
+            &mut self,
+            _request: AgentTurnRequest,
+            _on_activity: &mut AgentActivityHandler<'_>,
+            _on_tool_call: &mut AgentToolCallHandler<'_>,
+            _on_user_input: &mut AgentUserInputHandler<'_>,
+        ) -> Result<AgentTurnReply, AgentTurnFailure> {
+            unreachable!("route matching does not send a provider turn")
+        }
+    }
 
     #[test]
     fn chat_projects_exactly_the_two_nucleus_portals() {
@@ -226,6 +239,63 @@ mod tests {
 
     #[test]
     fn chat_adapter_resolves_through_the_live_registry() {
-        assert!(chat_runtime().is_ok());
+        assert!(chat_runtime("codex-app-server").is_ok());
+    }
+
+    #[test]
+    fn live_session_reuse_requires_the_exact_immutable_route() {
+        let route = SelectedAgentChatRoute {
+            runtime_adapter_id: "codex-app-server".to_owned(),
+            provider_instance_id: "codex:local-default".to_owned(),
+            provider_instance_revision: "1".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            provider_id: None,
+            model: "gpt-5.4-mini".to_owned(),
+            reasoning_effort: "low".to_owned(),
+            harness_mode: LocalCodexChatHarnessMode::Normal,
+        };
+        let session = LocalCodexChatSession {
+            session_id: "session:test".to_owned(),
+            resource_id: "resource:test".to_owned(),
+            live: Box::new(FixtureLiveSession {
+                info: AgentStartedSessionInfo {
+                    provider_thread_id: "thread:test".to_owned(),
+                    adapter_id: route.runtime_adapter_id.clone(),
+                    provider_instance_id: route.provider_instance_id.clone(),
+                    provider_instance_revision: route.provider_instance_revision.clone(),
+                    protocol_facade_id: route.protocol_facade_id.clone(),
+                    provider_id: route.provider_id.clone(),
+                    model: route.model.clone(),
+                    reasoning_effort: Some(route.reasoning_effort.clone()),
+                    harness_mode: AgentHarnessMode::Normal,
+                },
+            }),
+        };
+
+        assert!(session.targets_route(&route));
+        for changed in [
+            SelectedAgentChatRoute {
+                provider_instance_revision: "2".to_owned(),
+                ..route.clone()
+            },
+            SelectedAgentChatRoute {
+                protocol_facade_id: "other-facade".to_owned(),
+                ..route.clone()
+            },
+            SelectedAgentChatRoute {
+                model: "other-model".to_owned(),
+                ..route.clone()
+            },
+            SelectedAgentChatRoute {
+                reasoning_effort: "high".to_owned(),
+                ..route.clone()
+            },
+            SelectedAgentChatRoute {
+                harness_mode: LocalCodexChatHarnessMode::Plan,
+                ..route.clone()
+            },
+        ] {
+            assert!(!session.targets_route(&changed));
+        }
     }
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Icon, Text } from "@poodle/svelte";
+  import { Button, Icon, Text } from "@poodle/svelte";
   import { refreshCw } from "@poodle/icons-lucide";
   import { onMount } from "svelte";
   import {
@@ -237,7 +237,7 @@
 
 <section class="sidebar-view" aria-label="Forge">
   <header class="sidebar-view-head">
-    <span class="sidebar-dimmed">
+    <span class="sidebar-dimmed" role="status" aria-live="polite">
       {loading
         ? "Loading"
         : `${repositoryCount} ${repositoryCount === 1 ? "repository" : "repositories"}${changeCount > 0 ? ` · ${changeCount} changed` : ""}`}
@@ -254,10 +254,13 @@
   </header>
 
   {#if failure}
-    <div class="sidebar-message"><Text tone="danger">{failure}</Text></div>
+    <div class="sidebar-message" role="alert">
+      <Text tone="danger">{failure}</Text>
+      <Button variant="secondary" size="xs" onClick={() => void loadRepositories()}>Retry</Button>
+    </div>
   {/if}
   {#if mutationFailure}
-    <div class="sidebar-message"><Text tone="danger">{mutationFailure}</Text></div>
+    <div class="sidebar-message" role="alert"><Text tone="danger">{mutationFailure}</Text></div>
   {/if}
   {#if !failure && !loading && repositoryProjects.length === 0}
     <div class="sidebar-message"><span class="sidebar-dimmed">No Git resources are attached.</span></div>

@@ -9,6 +9,7 @@ mod goal_run;
 mod goal_update;
 mod mandates;
 mod persistence;
+mod provider_catalogue;
 mod questions;
 mod review_evidence;
 mod rework_context;
@@ -73,6 +74,9 @@ pub use persistence::{
     StoredChatQuestionExchange, StoredChatQuestionOption, StoredChatSubagent,
     StoredChatTaskListItem,
 };
+pub use provider_catalogue::{
+    AgentChatCredentialPosture, AgentChatProviderCatalogue, AgentChatProviderInstance,
+};
 pub use questions::{
     LocalCodexChatQuestionAnswer, LocalCodexChatQuestionAnswerRequest,
     LocalCodexChatQuestionRegistry,
@@ -107,7 +111,7 @@ where
     })?;
     persisted.ok_or_else(|| "Agent Chat question answer was not persisted".to_owned())
 }
-use runtime::{available_models, LocalCodexChatSession};
+use runtime::LocalCodexChatSession;
 use task_ledger::execute as execute_task_ledger;
 
 pub use task_authoring::{GoalCreationReceipt, TaskAuthoringReceipt, TaskCreationReceipt};
@@ -133,7 +137,9 @@ where
 }
 
 const CHAT_MODEL: &str = "gpt-5.4-mini";
+#[cfg(test)]
 const CHAT_REASONING_EFFORT: &str = "low";
+#[cfg(test)]
 const CHAT_ADAPTER_ID: &str = "codex-app-server";
 const CHAT_PROVIDER_INSTANCE_ID: &str = "codex:local-default";
 const CHAT_TASK_TOOLSET_VERSION: u32 = 5;
@@ -150,6 +156,14 @@ pub struct LocalCodexChatRequest {
     pub active_task_id: Option<String>,
     #[serde(default)]
     pub active_goal_id: Option<String>,
+    #[serde(default)]
+    pub provider_instance_id: Option<String>,
+    #[serde(default)]
+    pub provider_instance_revision: Option<String>,
+    #[serde(default)]
+    pub protocol_facade_id: Option<String>,
+    #[serde(default)]
+    pub provider_id: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
@@ -177,6 +191,7 @@ impl LocalCodexChatHarnessMode {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LocalCodexChatModelOption {
+    pub provider_id: Option<String>,
     pub model: String,
     pub display_name: String,
     pub description: String,
@@ -191,23 +206,15 @@ pub struct LocalCodexChatReasoningOption {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct LocalCodexChatProviderSummary {
-    pub provider_instance_id: String,
-    pub adapter_id: String,
-    pub display_name: String,
-    pub harness_name: String,
-    pub authentication_posture: String,
-    pub credential: LocalCodexCredentialSummary,
-    pub model_discovery: String,
-    pub models: Vec<LocalCodexChatModelOption>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LocalCodexChatReply {
     pub session_id: String,
     pub thread_id: String,
     pub turn_id: String,
     pub timeline_turn_id: String,
+    pub provider_instance_id: String,
+    pub provider_instance_revision: String,
+    pub protocol_facade_id: String,
+    pub provider_id: Option<String>,
     pub model: String,
     pub reasoning_effort: Option<String>,
     pub harness_mode: LocalCodexChatHarnessMode,
@@ -233,33 +240,8 @@ impl Default for LocalCodexChatService {
 }
 
 impl LocalCodexChatService {
-    pub fn available_models() -> Result<Vec<LocalCodexChatModelOption>, String> {
-        available_models()
-    }
-
-    pub fn provider_summary() -> LocalCodexChatProviderSummary {
-        match available_models() {
-            Ok(models) => LocalCodexChatProviderSummary {
-                provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
-                adapter_id: CHAT_ADAPTER_ID.to_owned(),
-                display_name: "Local Codex".to_owned(),
-                harness_name: "Codex app-server".to_owned(),
-                authentication_posture: "provider_managed".to_owned(),
-                credential: credentials::summary(),
-                model_discovery: "available".to_owned(),
-                models,
-            },
-            Err(_) => LocalCodexChatProviderSummary {
-                provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
-                adapter_id: CHAT_ADAPTER_ID.to_owned(),
-                display_name: "Local Codex".to_owned(),
-                harness_name: "Codex app-server".to_owned(),
-                authentication_posture: "provider_managed".to_owned(),
-                credential: credentials::summary(),
-                model_discovery: "unavailable".to_owned(),
-                models: Vec::new(),
-            },
-        }
+    pub fn provider_catalogue() -> Result<AgentChatProviderCatalogue, String> {
+        AgentChatProviderCatalogue::discover()
     }
 
     pub fn with_task_review_snapshot_store(store: crate::TaskReviewSnapshotStore) -> Self {
@@ -396,18 +378,14 @@ impl LocalCodexChatService {
         {
             return Err("chat conversation belongs to another project".to_owned());
         }
-        let (selected_model, selected_reasoning_effort, selected_harness_mode) =
-            selected_route(&request, stored.as_ref())?;
+        let catalogue = AgentChatProviderCatalogue::discover()?;
+        let selected_route = selected_route(&request, stored.as_ref(), &catalogue)?;
         let existing_session_matches =
             self.sessions
                 .get(&request.conversation_id)
                 .is_some_and(|session| {
                     session.targets_resource(&target_resource_id)
-                        && session.targets_route(
-                            &selected_model,
-                            &selected_reasoning_effort,
-                            selected_harness_mode,
-                        )
+                        && session.targets_route(&selected_route)
                 });
         if self.sessions.contains_key(&request.conversation_id) && !existing_session_matches {
             self.sessions.remove(&request.conversation_id);
@@ -431,9 +409,7 @@ impl LocalCodexChatService {
                     &target_resource_id,
                     stored.as_ref(),
                     migration_context.as_deref(),
-                    &selected_model,
-                    &selected_reasoning_effort,
-                    selected_harness_mode,
+                    &selected_route,
                     turn_timeout,
                 )?)
             }
@@ -527,8 +503,8 @@ impl LocalCodexChatService {
             };
         let mut reply = match session.send_turn(
             &provider_message,
-            &selected_model,
-            &selected_reasoning_effort,
+            &selected_route.model,
+            &selected_route.reasoning_effort,
             cancellation,
             &mut project_and_forward_activity,
             &mut persist_and_forward_question,
@@ -646,19 +622,115 @@ where
         .ok_or_else(|| format!("chat project expired before provider turn start: {project_id}"))
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SelectedAgentChatRoute {
+    pub runtime_adapter_id: String,
+    pub provider_instance_id: String,
+    pub provider_instance_revision: String,
+    pub protocol_facade_id: String,
+    pub provider_id: Option<String>,
+    pub model: String,
+    pub reasoning_effort: String,
+    pub harness_mode: LocalCodexChatHarnessMode,
+}
+
 fn selected_route(
     request: &LocalCodexChatRequest,
     stored: Option<&persistence::StoredChatSession>,
-) -> Result<(String, String, LocalCodexChatHarnessMode), String> {
+    catalogue: &AgentChatProviderCatalogue,
+) -> Result<SelectedAgentChatRoute, String> {
+    let requested_instance =
+        normalize_route_value(request.provider_instance_id.as_deref(), "provider instance")?
+            .or_else(|| {
+                stored
+                    .filter(|session| !session.provider_instance_id.is_empty())
+                    .map(|session| session.provider_instance_id.clone())
+            });
+    let instance = match requested_instance {
+        Some(instance_id) => catalogue
+            .instance(&instance_id)
+            .ok_or_else(|| format!("configured provider instance is unavailable: {instance_id}"))?,
+        None => catalogue.sole_ready_instance().ok_or_else(|| {
+            "provider selection is required because no single ready instance exists".to_owned()
+        })?,
+    };
+    if instance.selection_readiness != "ready" {
+        return Err(format!(
+            "configured provider instance is not ready: {}",
+            instance.provider_instance_id
+        ));
+    }
+    let protocol_facade_id =
+        normalize_route_value(request.protocol_facade_id.as_deref(), "protocol facade")?
+            .or_else(|| {
+                stored
+                    .filter(|session| !session.protocol_facade_id.is_empty())
+                    .map(|session| session.protocol_facade_id.clone())
+            })
+            .unwrap_or_else(|| instance.protocol_facade_id.clone());
+    if protocol_facade_id != instance.protocol_facade_id {
+        return Err("selected protocol facade does not belong to provider instance".to_owned());
+    }
+    let provider_instance_revision = normalize_route_value(
+        request.provider_instance_revision.as_deref(),
+        "provider instance revision",
+    )?
+    .or_else(|| {
+        stored
+            .filter(|session| !session.provider_instance_revision.is_empty())
+            .map(|session| session.provider_instance_revision.clone())
+    })
+    .unwrap_or_else(|| instance.instance_revision.clone());
+    if provider_instance_revision != instance.instance_revision {
+        return Err("selected provider instance revision is stale".to_owned());
+    }
     let model = normalize_route_value(request.model.as_deref(), "chat model")?
         .or_else(|| stored.map(|session| session.model.clone()))
         .unwrap_or_else(|| CHAT_MODEL.to_owned());
+    let requested_provider_id = normalize_route_value(request.provider_id.as_deref(), "provider")?
+        .or_else(|| stored.and_then(|session| session.provider_id.clone()));
+    let matching_models = instance
+        .models
+        .iter()
+        .filter(|entry| entry.model == model)
+        .collect::<Vec<_>>();
+    let selected_model = if let Some(provider_id) = requested_provider_id.as_deref() {
+        matching_models
+            .iter()
+            .copied()
+            .find(|entry| entry.provider_id.as_deref() == Some(provider_id))
+    } else if matching_models.len() == 1 {
+        matching_models.first().copied()
+    } else {
+        matching_models
+            .iter()
+            .copied()
+            .find(|entry| entry.provider_id.is_none())
+    }
+    .ok_or_else(|| "selected model does not belong to provider instance".to_owned())?;
     let reasoning_effort =
         normalize_route_value(request.reasoning_effort.as_deref(), "chat reasoning effort")?
             .or_else(|| stored.and_then(|session| session.reasoning_effort.clone()))
-            .unwrap_or_else(|| CHAT_REASONING_EFFORT.to_owned());
+            .unwrap_or_else(|| selected_model.default_reasoning_effort.clone());
+    if !selected_model.supported_reasoning_efforts.is_empty()
+        && !selected_model
+            .supported_reasoning_efforts
+            .iter()
+            .any(|option| option.reasoning_effort == reasoning_effort)
+    {
+        return Err("selected reasoning effort is unsupported by the model".to_owned());
+    }
 
-    Ok((model, reasoning_effort, request.harness_mode))
+    Ok(SelectedAgentChatRoute {
+        runtime_adapter_id: instance.runtime_adapter_id.clone(),
+        provider_instance_id: instance.provider_instance_id.clone(),
+        provider_instance_revision,
+        protocol_facade_id,
+        provider_id: selected_model.provider_id.clone(),
+        model,
+        reasoning_effort,
+        harness_mode: request.harness_mode,
+    })
 }
 
 fn normalize_route_value(value: Option<&str>, label: &str) -> Result<Option<String>, String> {
@@ -669,10 +741,9 @@ fn normalize_route_value(value: Option<&str>, label: &str) -> Result<Option<Stri
     if value.is_empty() || value.len() > 128 {
         return Err(format!("{label} must contain between 1 and 128 characters"));
     }
-    if !value
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
-    {
+    if !value.chars().all(|character| {
+        character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':' | '/' | '@')
+    }) {
         return Err(format!("{label} contains unsupported characters"));
     }
     Ok(Some(value.to_owned()))

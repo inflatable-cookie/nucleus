@@ -24,9 +24,11 @@ import {
   mutateWorkspaceLayout,
   prepareWorkspacePanel,
   updateWorkspacePanelPresentation,
+  updateWorkspaceProjectContext,
   type WorkspaceLayoutSnapshot,
   type WorkspacePanelPresentation,
   type WorkspacePanelPresentationInput,
+  type WorkspaceProjectContext,
 } from "./workspaceLayout";
 
 export interface WorkspaceLayoutSessionOptions {
@@ -55,6 +57,10 @@ export interface WorkspaceLayoutPort {
     panelInstanceId: string,
     presentation: WorkspacePanelPresentationInput,
   ): ReturnType<typeof updateWorkspacePanelPresentation>;
+  updateContext(
+    projectId: string,
+    context: WorkspaceProjectContext,
+  ): ReturnType<typeof updateWorkspaceProjectContext>;
 }
 
 const workspaceLayoutPort: WorkspaceLayoutPort = {
@@ -62,6 +68,7 @@ const workspaceLayoutPort: WorkspaceLayoutPort = {
   prepare: prepareWorkspacePanel,
   mutate: mutateWorkspaceLayout,
   update: updateWorkspacePanelPresentation,
+  updateContext: updateWorkspaceProjectContext,
 };
 
 export class WorkspaceLayoutSession {
@@ -229,6 +236,20 @@ export class WorkspaceLayoutSession {
         panelInstanceId,
         presentation,
       );
+      if (generation !== this.#generation || this.#destroyed) return;
+      this.#accept(snapshot);
+    } catch (error) {
+      if (generation === this.#generation && !this.#destroyed) {
+        this.#error = error;
+      }
+      throw error;
+    }
+  }
+
+  async updateContext(context: WorkspaceProjectContext): Promise<void> {
+    const generation = this.#generation;
+    try {
+      const snapshot = await this.#port.updateContext(this.projectId, context);
       if (generation !== this.#generation || this.#destroyed) return;
       this.#accept(snapshot);
     } catch (error) {

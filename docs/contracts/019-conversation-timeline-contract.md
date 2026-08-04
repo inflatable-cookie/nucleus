@@ -312,7 +312,7 @@ Nucleus persists assistant messages and work activity separately. Each durable
 activity observation retains:
 
 - conversation and canonical Nucleus turn identity
-- Swallowtail runtime operation and operation-local activity identity
+- Swallowtail `ActivityObservation::key()` as the complete portable activity identity
 - runtime event sequence
 - portable activity kind, lifecycle phase, and status
 - assistant phase where applicable
@@ -327,8 +327,20 @@ activity observation retains:
 Provider activity references and raw provider envelopes are not required by
 the product projection. Activity content is task data, not diagnostic text.
 
-Repeated observations update one display activity by runtime operation plus
-operation-local activity id. Durable observations remain ordered evidence.
+Repeated observations upsert one durable activity row by Swallowtail's complete
+`ActivityKey`, which contains runtime operation plus operation-local activity
+identity. The latest retained row keeps the runtime event sequence used for
+ordering. Provider activity references are opaque evidence, not projection
+keys. Identical provider and activity references in distinct runtime operations
+remain distinct durable rows.
+
+Nucleus conversation, provider-thread, canonical turn, and transcript-message
+identities remain separate from the portable activity key. Consumer-supplied
+Swallowtail run and turn ids must not be reused while an earlier projection
+using that operation identity remains retained, including after a Nucleus
+process restart. Nucleus does not rewrite or parse provider ids to enforce this
+rule.
+
 Completion-only activity does not gain a synthetic start. Provider-unspecified
 assistant activity remains provider-unspecified. Namespaced unknown activity
 remains unknown.
@@ -360,17 +372,18 @@ structured presentation rather than being flattened into generic tool-call
 rows. This presentation remains provider work evidence. It does not create
 Nucleus planning artifacts, Goals, Tasks, or child-control authority.
 
-An Agent Chat turn may carry one optional active task id from the local
-workspace selection. The server must resolve the current task record and
-confirm that it belongs to the request project before adding bounded context
-to the provider turn. Client-supplied task fields are not authoritative.
+An Agent Chat turn may carry optional active Goal and Task ids from the local
+workspace selection. The server must resolve each current record and confirm
+that it belongs to the request project before adding bounded context to the
+provider turn. Client-supplied Goal or Task fields are not authoritative.
 
-Active-task context is focus, not instruction or authority. It does not imply
+Selected Goal and Task context is focus, not instruction or authority. It does not imply
 mutation, assignment, lifecycle change, or dispatch. The canonical user
 message remains the operator-authored text; provider-only context enrichment
 must not be persisted as if the operator wrote it. The first slice keeps the
-selection local and removable rather than creating a durable
-conversation-to-task binding.
+selection in local client presentation state and removable rather than creating
+a durable conversation-to-Goal or conversation-to-Task binding. Restored ids
+must pass the same current-project resolution as a fresh selection.
 
 An explicit operator message may also source a bounded task-workflow mandate.
 That mandate is a separate canonical record linked to the conversation, user

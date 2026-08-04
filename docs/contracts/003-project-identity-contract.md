@@ -106,6 +106,13 @@ turning it into a global project default or leaking it into another project.
 Task execution and review snapshots retain the resolved resource id as task
 evidence attribution.
 
+The client must use one effective-target projection for both the visible panel
+control and the request sent to the host. It must not display one resource
+while silently executing against another. A healthy sole resource stays quiet;
+choice, repair, or a non-local authority host may make the compact target
+control visible. Runtime connection status comes from the opened host session,
+not from the resource record.
+
 ## Management Repository
 
 A project may configure one active management projection targeting a Git

@@ -21,27 +21,28 @@ use nucleus_server::{
     read_forge_repository_metadata_refreshes, read_forge_status_check_refreshes,
     recover_interrupted_chat_state, seed_local_memory_proposal, seed_local_planning_session,
     seed_local_project_with_resource_root, seed_local_research_run_brief, seed_local_task,
-    select_chat_actor, write_command_evidence, ControlApiCodecError, ControlRequestEnvelopeDto,
-    ControlResponseBodyDto, ControlResponseEnvelopeDto, EditorDirectoryEntry,
-    EditorFileCreateRequest, EditorFileDeleteReceipt, EditorFileDeleteRequest, EditorFileEntry,
-    EditorFileRenameRequest, EditorFileSaveRequest, EditorFileSnapshot, EditorFileWatchRuntime,
-    ForgeCredentialStatusRefreshInput, ForgeCredentialStatusRefreshPersistenceInput,
-    ForgeNetworkCredentialKind, ForgeNetworkCredentialResolutionBoundary,
-    ForgeNetworkCredentialStatus, ForgeNetworkExecutionCredentialRef,
-    ForgeNetworkExecutionOperationFamily, ForgePullRequestProvider, ForgePullRequestRefreshInput,
+    select_chat_actor, write_command_evidence, AgentChatProviderCatalogue, ControlApiCodecError,
+    ControlRequestEnvelopeDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
+    EditorDirectoryEntry, EditorFileCreateRequest, EditorFileDeleteReceipt,
+    EditorFileDeleteRequest, EditorFileEntry, EditorFileRenameRequest, EditorFileSaveRequest,
+    EditorFileSnapshot, EditorFileWatchRuntime, ForgeCredentialStatusRefreshInput,
+    ForgeCredentialStatusRefreshPersistenceInput, ForgeNetworkCredentialKind,
+    ForgeNetworkCredentialResolutionBoundary, ForgeNetworkCredentialStatus,
+    ForgeNetworkExecutionCredentialRef, ForgeNetworkExecutionOperationFamily,
+    ForgePullRequestProvider, ForgePullRequestRefreshInput,
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
     ForgeStatusCheckRefreshScope, LocalCodexChatActorSelectionRequest,
-    LocalCodexChatCancellationRegistry, LocalCodexChatHistory, LocalCodexChatModelOption,
-    LocalCodexChatQuestionAnswerRequest, LocalCodexChatQuestionRegistry, LocalCodexChatReply,
-    LocalCodexChatRequest, LocalCodexChatService, LocalCodexChatThreadSummary,
-    LocalCodexCredentialActionReceipt, LocalCodexCredentialActionRequest,
-    LocalControlRequestHandler, LocalMemoryProposalSeed, LocalPlanningSessionSeed,
-    LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed, ServerStateService,
-    StoredChatActorSelection, StoredChatQuestionExchange, TaskDiffFilePatchRequest,
-    TaskDiffFilePatchResponse, TaskDiffOverviewRequest, TaskDiffOverviewResponse,
-    TaskReviewSnapshotStore, TauriIpcControlCommandAdapter, TerminalHostRuntime,
+    LocalCodexChatCancellationRegistry, LocalCodexChatHistory, LocalCodexChatQuestionAnswerRequest,
+    LocalCodexChatQuestionRegistry, LocalCodexChatReply, LocalCodexChatRequest,
+    LocalCodexChatService, LocalCodexChatThreadSummary, LocalCodexCredentialActionReceipt,
+    LocalCodexCredentialActionRequest, LocalControlRequestHandler, LocalMemoryProposalSeed,
+    LocalPlanningSessionSeed, LocalProjectSeed, LocalResearchRunBriefSeed, LocalTaskSeed,
+    ServerStateService, StoredChatActorSelection, StoredChatQuestionExchange,
+    TaskDiffFilePatchRequest, TaskDiffFilePatchResponse, TaskDiffOverviewRequest,
+    TaskDiffOverviewResponse, TaskReviewSnapshotStore, TauriIpcControlCommandAdapter,
+    TerminalHostRuntime,
 };
 
 mod bridge;
@@ -467,8 +468,9 @@ async fn read_task_diff_overview(
     request: TaskDiffOverviewRequest,
 ) -> Result<TaskDiffOverviewResponse, String> {
     let server_state = state.server_state.clone();
+    let store = state.task_review_snapshot_store.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        nucleus_server::read_task_diff_overview(&server_state, &request)
+        nucleus_server::read_task_diff_overview(&server_state, store.as_ref(), &request)
     })
     .await
     .map_err(|_| "desktop diff worker failed".to_owned())?
@@ -675,18 +677,10 @@ async fn rename_agent_chat_thread(
 }
 
 #[tauri::command]
-async fn list_agent_chat_models() -> Result<Vec<LocalCodexChatModelOption>, String> {
-    tauri::async_runtime::spawn_blocking(LocalCodexChatService::available_models)
+async fn agent_chat_provider_catalogue() -> Result<AgentChatProviderCatalogue, String> {
+    tauri::async_runtime::spawn_blocking(LocalCodexChatService::provider_catalogue)
         .await
-        .map_err(|error| format!("agent chat model worker failed: {error}"))?
-}
-
-#[tauri::command]
-async fn agent_chat_provider_summary(
-) -> Result<nucleus_server::LocalCodexChatProviderSummary, String> {
-    tauri::async_runtime::spawn_blocking(LocalCodexChatService::provider_summary)
-        .await
-        .map_err(|error| format!("agent chat provider summary worker failed: {error}"))
+        .map_err(|error| format!("agent chat provider catalogue worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -995,6 +989,24 @@ async fn update_workspace_panel_presentation(
 }
 
 #[tauri::command]
+async fn update_workspace_project_context(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+    context: workspace_ui::WorkspaceProjectContextDto,
+) -> Result<workspace_ui::WorkspaceLayoutSnapshotDto, String> {
+    let runtime = state.workspace_ui.clone();
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        runtime.update_project_context(&project_id, context)
+    })
+    .await
+    .map_err(|_| "desktop workspace context worker failed".to_owned())??;
+    app.emit(WORKSPACE_LAYOUT_CHANGED_EVENT, snapshot.clone())
+        .map_err(|error| format!("emit desktop layout snapshot failed: {error}"))?;
+    Ok(snapshot)
+}
+
+#[tauri::command]
 fn desktop_window_page_ready(
     window: tauri::State<'_, window_host::NucleusWindowRuntime>,
 ) -> Result<longhorn_tauri_windowing::WindowRevealReceipt, String> {
@@ -1014,6 +1026,8 @@ pub fn run() {
             let profile = desktop_profile::DesktopProfile::from_environment(facts, &home)
                 .map_err(std::io::Error::other)?;
             profile.prepare().map_err(std::io::Error::other)?;
+            config_operations::restore::run_before_authorities(&profile)
+                .map_err(std::io::Error::other)?;
             let workspace_ui_paths = profile.workspace_ui_paths();
             let workspace_ui = Arc::new(
                 workspace_ui::WorkspaceUiRuntime::new(
@@ -1063,13 +1077,13 @@ pub fn run() {
             load_agent_chat_history,
             list_agent_chat_threads,
             rename_agent_chat_thread,
-            list_agent_chat_models,
-            agent_chat_provider_summary,
+            agent_chat_provider_catalogue,
             agent_chat_credential_action,
             workspace_layout_snapshot,
             prepare_workspace_panel,
             mutate_workspace_layout,
             update_workspace_panel_presentation,
+            update_workspace_project_context,
             desktop_startup_status,
             desktop_window_page_ready,
             list_editor_directory,
@@ -1123,6 +1137,9 @@ pub fn run() {
             longhorn_tauri_config::longhorn_config_backup_create,
             config_operations::export::longhorn_config_backup_export,
             longhorn_tauri_config::longhorn_config_backup_retention,
+            config_operations::restore::commands::nucleus_config_restore_prepare,
+            config_operations::restore::commands::nucleus_config_restore_status,
+            config_operations::restore::commands::nucleus_config_restore_confirm,
             longhorn_tauri_config::longhorn_config_restore_inspect,
             longhorn_tauri_config::longhorn_config_restore_plan,
             longhorn_tauri_config::longhorn_config_restore_execute,

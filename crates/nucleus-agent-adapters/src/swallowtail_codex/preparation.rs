@@ -12,7 +12,7 @@ use swallowtail_core::{
 };
 use swallowtail_runtime::{DiscoveryCancellation, PreparedAccessEvidence};
 
-use super::{host, request_id, scope_id};
+use super::{host, request_id, scope_id, CODEX_PROVIDER_INSTANCE_ID};
 
 const PREPARATION_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -23,7 +23,7 @@ pub(super) async fn app_server(host: &host::CodexHost) -> Result<CodexPreparedIn
         .ok_or_else(|| "Codex preparation time service is unavailable".to_owned())?;
     let input = CodexPreparationInput::new(
         CodexPreparedDriver::AppServer,
-        ConfiguredInstanceId::new("nucleus.codex.app-server").map_err(|error| error.to_string())?,
+        ConfiguredInstanceId::new(CODEX_PROVIDER_INSTANCE_ID).map_err(|error| error.to_string())?,
         InstanceRevision::new("1").map_err(|error| error.to_string())?,
         host::host_id(),
         host.target().clone(),

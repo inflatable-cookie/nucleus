@@ -26,11 +26,13 @@
     task,
     onOpenEditor,
     onReviewed,
+    onPrepareRework,
   }: {
     projectId: string | null;
     task: ControlTaskRecordDto | null;
-    onOpenEditor: (fileRef: string) => void;
+    onOpenEditor: (fileRef: string, resourceId: string | null, displayPath: string) => void;
     onReviewed: () => void;
+    onPrepareRework: () => void;
   } = $props();
 
   let overview = $state<TaskDiffOverview | null>(null);
@@ -215,7 +217,12 @@
   }
 
   function openSelectedFile(): void {
-    if (selectedFile) onOpenEditor(selectedFile.file_ref);
+    if (!selectedFile) return;
+    if (!overview?.resource_id) {
+      notice = "This review evidence does not identify an exact project resource.";
+      return;
+    }
+    onOpenEditor(selectedFile.file_ref, overview.resource_id, selectedFile.display_path);
   }
 </script>
 
@@ -265,7 +272,13 @@
           </div>
         </Popover>
         {#if selectedFile}
-          <Button variant="secondary" size="sm" onClick={openSelectedFile}>Open in Editor</Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!overview.resource_id}
+            title={overview.resource_id ? "Open this reviewed file in Editor" : "Exact snapshot resource unavailable"}
+            onClick={openSelectedFile}
+          >Open in Editor</Button>
         {/if}
         <span class="diff-counts">+{patch?.additions ?? 0} −{patch?.deletions ?? 0}</span>
       </div>
@@ -274,8 +287,11 @@
     {#if error}<div class="notice error" role="alert">{error}</div>{/if}
     {#if notice}<div class="notice" role="status">{notice}</div>{/if}
     {#if currentReview}
-      <div class="review-outcome" role="status">
-        <strong>{currentReview.outcome === "needs_changes" ? "Needs changes" : "Accepted"}</strong>
+      <div class="review-outcome">
+        <strong role="status">{currentReview.outcome === "needs_changes" ? "Needs changes" : "Accepted"}</strong>
+        {#if currentReview.outcome === "needs_changes"}
+          <Button variant="secondary" size="sm" onClick={onPrepareRework}>Address changes</Button>
+        {/if}
         {#if currentReview.reason_summary}<span>{currentReview.reason_summary}</span>{/if}
       </div>
     {/if}
@@ -301,7 +317,7 @@
 </Surface>
 
 <style>
-  .diff-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--poodle-color-text-primary); }
+  .diff-panel { display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; color: var(--poodle-color-text-primary); container-name: task-diff-panel; container-type: inline-size; }
   .diff-toolbar, .file-toolbar { display: flex; align-items: center; gap: .5rem; min-width: 0; padding: .38rem .55rem; border-bottom: 1px solid var(--poodle-color-border-subtle); }
   .summary { display: flex; align-items: baseline; gap: .55rem; min-width: 0; overflow: hidden; }
   .summary strong, .summary span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -321,8 +337,10 @@
   .menu-actions { display: flex; justify-content: flex-end; gap: .4rem; }
   .notice { padding: .35rem .6rem; color: var(--poodle-color-text-secondary); font-size: .78rem; border-bottom: 1px solid var(--poodle-color-border-subtle); }
   .notice.error { color: var(--poodle-color-text-danger); }
-  .review-outcome { display: flex; gap: .45rem; align-items: baseline; padding: .45rem .6rem; font-size: .8rem; border-bottom: 1px solid var(--poodle-color-border-subtle); background: var(--poodle-color-background-surface); }
-  .review-outcome span { color: var(--poodle-color-text-secondary); overflow-wrap: anywhere; }
+  .review-outcome { display: flex; gap: .55rem; align-items: center; min-width: 0; padding: .45rem .6rem; font-size: .8rem; border-bottom: 1px solid var(--poodle-color-border-subtle); background: var(--poodle-color-background-surface); }
+  .review-outcome strong { flex: none; }
+  .review-outcome span { flex: 1; min-width: 0; overflow: hidden; color: var(--poodle-color-text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+  .review-outcome :global(button) { flex: none; }
   .diff-body { flex: 1; min-height: 0; overflow: auto; background: var(--poodle-color-background-canvas); }
   pre { min-width: max-content; margin: 0; padding: .5rem 0; font: .78rem/1.5 var(--poodle-typography-font-family-mono); tab-size: 2; }
   .line { display: block; min-height: 1.5em; padding: 0 .75rem; white-space: pre; }
@@ -331,5 +349,5 @@
   .line.hunk { color: var(--poodle-color-text-accent); background: color-mix(in srgb, var(--poodle-color-accent-base) 8%, transparent); }
   .line.header { color: var(--poodle-color-text-secondary); font-weight: 600; }
   .empty { display: grid; place-items: center; min-height: 100%; padding: 1rem; text-align: center; }
-  @media (max-width: 42rem) { .summary span { display: none; } .file-toolbar :global(.poodle-popover) { max-width: 55%; } .file-trigger { min-width: 0; } }
+  @container task-diff-panel (max-width: 42rem) { .summary span { display: none; } .file-toolbar :global(.poodle-popover) { max-width: 55%; } .file-trigger { min-width: 0; } }
 </style>

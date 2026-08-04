@@ -9,6 +9,8 @@ use nucleus_memory::{
 };
 use nucleus_projects::ProjectId;
 
+use crate::memory_display::project_memory_display;
+
 /// Read-only project-scoped memory proposal projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryProposalsProjection {
@@ -27,6 +29,10 @@ pub struct MemoryProposalsProjection {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryProposalSummary {
     pub proposal_id: String,
+    pub display_title: Option<String>,
+    pub display_summary: Option<String>,
+    pub display_redacted: bool,
+    pub display_truncated: bool,
     pub scope: MemoryProposalSummaryScope,
     pub kind: MemoryProposalSummaryKind,
     pub status: MemoryProposalSummaryStatus,
@@ -163,8 +169,13 @@ impl MemoryProposalsProjection {
 
 impl From<&MemoryProposalStorageRecord> for MemoryProposalSummary {
     fn from(record: &MemoryProposalStorageRecord) -> Self {
+        let display = project_memory_display(&record.title, &record.summary, &record.sensitivity);
         Self {
             proposal_id: record.proposal_id.clone(),
+            display_title: display.title,
+            display_summary: display.summary,
+            display_redacted: display.redacted,
+            display_truncated: display.truncated,
             scope: MemoryProposalSummaryScope::from(&record.scope),
             kind: MemoryProposalSummaryKind::from(&record.kind),
             status: MemoryProposalSummaryStatus::from(&record.status),

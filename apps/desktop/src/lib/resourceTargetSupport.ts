@@ -11,6 +11,18 @@ export type ResourceTargetPresentation = {
   workingResources: ControlProjectResourceRecordDto[];
 };
 
+export function effectiveResourceTarget(
+  project: ControlProjectRecordDto,
+  explicitResourceId: string | null,
+): string | null {
+  if (explicitResourceId) return explicitResourceId;
+  if (project.default_working_resource_id) return project.default_working_resource_id;
+  const availableResources = project.resources.filter(
+    (resource) => resource.role === "working" && resourceIsAvailable(resource),
+  );
+  return availableResources.length === 1 ? availableResources[0].resource_id : null;
+}
+
 export function resourceTargetPresentation(
   project: ControlProjectRecordDto,
   explicitResourceId: string | null,
@@ -21,10 +33,7 @@ export function resourceTargetPresentation(
   return {
     show: availableResources.length > 1 || repairCount > 0,
     showSelector: workingResources.length > 1,
-    selectedResourceId:
-      explicitResourceId
-      ?? project.default_working_resource_id
-      ?? (availableResources.length === 1 ? availableResources[0].resource_id : null),
+    selectedResourceId: effectiveResourceTarget(project, explicitResourceId),
     repairCount,
     workingResources,
   };

@@ -271,6 +271,13 @@ authority and must not be copied into the durable decision record.
 Rework creates a new work item or a repaired work item with provenance back to
 the prior one. It must not overwrite prior runtime or review evidence.
 
+A client may prepare a rework message from the current selected Task and
+durable Needs changes outcome. Prepared composer text is transient UI state,
+not an admitted command or mandate. It contains no transient patch bytes and
+must not be submitted automatically. The agent resolves the current durable
+review context again after the operator sends the message; stale, accepted, or
+mismatched review context is refused by the existing rework authority.
+
 ## Implementation Gap Review
 
 Current engine proof records already have useful shape:

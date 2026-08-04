@@ -20,6 +20,10 @@ fn response_envelope_dto_serializes_memory_proposals_without_bodies_or_effects()
                 project_id: ProjectId("project:nucleus".to_owned()),
                 proposals: vec![MemoryProposalSummary {
                     proposal_id: "memory-proposal:nucleus:1".to_owned(),
+                    display_title: None,
+                    display_summary: None,
+                    display_redacted: true,
+                    display_truncated: false,
                     scope: MemoryProposalSummaryScope::Project,
                     kind: MemoryProposalSummaryKind::Decision,
                     status: MemoryProposalSummaryStatus::Proposed,
@@ -74,6 +78,8 @@ fn response_envelope_dto_serializes_memory_proposals_without_bodies_or_effects()
         } if project_id == "project:nucleus"
             && proposals.len() == 1
             && proposals[0].proposal_id == "memory-proposal:nucleus:1"
+            && proposals[0].display_title.is_none()
+            && proposals[0].display_redacted
             && source_counts.proposal_records == 1
             && source_counts.link_refs == 2
             && !client_can_mutate

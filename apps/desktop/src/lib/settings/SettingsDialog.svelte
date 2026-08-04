@@ -29,7 +29,9 @@
 </script>
 
 {#snippet settingsPage(context: SettingsPageRenderContext)}
-  <LazySettingsPage {context} {commandSession} />
+  {#key context.page.id}
+    <LazySettingsPage {context} {commandSession} />
+  {/key}
 {/snippet}
 
 <SettingsShell

@@ -60,10 +60,19 @@ Nucleus-owned conversation state and the sparse project workspace.
 - [x] Inspect the current app bundle, stored transcript readability, and
       non-stealing scroll behavior without provider effects.
 
+### Batch 5.4 — Portable Activity Key Adoption
+
+- [x] Execute card 082.
+- [x] Upsert durable activity by Swallowtail's complete portable `ActivityKey`.
+- [x] Keep Nucleus thread, turn, and transcript-message identity separate.
+- [x] Prevent consumer runtime-operation identity reuse across retained state.
+- [x] Prove equal provider/activity ids in two operations retain two rows.
+
 ## Acceptance Criteria
 
 - [x] no Nucleus code switches on Codex native event names
 - [x] one operation-local activity identity updates one displayed work item
+- [x] one complete portable activity key upserts one durable row
 - [x] assistant messages and work activity persist separately
 - [x] reasoning is labelled only as a summary
 - [x] consecutive work collapses through Poodle-owned grouping

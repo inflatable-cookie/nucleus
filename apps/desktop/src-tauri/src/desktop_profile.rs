@@ -209,6 +209,28 @@ impl DesktopProfile {
     pub fn legacy_import_receipt(&self) -> Option<&LegacyImportReceipt> {
         self.legacy_import_receipt.as_ref()
     }
+
+    #[cfg(test)]
+    pub(crate) fn portable_for_test(root: &Path) -> Result<Self, String> {
+        use longhorn_config::TargetPlatform;
+
+        let facts = PlatformDirectoryFacts::complete(
+            TargetPlatform::MacOs,
+            root.join("host/config"),
+            root.join("host/data"),
+            root.join("host/state"),
+            root.join("host/cache"),
+            root.join("host/log"),
+            root.join("host/runtime"),
+        );
+        Self::from_values(
+            facts,
+            Some(root.as_os_str()),
+            None,
+            None,
+            &root.join("home"),
+        )
+    }
 }
 
 #[cfg(test)]

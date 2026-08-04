@@ -26,6 +26,8 @@ import {
   DENSITY_ENTRY_ID,
   DEFAULT_HARNESS_MODE_ENTRY_ID,
   DEFAULT_MODEL_ENTRY_ID,
+  DEFAULT_PROVIDER_INSTANCE_ENTRY_ID,
+  DEFAULT_PROVIDER_ID_ENTRY_ID,
   DEFAULT_REASONING_ENTRY_ID,
   FIXTURE_STATUS_ENTRY_ID,
   GENERAL_PAGE_ID,
@@ -126,6 +128,8 @@ export class SettingsTransport implements EventTransport {
     const value = command.intent.value as Record<string, unknown>;
     if (command.applyUnitId === AGENT_UNIT_ID) {
       for (const [entryId, key] of [
+        [DEFAULT_PROVIDER_INSTANCE_ENTRY_ID, "defaultProviderInstanceId"],
+        [DEFAULT_PROVIDER_ID_ENTRY_ID, "defaultProviderId"],
         [DEFAULT_MODEL_ENTRY_ID, "defaultModel"],
         [DEFAULT_REASONING_ENTRY_ID, "defaultReasoningEffort"],
         [DEFAULT_HARNESS_MODE_ENTRY_ID, "defaultHarnessMode"],
@@ -272,6 +276,8 @@ function applyUnit(id: string, scopeId: string, timing: "immediate" | "staged") 
 function agentScopeSnapshot(): SettingsScopeSnapshot {
   const snapshot = scopeSnapshot(AGENT_SCOPE_ID, DEFAULT_MODEL_ENTRY_ID, "gpt-5.4-mini");
   snapshot.values.push(
+    valueProjection(DEFAULT_PROVIDER_INSTANCE_ENTRY_ID, "codex:local-default"),
+    valueProjection(DEFAULT_PROVIDER_ID_ENTRY_ID, null),
     valueProjection(DEFAULT_REASONING_ENTRY_ID, "low"),
     valueProjection(DEFAULT_HARNESS_MODE_ENTRY_ID, "normal"),
   );

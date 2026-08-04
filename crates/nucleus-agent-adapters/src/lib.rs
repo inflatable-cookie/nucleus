@@ -23,7 +23,7 @@ pub use credentials::{
     AdapterSecretResolutionBoundary, AdapterSecretResolutionPolicy, AdapterSecretScope,
     AdapterSecretSource, RawSecretExposurePolicy,
 };
-pub use live_registry::AgentAdapterRegistry;
+pub use live_registry::{AgentAdapterRegistry, RegisteredProviderInstanceCatalogue};
 pub use persistence::{
     AdapterRegistryPersistedField, AdapterRegistryPersistenceBackend,
     AdapterRegistryPersistencePolicy, AdapterRegistryRecomputedField, AdapterRegistryRepairPolicy,

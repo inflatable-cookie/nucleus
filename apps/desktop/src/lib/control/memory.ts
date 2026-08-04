@@ -4,6 +4,10 @@ import type { CountByLabelDto } from "./planningResearch";
 export type ControlAcceptedMemorySummaryDto = {
   memory_id: string;
   source_proposal_id: string | null;
+  display_title: string | null;
+  display_summary: string | null;
+  display_redacted: boolean;
+  display_truncated: boolean;
   scope: string;
   kind: string;
   status: string;

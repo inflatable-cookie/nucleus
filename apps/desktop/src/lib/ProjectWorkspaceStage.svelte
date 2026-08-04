@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Surface, Text } from "@poodle/svelte";
+  import { Button, Surface, Text } from "@poodle/svelte";
   import {
     LayoutDockRegion,
     LayoutSplitView,
@@ -14,14 +14,19 @@
   import ForgeDiffPanel from "./ForgeDiffPanel.svelte";
   import MemoryPanel from "./MemoryPanel.svelte";
   import PanelResourceTargetControl from "./PanelResourceTargetControl.svelte";
+  import { effectiveResourceTarget } from "./resourceTargetSupport";
   import TaskListPanel from "./TaskListPanel.svelte";
   import TerminalPanel from "./TerminalPanel.svelte";
   import { destroyBrowserIsland } from "./browserPanel";
   import { closeTerminalPanel } from "./terminalClient";
-  import type {
-    ControlGoalRecordDto,
-    ControlProjectRecordDto,
-    ControlTaskRecordDto,
+  import {
+    buildStateListQuery,
+    goalRecordsFromResponse,
+    submitControlEnvelope,
+    taskRecordsFromResponse,
+    type ControlGoalRecordDto,
+    type ControlProjectRecordDto,
+    type ControlTaskRecordDto,
   } from "./control";
   import {
     WorkspaceLayoutSession,
@@ -33,28 +38,41 @@
     WorkspacePanelPresentationInput,
   } from "./workspaceLayout";
   import type { AgentChatDefaults } from "./settings/client";
+  import {
+    REVIEW_REWORK_PROMPT,
+    type AgentChatDraftRequest,
+  } from "./reviewRework";
 
   let {
     selectedProject,
+    selectedConversationId = $bindable(null),
     agentChatDefaults,
     onOpenPanelKindsChange,
     onCommandContextChange,
   }: {
     selectedProject: ControlProjectRecordDto | null;
+    selectedConversationId: string | null;
     agentChatDefaults: AgentChatDefaults;
     onOpenPanelKindsChange?: (kinds: string[]) => void;
     onCommandContextChange?: (kind: string | null) => void;
   } = $props();
 
-  let session = $state.raw<WorkspaceLayoutSession | null>(null);
+  let session = $state<WorkspaceLayoutSession | null>(null);
   let selectedTaskId = $state<string | null>(null);
-  let selectedTask = $state<ControlTaskRecordDto | null>(null);
   let selectedGoalId = $state<string | null>(null);
-  let selectedGoal = $state<ControlGoalRecordDto | null>(null);
-  let panelConversationIds = $state<Record<string, string>>({});
+  let goals = $state<ControlGoalRecordDto[]>([]);
+  let tasks = $state<ControlTaskRecordDto[]>([]);
+  let workLoading = $state(false);
+  let workFailure = $state<string | null>(null);
+  let workLoadedProjectId = $state<string | null>(null);
+  let contextHydratedProjectId = $state<string | null>(null);
   let layoutDragActive = $state(false);
   let commandActiveRegionId = $state<RegionId | null>(null);
   let panelSequence = 0;
+  let workLoadVersion = 0;
+  let contextWriteActive = false;
+  let contextWriteRequested = false;
+  let appliedConversationRequest: string | null = null;
   let pendingThreadOpen = $state<{
     projectId: string;
     conversationId: string;
@@ -71,6 +89,10 @@
     path: string;
     scope: "all" | "staged" | "working";
   } | null>(null);
+  let pendingAgentChatDraft = $state<(
+    AgentChatDraftRequest & { panelInstanceId: string }
+  ) | null>(null);
+  let agentChatDraftSequence = 0;
 
   const snapshot = $derived(session?.snapshot);
   const binding = $derived(session?.binding);
@@ -78,6 +100,18 @@
   const container = $derived(
     document?.containers.find((candidate) => candidate.id === snapshot?.container_id),
   );
+  const activePanelsByRegion = $derived.by<Record<WorkspaceRegion, string | null>>(() => {
+    const regions = snapshot?.document.containers
+      .find((candidate) => candidate.id === snapshot.container_id)
+      ?.regions;
+    return {
+      left: regions?.find(({ region_id }) => region_id === "left")?.active_panel_instance_id ?? null,
+      center_top: regions?.find(({ region_id }) => region_id === "center_top")?.active_panel_instance_id ?? null,
+      center_bottom: regions?.find(({ region_id }) => region_id === "center_bottom")?.active_panel_instance_id ?? null,
+      right_top: regions?.find(({ region_id }) => region_id === "right_top")?.active_panel_instance_id ?? null,
+      right_bottom: regions?.find(({ region_id }) => region_id === "right_bottom")?.active_panel_instance_id ?? null,
+    };
+  });
   const openPanelKinds = $derived(
     snapshot ? [...new Set(snapshot.panels.map((panel) => panel.kind))] : [],
   );
@@ -91,13 +125,30 @@
   const hasCenter = $derived(visibleRegions.center_top || visibleRegions.center_bottom);
   const hasRight = $derived(visibleRegions.right_top || visibleRegions.right_bottom);
   const hasMain = $derived(hasCenter || hasRight);
+  const selectedGoal = $derived(
+    goals.find(
+      (goal) =>
+        goal.project_id === selectedProject?.project_id && goal.goal_id === selectedGoalId,
+    ) ?? null,
+  );
+  const selectedTask = $derived(
+    tasks.find(
+      (task) =>
+        task.project_id === selectedProject?.project_id && task.task_id === selectedTaskId,
+    ) ?? null,
+  );
 
   $effect(() => {
     const projectId = selectedProject?.project_id ?? null;
     selectedTaskId = null;
-    selectedTask = null;
     selectedGoalId = null;
-    selectedGoal = null;
+    goals = [];
+    tasks = [];
+    workFailure = null;
+    workLoadedProjectId = null;
+    contextHydratedProjectId = null;
+    appliedConversationRequest = null;
+    pendingAgentChatDraft = null;
     layoutDragActive = false;
     if (!projectId) {
       session = null;
@@ -116,6 +167,57 @@
   });
 
   $effect(() => {
+    const projectId = selectedProject?.project_id ?? null;
+    if (projectId) void loadWork(projectId);
+  });
+
+  $effect(() => {
+    const current = snapshot;
+    const projectId = selectedProject?.project_id ?? null;
+    if (!current || !projectId || current.project_id !== projectId) return;
+    if (contextHydratedProjectId === projectId) return;
+    contextHydratedProjectId = projectId;
+    selectedGoalId = current.context.selected_goal_id;
+    selectedTaskId = current.context.selected_task_id;
+    const requestedConversationId = selectedConversationId;
+    selectedConversationId = requestedConversationId ?? current.context.active_conversation_id;
+    if (requestedConversationId) {
+      appliedConversationRequest = requestedConversationId;
+      void openAgentChatThread(requestedConversationId);
+    }
+  });
+
+  $effect(() => {
+    const conversationId = selectedConversationId;
+    const projectId = selectedProject?.project_id ?? null;
+    if (
+      !conversationId
+      || !projectId
+      || !snapshot
+      || contextHydratedProjectId !== projectId
+      || appliedConversationRequest === conversationId
+    ) return;
+    appliedConversationRequest = conversationId;
+    void openAgentChatThread(conversationId);
+  });
+
+  $effect(() => {
+    const projectId = selectedProject?.project_id ?? null;
+    const taskId = selectedTaskId;
+    const goalId = selectedGoalId;
+    if (
+      !projectId
+      || contextHydratedProjectId !== projectId
+      || workLoadedProjectId !== projectId
+    ) return;
+    const validTaskId = taskId && tasks.some((task) => task.task_id === taskId) ? taskId : null;
+    const validGoalId = goalId && goals.some((goal) => goal.goal_id === goalId) ? goalId : null;
+    if (validTaskId !== taskId || validGoalId !== goalId) {
+      setWorkSelection(validGoalId, validTaskId);
+    }
+  });
+
+  $effect(() => {
     onOpenPanelKindsChange?.(openPanelKinds);
   });
 
@@ -126,6 +228,13 @@
       ({ panel_instance_id }) => panel_instance_id === region?.active_panel_instance_id,
     );
     onCommandContextChange?.(activePanel?.kind ?? null);
+    if (activePanel?.kind === "agentChat" && activePanel.conversation_id) {
+      appliedConversationRequest = activePanel.conversation_id;
+      if (selectedConversationId !== activePanel.conversation_id) {
+        selectedConversationId = activePanel.conversation_id;
+        queueContextWrite();
+      }
+    }
   });
 
   $effect(() => {
@@ -150,17 +259,13 @@
   });
 
   $effect(() => {
-    if (!selectedTaskId) selectedTask = null;
-    if (!selectedGoalId) selectedGoal = null;
-  });
-
-  $effect(() => {
     window.addEventListener("nucleus:create-workspace-panel", handleCreateWorkspacePanel);
     window.addEventListener("nucleus:open-task", handleOpenTask);
     window.addEventListener("nucleus:open-goal", handleOpenGoal);
     window.addEventListener("nucleus:open-file", handleOpenFile);
     window.addEventListener("nucleus:open-forge-diff", handleOpenForgeDiff);
     window.addEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
+    window.addEventListener("nucleus:tasks-changed", handleTasksChanged);
     window.addEventListener("nucleus:command-close-active-panel", closeCommandActivePanel);
     return () => {
       window.removeEventListener("nucleus:create-workspace-panel", handleCreateWorkspacePanel);
@@ -169,6 +274,7 @@
       window.removeEventListener("nucleus:open-file", handleOpenFile);
       window.removeEventListener("nucleus:open-forge-diff", handleOpenForgeDiff);
       window.removeEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
+      window.removeEventListener("nucleus:tasks-changed", handleTasksChanged);
       window.removeEventListener("nucleus:command-close-active-panel", closeCommandActivePanel);
     };
   });
@@ -188,14 +294,25 @@
 
   function handleOpenTask(event: Event): void {
     if (!(event instanceof CustomEvent) || event.detail?.projectId !== selectedProject?.project_id) return;
-    selectedTaskId = typeof event.detail.taskId === "string" ? event.detail.taskId : null;
+    const taskId = typeof event.detail.taskId === "string" ? event.detail.taskId : null;
+    setWorkSelection(taskId ? goalIdForTask(taskId) : null, taskId);
     focusPanelKind("tasks");
+  }
+
+  function handleTasksChanged(event: Event): void {
+    const projectId = selectedProject?.project_id ?? null;
+    const changedProjectId = event instanceof CustomEvent ? event.detail?.projectId : null;
+    if (projectId && (!changedProjectId || changedProjectId === projectId)) {
+      void loadWork(projectId);
+    }
   }
 
   function handleOpenGoal(event: Event): void {
     if (!(event instanceof CustomEvent) || event.detail?.projectId !== selectedProject?.project_id) return;
-    selectedGoalId = typeof event.detail.goalId === "string" ? event.detail.goalId : null;
-    selectedTaskId = typeof event.detail.taskId === "string" ? event.detail.taskId : null;
+    setWorkSelection(
+      typeof event.detail.goalId === "string" ? event.detail.goalId : null,
+      typeof event.detail.taskId === "string" ? event.detail.taskId : null,
+    );
     focusPanelKind("tasks");
   }
 
@@ -247,14 +364,133 @@
     const projectId = selectedProject.project_id;
     const candidates = snapshot.panels.filter((panel) => panel.kind === "agentChat");
     const panel = candidates.find(
-      (candidate) => defaultConversationId(projectId, candidate) === conversationId,
+      (candidate) => panelConversationId(candidate) === conversationId,
     ) ?? candidates[0] ?? await addPanel("agentChat");
     if (!panel) return;
-    panelConversationIds = {
-      ...panelConversationIds,
-      [panelConversationKey(projectId, panel)]: conversationId,
+    if (panel.conversation_id !== conversationId) {
+      await session.updatePanel(panel.panel_instance_id, {
+        ...toInput(panel),
+        conversation_id: conversationId,
+      });
+    }
+    appliedConversationRequest = conversationId;
+    selectedConversationId = conversationId;
+    queueContextWrite(true);
+    session.binding?.activate(panel.panel_instance_id);
+  }
+
+  async function prepareSelectedTaskRework(): Promise<void> {
+    if (!session || !snapshot || !selectedProject || !selectedTask) return;
+    const candidates = snapshot.panels.filter((panel) => panel.kind === "agentChat");
+    const panel = candidates.find(
+      (candidate) => panelConversationId(candidate) === selectedConversationId,
+    ) ?? candidates[0] ?? await addPanel("agentChat");
+    if (!panel) return;
+    agentChatDraftSequence += 1;
+    pendingAgentChatDraft = {
+      requestId: agentChatDraftSequence,
+      panelInstanceId: panel.panel_instance_id,
+      projectId: selectedProject.project_id,
+      taskId: selectedTask.task_id,
+      text: REVIEW_REWORK_PROMPT,
     };
     session.binding?.activate(panel.panel_instance_id);
+  }
+
+  function consumeAgentChatDraft(requestId: number): void {
+    if (pendingAgentChatDraft?.requestId === requestId) pendingAgentChatDraft = null;
+  }
+
+  async function activatePanelConversation(panel: WorkspacePanelPresentation): Promise<void> {
+    if (!session || panel.kind !== "agentChat") return;
+    const conversationId = panelConversationId(panel);
+    if (panel.conversation_id !== conversationId) {
+      await session.updatePanel(panel.panel_instance_id, {
+        ...toInput(panel),
+        conversation_id: conversationId,
+      });
+    }
+    appliedConversationRequest = conversationId;
+    selectedConversationId = conversationId;
+    queueContextWrite(true);
+  }
+
+  function setWorkSelection(goalId: string | null, taskId: string | null): void {
+    selectedGoalId = goalId;
+    selectedTaskId = taskId;
+    queueContextWrite(true);
+  }
+
+  function goalIdForTask(taskId: string): string | null {
+    return goals.find((goal) => goal.ordered_task_refs.includes(taskId))?.goal_id ?? null;
+  }
+
+  async function loadWork(projectId: string): Promise<void> {
+    const version = ++workLoadVersion;
+    workLoading = true;
+    workFailure = null;
+    try {
+      const [taskResponse, goalResponse] = await Promise.all([
+        submitControlEnvelope(buildStateListQuery("tasks")),
+        submitControlEnvelope(buildStateListQuery("goals")),
+      ]);
+      if (version !== workLoadVersion || projectId !== selectedProject?.project_id) return;
+      tasks = taskRecordsFromResponse(taskResponse).filter((task) => task.project_id === projectId);
+      goals = goalRecordsFromResponse(goalResponse).filter((goal) => goal.project_id === projectId);
+      workLoadedProjectId = projectId;
+    } catch (error) {
+      if (version === workLoadVersion && projectId === selectedProject?.project_id) {
+        workFailure = error instanceof Error ? error.message : String(error);
+      }
+    } finally {
+      if (version === workLoadVersion) workLoading = false;
+    }
+  }
+
+  function desiredWorkspaceContext() {
+    return {
+      selected_goal_id: selectedGoalId,
+      selected_task_id: selectedTaskId,
+      active_conversation_id: selectedConversationId,
+    };
+  }
+
+  function sameWorkspaceContext(
+    left: ReturnType<typeof desiredWorkspaceContext>,
+    right: ReturnType<typeof desiredWorkspaceContext>,
+  ): boolean {
+    return left.selected_goal_id === right.selected_goal_id
+      && left.selected_task_id === right.selected_task_id
+      && left.active_conversation_id === right.active_conversation_id;
+  }
+
+  function queueContextWrite(explicit = false): void {
+    if (
+      !snapshot
+      || (!explicit && contextHydratedProjectId !== selectedProject?.project_id)
+      || sameWorkspaceContext(snapshot.context, desiredWorkspaceContext())
+    ) return;
+    contextWriteRequested = true;
+    if (!contextWriteActive) void flushContextWrites();
+  }
+
+  async function flushContextWrites(): Promise<void> {
+    if (contextWriteActive) return;
+    contextWriteActive = true;
+    try {
+      while (contextWriteRequested) {
+        contextWriteRequested = false;
+        const targetSession = session;
+        const projectId = selectedProject?.project_id ?? null;
+        if (!targetSession || !projectId) continue;
+        await targetSession.updateContext(desiredWorkspaceContext());
+      }
+    } catch (error) {
+      session?.reportError(error);
+    } finally {
+      contextWriteActive = false;
+      if (contextWriteRequested) void flushContextWrites();
+    }
   }
 
   function focusPanelKind(kind: string): void {
@@ -340,6 +576,7 @@
       resource_targets: resourceTargets,
       editor_file: kind === "editor" ? editorFile : null,
       forge_diff: kind === "forgeDiff" ? forgeDiff : null,
+      conversation_id: null,
     };
     try {
       return await session.createPanel(input);
@@ -399,6 +636,13 @@
   }
 
   function cleanUpClosedPanel(panel: WorkspacePanelPresentation): void {
+    onOpenPanelKindsChange?.([
+      ...new Set(
+        (session?.snapshot?.panels ?? [])
+          .filter((candidate) => candidate.panel_instance_id !== panel.panel_instance_id)
+          .map((candidate) => candidate.kind),
+      ),
+    ]);
     if (panel.kind === "browser") {
       void destroyBrowserIsland(panel.external_id).catch((error) => session?.reportError(error));
     } else if (panel.kind === "terminal" && selectedProject?.project_id) {
@@ -443,25 +687,12 @@
 
   function effectivePanelResourceTarget(panel: WorkspacePanelPresentation): string | null {
     const explicit = panelResourceTarget(panel);
-    if (explicit || !selectedProject) return explicit;
-    if (selectedProject.default_working_resource_id) return selectedProject.default_working_resource_id;
-    const available = selectedProject.resources.filter(
-      (resource) =>
-        resource.role === "working" &&
-        resource.location_status === "present" &&
-        resource.locator_available,
-    );
-    return available.length === 1 ? available[0].resource_id : null;
+    return selectedProject ? effectiveResourceTarget(selectedProject, explicit) : explicit;
   }
 
   function panelConversationId(panel: WorkspacePanelPresentation): string {
     const projectId = selectedProject?.project_id ?? "unselected";
-    return panelConversationIds[panelConversationKey(projectId, panel)]
-      ?? defaultConversationId(projectId, panel);
-  }
-
-  function panelConversationKey(projectId: string, panel: WorkspacePanelPresentation): string {
-    return `${projectId}:${panel.external_id}`;
+    return panel.conversation_id ?? defaultConversationId(projectId, panel);
   }
 
   function defaultConversationId(projectId: string, panel: WorkspacePanelPresentation): string {
@@ -476,6 +707,7 @@
       resource_targets: { ...panel.resource_targets },
       editor_file: panel.editor_file,
       forge_diff: panel.forge_diff,
+      conversation_id: panel.conversation_id,
     };
   }
 
@@ -519,15 +751,37 @@
 >
   {#if !binding || !snapshot || !container || !session}
     <Surface tone="canvas" border="none" padding="md" asRole="region" label="Workspace status">
-      <Text tone={session?.status.kind === "failed" ? "danger" : "muted"}>{statusMessage()}</Text>
+      <div
+        class="workspace-status"
+        role={session?.status.kind === "failed" ? "alert" : "status"}
+        aria-live={session?.status.kind === "failed" ? "assertive" : "polite"}
+      >
+        <Text tone={session?.status.kind === "failed" ? "danger" : "muted"}>{statusMessage()}</Text>
+      </div>
       {#if session?.status.kind === "failed"}
-        <button type="button" class="retry" onclick={() => void session?.reconnect()}>Retry</button>
+        <div class="retry">
+          <Button variant="secondary" size="sm" onClick={() => void session?.reconnect()}>Retry</Button>
+        </div>
       {/if}
     </Surface>
+  {:else if snapshot.panels.length === 0}
+    <div class="window-body">
+      <div class="empty-workspace">
+        <Surface tone="canvas" border="none" padding="md" asRole="region" label="Empty workspace">
+          <div class="empty-workspace-content">
+            <Text weight="semibold">Empty workspace</Text>
+            <Text tone="muted">Open Agent Chat to continue, or use + for another panel.</Text>
+            <Button variant="secondary" size="sm" onClick={() => void addPanel("agentChat")}>
+              Open Agent Chat
+            </Button>
+          </div>
+        </Surface>
+      </div>
+    </div>
   {:else}
     <div class="window-body">
       {#if session.status.kind === "failed"}
-        <div class="layout-error"><Text size="xs" tone="danger">{statusMessage()}</Text></div>
+        <div class="layout-error" role="alert"><Text size="xs" tone="danger">{statusMessage()}</Text></div>
       {/if}
       <LayoutSplitView
         {binding}
@@ -540,17 +794,12 @@
         density="compact"
       >
         {#snippet primary()}
-          {@render RegionShell("left", "left", "left")}
+          {@render RegionShell("left", "left", "left", activePanelsByRegion.left)}
         {/snippet}
         {#snippet secondary()}
           {@render MainRegions()}
         {/snippet}
       </LayoutSplitView>
-      {#if !visibleRegions.left && !hasMain}
-        <Surface tone="canvas" border="none" padding="md" asRole="region" label="Empty workspace">
-          <Text tone="muted">No panels open</Text>
-        </Surface>
-      {/if}
     </div>
   {/if}
 </section>
@@ -587,8 +836,8 @@
       size="xs"
       density="compact"
     >
-      {#snippet primary()}{@render RegionShell("centerTop", "top", "center_top")}{/snippet}
-      {#snippet secondary()}{@render RegionShell("centerBottom", "bottom", "center_bottom")}{/snippet}
+      {#snippet primary()}{@render RegionShell("centerTop", "top", "center_top", activePanelsByRegion.center_top)}{/snippet}
+      {#snippet secondary()}{@render RegionShell("centerBottom", "bottom", "center_bottom", activePanelsByRegion.center_bottom)}{/snippet}
     </LayoutSplitView>
   {/if}
 {/snippet}
@@ -608,13 +857,18 @@
       size="xs"
       density="compact"
     >
-      {#snippet primary()}{@render RegionShell("rightTop", "top", "right_top")}{/snippet}
-      {#snippet secondary()}{@render RegionShell("rightBottom", "bottom", "right_bottom")}{/snippet}
+      {#snippet primary()}{@render RegionShell("rightTop", "top", "right_top", activePanelsByRegion.right_top)}{/snippet}
+      {#snippet secondary()}{@render RegionShell("rightBottom", "bottom", "right_bottom", activePanelsByRegion.right_bottom)}{/snippet}
     </LayoutSplitView>
   {/if}
 {/snippet}
 
-{#snippet RegionShell(label: string, edge: "left" | "right" | "top" | "bottom", regionId: RegionId)}
+{#snippet RegionShell(
+  label: string,
+  edge: "left" | "right" | "top" | "bottom",
+  regionId: RegionId,
+  activePanelInstanceId: string | null,
+)}
   {#if binding && snapshot && session}
     <section
       class="region-cell"
@@ -622,24 +876,30 @@
       onpointerdown={() => (commandActiveRegionId = regionId)}
       onfocusin={() => (commandActiveRegionId = regionId)}
     >
-      <LayoutDockRegion
-        {binding}
-        containerId={snapshot.container_id}
-        {regionId}
-        {edge}
-        resolvePanel={resolvePanel}
-        ariaLabel={`${label} panels`}
-        sizing="flexible"
-        emphasis="quiet"
-        size="xs"
-        density="compact"
-        tabVariant="block"
-      >
-        {#snippet body(context)}
-          {@const panel = panelFromContext(context)}
-          {#if panel}{@render PanelBody(panel, panelIsVisible(regionId, context.instance.id))}{/if}
-        {/snippet}
-      </LayoutDockRegion>
+      {#key activePanelInstanceId}
+        <LayoutDockRegion
+          {binding}
+          containerId={snapshot.container_id}
+          {regionId}
+          {edge}
+          resolvePanel={resolvePanel}
+          ariaLabel={`${label} panels`}
+          sizing="flexible"
+          emphasis="quiet"
+          size="xs"
+          density="compact"
+          tabVariant="block"
+        >
+          {#snippet body(context)}
+            {@const panel = panelFromContext(context)}
+            {#if panel}{@render PanelBody(
+              panel,
+              activePanelInstanceId === context.instance.id
+                && panelIsVisible(regionId, context.instance.id),
+            )}{/if}
+          {/snippet}
+        </LayoutDockRegion>
+      {/key}
     </section>
   {/if}
 {/snippet}
@@ -656,18 +916,27 @@
           activeTask={selectedTask}
           activeGoal={selectedGoal}
           {agentChatDefaults}
-          onClearActiveTask={() => (selectedTaskId = null)}
-          onClearActiveGoal={() => (selectedGoalId = null)}
+          onClearActiveTask={() => setWorkSelection(selectedGoalId, null)}
+          onClearActiveGoal={() => setWorkSelection(null, selectedTaskId)}
+          onConversationActive={() => void activatePanelConversation(panel)}
+          draftRequest={pendingAgentChatDraft?.panelInstanceId === panel.panel_instance_id
+            ? pendingAgentChatDraft
+            : null}
+          onDraftRequestConsumed={consumeAgentChatDraft}
         />
       </div>
     </div>
   {:else if panel.kind === "tasks"}
     <TaskListPanel
       selectedProjectId={selectedProject?.project_id ?? null}
+      {goals}
+      {tasks}
+      loading={workLoading}
+      failure={workFailure}
+      onRefresh={() => selectedProject && void loadWork(selectedProject.project_id)}
+      onSelectionChange={setWorkSelection}
       bind:selectedGoalId
-      bind:selectedGoal
       bind:selectedTaskId
-      bind:selectedTask
     />
   {:else if panel.kind === "editor"}
     <div class="resource-panel-shell">
@@ -701,8 +970,9 @@
     <DiffPanel
       projectId={selectedProject?.project_id ?? null}
       task={selectedTask}
-      onOpenEditor={(fileRef) => void openFileInEditor(fileRef)}
+      onOpenEditor={(fileRef, resourceId, displayPath) => void openFileInEditor(fileRef, resourceId, displayPath)}
       onReviewed={() => focusPanelKind("diff")}
+      onPrepareRework={() => void prepareSelectedTaskRework()}
     />
   {:else if panel.kind === "forgeDiff"}
     <ForgeDiffPanel
@@ -763,6 +1033,25 @@
 
   .retry {
     margin-top: 0.75rem;
+  }
+
+  .workspace-status {
+    display: grid;
+  }
+
+  .empty-workspace {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+  }
+
+  .empty-workspace-content {
+    display: grid;
+    justify-items: center;
+    gap: var(--poodle-space-stack-sm);
+    max-width: 24rem;
+    text-align: center;
   }
 
   .panel-placeholder {

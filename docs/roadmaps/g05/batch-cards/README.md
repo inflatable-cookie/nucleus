@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-08-02
+Updated: 2026-08-04
 
 ## Ready Cards
 
@@ -22,18 +22,8 @@ Updated: 2026-08-02
   host pairing/session contract and selected production topology
 - `051-secondary-window-product-gate.md` — needs an operator-selected
   secondary-window workflow
-- `045-backup-inventory-and-capture.md` — capture and host-selected export pass
-- `046-restore-and-recovery.md` — waits for grouped custom-adapter restore plus
-  Nucleus boot-time quiescence and restart handoff
-- `047-backup-recovery-settings-acceptance.md` — backup is composed; recovery
-  waits for card 046
-- `049-local-bridge-composition.md` — consumer-native local composition and
-  Tauri invocation pass
 - `052-surface-free-panel-transfer.md` — waits for card 051
 - `053-secondary-window-native-acceptance.md` — waits for card 052
-- `054-longhorn-adoption-conformance-closeout.md` — waits for card 047
-- `055-longhorn-deferral-and-g05-checkpoint.md` — waits for card 054 and the
-  operator checkpoint
 
 ## Completed Cards
 
@@ -81,4 +71,37 @@ Updated: 2026-08-02
 - `042-notification-ledger-and-projector.md`
 - `043-notification-presentation-and-actions.md`
 - `044-notification-acceptance.md`
+- `045-backup-inventory-and-capture.md`
+- `046-restore-and-recovery.md`
+- `047-backup-recovery-settings-acceptance.md`
 - `048-bridge-authority-reconciliation.md`
+- `049-local-bridge-composition.md`
+- `054-longhorn-adoption-conformance-closeout.md`
+- `055-longhorn-deferral-and-g05-checkpoint.md`
+- `056-shell-switch-epoch-and-context-isolation.md`
+- `057-empty-workspace-and-reconnect-recovery.md`
+- `058-shell-context-acceptance.md`
+- `059-work-context-authority-and-persistence.md`
+- `060-goal-task-cross-panel-focus.md`
+- `061-conversation-attachment-and-sidebar-sync.md`
+- `062-shared-work-context-acceptance.md`
+- `063-review-workflow-contract-and-resource-lineage.md`
+- `064-exact-diff-to-editor-navigation.md`
+- `065-review-to-agent-chat-rework-handoff.md`
+- `066-editor-review-rework-acceptance.md`
+- `067-panel-runtime-authority-and-status.md`
+- `068-shared-resource-target-projection.md`
+- `069-terminal-browser-runtime-presentation.md`
+- `070-terminal-browser-resource-acceptance.md`
+- `071-memory-product-display-projection.md`
+- `072-memory-panel-product-composition.md`
+- `073-provider-selection-and-session-defaults.md`
+- `074-advanced-control-placement.md`
+- `075-memory-provider-control-acceptance.md`
+- `076-shell-quality-contract-and-audit.md`
+- `077-semantic-shell-interaction.md`
+- `078-container-relative-panel-composition.md`
+- `079-shell-state-presentation.md`
+- `080-specialist-panel-recovery-convergence.md`
+- `081-shell-quality-acceptance.md`
+- `082-portable-activity-key-adoption.md`

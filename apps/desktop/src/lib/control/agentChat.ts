@@ -9,6 +9,10 @@ export type AgentChatRequest = {
   message: string;
   active_task_id: string | null;
   active_goal_id: string | null;
+  provider_instance_id: string | null;
+  provider_instance_revision: string | null;
+  protocol_facade_id: string | null;
+  provider_id: string | null;
   model: string;
   reasoning_effort: string;
   harness_mode: AgentChatHarnessMode;
@@ -68,6 +72,7 @@ export type AgentChatQuestionAnswerRequest = {
 };
 
 export type AgentChatModelOption = {
+  provider_id: string | null;
   model: string;
   display_name: string;
   description: string;
@@ -80,15 +85,39 @@ export type AgentChatReasoningOption = {
   description: string;
 };
 
-export type AgentChatProviderSummary = {
+export type AgentChatCredentialPosture = {
+  profile_id: string;
+  mechanism: string;
+  credential_state: string;
+  entitlement_metering: string;
+  entitlement_state: string;
+  endpoint_authorization: string;
+  runtime_readiness: string;
+  support_authority: string;
+  evidence_provenance: string;
+};
+
+export type AgentChatProviderInstance = {
   provider_instance_id: string;
-  adapter_id: string;
+  instance_revision: string;
+  runtime_adapter_id: string;
+  driver_id: string;
+  integration_family: string;
+  transport_family: string;
+  protocol_facade_id: string;
   display_name: string;
   harness_name: string;
-  authentication_posture: "provider_managed";
-  credential: AgentChatCredentialSummary;
-  model_discovery: "available" | "unavailable";
+  ownership: string;
+  selection_readiness: "ready" | "not_ready";
+  credential_posture: AgentChatCredentialPosture;
+  credential: AgentChatCredentialSummary | null;
+  model_catalogue_state: "available" | "unavailable";
+  model_catalogue_diagnostic: string | null;
   models: AgentChatModelOption[];
+};
+
+export type AgentChatProviderCatalogue = {
+  instances: AgentChatProviderInstance[];
 };
 
 export type AgentChatCredentialAction = "setup" | "repair" | "revoke";
@@ -165,6 +194,10 @@ export type AgentChatReply = {
   thread_id: string;
   turn_id: string;
   timeline_turn_id: string;
+  provider_instance_id: string;
+  provider_instance_revision: string;
+  protocol_facade_id: string;
+  provider_id: string | null;
   model: string;
   reasoning_effort: string | null;
   harness_mode: AgentChatHarnessMode;
@@ -334,6 +367,10 @@ export type AgentChatHistory = {
   project_id: string;
   session_id: string | null;
   thread_id: string | null;
+  provider_instance_id: string | null;
+  provider_instance_revision: string | null;
+  protocol_facade_id: string | null;
+  provider_id: string | null;
   model: string | null;
   reasoning_effort: string | null;
   harness_mode: AgentChatHarnessMode | null;
@@ -410,12 +447,8 @@ export function renameAgentChatThread(
   });
 }
 
-export function listAgentChatModels(): Promise<AgentChatModelOption[]> {
-  return invoke<AgentChatModelOption[]>("list_agent_chat_models");
-}
-
-export function loadAgentChatProviderSummary(): Promise<AgentChatProviderSummary> {
-  return invoke<AgentChatProviderSummary>("agent_chat_provider_summary");
+export function loadAgentChatProviderCatalogue(): Promise<AgentChatProviderCatalogue> {
+  return invoke<AgentChatProviderCatalogue>("agent_chat_provider_catalogue");
 }
 
 export function requestAgentChatCredentialAction(

@@ -8,6 +8,7 @@
     type TerminalEvent,
     type TerminalSessionSnapshot,
   } from "./terminalClient";
+  import { terminalStatusPresentation, terminalStatusRole } from "./terminalPresentation";
 
   let {
     panelId,
@@ -27,6 +28,7 @@
   let mounted = $state(false);
   let activeProjectId: string | null = null;
   let openingProjectId: string | null = null;
+  const status = $derived(terminalStatusPresentation(openingProjectId !== null, failure, session));
 
   $effect(() => {
     const selectedProjectId = projectId;
@@ -44,6 +46,7 @@
       return;
     }
 
+    const theme = terminalTheme(viewport);
     terminal = new Terminal({
       cursorBlink: true,
       cursorStyle: "bar",
@@ -52,13 +55,13 @@
       lineHeight: 1.25,
       scrollback: 5000,
       theme: {
-        background: "#0d1013",
-        foreground: "#d8dde5",
-        cursor: "#d8dde5",
-        cursorAccent: "#0d1013",
+        background: theme.background,
+        foreground: theme.foreground,
+        cursor: theme.foreground,
+        cursorAccent: theme.background,
         selectionBackground: "#30455f99",
-        black: "#1a1d21",
-        brightBlack: "#707985",
+        black: theme.background,
+        brightBlack: theme.muted,
       },
     });
     fitAddon = new FitAddon();
@@ -109,6 +112,13 @@
     } finally {
       if (openingProjectId === selectedProjectId) openingProjectId = null;
     }
+  }
+
+  function retryOpen(): void {
+    if (!projectId || openingProjectId) return;
+    failure = null;
+    activeProjectId = null;
+    void ensureSession(projectId);
   }
 
   function handleEvent(eventProjectId: string, event: TerminalEvent): void {
@@ -174,11 +184,40 @@
   function formatError(caught: unknown): string {
     return caught instanceof Error ? caught.message : String(caught);
   }
+
+  function terminalTheme(element: HTMLElement): {
+    background: string;
+    foreground: string;
+    muted: string;
+  } {
+    const style = getComputedStyle(element);
+    return {
+      background: token(style, "--poodle-color-background-canvas", "#0d1013"),
+      foreground: token(style, "--poodle-color-text-primary", "#d8dde5"),
+      muted: token(style, "--poodle-color-text-muted", "#707985"),
+    };
+  }
+
+  function token(style: CSSStyleDeclaration, name: string, fallback: string): string {
+    return style.getPropertyValue(name).trim() || fallback;
+  }
 </script>
 
 <section class="terminal-panel" aria-label="Terminal">
   <div class="terminal-viewport" bind:this={viewport}></div>
-  {#if failure}<div class="terminal-failure" role="status">{failure}</div>{/if}
+  {#if status}
+    <div
+      class:terminal-status--remote={status.kind === "remote"}
+      class="terminal-status"
+      role={terminalStatusRole(status)}
+      aria-live={status.kind === "failure" ? "assertive" : "polite"}
+    >
+      <span>{status.message}</span>
+      {#if status.canRetry}
+        <button type="button" onclick={retryOpen}>Retry</button>
+      {/if}
+    </div>
+  {/if}
 </section>
 
 <style>
@@ -189,7 +228,7 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    background: #0d1013;
+    background: var(--poodle-color-background-canvas);
   }
 
   .terminal-viewport {
@@ -206,18 +245,42 @@
   }
 
   .terminal-viewport :global(.xterm .xterm-viewport) {
-    background-color: #0d1013;
+    background-color: var(--poodle-color-background-canvas);
     scrollbar-width: thin;
   }
 
-  .terminal-failure {
+  .terminal-status {
     position: absolute;
     inset: auto 12px 12px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
     padding: 8px 10px;
     border: 1px solid color-mix(in srgb, var(--poodle-color-border-default) 75%, transparent);
     border-radius: 8px;
-    background: color-mix(in srgb, #171b20 94%, transparent);
+    background: color-mix(in srgb, var(--poodle-color-background-surface) 94%, transparent);
     color: var(--poodle-color-text-muted);
     font-size: 12px;
+  }
+
+  .terminal-status--remote {
+    inset: 10px 12px auto auto;
+    padding: 5px 8px;
+  }
+
+  .terminal-status button {
+    padding: 0.2rem 0.45rem;
+    color: var(--poodle-color-text-secondary);
+    font: inherit;
+    border: 1px solid var(--poodle-color-border-subtle);
+    border-radius: var(--poodle-radius-control);
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .terminal-status button:hover {
+    color: var(--poodle-color-text-primary);
+    background: var(--poodle-color-background-elevated);
   }
 </style>

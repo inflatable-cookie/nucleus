@@ -16,10 +16,13 @@ use longhorn_layout_config::{NoLayoutMigration, RegisteredLayoutDomain};
 use super::dto::{
     WorkspaceLayoutDispatchResultDto, WorkspaceLayoutMutationDto,
     WorkspaceLayoutMutationResponseDto, WorkspaceLayoutSnapshotDto,
-    WorkspacePanelPresentationInputDto, WorkspacePreparedPanelDto, WorkspaceUiPaths,
+    WorkspacePanelPresentationInputDto, WorkspacePreparedPanelDto, WorkspaceProjectContextDto,
+    WorkspaceUiPaths,
 };
 use super::migration;
-use super::product_state::{PanelPresentation, PanelPresentationDomain, PanelPresentationState};
+use super::product_state::{
+    normalize_project_context, PanelPresentation, PanelPresentationDomain, PanelPresentationState,
+};
 use super::registry::{
     agent_chat_instance, container_id, definition_for_kind, definition_registry, panel_instance_id,
     validate_project_id, PENDING_PROJECT_SCOPE, SCHEMA_ID,
@@ -253,6 +256,26 @@ impl WorkspaceUiRuntime {
         self.snapshot_locked(project_id)
     }
 
+    pub fn update_project_context(
+        &self,
+        project_id: &str,
+        context: WorkspaceProjectContextDto,
+    ) -> Result<WorkspaceLayoutSnapshotDto, String> {
+        validate_project_id(project_id)?;
+        let context = normalize_project_context(project_id, context)?;
+        let _guard = self
+            .scope_lock
+            .lock()
+            .map_err(|_| "Nucleus layout scope lock is poisoned".to_owned())?;
+        self.ensure_project(project_id)?;
+        let mut presentations = self.load_presentations()?;
+        presentations
+            .contexts
+            .insert(project_id.to_owned(), context);
+        self.publish_presentations(presentations)?;
+        self.snapshot_locked(project_id)
+    }
+
     fn snapshot_locked(&self, project_id: &str) -> Result<WorkspaceLayoutSnapshotDto, String> {
         let document = self.load_layout()?;
         let project_container_id = container_id(project_id)?;
@@ -264,6 +287,11 @@ impl WorkspaceUiRuntime {
             .projects
             .get(project_id)
             .ok_or_else(|| format!("Nucleus panel presentations are missing for {project_id}"))?;
+        let context = presentations
+            .contexts
+            .get(project_id)
+            .cloned()
+            .unwrap_or_default();
         let mut panels = Vec::new();
         for region in container.regions() {
             for panel_instance_id in region.panel_instance_ids() {
@@ -289,6 +317,7 @@ impl WorkspaceUiRuntime {
             schemas: registry.schemas().cloned().collect(),
             panel_definitions: registry.panel_definitions().cloned().collect(),
             panels,
+            context,
         })
     }
 

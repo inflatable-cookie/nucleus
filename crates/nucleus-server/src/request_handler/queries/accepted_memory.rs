@@ -98,6 +98,15 @@ mod tests {
         assert_eq!(projection.project_id.0, "project:nucleus");
         assert_eq!(projection.memories.len(), 1);
         assert_eq!(projection.memories[0].memory_id, "memory:nucleus");
+        assert_eq!(
+            projection.memories[0].display_title.as_deref(),
+            Some("Hidden accepted title")
+        );
+        assert_eq!(
+            projection.memories[0].display_summary.as_deref(),
+            Some("Hidden accepted summary")
+        );
+        assert!(!projection.memories[0].display_redacted);
         assert_eq!(projection.source_counts.accepted_records, 2);
         assert_eq!(projection.source_counts.out_of_scope_accepted_records, 1);
         assert!(!projection.client_can_mutate);

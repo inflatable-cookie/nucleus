@@ -3,9 +3,12 @@
 //! Hosts resolve a provider runtime by adapter id instead of hardcoding a
 //! provider; new adapters register here.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use nucleus_agent_protocol::{AgentSessionRuntime, TaskExecutionRuntime};
+use swallowtail_core::ConfiguredInstanceId;
+use swallowtail_runtime::ConfiguredProviderInstanceCatalogue;
 
 use crate::swallowtail_codex::{
     SwallowtailCodexSessionRuntime, SwallowtailCodexTaskExecutionRuntime,
@@ -16,6 +19,24 @@ use crate::swallowtail_codex::{
 pub struct AgentAdapterRegistry {
     runtimes: Vec<Arc<dyn AgentSessionRuntime + Send + Sync>>,
     task_runtimes: Vec<Arc<dyn TaskExecutionRuntime + Send + Sync>>,
+}
+
+/// One portable provider catalogue plus the Nucleus runtime that owns each instance.
+pub struct RegisteredProviderInstanceCatalogue {
+    catalogue: ConfiguredProviderInstanceCatalogue,
+    runtime_adapter_ids: BTreeMap<ConfiguredInstanceId, String>,
+}
+
+impl RegisteredProviderInstanceCatalogue {
+    pub fn catalogue(&self) -> &ConfiguredProviderInstanceCatalogue {
+        &self.catalogue
+    }
+
+    pub fn runtime_adapter_id(&self, instance_id: &ConfiguredInstanceId) -> Option<&str> {
+        self.runtime_adapter_ids
+            .get(instance_id)
+            .map(String::as_str)
+    }
 }
 
 impl AgentAdapterRegistry {
@@ -40,6 +61,33 @@ impl AgentAdapterRegistry {
             .iter()
             .map(|runtime| runtime.adapter_id().to_owned())
             .collect()
+    }
+
+    /// Admit every configured runtime instance into one Swallowtail catalogue.
+    pub fn configured_provider_catalogue(
+        &self,
+    ) -> Result<RegisteredProviderInstanceCatalogue, String> {
+        let mut instances = Vec::with_capacity(self.runtimes.len());
+        let mut runtime_adapter_ids = BTreeMap::new();
+        for runtime in &self.runtimes {
+            let instance = runtime.configured_provider_instance()?;
+            if runtime_adapter_ids
+                .insert(
+                    instance.instance_id().clone(),
+                    runtime.adapter_id().to_owned(),
+                )
+                .is_some()
+            {
+                return Err("multiple Nucleus runtimes claimed one provider instance".to_owned());
+            }
+            instances.push(instance);
+        }
+        let catalogue = ConfiguredProviderInstanceCatalogue::new(instances)
+            .map_err(|error| error.to_string())?;
+        Ok(RegisteredProviderInstanceCatalogue {
+            catalogue,
+            runtime_adapter_ids,
+        })
     }
 
     /// Resolve one adapter's runtime by id.

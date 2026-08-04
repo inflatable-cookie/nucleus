@@ -4,6 +4,16 @@ Logs record meaningful decisions, evidence, and closeouts.
 
 ## Current Logs
 
+- `2026-08-04-portable-activity-key-adoption.md`
+- `2026-08-04-shell-accessibility-responsive-and-failure-cohesion.md`
+- `2026-08-04-memory-provider-control-cohesion.md`
+- `2026-08-04-memory-product-context.md`
+- `2026-08-04-terminal-browser-resource-host-cohesion.md`
+- `2026-08-03-editor-diff-review-rework-cohesion.md`
+- `2026-08-03-shared-work-context.md`
+- `2026-08-03-shell-context-cohesion.md`
+- `2026-08-03-longhorn-product-checkpoint.md`
+- `2026-08-03-grouped-restore-restart-and-recovery.md`
 - `2026-08-02-host-selected-backup-export.md`
 - `2026-08-02-grouped-custom-adapter-restore-gate.md`
 - `2026-08-02-longhorn-secondary-systems-closeout.md`

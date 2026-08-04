@@ -7,7 +7,8 @@ mod runtime;
 
 pub use dto::{
     WorkspaceLayoutMutationDto, WorkspaceLayoutMutationResponseDto, WorkspaceLayoutSnapshotDto,
-    WorkspacePanelPresentationInputDto, WorkspacePreparedPanelDto, WorkspaceUiPaths,
+    WorkspacePanelPresentationInputDto, WorkspacePreparedPanelDto, WorkspaceProjectContextDto,
+    WorkspaceUiPaths,
 };
 pub use legacy::split_legacy_workspace_ui_document;
 pub use runtime::WorkspaceUiRuntime;

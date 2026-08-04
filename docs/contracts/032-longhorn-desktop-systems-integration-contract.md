@@ -324,25 +324,60 @@ configured archive bounds, and uses Longhorn's canonical user-export
 re-encoding and verified publication. It does not recapture current state,
 copy an operational archive unchanged, or implement a second ZIP codec.
 
-Restore remains inactive. The live SQLite authority is already held by
-`DesktopState`, so publishing a multi-domain restore in process would permit
-partial replacement or dual authority. All seven Nucleus backup domains are
-Longhorn custom-adapter domains. Longhorn's ordinary restore transaction is
-failure-atomic across ordinary file domains, while its public custom-adapter
-restore entry point executes one explicitly confirmed domain at a time. A
-single adapter may truthfully claim failure atomicity for its own publication;
-that claim does not make seven independent adapter calls one failure-atomic
-restore.
+Restore publication never runs inside the live renderer process. The live
+SQLite authority is held by `DesktopState`; file-backed domains are also opened
+by window, command, Settings, workspace, and notification services. A restore
+request therefore binds one inspected archive, the exact seven-domain
+selection, and Longhorn's grouped confirmation into a durable Nucleus restart
+request. Persisting that request grants only boot execution authority. It does
+not mutate a domain or claim completion.
 
-Nucleus must not reproduce Longhorn's journal, rollback, or archive vocabulary
-to bridge that gap. Restore requires a shared grouped custom-adapter restore
-transaction that binds one inspected archive and confirmation to the complete
-selected domain set, journals every target before publication, rolls the group
-back exactly, survives interruption, and can run during boot before
-`DesktopState` or any file-backed domain owner opens. Nucleus must additionally
-contract the app-wide quiescence and restart handoff that schedules this boot
-transaction. Until both boundaries exist, restore capabilities remain absent
-and unsupported operations return explicit rejections.
+Longhorn owns the grouped custom-adapter transaction, private stage material,
+journal, stable apply order, reverse rollback, terminal classification, and
+boot recovery. Every Nucleus adapter declares
+`GroupedFailureAtomic`, stages target and exact prior-state payloads without
+mutation, applies only Longhorn-supplied durable payloads, and independently
+verifies semantic evidence. File domains publish one exact document through
+atomic replacement. The SQLite domain stages and publishes through SQLite's
+native backup API; copying the main database, WAL, or shared-memory files is
+forbidden.
+
+Nucleus owns the restart request and boot boundary. The request records the
+storage-layout digest, archive path and digest, exact domain ids, group
+confirmation, and request state. It is written durably before restart is
+requested. On the next launch, after storage-profile resolution and directory
+preparation but before workspace, window, command, notification, Settings,
+bridge, terminal, server, or database authorities open, Nucleus reconstructs
+the exact domain descriptors and adapter catalogue. It first calls Longhorn
+group recovery. Recovery failure keeps product authorities closed and remains
+actionable on the next launch.
+
+After terminal recovery, a pending request is re-inspected and re-planned from
+the selected archive. Layout, archive, domain, adapter, evidence, or
+confirmation drift rejects execution without mutation. A matching request is
+executed once through Longhorn's grouped API. Nucleus clears the request only
+after a committed or completely rolled-back terminal receipt is durably
+recorded. An interrupted or recovery-required operation retains enough state
+for the next boot to invoke Longhorn recovery before any product authority
+opens.
+
+Settings exposes that last durable boot receipt as read-only recovery status.
+It may report committed, rejected, or rolled-back truth, but it cannot retry,
+alter, or reinterpret the grouped transaction.
+
+Nucleus must not reproduce Longhorn's journal, rollback, archive, or grouped
+transaction vocabulary. A grouped custom-adapter target must use Longhorn's
+explicit `BackupAdapterStateEvidence` for both target and rollback state.
+Archived absence carries zero payloads, restores as deletion inside the same
+transaction, and verifies as absent. Present evidence carries semantic SHA-256
+and at least one payload. Omitting an absent domain or publishing a synthetic
+payload is forbidden.
+
+Restore capabilities may be advertised only while the restart request, boot
+coordinator, exact seven-domain adapters, explicit target/rollback evidence,
+and deterministic restart/recovery fixtures remain installed. Unsupported
+restore commands continue to return explicit rejections. Native destructive
+acceptance uses an isolated state root and remains a separate operator gate.
 
 ## Optional Backend Bridge
 

@@ -13,7 +13,10 @@ use std::sync::{
 };
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
-use swallowtail_runtime::{CallbackRequest, HarnessUserInputRequest, HarnessUserInputResponse};
+use swallowtail_runtime::{
+    CallbackRequest, ConfiguredProviderInstanceRecord, HarnessUserInputRequest,
+    HarnessUserInputResponse,
+};
 
 use crate::AgentActivityHandler;
 
@@ -28,6 +31,10 @@ pub enum AgentHarnessMode {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentSessionStartRequest {
     pub working_directory: String,
+    pub provider_instance_id: String,
+    pub provider_instance_revision: String,
+    pub protocol_facade_id: String,
+    pub provider_id: Option<String>,
     pub model: String,
     pub reasoning_effort: String,
     pub harness_mode: AgentHarnessMode,
@@ -41,6 +48,11 @@ pub struct AgentSessionStartRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentStartedSessionInfo {
     pub provider_thread_id: String,
+    pub adapter_id: String,
+    pub provider_instance_id: String,
+    pub provider_instance_revision: String,
+    pub protocol_facade_id: String,
+    pub provider_id: Option<String>,
     pub model: String,
     pub reasoning_effort: Option<String>,
     pub harness_mode: AgentHarnessMode,
@@ -342,23 +354,6 @@ impl AgentUserInputAnswerer {
 pub type AgentUserInputHandler<'a> =
     dyn FnMut(AgentUserInputRequest) -> Result<AgentUserInputWait, String> + 'a;
 
-/// One model option a provider offers.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AgentModelOption {
-    pub model: String,
-    pub display_name: String,
-    pub description: String,
-    pub default_reasoning_effort: String,
-    pub supported_reasoning_efforts: Vec<AgentReasoningOption>,
-}
-
-/// One reasoning-effort option for a model.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AgentReasoningOption {
-    pub reasoning_effort: String,
-    pub description: String,
-}
-
 /// A live provider-backed session.
 pub trait AgentLiveSession {
     fn info(&self) -> &AgentStartedSessionInfo;
@@ -461,7 +456,7 @@ mod tests {
     }
 }
 
-/// A provider runtime that can start sessions and list models.
+/// A provider runtime that can start sessions and admit its configured instance.
 pub trait AgentSessionRuntime {
     fn adapter_id(&self) -> &str;
 
@@ -470,5 +465,5 @@ pub trait AgentSessionRuntime {
         request: AgentSessionStartRequest,
     ) -> Result<Box<dyn AgentLiveSession + Send>, String>;
 
-    fn model_catalog(&self) -> Result<Vec<AgentModelOption>, String>;
+    fn configured_provider_instance(&self) -> Result<ConfiguredProviderInstanceRecord, String>;
 }

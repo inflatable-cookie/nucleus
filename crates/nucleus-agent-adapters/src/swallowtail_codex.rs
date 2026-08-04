@@ -6,20 +6,22 @@
 
 use futures_executor::block_on;
 use nucleus_agent_protocol::{
-    AgentActivityHandler, AgentHarnessMode, AgentLiveSession, AgentModelOption,
-    AgentReasoningOption, AgentSessionRuntime, AgentSessionStartRequest, AgentStartedSessionInfo,
-    AgentToolCallHandler, AgentTurnFailure, AgentTurnReply, AgentTurnRequest,
-    AgentUserInputHandler,
+    AgentActivityHandler, AgentHarnessMode, AgentLiveSession, AgentSessionRuntime,
+    AgentSessionStartRequest, AgentStartedSessionInfo, AgentToolCallHandler, AgentTurnFailure,
+    AgentTurnReply, AgentTurnRequest, AgentUserInputHandler,
 };
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use swallowtail_adapter_codex::{CodexAppServerDriver, CodexSessionProfileInput};
+use swallowtail_adapter_codex::{
+    codex_app_server_descriptor, CodexAppServerDriver, CodexSessionProfileInput,
+};
 use swallowtail_core::{HarnessMode, ObservableActivityAvailability, ReasoningMode};
 use swallowtail_runtime::{
-    HostServices, InteractiveSessionDriver, InteractiveSessionHandle, ModelCatalogDriver,
-    OperationContent, RequestId, RuntimeFailure, RuntimeTurnId, ScopeId, SessionOptions,
-    TurnRequest,
+    ConfiguredProviderInstanceAdmission, ConfiguredProviderInstanceRecord,
+    ConfiguredProviderModelCatalogueInput, HostServices, InteractiveSessionDriver,
+    InteractiveSessionHandle, OperationContent, RequestId, RuntimeFailure, RuntimeTurnId, ScopeId,
+    SessionOptions, TurnRequest,
 };
 
 mod host;
@@ -66,6 +68,15 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
         let host = host::local_host(Path::new(&request.working_directory))?;
         let services = host.services();
         let prepared = block_on(preparation::app_server(&host))?;
+        if prepared.instance().id().as_str() != request.provider_instance_id {
+            return Err("selected provider instance does not match prepared Codex".to_owned());
+        }
+        if prepared.instance().revision().as_str() != request.provider_instance_revision {
+            return Err("selected provider instance revision is stale".to_owned());
+        }
+        if prepared.instance().protocol_facade_id().as_str() != request.protocol_facade_id {
+            return Err("selected protocol facade does not match prepared Codex".to_owned());
+        }
         let driver = CodexAppServerDriver::new(prepared.environment().clone());
         let mut options = SessionOptions::default()
             .with_developer_instructions(
@@ -110,6 +121,11 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
         Ok(Box::new(SwallowtailCodexLiveSession {
             info: AgentStartedSessionInfo {
                 provider_thread_id,
+                adapter_id: CODEX_LIVE_ADAPTER_ID.to_owned(),
+                provider_instance_id: request.provider_instance_id,
+                provider_instance_revision: request.provider_instance_revision,
+                protocol_facade_id: request.protocol_facade_id,
+                provider_id: request.provider_id,
                 model: request.model,
                 reasoning_effort: Some(request.reasoning_effort),
                 harness_mode: request.harness_mode,
@@ -120,13 +136,12 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
         }))
     }
 
-    fn model_catalog(&self) -> Result<Vec<AgentModelOption>, String> {
+    fn configured_provider_instance(&self) -> Result<ConfiguredProviderInstanceRecord, String> {
         let current = std::env::current_dir()
             .map_err(|_| "Nucleus could not resolve its host working directory".to_owned())?;
         let host = host::local_host(&current)?;
         let services = host.services();
         let prepared = block_on(preparation::app_server(&host))?;
-        let driver = CodexAppServerDriver::new(prepared.environment().clone());
         let time = services
             .time()
             .ok_or_else(|| "Codex catalog time service is unavailable".to_owned())?;
@@ -134,40 +149,23 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
         let catalogue = prepared
             .prepare_catalogue(request_id("catalog")?, Some(deadline))
             .map_err(preparation::error)?;
-        let (_, plan, catalog_request) = catalogue.into_parts();
-        let models =
-            block_on(driver.list_models(plan, catalog_request, services)).map_err(runtime_error)?;
-
-        Ok(models
-            .into_iter()
-            .map(|entry| {
-                let metadata = entry.metadata();
-                let reasoning = metadata.reasoning();
-                AgentModelOption {
-                    model: entry.id().as_str().to_owned(),
-                    display_name: metadata
-                        .display_name()
-                        .unwrap_or_else(|| entry.id().as_str())
-                        .to_owned(),
-                    description: metadata.description().unwrap_or_default().to_owned(),
-                    default_reasoning_effort: reasoning
-                        .and_then(|value| value.default_mode())
-                        .map(|mode| mode.as_str().to_owned())
-                        .unwrap_or_else(|| "low".to_owned()),
-                    supported_reasoning_efforts: reasoning
-                        .map(|value| {
-                            value
-                                .supported_modes()
-                                .map(|mode| AgentReasoningOption {
-                                    reasoning_effort: mode.as_str().to_owned(),
-                                    description: String::new(),
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                }
-            })
-            .collect())
+        let source = catalogue.evidence().operation().clone();
+        let model_catalogue = match block_on(catalogue.list_models(services)) {
+            Ok(models) => ConfiguredProviderModelCatalogueInput::available(source.clone(), models),
+            Err(error) => ConfiguredProviderModelCatalogueInput::unavailable(
+                source.clone(),
+                error.diagnostic().clone(),
+            ),
+        };
+        let admission = ConfiguredProviderInstanceAdmission::new(
+            codex_app_server_descriptor(),
+            prepared.instance().clone(),
+            prepared.access_profile().clone(),
+            prepared.access_evidence().clone(),
+        )
+        .with_prepared_routes([source])
+        .with_model_catalogue(model_catalogue);
+        ConfiguredProviderInstanceRecord::admit(admission).map_err(|error| error.to_string())
     }
 }
 
@@ -209,7 +207,7 @@ impl AgentLiveSession for SwallowtailCodexLiveSession {
         let mut turn = block_on(
             session.start_turn(
                 TurnRequest::new(
-                    runtime_turn_id()?,
+                    runtime_turn_id("chat")?,
                     OperationContent::new(request.message).map_err(|error| error.to_string())?,
                 )
                 .with_deadline(deadline),
@@ -266,10 +264,10 @@ fn scope_id(kind: &str) -> Result<ScopeId, String> {
     .map_err(|error| error.to_string())
 }
 
-fn runtime_turn_id() -> Result<RuntimeTurnId, String> {
+fn runtime_turn_id(kind: &str) -> Result<RuntimeTurnId, String> {
     RuntimeTurnId::new(format!(
-        "nucleus-chat-turn-{}",
-        REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        "nucleus-{kind}-turn-{}",
+        uuid::Uuid::new_v4().simple()
     ))
     .map_err(|error| error.to_string())
 }
@@ -288,6 +286,21 @@ mod tests {
         CallbackId, CallbackPayload, CallbackRequest, CallbackResult, CleanupOutcome,
         TerminalOutcome, TerminalStatus,
     };
+
+    #[test]
+    fn runtime_turn_ids_are_unique_across_retained_operations() {
+        let first = runtime_turn_id("chat").expect("first runtime turn id");
+        let second = runtime_turn_id("chat").expect("second runtime turn id");
+
+        assert_ne!(first, second);
+        for turn_id in [&first, &second] {
+            let random_identity = turn_id
+                .as_str()
+                .strip_prefix("nucleus-chat-turn-")
+                .expect("Nucleus chat prefix");
+            uuid::Uuid::parse_str(random_identity).expect("UUID-backed runtime identity");
+        }
+    }
 
     #[test]
     fn nucleus_tool_specs_map_to_bounded_swallowtail_declarations() {
@@ -345,6 +358,10 @@ mod tests {
         let failure = SwallowtailCodexSessionRuntime
             .start_session(AgentSessionStartRequest {
                 working_directory: "/not/used".to_owned(),
+                provider_instance_id: CODEX_PROVIDER_INSTANCE_ID.to_owned(),
+                provider_instance_revision: "1".to_owned(),
+                protocol_facade_id: "codex-app-server-v2".to_owned(),
+                provider_id: None,
                 model: "gpt-5.4-mini".to_owned(),
                 reasoning_effort: "low".to_owned(),
                 harness_mode: AgentHarnessMode::Normal,
@@ -362,11 +379,12 @@ mod tests {
     #[test]
     #[ignore = "requires a locally authenticated Codex installation"]
     fn current_local_codex_model_catalog_clears_full_preflight() {
-        let models = SwallowtailCodexSessionRuntime
-            .model_catalog()
-            .expect("Codex model catalog");
+        let instance = SwallowtailCodexSessionRuntime
+            .configured_provider_instance()
+            .expect("Codex configured provider instance");
 
-        assert!(!models.is_empty());
+        assert_eq!(instance.instance_id().as_str(), CODEX_PROVIDER_INSTANCE_ID);
+        assert!(instance.model_catalogue().is_some());
     }
 
     #[test]
@@ -376,6 +394,10 @@ mod tests {
         let session = SwallowtailCodexSessionRuntime
             .start_session(AgentSessionStartRequest {
                 working_directory: working_directory.display().to_string(),
+                provider_instance_id: CODEX_PROVIDER_INSTANCE_ID.to_owned(),
+                provider_instance_revision: "1".to_owned(),
+                protocol_facade_id: "codex-app-server-v2".to_owned(),
+                provider_id: None,
                 model: "gpt-5.4-mini".to_owned(),
                 reasoning_effort: "low".to_owned(),
                 harness_mode: AgentHarnessMode::Normal,

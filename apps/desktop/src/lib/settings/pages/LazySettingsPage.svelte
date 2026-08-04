@@ -31,7 +31,9 @@
           ? import("./AgentProviderSettingsPage.svelte")
           : rendererId === "longhorn:commands.keybindings"
             ? import("./KeybindingsSettingsPage.svelte")
-            : rendererId === "longhorn:config.storage" || rendererId === "longhorn:config.backup"
+            : rendererId === "longhorn:config.storage" ||
+                rendererId === "longhorn:config.backup" ||
+                rendererId === "longhorn:config.restore"
               ? import("./ConfigOperationsSettingsPage.svelte")
             : Promise.reject(new Error(`Unknown settings renderer ${rendererId}`));
     void load
@@ -54,7 +56,9 @@
     {:else}
       <p role="alert">Keybindings are unavailable.</p>
     {/if}
-  {:else if context.page.rendererId === "longhorn:config.storage" || context.page.rendererId === "longhorn:config.backup"}
+  {:else if context.page.rendererId === "longhorn:config.storage" ||
+    context.page.rendererId === "longhorn:config.backup" ||
+    context.page.rendererId === "longhorn:config.restore"}
     <Page rendererId={context.page.rendererId} />
   {:else}
     <Page {context} />

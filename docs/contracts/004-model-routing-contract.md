@@ -167,6 +167,31 @@ Rules:
 - route-level failures should be surfaced separately from harness transport
   failures where possible
 
+## Configured Provider Catalogue
+
+Product selection consumes Swallowtail's admitted configured-provider-instance
+catalogue. Nucleus assembles the immutable snapshot from the exact prepared
+facades and model-catalogue outcomes registered with its runtime host; it does
+not parse provider payloads or recreate route readiness in TypeScript.
+
+Each selectable product route retains:
+
+- the Nucleus runtime adapter binding
+- configured-provider-instance id and revision
+- protocol facade id
+- optional provider id supplied by the model catalogue
+- model id and the exact model-catalogue source
+- Swallowtail selection readiness and safe credential posture
+
+Product labels, ordering, defaults, and explicit selection remain Nucleus
+policy. A `NotReady` instance stays visible but cannot start a session. One
+configured instance is displayed as read-only identity and does not add a
+redundant selector. Model and reasoning options are always scoped to the
+selected instance's bound catalogue.
+
+The catalogue grants no provider effect, credential authority, default,
+fallback, or generic routing operation.
+
 ## Scoped Route Overrides
 
 Model routes may be overridden at project, session, or task-preference scope.

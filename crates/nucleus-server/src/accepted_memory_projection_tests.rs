@@ -15,7 +15,7 @@ use crate::accepted_memory_projection::{
 };
 
 #[test]
-fn projection_filters_project_records_and_hides_memory_body() {
+fn projection_filters_project_records_and_exposes_only_bounded_display_content() {
     let projection = AcceptedMemoryProjection::from_projection_records(
         ProjectId("project:nucleus".to_owned()),
         vec![
@@ -30,6 +30,16 @@ fn projection_filters_project_records_and_hides_memory_body() {
     assert_eq!(projection.memories.len(), 1);
     let memory = &projection.memories[0];
     assert_eq!(memory.memory_id, "memory:1");
+    assert_eq!(
+        memory.display_title.as_deref(),
+        Some("Hidden accepted memory title")
+    );
+    assert_eq!(
+        memory.display_summary.as_deref(),
+        Some("Hidden accepted memory body")
+    );
+    assert!(!memory.display_redacted);
+    assert!(!memory.display_truncated);
     assert_eq!(
         memory.source_proposal_id.as_deref(),
         Some("memory-proposal:1")
@@ -54,6 +64,23 @@ fn projection_filters_project_records_and_hides_memory_body() {
     assert!(!projection.projection_written);
     assert!(!projection.embedding_available);
     assert!(!projection.provider_sync_available);
+    assert!(!format!("{projection:?}").contains("Hidden accepted memory detail"));
+}
+
+#[test]
+fn projection_redacts_sensitive_display_content() {
+    let mut restricted = accepted_memory("memory:restricted", "project:nucleus");
+    restricted.sensitivity = MemorySensitivityStorage::Restricted;
+
+    let projection = AcceptedMemoryProjection::from_projection_records(
+        ProjectId("project:nucleus".to_owned()),
+        vec![AcceptedMemoryProjectionRecord::Accepted(restricted)],
+    );
+
+    let memory = &projection.memories[0];
+    assert_eq!(memory.display_title, None);
+    assert_eq!(memory.display_summary, None);
+    assert!(memory.display_redacted);
     assert!(!format!("{projection:?}").contains("Hidden accepted memory body"));
 }
 

@@ -8,7 +8,7 @@ use nucleus_local_store::LocalStoreBackend;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 
-use crate::project_resource_target::resolve_optional_project_resource_target;
+use crate::project_resource_target::resolve_optional_project_resource_target_on_host;
 use crate::ServerStateService;
 
 const OUTPUT_BUFFER_LIMIT: usize = 1024 * 1024;
@@ -479,7 +479,12 @@ where
     B: LocalStoreBackend,
     F: FnOnce() -> Result<PathBuf, String>,
 {
-    match resolve_optional_project_resource_target(state, project_id, resource_id)? {
+    match resolve_optional_project_resource_target_on_host(
+        state,
+        project_id,
+        resource_id,
+        LOCAL_HOST_ID,
+    )? {
         Some(target) => Ok((target.root, Some(target.resource_id))),
         None => host_default().map(|root| (root, None)),
     }
@@ -612,6 +617,35 @@ mod tests {
             .expect("resolve terminal working directory"),
             (fallback, None)
         );
+    }
+
+    #[test]
+    fn resource_free_project_does_not_use_a_fallback_on_the_wrong_host() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let state =
+            ServerStateService::new(SqliteBackend::new(directory.path().join("state.sqlite")));
+        persist_resource_free_project(&state, "project:remote");
+        let id = PersistenceRecordId("project:remote".to_owned());
+        let mut record = state.projects().get(&id).expect("get").expect("project");
+        let previous = record.revision_id.clone();
+        let mut project = decode_project_storage_record(&record.payload.bytes).expect("decode");
+        project.authority_host_ref = "host:remote-builder".to_owned();
+        record.revision_id = RevisionId("rev:test:remote".to_owned());
+        record.payload = LocalStoreRecordPayload {
+            media_type: Some("application/json".to_owned()),
+            bytes: encode_project_storage_payload(&project).expect("encode"),
+        };
+        state
+            .projects()
+            .put(record, RevisionExpectation::Exact(previous))
+            .expect("put");
+
+        let error = terminal_working_directory_with(&state, "project:remote", None, || {
+            panic!("wrong-host fallback must not run")
+        })
+        .expect_err("wrong authority host");
+
+        assert!(error.contains("authority host host:remote-builder"));
     }
 
     #[test]

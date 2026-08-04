@@ -166,6 +166,8 @@
     height: 100%;
     min-height: 0;
     color: var(--poodle-color-text-primary);
+    container-name: forge-diff-panel;
+    container-type: inline-size;
   }
 
   .diff-toolbar,
@@ -282,7 +284,7 @@
     text-align: center;
   }
 
-  @media (max-width: 42rem) {
+  @container forge-diff-panel (max-width: 42rem) {
     .summary span,
     .scope {
       display: none;

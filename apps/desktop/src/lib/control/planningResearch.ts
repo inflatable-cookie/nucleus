@@ -25,6 +25,10 @@ export type ControlPlanningSessionSourceCountsDto = {
 
 export type ControlMemoryProposalSummaryDto = {
   proposal_id: string;
+  display_title: string | null;
+  display_summary: string | null;
+  display_redacted: boolean;
+  display_truncated: boolean;
   scope: string;
   kind: string;
   status: string;

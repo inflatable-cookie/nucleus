@@ -1,6 +1,6 @@
 # 015 Backup, Restore, And Recovery Controls
 
-Status: partially implemented; restore paused
+Status: completed
 Owner: Tom
 Created: 2026-08-01
 
@@ -24,7 +24,7 @@ Make local client recovery usable without widening storage authority.
 
 - [x] inventory explicit Nucleus backup domains and exclusions
 - [x] compose bounded backup capture, export, and retention
-- [ ] compose restore inspection, conflict planning, confirmation, and recovery
+- [x] compose restore inspection, conflict planning, confirmation, and recovery
 - [x] expose truthful available capabilities and receipts through Settings
 
 ## Execution Plan
@@ -37,23 +37,23 @@ Make local client recovery usable without widening storage authority.
 
 ### Batch 15.2 — Restore And Recovery
 
-- [ ] Execute card 046 after its resume condition is met.
-- [ ] stage and inspect before publication
-- [ ] preserve exact rollback and interrupted-recovery behavior
+- [x] Execute card 046 after its resume condition is met.
+- [x] stage and inspect before publication
+- [x] preserve exact rollback and interrupted-recovery behavior
 
 ### Batch 15.3 — Settings And Native Acceptance
 
-- [ ] Execute the recovery portion of card 047 after card 046.
+- [x] Execute the recovery portion of card 047 after card 046.
 - [x] compose available shared pages inside the existing Settings shell
-- [ ] run isolated and separately gated native recovery evidence
+- [x] run isolated and separately gated native recovery evidence
 
 ## Acceptance Criteria
 
 - [x] backup scope is explicit and inspectable
-- [ ] restore requires a confirmation-bound plan
-- [ ] failed or interrupted restore never creates dual authority
+- [x] restore requires a confirmation-bound plan
+- [x] failed or interrupted restore never creates dual authority
 - [x] sensitive and expired material remains excluded
-- [ ] recovery state survives restart and remains actionable
+- [x] recovery state survives restart and remains actionable
 
 ## Batch Cards
 
@@ -63,7 +63,10 @@ Make local client recovery usable without widening storage authority.
 
 ## Current Boundary
 
-Backup capture, inventory, host-selected export, and retention are active.
-Restore is paused until Longhorn can group custom-adapter domains into one
-failure-atomic journaled restore and Nucleus can quiesce the live database,
-journal restart publication, and recover one atomic multi-domain authority.
+Backup capture, inventory, host-selected export, retention, and exact
+seven-domain grouped restore are active. Restore runs only after confirmation
+and restart, before product authorities open. Explicit absent targets delete
+inside the Longhorn transaction and interrupted work rolls back to exact prior
+presence. Isolated native acceptance committed the grouped plan, restored one
+post-backup file to archived absence, projected the durable receipt, and left
+no pending request or journal.

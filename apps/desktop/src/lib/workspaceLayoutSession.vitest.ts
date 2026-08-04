@@ -20,6 +20,7 @@ import type {
   WorkspaceLayoutSnapshot,
   WorkspacePanelPresentationInput,
   WorkspacePreparedPanel,
+  WorkspaceProjectContext,
 } from "./workspaceLayout";
 
 describe("WorkspaceLayoutSession", () => {
@@ -114,6 +115,32 @@ describe("WorkspaceLayoutSession", () => {
     });
     screen.unmount();
   });
+
+  it("projects typed project context through the mounted workspace session", async () => {
+    const port = new ControlledPort();
+    const sessions: WorkspaceLayoutSession[] = [];
+    const screen = render(WorkspaceLayoutSessionHarness, {
+      props: {
+        projectId: "project:alpha",
+        port,
+        onSession: (session) => sessions.push(session),
+      },
+    });
+    await waitFor(() => expect(port.connections).toHaveLength(1));
+    port.connections[0].publish(snapshot("project:alpha", 1, 1));
+    await waitFor(() => expect(sessions[0].status.kind).toBe("ready"));
+
+    const context: WorkspaceProjectContext = {
+      selected_goal_id: "goal:alpha",
+      selected_task_id: "task:alpha",
+      active_conversation_id: "conversation:alpha",
+    };
+    await sessions[0].updateContext(context);
+
+    expect(port.contextUpdates).toEqual([{ projectId: "project:alpha", context }]);
+    expect(sessions[0].snapshot?.context).toEqual(context);
+    screen.unmount();
+  });
 });
 
 class ControlledPort implements WorkspaceLayoutPort {
@@ -124,6 +151,10 @@ class ControlledPort implements WorkspaceLayoutPort {
     createPanel: WorkspacePanelPresentationInput | null;
   }> = [];
   readonly order: string[] = [];
+  readonly contextUpdates: Array<{
+    projectId: string;
+    context: WorkspaceProjectContext;
+  }> = [];
   #mutation = deferred<WorkspaceLayoutMutationResponse>();
 
   connect(
@@ -155,6 +186,17 @@ class ControlledPort implements WorkspaceLayoutPort {
 
   update(): Promise<WorkspaceLayoutSnapshot> {
     throw new Error("update is outside this lifecycle proof");
+  }
+
+  updateContext(
+    projectId: string,
+    context: WorkspaceProjectContext,
+  ): Promise<WorkspaceLayoutSnapshot> {
+    this.contextUpdates.push({ projectId, context });
+    return Promise.resolve({
+      ...snapshot(projectId, 2, 1),
+      context,
+    });
   }
 
   resolveMutation(response: WorkspaceLayoutMutationResponse): void {
@@ -241,6 +283,11 @@ function snapshot(
     schemas: [schema],
     panel_definitions: [],
     panels: [],
+    context: {
+      selected_goal_id: null,
+      selected_task_id: null,
+      active_conversation_id: null,
+    },
   };
 }
 

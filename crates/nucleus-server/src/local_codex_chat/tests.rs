@@ -21,6 +21,10 @@ fn chat_request_serializes_for_tauri_boundary() {
         message: "hello".to_owned(),
         active_task_id: Some("task:nucleus:one".to_owned()),
         active_goal_id: None,
+        provider_instance_id: Some(CHAT_PROVIDER_INSTANCE_ID.to_owned()),
+        provider_instance_revision: Some("1".to_owned()),
+        protocol_facade_id: Some("codex-app-server-v2".to_owned()),
+        provider_id: None,
         model: Some("gpt-5.4-mini".to_owned()),
         reasoning_effort: Some("low".to_owned()),
         harness_mode: LocalCodexChatHarnessMode::Normal,
@@ -42,29 +46,46 @@ fn chat_route_selection_uses_requested_values_and_rejects_invalid_slugs() {
     request.reasoning_effort = Some("medium".to_owned());
 
     assert_eq!(
-        selected_route(&request, None).expect("route"),
-        (
-            "gpt-5.4-mini".to_owned(),
-            "medium".to_owned(),
-            LocalCodexChatHarnessMode::Normal,
-        )
+        selected_route(&request, None, &test_catalogue()).expect("route"),
+        SelectedAgentChatRoute {
+            runtime_adapter_id: CHAT_ADAPTER_ID.to_owned(),
+            provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
+            provider_instance_revision: "1".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            provider_id: None,
+            model: "gpt-5.4-mini".to_owned(),
+            reasoning_effort: "medium".to_owned(),
+            harness_mode: LocalCodexChatHarnessMode::Normal,
+        }
     );
 
     request.harness_mode = LocalCodexChatHarnessMode::Plan;
     assert_eq!(
-        selected_route(&request, None).expect("plan route"),
-        (
-            "gpt-5.4-mini".to_owned(),
-            "medium".to_owned(),
-            LocalCodexChatHarnessMode::Plan,
-        )
+        selected_route(&request, None, &test_catalogue())
+            .expect("plan route")
+            .harness_mode,
+        LocalCodexChatHarnessMode::Plan
     );
 
     request.model = Some("gpt 5.4".to_owned());
     assert_eq!(
-        selected_route(&request, None).expect_err("invalid route"),
+        selected_route(&request, None, &test_catalogue()).expect_err("invalid route"),
         "chat model contains unsupported characters"
     );
+
+    request.model = Some(CHAT_MODEL.to_owned());
+    request.provider_instance_revision = Some("stale".to_owned());
+    assert_eq!(
+        selected_route(&request, None, &test_catalogue()).expect_err("stale instance"),
+        "selected provider instance revision is stale"
+    );
+
+    request.provider_instance_revision = Some("1".to_owned());
+    let mut unavailable = test_catalogue();
+    unavailable.instances[0].selection_readiness = "not_ready".to_owned();
+    assert!(selected_route(&request, None, &unavailable)
+        .expect_err("unavailable provider")
+        .contains("not ready"));
 }
 
 #[test]
@@ -120,7 +141,8 @@ fn resource_free_chat_uses_host_home_without_inventing_a_resource() {
 #[test]
 #[ignore = "requires a locally authenticated Codex app-server"]
 fn live_chat_model_catalog_exposes_reasoning_options() {
-    let models = LocalCodexChatService::available_models().expect("model catalog");
+    let catalogue = LocalCodexChatService::provider_catalogue().expect("provider catalogue");
+    let models = &catalogue.instances[0].models;
 
     assert!(!models.is_empty());
     assert!(models
@@ -214,9 +236,16 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
         "resource:live-smoke",
         None,
         None,
-        CHAT_MODEL,
-        CHAT_REASONING_EFFORT,
-        LocalCodexChatHarnessMode::Normal,
+        &SelectedAgentChatRoute {
+            runtime_adapter_id: CHAT_ADAPTER_ID.to_owned(),
+            provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
+            provider_instance_revision: "1".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            provider_id: None,
+            model: CHAT_MODEL.to_owned(),
+            reasoning_effort: CHAT_REASONING_EFFORT.to_owned(),
+            harness_mode: LocalCodexChatHarnessMode::Normal,
+        },
         CHAT_TURN_TIMEOUT,
     )
     .expect("start chat session");
@@ -317,6 +346,10 @@ fn live_chat_receives_active_task_context_without_polluting_history() {
                 message: operator_message.to_owned(),
                 active_task_id: Some("task:nucleus-local:bootstrap".to_owned()),
                 active_goal_id: None,
+                provider_instance_id: Some(CHAT_PROVIDER_INSTANCE_ID.to_owned()),
+                provider_instance_revision: Some("1".to_owned()),
+                protocol_facade_id: Some("codex-app-server-v2".to_owned()),
+                provider_id: None,
                 model: None,
                 reasoning_effort: None,
                 harness_mode: LocalCodexChatHarnessMode::Normal,
@@ -346,6 +379,10 @@ fn durable_chat_reopens_with_transcript_context_after_service_restart() {
         message: message.to_owned(),
         active_task_id: None,
         active_goal_id: None,
+        provider_instance_id: Some(CHAT_PROVIDER_INSTANCE_ID.to_owned()),
+        provider_instance_revision: Some("1".to_owned()),
+        protocol_facade_id: Some("codex-app-server-v2".to_owned()),
+        provider_id: None,
         model: None,
         reasoning_effort: None,
         harness_mode: LocalCodexChatHarnessMode::Normal,
@@ -388,6 +425,10 @@ fn live_chat_authors_a_task_batch_without_dispatching_work() {
                 message: "Use the task ledger now to create exactly two ready tasks. First: title 'Live tool task one', description 'First live task.', acceptance criterion 'First task exists', normal importance, execute action, validation command 'effigy desktop:check'. Second: title 'Live tool task two', description 'Second live task.', acceptance criterion 'Second task exists', normal importance, test action, validation command 'effigy qa'. Keep your reply brief.".to_owned(),
                 active_task_id: None,
                 active_goal_id: None,
+                provider_instance_id: Some(CHAT_PROVIDER_INSTANCE_ID.to_owned()),
+                provider_instance_revision: Some("1".to_owned()),
+                protocol_facade_id: Some("codex-app-server-v2".to_owned()),
+                provider_id: None,
                 model: None,
                 reasoning_effort: None,
                 harness_mode: LocalCodexChatHarnessMode::Normal,
@@ -564,6 +605,10 @@ fn live_chat_creates_and_runs_a_two_task_goal_through_two_portals() {
                 message: "Inspect this Goal with task_workflow, then run this Goal now. Use the exact excerpt 'run this Goal now' as the mandate authority and a stable idempotency key. Do not accept review or complete the tasks.".to_owned(),
                 active_task_id: None,
                 active_goal_id: Some(goal.goal_id.clone()),
+                provider_instance_id: Some(CHAT_PROVIDER_INSTANCE_ID.to_owned()),
+                provider_instance_revision: Some("1".to_owned()),
+                protocol_facade_id: Some("codex-app-server-v2".to_owned()),
+                provider_id: None,
                 model: None,
                 reasoning_effort: None,
                 harness_mode: LocalCodexChatHarnessMode::Normal,
@@ -640,6 +685,10 @@ fn request(conversation: &str, message: &str) -> LocalCodexChatRequest {
         message: message.to_owned(),
         active_task_id: None,
         active_goal_id: None,
+        provider_instance_id: Some(CHAT_PROVIDER_INSTANCE_ID.to_owned()),
+        provider_instance_revision: Some("1".to_owned()),
+        protocol_facade_id: Some("codex-app-server-v2".to_owned()),
+        provider_id: None,
         model: None,
         reasoning_effort: None,
         harness_mode: LocalCodexChatHarnessMode::Normal,
@@ -666,6 +715,9 @@ fn persist_legacy_session(
             harness_mode: LocalCodexChatHarnessMode::Normal,
             adapter_id: CHAT_ADAPTER_ID.to_owned(),
             provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
+            provider_instance_revision: "1".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            provider_id: None,
             turn_count: 1,
             task_toolset_version: toolset_version,
         },
@@ -683,6 +735,55 @@ fn persist_legacy_session(
         &[],
     )
     .expect("persist legacy chat completion");
+}
+
+fn test_catalogue() -> AgentChatProviderCatalogue {
+    AgentChatProviderCatalogue {
+        instances: vec![AgentChatProviderInstance {
+            provider_instance_id: CHAT_PROVIDER_INSTANCE_ID.to_owned(),
+            instance_revision: "1".to_owned(),
+            runtime_adapter_id: CHAT_ADAPTER_ID.to_owned(),
+            driver_id: "swallowtail.codex.app-server".to_owned(),
+            integration_family: "codex".to_owned(),
+            transport_family: "stdio-json-rpc".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            display_name: "Local Codex".to_owned(),
+            harness_name: "Codex app-server".to_owned(),
+            ownership: "host_owned_persistent".to_owned(),
+            selection_readiness: "ready".to_owned(),
+            credential_posture: AgentChatCredentialPosture {
+                profile_id: "codex-login".to_owned(),
+                mechanism: "interactive_oauth".to_owned(),
+                credential_state: "ready".to_owned(),
+                entitlement_metering: "subscription_allowance".to_owned(),
+                entitlement_state: "available".to_owned(),
+                endpoint_authorization: "allowed".to_owned(),
+                runtime_readiness: "ready".to_owned(),
+                support_authority: "provider_supported".to_owned(),
+                evidence_provenance: "observed".to_owned(),
+            },
+            credential: None,
+            model_catalogue_state: "available".to_owned(),
+            model_catalogue_diagnostic: None,
+            models: vec![LocalCodexChatModelOption {
+                provider_id: None,
+                model: CHAT_MODEL.to_owned(),
+                display_name: "GPT-5.4 Mini".to_owned(),
+                description: String::new(),
+                default_reasoning_effort: CHAT_REASONING_EFFORT.to_owned(),
+                supported_reasoning_efforts: vec![
+                    LocalCodexChatReasoningOption {
+                        reasoning_effort: "low".to_owned(),
+                        description: String::new(),
+                    },
+                    LocalCodexChatReasoningOption {
+                        reasoning_effort: "medium".to_owned(),
+                        description: String::new(),
+                    },
+                ],
+            }],
+        }],
+    }
 }
 
 fn redirect_project_root(state: &ServerStateService<SqliteBackend>, root: &std::path::Path) {

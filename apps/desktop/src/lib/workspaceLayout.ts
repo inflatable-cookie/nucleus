@@ -36,10 +36,17 @@ export type WorkspacePanelPresentationInput = {
   resource_targets: Record<string, string>;
   editor_file: WorkspaceEditorFile | null;
   forge_diff: WorkspaceForgeDiff | null;
+  conversation_id: string | null;
 };
 
 export type WorkspacePanelPresentation = WorkspacePanelPresentationInput & {
   panel_instance_id: string;
+};
+
+export type WorkspaceProjectContext = {
+  selected_goal_id: string | null;
+  selected_task_id: string | null;
+  active_conversation_id: string | null;
 };
 
 export type WorkspaceLayoutSnapshot = {
@@ -50,6 +57,7 @@ export type WorkspaceLayoutSnapshot = {
   schemas: LayoutSchemaDefinition[];
   panel_definitions: PanelDefinition[];
   panels: WorkspacePanelPresentation[];
+  context: WorkspaceProjectContext;
 };
 
 export type WorkspacePreparedPanel = {
@@ -131,6 +139,15 @@ export async function updateWorkspacePanelPresentation(
   );
 }
 
+export async function updateWorkspaceProjectContext(
+  projectId: string,
+  context: WorkspaceProjectContext,
+): Promise<WorkspaceLayoutSnapshot> {
+  return validateWorkspaceLayoutSnapshot(
+    await invoke("update_workspace_project_context", { projectId, context }),
+  );
+}
+
 export function validateWorkspaceLayoutSnapshot(
   value: unknown,
 ): WorkspaceLayoutSnapshot {
@@ -144,6 +161,7 @@ export function validateWorkspaceLayoutSnapshot(
     validatePanelDefinition,
   );
   array(record.panels, "panels").forEach(validatePanelPresentation);
+  validateProjectContext(record.context);
   return record as WorkspaceLayoutSnapshot;
 }
 
@@ -178,6 +196,13 @@ function validatePreparedPanel(value: unknown): WorkspacePreparedPanel {
   string(record.region_id, "region_id");
   validatePanelPresentationInput(record.presentation);
   return record as WorkspacePreparedPanel;
+}
+
+function validateProjectContext(value: unknown): void {
+  const record = object(value, "workspace project context");
+  nullableString(record.selected_goal_id, "selected_goal_id");
+  nullableString(record.selected_task_id, "selected_task_id");
+  nullableString(record.active_conversation_id, "active_conversation_id");
 }
 
 function validateLayoutDocument(value: unknown): asserts value is LayoutDocument {
@@ -284,6 +309,7 @@ function validatePanelPresentationInput(value: unknown): void {
       throw new TypeError("forge diff has an unknown scope");
     }
   }
+  nullableString(panel.conversation_id, "conversation_id");
 }
 
 function object(value: unknown, name: string): Record<string, unknown> {
