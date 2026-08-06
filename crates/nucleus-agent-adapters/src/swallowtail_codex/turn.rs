@@ -251,6 +251,9 @@ pub(super) fn completed_output(outcome: &TerminalOutcome) -> Result<String, Agen
                     "Codex completed the turn without an assistant message".to_owned(),
                 )
             }),
+        TerminalStatus::Detached => Err(AgentTurnFailure::Failed(
+            "Codex turn observation detached while provider work may continue".to_owned(),
+        )),
         TerminalStatus::Cancelled => Err(AgentTurnFailure::Cancelled),
         TerminalStatus::TimedOut => Err(AgentTurnFailure::TimedOut),
         TerminalStatus::ProviderRequestObserved(_) => Err(AgentTurnFailure::Failed(
@@ -309,6 +312,18 @@ mod tests {
             )),
             Err(AgentTurnFailure::TimedOut),
         );
+    }
+
+    #[test]
+    fn detached_terminal_does_not_claim_completion_or_cancellation() {
+        assert!(matches!(
+            completed_output(&TerminalOutcome::new(
+                TerminalStatus::Detached,
+                CleanupOutcome::Clean,
+            )),
+            Err(AgentTurnFailure::Failed(reason))
+                if reason.contains("provider work may continue")
+        ));
     }
 
     #[test]

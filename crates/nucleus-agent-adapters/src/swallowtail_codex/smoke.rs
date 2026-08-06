@@ -286,6 +286,12 @@ fn finish_outcome(
 fn terminal_status(status: &TerminalStatus) -> (String, CodexReadOnlySmokeStatus) {
     match status {
         TerminalStatus::Completed => ("completed".to_owned(), CodexReadOnlySmokeStatus::Completed),
+        TerminalStatus::Detached => (
+            "detached".to_owned(),
+            CodexReadOnlySmokeStatus::Failed(
+                "Codex diagnostic observation detached while provider work may continue".to_owned(),
+            ),
+        ),
         TerminalStatus::TimedOut => ("timed_out".to_owned(), CodexReadOnlySmokeStatus::TimedOut),
         TerminalStatus::Cancelled => (
             "cancelled".to_owned(),
@@ -420,5 +426,23 @@ mod tests {
 
         assert_eq!(outcome.status, CodexReadOnlySmokeStatus::TimedOut);
         assert_eq!(outcome.turn_status, "timed_out");
+    }
+
+    #[test]
+    fn detachment_does_not_claim_provider_completion() {
+        let outcome = finish_outcome(
+            "thread-1".to_owned(),
+            "turn-1".to_owned(),
+            observation(TerminalStatus::Detached, CleanupOutcome::Clean),
+            CleanupOutcome::Clean,
+            CleanupOutcome::Clean,
+        );
+
+        assert_eq!(outcome.turn_status, "detached");
+        assert!(matches!(
+            outcome.status,
+            CodexReadOnlySmokeStatus::Failed(reason)
+                if reason.contains("provider work may continue")
+        ));
     }
 }

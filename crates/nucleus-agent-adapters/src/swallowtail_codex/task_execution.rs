@@ -273,6 +273,10 @@ fn map_outcome(
     }
     match terminal.status() {
         TerminalStatus::Completed => TaskExecutionOutcome::Completed(linkage),
+        TerminalStatus::Detached => TaskExecutionOutcome::RecoveryRequired {
+            linkage: Some(linkage),
+            reason: "Codex task observation detached while provider work may continue.".to_owned(),
+        },
         TerminalStatus::Cancelled => TaskExecutionOutcome::Cancelled {
             linkage: Some(linkage),
             reason: "Codex task turn was cancelled.".to_owned(),
@@ -396,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn timeout_and_cleanup_uncertainty_require_recovery() {
+    fn timeout_detachment_and_cleanup_uncertainty_require_recovery() {
         let timeout = TerminalOutcome::new(TerminalStatus::TimedOut, CleanupOutcome::NotApplicable);
         assert!(matches!(
             map_outcome(
@@ -406,6 +410,18 @@ mod tests {
                 CleanupOutcome::Clean,
             ),
             TaskExecutionOutcome::RecoveryRequired { .. }
+        ));
+        let detached =
+            TerminalOutcome::new(TerminalStatus::Detached, CleanupOutcome::NotApplicable);
+        assert!(matches!(
+            map_outcome(
+                linkage(),
+                Ok(detached),
+                CleanupOutcome::NotApplicable,
+                CleanupOutcome::Clean,
+            ),
+            TaskExecutionOutcome::RecoveryRequired { reason, .. }
+                if reason.contains("provider work may continue")
         ));
         let completed =
             TerminalOutcome::new(TerminalStatus::Completed, CleanupOutcome::NotApplicable);
