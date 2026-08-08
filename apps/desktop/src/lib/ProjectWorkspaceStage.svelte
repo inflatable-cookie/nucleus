@@ -829,6 +829,7 @@
         ariaLabel="Left and main workspace regions"
         size="xs"
         density="compact"
+        toggleVisibility="hover"
       >
         {#snippet primary()}
           {@render RegionShell("left", "left", "left", activePanelsByRegion.left)}
@@ -852,6 +853,7 @@
       ariaLabel="Center and right workspace regions"
       size="xs"
       density="compact"
+      toggleVisibility="hover"
     >
       {#snippet primary()}{@render CenterRegions()}{/snippet}
       {#snippet secondary()}{@render RightRegions()}{/snippet}
@@ -872,6 +874,7 @@
       ariaLabel="Center top and center bottom workspace regions"
       size="xs"
       density="compact"
+      toggleVisibility="hover"
     >
       {#snippet primary()}{@render RegionShell("centerTop", "top", "center_top", activePanelsByRegion.center_top)}{/snippet}
       {#snippet secondary()}{@render RegionShell("centerBottom", "bottom", "center_bottom", activePanelsByRegion.center_bottom)}{/snippet}
@@ -893,6 +896,7 @@
       ariaLabel="Right top and right bottom workspace regions"
       size="xs"
       density="compact"
+      toggleVisibility="hover"
     >
       {#snippet primary()}{@render RegionShell("rightTop", "top", "right_top", activePanelsByRegion.right_top)}{/snippet}
       {#snippet secondary()}{@render RegionShell("rightBottom", "bottom", "right_bottom", activePanelsByRegion.right_bottom)}{/snippet}
