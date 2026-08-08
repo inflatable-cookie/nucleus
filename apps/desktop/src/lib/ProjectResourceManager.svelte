@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Icon, Menu, Text, type MenuItem } from "@poodle/svelte";
-  import { arrowLeft, ellipsis, folderPlus } from "@poodle/icons-lucide";
+  import { Icon, Menu, Text, type MenuItem } from "@inflatable-cookie/poodle-svelte";
+  import { arrowLeft, ellipsis, folderPlus } from "@inflatable-cookie/poodle-icons-lucide";
   import { open } from "@tauri-apps/plugin-dialog";
   import {
     buildControlCommandEnvelope,

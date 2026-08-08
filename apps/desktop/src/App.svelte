@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { Icon, IconButton, Menu, Popover, SplitView, type MenuItem } from "@poodle/svelte";
-  import { info, plus, settings as settingsIcon } from "@poodle/icons-lucide";
+  import { Icon, IconButton, Menu, Popover, SplitView, type MenuItem } from "@inflatable-cookie/poodle-svelte";
+  import { info, plus, settings as settingsIcon } from "@inflatable-cookie/poodle-icons-lucide";
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
   import CommandPalette from "./lib/commands/CommandPalette.svelte";
   import { NucleusCommandRuntime } from "./lib/commands/runtime.svelte";

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Button, Icon, Menu, Text, type MenuItem } from "@poodle/svelte";
-  import { chevronRight, ellipsis, file, folder, refreshCw } from "@poodle/icons-lucide";
+  import { Button, Icon, Menu, Text, type MenuItem } from "@inflatable-cookie/poodle-svelte";
+  import { chevronRight, ellipsis, file, folder, refreshCw } from "@inflatable-cookie/poodle-icons-lucide";
   import { onMount, tick, untrack } from "svelte";
   import type { ControlProjectRecordDto, ControlProjectResourceRecordDto } from "./control";
   import type { EditorFileWatchEvent } from "./control/editorFileWatch";

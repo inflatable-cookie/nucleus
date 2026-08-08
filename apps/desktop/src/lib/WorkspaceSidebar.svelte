@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Tabs, type TabItem } from "@poodle/svelte";
-  import { files, folderTree, gitBranch, messagesSquare } from "@poodle/icons-lucide";
+  import { Tabs, type TabItem } from "@inflatable-cookie/poodle-svelte";
+  import { files, folderTree, gitBranch, messagesSquare } from "@inflatable-cookie/poodle-icons-lucide";
   import { onMount } from "svelte";
   import type { ControlProjectRecordDto } from "./control";
   import FilesSidebarView from "./FilesSidebarView.svelte";

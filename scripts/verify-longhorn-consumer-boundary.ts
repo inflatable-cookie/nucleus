@@ -311,7 +311,7 @@ function verifyRendererArtifacts() {
     const workspaceManifest = JSON.parse(
       readFileSync(resolve(longhornRoot, "package.json"), "utf8"),
     ) as PackageManifest & { devDependencies?: Record<string, string> };
-    const poodleRef = workspaceManifest.devDependencies?.["@poodle/headless"];
+    const poodleRef = workspaceManifest.devDependencies?.["@inflatable-cookie/poodle-headless"];
     assert(poodleRef?.startsWith("file:"), "Longhorn Poodle artifact reference is missing");
     const poodlePack = resolve(longhornRoot, poodleRef.slice("file:".length));
     const poodlePackRoot = dirname(poodlePack);
@@ -361,7 +361,7 @@ function verifyRendererArtifacts() {
         return { name: value.name, root: realpathSync(dirname(absolute)) };
       });
     const svelteRuntime = packageManifests.filter(({ name }) => name === "svelte");
-    const poodleRuntime = packageManifests.filter(({ name }) => name === "@poodle/svelte");
+    const poodleRuntime = packageManifests.filter(({ name }) => name === "@inflatable-cookie/poodle-svelte");
     assert(svelteRuntime.length === 1, `artifact graph has ${svelteRuntime.length} Svelte runtimes`);
     assert(poodleRuntime.length === 1, `artifact graph has ${poodleRuntime.length} Poodle runtimes`);
     for (const name of Object.keys(rendererPackages)) {

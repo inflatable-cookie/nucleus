@@ -2,7 +2,7 @@ import type {
   OverlaySurfaceGeometry,
   OverlaySurfaceGeometryChange,
   OverlayViewportRect,
-} from "@poodle/svelte";
+} from "@inflatable-cookie/poodle-svelte";
 
 let nextOverlayId = 0;
 

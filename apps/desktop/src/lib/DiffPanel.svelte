@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Popover, Surface, Text } from "@poodle/svelte";
+  import { Button, Popover, Surface, Text } from "@inflatable-cookie/poodle-svelte";
   import type { ControlTaskRecordDto } from "./control";
   import {
     querySelectedTaskReviewDecisionAdmission,

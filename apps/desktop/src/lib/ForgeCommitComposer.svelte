@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, TextInput } from "@poodle/svelte";
+  import { Button, TextInput } from "@inflatable-cookie/poodle-svelte";
 
   let {
     message,

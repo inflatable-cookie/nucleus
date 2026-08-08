@@ -1,4 +1,4 @@
-import type { TranscriptItem } from "@poodle/svelte";
+import type { TranscriptItem } from "@inflatable-cookie/poodle-svelte";
 
 import type {
   AgentChatActivity,

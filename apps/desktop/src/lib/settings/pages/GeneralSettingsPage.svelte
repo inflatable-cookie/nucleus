@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Switch, Text } from "@poodle/svelte";
+  import { Button, Switch, Text } from "@inflatable-cookie/poodle-svelte";
   import type { SettingsPageRenderContext } from "@inflatable-cookie/longhorn-settings/svelte";
   import {
     FIXTURE_STATUS_ENTRY_ID,

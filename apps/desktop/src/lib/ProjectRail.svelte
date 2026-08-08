@@ -7,7 +7,7 @@
     SegmentedControl,
     Text,
     type MenuItem,
-  } from "@poodle/svelte";
+  } from "@inflatable-cookie/poodle-svelte";
   import {
     chevronDown,
     chevronRight,
@@ -16,7 +16,7 @@
     folderCog,
     plus,
     refreshCw,
-  } from "@poodle/icons-lucide";
+  } from "@inflatable-cookie/poodle-icons-lucide";
   import { onDestroy, onMount, tick } from "svelte";
   import {
     buildStateListQuery,

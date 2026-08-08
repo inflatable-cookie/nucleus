@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Surface, Text } from "@poodle/svelte";
+  import { Button, Surface, Text } from "@inflatable-cookie/poodle-svelte";
   import {
     LayoutDockRegion,
     LayoutSplitView,

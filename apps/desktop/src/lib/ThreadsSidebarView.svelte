@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Button, EditableLabel, Icon, Text } from "@poodle/svelte";
-  import { messageCircle, plus, refreshCw, trash2 } from "@poodle/icons-lucide";
+  import { Button, EditableLabel, Icon, Text } from "@inflatable-cookie/poodle-svelte";
+  import { messageCircle, plus, refreshCw, trash2 } from "@inflatable-cookie/poodle-icons-lucide";
   import { onMount } from "svelte";
   import {
     buildControlCommandEnvelope,

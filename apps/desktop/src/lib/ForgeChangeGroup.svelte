@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Icon } from "@poodle/svelte";
-  import { fileDiff, minus, plus } from "@poodle/icons-lucide";
+  import { Icon } from "@inflatable-cookie/poodle-svelte";
+  import { fileDiff, minus, plus } from "@inflatable-cookie/poodle-icons-lucide";
   import type {
     ScmWorkingCopyDiffScope,
     ScmWorkingCopyFileStatus,

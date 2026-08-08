@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Button, Icon, Surface, Text } from "@poodle/svelte";
-  import { refreshCw } from "@poodle/icons-lucide";
+  import { Button, Icon, Surface, Text } from "@inflatable-cookie/poodle-svelte";
+  import { refreshCw } from "@inflatable-cookie/poodle-icons-lucide";
   import { onMount } from "svelte";
   import {
     readScmWorkingCopyDiff,

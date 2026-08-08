@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Icon } from "@poodle/svelte";
-  import { chevronDown, chevronRight, gitBranch, gitFork } from "@poodle/icons-lucide";
+  import { Icon } from "@inflatable-cookie/poodle-svelte";
+  import { chevronDown, chevronRight, gitBranch, gitFork } from "@inflatable-cookie/poodle-icons-lucide";
   import type {
     ControlProjectResourceRecordDto,
     ScmWorkingCopyDiffScope,

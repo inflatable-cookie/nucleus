@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { Button, Callout, ConfirmAction, DetailItem, Surface } from "@poodle/svelte";
+  import { Button, Callout, ConfirmAction, DetailItem, Surface } from "@inflatable-cookie/poodle-svelte";
   import { onMount } from "svelte";
 
   type RestorePreparation = {

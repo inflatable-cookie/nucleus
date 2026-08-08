@@ -3,8 +3,8 @@
     Icon,
     Popover,
     type OverlaySurfaceGeometryChangeHandler,
-  } from "@poodle/svelte";
-  import { bell } from "@poodle/icons-lucide";
+  } from "@inflatable-cookie/poodle-svelte";
+  import { bell } from "@inflatable-cookie/poodle-icons-lucide";
   import { NotificationPanel } from "@inflatable-cookie/longhorn-notifications/poodle";
   import type { NotificationSession } from "@inflatable-cookie/longhorn-notifications/svelte";
 

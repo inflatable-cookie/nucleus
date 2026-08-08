@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { Icon, Text } from "@poodle/svelte";
-  import { arrowLeft, arrowRight, externalLink, rotateCw } from "@poodle/icons-lucide";
+  import { Icon, Text } from "@inflatable-cookie/poodle-svelte";
+  import { arrowLeft, arrowRight, externalLink, rotateCw } from "@inflatable-cookie/poodle-icons-lucide";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {

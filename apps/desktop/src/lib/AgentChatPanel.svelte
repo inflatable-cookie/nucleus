@@ -100,8 +100,8 @@
     type ModelCapabilityAxis,
     type ModelOption,
     type ModelSelection,
-  } from "@poodle/svelte";
-  import { messageSquareText } from "@poodle/icons-lucide";
+  } from "@inflatable-cookie/poodle-svelte";
+  import { messageSquareText } from "@inflatable-cookie/poodle-icons-lucide";
   import TaskCreationReceipt from "./TaskCreationReceipt.svelte";
   import TaskWorkflowReceipt from "./TaskWorkflowReceipt.svelte";
   import {
