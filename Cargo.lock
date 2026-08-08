@@ -2494,7 +2494,7 @@ version = "0.1.0"
 dependencies = [
  "longhorn-config",
  "longhorn-core",
- "longhorn-tauri-windowing",
+ "longhorn-windowing",
 ]
 
 [[package]]

@@ -7,3 +7,4 @@ node_modules/
 dist/
 apps/desktop/src-tauri/gen/
 apps/desktop/.svelte-check/
+.cargo/config.toml

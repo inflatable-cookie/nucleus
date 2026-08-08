@@ -39,7 +39,10 @@ fn agent_chat_exposes_exact_active_turn_cancellation() {
     let control = include_str!("../../../src/lib/control/agentChat.ts");
 
     assert!(chat.contains("cancelAgentChatTurn(projectId, conversationId)"));
-    assert!(chat.contains("cancelRequested ? \"Cancelling…\" : \"Cancel\""));
+    assert!(chat.contains("onStop={() => void cancelTurn()}"));
+    assert!(chat.contains(
+        "pending ? (cancelRequested ? \"Cancelling…\" : \"Working…\") : null"
+    ));
     assert!(control.contains("invoke<boolean>(\"cancel_agent_chat_turn\""));
 }
 
