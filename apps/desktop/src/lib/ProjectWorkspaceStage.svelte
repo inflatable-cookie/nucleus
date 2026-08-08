@@ -926,6 +926,7 @@
           size="xs"
           density="compact"
           tabVariant="block"
+          showCollapseToggle={false}
         >
           {#snippet body(context)}
             {@const panel = panelFromContext(context)}
