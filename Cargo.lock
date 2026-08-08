@@ -4147,8 +4147,8 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "swallowtail-adapter-codex"
-version = "0.2.0"
-source = "git+https://github.com/inflatable-cookie/swallowtail?tag=v0.2.0#0104b8948ad141f5c42ad752127203b9b1d72db5"
+version = "0.3.0"
+source = "git+https://github.com/inflatable-cookie/swallowtail?tag=v0.3.0#35cda7523fcf6ef0d9fcc7bec546621ec71f7de1"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -4161,16 +4161,16 @@ dependencies = [
 
 [[package]]
 name = "swallowtail-core"
-version = "0.2.0"
-source = "git+https://github.com/inflatable-cookie/swallowtail?tag=v0.2.0#0104b8948ad141f5c42ad752127203b9b1d72db5"
+version = "0.3.0"
+source = "git+https://github.com/inflatable-cookie/swallowtail?tag=v0.3.0#35cda7523fcf6ef0d9fcc7bec546621ec71f7de1"
 dependencies = [
  "semver",
 ]
 
 [[package]]
 name = "swallowtail-host-local"
-version = "0.2.0"
-source = "git+https://github.com/inflatable-cookie/swallowtail?tag=v0.2.0#0104b8948ad141f5c42ad752127203b9b1d72db5"
+version = "0.3.0"
+source = "git+https://github.com/inflatable-cookie/swallowtail?tag=v0.3.0#35cda7523fcf6ef0d9fcc7bec546621ec71f7de1"
 dependencies = [
  "futures-executor",
  "sha2 0.10.9",
@@ -4180,10 +4180,12 @@ dependencies = [
 
 [[package]]
 name = "swallowtail-runtime"
-version = "0.2.0"
-source = "git+https://github.com/inflatable-cookie/swallowtail?tag=v0.2.0#0104b8948ad141f5c42ad752127203b9b1d72db5"
+version = "0.3.0"
+source = "git+https://github.com/inflatable-cookie/swallowtail?tag=v0.3.0#35cda7523fcf6ef0d9fcc7bec546621ec71f7de1"
 dependencies = [
+ "futures-channel",
  "futures-core",
+ "semver",
  "sha2 0.10.9",
  "swallowtail-core",
  "zeroize",
