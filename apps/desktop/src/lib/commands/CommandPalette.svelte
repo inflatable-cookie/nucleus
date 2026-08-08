@@ -1,6 +1,6 @@
 <script lang="ts">
   import { CommandPalette, type CommandActionItem, type DiscoveryState } from "@inflatable-cookie/poodle-svelte";
-  import type { CommandSession } from "@inflatable-cookie/longhorn-commands/svelte";
+  import type { CommandSession } from "@inflatable-cookie/longhorn-poodle-svelte/commands/svelte";
 
   let { session }: { session: CommandSession } = $props();
 

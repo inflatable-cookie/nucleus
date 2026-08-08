@@ -1,13 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { EventTransport, Unlisten } from "@inflatable-cookie/longhorn-core";
+import type { EventTransport, Unlisten } from "@inflatable-cookie/longhorn/core";
 import {
   SETTINGS_SCOPE_CHANGED_EVENT,
   SettingsClient,
   type SettingsRegistrySnapshot,
   type SettingsScopeSnapshot,
-} from "@inflatable-cookie/longhorn-settings";
-import { SettingsSession } from "@inflatable-cookie/longhorn-settings/svelte";
+} from "@inflatable-cookie/longhorn/settings";
+import { SettingsSession } from "@inflatable-cookie/longhorn-poodle-svelte/settings/svelte";
 
 export const GENERAL_PAGE_ID = "nucleus:general";
 export const APPEARANCE_PAGE_ID = "nucleus:appearance";

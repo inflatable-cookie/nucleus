@@ -4,8 +4,8 @@
     LayoutDockRegion,
     LayoutSplitView,
     type PanelRenderContext,
-  } from "@inflatable-cookie/longhorn-poodle";
-  import type { RegionId } from "@inflatable-cookie/longhorn-layout";
+  } from "@inflatable-cookie/longhorn-poodle-svelte/poodle";
+  import type { RegionId } from "@inflatable-cookie/longhorn/layout";
 
   import AgentChatPanel from "./AgentChatPanel.svelte";
   import BrowserPanel from "./BrowserPanel.svelte";

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -18,17 +19,9 @@ const desktopRoot = resolve(repoRoot, "apps/desktop");
 const longhornRoot = resolve(repoRoot, "../longhorn");
 
 const rendererPackages = {
-  "@inflatable-cookie/longhorn-commands": "commands",
-  "@inflatable-cookie/longhorn-config": "config",
-  "@inflatable-cookie/longhorn-core": "core",
-  "@inflatable-cookie/longhorn-layout": "layout",
-  "@inflatable-cookie/longhorn-native-content": "native-content",
-  "@inflatable-cookie/longhorn-native-content-svelte": "native-content-svelte",
-  "@inflatable-cookie/longhorn-notifications": "notifications",
-  "@inflatable-cookie/longhorn-operation": "operation",
-  "@inflatable-cookie/longhorn-poodle": "poodle",
-  "@inflatable-cookie/longhorn-settings": "settings",
-  "@inflatable-cookie/longhorn-svelte": "svelte",
+  "@inflatable-cookie/longhorn": "longhorn",
+  "@inflatable-cookie/longhorn-poodle-svelte": "longhorn-poodle-svelte",
+  "@inflatable-cookie/longhorn-tauri": "longhorn-tauri",
 } as const;
 
 const rustCrates = [
@@ -65,10 +58,19 @@ const selectedLonghornSources = [
   ...rustCrates.map((name) => `crates/${name}`),
 ] as const;
 
-const forbiddenRendererPackages = [
-  "@inflatable-cookie/longhorn-history",
-  "@inflatable-cookie/longhorn-surface-transfer",
-  "@inflatable-cookie/longhorn-surfaces",
+// Card 164 collapsed Longhorn's eighteen renderer packages into three, so
+// "nucleus does not install Surfaces" is no longer expressible or true: the
+// domains ship in one package whether or not they are composed. The half of
+// the claim that still holds — and is the one that ever mattered — is that
+// nucleus never *imports* them. Tree-shaking keeps them out of the bundle.
+// The Rust side keeps install-absence below, where the split is still real.
+const forbiddenRendererImports = [
+  "@inflatable-cookie/longhorn/history",
+  "@inflatable-cookie/longhorn/history-tree",
+  "@inflatable-cookie/longhorn/surface-transfer",
+  "@inflatable-cookie/longhorn/surfaces",
+  "@inflatable-cookie/longhorn-poodle-svelte/surfaces",
+  "@inflatable-cookie/longhorn-poodle-svelte/surface-transfer",
 ] as const;
 const forbiddenRustCrates = [
   "longhorn-history",
@@ -106,10 +108,18 @@ for (const [name, sourceDirectory] of Object.entries(rendererPackages)) {
     assert(manifest.overrides?.[name] === expected, `${name} override mismatch`);
 }
 
-for (const name of forbiddenRendererPackages) {
-  assert(!manifest.dependencies?.[name], `forbidden renderer dependency ${name}`);
-  assert(!manifest.overrides?.[name], `forbidden renderer override ${name}`);
-  assert(!existsSync(resolve(desktopRoot, "node_modules", ...name.split("/"))), `${name} installed`);
+const rendererSource = command(desktopRoot, [
+  "git",
+  "grep",
+  "-h",
+  "-o",
+  "-E",
+  "@inflatable-cookie/longhorn[a-z/-]*",
+  "--",
+  "src",
+]);
+for (const name of forbiddenRendererImports) {
+  assert(!rendererSource.includes(name), `forbidden renderer import ${name}`);
 }
 
 const rendererArtifactProof = verifyRendererArtifacts();
@@ -212,7 +222,7 @@ console.log(
       },
       renderer: {
         ...rendererArtifactProof,
-        forbiddenPackagesAbsent: forbiddenRendererPackages,
+        forbiddenImportsAbsent: forbiddenRendererImports,
       },
       rust: {
         crates: installedRust,
@@ -374,12 +384,20 @@ function verifyRendererArtifacts() {
         `${name} resolved outside proof root: ${resolvedRoot}`,
       );
     }
-    for (const name of forbiddenRendererPackages) {
-      assert(
-        !existsSync(resolve(consumer, "node_modules", ...name.split("/"))),
-        `${name} resolved in artifact graph`,
-      );
-    }
+    // Subpath absence is not checkable in a consolidated package, so assert
+    // the stronger property instead: exactly the three Longhorn packages are
+    // installed and no fourth one leaked in.
+    const scopeRoot = resolve(consumer, "node_modules/@inflatable-cookie");
+    const installedLonghorn = readdirSync(scopeRoot)
+      .filter((entry) => entry === "longhorn" || entry.startsWith("longhorn-"))
+      .sort();
+    assert(
+      JSON.stringify(installedLonghorn) ===
+        JSON.stringify(
+          Object.values(rendererPackages).slice().sort(),
+        ),
+      `artifact graph installs ${installedLonghorn.join(", ")}`,
+    );
 
     return {
       packages: longhornIdentities,

@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { SettingsShell } from "@inflatable-cookie/longhorn-settings/poodle";
+  import { SettingsShell } from "@inflatable-cookie/longhorn-poodle-svelte/settings/poodle";
   import type {
     SettingsPageRenderContext,
     SettingsPageRenderer,
     SettingsSession,
-  } from "@inflatable-cookie/longhorn-settings/svelte";
-  import type { CommandSession } from "@inflatable-cookie/longhorn-commands/svelte";
+  } from "@inflatable-cookie/longhorn-poodle-svelte/settings/svelte";
+  import type { CommandSession } from "@inflatable-cookie/longhorn-poodle-svelte/commands/svelte";
   import { createNucleusSettingsSession } from "./client";
   import LazySettingsPage from "./pages/LazySettingsPage.svelte";
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Button, RadioGroup, Select, Text } from "@inflatable-cookie/poodle-svelte";
-  import type { SettingsPageRenderContext } from "@inflatable-cookie/longhorn-settings/svelte";
+  import type { SettingsPageRenderContext } from "@inflatable-cookie/longhorn-poodle-svelte/settings/svelte";
   import {
     loadAgentChatProviderCatalogue,
     requestAgentChatCredentialAction,

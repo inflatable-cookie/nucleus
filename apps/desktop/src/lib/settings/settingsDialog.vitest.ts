@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
 
-import { SETTINGS_APPLY_COMMAND } from "@inflatable-cookie/longhorn-settings";
+import { SETTINGS_APPLY_COMMAND } from "@inflatable-cookie/longhorn/settings";
 
 import SettingsDialog from "./SettingsDialog.svelte";
 import { DEFAULT_HARNESS_MODE_ENTRY_ID } from "./client";

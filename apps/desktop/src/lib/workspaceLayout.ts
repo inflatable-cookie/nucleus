@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   CheckedSnapshotConnection,
   type ConnectionFailureReporter,
-} from "@inflatable-cookie/longhorn-core";
+} from "@inflatable-cookie/longhorn/core";
 import {
   assertCompatibleLayoutMutationCommand,
   assertCompatibleLayoutMutationOutcome,
@@ -12,8 +12,8 @@ import {
   type LayoutMutationRequest,
   type LayoutSchemaDefinition,
   type PanelDefinition,
-} from "@inflatable-cookie/longhorn-layout";
-import type { LayoutDispatchResult } from "@inflatable-cookie/longhorn-svelte/layout";
+} from "@inflatable-cookie/longhorn/layout";
+import type { LayoutDispatchResult } from "@inflatable-cookie/longhorn-poodle-svelte/layout";
 
 export const WORKSPACE_LAYOUT_CHANGED_EVENT = "nucleus://workspace-layout";
 

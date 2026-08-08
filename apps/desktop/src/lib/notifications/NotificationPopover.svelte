@@ -5,8 +5,8 @@
     type OverlaySurfaceGeometryChangeHandler,
   } from "@inflatable-cookie/poodle-svelte";
   import { bell } from "@inflatable-cookie/poodle-icons-lucide";
-  import { NotificationPanel } from "@inflatable-cookie/longhorn-notifications/poodle";
-  import type { NotificationSession } from "@inflatable-cookie/longhorn-notifications/svelte";
+  import { NotificationPanel } from "@inflatable-cookie/longhorn-poodle-svelte/notifications/poodle";
+  import type { NotificationSession } from "@inflatable-cookie/longhorn-poodle-svelte/notifications/svelte";
 
   let {
     session,

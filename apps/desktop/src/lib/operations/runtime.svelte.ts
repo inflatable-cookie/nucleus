@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { EventTransport } from "@inflatable-cookie/longhorn-core";
-import { createTauriOperationPort } from "@inflatable-cookie/longhorn-operation/tauri";
-import { OperationSession } from "@inflatable-cookie/longhorn-operation/svelte";
+import type { EventTransport } from "@inflatable-cookie/longhorn/core";
+import { createTauriOperationPort } from "@inflatable-cookie/longhorn-tauri/operation";
+import { OperationSession } from "@inflatable-cookie/longhorn-poodle-svelte/operation/svelte";
 
 let requestSequence = 0;
 

@@ -8,7 +8,7 @@
     NativeContentSession,
     nativeContentViewport,
     resolveNativeContentVisibility,
-  } from "@inflatable-cookie/longhorn-native-content-svelte";
+  } from "@inflatable-cookie/longhorn-poodle-svelte/native-content";
   import {
     DEFAULT_BROWSER_URL,
     browserIslandId,
