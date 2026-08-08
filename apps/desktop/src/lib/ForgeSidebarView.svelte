@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, Icon, Text } from "@inflatable-cookie/poodle-svelte";
-  import { refreshCw } from "@inflatable-cookie/poodle-icons-lucide";
+  import { refreshCw } from "@inflatable-cookie/poodle-core/icons";
   import { onMount } from "svelte";
   import {
     buildStateListQuery,

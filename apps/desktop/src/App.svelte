@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { Icon, IconButton, Menu, Popover, SplitView, type MenuItem } from "@inflatable-cookie/poodle-svelte";
-  import { info, plus, settings as settingsIcon } from "@inflatable-cookie/poodle-icons-lucide";
+  import { info, plus, settings as settingsIcon } from "@inflatable-cookie/poodle-core/icons";
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
   import CommandPalette from "./lib/commands/CommandPalette.svelte";
   import { NucleusCommandRuntime } from "./lib/commands/runtime.svelte";

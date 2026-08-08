@@ -17,11 +17,8 @@
         "@inflatable-cookie/longhorn": "file:../../../longhorn/packages/longhorn",
         "@inflatable-cookie/longhorn-poodle-svelte": "file:../../../longhorn/packages/longhorn-poodle-svelte",
         "@inflatable-cookie/longhorn-tauri": "file:../../../longhorn/packages/longhorn-tauri",
-        "@inflatable-cookie/poodle-headless": "file:../../../poodle/packages/core",
-        "@inflatable-cookie/poodle-icons-lucide": "file:../../../poodle/packages/svelte/icons-lucide",
-        "@inflatable-cookie/poodle-styles": "file:../../../poodle/packages/styles",
+        "@inflatable-cookie/poodle-core": "file:../../../poodle/packages/core",
         "@inflatable-cookie/poodle-svelte": "file:../../../poodle/packages/svelte/components",
-        "@inflatable-cookie/poodle-svelte-tokens": "file:../../../poodle/packages/svelte/tokens",
         "@lezer/highlight": "^1.2.3",
         "@tauri-apps/api": "^2.11.1",
         "@tauri-apps/plugin-dialog": "^2.7.2",
@@ -47,11 +44,9 @@
   "overrides": {
     "@inflatable-cookie/longhorn": "file:../../../longhorn/packages/longhorn",
     "@inflatable-cookie/longhorn-poodle-svelte": "file:../../../longhorn/packages/longhorn-poodle-svelte",
-    "@inflatable-cookie/poodle-headless": "file:../../../poodle/packages/core",
-    "@inflatable-cookie/poodle-icons-lucide": "file:../../../poodle/packages/svelte/icons-lucide",
-    "@inflatable-cookie/poodle-styles": "file:../../../poodle/packages/styles",
+    "@inflatable-cookie/longhorn-tauri": "file:../../../longhorn/packages/longhorn-tauri",
+    "@inflatable-cookie/poodle-core": "file:../../../poodle/packages/core",
     "@inflatable-cookie/poodle-svelte": "file:../../../poodle/packages/svelte/components",
-    "@inflatable-cookie/poodle-svelte-tokens": "file:../../../poodle/packages/svelte/tokens",
     "@inflatable-cookie/poodle-tokens": "file:../../../poodle/packages/tokens",
   },
   "packages": {
@@ -119,15 +114,9 @@
 
     "@inflatable-cookie/longhorn-tauri": ["@inflatable-cookie/longhorn-tauri@file:../../../longhorn/packages/longhorn-tauri", { "peerDependencies": { "@inflatable-cookie/longhorn": "0.1.0", "@tauri-apps/api": "^2.10.1" } }],
 
-    "@inflatable-cookie/poodle-headless": ["@inflatable-cookie/poodle-headless@file:../../../poodle/packages/core", { "devDependencies": { "@types/bun": "^1.3.14", "marked": "^18.0.0" } }],
+    "@inflatable-cookie/poodle-core": ["@inflatable-cookie/poodle-core@file:../../../poodle/packages/core", { "devDependencies": { "@types/bun": "^1.3.14", "lucide-static": "^0.577.0", "marked": "^18.0.0" } }],
 
-    "@inflatable-cookie/poodle-icons-lucide": ["@inflatable-cookie/poodle-icons-lucide@file:../../../poodle/packages/svelte/icons-lucide", { "dependencies": { "lucide-static": "^0.577.0" } }],
-
-    "@inflatable-cookie/poodle-styles": ["@inflatable-cookie/poodle-styles@file:../../../poodle/packages/styles", {}],
-
-    "@inflatable-cookie/poodle-svelte": ["@inflatable-cookie/poodle-svelte@file:../../../poodle/packages/svelte/components", { "dependencies": { "@inflatable-cookie/poodle-headless": "0.1.0", "@inflatable-cookie/poodle-icons-lucide": "0.1.0", "@inflatable-cookie/poodle-styles": "0.1.0", "@inflatable-cookie/poodle-svelte-tokens": "0.1.0", "marked": "^18.0.0" }, "peerDependencies": { "svelte": ">=5.38.6 <6" } }],
-
-    "@inflatable-cookie/poodle-svelte-tokens": ["@inflatable-cookie/poodle-svelte-tokens@file:../../../poodle/packages/svelte/tokens", {}],
+    "@inflatable-cookie/poodle-svelte": ["@inflatable-cookie/poodle-svelte@file:../../../poodle/packages/svelte/components", { "dependencies": { "@inflatable-cookie/poodle-core": "0.1.0", "marked": "^18.0.0" }, "peerDependencies": { "svelte": ">=5.38.6 <6" } }],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 
@@ -485,13 +474,7 @@
 
     "@inflatable-cookie/longhorn-tauri/@inflatable-cookie/longhorn": ["@inflatable-cookie/longhorn@file:../../../longhorn/packages/longhorn", {}],
 
-    "@inflatable-cookie/poodle-svelte/@inflatable-cookie/poodle-headless": ["@inflatable-cookie/poodle-headless@file:../../../poodle/packages/core", {}],
-
-    "@inflatable-cookie/poodle-svelte/@inflatable-cookie/poodle-icons-lucide": ["@inflatable-cookie/poodle-icons-lucide@file:../../../poodle/packages/svelte/icons-lucide", {}],
-
-    "@inflatable-cookie/poodle-svelte/@inflatable-cookie/poodle-styles": ["@inflatable-cookie/poodle-styles@file:../../../poodle/packages/styles", {}],
-
-    "@inflatable-cookie/poodle-svelte/@inflatable-cookie/poodle-svelte-tokens": ["@inflatable-cookie/poodle-svelte-tokens@file:../../../poodle/packages/svelte/tokens", {}],
+    "@inflatable-cookie/poodle-svelte/@inflatable-cookie/poodle-core": ["@inflatable-cookie/poodle-core@file:../../../poodle/packages/core", {}],
 
     "@testing-library/dom/aria-query": ["aria-query@5.3.0", "", { "dependencies": { "dequal": "^2.0.3" } }, "sha512-b0P0sZPKtyu8HkeRAfCq0IfURZK+SuwMjY1UXGBU27wpAiTwQAIlq56IbIO+ytk/JjS1fMR14ee5WBBfKi5J6A=="],
 

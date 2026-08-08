@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Icon } from "@inflatable-cookie/poodle-svelte";
-  import { check } from "@inflatable-cookie/poodle-icons-lucide";
+  import { check } from "@inflatable-cookie/poodle-core/icons";
   import type { TaskAuthoringReceipt } from "./control/agentChat";
 
   let {

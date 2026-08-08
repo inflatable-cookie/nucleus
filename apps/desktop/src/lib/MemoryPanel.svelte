@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, IconButton, Text } from "@inflatable-cookie/poodle-svelte";
-  import { refreshCw } from "@inflatable-cookie/poodle-icons-lucide";
+  import { refreshCw } from "@inflatable-cookie/poodle-core/icons";
   import {
     queryAcceptedMemory,
     queryMemoryProposals,

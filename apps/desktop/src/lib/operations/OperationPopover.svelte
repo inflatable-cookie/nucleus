@@ -4,7 +4,7 @@
     Popover,
     type OverlaySurfaceGeometryChangeHandler,
   } from "@inflatable-cookie/poodle-svelte";
-  import { activity } from "@inflatable-cookie/poodle-icons-lucide";
+  import { activity } from "@inflatable-cookie/poodle-core/icons";
   import { OperationPanel } from "@inflatable-cookie/longhorn-poodle-svelte/operation/poodle";
   import type { OperationSession } from "@inflatable-cookie/longhorn-poodle-svelte/operation/svelte";
 

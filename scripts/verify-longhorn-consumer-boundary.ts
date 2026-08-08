@@ -321,7 +321,7 @@ function verifyRendererArtifacts() {
     const workspaceManifest = JSON.parse(
       readFileSync(resolve(longhornRoot, "package.json"), "utf8"),
     ) as PackageManifest & { devDependencies?: Record<string, string> };
-    const poodleRef = workspaceManifest.devDependencies?.["@inflatable-cookie/poodle-headless"];
+    const poodleRef = workspaceManifest.devDependencies?.["@inflatable-cookie/poodle-core"];
     assert(poodleRef?.startsWith("file:"), "Longhorn Poodle artifact reference is missing");
     const poodlePack = resolve(longhornRoot, poodleRef.slice("file:".length));
     const poodlePackRoot = dirname(poodlePack);
