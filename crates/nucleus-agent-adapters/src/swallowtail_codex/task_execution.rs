@@ -302,15 +302,27 @@ fn map_outcome(
         },
         TerminalStatus::ProviderFailed(diagnostic) => TaskExecutionOutcome::Failed {
             linkage: Some(linkage),
-            reason: format!("Codex provider failed: {}", diagnostic.message()),
+            reason: format!(
+                "Codex provider failed: [{}] {}",
+                diagnostic.code(),
+                diagnostic.message()
+            ),
         },
         TerminalStatus::HostFailed(diagnostic) => TaskExecutionOutcome::Failed {
             linkage: Some(linkage),
-            reason: format!("Codex host failed: {}", diagnostic.message()),
+            reason: format!(
+                "Codex host failed: [{}] {}",
+                diagnostic.code(),
+                diagnostic.message()
+            ),
         },
         TerminalStatus::RuntimeFailed(diagnostic) => TaskExecutionOutcome::Failed {
             linkage: Some(linkage),
-            reason: format!("Codex runtime failed: {}", diagnostic.message()),
+            reason: format!(
+                "Codex runtime failed: [{}] {}",
+                diagnostic.code(),
+                diagnostic.message()
+            ),
         },
     }
 }

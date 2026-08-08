@@ -57,10 +57,11 @@ pub use mandates::{
     WorkflowMandateStatus,
 };
 use persistence::{
-    canonical_turn_id, persist_activity, persist_question_answer, persist_question_pending,
-    persist_session, persist_turn_completion, persist_turn_failure, persist_turn_start,
-    project_activity, project_has_active_turn, project_question, read_history, read_session,
-    settle_pending_questions_for_turn, ChatTurnFailureStatus,
+    canonical_turn_id, persist_activity, persist_plan_pending, persist_question_answer,
+    persist_question_pending, persist_session, persist_turn_completion, persist_turn_failure,
+    persist_turn_start, project_activity, project_has_active_turn, project_question, read_history,
+    read_session, settle_pending_plan_for_conversation, settle_pending_questions_for_turn,
+    ChatTurnFailureStatus,
 };
 #[cfg(test)]
 pub(crate) use persistence::{
@@ -70,9 +71,9 @@ pub(crate) use persistence::{
 pub use persistence::{
     read_native_proof_evidence, recover_interrupted_chat_state, ChatMessageRole,
     LocalCodexChatHistory, LocalCodexChatThreadSummary, NativeProofEvidenceSummary,
-    StoredChatActivity, StoredChatMessage, StoredChatQuestion, StoredChatQuestionAnswer,
-    StoredChatQuestionExchange, StoredChatQuestionOption, StoredChatSubagent,
-    StoredChatTaskListItem,
+    StoredChatActivity, StoredChatMessage, StoredChatPlanDecision, StoredChatQuestion,
+    StoredChatQuestionAnswer, StoredChatQuestionExchange, StoredChatQuestionOption,
+    StoredChatSubagent, StoredChatTaskListItem,
 };
 pub use provider_catalogue::{
     AgentChatCredentialPosture, AgentChatProviderCatalogue, AgentChatProviderInstance,
@@ -189,6 +190,40 @@ impl LocalCodexChatHarnessMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalCodexChatPlanDecisionKind {
+    Accepted,
+    Revised,
+    Dismissed,
+}
+
+impl LocalCodexChatPlanDecisionKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Revised => "revised",
+            Self::Dismissed => "dismissed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalCodexChatPlanDecisionRequest {
+    pub project_id: String,
+    pub conversation_id: String,
+    pub turn_id: String,
+    pub runtime_operation_id: String,
+    pub activity_id: String,
+    pub decision: LocalCodexChatPlanDecisionKind,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalCodexChatPlanDecisionReply {
+    pub decision: StoredChatPlanDecision,
+    pub follow_up: Option<LocalCodexChatReply>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LocalCodexChatModelOption {
     pub provider_id: Option<String>,
@@ -218,7 +253,9 @@ pub struct LocalCodexChatReply {
     pub model: String,
     pub reasoning_effort: Option<String>,
     pub harness_mode: LocalCodexChatHarnessMode,
-    pub assistant_message: String,
+    /// Absent when a plan-terminal turn completed with no final assistant
+    /// message; the pending plan record carries the outcome instead.
+    pub assistant_message: Option<String>,
     pub task_receipts: Vec<TaskAuthoringReceipt>,
     pub workflow_receipts: Vec<TaskWorkflowReceipt>,
 }
@@ -227,6 +264,47 @@ pub struct LocalCodexChatService {
     sessions: HashMap<String, LocalCodexChatSession>,
     task_review_snapshot_store: Option<crate::TaskReviewSnapshotStore>,
     turn_timeout: Duration,
+}
+
+/// Accumulates plan-activity content during one turn so a completed Plan-mode
+/// turn can persist the exact proposed plan snapshot. Mirrors the desktop
+/// delta/replacement accumulation over one activity identity.
+#[derive(Default)]
+struct PlanDraftAccumulator {
+    held: HashMap<(String, String), (u64, String)>,
+}
+
+impl PlanDraftAccumulator {
+    fn observe(&mut self, activity: &StoredChatActivity) {
+        if activity.kind != "plan" {
+            return;
+        }
+        let key = (
+            activity.runtime_operation_id.clone(),
+            activity.activity_id.clone(),
+        );
+        let entry = self
+            .held
+            .entry(key)
+            .or_insert_with(|| (activity.sequence, String::new()));
+        entry.0 = activity.sequence;
+        match (
+            activity.content_change.as_deref(),
+            activity.content.as_deref(),
+        ) {
+            (Some("replacement_snapshot"), Some(content)) => entry.1 = content.to_owned(),
+            (Some("delta"), Some(content)) => entry.1.push_str(content),
+            _ => {}
+        }
+    }
+
+    fn finish(self) -> Option<(String, String, String)> {
+        self.held
+            .into_iter()
+            .filter(|(_, (_, text))| !text.trim().is_empty())
+            .max_by_key(|(_, (sequence, _))| *sequence)
+            .map(|((operation, activity), (_, text))| (operation, activity, text))
+    }
 }
 
 impl Default for LocalCodexChatService {
@@ -295,6 +373,21 @@ impl LocalCodexChatService {
         B: LocalStoreBackend,
     {
         persistence::rename_thread(state, project_id, conversation_id, title)
+    }
+
+    pub fn delete_thread<B>(
+        &mut self,
+        state: &ServerStateService<B>,
+        project_id: &str,
+        conversation_id: &str,
+    ) -> Result<u64, String>
+    where
+        B: LocalStoreBackend,
+    {
+        // Dropping the live session closes the provider session; the chat
+        // mutex on the Tauri boundary guarantees no turn is in flight.
+        self.sessions.remove(conversation_id);
+        persistence::delete_thread(state, project_id, conversation_id)
     }
 
     pub fn send_message<B>(
@@ -463,6 +556,15 @@ impl LocalCodexChatService {
             )?;
             return Err(error);
         }
+        // An ordinary message sent while a plan awaits its decision is the
+        // revise channel: the pending plan settles exactly once as revised.
+        settle_pending_plan_for_conversation(
+            state,
+            &request.conversation_id,
+            "revised",
+            persistence::now_unix_ms(),
+        )?;
+        let mut plan_draft = PlanDraftAccumulator::default();
         let mut subagent_directories = ChatSubagentDirectories::default();
         let mut project_and_forward_activity = |event: AgentActivityEvent| -> Result<(), String> {
             let directory = subagent_directories.observe(
@@ -478,6 +580,7 @@ impl LocalCodexChatService {
                 turn_count,
                 event,
             );
+            plan_draft.observe(&activity);
             persist_activity(state, &activity)?;
             if let Some(directory) = &directory {
                 persist_subagent_directory(state, directory)?;
@@ -549,13 +652,123 @@ impl LocalCodexChatService {
             state,
             &canonical_turn_id,
             &reply.turn_id,
-            &reply.assistant_message,
+            reply.assistant_message.as_deref(),
             &reply.task_receipts,
             &reply.workflow_receipts,
         )?;
+        if selected_route.harness_mode == LocalCodexChatHarnessMode::Plan {
+            if let Some((runtime_operation_id, activity_id, plan)) = plan_draft.finish() {
+                persist_plan_pending(
+                    state,
+                    &StoredChatPlanDecision {
+                        conversation_id: request.conversation_id.clone(),
+                        project_id: request.project_id.clone(),
+                        turn_id: canonical_turn_id.clone(),
+                        turn_ordinal: turn_count,
+                        runtime_operation_id,
+                        activity_id,
+                        plan,
+                        status: "pending".to_owned(),
+                        decided_at_unix_ms: None,
+                        accept_turn_id: None,
+                    },
+                )?;
+            }
+        }
         reply.timeline_turn_id = canonical_turn_id;
 
         Ok(reply)
+    }
+
+    pub fn decide_plan<B>(
+        &mut self,
+        state: &ServerStateService<B>,
+        request: LocalCodexChatPlanDecisionRequest,
+    ) -> Result<LocalCodexChatPlanDecisionReply, String>
+    where
+        B: LocalStoreBackend + Clone,
+    {
+        let mut ignore_activity = |_, _| Ok(());
+        let mut ignore_question = |_| Ok(());
+        let questions = LocalCodexChatQuestionRegistry::default();
+        self.decide_plan_with_task_authoring_and_cancellation(
+            state,
+            request,
+            AgentTurnCancellation::new(),
+            &questions,
+            &mut |_| Err("agent task authoring is unavailable on this chat boundary".to_owned()),
+            &mut ignore_activity,
+            &mut ignore_question,
+        )
+    }
+
+    pub fn decide_plan_with_task_authoring_and_cancellation<B, F, A, Q>(
+        &mut self,
+        state: &ServerStateService<B>,
+        request: LocalCodexChatPlanDecisionRequest,
+        cancellation: AgentTurnCancellation,
+        questions: &LocalCodexChatQuestionRegistry,
+        execute: &mut F,
+        on_activity: &mut A,
+        on_question: &mut Q,
+    ) -> Result<LocalCodexChatPlanDecisionReply, String>
+    where
+        B: LocalStoreBackend + Clone,
+        F: FnMut(crate::control_api::ServerControlRequest) -> Result<(), String>,
+        A: FnMut(StoredChatActivity, Option<StoredChatSubagentDirectory>) -> Result<(), String>,
+        Q: FnMut(StoredChatQuestionExchange) -> Result<(), String>,
+    {
+        let stored = read_session(state, &request.conversation_id)?
+            .filter(|session| session.project_id == request.project_id)
+            .ok_or_else(|| {
+                format!(
+                    "Agent Chat plan conversation is unknown: {}",
+                    request.conversation_id
+                )
+            })?;
+        let accept_turn_id = (request.decision == LocalCodexChatPlanDecisionKind::Accepted)
+            .then(|| canonical_turn_id(&request.conversation_id, stored.turn_count + 1));
+        let decision = persistence::settle_plan_decision(
+            state,
+            &request,
+            persistence::now_unix_ms(),
+            accept_turn_id,
+        )?;
+        let follow_up = if request.decision == LocalCodexChatPlanDecisionKind::Accepted {
+            let accept = LocalCodexChatRequest {
+                conversation_id: request.conversation_id.clone(),
+                project_id: request.project_id.clone(),
+                resource_id: stored.resource_id.clone(),
+                message: format!(
+                    "The operator accepted the proposed plan. Proceed with it as proposed. Accepted plan follows.\n\n{}",
+                    decision.plan
+                ),
+                active_task_id: None,
+                active_goal_id: None,
+                provider_instance_id: None,
+                provider_instance_revision: None,
+                protocol_facade_id: None,
+                provider_id: None,
+                model: None,
+                reasoning_effort: None,
+                harness_mode: LocalCodexChatHarnessMode::Normal,
+            };
+            Some(self.send_message_with_task_authoring_and_cancellation(
+                state,
+                accept,
+                cancellation,
+                questions,
+                execute,
+                on_activity,
+                on_question,
+            )?)
+        } else {
+            None
+        };
+        Ok(LocalCodexChatPlanDecisionReply {
+            decision,
+            follow_up,
+        })
     }
 }
 
@@ -568,6 +781,11 @@ where
 {
     project_has_active_turn(state, project_id)
 }
+
+/// Sentinel target resource id for resource-free chats. Stored sessions
+/// persist it as their resource id, so it must never be resolved as a real
+/// project resource.
+const RESOURCE_FREE_TARGET_ID: &str = "resource:none";
 
 fn resolve_chat_working_context<B>(
     state: &ServerStateService<B>,
@@ -584,6 +802,9 @@ fn resolve_chat_working_context<B>(
 where
     B: LocalStoreBackend,
 {
+    // Stored sessions of resource-free chats carry the sentinel as their
+    // resource id; it names no real resource and must resolve as absent.
+    let resource_id = resource_id.filter(|id| *id != RESOURCE_FREE_TARGET_ID);
     let target = crate::project_resource_target::resolve_optional_project_resource_target(
         state,
         project_id,
@@ -600,7 +821,7 @@ where
                 .ok_or_else(|| {
                     "resource-free chat requires a resolvable host home directory".to_owned()
                 })?,
-            "resource:none".to_owned(),
+            RESOURCE_FREE_TARGET_ID.to_owned(),
         ),
     };
     Ok((target, root, target_resource_id))

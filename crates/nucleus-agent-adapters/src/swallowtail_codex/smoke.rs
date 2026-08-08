@@ -306,21 +306,24 @@ fn terminal_status(status: &TerminalStatus) -> (String, CodexReadOnlySmokeStatus
         TerminalStatus::ProviderFailed(diagnostic) => (
             "provider_failed".to_owned(),
             CodexReadOnlySmokeStatus::Failed(format!(
-                "Codex provider failed: {}",
+                "Codex provider failed: [{}] {}",
+                diagnostic.code(),
                 diagnostic.message()
             )),
         ),
         TerminalStatus::HostFailed(diagnostic) => (
             "host_failed".to_owned(),
             CodexReadOnlySmokeStatus::Failed(format!(
-                "Codex host failed: {}",
+                "Codex host failed: [{}] {}",
+                diagnostic.code(),
                 diagnostic.message()
             )),
         ),
         TerminalStatus::RuntimeFailed(diagnostic) => (
             "runtime_failed".to_owned(),
             CodexReadOnlySmokeStatus::Failed(format!(
-                "Codex runtime failed: {}",
+                "Codex runtime failed: [{}] {}",
+                diagnostic.code(),
                 diagnostic.message()
             )),
         ),

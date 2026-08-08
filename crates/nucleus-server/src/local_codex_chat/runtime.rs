@@ -27,6 +27,31 @@ use tool_calls::consolidate_task_receipts;
 
 const TASK_TOOL_INSTRUCTIONS: &str = "You are operating inside Nucleus. You have exactly two Nucleus portals. task_ledger inspects, creates, and updates durable Goals and tasks; use inspect before updates and fill every inferable field. task_workflow inspects or runs exactly one task or one Goal snapshot. Task inspection returns current review context; when it reports rework_ready, a newly authorized task run creates a fresh work item carrying that durable review note and its provenance. Call task_workflow run only when the current operator message explicitly authorizes execution; copy an exact authorizing excerpt, cite the current scope revision, and supply a stable idempotency key. Selection, readiness, and a review decision are not execution authority. Never invent task arrays, project sweeps, lifecycle transitions, delegation stages, or dispatch stages. Provider completion does not accept review, complete tasks, achieve Goals, or publish SCM changes. The portals are independent of the chat thread's read-only repository sandbox.";
 
+// Codex replaces its built-in plan-mode instructions when a client supplies
+// developer instructions, so Nucleus must re-declare the proposed-plan
+// presentation convention itself or the provider never emits plan items.
+const PLAN_PRESENTATION_INSTRUCTIONS: &str = "Plan mode is active. When you present a complete plan for operator review, wrap the final plan in exactly one <proposed_plan>...</proposed_plan> block so the host can render review controls. Keep working notes and partial drafts outside the block; tag only the plan you ask the operator to accept.";
+
+fn chat_developer_instructions(
+    migration_context: Option<&str>,
+    harness_mode: LocalCodexChatHarnessMode,
+) -> String {
+    let instructions = migration_context.map_or_else(
+        || TASK_TOOL_INSTRUCTIONS.to_owned(),
+        |context| {
+            format!(
+                "{TASK_TOOL_INSTRUCTIONS}\n\nThis Nucleus conversation moved to a tool-enabled provider thread. Use this prior transcript as context:\n\n{context}"
+            )
+        },
+    );
+    match harness_mode {
+        LocalCodexChatHarnessMode::Plan => {
+            format!("{instructions}\n\n{PLAN_PRESENTATION_INSTRUCTIONS}")
+        }
+        LocalCodexChatHarnessMode::Normal => instructions,
+    }
+}
+
 pub(super) struct LocalCodexChatSession {
     session_id: String,
     resource_id: String,
@@ -75,14 +100,8 @@ impl LocalCodexChatSession {
         route: &SelectedAgentChatRoute,
         turn_timeout: Duration,
     ) -> Result<Self, String> {
-        let developer_instructions = migration_context.map_or_else(
-            || TASK_TOOL_INSTRUCTIONS.to_owned(),
-            |context| {
-                format!(
-                    "{TASK_TOOL_INSTRUCTIONS}\n\nThis Nucleus conversation moved to a tool-enabled provider thread. Use this prior transcript as context:\n\n{context}"
-                )
-            },
-        );
+        let developer_instructions =
+            chat_developer_instructions(migration_context, route.harness_mode);
         let live =
             chat_runtime(&route.runtime_adapter_id)?.start_session(AgentSessionStartRequest {
                 working_directory: project_root.to_owned(),
@@ -235,6 +254,21 @@ mod tests {
             .collect();
 
         assert_eq!(names, vec!["task_ledger", "task_workflow"]);
+    }
+
+    #[test]
+    fn plan_mode_instructions_carry_the_proposed_plan_convention() {
+        let plan = chat_developer_instructions(None, LocalCodexChatHarnessMode::Plan);
+        assert!(plan.contains(TASK_TOOL_INSTRUCTIONS));
+        assert!(plan.contains("<proposed_plan>"));
+
+        let normal = chat_developer_instructions(None, LocalCodexChatHarnessMode::Normal);
+        assert_eq!(normal, TASK_TOOL_INSTRUCTIONS);
+
+        let migrated =
+            chat_developer_instructions(Some("prior transcript"), LocalCodexChatHarnessMode::Plan);
+        assert!(migrated.contains("prior transcript"));
+        assert!(migrated.contains("<proposed_plan>"));
     }
 
     #[test]

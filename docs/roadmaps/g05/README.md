@@ -86,6 +86,8 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 - `024-shell-accessibility-responsive-and-failure-cohesion.md` - completed;
   semantic project interaction, container-relative movable panels, local
   recovery, and supported-minimum native acceptance pass
+- `025-plan-decision-agent-chat.md` - active; contracts, failure detail, and
+  server/desktop implementation complete; native acceptance operator-held
 
 The secondary-system sequence starts with structural admission, then Settings
 as the first product-facing lane. Hosted Surfaces, generic history,

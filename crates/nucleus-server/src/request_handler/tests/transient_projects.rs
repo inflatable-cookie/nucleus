@@ -125,7 +125,7 @@ fn promoted_chat_retains_conversation_identity_and_history() {
         handler.state(),
         "turn:history",
         "provider-turn:history",
-        "Context retained",
+        Some("Context retained"),
         &[],
         &[],
     )

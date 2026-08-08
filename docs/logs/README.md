@@ -4,6 +4,7 @@ Logs record meaningful decisions, evidence, and closeouts.
 
 ## Current Logs
 
+- `2026-08-07-plan-decision-agent-chat.md`
 - `2026-08-04-portable-activity-key-adoption.md`
 - `2026-08-04-shell-accessibility-responsive-and-failure-cohesion.md`
 - `2026-08-04-memory-provider-control-cohesion.md`

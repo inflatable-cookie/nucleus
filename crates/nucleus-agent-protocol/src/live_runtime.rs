@@ -179,7 +179,9 @@ impl From<String> for AgentTurnFailure {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentTurnReply {
     pub turn_id: String,
-    pub assistant_message: String,
+    /// The final assistant message when the turn produced one. A plan-mode
+    /// turn whose outcome is a proposed plan completes without one.
+    pub assistant_message: Option<String>,
 }
 
 /// A provider-surfaced dynamic tool call awaiting a host response.

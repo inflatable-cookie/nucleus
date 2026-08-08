@@ -23,6 +23,10 @@
     string,
     import("./control/agentChat").AgentChatQuestionExchange[]
   >();
+  const retainedPlanDecisions = new Map<
+    string,
+    import("./control/agentChat").AgentChatPlanDecision[]
+  >();
   const retainedSubagentDirectories = new Map<
     string,
     import("./control/agentChat").AgentChatSubagentDirectory[]
@@ -82,6 +86,7 @@
   import { onDestroy } from "svelte";
   import {
     AgentChatInput,
+    AgentPlan,
     AgentQuestion,
     AgentTranscript,
     Button,
@@ -102,6 +107,7 @@
   import {
     assembleAgentTranscript,
     filterAgentChatActivities,
+    latestFailedTurnNotice,
     type AgentTranscriptTurn,
   } from "./agentChatTranscript";
   import type { ControlGoalRecordDto, ControlTaskRecordDto } from "./control";
@@ -110,6 +116,7 @@
     AgentChatActivity,
     AgentChatActorSelection,
     AgentChatHarnessMode,
+    AgentChatPlanDecision,
     AgentChatQuestionExchange,
     AgentChatSubagentDirectory,
     AgentChatProviderCatalogue,
@@ -119,6 +126,7 @@
   import {
     answerAgentChatQuestion,
     cancelAgentChatTurn,
+    decideAgentChatPlan,
     loadAgentChatProviderCatalogue,
     loadAgentChatHistory,
     selectAgentChatActor,
@@ -164,6 +172,8 @@
   let messages = $state<ChatMessage[]>([]);
   let activities = $state<AgentChatActivity[]>([]);
   let questions = $state<AgentChatQuestionExchange[]>([]);
+  let planDecisions = $state<AgentChatPlanDecision[]>([]);
+  let decidingPlan = $state(false);
   let subagentDirectories = $state<AgentChatSubagentDirectory[]>([]);
   let actorSelection = $state<AgentChatActorSelection>({
     project_id: "",
@@ -196,6 +206,7 @@
   let collectedQuestionAnswers = $state<AgentQuestionAnswer[]>([]);
   let answeringQuestion = $state(false);
   let questionComponent = $state<{ submit: () => void } | null>(null);
+  let composerRegion = $state<HTMLDivElement | null>(null);
   let hydrationVersion = 0;
   let historyOwnsRoute = $state(false);
   let appliedDraftRequestId = $state(0);
@@ -330,6 +341,7 @@
       pending ? (cancelRequested ? "Cancelling…" : "Working…") : null,
       conversationId,
       questions,
+      planDecisions,
     ),
   );
   const actorChoices = $derived.by(() => [
@@ -364,6 +376,9 @@
   const pendingQuestion = $derived(
     questions.find((question) => question.status === "pending") ?? null,
   );
+  const pendingPlan = $derived(
+    planDecisions.find((decision) => decision.status === "pending") ?? null,
+  );
   const questionItems = $derived<AgentQuestionItem[]>(
     pendingQuestion?.questions.map((question) => ({
       id: question.question_id,
@@ -386,6 +401,7 @@
       (message) => message.taskReceipts.length > 0 || message.workflowReceipts.length > 0,
     ),
   );
+  const failedTurnNotice = $derived(latestFailedTurnNotice(turns));
 
   $effect(() => {
     if (activeConversationId !== conversationId) {
@@ -394,6 +410,7 @@
       messages = retainedMessages.get(conversationId) ?? [];
       activities = retainedActivities.get(conversationId) ?? [];
       questions = retainedQuestions.get(conversationId) ?? [];
+      planDecisions = retainedPlanDecisions.get(conversationId) ?? [];
       subagentDirectories = retainedSubagentDirectories.get(conversationId) ?? [];
       actorSelection =
         retainedActorSelections.get(conversationId) ?? actorSelectionFor("all");
@@ -518,11 +535,13 @@
       }));
       activities = history.activities;
       questions = history.questions;
+      planDecisions = history.plan_decisions;
       subagentDirectories = history.subagent_directories;
       actorSelection = history.actor_selection;
       turns = history.turns.map((turn) => ({
         turnId: turn.turn_id,
         status: turn.status,
+        failureReason: turn.failure_reason,
       }));
       historyOwnsRoute = Boolean(
         history.provider_instance_id || history.model || history.reasoning_effort || history.harness_mode,
@@ -530,6 +549,7 @@
       retain(retainedMessages, nextConversationId, messages);
       retain(retainedActivities, nextConversationId, activities);
       retain(retainedQuestions, nextConversationId, questions);
+      retain(retainedPlanDecisions, nextConversationId, planDecisions);
       retain(retainedSubagentDirectories, nextConversationId, subagentDirectories);
       retain(retainedActorSelections, nextConversationId, actorSelection);
       retain(retainedTurns, nextConversationId, turns);
@@ -647,29 +667,44 @@
           : message,
       );
       retain(retainedMessages, conversationId, messages);
-      appendMessage({
-        id: `message:${reply.timeline_turn_id}:assistant`,
-        turnId: reply.timeline_turn_id,
-        sequence: nextMessageSequence(),
-        role: "assistant",
-        text: reply.assistant_message,
-        taskReceipts: reply.task_receipts,
-        workflowReceipts: reply.workflow_receipts,
-      });
+      if (reply.assistant_message !== null) {
+        appendMessage({
+          id: `message:${reply.timeline_turn_id}:assistant`,
+          turnId: reply.timeline_turn_id,
+          sequence: nextMessageSequence(),
+          role: "assistant",
+          text: reply.assistant_message,
+          taskReceipts: reply.task_receipts,
+          workflowReceipts: reply.workflow_receipts,
+        });
+      }
       if (reply.task_receipts.length > 0 || reply.workflow_receipts.length > 0) {
         window.dispatchEvent(
           new CustomEvent("nucleus:tasks-changed", { detail: { projectId } }),
         );
       }
       window.dispatchEvent(new CustomEvent("nucleus:threads-changed"));
+      if (pendingPlan) {
+        // The server settled the pending plan as revised when this ordinary
+        // message started; mirror that durable truth without a re-fetch.
+        const settled = pendingPlan;
+        planDecisions = planDecisions.map((candidate) =>
+          candidate.turn_id === settled.turn_id
+            ? { ...candidate, status: "revised" as const, decided_at_unix_ms: Date.now() }
+            : candidate,
+        );
+        retain(retainedPlanDecisions, conversationId, planDecisions);
+      }
     } catch (caught) {
       const reason = caught instanceof Error ? caught.message : String(caught);
       if (!cancelRequested) {
         messages = messages.filter((message) => message.id !== optimisticMessageId);
         retain(retainedMessages, conversationId, messages);
+        // An operator-cancelled turn is recorded by the transcript's terminal
+        // item; it is not an error and gets no red banner.
+        failure = reason;
       }
       await hydrateHistory(projectId, conversationId);
-      failure = reason;
     } finally {
       retainedPendingConversations.delete(conversationId);
       pending = false;
@@ -744,6 +779,57 @@
       }
     } catch (caught) {
       failure = caught instanceof Error ? caught.message : String(caught);
+    }
+  }
+
+  function focusComposerEditor(): void {
+    composerRegion?.querySelector("textarea")?.focus();
+  }
+
+  async function decidePlan(decision: "accepted" | "dismissed"): Promise<void> {
+    if (!projectId || !pendingPlan || decidingPlan || pending) {
+      return;
+    }
+    const plan = pendingPlan;
+    decidingPlan = true;
+    failure = null;
+    if (decision === "accepted") {
+      pending = true;
+      cancelRequested = false;
+      retainedPendingConversations.add(conversationId);
+    }
+    try {
+      const reply = await decideAgentChatPlan({
+        project_id: projectId,
+        conversation_id: conversationId,
+        turn_id: plan.turn_id,
+        runtime_operation_id: plan.runtime_operation_id,
+        activity_id: plan.activity_id,
+        decision,
+      });
+      planDecisions = [
+        ...planDecisions.filter((candidate) => candidate.turn_id !== plan.turn_id),
+        reply.decision,
+      ];
+      retain(retainedPlanDecisions, conversationId, planDecisions);
+      if (reply.follow_up) {
+        harnessMode = reply.follow_up.harness_mode;
+        retain(retainedHarnessModes, conversationId, reply.follow_up.harness_mode);
+        await hydrateHistory(projectId, conversationId);
+        window.dispatchEvent(new CustomEvent("nucleus:threads-changed"));
+      }
+    } catch (caught) {
+      await hydrateHistory(projectId, conversationId);
+      if (!cancelRequested) {
+        failure = caught instanceof Error ? caught.message : String(caught);
+      }
+    } finally {
+      if (decision === "accepted") {
+        retainedPendingConversations.delete(conversationId);
+        pending = false;
+        cancelRequested = false;
+      }
+      decidingPlan = false;
     }
   }
 
@@ -1023,19 +1109,6 @@
       </div>
     {/if}
 
-    {#if pending}
-      <div class="pending-actions">
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={cancelRequested}
-          onClick={() => void cancelTurn()}
-        >
-          {cancelRequested ? "Cancelling…" : "Cancel"}
-        </Button>
-      </div>
-    {/if}
-
     {#if receiptMessages.length > 0}
       <div class="receipt-list" aria-label="Agent action receipts">
         {#each receiptMessages as message (message.id)}
@@ -1050,7 +1123,10 @@
     {/if}
   </div>
 
-  <div class="composer-float">
+  <div class="composer-float" bind:this={composerRegion}>
+    {#if failedTurnNotice}
+      <div class="chat-error">Turn failed: {failedTurnNotice}</div>
+    {/if}
     {#if failure}<div class="chat-error" role="alert">{failure}</div>{/if}
     {#key appliedDraftRequestId}
       <AgentChatInput
@@ -1061,7 +1137,7 @@
         minRows={2}
         maxRows={8}
         size="sm"
-        status={pendingQuestion ? "questioning" : pending ? "busy" : "idle"}
+        status={pendingQuestion ? "questioning" : pending ? "busy" : pendingPlan ? "reviewing-plan" : "idle"}
         questionCanSubmit={questionCanSubmit}
         attachments={contextAttachments}
         disabled={!projectId || loadingHistory || answeringQuestion}
@@ -1070,6 +1146,19 @@
         onValueChange={retainDraft}
         onRemoveAttachment={removeContextAttachment}
       >
+        {#snippet plan()}
+          {#if pendingPlan}
+            <AgentPlan
+              plan={pendingPlan.plan}
+              dismissible
+              size="sm"
+              density="compact"
+              onAccept={() => void decidePlan("accepted")}
+              onRevise={focusComposerEditor}
+              onDismiss={() => void decidePlan("dismissed")}
+            />
+          {/if}
+        {/snippet}
         {#snippet question()}
           <AgentQuestion
             bind:this={questionComponent}
@@ -1175,8 +1264,32 @@
     min-height: 0;
     overflow: hidden;
     height: 100%;
-    padding: clamp(1rem, 4cqi, 3rem);
-    padding-bottom: clamp(11rem, 24vh, 14rem);
+    padding: 0;
+  }
+
+  /* Composer clearance lives inside the scroll region: the transcript
+     stretches the full panel height and the last block scrolls above the
+     floating composer, instead of the container reserving dead space. */
+  .transcript-content :global(.poodle-agent-transcript__viewport) {
+    padding-bottom: clamp(9rem, 18vh, 10.5rem);
+  }
+
+  /* The scroller spans the panel so the scrollbar rides the viewport edge;
+     the reading column clamps the blocks, not the scroll container. */
+  .transcript-content :global(.poodle-agent-transcript__runway),
+  .transcript-content :global(.poodle-agent-transcript__blocks) {
+    width: min(48rem, 100%);
+    margin: 0 auto;
+  }
+
+  /* The activity strip ("Working…") lives outside the scroller; clamp it to
+     the same column, inset included. */
+  .transcript-content :global(.poodle-agent-transcript__activity) {
+    box-sizing: border-box;
+    width: min(48rem, 100%);
+    margin-right: auto;
+    margin-left: auto;
+    padding-inline: var(--poodle-agent-transcript-inset);
   }
 
   .chat-empty {
@@ -1193,10 +1306,9 @@
   .transcript-shell {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    width: min(48rem, 100%);
+    width: 100%;
     height: 100%;
     min-height: 0;
-    margin: 0 auto;
   }
 
   .actor-navigation {
@@ -1206,7 +1318,9 @@
     align-items: center;
     justify-content: flex-end;
     gap: 0.25rem;
+    width: min(48rem, 100%);
     min-height: 2rem;
+    margin: 0 auto;
     padding-bottom: 0.35rem;
   }
 
@@ -1237,15 +1351,6 @@
     overflow: auto;
   }
 
-  .pending-actions {
-    position: relative;
-    z-index: 5;
-    justify-self: end;
-    width: min(48rem, 100%);
-    margin: 0 auto;
-    text-align: right;
-  }
-
   .composer-float {
     position: absolute;
     z-index: 5;
@@ -1272,7 +1377,11 @@
     background: var(--poodle-color-background-surface);
   }
 
+  /* Narrow panels wrap the composer's model row taller, so the scroll-region
+     clearance grows to match. */
   @container agent-chat-panel (max-width: 36rem) {
-    .chat-timeline { padding-bottom: 13rem; }
+    .transcript-content :global(.poodle-agent-transcript__viewport) {
+      padding-bottom: 12rem;
+    }
   }
 </style>

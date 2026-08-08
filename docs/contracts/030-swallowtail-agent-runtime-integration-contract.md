@@ -2,7 +2,7 @@
 
 Status: draft-promoted-first-pass
 Owner: Tom
-Updated: 2026-07-25
+Updated: 2026-08-07
 
 ## Purpose
 
@@ -110,6 +110,13 @@ Task execution keeps its current explicit unsupported/wait-state policy until
 its own contracts admit interactive answers. It must recognize the current
 portable callback variant and fail honestly rather than relying on a removed
 Swallowtail name.
+
+The plan-decision route rides the existing Agent Chat session rules. Accepting
+a proposed plan opens a Normal-mode prepared session per Contract 010's
+Effective Session Mode rule. When the settled route differs from the live
+session route, the existing route-mismatch rule already opens a fresh session
+with bounded message-only migration context; no mid-session mode switch exists
+in Swallowtail and Nucleus does not fake one.
 
 ## Lifecycle And Diagnostics
 

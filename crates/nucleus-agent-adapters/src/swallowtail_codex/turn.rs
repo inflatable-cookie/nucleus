@@ -240,17 +240,24 @@ fn callback_failure(detail: &str) -> CallbackResult {
     }
 }
 
-pub(super) fn completed_output(outcome: &TerminalOutcome) -> Result<String, AgentTurnFailure> {
+pub(super) fn completed_output(
+    outcome: &TerminalOutcome,
+    allow_missing_message: bool,
+) -> Result<Option<String>, AgentTurnFailure> {
     match outcome.status() {
-        TerminalStatus::Completed => outcome
-            .output()
-            .map(|output| output.as_str().trim().to_owned())
-            .filter(|output| !output.is_empty())
-            .ok_or_else(|| {
-                AgentTurnFailure::Failed(
+        TerminalStatus::Completed => {
+            let message = outcome
+                .output()
+                .map(|output| output.as_str().trim().to_owned())
+                .filter(|output| !output.is_empty());
+            match (message, allow_missing_message) {
+                (Some(message), _) => Ok(Some(message)),
+                (None, true) => Ok(None),
+                (None, false) => Err(AgentTurnFailure::Failed(
                     "Codex completed the turn without an assistant message".to_owned(),
-                )
-            }),
+                )),
+            }
+        }
         TerminalStatus::Detached => Err(AgentTurnFailure::Failed(
             "Codex turn observation detached while provider work may continue".to_owned(),
         )),
@@ -260,15 +267,18 @@ pub(super) fn completed_output(outcome: &TerminalOutcome) -> Result<String, Agen
             "Codex turn stopped for an unsupported provider request".to_owned(),
         )),
         TerminalStatus::ProviderFailed(diagnostic) => Err(AgentTurnFailure::Failed(format!(
-            "Codex provider failed: {}",
+            "Codex provider failed: [{}] {}",
+            diagnostic.code(),
             diagnostic.message()
         ))),
         TerminalStatus::HostFailed(diagnostic) => Err(AgentTurnFailure::Failed(format!(
-            "Codex host failed: {}",
+            "Codex host failed: [{}] {}",
+            diagnostic.code(),
             diagnostic.message()
         ))),
         TerminalStatus::RuntimeFailed(diagnostic) => Err(AgentTurnFailure::Failed(format!(
-            "Codex runtime failed: {}",
+            "Codex runtime failed: [{}] {}",
+            diagnostic.code(),
             diagnostic.message()
         ))),
     }
@@ -299,17 +309,17 @@ mod tests {
     #[test]
     fn terminal_cancellation_and_deadline_remain_typed() {
         assert_eq!(
-            completed_output(&TerminalOutcome::new(
-                TerminalStatus::Cancelled,
-                CleanupOutcome::Clean,
-            )),
+            completed_output(
+                &TerminalOutcome::new(TerminalStatus::Cancelled, CleanupOutcome::Clean),
+                false,
+            ),
             Err(AgentTurnFailure::Cancelled),
         );
         assert_eq!(
-            completed_output(&TerminalOutcome::new(
-                TerminalStatus::TimedOut,
-                CleanupOutcome::Clean,
-            )),
+            completed_output(
+                &TerminalOutcome::new(TerminalStatus::TimedOut, CleanupOutcome::Clean),
+                false,
+            ),
             Err(AgentTurnFailure::TimedOut),
         );
     }
@@ -317,13 +327,34 @@ mod tests {
     #[test]
     fn detached_terminal_does_not_claim_completion_or_cancellation() {
         assert!(matches!(
-            completed_output(&TerminalOutcome::new(
-                TerminalStatus::Detached,
-                CleanupOutcome::Clean,
-            )),
+            completed_output(
+                &TerminalOutcome::new(TerminalStatus::Detached, CleanupOutcome::Clean),
+                false,
+            ),
             Err(AgentTurnFailure::Failed(reason))
                 if reason.contains("provider work may continue")
         ));
+    }
+
+    #[test]
+    fn terminal_failures_keep_the_safe_diagnostic_code() {
+        let diagnostic = swallowtail_core::SafeDiagnostic::new(
+            "swallowtail.codex.app_server.malformed_notification",
+            "Codex app-server returned a malformed notification",
+        );
+        for status in [
+            TerminalStatus::ProviderFailed(diagnostic.clone()),
+            TerminalStatus::HostFailed(diagnostic.clone()),
+            TerminalStatus::RuntimeFailed(diagnostic),
+        ] {
+            assert!(matches!(
+                completed_output(&TerminalOutcome::new(status, CleanupOutcome::Clean), false),
+                Err(AgentTurnFailure::Failed(reason))
+                    if reason.contains(
+                        "[swallowtail.codex.app_server.malformed_notification]"
+                    ) && reason.contains("malformed notification")
+            ));
+        }
     }
 
     #[test]

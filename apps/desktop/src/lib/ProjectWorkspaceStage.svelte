@@ -4,8 +4,8 @@
     LayoutDockRegion,
     LayoutSplitView,
     type PanelRenderContext,
-  } from "@longhorn/poodle";
-  import type { RegionId } from "@longhorn/layout";
+  } from "@inflatable-cookie/longhorn-poodle";
+  import type { RegionId } from "@inflatable-cookie/longhorn-layout";
 
   import AgentChatPanel from "./AgentChatPanel.svelte";
   import BrowserPanel from "./BrowserPanel.svelte";
@@ -67,6 +67,7 @@
   let workLoadedProjectId = $state<string | null>(null);
   let contextHydratedProjectId = $state<string | null>(null);
   let layoutDragActive = $state(false);
+  let layoutDragEpoch = 0;
   let commandActiveRegionId = $state<RegionId | null>(null);
   let panelSequence = 0;
   let workLoadVersion = 0;
@@ -149,6 +150,7 @@
     contextHydratedProjectId = null;
     appliedConversationRequest = null;
     pendingAgentChatDraft = null;
+    layoutDragEpoch += 1;
     layoutDragActive = false;
     if (!projectId) {
       session = null;
@@ -265,6 +267,7 @@
     window.addEventListener("nucleus:open-file", handleOpenFile);
     window.addEventListener("nucleus:open-forge-diff", handleOpenForgeDiff);
     window.addEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
+    window.addEventListener("nucleus:agent-chat-thread-deleted", handleAgentChatThreadDeleted);
     window.addEventListener("nucleus:tasks-changed", handleTasksChanged);
     window.addEventListener("nucleus:command-close-active-panel", closeCommandActivePanel);
     return () => {
@@ -274,6 +277,7 @@
       window.removeEventListener("nucleus:open-file", handleOpenFile);
       window.removeEventListener("nucleus:open-forge-diff", handleOpenForgeDiff);
       window.removeEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
+      window.removeEventListener("nucleus:agent-chat-thread-deleted", handleAgentChatThreadDeleted);
       window.removeEventListener("nucleus:tasks-changed", handleTasksChanged);
       window.removeEventListener("nucleus:command-close-active-panel", closeCommandActivePanel);
     };
@@ -357,6 +361,28 @@
       projectId: event.detail.projectId,
       conversationId: event.detail.conversationId,
     };
+  }
+
+  async function handleAgentChatThreadDeleted(event: Event): Promise<void> {
+    if (
+      !(event instanceof CustomEvent) ||
+      typeof event.detail?.conversationId !== "string"
+    ) return;
+    const deletedId = event.detail.conversationId;
+    if (selectedConversationId === deletedId) {
+      selectedConversationId = null;
+      queueContextWrite(true);
+    }
+    if (!session || !snapshot) return;
+    // A panel bound to the deleted thread keeps no stale transcript: rebind it
+    // to a fresh conversation so it becomes a new empty chat.
+    for (const panel of snapshot.panels.filter((panel) => panel.kind === "agentChat")) {
+      if (panelConversationId(panel) !== deletedId) continue;
+      await session.updatePanel(panel.panel_instance_id, {
+        ...toInput(panel),
+        conversation_id: `conversation:${crypto.randomUUID()}`,
+      });
+    }
   }
 
   async function openAgentChatThread(conversationId: string): Promise<void> {
@@ -652,11 +678,22 @@
   }
 
   function beginLayoutDrag(): void {
-    layoutDragActive = true;
-    window.dispatchEvent(new CustomEvent("nucleus:native-panels-hide"));
+    // Defer the drop-target reveal past the dragstart default phase:
+    // mutating the region layout while WebKit is still establishing the drag
+    // session cancels it before the first dragover.
+    const epoch = ++layoutDragEpoch;
+    requestAnimationFrame(() => {
+      if (epoch !== layoutDragEpoch || layoutDragActive) return;
+      layoutDragActive = true;
+      window.dispatchEvent(new CustomEvent("nucleus:native-panels-hide"));
+    });
   }
 
   function endLayoutDrag(): void {
+    layoutDragEpoch += 1;
+    if (!layoutDragActive) {
+      return;
+    }
     layoutDragActive = false;
     window.dispatchEvent(new CustomEvent("nucleus:native-panels-show"));
   }

@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import type {
   AgentChatActivity,
+  AgentChatPlanDecision,
   AgentChatQuestionExchange,
 } from "./control/agentChat";
 import {
   assembleAgentTranscript,
+  latestFailedTurnNotice,
   type AgentTranscriptMessage,
 } from "./agentChatTranscript";
 
@@ -273,6 +275,103 @@ describe("agent chat transcript projection", () => {
     );
   });
 
+  test("a completed turn leaves no streaming caret on an in-progress task list", () => {    const items = assembleAgentTranscript(
+      [user],
+      [
+        activity({
+          kind: "plan",
+          status: "in_progress",
+          task_list: [{ content: "Done", status: "completed", priority: null }],
+        }),
+      ],
+      [{ turnId: "turn:1", status: "completed" }],
+      null,
+      "conversation:1",
+    );
+
+    expect(items[1]).toMatchObject({
+      kind: "message",
+      isStreaming: false,
+    });
+  });
+
+  test("streamed orphan list markers join their item text for display", () => {
+    const items = assembleAgentTranscript(
+      [user],
+      [
+        activity({
+          kind: "plan",
+          status: "completed",
+          content_stream: "plan_text",
+          content: "7.\n\n  List the expected outputs.\n\n8.\n\n  Confirm the scenario is small.",
+        }),
+      ],
+      [{ turnId: "turn:1", status: "completed" }],
+      null,
+      "conversation:1",
+    );
+
+    expect(items[1]).toHaveProperty(
+      "markdown",
+      "7. List the expected outputs.\n\n8. Confirm the scenario is small.",
+    );
+  });
+
+  test("terminal turn items do not pulse", () => {
+    const items = assembleAgentTranscript(
+      [user],
+      [activity()],
+      [{ turnId: "turn:1", status: "cancelled" }],
+      null,
+      "conversation:1",
+    );
+
+    expect(items[2]).toEqual({
+      kind: "activity",
+      id: "terminal:turn:1",
+      label: "Turn cancelled",
+      spinning: false,
+    });
+  });
+
+  test("empty reasoning summaries and unknown echoes leave no rows", () => {
+    const items = assembleAgentTranscript(
+      [user],
+      [
+        activity({ kind: "reasoning_summary", status: "completed", lifecycle: "completed" }),
+        activity({
+          activity_id: "activity:echo",
+          kind: "unknown",
+          kind_namespace: "codex.app-server.item.userMessage",
+          disclosure: "identity_and_lifecycle_only",
+          status: "completed",
+          lifecycle: "completed",
+        }),
+        activity({
+          activity_id: "activity:reasoning-with-content",
+          kind: "reasoning_summary",
+          status: "completed",
+          lifecycle: "completed",
+          content_change: "replacement_snapshot",
+          content_stream: "reasoning_summary_text",
+          content: "Considered the plan shape before answering.",
+        }),
+      ],
+      [{ turnId: "turn:1", status: "completed" }],
+      null,
+      "conversation:1",
+    );
+
+    // Only the reasoning summary with content survives, with its first line
+    // as the row detail.
+    expect(items).toHaveLength(2);
+    expect(items[1]).toMatchObject({
+      kind: "tool-call",
+      label: "Reasoning summary",
+      detail: "Considered the plan shape before answering.",
+    });
+  });
+
   test("settles interrupted activity from durable turn truth", () => {
     const items = assembleAgentTranscript(
       [user],
@@ -290,6 +389,7 @@ describe("agent chat transcript projection", () => {
       kind: "activity",
       id: "terminal:turn:1",
       label: "Turn cancelled",
+      spinning: false,
     });
   });
 
@@ -384,6 +484,134 @@ describe("agent chat transcript projection", () => {
       id: "message:turn:1:assistant",
       role: "assistant",
       markdown: "Canonical final",
+    });
+  });
+});
+
+describe("latestFailedTurnNotice", () => {
+  test("returns the most recent failed turn reason", () => {
+    expect(
+      latestFailedTurnNotice([
+        {
+          turnId: "turn:1",
+          status: "failed",
+          failureReason: "[swallowtail.codex.turn.timeout] first",
+        },
+        { turnId: "turn:2", status: "completed" },
+        {
+          turnId: "turn:3",
+          status: "failed",
+          failureReason:
+            "[swallowtail.codex.app_server.malformed_notification] latest",
+        },
+      ]),
+    ).toBe("[swallowtail.codex.app_server.malformed_notification] latest");
+  });
+
+  test("stays quiet without a failed turn reason", () => {
+    expect(
+      latestFailedTurnNotice([
+        { turnId: "turn:1", status: "completed" },
+        { turnId: "turn:2", status: "cancelled" },
+        { turnId: "turn:3", status: "failed" },
+      ]),
+    ).toBeNull();
+    expect(latestFailedTurnNotice([])).toBeNull();
+  });
+});
+
+function planDecision(
+  overrides: Partial<AgentChatPlanDecision> = {},
+): AgentChatPlanDecision {
+  return {
+    conversation_id: "conversation:1",
+    project_id: "project:1",
+    turn_id: "turn:1",
+    turn_ordinal: 1,
+    runtime_operation_id: "turn:runtime:1",
+    activity_id: "activity:1",
+    plan: "# Plan\n\n1. Do the work",
+    status: "accepted",
+    decided_at_unix_ms: 1000,
+    accept_turn_id: "turn:2",
+    ...overrides,
+  };
+}
+
+describe("decided plan transcript records", () => {
+  const planActivity = activity({
+    kind: "plan",
+    content_stream: "plan_text",
+    content: "# Plan\n\n1. Do the work",
+  });
+
+  test("a settled decision replaces the flattened plan with one record", () => {
+    const items = assembleAgentTranscript(
+      [user],
+      [planActivity],
+      [{ turnId: "turn:1", status: "completed" }],
+      null,
+      "conversation:1",
+      [],
+      [planDecision()],
+    );
+
+    expect(items).toHaveLength(2);
+    expect(items[1]).toEqual({
+      kind: "decided-plan",
+      id: "turn:1:turn:runtime:1:activity:1:decided",
+      plan: "# Plan\n\n1. Do the work",
+      status: "accepted",
+      decidedAt: new Date(1000).toLocaleString(),
+    });
+  });
+
+  test("a pending plan stays out of the transcript while the composer reviews it", () => {
+    const items = assembleAgentTranscript(
+      [user],
+      [planActivity],
+      [{ turnId: "turn:1", status: "completed" }],
+      null,
+      "conversation:1",
+      [],
+      [planDecision({ status: "pending", decided_at_unix_ms: null, accept_turn_id: null })],
+    );
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "message", role: "user" });
+  });
+
+  test("an undecided plan keeps the legacy flattened rendering", () => {
+    const items = assembleAgentTranscript(
+      [user],
+      [planActivity],
+      [{ turnId: "turn:1", status: "completed" }],
+      null,
+      "conversation:1",
+    );
+
+    expect(items).toHaveLength(2);
+    expect(items[1]).toMatchObject({
+      kind: "message",
+      role: "assistant",
+      markdown: "# Plan\n\n1. Do the work",
+    });
+  });
+
+  test("a dismissed decision records the plan as a non-event", () => {
+    const items = assembleAgentTranscript(
+      [user],
+      [planActivity],
+      [{ turnId: "turn:1", status: "completed" }],
+      null,
+      "conversation:1",
+      [],
+      [planDecision({ status: "dismissed", accept_turn_id: null })],
+    );
+
+    expect(items[1]).toMatchObject({
+      kind: "decided-plan",
+      status: "dismissed",
     });
   });
 });

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, EditableLabel, Icon, Text } from "@poodle/svelte";
-  import { messageCircle, plus, refreshCw } from "@poodle/icons-lucide";
+  import { messageCircle, plus, refreshCw, trash2 } from "@poodle/icons-lucide";
   import { onMount } from "svelte";
   import {
     buildControlCommandEnvelope,
@@ -10,6 +10,7 @@
     type ControlProjectRecordDto,
   } from "./control";
   import {
+    deleteAgentChatThread,
     listAgentChatThreads,
     renameAgentChatThread,
     type AgentChatThreadSummary,
@@ -31,6 +32,8 @@
   let projectNameDrafts = $state<Record<string, string>>({});
   let threadTitleDrafts = $state<Record<string, string>>({});
   let renamingConversationId = $state<string | null>(null);
+  let confirmingDeleteId = $state<string | null>(null);
+  let deletingConversationId = $state<string | null>(null);
 
   const transientChats = $derived(
     projects.filter((project) => project.status === "active" && project.retention === "transient"),
@@ -200,6 +203,65 @@
     );
   }
 
+  async function deleteThread(thread: AgentChatThreadSummary): Promise<void> {
+    if (deletingConversationId) return;
+    if (confirmingDeleteId !== thread.conversation_id) {
+      confirmingDeleteId = thread.conversation_id;
+      return;
+    }
+    confirmingDeleteId = null;
+    deletingConversationId = thread.conversation_id;
+    failure = null;
+    try {
+      await deleteAgentChatThread(thread.project_id, thread.conversation_id);
+      threads = threads.filter(
+        (candidate) => candidate.conversation_id !== thread.conversation_id,
+      );
+      if (selectedConversationId === thread.conversation_id) {
+        selectedConversationId = null;
+      }
+      window.dispatchEvent(
+        new CustomEvent("nucleus:agent-chat-thread-deleted", {
+          detail: {
+            projectId: thread.project_id,
+            conversationId: thread.conversation_id,
+          },
+        }),
+      );
+      // A transient quick chat with no threads left is an empty shell; remove
+      // it too. Refusal (e.g. lifecycle guards) leaves the empty chat row,
+      // which is the pre-existing behavior.
+      const transientChat = transientProject(thread.project_id);
+      if (
+        transientChat
+        && !threads.some((candidate) => candidate.project_id === thread.project_id)
+      ) {
+        const idempotencyKey = `chat-delete:${crypto.randomUUID()}`;
+        try {
+          await submitProjectCommand({
+            kind: "project_lifecycle",
+            command_id: `command:${idempotencyKey}`,
+            project_id: thread.project_id,
+            action: "delete",
+            expected_revision: transientChat.revision_id,
+            display_name: null,
+            actor_ref: "operator:desktop",
+            authority_host_ref: transientChat.authority_host_ref,
+            idempotency_key: idempotencyKey,
+          });
+          notifyProjectsChanged();
+        } catch {
+          // The thread is gone either way; the empty chat row can be expired later.
+        }
+      }
+      window.dispatchEvent(new CustomEvent("nucleus:threads-changed"));
+    } catch (caught) {
+      failure = formatError(caught);
+    } finally {
+      deletingConversationId = null;
+    }
+  }
+
   function selectEmptyChat(projectId: string): void {
     selectedConversationId = null;
     selectedProjectId = projectId;
@@ -304,8 +366,8 @@
               </button>
             </span>
           </div>
-          {#if transientChat}
-            <div class="thread-actions">
+          <div class="thread-actions">
+            {#if transientChat}
               <button
                 type="button"
                 disabled={creating || renamingConversationId === thread.conversation_id}
@@ -316,8 +378,36 @@
               >
                 Convert to project
               </button>
-            </div>
-          {/if}
+            {/if}
+            {#if confirmingDeleteId === thread.conversation_id}
+              <button
+                type="button"
+                class="thread-delete-confirm"
+                disabled={deletingConversationId !== null}
+                onclick={() => void deleteThread(thread)}
+              >
+                Confirm delete
+              </button>
+              <button
+                type="button"
+                disabled={deletingConversationId !== null}
+                onclick={() => (confirmingDeleteId = null)}
+              >
+                Cancel
+              </button>
+            {:else}
+              <button
+                type="button"
+                class="thread-delete"
+                aria-label={`Delete thread ${thread.title}`}
+                title="Delete thread"
+                disabled={creating || deletingConversationId !== null}
+                onclick={() => void deleteThread(thread)}
+              >
+                <Icon icon={trash2} size="sm" />
+              </button>
+            {/if}
+          </div>
         </section>
       {/each}
     </div>
@@ -367,6 +457,26 @@
 
   .thread-actions > button {
     flex: none;
+  }
+
+  .work-thread .thread-actions {
+    padding: 0 0.5rem 0.375rem;
+  }
+
+  .work-thread.transient .thread-actions {
+    padding: 0;
+  }
+
+  .thread-delete {
+    display: grid;
+    place-items: center;
+    width: 1.75rem;
+    padding: 0;
+  }
+
+  .thread-delete-confirm {
+    color: var(--poodle-color-text-danger, #d64545);
+    border-color: var(--poodle-color-text-danger, #d64545);
   }
 
   .sidebar-view-actions button,

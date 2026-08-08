@@ -353,6 +353,9 @@ shape.
 - `g05/024-shell-accessibility-responsive-and-failure-cohesion.md` - completed;
   semantic interaction, container-relative panels, bounded local recovery, and
   supported-minimum native acceptance pass
+- `g05/025-plan-decision-agent-chat.md` - active; contracts, failure-detail
+  preservation, and server/desktop plan-decision implementation completed;
+  native acceptance operator-held
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -412,5 +415,6 @@ shape.
 
 ## Next Task
 
-Operator checkpoint: use the completed portable activity-key adoption and
-select the next bounded g05 product priority.
+Operator checkpoint: run the card 086 native acceptance pass — a Plan-mode
+turn to a pending plan, accept, revise, and dismiss decisions, conversation
+reload, and the Normal-mode follow-up session against a live provider.

@@ -231,7 +231,8 @@ impl AgentLiveSession for SwallowtailCodexLiveSession {
         let cleanup = block_on(turn.close());
         let outcome = outcome?;
         require_clean_turn(cleanup)?;
-        let assistant_message = completed_output(&outcome)?;
+        let assistant_message =
+            completed_output(&outcome, self.info.harness_mode == AgentHarnessMode::Plan)?;
 
         Ok(AgentTurnReply {
             turn_id: provider_turn_id,
@@ -273,7 +274,11 @@ fn runtime_turn_id(kind: &str) -> Result<RuntimeTurnId, String> {
 }
 
 fn runtime_error(error: RuntimeFailure) -> String {
-    error.to_string()
+    format!(
+        "[{}] {}",
+        error.diagnostic().code(),
+        error.diagnostic().message()
+    )
 }
 
 #[cfg(test)]
@@ -300,6 +305,19 @@ mod tests {
                 .expect("Nucleus chat prefix");
             uuid::Uuid::parse_str(random_identity).expect("UUID-backed runtime identity");
         }
+    }
+
+    #[test]
+    fn runtime_errors_keep_the_safe_diagnostic_code() {
+        let failure = RuntimeFailure::new(swallowtail_core::SafeDiagnostic::new(
+            "swallowtail.codex.app_server.malformed_notification",
+            "Codex app-server returned a malformed notification",
+        ));
+
+        assert_eq!(
+            runtime_error(failure),
+            "[swallowtail.codex.app_server.malformed_notification] Codex app-server returned a malformed notification"
+        );
     }
 
     #[test]
@@ -350,7 +368,16 @@ mod tests {
         let outcome =
             TerminalOutcome::new(TerminalStatus::Completed, CleanupOutcome::NotApplicable);
 
-        assert!(completed_output(&outcome).is_err());
+        assert!(completed_output(&outcome, false).is_err());
+        assert_eq!(completed_output(&outcome, true), Ok(None));
+
+        let with_message = outcome
+            .clone()
+            .with_output(OperationContent::new("plan review follows").expect("output"));
+        assert_eq!(
+            completed_output(&with_message, true),
+            Ok(Some("plan review follows".to_owned()))
+        );
     }
 
     #[test]

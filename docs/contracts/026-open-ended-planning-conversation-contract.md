@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-19
+Updated: 2026-08-07
 
 ## Purpose
 
@@ -125,6 +125,28 @@ Promotion can create or update:
 Promotion should be explicit and reviewable. Nucleus may suggest promotion, but
 it must not silently convert brainstorm text into active tasks, accepted
 architecture, durable memory, or SCM-projected files.
+
+## Plan Decision Promotion Rule
+
+Accepting a proposed plan is an explicit, durable, reviewable operator action.
+It is never a synthesized user message.
+
+A plan decision record carries provenance:
+
+- the decision outcome: accepted, revised, or dismissed
+- source plan correlation: the Nucleus turn id that proposed the plan plus the
+  plan activity correlation
+- the reviewed plan snapshot
+- created timestamp where known
+
+A dismissed or revised plan is also durable truth. The record preserves what
+was proposed and what the operator settled, so later conversation, task seeds,
+and promotion history can cite the exact decision instead of reconstructing it
+from transcript prose.
+
+An accepted plan stays provisional planning output until it is promoted
+through the Promotion Rule. Acceptance settles the plan; it does not create
+tasks, start execution, or mutate project state by itself.
 
 ## Action Boundary
 

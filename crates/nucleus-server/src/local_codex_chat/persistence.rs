@@ -4,6 +4,7 @@ use nucleus_local_store::{
     LocalStoreBackend, LocalStoreRecord, LocalStoreRecordPayload, RevisionExpectation,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use swallowtail_runtime::{
     ActivityActor, ActivityAssistantPhase, ActivityContentChangeKind, ActivityContentStream,
     ActivityCorrelation, ActivityDisclosure, ActivityKind, ActivityLifecyclePhase, ActivityStatus,
@@ -13,9 +14,11 @@ use swallowtail_runtime::{
 
 use super::subagent_directory::{
     operation_id_string, project_subagent_snapshot, read_subagent_directories,
-    StoredChatSubagentDirectory,
+    StoredChatSubagentDirectory, DIRECTORY_PREFIX,
 };
-use super::subagent_selection::{read_chat_actor_selection, StoredChatActorSelection};
+use super::subagent_selection::{
+    read_chat_actor_selection, StoredChatActorSelection, SELECTION_PREFIX,
+};
 use super::{LocalCodexChatHarnessMode, TaskAuthoringReceipt, TaskWorkflowReceipt};
 use crate::ServerStateService;
 
@@ -24,6 +27,7 @@ const TURN_PREFIX: &str = "product-chat-turn:";
 const MESSAGE_PREFIX: &str = "product-chat-message:";
 const ACTIVITY_PREFIX: &str = "product-chat-activity:";
 const QUESTION_PREFIX: &str = "product-chat-question:";
+const PLAN_PREFIX: &str = "product-chat-plan:";
 const THREAD_METADATA_PREFIX: &str = "product-chat-thread-metadata:";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -197,6 +201,22 @@ pub struct StoredChatQuestionAnswer {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredChatPlanDecision {
+    pub conversation_id: String,
+    pub project_id: String,
+    pub turn_id: String,
+    pub turn_ordinal: u64,
+    pub runtime_operation_id: String,
+    pub activity_id: String,
+    pub plan: String,
+    pub status: String,
+    #[serde(default)]
+    pub decided_at_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub accept_turn_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatMessageRole {
     User,
@@ -220,6 +240,8 @@ pub struct LocalCodexChatHistory {
     pub messages: Vec<StoredChatMessage>,
     pub activities: Vec<StoredChatActivity>,
     pub questions: Vec<StoredChatQuestionExchange>,
+    #[serde(default)]
+    pub plan_decisions: Vec<StoredChatPlanDecision>,
     pub subagent_directories: Vec<StoredChatSubagentDirectory>,
     pub actor_selection: StoredChatActorSelection,
 }
@@ -229,6 +251,8 @@ pub struct LocalCodexChatHistoryTurn {
     pub turn_id: String,
     pub ordinal: u64,
     pub status: String,
+    #[serde(default)]
+    pub failure_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -329,6 +353,16 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     questions.retain(|question| question.conversation_id == conversation_id);
     questions.sort_by_key(|question| question.event_sequence);
+    let mut plan_decisions = state
+        .agent_sessions()
+        .list()
+        .map_err(storage_error)?
+        .into_iter()
+        .filter(|record| record.id.0.starts_with(PLAN_PREFIX))
+        .map(|record| decode::<StoredChatPlanDecision>(&record.payload.bytes))
+        .collect::<Result<Vec<_>, _>>()?;
+    plan_decisions.retain(|decision| decision.conversation_id == conversation_id);
+    plan_decisions.sort_by_key(|decision| decision.turn_ordinal);
     let subagent_directories = read_subagent_directories(state, project_id, conversation_id)?;
     let actor_selection = read_chat_actor_selection(state, project_id, conversation_id)?;
 
@@ -362,11 +396,13 @@ where
                 turn_id: turn.turn_id,
                 ordinal: turn.ordinal,
                 status: turn.status,
+                failure_reason: turn.failure_reason,
             })
             .collect(),
         messages,
         activities,
         questions,
+        plan_decisions,
         subagent_directories,
         actor_selection,
     })
@@ -585,6 +621,113 @@ fn project_answers(
 fn question_record_id(turn_id: &str, callback_id: &str) -> PersistenceRecordId {
     let identity = blake3::hash(callback_id.as_bytes()).to_hex();
     PersistenceRecordId(format!("{QUESTION_PREFIX}{turn_id}:{identity}"))
+}
+
+pub fn now_unix_ms() -> Option<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+}
+
+fn plan_record_id(turn_id: &str) -> PersistenceRecordId {
+    PersistenceRecordId(format!("{PLAN_PREFIX}{turn_id}"))
+}
+
+pub fn persist_plan_pending<B>(
+    state: &ServerStateService<B>,
+    decision: &StoredChatPlanDecision,
+) -> Result<(), String>
+where
+    B: LocalStoreBackend,
+{
+    if decision.status != "pending" {
+        return Err("Agent Chat plan must enter as pending".to_owned());
+    }
+    let record_id = plan_record_id(&decision.turn_id);
+    put_json(
+        state,
+        record_id.clone(),
+        decision,
+        RevisionId(format!("rev:{}:pending", record_id.0)),
+        RevisionExpectation::MustNotExist,
+    )
+}
+
+pub fn settle_plan_decision<B>(
+    state: &ServerStateService<B>,
+    request: &super::LocalCodexChatPlanDecisionRequest,
+    decided_at_unix_ms: Option<u64>,
+    accept_turn_id: Option<String>,
+) -> Result<StoredChatPlanDecision, String>
+where
+    B: LocalStoreBackend,
+{
+    let record_id = plan_record_id(&request.turn_id);
+    let record = state
+        .agent_sessions()
+        .get(&record_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| "Agent Chat plan decision record is missing".to_owned())?;
+    let mut decision = decode::<StoredChatPlanDecision>(&record.payload.bytes)?;
+    if decision.status != "pending" {
+        return Err("Agent Chat plan is stale or already decided".to_owned());
+    }
+    if decision.conversation_id != request.conversation_id
+        || decision.project_id != request.project_id
+        || decision.runtime_operation_id != request.runtime_operation_id
+        || decision.activity_id != request.activity_id
+    {
+        return Err("Agent Chat plan correlation does not match".to_owned());
+    }
+    decision.status = request.decision.as_str().to_owned();
+    decision.decided_at_unix_ms = decided_at_unix_ms;
+    decision.accept_turn_id = accept_turn_id;
+    put_json(
+        state,
+        record_id.clone(),
+        &decision,
+        RevisionId(format!("rev:{}:{}", record_id.0, decision.status)),
+        RevisionExpectation::Exact(record.revision_id),
+    )?;
+    Ok(decision)
+}
+
+pub fn settle_pending_plan_for_conversation<B>(
+    state: &ServerStateService<B>,
+    conversation_id: &str,
+    status: &str,
+    decided_at_unix_ms: Option<u64>,
+) -> Result<Option<StoredChatPlanDecision>, String>
+where
+    B: LocalStoreBackend,
+{
+    let records = state.agent_sessions().list().map_err(storage_error)?;
+    let pending = records
+        .into_iter()
+        .filter(|record| record.id.0.starts_with(PLAN_PREFIX))
+        .map(|record| {
+            decode::<StoredChatPlanDecision>(&record.payload.bytes)
+                .map(|decision| (record, decision))
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .find(|(_, decision)| {
+            decision.conversation_id == conversation_id && decision.status == "pending"
+        });
+    let Some((record, mut decision)) = pending else {
+        return Ok(None);
+    };
+    decision.status = status.to_owned();
+    decision.decided_at_unix_ms = decided_at_unix_ms;
+    put_json(
+        state,
+        record.id.clone(),
+        &decision,
+        RevisionId(format!("rev:{}:{status}", record.id.0)),
+        RevisionExpectation::Exact(record.revision_id),
+    )?;
+    Ok(Some(decision))
 }
 
 pub fn project_activity(
@@ -935,6 +1078,72 @@ fn compact_thread_title(message: &str) -> String {
     title
 }
 
+/// Hard-deletes every durable record owned by one chat thread: session,
+/// thread metadata, actor selection, turns, messages, activities, question
+/// exchanges, plan decisions, and subagent directories. Returns the number of
+/// records removed.
+pub fn delete_thread<B>(
+    state: &ServerStateService<B>,
+    project_id: &str,
+    conversation_id: &str,
+) -> Result<u64, String>
+where
+    B: LocalStoreBackend,
+{
+    read_session(state, conversation_id)?
+        .filter(|session| session.project_id == project_id)
+        .ok_or_else(|| format!("chat thread not found: {conversation_id}"))?;
+
+    let mut victims = vec![
+        session_record_id(conversation_id),
+        thread_metadata_record_id(conversation_id),
+        PersistenceRecordId(format!(
+            "{SELECTION_PREFIX}{}",
+            blake3::hash(conversation_id.as_bytes()).to_hex()
+        )),
+    ];
+    for record in state.agent_sessions().list().map_err(storage_error)? {
+        let id = &record.id.0;
+        let conversation_scoped = id.starts_with(TURN_PREFIX)
+            || id.starts_with(MESSAGE_PREFIX)
+            || id.starts_with(ACTIVITY_PREFIX)
+            || id.starts_with(QUESTION_PREFIX)
+            || id.starts_with(PLAN_PREFIX)
+            || id.starts_with(DIRECTORY_PREFIX);
+        if !conversation_scoped {
+            continue;
+        }
+        let payload = decode::<serde_json::Value>(&record.payload.bytes)?;
+        if payload.get("conversation_id").and_then(Value::as_str) != Some(conversation_id) {
+            continue;
+        }
+        if id.starts_with(DIRECTORY_PREFIX)
+            && payload.get("project_id").and_then(Value::as_str) != Some(project_id)
+        {
+            continue;
+        }
+        victims.push(record.id.clone());
+    }
+
+    let mut deleted = 0u64;
+    for record_id in victims {
+        if state
+            .agent_sessions()
+            .get(&record_id)
+            .map_err(storage_error)?
+            .is_none()
+        {
+            continue;
+        }
+        state
+            .agent_sessions()
+            .delete(&record_id, RevisionExpectation::Any)
+            .map_err(storage_error)?;
+        deleted += 1;
+    }
+    Ok(deleted)
+}
+
 pub fn canonical_turn_id(conversation_id: &str, ordinal: u64) -> String {
     format!("turn:chat:{conversation_id}:{ordinal}")
 }
@@ -1011,7 +1220,7 @@ pub fn persist_turn_completion<B>(
     state: &ServerStateService<B>,
     turn_id: &str,
     provider_turn_id: &str,
-    assistant_message: &str,
+    assistant_message: Option<&str>,
     task_receipts: &[TaskAuthoringReceipt],
     workflow_receipts: &[TaskWorkflowReceipt],
 ) -> Result<(), String>
@@ -1031,6 +1240,11 @@ where
         RevisionId(format!("rev:{TURN_PREFIX}{turn_id}:completed")),
         RevisionExpectation::Exact(revision),
     )?;
+    let Some(assistant_message) = assistant_message else {
+        // A plan-terminal turn completes without a final assistant message;
+        // the pending plan record is its outcome artifact.
+        return Ok(());
+    };
     let first_sequence = (turn.ordinal.saturating_sub(1)) * 2;
     persist_message(
         state,
@@ -1497,7 +1711,7 @@ mod tests {
             &state,
             "turn:1",
             "provider-turn:1",
-            "Hi there",
+            Some("Hi there"),
             &[],
             &[TaskWorkflowReceipt {
                 status: super::super::TaskWorkflowReceiptStatus::ReviewReady,
@@ -1585,6 +1799,81 @@ mod tests {
     }
 
     #[test]
+    fn thread_delete_removes_every_conversation_record() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("db.sqlite");
+        let state = ServerStateService::new(SqliteBackend::new(path.clone()));
+        let session = |conversation_id: &str| StoredChatSession {
+            conversation_id: conversation_id.to_owned(),
+            project_id: "project:1".to_owned(),
+            resource_id: None,
+            session_id: format!("session:{conversation_id}"),
+            provider_thread_id: format!("thread:{conversation_id}"),
+            model: "model".to_owned(),
+            reasoning_effort: None,
+            harness_mode: LocalCodexChatHarnessMode::Normal,
+            adapter_id: "codex-app-server".to_owned(),
+            provider_instance_id: "codex:local-default".to_owned(),
+            provider_instance_revision: "1".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            provider_id: None,
+            turn_count: 1,
+            task_toolset_version: 5,
+        };
+        persist_turn_start(
+            &state,
+            session("conversation:delete"),
+            "turn:delete",
+            "Delete me",
+            None,
+        )
+        .expect("start deleted thread");
+        persist_turn_completion(
+            &state,
+            "turn:delete",
+            "provider-turn:delete",
+            Some("Gone"),
+            &[],
+            &[],
+        )
+        .expect("complete deleted thread");
+        persist_turn_start(
+            &state,
+            session("conversation:keep"),
+            "turn:keep",
+            "Keep me",
+            None,
+        )
+        .expect("start kept thread");
+
+        let deleted =
+            delete_thread(&state, "project:1", "conversation:delete").expect("delete thread");
+        assert!(deleted >= 4, "session, turn, and both messages: {deleted}");
+        assert_eq!(
+            delete_thread(&state, "project:1", "conversation:delete"),
+            Err("chat thread not found: conversation:delete".to_owned()),
+            "second delete finds nothing",
+        );
+        assert_eq!(
+            delete_thread(&state, "project:2", "conversation:keep"),
+            Err("chat thread not found: conversation:keep".to_owned()),
+            "cross-project delete is rejected",
+        );
+
+        let reopened = ServerStateService::new(SqliteBackend::new(path));
+        let threads = list_threads(&reopened).expect("list threads");
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].conversation_id, "conversation:keep");
+        let gone = read_history(&reopened, "project:1", "conversation:delete")
+            .expect("deleted history reads empty");
+        assert!(gone.turns.is_empty());
+        assert!(gone.messages.is_empty());
+        let kept = read_history(&reopened, "project:1", "conversation:keep")
+            .expect("kept history survives");
+        assert_eq!(kept.messages.len(), 1);
+    }
+
+    #[test]
     fn native_proof_evidence_counts_terminal_truth_without_sensitive_material() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
@@ -1624,7 +1913,7 @@ mod tests {
                     &state,
                     &turn_id,
                     "provider-turn-secret",
-                    "assistant-secret-material",
+                    Some("assistant-secret-material"),
                     &[],
                     &[],
                 )
@@ -1708,12 +1997,59 @@ mod tests {
 
         let history = read_history(&state, "project:1", "conversation:1").expect("history");
         assert_eq!(history.turns[0].status, "failed");
+        assert_eq!(
+            history.turns[0].failure_reason.as_deref(),
+            Some("provider unavailable")
+        );
         assert_eq!(history.messages.len(), 1);
         assert_eq!(history.messages[0].role, ChatMessageRole::User);
         assert_eq!(
             current_turn(&state, "conversation:1").expect("turn").status,
             "failed"
         );
+    }
+
+    #[test]
+    fn failed_turn_history_bounds_the_failure_reason() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
+        let session = StoredChatSession {
+            conversation_id: "conversation:bounded".to_owned(),
+            project_id: "project:1".to_owned(),
+            resource_id: None,
+            session_id: "session:bounded".to_owned(),
+            provider_thread_id: "thread:bounded".to_owned(),
+            model: "model".to_owned(),
+            reasoning_effort: None,
+            harness_mode: LocalCodexChatHarnessMode::Normal,
+            adapter_id: "codex-app-server".to_owned(),
+            provider_instance_id: "codex:local-default".to_owned(),
+            provider_instance_revision: "1".to_owned(),
+            protocol_facade_id: "codex-app-server-v2".to_owned(),
+            provider_id: None,
+            turn_count: 1,
+            task_toolset_version: 4,
+        };
+        persist_turn_start(&state, session, "turn:bounded", "Run the goal", None).expect("start");
+        let long_reason = format!(
+            "[swallowtail.codex.app_server.malformed_notification] {}",
+            "x".repeat(600)
+        );
+        persist_turn_failure(
+            &state,
+            "turn:bounded",
+            ChatTurnFailureStatus::Failed,
+            &long_reason,
+        )
+        .expect("fail");
+
+        let history = read_history(&state, "project:1", "conversation:bounded").expect("history");
+        let reason = history.turns[0]
+            .failure_reason
+            .as_deref()
+            .expect("failure reason");
+        assert_eq!(reason.chars().count(), 500);
+        assert!(reason.starts_with("[swallowtail.codex.app_server.malformed_notification]"));
     }
 
     #[test]
@@ -1828,5 +2164,125 @@ mod tests {
             read_history(&reopened, "project:restart", "conversation:restart").expect("history");
         assert_eq!(history.turns[0].status, "failed");
         assert_eq!(history.questions[0].status, "abandoned");
+    }
+
+    fn pending_plan(turn_id: &str) -> StoredChatPlanDecision {
+        StoredChatPlanDecision {
+            conversation_id: "conversation:plan".to_owned(),
+            project_id: "project:plan".to_owned(),
+            turn_id: turn_id.to_owned(),
+            turn_ordinal: 1,
+            runtime_operation_id: "turn:runtime:plan".to_owned(),
+            activity_id: "activity:plan".to_owned(),
+            plan: "# Plan\n\n1. Do the work".to_owned(),
+            status: "pending".to_owned(),
+            decided_at_unix_ms: None,
+            accept_turn_id: None,
+        }
+    }
+
+    fn plan_decision_request(
+        decision: crate::local_codex_chat::LocalCodexChatPlanDecisionKind,
+    ) -> crate::local_codex_chat::LocalCodexChatPlanDecisionRequest {
+        crate::local_codex_chat::LocalCodexChatPlanDecisionRequest {
+            project_id: "project:plan".to_owned(),
+            conversation_id: "conversation:plan".to_owned(),
+            turn_id: "turn:plan".to_owned(),
+            runtime_operation_id: "turn:runtime:plan".to_owned(),
+            activity_id: "activity:plan".to_owned(),
+            decision,
+        }
+    }
+
+    #[test]
+    fn pending_plan_decision_round_trips_through_history() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
+        persist_plan_pending(&state, &pending_plan("turn:plan")).expect("persist pending plan");
+
+        let history = read_history(&state, "project:plan", "conversation:plan").expect("history");
+        assert_eq!(history.plan_decisions.len(), 1);
+        let decision = &history.plan_decisions[0];
+        assert_eq!(decision.status, "pending");
+        assert_eq!(decision.plan, "# Plan\n\n1. Do the work");
+        assert_eq!(decision.runtime_operation_id, "turn:runtime:plan");
+        assert_eq!(decision.activity_id, "activity:plan");
+        assert_eq!(decision.decided_at_unix_ms, None);
+
+        let duplicate = persist_plan_pending(&state, &pending_plan("turn:plan"));
+        assert!(duplicate.is_err(), "one pending plan per proposed plan");
+    }
+
+    #[test]
+    fn plan_decision_settles_exactly_once_with_exact_correlation() {
+        use crate::local_codex_chat::LocalCodexChatPlanDecisionKind;
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
+        persist_plan_pending(&state, &pending_plan("turn:plan")).expect("persist pending plan");
+
+        let mut mismatched = plan_decision_request(LocalCodexChatPlanDecisionKind::Dismissed);
+        mismatched.runtime_operation_id = "turn:runtime:other".to_owned();
+        assert!(settle_plan_decision(&state, &mismatched, Some(7), None).is_err());
+
+        let settled = settle_plan_decision(
+            &state,
+            &plan_decision_request(LocalCodexChatPlanDecisionKind::Accepted),
+            Some(9),
+            Some("turn:chat:conversation:plan:2".to_owned()),
+        )
+        .expect("settle");
+        assert_eq!(settled.status, "accepted");
+        assert_eq!(settled.decided_at_unix_ms, Some(9));
+        assert_eq!(
+            settled.accept_turn_id.as_deref(),
+            Some("turn:chat:conversation:plan:2")
+        );
+
+        let repeat = settle_plan_decision(
+            &state,
+            &plan_decision_request(LocalCodexChatPlanDecisionKind::Dismissed),
+            Some(11),
+            None,
+        );
+        assert!(repeat.is_err(), "post-settlement decisions fail");
+
+        let history = read_history(&state, "project:plan", "conversation:plan").expect("history");
+        assert_eq!(history.plan_decisions[0].status, "accepted");
+    }
+
+    #[test]
+    fn ordinary_message_settles_pending_plan_as_revised() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let state = ServerStateService::new(SqliteBackend::new(temp_dir.path().join("db.sqlite")));
+        persist_plan_pending(&state, &pending_plan("turn:plan")).expect("persist pending plan");
+
+        let settled =
+            settle_pending_plan_for_conversation(&state, "conversation:plan", "revised", Some(13))
+                .expect("settle")
+                .expect("pending plan");
+        assert_eq!(settled.status, "revised");
+        assert_eq!(settled.decided_at_unix_ms, Some(13));
+        assert!(
+            settle_pending_plan_for_conversation(&state, "conversation:plan", "revised", Some(15))
+                .expect("settle")
+                .is_none(),
+            "no second pending plan remains"
+        );
+    }
+
+    #[test]
+    fn restart_keeps_a_pending_plan_queryable() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("db.sqlite");
+        let state = ServerStateService::new(SqliteBackend::new(path.clone()));
+        persist_plan_pending(&state, &pending_plan("turn:plan")).expect("persist pending plan");
+        drop(state);
+
+        let reopened = ServerStateService::new(SqliteBackend::new(path));
+        recover_interrupted_chat_state(&reopened).expect("recover");
+        let history =
+            read_history(&reopened, "project:plan", "conversation:plan").expect("history");
+        assert_eq!(history.plan_decisions.len(), 1);
+        assert_eq!(history.plan_decisions[0].status, "pending");
     }
 }

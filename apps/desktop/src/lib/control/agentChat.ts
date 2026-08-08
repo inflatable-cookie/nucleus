@@ -201,7 +201,8 @@ export type AgentChatReply = {
   model: string;
   reasoning_effort: string | null;
   harness_mode: AgentChatHarnessMode;
-  assistant_message: string;
+  /** Null when a plan-terminal turn completed with no final assistant message. */
+  assistant_message: string | null;
   task_receipts: TaskAuthoringReceipt[];
   workflow_receipts: TaskWorkflowReceipt[];
 };
@@ -258,6 +259,7 @@ export type AgentChatHistoryTurn = {
   turn_id: string;
   ordinal: number;
   status: "started" | "completed" | "cancelled" | "timed_out" | "failed";
+  failure_reason: string | null;
 };
 
 export type AgentChatActivity = {
@@ -362,6 +364,35 @@ export type AgentChatActorSelection = {
 
 export type AgentChatActorSelectionRequest = AgentChatActorSelection;
 
+export type AgentChatPlanDecisionStatus = "pending" | "accepted" | "revised" | "dismissed";
+
+export type AgentChatPlanDecision = {
+  conversation_id: string;
+  project_id: string;
+  turn_id: string;
+  turn_ordinal: number;
+  runtime_operation_id: string;
+  activity_id: string;
+  plan: string;
+  status: AgentChatPlanDecisionStatus;
+  decided_at_unix_ms: number | null;
+  accept_turn_id: string | null;
+};
+
+export type AgentChatPlanDecisionRequest = {
+  project_id: string;
+  conversation_id: string;
+  turn_id: string;
+  runtime_operation_id: string;
+  activity_id: string;
+  decision: "accepted" | "revised" | "dismissed";
+};
+
+export type AgentChatPlanDecisionReply = {
+  decision: AgentChatPlanDecision;
+  follow_up: AgentChatReply | null;
+};
+
 export type AgentChatHistory = {
   conversation_id: string;
   project_id: string;
@@ -378,6 +409,7 @@ export type AgentChatHistory = {
   messages: AgentChatHistoryMessage[];
   activities: AgentChatActivity[];
   questions: AgentChatQuestionExchange[];
+  plan_decisions: AgentChatPlanDecision[];
   subagent_directories: AgentChatSubagentDirectory[];
   actor_selection: AgentChatActorSelection;
 };
@@ -415,6 +447,12 @@ export function answerAgentChatQuestion(
   return invoke<AgentChatQuestionExchange>("answer_agent_chat_question", { request });
 }
 
+export function decideAgentChatPlan(
+  request: AgentChatPlanDecisionRequest,
+): Promise<AgentChatPlanDecisionReply> {
+  return invoke<AgentChatPlanDecisionReply>("decide_agent_chat_plan", { request });
+}
+
 export function selectAgentChatActor(
   request: AgentChatActorSelectionRequest,
 ): Promise<AgentChatActorSelection> {
@@ -444,6 +482,16 @@ export function renameAgentChatThread(
     projectId,
     conversationId,
     title,
+  });
+}
+
+export function deleteAgentChatThread(
+  projectId: string,
+  conversationId: string,
+): Promise<number> {
+  return invoke<number>("delete_agent_chat_thread", {
+    projectId,
+    conversationId,
   });
 }
 

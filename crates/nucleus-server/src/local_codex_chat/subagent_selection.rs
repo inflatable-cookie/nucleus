@@ -6,7 +6,7 @@ use super::persistence::{decode, put_json, storage_error};
 use super::subagent_directory::read_subagent_directories;
 use crate::ServerStateService;
 
-const SELECTION_PREFIX: &str = "product-chat-actor-selection:";
+pub(super) const SELECTION_PREFIX: &str = "product-chat-actor-selection:";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

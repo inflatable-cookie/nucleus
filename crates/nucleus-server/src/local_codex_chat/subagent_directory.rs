@@ -12,7 +12,7 @@ use swallowtail_runtime::{
 use super::persistence::{decode, put_json, storage_error, StoredChatSubagent};
 use crate::ServerStateService;
 
-const DIRECTORY_PREFIX: &str = "product-chat-subagent-directory:";
+pub(super) const DIRECTORY_PREFIX: &str = "product-chat-subagent-directory:";
 const MAXIMUM_SUBAGENTS_PER_OPERATION: usize = 256;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -3,6 +3,7 @@ import type { TranscriptItem } from "@poodle/svelte";
 import type {
   AgentChatActivity,
   AgentChatActorSelection,
+  AgentChatPlanDecision,
   AgentChatQuestionExchange,
 } from "./control/agentChat";
 
@@ -17,7 +18,17 @@ export type AgentTranscriptMessage = {
 export type AgentTranscriptTurn = {
   turnId: string;
   status: "started" | "completed" | "cancelled" | "timed_out" | "failed";
+  failureReason?: string | null;
 };
+
+export function latestFailedTurnNotice(turns: AgentTranscriptTurn[]): string | null {
+  return (
+    [...turns]
+      .reverse()
+      .find((turn) => turn.status === "failed" && turn.failureReason)
+      ?.failureReason ?? null
+  );
+}
 
 export function filterAgentChatActivities(
   observations: AgentChatActivity[],
@@ -44,6 +55,7 @@ export function assembleAgentTranscript(
   activityLabel: string | null,
   conversationId: string,
   questionExchanges: AgentChatQuestionExchange[] = [],
+  planDecisions: AgentChatPlanDecision[] = [],
 ): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const sortedMessages = [...chatMessages].sort(
@@ -52,6 +64,12 @@ export function assembleAgentTranscript(
   const messagesByTurn = new Map<string, AgentTranscriptMessage[]>();
   const activitiesByTurn = new Map<string, AgentChatActivity[]>();
   const turnStatusById = new Map(turns.map((turn) => [turn.turnId, turn.status]));
+  const decisionsByTurn = new Map<string, AgentChatPlanDecision[]>();
+  for (const decision of planDecisions) {
+    const held = decisionsByTurn.get(decision.turn_id) ?? [];
+    held.push(decision);
+    decisionsByTurn.set(decision.turn_id, held);
+  }
 
   for (const message of sortedMessages) {
     const held = messagesByTurn.get(message.turnId) ?? [];
@@ -84,10 +102,12 @@ export function assembleAgentTranscript(
             (candidate) => candidate.role === "assistant",
           ),
           turnStatusById.get(message.turnId),
+          decidedPlanIdentities(decisionsByTurn.get(message.turnId) ?? []),
         ),
       );
       items.push(...answeredQuestionItems(message.turnId, questionExchanges));
       items.push(...settledQuestionItems(message.turnId, questionExchanges));
+      items.push(...decidedPlanItems(message.turnId, decisionsByTurn.get(message.turnId) ?? []));
       emittedTurns.add(message.turnId);
     } else {
       items.push({
@@ -107,6 +127,7 @@ export function assembleAgentTranscript(
           turnActivity,
           false,
           turnStatusById.get(turnId),
+          decidedPlanIdentities(decisionsByTurn.get(turnId) ?? []),
         ),
       );
     }
@@ -119,6 +140,35 @@ export function assembleAgentTranscript(
     });
   }
   return items;
+}
+
+function decidedPlanIdentities(decisions: AgentChatPlanDecision[]): Set<string> {
+  return new Set(
+    decisions.map(
+      (decision) => `${decision.runtime_operation_id}\u0000${decision.activity_id}`,
+    ),
+  );
+}
+
+function decidedPlanItems(
+  turnId: string,
+  decisions: AgentChatPlanDecision[],
+): TranscriptItem[] {
+  return decisions
+    .filter(
+      (decision): decision is AgentChatPlanDecision & { status: "accepted" | "revised" | "dismissed" } =>
+        decision.status !== "pending",
+    )
+    .map((decision) => ({
+      kind: "decided-plan",
+      id: `${turnId}:${decision.runtime_operation_id}:${decision.activity_id}:decided`,
+      plan: decision.plan,
+      status: decision.status,
+      decidedAt:
+        decision.decided_at_unix_ms === null
+          ? undefined
+          : new Date(decision.decided_at_unix_ms).toLocaleString(),
+    }));
 }
 
 function settledQuestionItems(
@@ -191,11 +241,26 @@ function answeredQuestionItems(
     );
 }
 
+/**
+ * Display-only cleanup for streamed text: models sometimes emit a list
+ * marker on its own line, a blank line, then the item text ("7.\n\n  List…"),
+ * which parses as an empty item plus a detached paragraph. Joining the marker
+ * back onto its text changes presentation only; the stored content is
+ * untouched.
+ */
+function joinOrphanListMarkers(markdown: string): string {
+  return markdown.replace(
+    /(^|\n)([ \t]*(?:\d+\.|[-*+]))[ \t]*\n+[ \t]*(?=\S)/g,
+    "$1$2 ",
+  );
+}
+
 function assembleTurnActivity(
   turnId: string,
   observations: AgentChatActivity[],
   hasCanonicalAssistantMessage: boolean,
   turnStatus: AgentTranscriptTurn["status"] | undefined,
+  decidedPlans: Set<string>,
 ): TranscriptItem[] {
   type HeldActivity = {
     firstSequence: number;
@@ -225,11 +290,23 @@ function assembleTurnActivity(
     });
   }
 
-  const activityItems = [...heldById.values()]
-    .sort((left, right) => left.firstSequence - right.firstSequence)
-    .flatMap(({ latest, content, taskList }): TranscriptItem[] => {
+  const activityItems = [...heldById.entries()]
+    .sort((left, right) => left[1].firstSequence - right[1].firstSequence)
+    .flatMap(([identity, { latest, content, taskList }]): TranscriptItem[] => {
       const id = `${turnId}:${latest.runtime_operation_id}:${latest.activity_id}`;
       const status = terminalActivityStatus(latest.status, turnStatus);
+      if (
+        !content
+        && status !== "failed"
+        && status !== "cancelled"
+        && (latest.kind === "unknown" || latest.kind === "reasoning_summary")
+      ) {
+        // Empty rows carry no information: unknown kinds are provider identity
+        // echoes (e.g. user message items), and Codex sends this client empty
+        // reasoning summaries. Failed or cancelled rows stay — their status is
+        // the information. A reasoning row that ever gains content shows.
+        return [];
+      }
       if (latest.kind === "assistant_message") {
         const isExplicitFinal =
           latest.assistant_phase === "final" ||
@@ -242,7 +319,7 @@ function assembleTurnActivity(
             kind: "message",
             id,
             role: "assistant",
-            markdown: content,
+            markdown: joinOrphanListMarkers(content),
             isStreaming: status === "pending" || status === "in_progress",
           },
         ];
@@ -261,12 +338,17 @@ function assembleTurnActivity(
       }
 
       if (latest.kind === "plan" && content) {
+        if (decidedPlans.has(identity)) {
+          // A decided plan leaves one transcript record, not a flattened
+          // markdown message; the live plan stays in the composer.
+          return [];
+        }
         return [
           {
             kind: "message",
             id,
             role: "assistant",
-            markdown: `${activityActorPrefix(latest)}${content}`,
+            markdown: `${activityActorPrefix(latest)}${joinOrphanListMarkers(content)}`,
             isStreaming: status === "pending" || status === "in_progress",
           },
         ];
@@ -312,8 +394,7 @@ function activityActorPrefix(activity: AgentChatActivity): string {
     : "";
 }
 
-function terminalActivityStatus(
-  activityStatus: AgentChatActivity["status"],
+function terminalActivityStatus(  activityStatus: AgentChatActivity["status"],
   turnStatus: AgentTranscriptTurn["status"] | undefined,
 ): AgentChatActivity["status"] {
   if (activityStatus !== "pending" && activityStatus !== "in_progress") {
@@ -324,6 +405,11 @@ function terminalActivityStatus(
   }
   if (turnStatus === "failed" || turnStatus === "timed_out") {
     return "failed";
+  }
+  if (turnStatus === "completed") {
+    // A completed turn has nothing left to stream; providers leave snapshot
+    // activities (task lists, plans) without a terminal status.
+    return "completed";
   }
   return activityStatus;
 }
@@ -345,6 +431,7 @@ function terminalTurnItem(
         kind: "activity",
         id: `terminal:${turnId}`,
         label,
+        spinning: false,
       }
     : null;
 }

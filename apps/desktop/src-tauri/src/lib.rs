@@ -34,7 +34,8 @@ use nucleus_server::{
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
     ForgeStatusCheckRefreshScope, LocalCodexChatActorSelectionRequest,
-    LocalCodexChatCancellationRegistry, LocalCodexChatHistory, LocalCodexChatQuestionAnswerRequest,
+    LocalCodexChatCancellationRegistry, LocalCodexChatHistory, LocalCodexChatPlanDecisionReply,
+    LocalCodexChatPlanDecisionRequest, LocalCodexChatQuestionAnswerRequest,
     LocalCodexChatQuestionRegistry, LocalCodexChatReply, LocalCodexChatRequest,
     LocalCodexChatService, LocalCodexChatThreadSummary, LocalCodexCredentialActionReceipt,
     LocalCodexCredentialActionRequest, LocalControlRequestHandler, LocalMemoryProposalSeed,
@@ -613,6 +614,74 @@ fn answer_agent_chat_question(
 }
 
 #[tauri::command]
+async fn decide_agent_chat_plan(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, DesktopState>,
+    request: LocalCodexChatPlanDecisionRequest,
+) -> Result<LocalCodexChatPlanDecisionReply, String> {
+    let active_turn = state
+        .chat_cancellation
+        .begin(&request.project_id, &request.conversation_id)?;
+    let cancellation = active_turn.cancellation();
+    let chat = Arc::clone(&state.chat);
+    let chat_questions = state.chat_questions.clone();
+    let adapter = Arc::clone(&state.adapter);
+    let server_state = state.server_state.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let _active_turn = active_turn;
+        let mut chat = chat
+            .lock()
+            .map_err(|_| "agent chat runtime lock is poisoned".to_owned())?;
+        chat.decide_plan_with_task_authoring_and_cancellation(
+            &server_state,
+            request,
+            cancellation,
+            &chat_questions,
+            &mut |control_request| {
+                let envelope = ControlRequestEnvelopeDto::try_from(&control_request)
+                    .map_err(|error| error.reason)?;
+                let response = adapter
+                    .lock()
+                    .map_err(|_| "desktop command adapter lock is poisoned".to_owned())?
+                    .submit_control_envelope(envelope)
+                    .map_err(|error| error.reason)?;
+                match response.body {
+                    ControlResponseBodyDto::CommandReceipt { status, .. }
+                        if status == "accepted_for_state_mutation" =>
+                    {
+                        Ok(())
+                    }
+                    ControlResponseBodyDto::CommandReceipt { status, .. } => {
+                        Err(format!("task ledger command was not accepted: {status}"))
+                    }
+                    ControlResponseBodyDto::Error { reason, .. } => Err(reason),
+                    _ => Err("task ledger command returned an unexpected response".to_owned()),
+                }
+            },
+            &mut |activity, directory| {
+                window
+                    .emit("agent-chat:activity", activity)
+                    .map_err(|error| format!("agent chat activity delivery failed: {error}"))?;
+                if let Some(directory) = directory {
+                    window
+                        .emit("agent-chat:subagents", directory)
+                        .map_err(|error| format!("agent chat child delivery failed: {error}"))?;
+                }
+                Ok(())
+            },
+            &mut |question| {
+                window
+                    .emit("agent-chat:question", question)
+                    .map_err(|error| format!("agent chat question delivery failed: {error}"))
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("agent chat worker failed: {error}"))?
+}
+
+#[tauri::command]
 fn select_agent_chat_actor(
     state: tauri::State<'_, DesktopState>,
     request: LocalCodexChatActorSelectionRequest,
@@ -674,6 +743,25 @@ async fn rename_agent_chat_thread(
     })
     .await
     .map_err(|error| format!("agent chat thread rename worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn delete_agent_chat_thread(
+    state: tauri::State<'_, DesktopState>,
+    project_id: String,
+    conversation_id: String,
+) -> Result<u64, String> {
+    let chat = Arc::clone(&state.chat);
+    let server_state = state.server_state.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut chat = chat
+            .lock()
+            .map_err(|_| "agent chat runtime lock is poisoned".to_owned())?;
+        chat.delete_thread(&server_state, &project_id, &conversation_id)
+    })
+    .await
+    .map_err(|error| format!("agent chat thread delete worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1073,10 +1161,12 @@ pub fn run() {
             send_agent_chat_message,
             cancel_agent_chat_turn,
             answer_agent_chat_question,
+            decide_agent_chat_plan,
             select_agent_chat_actor,
             load_agent_chat_history,
             list_agent_chat_threads,
             rename_agent_chat_thread,
+            delete_agent_chat_thread,
             agent_chat_provider_catalogue,
             agent_chat_credential_action,
             workspace_layout_snapshot,

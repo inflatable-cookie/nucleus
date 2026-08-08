@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-07-09
+Updated: 2026-08-07
 
 ## Purpose
 
@@ -150,6 +150,42 @@ state. Exactly one resolution may be attached to one pending request.
 Secret-text answers are response data. They must not be persisted or replayed
 as visible transcript content. Durable records may retain only the redacted
 fact that the secret question was answered.
+
+## Plan Decision Rule
+
+A plan decision is a first-class timeline exchange, not a chat message, tool
+call, or parsed provider payload.
+
+The pending record retains the Nucleus conversation and turn ids plus the plan
+activity correlation. Its body is the proposed plan snapshot; Nucleus does not
+derive task scope or product context from plan prose.
+
+Exactly one decision may be attached to one proposed plan. The durable
+decision retains the outcome (accepted, revised, or dismissed), the reviewed
+plan snapshot, and the source plan provenance. It is rendered as a settled
+`decided-plan` transcript record after the operator acts. Pending plans remain
+separately queryable so the composer can enter plan review.
+
+A plan decision is an operator action record. It must not be persisted or
+replayed as a synthesized user message.
+
+A plan-terminal turn may complete without a final assistant message: when the
+provider's whole closing output is the proposed plan, the turn completes
+cleanly and the pending plan record is its outcome artifact. Such a turn is
+not a failure and no empty assistant message is persisted. Outside plan mode
+a completed turn still requires a non-empty assistant message.
+
+## Thread Deletion Rule
+
+Deleting a chat thread is an explicit operator action that hard-deletes every
+durable record the conversation owns: session, thread metadata, actor
+selection, turns, messages, observable activities, question exchanges, plan
+decisions, and subagent directories. Deletion is project-scoped and rejects
+cross-project access. Dropping the conversation closes any live provider
+session bound to it; the chat command boundary guarantees no turn is in
+flight. No tombstone is retained — the thread leaves listings and history
+entirely. Deleting a thread never deletes its project; a transient quick chat
+left threadless is removed separately through the project lifecycle.
 
 ## Provider Work Projection Rule
 
