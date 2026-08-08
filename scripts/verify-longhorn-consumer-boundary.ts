@@ -18,17 +18,17 @@ const desktopRoot = resolve(repoRoot, "apps/desktop");
 const longhornRoot = resolve(repoRoot, "../longhorn");
 
 const rendererPackages = {
-  "@longhorn/commands": "commands",
-  "@longhorn/config": "config",
-  "@longhorn/core": "core",
-  "@longhorn/layout": "layout",
-  "@longhorn/native-content": "native-content",
-  "@longhorn/native-content-svelte": "native-content-svelte",
-  "@longhorn/notifications": "notifications",
-  "@longhorn/operation": "operation",
-  "@longhorn/poodle": "poodle",
-  "@longhorn/settings": "settings",
-  "@longhorn/svelte": "svelte",
+  "@inflatable-cookie/longhorn-commands": "commands",
+  "@inflatable-cookie/longhorn-config": "config",
+  "@inflatable-cookie/longhorn-core": "core",
+  "@inflatable-cookie/longhorn-layout": "layout",
+  "@inflatable-cookie/longhorn-native-content": "native-content",
+  "@inflatable-cookie/longhorn-native-content-svelte": "native-content-svelte",
+  "@inflatable-cookie/longhorn-notifications": "notifications",
+  "@inflatable-cookie/longhorn-operation": "operation",
+  "@inflatable-cookie/longhorn-poodle": "poodle",
+  "@inflatable-cookie/longhorn-settings": "settings",
+  "@inflatable-cookie/longhorn-svelte": "svelte",
 } as const;
 
 const rustCrates = [
@@ -66,9 +66,9 @@ const selectedLonghornSources = [
 ] as const;
 
 const forbiddenRendererPackages = [
-  "@longhorn/history",
-  "@longhorn/surface-transfer",
-  "@longhorn/surfaces",
+  "@inflatable-cookie/longhorn-history",
+  "@inflatable-cookie/longhorn-surface-transfer",
+  "@inflatable-cookie/longhorn-surfaces",
 ] as const;
 const forbiddenRustCrates = [
   "longhorn-history",

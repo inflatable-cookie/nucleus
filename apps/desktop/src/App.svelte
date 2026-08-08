@@ -9,7 +9,7 @@
   import OperationPopover from "./lib/operations/OperationPopover.svelte";
   import { createNucleusOperationSession } from "./lib/operations/runtime.svelte";
   import NotificationPopover from "./lib/notifications/NotificationPopover.svelte";
-  import { NotificationToastHost } from "@longhorn/notifications/poodle";
+  import { NotificationToastHost } from "@inflatable-cookie/longhorn-notifications/poodle";
   import { createNucleusNotificationSession } from "./lib/notifications/runtime.svelte";
   import SettingsDialog from "./lib/settings/SettingsDialog.svelte";
   import WorkspaceSidebar from "./lib/WorkspaceSidebar.svelte";

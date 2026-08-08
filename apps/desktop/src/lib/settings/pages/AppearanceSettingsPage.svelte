@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, RadioGroup, Text } from "@poodle/svelte";
-  import type { SettingsPageRenderContext } from "@longhorn/settings/svelte";
+  import type { SettingsPageRenderContext } from "@inflatable-cookie/longhorn-settings/svelte";
   import {
     APPEARANCE_SCOPE_ID,
     APPEARANCE_UNIT_ID,

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, Switch, Text } from "@poodle/svelte";
-  import type { SettingsPageRenderContext } from "@longhorn/settings/svelte";
+  import type { SettingsPageRenderContext } from "@inflatable-cookie/longhorn-settings/svelte";
   import {
     FIXTURE_STATUS_ENTRY_ID,
     GENERAL_SCOPE_ID,

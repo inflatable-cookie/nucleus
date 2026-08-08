@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Component } from "svelte";
-  import type { SettingsPageRenderContext } from "@longhorn/settings/svelte";
-  import type { CommandSession } from "@longhorn/commands/svelte";
+  import type { SettingsPageRenderContext } from "@inflatable-cookie/longhorn-settings/svelte";
+  import type { CommandSession } from "@inflatable-cookie/longhorn-commands/svelte";
   import {
     APPEARANCE_RENDERER_ID,
     AGENT_RENDERER_ID,

@@ -14,8 +14,8 @@ import {
   type CommandKeymapReset,
   type CommandPlatform,
   type CommandPorts,
-} from "@longhorn/commands";
-import { CommandSession } from "@longhorn/commands/svelte";
+} from "@inflatable-cookie/longhorn-commands";
+import { CommandSession } from "@inflatable-cookie/longhorn-commands/svelte";
 
 export interface NucleusCommandFacts {
   readonly selectedProjectId: string | null;

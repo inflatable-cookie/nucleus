@@ -2,22 +2,22 @@ import type {
   LayoutDocument,
   LayoutMutationRequest,
   PanelInstanceId,
-} from "@longhorn/layout";
+} from "@inflatable-cookie/longhorn-layout";
 import type {
   PanelPresentation,
   PoodleLayoutBinding,
-} from "@longhorn/poodle/binding";
-import { createPoodleLayoutBinding } from "@longhorn/poodle/binding";
+} from "@inflatable-cookie/longhorn-poodle/binding";
+import { createPoodleLayoutBinding } from "@inflatable-cookie/longhorn-poodle/binding";
 import {
   LayoutState,
   type LayoutDispatchResult,
-} from "@longhorn/svelte/layout";
+} from "@inflatable-cookie/longhorn-svelte/layout";
 import {
   ReactiveClientState,
   type ClientStatus,
   type ReactiveConnection,
-} from "@longhorn/svelte";
-import type { ConnectionFailureReporter } from "@longhorn/core";
+} from "@inflatable-cookie/longhorn-svelte";
+import type { ConnectionFailureReporter } from "@inflatable-cookie/longhorn-core";
 
 import {
   connectWorkspaceLayout,

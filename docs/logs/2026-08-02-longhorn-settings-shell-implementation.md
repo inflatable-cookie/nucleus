@@ -56,7 +56,7 @@ conflict. Restart restored compact density and enabled fixture status.
 - Longhorn commit `58883b903a211956eef659ba19ff0bc57fe98da5`
 - selected-tree SHA-256
   `b46803e7a208ceca39e7f394d4d046a157592dc6a783fa055a0814ffa6df9053`
-- seven produced renderer packages, including `@longhorn/settings`
+- seven produced renderer packages, including `@inflatable-cookie/longhorn-settings`
 - fourteen admitted Rust crates, including Settings config and Tauri support
 - one Svelte runtime and one Poodle runtime
 - no admitted Surface or generic-history dependency

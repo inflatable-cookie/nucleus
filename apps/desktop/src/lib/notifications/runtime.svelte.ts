@@ -1,10 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { EventTransport } from "@longhorn/core";
-import type { CommandSession } from "@longhorn/commands/svelte";
-import type { NotificationActionExecutor } from "@longhorn/notifications";
-import { createTauriNotificationPort } from "@longhorn/notifications/tauri";
-import { NotificationSession } from "@longhorn/notifications/svelte";
+import type { EventTransport } from "@inflatable-cookie/longhorn-core";
+import type { CommandSession } from "@inflatable-cookie/longhorn-commands/svelte";
+import type { NotificationActionExecutor } from "@inflatable-cookie/longhorn-notifications";
+import { createTauriNotificationPort } from "@inflatable-cookie/longhorn-notifications/tauri";
+import { NotificationSession } from "@inflatable-cookie/longhorn-notifications/svelte";
 
 const OPERATIONS_SOURCE = "nucleus:operations";
 const OPEN_FORGE_ACTION = "nucleus:sidebar.show-forge";

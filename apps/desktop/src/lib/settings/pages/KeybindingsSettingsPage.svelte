@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { KeybindingSettings } from "@longhorn/commands/poodle";
+  import { KeybindingSettings } from "@inflatable-cookie/longhorn-commands/poodle";
   import type {
     CommandEffectiveBinding,
     CommandKeyChord,
     CommandKeymapOverride,
     CommandKeymapPatch,
-  } from "@longhorn/commands";
-  import type { CommandSession } from "@longhorn/commands/svelte";
+  } from "@inflatable-cookie/longhorn-commands";
+  import type { CommandSession } from "@inflatable-cookie/longhorn-commands/svelte";
 
   let { commandSession }: { commandSession: CommandSession } = $props();
   let query = $state("");

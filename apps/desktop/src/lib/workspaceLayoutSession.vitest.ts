@@ -5,9 +5,9 @@ import type {
   LayoutDocument,
   LayoutMutationRequest,
   LayoutSchemaDefinition,
-} from "@longhorn/layout";
-import type { ConnectionFailureReporter } from "@longhorn/core";
-import type { ReactiveConnection } from "@longhorn/svelte";
+} from "@inflatable-cookie/longhorn-layout";
+import type { ConnectionFailureReporter } from "@inflatable-cookie/longhorn-core";
+import type { ReactiveConnection } from "@inflatable-cookie/longhorn-svelte";
 
 import WorkspaceLayoutSessionHarness from "./WorkspaceLayoutSessionHarness.svelte";
 import {

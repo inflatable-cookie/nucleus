@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { EventTransport } from "@longhorn/core";
-import { NativeContentClient } from "@longhorn/native-content";
-import { createTauriNativeContentPort } from "@longhorn/native-content/tauri";
+import type { EventTransport } from "@inflatable-cookie/longhorn-core";
+import { NativeContentClient } from "@inflatable-cookie/longhorn-native-content";
+import { createTauriNativeContentPort } from "@inflatable-cookie/longhorn-native-content/tauri";
 
 export const DEFAULT_BROWSER_URL = "https://example.com";
 

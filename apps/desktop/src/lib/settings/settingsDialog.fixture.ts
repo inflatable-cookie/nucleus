@@ -1,4 +1,4 @@
-import type { EventTransport, Unlisten } from "@longhorn/core";
+import type { EventTransport, Unlisten } from "@inflatable-cookie/longhorn-core";
 import {
   SETTINGS_APPLY_COMMAND,
   SETTINGS_LOAD_COMMAND,
@@ -11,8 +11,8 @@ import {
   type SettingsRegistrySnapshot,
   type SettingsResetCommand,
   type SettingsScopeSnapshot,
-} from "@longhorn/settings";
-import { SettingsSession } from "@longhorn/settings/svelte";
+} from "@inflatable-cookie/longhorn-settings";
+import { SettingsSession } from "@inflatable-cookie/longhorn-settings/svelte";
 
 import {
   AGENT_PAGE_ID,

@@ -5,8 +5,8 @@
     type OverlaySurfaceGeometryChangeHandler,
   } from "@poodle/svelte";
   import { activity } from "@poodle/icons-lucide";
-  import { OperationPanel } from "@longhorn/operation/poodle";
-  import type { OperationSession } from "@longhorn/operation/svelte";
+  import { OperationPanel } from "@inflatable-cookie/longhorn-operation/poodle";
+  import type { OperationSession } from "@inflatable-cookie/longhorn-operation/svelte";
 
   let {
     session,

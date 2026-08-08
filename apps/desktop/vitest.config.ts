@@ -9,10 +9,10 @@ export default defineConfig({
   },
   ssr: {
     noExternal: [
-      "@longhorn/settings",
-      "@longhorn/operation",
-      "@longhorn/notifications",
-      "@longhorn/config",
+      "@inflatable-cookie/longhorn-settings",
+      "@inflatable-cookie/longhorn-operation",
+      "@inflatable-cookie/longhorn-notifications",
+      "@inflatable-cookie/longhorn-config",
       "@poodle/headless",
       "@poodle/icons-lucide",
       "@poodle/styles",
