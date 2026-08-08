@@ -7,4 +7,4 @@ repository.workspace = true
 
 [dependencies]
 serde_json = "1"
-swallowtail-runtime = { git = "https://github.com/inflatable-cookie/swallowtail", tag = "v0.3.0" }
+swallowtail-runtime = { git = "https://github.com/inflatable-cookie/swallowtail", tag = "v0.3.1" }
