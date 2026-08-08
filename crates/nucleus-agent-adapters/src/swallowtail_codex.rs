@@ -24,6 +24,7 @@ use swallowtail_runtime::{
     SessionOptions, TurnRequest,
 };
 
+mod debug_observer;
 mod host;
 mod preparation;
 mod smoke;

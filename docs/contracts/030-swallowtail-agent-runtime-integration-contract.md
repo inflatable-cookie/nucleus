@@ -171,6 +171,10 @@ in Swallowtail and Nucleus does not fake one.
   process drop
 - default errors expose safe diagnostics, not prompts, callback payloads,
   schemas, credentials, raw provider envelopes, or filesystem paths
+- `NUCLEUS_SWALLOWTAIL_DEBUG=1` (also `true` / `yes` / `on`) may register an
+  opt-in Swallowtail `DiagnosticObserver` on the Codex host that prints
+  restricted debug observations to stderr; ordinary product runs leave the
+  observer unregistered and must not use debug observations for control flow
 
 ## Application Proof Profile
 

@@ -1,13 +1,15 @@
+use crate::swallowtail_codex::debug_observer::optional_debug_observer;
 use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 use swallowtail_adapter_codex::CODEX_CLI_AXIS;
 use swallowtail_core::{ExecutionHostId, InterfaceVersionAxis};
 use swallowtail_host_local::{LocalHostServices, LocalProcessHost, LocalProcessLimits};
 use swallowtail_runtime::{
-    Deadline, EnvironmentRef, ExecutableRef, HostServices, InstalledExecutableTarget,
-    MonotonicInstant, TimeService, WorkingResourceRef,
+    Deadline, DiagnosticObserver, EnvironmentRef, ExecutableRef, HostServices,
+    InstalledExecutableTarget, MonotonicInstant, TimeService, WorkingResourceRef,
 };
 
 const HOST_ID: &str = "nucleus.embedded";
@@ -21,11 +23,16 @@ pub(super) struct CodexHost {
     target: InstalledExecutableTarget,
     environment: EnvironmentRef,
     working_resource: WorkingResourceRef,
+    debug_observer: Option<Arc<dyn DiagnosticObserver>>,
 }
 
 impl CodexHost {
     pub(super) fn services(&self) -> HostServices {
-        self.local.services().clone()
+        let services = self.local.services().clone();
+        match &self.debug_observer {
+            Some(observer) => services.with_diagnostic_observer(Arc::clone(observer)),
+            None => services,
+        }
     }
 
     pub(super) const fn target(&self) -> &InstalledExecutableTarget {
@@ -66,6 +73,7 @@ pub(super) fn approved_host(
         target,
         environment,
         working_resource,
+        debug_observer: optional_debug_observer(),
     })
 }
 
