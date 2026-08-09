@@ -26,6 +26,7 @@ use swallowtail_runtime::{
 
 mod debug_observer;
 mod host;
+mod idioms;
 mod preparation;
 mod smoke;
 mod task_execution;

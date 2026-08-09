@@ -7,7 +7,6 @@ use std::time::Duration;
 use swallowtail_adapter_codex::CODEX_CLI_AXIS;
 use swallowtail_core::{ExecutionHostId, InterfaceVersionAxis};
 use swallowtail_host_local::{LocalHostServices, LocalProcessHost, LocalProcessLimits};
-use swallowtail_idioms::IdiomSource;
 use swallowtail_runtime::{
     Deadline, DiagnosticObserver, EnvironmentRef, ExecutableRef, HostServices,
     InstalledExecutableTarget, MonotonicInstant, TimeService, WorkingResourceRef,
@@ -25,30 +24,15 @@ pub(super) struct CodexHost {
     environment: EnvironmentRef,
     working_resource: WorkingResourceRef,
     debug_observer: Option<Arc<dyn DiagnosticObserver>>,
-    idiom_source: Option<Arc<dyn IdiomSource>>,
 }
 
 impl CodexHost {
     pub(super) fn services(&self) -> HostServices {
         let services = self.local.services().clone();
-        let services = match &self.debug_observer {
+        match &self.debug_observer {
             Some(observer) => services.with_diagnostic_observer(Arc::clone(observer)),
             None => services,
-        };
-        match &self.idiom_source {
-            Some(source) => services.with_idiom_source(Arc::clone(source)),
-            None => services,
         }
-    }
-
-    /// Registers the product-owned idiom selection source (Contract 056).
-    ///
-    /// Without a source, an idioms session opt-in fails closed before any
-    /// provider work.
-    #[must_use]
-    pub(super) fn with_idiom_source(mut self, source: Arc<dyn IdiomSource>) -> Self {
-        self.idiom_source = Some(source);
-        self
     }
 
     pub(super) const fn target(&self) -> &InstalledExecutableTarget {
@@ -90,7 +74,6 @@ pub(super) fn approved_host(
         environment,
         working_resource,
         debug_observer: optional_debug_observer(),
-        idiom_source: None,
     })
 }
 
@@ -238,13 +221,11 @@ mod tests {
         )
         .expect("idiom");
         let source = StaticRulesSource::new(vec![rule]);
-        let host = super::approved_host(
-            std::env::temp_dir().as_path(),
-            std::path::PathBuf::from("/nonexistent/codex-seam-probe"),
+        let services = HostServices::new(
+            swallowtail_core::ExecutionHostId::new("fixture.nucleus.host")
+                .expect("fixture host id"),
         )
-        .expect("host builds with a synthetic approved target")
         .with_idiom_source(Arc::new(source));
-        let services = host.services();
 
         let options = SessionOptions::default()
             .with_developer_instructions(

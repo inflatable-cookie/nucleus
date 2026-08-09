@@ -14,6 +14,9 @@ pub(super) struct TaskExecutionRequest<'a> {
     pub project_root: &'a str,
     pub route: &'a GoalRunRoute,
     pub prompt: &'a str,
+    /// Whether the session may fold AGENTS.md idioms. Defaults on; the
+    /// composer toggle will thread this once the control surface carries it.
+    pub idioms_enabled: bool,
 }
 
 pub(super) fn run_task<F>(
@@ -38,6 +41,7 @@ where
             developer_instructions: TASK_DEVELOPER_INSTRUCTIONS.to_owned(),
             prompt: request.prompt.to_owned(),
             timeout: TASK_TURN_TIMEOUT,
+            idioms_enabled: request.idioms_enabled,
         },
         &mut on_started,
     )

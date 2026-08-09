@@ -16,6 +16,10 @@ pub struct TaskExecutionRequest {
     pub developer_instructions: String,
     pub prompt: String,
     pub timeout: Duration,
+    /// Whether the session may fold AGENTS.md idioms into its developer
+    /// instructions (Contract 056 route opt-in). The adapter still requires
+    /// an AGENTS.md file to fold anything.
+    pub idioms_enabled: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -26,9 +26,35 @@ testbed consumer.
 - no product semantics invented: the seam is mechanism, rule content stays
   product-owned
 
+## AGENTS.md Workflow Wiring
+
+The product workflow now activates idioms when a project has an `AGENTS.md`:
+
+- `nucleus-agent-protocol::TaskExecutionRequest` carries `idioms_enabled`
+- the Codex adapter parses `<project_root>/AGENTS.md` into Project-scoped
+  static idioms (`swallowtail_codex/idioms.rs`): sections and bullets,
+  code fences skipped, capped at 8 in file order, full confidence, static
+  provenance
+- when enabled, the task path registers the source on `HostServices` and
+  sets the session opt-in; sessions then receive the folded `[idioms]`
+  block after Nucleus's developer instructions
+- the server task chain defaults `idioms_enabled: true` ("use AGENTS.md by
+  default if it exists")
+
+## Pending
+
+- composer toggle: threads `idioms_enabled` through the control surface and
+  the chat composer UI (session-scoped: bound at session open, takes effect
+  on the next session)
+- memory as secondary source: memory records join the same source once the
+  memory system is implemented
+- oversight-agent signals: accept/reject/edit recording lands with the
+  designated oversight agent (cheap-model quick-chat / title generation)
+
 ## Validation
 
-- focused `nucleus-agent-adapters` nextest suite: 28 passed, 2 skipped
+- focused `nucleus-agent-adapters` nextest suite: 31 passed, 2 skipped
+- `nucleus-server` suite: 2067 passed, 14 skipped
 - `nucleus-agent-protocol` and `nucleus-server` compile on the pinned rev
 - the pre-existing `large_enum_variant` clippy finding in
   `nucleus-agent-protocol` remains untouched and unrelated

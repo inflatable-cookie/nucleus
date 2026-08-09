@@ -503,6 +503,7 @@ fn authenticated_single_task_runner_performs_a_workspace_write() {
                 project_root: &root,
                 route: &route,
                 prompt: "Create a UTF-8 file named nucleus-single-task-smoke.txt containing exactly the text nucleus task smoke ok followed by a newline. Do nothing else.",
+                idioms_enabled: true,
             },
             |_| {
                 started = true;

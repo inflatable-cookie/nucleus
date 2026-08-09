@@ -104,6 +104,7 @@ where
                     project_root: &input.project_root,
                     route: &input.route,
                     prompt: &input.prompt,
+                    idioms_enabled: true,
                 },
                 on_started,
             )
