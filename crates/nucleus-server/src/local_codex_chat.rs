@@ -171,6 +171,13 @@ pub struct LocalCodexChatRequest {
     pub reasoning_effort: Option<String>,
     #[serde(default)]
     pub harness_mode: LocalCodexChatHarnessMode,
+    /// Whether the chat session may fold AGENTS.md idioms (defaults on).
+    #[serde(default = "idioms_enabled_default")]
+    pub idioms_enabled: bool,
+}
+
+fn idioms_enabled_default() -> bool {
+    true
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -504,6 +511,7 @@ impl LocalCodexChatService {
                     migration_context.as_deref(),
                     &selected_route,
                     turn_timeout,
+                    request.idioms_enabled,
                 )?)
             }
         };
@@ -752,6 +760,7 @@ impl LocalCodexChatService {
                 model: None,
                 reasoning_effort: None,
                 harness_mode: LocalCodexChatHarnessMode::Normal,
+                idioms_enabled: true,
             };
             Some(self.send_message_with_task_authoring_and_cancellation(
                 state,

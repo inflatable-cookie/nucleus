@@ -12,11 +12,9 @@ use swallowtail_adapter_codex::{
     CodexSessionProfileInput,
 };
 use swallowtail_core::ReasoningMode;
-use swallowtail_idioms::{IdiomScope, MonotonicInstant as IdiomClock, StaticRulesSource};
 use swallowtail_runtime::{
-    CallbackRequestKind, CleanupOutcome, IdiomSessionOption, InteractiveSessionDriver,
-    OperationContent, RuntimeFailure, SessionOptions, TerminalOutcome, TerminalStatus, TurnHandle,
-    TurnRequest,
+    CallbackRequestKind, CleanupOutcome, InteractiveSessionDriver, OperationContent,
+    RuntimeFailure, SessionOptions, TerminalOutcome, TerminalStatus, TurnHandle, TurnRequest,
 };
 
 use super::{host, idioms, preparation, request_id, runtime_error};
@@ -46,16 +44,13 @@ impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {
         }
         let reasoning =
             ReasoningMode::new(&request.reasoning_effort).map_err(|error| error.to_string())?;
-        let host = host::local_host(Path::new(&request.working_directory))?;
         let project_root = Path::new(&request.working_directory);
-        let mut services = host.services();
-        if request.idioms_enabled {
-            let records = idioms::agents_md_idioms(project_root, IdiomClock::from_ticks(0));
-            if !records.is_empty() {
-                services = services
-                    .with_idiom_source(std::sync::Arc::new(StaticRulesSource::new(records)));
-            }
-        }
+        let host = host::local_host(project_root)?;
+        let wiring = idioms::wiring(project_root, request.idioms_enabled);
+        let services = match wiring.source() {
+            Some(source) => host.services().with_idiom_source(source),
+            None => host.services(),
+        };
         let prepared = block_on_worker(preparation::app_server(&host))?;
         let driver = CodexAppServerDriver::new(prepared.environment().clone());
         let mut options = SessionOptions::default()
@@ -64,11 +59,8 @@ impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {
                     .map_err(|error| error.to_string())?,
             )
             .with_reasoning_mode(reasoning);
-        if request.idioms_enabled {
-            options = options.with_idioms(
-                IdiomSessionOption::new(IdiomScope::Project, idioms::MAX_AGENTS_MD_IDIOMS)
-                    .map_err(|error| error.to_string())?,
-            );
+        if let Some(idiom_option) = wiring.option() {
+            options = options.with_idioms(idiom_option);
         }
         let prompt = OperationContent::new(request.prompt).map_err(|error| error.to_string())?;
         let runtime_turn_id = super::runtime_turn_id("task")?;

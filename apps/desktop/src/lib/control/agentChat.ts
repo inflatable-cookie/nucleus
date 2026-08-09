@@ -16,6 +16,8 @@ export type AgentChatRequest = {
   model: string;
   reasoning_effort: string;
   harness_mode: AgentChatHarnessMode;
+  /** Fold AGENTS.md idioms into the session's developer instructions. */
+  idioms_enabled: boolean;
 };
 
 export type AgentChatQuestionOption = {

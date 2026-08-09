@@ -191,6 +191,8 @@
   let model = $state(DEFAULT_MODEL);
   let reasoningEffort = $state(DEFAULT_REASONING_EFFORT);
   let harnessMode = $state<AgentChatHarnessMode>(DEFAULT_HARNESS_MODE);
+  /** Fold AGENTS.md idioms into the session (applies from the next session). */
+  let idiomsEnabled = $state(true);
   let providerInstanceId = $state("");
   let providerInstanceRevision = $state("");
   let protocolFacadeId = $state("");
@@ -636,6 +638,7 @@
         model,
         reasoning_effort: reasoningEffort,
         harness_mode: harnessMode,
+        idioms_enabled: idiomsEnabled,
       });
       model = reply.model;
       providerInstanceId = reply.provider_instance_id;
@@ -1207,6 +1210,17 @@
               onPressedChange={(pressed) => selectHarnessMode(pressed ? "plan" : "normal")}
             >
               {harnessMode === "plan" ? "Plan" : "Normal"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              pressed={idiomsEnabled}
+              title="Fold AGENTS.md idioms into the session (applies from the next session)"
+              ariaLabel="AGENTS.md idioms"
+              disabled={pending || loadingHistory}
+              onPressedChange={(pressed) => (idiomsEnabled = pressed)}
+            >
+              {idiomsEnabled ? "Idioms on" : "Idioms off"}
             </Button>
           </div>
         {/snippet}

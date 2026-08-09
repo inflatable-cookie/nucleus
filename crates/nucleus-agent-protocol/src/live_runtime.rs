@@ -42,6 +42,9 @@ pub struct AgentSessionStartRequest {
     pub dynamic_tools: Vec<Value>,
     pub resume_provider_thread_id: Option<String>,
     pub turn_timeout: Duration,
+    /// Whether the session may fold AGENTS.md idioms into its developer
+    /// instructions (Contract 056 route opt-in).
+    pub idioms_enabled: bool,
 }
 
 /// Provider-assigned identity and effective settings of a started session.

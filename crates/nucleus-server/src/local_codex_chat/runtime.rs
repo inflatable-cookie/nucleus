@@ -99,6 +99,7 @@ impl LocalCodexChatSession {
         migration_context: Option<&str>,
         route: &SelectedAgentChatRoute,
         turn_timeout: Duration,
+        idioms_enabled: bool,
     ) -> Result<Self, String> {
         let developer_instructions =
             chat_developer_instructions(migration_context, route.harness_mode);
@@ -118,6 +119,7 @@ impl LocalCodexChatSession {
                 // tools on thread/resume. Nucleus supplies transcript context and
                 // opens fresh instead of resuming from a provider id alone.
                 resume_provider_thread_id: None,
+                idioms_enabled,
                 turn_timeout,
             })?;
 

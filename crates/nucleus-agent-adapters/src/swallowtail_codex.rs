@@ -67,8 +67,13 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
         let tools = tool_declarations(request.dynamic_tools)?;
         let reasoning =
             ReasoningMode::new(&request.reasoning_effort).map_err(|error| error.to_string())?;
-        let host = host::local_host(Path::new(&request.working_directory))?;
-        let services = host.services();
+        let project_root = Path::new(&request.working_directory);
+        let host = host::local_host(project_root)?;
+        let wiring = idioms::wiring(project_root, request.idioms_enabled);
+        let services = match wiring.source() {
+            Some(source) => host.services().with_idiom_source(source),
+            None => host.services(),
+        };
         let prepared = block_on(preparation::app_server(&host))?;
         if prepared.instance().id().as_str() != request.provider_instance_id {
             return Err("selected provider instance does not match prepared Codex".to_owned());
@@ -87,6 +92,9 @@ impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {
             )
             .with_reasoning_mode(reasoning)
             .with_tools(tools);
+        if let Some(idiom_option) = wiring.option() {
+            options = options.with_idioms(idiom_option);
+        }
         if request.harness_mode == AgentHarnessMode::Plan {
             options = options.with_harness_mode(HarnessMode::Plan);
         }
@@ -397,6 +405,7 @@ mod tests {
                 developer_instructions: "instructions".to_owned(),
                 dynamic_tools: Vec::new(),
                 resume_provider_thread_id: Some("thread:stored".to_owned()),
+                idioms_enabled: true,
                 turn_timeout: Duration::from_secs(180),
             })
             .err()
@@ -438,6 +447,7 @@ mod tests {
                     "inputSchema": { "type": "object" }
                 })],
                 resume_provider_thread_id: None,
+                idioms_enabled: true,
                 turn_timeout: Duration::from_secs(180),
             })
             .expect("Codex chat session");

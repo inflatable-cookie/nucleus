@@ -28,6 +28,7 @@ fn chat_request_serializes_for_tauri_boundary() {
         model: Some("gpt-5.4-mini".to_owned()),
         reasoning_effort: Some("low".to_owned()),
         harness_mode: LocalCodexChatHarnessMode::Normal,
+    idioms_enabled: true,
     };
     let value = serde_json::to_value(request).expect("serialize request");
     assert_eq!(value["conversation_id"], "panel:agent-chat");
@@ -254,6 +255,7 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
             harness_mode: LocalCodexChatHarnessMode::Normal,
         },
         CHAT_TURN_TIMEOUT,
+        true,
     )
     .expect("start chat session");
     let mut task_tool = |_: &str, _: &str, _: &str, _| {
@@ -366,6 +368,7 @@ fn live_chat_receives_active_task_context_without_polluting_history() {
                 model: None,
                 reasoning_effort: None,
                 harness_mode: LocalCodexChatHarnessMode::Normal,
+            idioms_enabled: true,
             },
         )
         .expect("active task turn");
@@ -402,6 +405,7 @@ fn durable_chat_reopens_with_transcript_context_after_service_restart() {
         model: None,
         reasoning_effort: None,
         harness_mode: LocalCodexChatHarnessMode::Normal,
+    idioms_enabled: true,
     };
     let first = LocalCodexChatService::default()
         .send_message(&state, request("Reply with exactly: durable first"))
@@ -448,6 +452,7 @@ fn live_chat_authors_a_task_batch_without_dispatching_work() {
                 model: None,
                 reasoning_effort: None,
                 harness_mode: LocalCodexChatHarnessMode::Normal,
+            idioms_enabled: true,
             },
             &mut |request| accepted(&mut handler, request),
         )
@@ -628,6 +633,7 @@ fn live_chat_creates_and_runs_a_two_task_goal_through_two_portals() {
                 model: None,
                 reasoning_effort: None,
                 harness_mode: LocalCodexChatHarnessMode::Normal,
+            idioms_enabled: true,
             },
             &mut |request| accepted(&mut handler, request),
         )
@@ -859,6 +865,7 @@ fn request(conversation: &str, message: &str) -> LocalCodexChatRequest {
         model: None,
         reasoning_effort: None,
         harness_mode: LocalCodexChatHarnessMode::Normal,
+    idioms_enabled: true,
     }
 }
 

@@ -5,10 +5,13 @@
 //! implemented; this module owns the parse and the layering seam.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use swallowtail_idioms::{
     BoundedText, Idiom, IdiomConstraint, IdiomId, IdiomScope, MonotonicInstant, Provenance,
+    StaticRulesSource,
 };
+use swallowtail_runtime::IdiomSessionOption;
 
 /// Maximum idioms folded from AGENTS.md into one session.
 pub const MAX_AGENTS_MD_IDIOMS: usize = 8;
@@ -16,6 +19,53 @@ pub const MAX_AGENTS_MD_IDIOMS: usize = 8;
 const MAX_LINE_BYTES: usize = 512;
 /// Provenance source reference for AGENTS.md idioms.
 const AGENTS_MD_SOURCE: &str = "AGENTS.md";
+
+/// The route opt-in wiring for one session: an optional registered source
+/// and an optional session option.
+pub struct IdiomWiring {
+    source: Option<Arc<dyn swallowtail_idioms::IdiomSource>>,
+    option: Option<IdiomSessionOption>,
+}
+
+impl IdiomWiring {
+    /// Returns the registered source, when enabled and AGENTS.md exists.
+    #[must_use]
+    pub fn source(&self) -> Option<Arc<dyn swallowtail_idioms::IdiomSource>> {
+        self.source.clone()
+    }
+
+    /// Returns the session option, when enabled and AGENTS.md exists.
+    #[must_use]
+    pub fn option(&self) -> Option<IdiomSessionOption> {
+        self.option.clone()
+    }
+}
+
+/// Resolves the idioms opt-in wiring for one session.
+///
+/// When enabled and an `AGENTS.md` exists, the parsed records become a
+/// static source and the session option is set. Disabled or absent file
+/// yields no source and no option — the default route behavior.
+#[must_use]
+pub fn wiring(project_root: &Path, enabled: bool) -> IdiomWiring {
+    if !enabled {
+        return IdiomWiring {
+            source: None,
+            option: None,
+        };
+    }
+    let records = agents_md_idioms(project_root, MonotonicInstant::from_ticks(0));
+    if records.is_empty() {
+        return IdiomWiring {
+            source: None,
+            option: None,
+        };
+    }
+    IdiomWiring {
+        source: Some(Arc::new(StaticRulesSource::new(records))),
+        option: IdiomSessionOption::new(IdiomScope::Project, MAX_AGENTS_MD_IDIOMS).ok(),
+    }
+}
 
 /// Reads the project's `AGENTS.md` idioms, or an empty set when the file is
 /// absent.

@@ -41,11 +41,19 @@ The product workflow now activates idioms when a project has an `AGENTS.md`:
 - the server task chain defaults `idioms_enabled: true` ("use AGENTS.md by
   default if it exists")
 
+## Composer Toggle
+
+The chat composer carries an "Idioms" toggle next to the Plan toggle:
+
+- `AgentChatRequest` / `LocalCodexChatRequest` carry `idioms_enabled`
+  (defaults on via serde default)
+- the toggle is session-scoped: it is bound when a chat session starts, so
+  it applies to the next session and is documented in the button title
+- the chat session path (`AgentSessionStartRequest` → `start_session`)
+  shares the same AGENTS.md wiring helper as task execution
+
 ## Pending
 
-- composer toggle: threads `idioms_enabled` through the control surface and
-  the chat composer UI (session-scoped: bound at session open, takes effect
-  on the next session)
 - memory as secondary source: memory records join the same source once the
   memory system is implemented
 - oversight-agent signals: accept/reject/edit recording lands with the
