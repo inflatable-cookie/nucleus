@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Icon, Select } from "@inflatable-cookie/poodle-svelte";
-  import { folderCog, triangleAlert } from "@inflatable-cookie/poodle-core/icons";
+  import { folderCog, triangleAlert } from "../icons.generated";
   import type { ControlProjectRecordDto } from "./control";
   import { resourceIsAvailable, resourceTargetPresentation } from "./resourceTargetSupport";
 

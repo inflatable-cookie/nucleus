@@ -16,7 +16,7 @@
     folderCog,
     plus,
     refreshCw,
-  } from "@inflatable-cookie/poodle-core/icons";
+  } from "../icons.generated";
   import { onDestroy, onMount, tick } from "svelte";
   import {
     buildStateListQuery,

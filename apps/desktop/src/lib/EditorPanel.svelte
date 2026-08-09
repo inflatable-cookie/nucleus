@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, Icon, Popover, Surface, Text } from "@inflatable-cookie/poodle-svelte";
-  import { folderOpen } from "@inflatable-cookie/poodle-core/icons";
+  import { folderOpen } from "../icons.generated";
   import { onDestroy, onMount, untrack } from "svelte";
   import CodeEditor from "./CodeEditor.svelte";
   import {

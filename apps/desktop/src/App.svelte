@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { Icon, IconButton, Menu, Popover, SplitView, type MenuItem } from "@inflatable-cookie/poodle-svelte";
-  import { info, plus, settings as settingsIcon } from "@inflatable-cookie/poodle-core/icons";
+  import { Icon, IconButton, IconProvider, Menu, Popover, SplitView, type MenuItem } from "@inflatable-cookie/poodle-svelte";
+  import { icons, info, plus, settings as settingsIcon } from "./icons.generated";
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
   import CommandPalette from "./lib/commands/CommandPalette.svelte";
   import { NucleusCommandRuntime } from "./lib/commands/runtime.svelte";
@@ -295,6 +295,7 @@
   }
 </script>
 
+<IconProvider {icons}>
 <main
   class="app-root"
   data-theme="cobalt"
@@ -483,6 +484,7 @@
     placement="bottom-end"
   />
 </main>
+</IconProvider>
 
 <style>
   .app-root {

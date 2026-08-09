@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Icon, Select, Text } from "@inflatable-cookie/poodle-svelte";
-  import { arrowLeft, triangleAlert } from "@inflatable-cookie/poodle-core/icons";
+  import { arrowLeft, triangleAlert } from "../icons.generated";
   import {
     buildControlCommandEnvelope,
     submitControlEnvelope,

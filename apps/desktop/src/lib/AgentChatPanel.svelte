@@ -101,7 +101,7 @@
     type ModelOption,
     type ModelSelection,
   } from "@inflatable-cookie/poodle-svelte";
-  import { messageSquareText } from "@inflatable-cookie/poodle-core/icons";
+  import { messageSquareText } from "../icons.generated";
   import TaskCreationReceipt from "./TaskCreationReceipt.svelte";
   import TaskWorkflowReceipt from "./TaskWorkflowReceipt.svelte";
   import {
