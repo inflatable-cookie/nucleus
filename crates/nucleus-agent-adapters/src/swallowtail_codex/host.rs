@@ -7,6 +7,7 @@ use std::time::Duration;
 use swallowtail_adapter_codex::CODEX_CLI_AXIS;
 use swallowtail_core::{ExecutionHostId, InterfaceVersionAxis};
 use swallowtail_host_local::{LocalHostServices, LocalProcessHost, LocalProcessLimits};
+use swallowtail_idioms::IdiomSource;
 use swallowtail_runtime::{
     Deadline, DiagnosticObserver, EnvironmentRef, ExecutableRef, HostServices,
     InstalledExecutableTarget, MonotonicInstant, TimeService, WorkingResourceRef,
@@ -24,15 +25,30 @@ pub(super) struct CodexHost {
     environment: EnvironmentRef,
     working_resource: WorkingResourceRef,
     debug_observer: Option<Arc<dyn DiagnosticObserver>>,
+    idiom_source: Option<Arc<dyn IdiomSource>>,
 }
 
 impl CodexHost {
     pub(super) fn services(&self) -> HostServices {
         let services = self.local.services().clone();
-        match &self.debug_observer {
+        let services = match &self.debug_observer {
             Some(observer) => services.with_diagnostic_observer(Arc::clone(observer)),
             None => services,
+        };
+        match &self.idiom_source {
+            Some(source) => services.with_idiom_source(Arc::clone(source)),
+            None => services,
         }
+    }
+
+    /// Registers the product-owned idiom selection source (Contract 056).
+    ///
+    /// Without a source, an idioms session opt-in fails closed before any
+    /// provider work.
+    #[must_use]
+    pub(super) fn with_idiom_source(mut self, source: Arc<dyn IdiomSource>) -> Self {
+        self.idiom_source = Some(source);
+        self
     }
 
     pub(super) const fn target(&self) -> &InstalledExecutableTarget {
@@ -74,6 +90,7 @@ pub(super) fn approved_host(
         environment,
         working_resource,
         debug_observer: optional_debug_observer(),
+        idiom_source: None,
     })
 }
 
@@ -181,6 +198,15 @@ fn approved_environment() -> Vec<(OsString, OsString)> {
 #[cfg(test)]
 mod tests {
     use super::{find_executable_in_path, is_direct_executable};
+    use std::sync::Arc;
+    use swallowtail_idioms::{
+        BoundedText, Idiom, IdiomConstraint, IdiomId, IdiomScope, MonotonicInstant, Provenance,
+        StaticRulesSource,
+    };
+    use swallowtail_runtime::{
+        resolve_idiom_instructions, HostServices, IdiomSessionOption, OperationContent,
+        SessionOptions,
+    };
 
     #[test]
     fn path_resolution_promotes_an_absolute_executable_target() {
@@ -198,5 +224,48 @@ mod tests {
         assert!(resolved.is_absolute());
         assert_eq!(resolved, current);
         assert!(is_direct_executable(&resolved));
+    }
+
+    #[test]
+    fn registered_idiom_source_folds_into_session_instructions() {
+        let rule = Idiom::new(
+            IdiomId::new("named-exports").expect("id"),
+            IdiomScope::Project,
+            IdiomConstraint::text("use named exports").expect("constraint"),
+            90,
+            MonotonicInstant::from_ticks(0),
+            Provenance::Static(BoundedText::new("nucleus rules", 256).expect("bounded source")),
+        )
+        .expect("idiom");
+        let source = StaticRulesSource::new(vec![rule]);
+        let host = super::approved_host(
+            std::env::temp_dir().as_path(),
+            std::path::PathBuf::from("/nonexistent/codex-seam-probe"),
+        )
+        .expect("host builds with a synthetic approved target")
+        .with_idiom_source(Arc::new(source));
+        let services = host.services();
+
+        let options = SessionOptions::default()
+            .with_developer_instructions(
+                OperationContent::new("consumer guidance".to_owned()).expect("content"),
+            )
+            .with_idioms(IdiomSessionOption::new(IdiomScope::Project, 8).expect("option"));
+        let resolved = resolve_idiom_instructions(&services, &options)
+            .expect("registered source resolves")
+            .expect("combined instructions");
+        assert!(resolved.as_str().starts_with("consumer guidance"));
+        assert!(resolved.as_str().contains("[idioms]"));
+        assert!(resolved
+            .as_str()
+            .contains("[project static] use named exports"));
+
+        let plain = SessionOptions::default();
+        assert!(
+            resolve_idiom_instructions(&services, &plain)
+                .expect("no opt-in resolves")
+                .is_none(),
+            "no opt-in means no idioms work"
+        );
     }
 }

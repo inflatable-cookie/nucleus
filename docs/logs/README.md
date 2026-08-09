@@ -4,6 +4,7 @@ Logs record meaningful decisions, evidence, and closeouts.
 
 ## Current Logs
 
+- `2026-08-09-swallowtail-idioms-route-opt-in-adoption.md`
 - `2026-08-08-swallowtail-debug-observation-host.md`
 - `2026-08-07-plan-decision-agent-chat.md`
 - `2026-08-04-portable-activity-key-adoption.md`

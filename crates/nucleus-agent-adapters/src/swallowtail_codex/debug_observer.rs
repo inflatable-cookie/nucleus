@@ -22,10 +22,7 @@ impl DiagnosticObserver for SwallowtailDebugObserver {
     }
 
     fn observe_debug(&self, observation: &DebugObservation) {
-        let mut line = format!(
-            "nucleus.swallowtail.debug kind={:?}",
-            observation.kind()
-        );
+        let mut line = format!("nucleus.swallowtail.debug kind={:?}", observation.kind());
         if let Some(route) = observation.route() {
             line.push_str(&format!(" route={route}"));
         }
@@ -98,9 +95,8 @@ mod tests {
     #[test]
     fn host_services_deliver_debug_observations_to_registered_observer() {
         let observer = Arc::new(RecordingObserver::default());
-        let services =
-            HostServices::new(ExecutionHostId::new("nucleus.test").expect("host id"))
-                .with_diagnostic_observer(observer.clone());
+        let services = HostServices::new(ExecutionHostId::new("nucleus.test").expect("host id"))
+            .with_diagnostic_observer(observer.clone());
 
         services.emit_debug_observation(
             &DebugObservation::new(
