@@ -415,7 +415,9 @@ shape.
 
 ## Next Task
 
-Subagent interface lane: card 093 (subagent group transcript) is merged and
-verified. Next move is the operator's pick — visually verify the subagent
-group rendering in the running harness against a live provider, then select
-the lane's next card.
+Subagent interface lane: the group rendering (093) and the composer-zone
+actor selector with the stuck-view fallback (094) are merged. The live
+collab spawn failure is mapped (swallowtail 197: admission ordering race);
+the contract delta (swallowtail 198) is dispatched and the implementation
+(swallowtail 199) follows it. Once those land, re-run the live Codex
+multi-agent spawn test against the new build.
