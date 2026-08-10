@@ -344,6 +344,7 @@
       conversationId,
       questions,
       planDecisions,
+      actorSelection.kind === "all" ? subagentDirectories : [],
     ),
   );
   const actorChoices = $derived.by(() => [
@@ -1107,6 +1108,7 @@
               (expandedToolRuns = toggle(expandedToolRuns, id))}
             onToolCallToggle={(id) =>
               (expandedToolCalls = toggle(expandedToolCalls, id))}
+            onOpenChild={(childId) => void chooseActor(childId)}
           />
         </div>
       </div>

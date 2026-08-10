@@ -5,6 +5,7 @@ import type {
   AgentChatActorSelection,
   AgentChatPlanDecision,
   AgentChatQuestionExchange,
+  AgentChatSubagentDirectory,
 } from "./control/agentChat";
 
 export type AgentTranscriptMessage = {
@@ -56,6 +57,7 @@ export function assembleAgentTranscript(
   conversationId: string,
   questionExchanges: AgentChatQuestionExchange[] = [],
   planDecisions: AgentChatPlanDecision[] = [],
+  subagentDirectories: AgentChatSubagentDirectory[] = [],
 ): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const sortedMessages = [...chatMessages].sort(
@@ -103,6 +105,7 @@ export function assembleAgentTranscript(
           ),
           turnStatusById.get(message.turnId),
           decidedPlanIdentities(decisionsByTurn.get(message.turnId) ?? []),
+          subagentDirectories,
         ),
       );
       items.push(...answeredQuestionItems(message.turnId, questionExchanges));
@@ -128,6 +131,7 @@ export function assembleAgentTranscript(
           false,
           turnStatusById.get(turnId),
           decidedPlanIdentities(decisionsByTurn.get(turnId) ?? []),
+          subagentDirectories,
         ),
       );
     }
@@ -261,6 +265,7 @@ function assembleTurnActivity(
   hasCanonicalAssistantMessage: boolean,
   turnStatus: AgentTranscriptTurn["status"] | undefined,
   decidedPlans: Set<string>,
+  subagentDirectories: AgentChatSubagentDirectory[],
 ): TranscriptItem[] {
   type HeldActivity = {
     firstSequence: number;
@@ -290,9 +295,43 @@ function assembleTurnActivity(
     });
   }
 
+  const knownChildren = new Map<
+    string,
+    AgentChatSubagentDirectory["subagents"][number]
+  >();
+  for (const directory of subagentDirectories) {
+    if (directory.turn_id !== turnId) continue;
+    for (const subagent of directory.subagents) {
+      knownChildren.set(
+        childActorKey(directory.runtime_operation_id, subagent.subagent_id),
+        subagent,
+      );
+    }
+  }
+
+  const emittedChildGroups = new Set<string>();
   const activityItems = [...heldById.entries()]
     .sort((left, right) => left[1].firstSequence - right[1].firstSequence)
     .flatMap(([identity, { latest, content, taskList }]): TranscriptItem[] => {
+      const childKey =
+        latest.actor_kind === "subagent" && latest.actor_id
+          ? childActorKey(latest.runtime_operation_id, latest.actor_id)
+          : null;
+      const child = childKey ? knownChildren.get(childKey) : undefined;
+      if (childKey && child) {
+        if (emittedChildGroups.has(childKey)) return [];
+        emittedChildGroups.add(childKey);
+        const childEntries = [...heldById.values()]
+          .filter(
+            (entry) =>
+              entry.latest.actor_kind === "subagent" &&
+              entry.latest.actor_id &&
+              childActorKey(entry.latest.runtime_operation_id, entry.latest.actor_id) === childKey,
+          )
+          .sort((left, right) => left.firstSequence - right.firstSequence);
+        return [subagentGroupItem(turnId, childKey, child, childEntries)];
+      }
+
       const id = `${turnId}:${latest.runtime_operation_id}:${latest.activity_id}`;
       const status = terminalActivityStatus(latest.status, turnStatus);
       if (
@@ -367,6 +406,49 @@ function assembleTurnActivity(
     });
   const terminalItem = terminalTurnItem(turnId, turnStatus);
   return terminalItem ? [...activityItems, terminalItem] : activityItems;
+}
+
+function childActorKey(runtimeOperationId: string, actorId: string): string {
+  return JSON.stringify([runtimeOperationId, actorId]);
+}
+
+function subagentGroupItem(
+  turnId: string,
+  childKey: string,
+  child: AgentChatSubagentDirectory["subagents"][number],
+  entries: Array<{
+    firstSequence: number;
+    latest: AgentChatActivity;
+    content: string;
+    taskList: AgentChatActivity["task_list"];
+  }>,
+): TranscriptItem {
+  const latestEntry = [...entries].sort(
+    (left, right) => left.latest.sequence - right.latest.sequence,
+  )[entries.length - 1];
+  const latestLine = latestEntry
+    ? latestEntry.latest.label?.trim() || compactActivityDetail(latestEntry.content)
+    : undefined;
+  const detailLines = entries.map(
+    ({ latest }) => latest.label?.trim() || defaultActivityLabel(latest.kind),
+  );
+  const terminal =
+    child.status === "completed" ||
+    child.status === "failed" ||
+    child.status === "interrupted" ||
+    child.status === "shutdown";
+
+  return {
+    kind: "subagent-group",
+    id: `${turnId}:subagent:${childKey}`,
+    subagent: {
+      id: childKey,
+      label: child.label ?? child.subagent_id,
+      status: child.status,
+      ...(terminal ? { summary: latestLine } : { activityLine: latestLine }),
+    },
+    detailLines,
+  };
 }
 
 function providerTaskListMarkdown(

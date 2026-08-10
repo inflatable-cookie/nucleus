@@ -4,6 +4,7 @@ import type {
   AgentChatActivity,
   AgentChatPlanDecision,
   AgentChatQuestionExchange,
+  AgentChatSubagentDirectory,
 } from "./control/agentChat";
 import {
   assembleAgentTranscript,
@@ -49,6 +50,35 @@ function activity(
   };
 }
 
+function subagentDirectory(
+  overrides: Partial<AgentChatSubagentDirectory> = {},
+): AgentChatSubagentDirectory {
+  return {
+    project_id: "project:1",
+    conversation_id: "conversation:1",
+    turn_id: "turn:1",
+    turn_ordinal: 1,
+    runtime_operation_id: "turn:runtime:1",
+    first_sequence: 2,
+    last_sequence: 4,
+    subagents: [
+      {
+        subagent_id: "child-1",
+        parent_kind: "operation",
+        parent_id: null,
+        status: "running",
+        label: "Analyst",
+        description: null,
+        model: null,
+        reasoning: null,
+        background: null,
+        originating_activity_ref: null,
+      },
+    ],
+    ...overrides,
+  };
+}
+
 describe("agent chat transcript projection", () => {
   test("desktop composition keeps activity, cancellation, and receipts together", async () => {
     const panel = await Bun.file(
@@ -60,6 +90,7 @@ describe("agent chat transcript projection", () => {
     expect(panel).toContain('listen<AgentChatQuestionExchange>("agent-chat:question"');
     expect(panel).toContain('"agent-chat:subagents"');
     expect(panel).toContain("selectAgentChatActor");
+    expect(panel).toContain("onOpenChild={(childId) => void chooseActor(childId)}");
     expect(panel).toContain('status={pendingQuestion ? "questioning"');
     expect(panel).toContain("answerAgentChatQuestion");
     expect(panel).toContain("cancelAgentChatTurn(projectId, conversationId)");
@@ -241,6 +272,131 @@ describe("agent chat transcript projection", () => {
       "markdown",
       "**Child work · child-1**\n\n**Plan**\n\n- **Completed** · high priority — Inspect\n- **In progress** · medium priority — Apply",
     );
+  });
+
+  test("groups known child activities while preserving primary ordering", () => {
+    const items = assembleAgentTranscript(
+      [user],
+      [
+        activity({ sequence: 1, label: "Main work", content: "primary" }),
+        activity({
+          sequence: 2,
+          activity_id: "child-activity-1",
+          actor_kind: "subagent",
+          actor_id: "child-1",
+          label: "Inspect",
+          content: "first detail",
+        }),
+        activity({
+          sequence: 3,
+          activity_id: "child-activity-2",
+          actor_kind: "subagent",
+          actor_id: "child-1",
+          label: "Build",
+          content: "second detail",
+        }),
+        activity({
+          sequence: 4,
+          activity_id: "child-activity-3",
+          actor_kind: "subagent",
+          actor_id: "child-2",
+          label: "Test",
+          content: "terminal detail",
+        }),
+      ],
+      [],
+      null,
+      "conversation:1",
+      [],
+      [],
+      [
+        subagentDirectory({
+          last_sequence: 4,
+          subagents: [
+            subagentDirectory().subagents[0],
+            { ...subagentDirectory().subagents[0], subagent_id: "child-2", label: "Builder", status: "completed" },
+          ],
+        }),
+      ],
+    );
+
+    expect(items.map((item) => item.kind)).toEqual([
+      "message",
+      "tool-call",
+      "subagent-group",
+      "subagent-group",
+    ]);
+    expect(items[2]).toEqual({
+      kind: "subagent-group",
+      id: 'turn:1:subagent:["turn:runtime:1","child-1"]',
+      subagent: {
+        id: '["turn:runtime:1","child-1"]',
+        label: "Analyst",
+        status: "running",
+        activityLine: "Build",
+      },
+      detailLines: ["Inspect", "Build"],
+    });
+    expect(items[3]).toMatchObject({
+      kind: "subagent-group",
+      subagent: {
+        label: "Builder",
+        status: "completed",
+        summary: "Test",
+      },
+      detailLines: ["Test"],
+    });
+  });
+
+  test("keeps unknown child status literal and falls back without a directory", () => {
+    const items = assembleAgentTranscript(
+      [user],
+      [
+        activity({
+          sequence: 1,
+          activity_id: "unknown-child-activity",
+          actor_kind: "subagent",
+          actor_id: "child-unknown",
+          label: "Waiting for provider truth",
+          content: "still observing",
+        }),
+        activity({
+          sequence: 2,
+          activity_id: "undocumented-child-activity",
+          actor_kind: "subagent",
+          actor_id: "child-undocumented",
+          label: "Unattributed activity",
+          content: "preserve this row",
+        }),
+      ],
+      [],
+      null,
+      "conversation:1",
+      [],
+      [],
+      [
+        subagentDirectory({
+          last_sequence: 1,
+          subagents: [
+            { ...subagentDirectory().subagents[0], subagent_id: "child-unknown", status: "unknown" },
+          ],
+        }),
+      ],
+    );
+
+    expect(items[1]).toMatchObject({
+      kind: "subagent-group",
+      subagent: {
+        label: "Analyst",
+        status: "unknown",
+        activityLine: "Waiting for provider truth",
+      },
+    });
+    expect(items[2]).toMatchObject({
+      kind: "tool-call",
+      label: "Unattributed activity",
+      detail: "preserve this row",
+    });
   });
 
   test("task-list omission retains the snapshot and an empty replacement clears it", () => {
