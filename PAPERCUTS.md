@@ -5,7 +5,9 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 ## Open
 
-### [ ] Main checkout `.cargo/config.toml` missing at card dispatch — 2026-08-10
+## Resolved
+
+### [x] Main checkout `.cargo/config.toml` missing at card dispatch — 2026-08-10
 - Friction: Card 091 Environment Notes instruct workers to copy
   `.cargo/config.toml` verbatim from the main checkout
   (`/Users/tom/Dev/projects/nucleus/.cargo/config.toml`) before building.
@@ -19,6 +21,13 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   relative paths) so the machine-local patch is reproducible, or note in
   the card that the file is machine-local and may be absent.
 - Surface: `nucleus` worktrees; card 091; swallowtail sibling patching.
+- Resolution (2026-08-10): `effigy deps link cargo ../swallowtail` is the
+  managed replacement — it writes a bounded patch block into
+  `.cargo/config.toml` and rewrites the five lock entries to path sources
+  (do not commit while linked). The committed baseline is the git rev pin,
+  bumped to `5855db7c` in `b3dc124e`. Bit for real on the first collab
+  spawn retest: the running app built swallowtail at the stale pinned rev
+  and reproduced the already-fixed admission race.
 
 ### [ ] `effigy deps link bun` blocked by nested duplicate svelte copy — 2026-08-10
 - Friction: Linking poodle local source into `apps/desktop`
