@@ -1,6 +1,6 @@
 # 094 Actor Selector Composer Placement And Visibility
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-10
 Milestone: none yet (subagent interface lane)
@@ -80,14 +80,22 @@ control affordance on subagents (observation-only per swallowtail 045).
 
 ## Acceptance
 
-- [ ] selector renders in the composer zone whenever subagent directories
+- [x] selector renders in the composer zone whenever subagent directories
   exist or the current selection is a child
-- [ ] selector trigger reads as a chip (icon + label + status), not plain
+- [x] selector trigger reads as a chip (icon + label + status), not plain
   ghost text
-- [ ] child selection with no directory falls back to `All work`, locally
+- [x] child selection with no directory falls back to `All work`, locally
   and persisted
-- [ ] group `onOpenChild` → child view → `All work` round trip works
-- [ ] fixtures + `effigy desktop:check` + `effigy desktop:test` pass
+- [x] group `onOpenChild` → child view → `All work` round trip works
+- [x] fixtures + `effigy desktop:check` + `effigy desktop:test` pass
+
+## Closeout
+
+Merged to main as `fd8b8060` (worker commit `7342ad3a`, deepseek flash
+xhigh, clean first run — no stalls, no stops). The fallback landed as pure
+panel state reconciliation (`reconcileActorSelection`); no projection or
+server changes needed. Post-merge verification on main checkout: desktop
+check clean, 71 bun + 23 vitest tests pass.
 
 ## Evidence
 

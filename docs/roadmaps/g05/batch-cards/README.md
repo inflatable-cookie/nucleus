@@ -14,8 +14,7 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `094-actor-selector-composer-placement.md` — worker thread
-  `thread/094-actor-selector-composer-placement`
+- none
 
 ## Paused Cards
 
@@ -117,3 +116,4 @@ Updated: 2026-08-04
 - `091-plan-decision-live-provider-proof.md`
 - `092-subagent-rendering-survey.md`
 - `093-subagent-group-transcript.md`
+- `094-actor-selector-composer-placement.md`
