@@ -8,6 +8,11 @@ Updated: 2026-08-04
 
 - none
 
+## Dispatched Cards
+
+- `091-plan-decision-live-provider-proof.md` — live provider proof for the
+  plan-decision lane; worker thread `thread/091-plan-live-proof`
+
 ## Planned Cards
 
 - none
