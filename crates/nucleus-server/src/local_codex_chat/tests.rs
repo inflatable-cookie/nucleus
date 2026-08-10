@@ -850,6 +850,256 @@ fn plan_decision_requires_a_known_conversation() {
     assert!(service.decide_plan(&state, request).is_err());
 }
 
+#[test]
+#[ignore = "requires a locally authenticated Codex app-server"]
+fn live_plan_decision_dismiss_settles_without_follow_up() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let path = temp_dir.path().join("nucleus.sqlite");
+    let (state, project_id) = transient_chat_project(&path, "plan-dismiss-live");
+    let conversation_id = format!("{project_id}:panel:plan-dismiss-live");
+    let mut service = LocalCodexChatService::default();
+
+    let reply = plan_send(
+        &mut service,
+        &state,
+        &project_id,
+        &conversation_id,
+        "Plan how to make a cup of tea, then present the final plan.",
+    );
+    let pending =
+        pending_plan_or_retry(&mut service, &state, &project_id, &conversation_id, &reply);
+    assert_eq!(pending.status, "pending");
+    assert!(!pending.plan.trim().is_empty());
+    assert!(pending.decided_at_unix_ms.is_none());
+    assert!(pending.accept_turn_id.is_none());
+
+    let decision_request = LocalCodexChatPlanDecisionRequest {
+        project_id: project_id.clone(),
+        conversation_id: conversation_id.clone(),
+        turn_id: pending.turn_id.clone(),
+        runtime_operation_id: pending.runtime_operation_id.clone(),
+        activity_id: pending.activity_id.clone(),
+        decision: LocalCodexChatPlanDecisionKind::Dismissed,
+    };
+
+    let settled = service
+        .decide_plan(&state, decision_request.clone())
+        .expect("dismiss pending plan");
+    assert_eq!(settled.decision.status, "dismissed");
+    assert!(settled.decision.decided_at_unix_ms.is_some());
+    assert_eq!(settled.follow_up, None);
+
+    // Exactly-once settle: a second decision on the same correlation fails.
+    assert_eq!(
+        service
+            .decide_plan(&state, decision_request)
+            .expect_err("repeat settle"),
+        "Agent Chat plan is stale or already decided"
+    );
+
+    // Dismiss leaves no follow-up turn: the plan turn is the only turn.
+    let history = read_history(&state, &project_id, &conversation_id).expect("history");
+    assert_eq!(history.turns.len(), 1);
+    assert_eq!(history.turns[0].status, "completed");
+    assert_eq!(history.plan_decisions.len(), 1);
+    assert_eq!(history.plan_decisions[0].status, "dismissed");
+    assert_eq!(history.plan_decisions[0].plan, pending.plan);
+
+    // A fresh state service over the same sqlite file still shows the settled
+    // decision.
+    let reopened = ServerStateService::new(SqliteBackend::new(path));
+    let history = read_history(&reopened, &project_id, &conversation_id).expect("reopened history");
+    assert_eq!(history.plan_decisions.len(), 1);
+    assert_eq!(history.plan_decisions[0].status, "dismissed");
+    assert_eq!(history.plan_decisions[0].plan, pending.plan);
+}
+
+#[test]
+#[ignore = "requires a locally authenticated Codex app-server"]
+fn live_plan_decision_accept_drives_normal_mode_follow_up() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let path = temp_dir.path().join("nucleus.sqlite");
+    let (state, project_id) = transient_chat_project(&path, "plan-accept-live");
+    let conversation_id = format!("{project_id}:panel:plan-accept-live");
+    let mut service = LocalCodexChatService::default();
+
+    let reply = plan_send(
+        &mut service,
+        &state,
+        &project_id,
+        &conversation_id,
+        "Plan how to make a cup of tea, then present the final plan.",
+    );
+    let pending =
+        pending_plan_or_retry(&mut service, &state, &project_id, &conversation_id, &reply);
+    assert_eq!(pending.status, "pending");
+
+    let settled = service
+        .decide_plan(
+            &state,
+            LocalCodexChatPlanDecisionRequest {
+                project_id: project_id.clone(),
+                conversation_id: conversation_id.clone(),
+                turn_id: pending.turn_id.clone(),
+                runtime_operation_id: pending.runtime_operation_id.clone(),
+                activity_id: pending.activity_id.clone(),
+                decision: LocalCodexChatPlanDecisionKind::Accepted,
+            },
+        )
+        .expect("accept pending plan");
+    assert_eq!(settled.decision.status, "accepted");
+    assert_eq!(settled.decision.plan, pending.plan);
+    let accept_turn_id = settled
+        .decision
+        .accept_turn_id
+        .as_deref()
+        .expect("accept records accept_turn_id");
+
+    // Acceptance drives a completed follow-up turn in Normal harness mode; the
+    // route change opens a fresh Normal session per the route-mismatch rule.
+    let follow_up = settled.follow_up.expect("accept drives a follow-up turn");
+    assert_eq!(follow_up.harness_mode, LocalCodexChatHarnessMode::Normal);
+    assert_eq!(follow_up.timeline_turn_id, accept_turn_id);
+
+    let history = read_history(&state, &project_id, &conversation_id).expect("history");
+    assert_eq!(history.turns.len(), 2);
+    assert!(history.turns.iter().all(|turn| turn.status == "completed"));
+    assert_eq!(history.plan_decisions.len(), 1);
+    assert_eq!(history.plan_decisions[0].status, "accepted");
+    assert_eq!(
+        history.plan_decisions[0].accept_turn_id.as_deref(),
+        Some(accept_turn_id)
+    );
+
+    // A fresh state service over the same sqlite file shows both turns and
+    // the settled decision.
+    let reopened = ServerStateService::new(SqliteBackend::new(path));
+    let history = read_history(&reopened, &project_id, &conversation_id).expect("reopened history");
+    assert_eq!(history.turns.len(), 2);
+    assert!(history.turns.iter().all(|turn| turn.status == "completed"));
+    assert_eq!(history.plan_decisions.len(), 1);
+    assert_eq!(history.plan_decisions[0].status, "accepted");
+    assert_eq!(
+        history.plan_decisions[0].accept_turn_id.as_deref(),
+        Some(accept_turn_id)
+    );
+}
+
+/// Create a transient quick-chat project in a fresh sqlite file and return
+/// the state service plus the created project id. Transient chats are
+/// resource-free: they resolve to the host home read-only context (card 090
+/// sentinel behavior), so the accept follow-up exercises that path live.
+fn transient_chat_project(path: &std::path::Path, suffix: &str) -> (ServerStateService<SqliteBackend>, String) {
+    let backend = SqliteBackend::new(path.to_path_buf());
+    let state = ServerStateService::new(backend.clone());
+    let mut handler = LocalControlRequestHandler::new(backend, None);
+    accepted(
+        &mut handler,
+        crate::control_api::ServerControlRequest {
+            id: crate::ServerControlRequestId(format!("request:create-{suffix}")),
+            client_id: crate::ClientId("client:test".to_owned()),
+            kind: crate::control_api::ServerControlRequestKind::Command(crate::ServerCommand {
+                id: crate::ServerCommandId(format!("command:create-{suffix}")),
+                client_id: crate::ClientId("client:test".to_owned()),
+                kind: crate::ServerCommandKind::Project(crate::commands::ProjectCommand::Create(
+                    crate::commands::ProjectCreateCommand {
+                        display_name: String::new(),
+                        transient: true,
+                        actor_ref: "operator:test".to_owned(),
+                        authority_host_ref: "host:embedded-desktop".to_owned(),
+                        idempotency_key: format!("create-{suffix}"),
+                    },
+                )),
+            }),
+        },
+    )
+    .expect("create transient project");
+    let project_id = handler
+        .state()
+        .projects()
+        .list()
+        .expect("projects")
+        .into_iter()
+        .find(|record| record.kind == nucleus_core::PersistenceRecordKind::Project)
+        .expect("transient project")
+        .id
+        .0;
+    drop(handler);
+    (state, project_id)
+}
+
+/// Send one Plan-mode chat turn and expect success.
+fn plan_send(
+    service: &mut LocalCodexChatService,
+    state: &ServerStateService<SqliteBackend>,
+    project_id: &str,
+    conversation_id: &str,
+    message: &str,
+) -> LocalCodexChatReply {
+    service
+        .send_message(
+            state,
+            LocalCodexChatRequest {
+                conversation_id: conversation_id.to_owned(),
+                project_id: project_id.to_owned(),
+                resource_id: None,
+                message: message.to_owned(),
+                active_task_id: None,
+                active_goal_id: None,
+                provider_instance_id: Some(CHAT_PROVIDER_INSTANCE_ID.to_owned()),
+                provider_instance_revision: Some("1".to_owned()),
+                protocol_facade_id: Some("codex-app-server-v2".to_owned()),
+                provider_id: None,
+                model: None,
+                reasoning_effort: None,
+                harness_mode: LocalCodexChatHarnessMode::Plan,
+                idioms_enabled: true,
+            },
+        )
+        .expect("plan mode turn")
+}
+
+/// The pending plan a Plan-mode turn produced, retrying once with a more
+/// explicit prompt if the provider emitted no typed plan on the first turn.
+/// Panics with the turn evidence when no plan appears after the retry (card
+/// stop condition: provider does not emit a typed plan).
+fn pending_plan_or_retry(
+    service: &mut LocalCodexChatService,
+    state: &ServerStateService<SqliteBackend>,
+    project_id: &str,
+    conversation_id: &str,
+    first_reply: &LocalCodexChatReply,
+) -> StoredChatPlanDecision {
+    let history = read_history(state, project_id, conversation_id).expect("history");
+    if let Some(decision) = history
+        .plan_decisions
+        .into_iter()
+        .find(|decision| decision.status == "pending")
+    {
+        return decision;
+    }
+    let retry = plan_send(
+        service,
+        state,
+        project_id,
+        conversation_id,
+        "You are in plan mode. Produce a detailed plan for making a cup of tea \
+         and present your final plan as the proposed plan the operator \
+         reviews. Do not execute anything.",
+    );
+    let history = read_history(state, project_id, conversation_id).expect("history after retry");
+    let decisions = history.plan_decisions.clone();
+    decisions
+        .iter()
+        .find(|decision| decision.status == "pending")
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "provider emitted no typed plan after one retry. first turn reply: {first_reply:?}; retry reply: {retry:?}; plan decisions: {decisions:?}"
+            )
+        })
+}
+
 fn request(conversation: &str, message: &str) -> LocalCodexChatRequest {
     LocalCodexChatRequest {
         conversation_id: format!("project:nucleus-local:panel:{conversation}"),
