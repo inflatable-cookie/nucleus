@@ -14,8 +14,7 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `093-subagent-group-transcript.md` — worker thread
-  `thread/093-subagent-group-transcript`
+- none
 
 ## Paused Cards
 
@@ -116,3 +115,4 @@ Updated: 2026-08-04
 - `090-resource-free-chat-sentinel-resolution.md`
 - `091-plan-decision-live-provider-proof.md`
 - `092-subagent-rendering-survey.md`
+- `093-subagent-group-transcript.md`

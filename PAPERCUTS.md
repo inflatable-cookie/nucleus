@@ -19,3 +19,16 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   relative paths) so the machine-local patch is reproducible, or note in
   the card that the file is machine-local and may be absent.
 - Surface: `nucleus` worktrees; card 091; swallowtail sibling patching.
+
+### [ ] `effigy deps link bun` blocked by nested duplicate svelte copy — 2026-08-10
+- Friction: Linking poodle local source into `apps/desktop`
+  (`effigy deps link bun ../../../poodle`) failed because poodle's
+  `node_modules/.bun` held a second svelte copy (`svelte@5.56.8`) alongside
+  the hoisted one; the linker refused until the nested copy was deleted.
+- Impact: One manual `rm -rf` of a regenerable directory before the link
+  succeeds; poodle's next `bun install` may recreate the conflict.
+- Possible fix: Have the linker dedupe (or ignore) nested `.bun` copies that
+  match the hoisted version, or document the deletion step in the link
+  command's error output (it already points at the directory).
+- Surface: `effigy deps link bun`, TS side; first proven use of the flow
+  (nucleus desktop ← poodle local source, 2026-08-10).

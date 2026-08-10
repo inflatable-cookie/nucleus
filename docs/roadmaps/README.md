@@ -415,6 +415,7 @@ shape.
 
 ## Next Task
 
-Operator checkpoint: run the card 086 native acceptance pass — a Plan-mode
-turn to a pending plan, accept, revise, and dismiss decisions, conversation
-reload, and the Normal-mode follow-up session against a live provider.
+Subagent interface lane: card 093 (subagent group transcript) is merged and
+verified. Next move is the operator's pick — visually verify the subagent
+group rendering in the running harness against a live provider, then select
+the lane's next card.

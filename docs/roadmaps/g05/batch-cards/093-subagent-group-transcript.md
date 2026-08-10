@@ -1,6 +1,6 @@
 # 093 Subagent Group Transcript Rendering
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-10
 Milestone: none yet (subagent interface lane)
@@ -70,12 +70,22 @@ poodle or swallowtail sources.
 
 ## Acceptance
 
-- [ ] child activities render as one `subagent-group` per child per turn
-- [ ] running children show the live activity line; terminal children show
+- [x] child activities render as one `subagent-group` per child per turn
+- [x] running children show the live activity line; terminal children show
   the summary; unknown stays literal
-- [ ] `onOpenChild` switches the transcript to the child's attribution and
+- [x] `onOpenChild` switches the transcript to the child's attribution and
   back
-- [ ] fixtures + `effigy desktop:check` + `effigy desktop:test` pass
+- [x] fixtures + `effigy desktop:check` + `effigy desktop:test` pass
+
+## Closeout
+
+Merged to main as `7f45481b` (worker commit `55fb5988`). Executed on
+`gpt-5.6-luna-high` after two flash stream-stall resumes; the worker's one
+stop (Poodle `onOpenChild` forwarding gap) was ruled correct and closed in
+poodle before resume. The acceptance line previously blocked by Longhorn
+export drift cleared once main fixed the drift (`886a9d07`); post-merge
+verification on main checkout with poodle linked to local source:
+`bun run check` 0 errors, `bun run test` 69 bun + 23 vitest passed.
 
 ## Evidence
 
