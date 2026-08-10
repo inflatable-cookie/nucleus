@@ -1,6 +1,6 @@
 # 092 Subagent Rendering Survey
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-10
 Milestone: none (research surface)
@@ -97,3 +97,11 @@ Where only secondary sources exist, mark the row as such.
 - A product's rendering cannot be evidenced from any source → mark the row
   "no public evidence found", do not guess
 - Anything in the governing refs contradicts this card → stop with citations
+
+## Closeout
+
+Merged `b48d076a`. Survey covers all seven required products plus four
+optional, cited per claim, absences recorded as data, comparison table
+complete, no recommendations. Two provider-stream stalls (grok-4.5-medium
+twice, flash once) were handled by resume; the flash resume completed the
+card. Third-model completion noted for the routing table.
