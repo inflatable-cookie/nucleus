@@ -5,9 +5,9 @@ import {
   type ConnectionFailureReporter,
 } from "@inflatable-cookie/longhorn/core";
 import {
-  assertCompatibleLayoutMutationCommand,
-  assertCompatibleLayoutMutationOutcome,
-  assertCompatibleLayoutMutationRejectionCode,
+  assertValidLayoutMutationCommand,
+  assertValidLayoutMutationOutcome,
+  assertValidLayoutMutationRejectionCode,
   type LayoutDocument,
   type LayoutMutationRequest,
   type LayoutSchemaDefinition,
@@ -116,7 +116,7 @@ export async function mutateWorkspaceLayout(
   request: LayoutMutationRequest,
   createPanel: WorkspacePanelPresentationInput | null = null,
 ): Promise<WorkspaceLayoutMutationResponse> {
-  assertCompatibleLayoutMutationCommand(request.command);
+  assertValidLayoutMutationCommand(request.command);
   return validateMutationResponse(
     await invoke("mutate_workspace_layout", {
       projectId,
@@ -173,13 +173,13 @@ function validateMutationResponse(value: unknown): WorkspaceLayoutMutationRespon
     string(receipt.request_id, "request_id");
     integer(receipt.previous_revision, "previous_revision");
     integer(receipt.committed_revision, "committed_revision");
-    assertCompatibleLayoutMutationOutcome(receipt.outcome);
+    assertValidLayoutMutationOutcome(receipt.outcome);
     validateLayoutDocument(receipt.authoritative_document);
   } else if (result.status === "rejected") {
     const rejection = object(result.rejection, "layout mutation rejection");
     string(rejection.request_id, "request_id");
     integer(rejection.current_revision, "current_revision");
-    assertCompatibleLayoutMutationRejectionCode(rejection.code);
+    assertValidLayoutMutationRejectionCode(rejection.code);
     string(rejection.detail, "detail");
     validateLayoutDocument(rejection.authoritative_document);
   } else {
