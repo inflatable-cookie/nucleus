@@ -10,7 +10,8 @@ Updated: 2026-08-04
 
 ## Planned Cards
 
-- none
+- `093-subagent-group-transcript.md` — blocked on the poodle 023 component
+  merge; renders child work as inline subagent groups
 
 ## Paused Cards
 
