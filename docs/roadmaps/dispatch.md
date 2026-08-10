@@ -11,4 +11,4 @@ One line per orchestrated worker thread. Orchestrator-only writes.
 | 094-actor-selector-composer-placement | `g05/batch-cards/094-actor-selector-composer-placement.md` | `thread/094-actor-selector-composer-placement` | merged |
 | 197-codex-collab-admission (swallowtail) | `swallowtail/docs/roadmaps/g03/batch-cards/197-codex-collab-spawn-admission-evidence.md` | `thread/197-codex-collab-spawn-admission-evidence` | merged |
 | 198-spawn-confirmation-contract (swallowtail) | `swallowtail/docs/roadmaps/g03/batch-cards/198-contract-045-spawn-confirmation-admission.md` | `thread/198-contract-045-spawn-confirmation-admission` | merged |
-| 199-spawn-confirmation-admission (swallowtail) | `swallowtail/docs/roadmaps/g03/batch-cards/199-codex-spawn-confirmation-admission.md` | `thread/199-codex-spawn-confirmation-admission` | dispatched |
+| 199-spawn-confirmation-admission (swallowtail) | `swallowtail/docs/roadmaps/g03/batch-cards/199-codex-spawn-confirmation-admission.md` | `thread/199-codex-spawn-confirmation-admission` | merged |

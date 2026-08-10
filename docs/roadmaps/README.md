@@ -415,9 +415,11 @@ shape.
 
 ## Next Task
 
-Subagent interface lane: the group rendering (093) and the composer-zone
-actor selector with the stuck-view fallback (094) are merged. The live
-collab spawn failure is mapped (swallowtail 197: admission ordering race);
-the contract delta (swallowtail 198) is dispatched and the implementation
-(swallowtail 199) follows it. Once those land, re-run the live Codex
-multi-agent spawn test against the new build.
+Subagent interface lane: the group rendering (093), composer-zone actor
+selector with stuck-view fallback (094), and the collab spawn admission fix
+(swallowtail 197 evidence → 198 contract → 199 implementation) are all
+merged. Operator retest: re-run the live Codex multi-agent spawn against
+the current build — the turn should survive the spawn ordering race and the
+groups should render with working click-through and return. If a capture
+shows the child lifecycle beating even the `subAgentActivity` confirmation,
+that becomes the bounded-deferral card (see research note 120).
