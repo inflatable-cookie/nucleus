@@ -8,6 +8,11 @@ Updated: 2026-08-04
 
 - none
 
+## Dispatched Cards
+
+- `092-subagent-rendering-survey.md` — research hub on sub-agent rendering
+  across harness apps; worker thread `thread/092-subagent-rendering-survey`
+
 ## Planned Cards
 
 - none
