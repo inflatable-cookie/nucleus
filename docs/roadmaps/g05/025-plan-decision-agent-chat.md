@@ -1,6 +1,6 @@
 # 025 Plan Decision Agent Chat
 
-Status: active
+Status: completed
 Owner: Tom
 Created: 2026-08-07
 
@@ -43,7 +43,7 @@ explicit plan-decision boundary while keeping normal state quiet.
 - [x] a failed turn stays inspectable after conversation reload
 - [x] plan decisions persist exactly one decision per proposed plan
 - [x] accepting a plan opens a Normal-mode prepared session per contract 010
-- [ ] native acceptance proves the composer plan-review and settled record
+- [x] native acceptance proves the composer plan-review and settled record (operator GUI pass 2026-08-07 + recorded live proof, card 091)
 
 ## Batch Cards
 
@@ -51,3 +51,8 @@ explicit plan-decision boundary while keeping normal state quiet.
 - `batch-cards/084-plan-decision-contract-amendments.md`
 - `batch-cards/085-plan-decision-server-implementation.md`
 - `batch-cards/086-plan-decision-desktop-wiring-and-native-acceptance.md`
+- `batch-cards/087-plan-mode-proposed-plan-instructions.md`
+- `batch-cards/088-plan-terminal-turn-completion.md`
+- `batch-cards/089-chat-thread-deletion.md`
+- `batch-cards/090-resource-free-chat-sentinel-resolution.md`
+- `batch-cards/091-plan-decision-live-provider-proof.md`

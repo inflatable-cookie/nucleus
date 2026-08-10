@@ -1,6 +1,6 @@
 # 091 Plan Decision Live Provider Proof
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-10
 Milestone: `../025-plan-decision-agent-chat.md`
@@ -103,6 +103,14 @@ sources, any status/roadmap file, any existing test.
   commands + exit states, the live run's salient output (turn ids, decision
   statuses), and anything you could not verify. No recommendation needed —
   the planner rules from the log.
+
+## Closeout
+
+Merged `e8cbe60a` via `95e89935`. Both live tests pass on the merge result
+under an independent orchestrator re-run (2 passed, 17.1s). Worker finding
+ruled correct: the card's Environment Notes were stale — `Cargo.toml` pins a
+swallowtail rev that already contains the late-correlation fix, so the
+cargo patch is no longer load-bearing. Recorded in PAPERCUTS.md.
 
 ## Stop Conditions
 

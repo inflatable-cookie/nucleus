@@ -8,19 +8,9 @@ Updated: 2026-08-04
 
 - none
 
-## Dispatched Cards
-
-- `091-plan-decision-live-provider-proof.md` — live provider proof for the
-  plan-decision lane; worker thread `thread/091-plan-live-proof`
-
 ## Planned Cards
 
 - none
-
-## Operator-Held Cards
-
-- `086-plan-decision-desktop-wiring-and-native-acceptance.md` — wiring complete;
-  needs the operator-authorized live acceptance pass
 
 ## Paused Cards
 
@@ -114,7 +104,9 @@ Updated: 2026-08-04
 - `083-failure-detail-preservation.md`
 - `084-plan-decision-contract-amendments.md`
 - `085-plan-decision-server-implementation.md`
+- `086-plan-decision-desktop-wiring-and-native-acceptance.md`
 - `087-plan-mode-proposed-plan-instructions.md`
 - `088-plan-terminal-turn-completion.md`
 - `089-chat-thread-deletion.md`
 - `090-resource-free-chat-sentinel-resolution.md`
+- `091-plan-decision-live-provider-proof.md`

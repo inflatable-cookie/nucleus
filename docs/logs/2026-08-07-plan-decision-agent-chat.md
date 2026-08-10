@@ -122,3 +122,16 @@ resource:none" on resource-free quick chats: the stored session persists the
 from the stored session, so the sentinel hit the resource lookup as a
 literal id. `resolve_chat_working_context` now normalizes the sentinel to
 resource-free for every caller. Focused server tests pass.
+
+## Closeout Addendum (2026-08-10)
+
+Native acceptance is now on record twice over: the operator's GUI-level pass
+(2026-08-07, accept/settle/follow-up after card 090) and card 091's recorded
+live provider proof — two ignored integration tests that run the dismiss and
+accept arcs against the real Codex app-server, asserting pending persistence,
+exactly-once settle, the Normal-mode follow-up with exact `accept_turn_id`
+linkage, and read-back truth across a store reopen. Both tests pass on the
+merged result under an independent re-run. Cards 086 and 091 are completed
+and milestone g05/025 is closed. The proof was executed by a dispatched
+worker thread per `docs/roadmaps/dispatch.md`; the worker's stale-environment
+finding (the cargo patch note) was ruled correct and recorded in PAPERCUTS.md.

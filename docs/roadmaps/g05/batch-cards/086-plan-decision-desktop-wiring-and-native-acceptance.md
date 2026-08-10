@@ -1,6 +1,6 @@
 # 086 Plan Decision Desktop Wiring And Native Acceptance
 
-Status: operator-held
+Status: completed
 Owner: Tom
 Created: 2026-08-07
 Milestone: `../025-plan-decision-agent-chat.md`
@@ -19,13 +19,13 @@ and the transcript renders the settled `decided-plan` record.
 - [x] accept, revise, and dismiss reach the server decision route unchanged
 - [x] the settled `decided-plan` record renders in the transcript after reload
 - [x] the rest of the UI stays responsive while a plan is pending
-- [ ] native acceptance proves review, settle, reload, and route-switch truth
+- [x] native acceptance proves review, settle, reload, and route-switch truth
 
 ## Validation
 
 - [x] focused desktop fixtures cover pending and settled plan rendering
 - [x] svelte check, vitest, and docs QA pass
-- [ ] native acceptance passes
+- [x] native acceptance passes
 
 ## Stop Conditions
 
@@ -49,8 +49,10 @@ and the transcript renders the settled `decided-plan` record.
   rendering. Svelte check reports zero errors and warnings; bun and vitest
   suites pass.
 
-## Remaining Gate
+## Remaining Gate — Closed
 
-The operator-authorized live pass: run a Plan-mode turn to a pending plan,
-exercise accept, revise, and dismiss, reload the conversation, and confirm the
-Normal-mode follow-up session and the settled `decided-plan` records.
+The operator ran the GUI-level live pass on 2026-08-07 (accept rendered and
+settled; the follow-up ran after card 090's fix). Card 091 adds the recorded
+service-level live proof: dismiss settles without follow-up, accept drives a
+completed Normal-mode follow-up with exact turn linkage, both verified across
+store reopen. Ruling: the gate is satisfied by the two combined.
