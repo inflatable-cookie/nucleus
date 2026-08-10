@@ -1,6 +1,6 @@
 # 093 Subagent Group Transcript Rendering
 
-Status: blocked on poodle `thread/023-agent-subagent-component` merge
+Status: dispatched
 Owner: Tom
 Created: 2026-08-10
 Milestone: none yet (subagent interface lane)
@@ -25,6 +25,17 @@ detail, and click-through into the child's attributed view.
 - Poodle contract `poodle/docs/contracts/components/agent-subagent.md` (once
   merged) — the component API
 
+## Environment Notes
+
+- The poodle component merged to poodle main as `bf5dc91f`. The worktree
+  parent (`nucleus-wt/`) already symlinks `poodle`, `longhorn`, and
+  `swallowtail` to the live sibling checkouts; the file: dependency paths in
+  `apps/desktop/package.json` resolve through them.
+- Run `bun install` in `apps/desktop` before building or testing so the
+  poodle copy includes `AgentSubagent`.
+- Read the merged component contract for the exact API:
+  `/Users/tom/Dev/projects/poodle/docs/contracts/components/agent-subagent.md`.
+
 ## Worker Rules
 
 - Execute the card exactly; no planning authority; no sub-agents.
@@ -32,7 +43,8 @@ detail, and click-through into the child's attributed view.
   batch log only.
 - Poodle's merged component contract is authoritative for the component API;
   a mismatch is a stop-condition finding with citations.
-- Commit on branch `thread/093-subagent-group-transcript` and push; no merge.
+- Commit on branch `thread/093-subagent-group-transcript` and push with
+  `git push -u origin thread/093-subagent-group-transcript`; no merge.
 
 ## Scope
 
