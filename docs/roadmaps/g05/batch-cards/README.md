@@ -6,7 +6,7 @@ Updated: 2026-08-04
 
 ## Ready Cards
 
-- none
+- `094-actor-selector-composer-placement.md`
 
 ## Planned Cards
 
