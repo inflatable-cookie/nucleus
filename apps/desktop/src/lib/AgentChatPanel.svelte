@@ -93,6 +93,7 @@
     Icon,
     ModelPicker,
     Select,
+    StatusIndicator,
     Text,
     type AgentChatAttachment,
     type AgentQuestionAnswer,
@@ -100,7 +101,12 @@
     type ModelCapabilityAxis,
     type ModelOption,
     type ModelSelection,
+    type StatusTone,
   } from "@inflatable-cookie/poodle-svelte";
+  import {
+    subagentStatusLabel,
+    type AgentSubagentStatus,
+  } from "@inflatable-cookie/poodle-core";
   import { messageSquareText } from "../icons.generated";
   import TaskCreationReceipt from "./TaskCreationReceipt.svelte";
   import TaskWorkflowReceipt from "./TaskWorkflowReceipt.svelte";
@@ -376,6 +382,59 @@
     actorChoices.map(({ value, label }) => ({ value, label })),
   );
   const actorSelectionValue = $derived(selectionValue(actorSelection));
+  /**
+   * The directory entry backing the current child selection, when the
+   * selection is a subagent whose directory is present. The composer chip
+   * reads label and status from it; `null` means the selection is All work,
+   * Primary, or a dangling child the fallback is about to reset.
+   */
+  const selectedChild = $derived(
+    actorSelection.kind === "subagent" &&
+      actorSelection.runtime_operation_id !== null &&
+      actorSelection.actor_id !== null
+      ? (subagentDirectories
+          .flatMap((directory) =>
+            directory.subagents.map((subagent) => ({ directory, subagent })),
+          )
+          .find(
+            ({ directory, subagent }) =>
+              directory.runtime_operation_id === actorSelection.runtime_operation_id &&
+              subagent.subagent_id === actorSelection.actor_id,
+          ) ?? null)
+      : null,
+  );
+  /**
+   * The selector lives with the composer, where the operator's attention is.
+   * It shows whenever there is attributed work to navigate, or the transcript
+   * is currently filtered to a child — even one whose directory entry is
+   * missing, so a stuck child view always has a way back.
+   */
+  const actorSelectorVisible = $derived(
+    subagentDirectories.length > 0 || actorSelection.kind === "subagent",
+  );
+  const actorChipLabel = $derived(
+    actorSelection.kind === "subagent"
+      ? selectedChild?.subagent.label ??
+          selectedChild?.subagent.subagent_id ??
+          actorSelection.actor_id ??
+          "Child work"
+      : actorSelection.kind === "primary"
+        ? "Primary"
+        : "All work",
+  );
+  const actorChipIcon = $derived(
+    actorSelection.kind === "subagent"
+      ? "git-branch"
+      : actorSelection.kind === "primary"
+        ? "user"
+        : "users",
+  );
+  const actorChipStatus = $derived(
+    selectedChild ? subagentStatusLabel(selectedChild.subagent.status) : null,
+  );
+  const actorChipStatusTone = $derived<StatusTone>(
+    selectedChild ? subagentStatusTone(selectedChild.subagent.status) : "neutral",
+  );
   const pendingQuestion = $derived(
     questions.find((question) => question.status === "pending") ?? null,
   );
@@ -491,6 +550,7 @@
             left.first_sequence - right.first_sequence,
         );
         retain(retainedSubagentDirectories, conversationId, subagentDirectories);
+        void reconcileActorSelection();
       },
     );
     return () => {
@@ -556,6 +616,7 @@
       retain(retainedSubagentDirectories, nextConversationId, subagentDirectories);
       retain(retainedActorSelections, nextConversationId, actorSelection);
       retain(retainedTurns, nextConversationId, turns);
+      void reconcileActorSelection();
       model = history.model ?? model;
       providerInstanceId = history.provider_instance_id ?? providerInstanceId;
       providerInstanceRevision = history.provider_instance_revision
@@ -1030,6 +1091,57 @@
     }
   }
 
+  /**
+   * A child selection must always have a directory entry: without one the
+   * transcript stays filtered to a child that no longer exists while the
+   * selector hides (directories empty), leaving no way back. On hydrate and
+   * on directory events, reset a dangling selection to All work and persist
+   * the reset through the server so durable state agrees.
+   */
+  async function reconcileActorSelection(): Promise<void> {
+    if (actorSelection.kind !== "subagent") {
+      return;
+    }
+    const tracked = subagentDirectories.some(
+      (directory) =>
+        directory.runtime_operation_id === actorSelection.runtime_operation_id &&
+        directory.subagents.some(
+          (subagent) => subagent.subagent_id === actorSelection.actor_id,
+        ),
+    );
+    if (tracked) {
+      return;
+    }
+    const fallback = actorSelectionFor("all");
+    actorSelection = fallback;
+    retain(retainedActorSelections, conversationId, actorSelection);
+    try {
+      actorSelection = await selectAgentChatActor(fallback);
+      retain(retainedActorSelections, conversationId, actorSelection);
+    } catch {
+      // The local reset already restored navigation; the durable selection
+      // reconciles again on the next hydrate.
+    }
+  }
+
+  function subagentStatusTone(status: AgentSubagentStatus): StatusTone {
+    switch (status) {
+      case "running":
+        return "pending";
+      case "waiting":
+        return "info";
+      case "completed":
+        return "success";
+      case "failed":
+      case "interrupted":
+        return "danger";
+      case "unknown":
+      case "pending":
+      case "shutdown":
+        return "neutral";
+    }
+  }
+
   function actorSelectionFor(kind: "all" | "primary"): AgentChatActorSelection {
     return {
       project_id: projectId ?? "",
@@ -1080,21 +1192,6 @@
       </div>
     {:else}
       <div class="transcript-shell">
-        {#if subagentDirectories.length > 0}
-          <div class="actor-navigation">
-            <Text tone="muted" size="xs">Transcript</Text>
-            <Select
-              value={actorSelectionValue}
-              options={actorOptions}
-              variant="ghost"
-              size="xs"
-              native={false}
-              menuMinWidth="14rem"
-              ariaLabel="Attributed agent work"
-              onValueChange={(value) => void chooseActor(value)}
-            />
-          </div>
-        {/if}
         <div class="transcript-content">
           <AgentTranscript
             items={transcriptItems}
@@ -1133,6 +1230,39 @@
       <div class="chat-error">Turn failed: {failedTurnNotice}</div>
     {/if}
     {#if failure}<div class="chat-error" role="alert">{failure}</div>{/if}
+    {#if actorSelectorVisible}
+      <!-- The actor selector rides with the composer, where the operator's
+           attention is; a ghost select pinned above the transcript went
+           unnoticed. Chip trigger: icon + current actor label, with the
+           child's status reflected while a child is selected. -->
+      <div class="actor-selector">
+        <Select
+          value={actorSelectionValue}
+          options={actorOptions}
+          variant="ghost"
+          size="sm"
+          native={false}
+          menuMinWidth="16rem"
+          ariaLabel="Attributed agent work"
+          onValueChange={(value) => void chooseActor(value)}
+        >
+          {#snippet trigger({ open })}
+            <span class="actor-selector-chip" data-open={open} data-actor-kind={actorSelection.kind}>
+              <Icon name={actorChipIcon} size="xs" />
+              <span class="actor-selector-chip__label">{actorChipLabel}</span>
+              {#if selectedChild && actorChipStatus}
+                <StatusIndicator
+                  status={actorChipStatusTone}
+                  label={actorChipStatus}
+                  size="xs"
+                />
+              {/if}
+              <Icon name="chevron-down" size="xs" />
+            </span>
+          {/snippet}
+        </Select>
+      </div>
+    {/if}
     {#key appliedDraftRequestId}
       <AgentChatInput
         bind:value={draft}
@@ -1327,19 +1457,6 @@
     min-height: 0;
   }
 
-  .actor-navigation {
-    position: relative;
-    z-index: 6;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.25rem;
-    width: min(48rem, 100%);
-    min-height: 2rem;
-    margin: 0 auto;
-    padding-bottom: 0.35rem;
-  }
-
   .transcript-content {
     min-height: 0;
   }
@@ -1377,6 +1494,57 @@
     gap: 0.45rem;
     width: min(48rem, calc(100% - clamp(1.5rem, 6cqi, 4rem)));
     margin: 0 auto;
+  }
+
+  /* The actor chip row sits directly above the composer, aligned to the same
+     column. The ghost Select wraps the chip; the chip itself matches the
+     composer's attachment-chip language (subtle border, elevated fill,
+     control radius). */
+  .actor-selector {
+    display: flex;
+    justify-self: start;
+    min-width: 0;
+  }
+
+  .actor-selector-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    max-width: 100%;
+    min-width: 0;
+    padding: 0.1875rem 0.5rem;
+    border: 0.0625rem solid var(--poodle-color-border-subtle);
+    border-radius: var(--poodle-radius-control);
+    background: var(--poodle-color-background-elevated);
+    color: var(--poodle-color-text-primary);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    transition:
+      border-color var(--poodle-motion-duration-interaction)
+        var(--poodle-motion-easing-standard),
+      background var(--poodle-motion-duration-interaction)
+        var(--poodle-motion-easing-standard);
+  }
+
+  .actor-selector-chip:hover,
+  .actor-selector-chip[data-open="true"] {
+    border-color: color-mix(
+      in srgb,
+      var(--poodle-color-border-default) 78%,
+      var(--poodle-color-text-primary)
+    );
+  }
+
+  .actor-selector-chip > :global(.poodle-icon) {
+    flex: 0 0 auto;
+    color: var(--poodle-color-text-secondary);
+  }
+
+  .actor-selector-chip__label {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   :global(html[data-nucleus-split-resizing]) .agent-chat::after {
