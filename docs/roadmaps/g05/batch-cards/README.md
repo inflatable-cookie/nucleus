@@ -6,7 +6,7 @@ Updated: 2026-08-04
 
 ## Ready Cards
 
-- `094-actor-selector-composer-placement.md`
+- none
 
 ## Planned Cards
 
@@ -14,7 +14,8 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- none
+- `094-actor-selector-composer-placement.md` — worker thread
+  `thread/094-actor-selector-composer-placement`
 
 ## Paused Cards
 

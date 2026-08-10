@@ -1,6 +1,6 @@
 # 094 Actor Selector Composer Placement And Visibility
 
-Status: ready
+Status: dispatched
 Owner: Tom
 Created: 2026-08-10
 Milestone: none yet (subagent interface lane)
