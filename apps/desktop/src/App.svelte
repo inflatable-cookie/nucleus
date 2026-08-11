@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { Icon, IconButton, IconProvider, Menu, Popover, SplitView, ToastHost, type MenuItem } from "@inflatable-cookie/poodle-svelte";
+  import { AppHeader, Icon, IconButton, IconProvider, Menu, Popover, SplitView, ToastHost, type MenuItem } from "@inflatable-cookie/poodle-svelte";
   import { icons, info, plus, settings as settingsIcon } from "./icons.generated";
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
   import CommandPalette from "./lib/commands/CommandPalette.svelte";
@@ -47,6 +47,16 @@
         : ("windows" as const),
     },
   };
+
+  // AppHeader marks itself `data-drag-region` and exposes its root element; the
+  // behaviour is the host's to supply.
+  let titlebarElement = $state<HTMLElement | null>(null);
+
+  $effect(() => {
+    const node = titlebarElement;
+    if (!node) return;
+    return windowDrag(node, windowDragOptions).destroy;
+  });
 
   let startupError = $state<string | null>(null);
   let fixturePosture = $state(false);
@@ -360,116 +370,111 @@
 
     {#snippet secondary()}
       <div class="app-work-area">
-        <header
-          class="app-titlebar"
-          role="toolbar"
-          tabindex="-1"
-          aria-label="Workspace titlebar"
-          use:windowDrag={windowDragOptions}
+        <AppHeader
+          bind:element={titlebarElement}
+          dragRegion
+          ariaLabel="Workspace titlebar"
         >
-          <div class="titlebar-lead">
-            <div class="titlebar-title-block">
-              <div class="titlebar-title-line">
-                <h1>{selectedProject?.display_name ?? "Nucleus"}</h1>
-                <Popover
-                  placement="bottom-start"
-                  initialFocus="content"
-                  ariaLabel="Project details"
-                  surfaceMinWidth="18rem"
-                  onOpenChange={(open) => setNativePanelOverlayOpen(projectDetailsOverlayId, open)}
-                  onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(projectDetailsOverlayId, change)}
-                >
-                  {#snippet trigger()}
-                    <span
-                      class="project-info-trigger"
-                      aria-label="Project details"
-                      data-no-window-drag
-                    >
-                      <Icon icon={info} size="xs" />
-                    </span>
-                  {/snippet}
-                  <div class="project-info-popover" data-no-window-drag>
-                    <h2>{selectedProject?.display_name ?? "No project selected"}</h2>
-                    <dl>
-                      <div>
-                        <dt>Project id</dt>
-                        <dd>{selectedProject?.project_id ?? "none"}</dd>
-                      </div>
-                      <div>
-                        <dt>Status</dt>
-                        <dd>{selectedProject?.status ?? "idle"}</dd>
-                      </div>
-                      <div>
-                        <dt>Importance</dt>
-                        <dd>{selectedProject?.importance_level ?? "none"}</dd>
-                      </div>
-                      <div>
-                        <dt>Revision</dt>
-                        <dd>{selectedProject?.revision_id ?? "none"}</dd>
-                      </div>
-                      <div>
-                        <dt>Retention</dt>
-                        <dd>{selectedProject?.retention ?? "none"}</dd>
-                      </div>
-                      <div>
-                        <dt>Resource health</dt>
-                        <dd>{selectedProject?.location_status ?? "not_recorded"}</dd>
-                      </div>
-                      <div>
-                        <dt>Resources</dt>
-                        <dd>{selectedProject?.resource_count ?? 0}</dd>
-                      </div>
-                      <div>
-                        <dt>Repositories</dt>
-                        <dd>{selectedProject?.repository_count ?? 0}</dd>
-                      </div>
-                    </dl>
-                  </div>
-                </Popover>
+          {#snippet identity()}
+              <div class="titlebar-title-block">
+                <div class="titlebar-title-line">
+                  <h1>{selectedProject?.display_name ?? "Nucleus"}</h1>
+                  <Popover
+                    placement="bottom-start"
+                    initialFocus="content"
+                    ariaLabel="Project details"
+                    surfaceMinWidth="18rem"
+                    onOpenChange={(open) => setNativePanelOverlayOpen(projectDetailsOverlayId, open)}
+                    onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(projectDetailsOverlayId, change)}
+                  >
+                    {#snippet trigger()}
+                      <span
+                        class="project-info-trigger"
+                        aria-label="Project details"
+                        data-no-window-drag
+                      >
+                        <Icon icon={info} size="xs" />
+                      </span>
+                    {/snippet}
+                    <div class="project-info-popover" data-no-window-drag>
+                      <h2>{selectedProject?.display_name ?? "No project selected"}</h2>
+                      <dl>
+                        <div>
+                          <dt>Project id</dt>
+                          <dd>{selectedProject?.project_id ?? "none"}</dd>
+                        </div>
+                        <div>
+                          <dt>Status</dt>
+                          <dd>{selectedProject?.status ?? "idle"}</dd>
+                        </div>
+                        <div>
+                          <dt>Importance</dt>
+                          <dd>{selectedProject?.importance_level ?? "none"}</dd>
+                        </div>
+                        <div>
+                          <dt>Revision</dt>
+                          <dd>{selectedProject?.revision_id ?? "none"}</dd>
+                        </div>
+                        <div>
+                          <dt>Retention</dt>
+                          <dd>{selectedProject?.retention ?? "none"}</dd>
+                        </div>
+                        <div>
+                          <dt>Resource health</dt>
+                          <dd>{selectedProject?.location_status ?? "not_recorded"}</dd>
+                        </div>
+                        <div>
+                          <dt>Resources</dt>
+                          <dd>{selectedProject?.resource_count ?? 0}</dd>
+                        </div>
+                        <div>
+                          <dt>Repositories</dt>
+                          <dd>{selectedProject?.repository_count ?? 0}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </Popover>
+                </div>
               </div>
-            </div>
-          </div>
+          {/snippet}
 
-          <div class="titlebar-drag-lane" aria-hidden="true">
-          </div>
-
-          <div class="titlebar-actions" data-no-window-drag>
-            <NotificationPopover
-              session={notificationSession}
-              onOpenChange={(open) => setNativePanelOverlayOpen(notificationsOverlayId, open)}
-              onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(notificationsOverlayId, change)}
-            />
-            <OperationPopover
-              session={operationSession}
-              onOpenChange={(open) => setNativePanelOverlayOpen(operationsOverlayId, open)}
-              onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(operationsOverlayId, change)}
-            />
-            <IconButton
-              variant="secondary"
-              icon={settingsIcon}
-              ariaLabel="Settings"
-              tooltip="Settings"
-              onClick={() => (settingsOpen = true)}
-            />
-            <Menu
-              items={newPanelItems}
-              ariaLabel="New workspace panel"
-              placement="bottom-end"
-              onAction={createWorkspacePanel}
-              onOpenChange={(open) => setNativePanelOverlayOpen(newPanelOverlayId, open)}
-              onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(newPanelOverlayId, change)}
-            >
-              {#snippet trigger()}
-                <IconButton
-                  variant="secondary"
-                  icon={plus}
-                  ariaLabel="New workspace panel"
-                  tooltip="New panel"
-                />
-              {/snippet}
-            </Menu>
-          </div>
-        </header>
+          {#snippet actions()}
+              <NotificationPopover
+                session={notificationSession}
+                onOpenChange={(open) => setNativePanelOverlayOpen(notificationsOverlayId, open)}
+                onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(notificationsOverlayId, change)}
+              />
+              <OperationPopover
+                session={operationSession}
+                onOpenChange={(open) => setNativePanelOverlayOpen(operationsOverlayId, open)}
+                onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(operationsOverlayId, change)}
+              />
+              <IconButton
+                variant="secondary"
+                icon={settingsIcon}
+                ariaLabel="Settings"
+                tooltip="Settings"
+                onClick={() => (settingsOpen = true)}
+              />
+              <Menu
+                items={newPanelItems}
+                ariaLabel="New workspace panel"
+                placement="bottom-end"
+                onAction={createWorkspacePanel}
+                onOpenChange={(open) => setNativePanelOverlayOpen(newPanelOverlayId, open)}
+                onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(newPanelOverlayId, change)}
+              >
+                {#snippet trigger()}
+                  <IconButton
+                    variant="secondary"
+                    icon={plus}
+                    ariaLabel="New workspace panel"
+                    tooltip="New panel"
+                  />
+                {/snippet}
+              </Menu>
+          {/snippet}
+        </AppHeader>
 
         <div class="product-shell">
           <section class="workspace-stage" aria-label="Workspace">
@@ -522,32 +527,6 @@
     height: 100%;
     min-width: 0;
     min-height: 0;
-  }
-
-  .app-titlebar {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    min-width: 0;
-    min-height: 3rem;
-    padding: 0.375rem 1rem;
-    background: var(--poodle-color-background-elevated);
-    border-bottom: 0.0625rem solid var(--poodle-color-border-subtle);
-    flex-shrink: 0;
-    user-select: none;
-    -webkit-user-select: none;
-  }
-
-  .titlebar-lead,
-  .titlebar-actions {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-  }
-
-  .titlebar-lead {
-    flex: 0 1 auto;
-    gap: 0.75rem;
   }
 
   .titlebar-title-block {
@@ -628,20 +607,14 @@
     line-height: 1.3;
   }
 
-  .titlebar-drag-lane {
-    flex: 1 1 0;
-    min-width: 4rem;
-    min-height: 2rem;
-    cursor: grab;
-  }
-
-  .titlebar-drag-lane:active {
-    cursor: grabbing;
-  }
-
-  .titlebar-actions {
-    gap: 0.5rem;
-    flex-wrap: wrap;
+  /* The titlebar sits after the project rail, so the traffic lights fall over
+     the rail and this bar needs no inset to clear them -- unlike every other
+     application's. Height matches AppHeader's 48px step; the lights are placed
+     against it in tauri.conf.json. */
+  :global(.poodle-app-header) {
+    --poodle-app-header-min-height: 3rem;
+    user-select: none;
+    -webkit-user-select: none;
   }
 
   .product-shell {
@@ -671,18 +644,6 @@
     background: var(--poodle-color-background-canvas);
   }
 
-  @media (max-width: 780px) {
-    .app-titlebar {
-      flex-wrap: wrap;
-    }
-
-    .titlebar-drag-lane {
-      order: 4;
-      flex-basis: 100%;
-      min-height: 1rem;
-    }
-
-  }
   .startup-error {
     position: fixed;
     top: 0;
