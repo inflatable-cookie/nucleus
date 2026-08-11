@@ -18,7 +18,8 @@
     watchEditorFiles,
     type EditorFileWatchEvent,
   } from "./lib/control/editorFileWatch";
-  import { beginWindowDrag } from "./lib/windowChrome";
+  import { windowDrag } from "@inflatable-cookie/longhorn-poodle-svelte";
+  import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import {
     createNativePanelOverlayId,
     setNativePanelOverlayOpen,
@@ -30,6 +31,22 @@
     type AgentChatDefaults,
     type DesktopPreferencesProjection,
   } from "./lib/settings/client";
+
+  // Titlebar gesture. `data-tauri-drag-region` is deliberately absent from the
+  // header: Tauri's handler answers the same mousedown without checking
+  // modifiers, so both present means cmd-click drags and `start_dragging` runs
+  // twice.
+  const windowDragOptions = {
+    startDragging: () => getCurrentWebviewWindow().startDragging(),
+    reportError: (error: unknown) =>
+      console.error("nucleus.window_drag_failed", error),
+    zoom: {
+      toggleMaximize: () => getCurrentWebviewWindow().toggleMaximize(),
+      platform: navigator.platform.toLowerCase().includes("mac")
+        ? ("macOs" as const)
+        : ("windows" as const),
+    },
+  };
 
   let startupError = $state<string | null>(null);
   let fixturePosture = $state(false);
@@ -348,11 +365,10 @@
           role="toolbar"
           tabindex="-1"
           aria-label="Workspace titlebar"
-          data-tauri-drag-region
-          onmousedown={beginWindowDrag}
+          use:windowDrag={windowDragOptions}
         >
-          <div class="titlebar-lead" data-tauri-drag-region>
-            <div class="titlebar-title-block" data-tauri-drag-region>
+          <div class="titlebar-lead">
+            <div class="titlebar-title-block">
               <div class="titlebar-title-line">
                 <h1>{selectedProject?.display_name ?? "Nucleus"}</h1>
                 <Popover
@@ -414,7 +430,7 @@
             </div>
           </div>
 
-          <div class="titlebar-drag-lane" aria-hidden="true" data-tauri-drag-region>
+          <div class="titlebar-drag-lane" aria-hidden="true">
           </div>
 
           <div class="titlebar-actions" data-no-window-drag>
