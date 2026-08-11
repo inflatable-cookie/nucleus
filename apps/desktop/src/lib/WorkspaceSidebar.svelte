@@ -72,6 +72,7 @@
 <section class="workspace-sidebar" aria-label="Workspace sidebar">
   <div class="sidebar-tabs">
     <Tabs
+      bordered
       {items}
       value={activeMode}
       variant="pill"
