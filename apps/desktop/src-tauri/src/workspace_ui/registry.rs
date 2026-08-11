@@ -137,7 +137,7 @@ pub fn workspace_window_id() -> Result<longhorn_core::WindowId, String> {
 pub fn project_surface_id(project_id: &str) -> Result<SurfaceId, String> {
     validate_project_id(project_id)?;
     SurfaceId::new(format!(
-        "container:{}",
+        "surface:{}",
         Sha256Digest::from_bytes(project_id.as_bytes()).as_str()
     ))
     .map_err(|error| error.to_string())

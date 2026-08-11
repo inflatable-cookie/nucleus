@@ -89,7 +89,7 @@ describe("WorkspaceLayoutSession", () => {
       expected_revision: 1,
       command: {
         kind: "set_region_collapsed",
-        surface_id: "container:workspace",
+        surface_id: "surface:workspace",
         region_id: "main",
         collapsed: true,
       },
@@ -282,7 +282,7 @@ function snapshot(
   return {
     projection_revision: projectionRevision,
     project_id: projectId,
-    surface_id: "container:workspace",
+    surface_id: "surface:workspace",
     document,
     schemas: [schema],
     panel_definitions: [],

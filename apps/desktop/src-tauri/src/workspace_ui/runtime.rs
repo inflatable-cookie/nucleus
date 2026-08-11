@@ -31,8 +31,8 @@ use super::registry::{
 mod project_documents;
 
 use project_documents::{
-    append_project, claim_pending_document, container_panel_ids, layout_issue,
-    registered_layout_domain, remap_container, seeded_container, validate_project_command,
+    append_project, claim_pending_document, layout_issue, registered_layout_domain,
+    remap_container, seeded_container, surface_panel_ids, validate_project_command,
 };
 
 const LAYOUT_DOMAIN_ID: &str = "nucleus.project-layouts";
@@ -221,12 +221,12 @@ impl WorkspaceUiRuntime {
             .map_err(|_| "Nucleus layout scope lock is poisoned".to_owned())?;
         self.ensure_project(project_id)?;
         let document = self.load_layout()?;
-        let container = document
+        let surface = document
             .surface(&project_surface_id(project_id)?)
             .ok_or_else(|| format!("Nucleus layout is missing for project {project_id}"))?;
         let instance_id =
             PanelInstanceId::new(panel_instance_id).map_err(|error| error.to_string())?;
-        if !container_panel_ids(container).contains(&instance_id) {
+        if !surface_panel_ids(surface).contains(&instance_id) {
             return Err(format!(
                 "panel {panel_instance_id} is outside project {project_id}"
             ));
@@ -279,7 +279,7 @@ impl WorkspaceUiRuntime {
     fn snapshot_locked(&self, project_id: &str) -> Result<WorkspaceLayoutSnapshotDto, String> {
         let document = self.load_layout()?;
         let project_container_id = project_surface_id(project_id)?;
-        let container = document
+        let surface = document
             .surface(&project_container_id)
             .ok_or_else(|| format!("Nucleus layout is missing for project {project_id}"))?;
         let presentations = self.load_presentations()?;
@@ -293,7 +293,7 @@ impl WorkspaceUiRuntime {
             .cloned()
             .unwrap_or_default();
         let mut panels = Vec::new();
-        for region in container.regions() {
+        for region in surface.regions() {
             for panel_instance_id in region.panel_instance_ids() {
                 let instance = document.panel_instance(panel_instance_id).ok_or_else(|| {
                     format!("Nucleus layout references missing panel {panel_instance_id}")
@@ -412,7 +412,7 @@ impl WorkspaceUiRuntime {
             .or_insert(BTreeMap::from([PanelPresentation::agent_chat(project_id)?]));
         self.publish_presentations(presentations)?;
 
-        let container = seeded_container(project_id)?;
+        let surface = seeded_container(project_id)?;
         let instance = agent_chat_instance(project_id)?;
         self.store
             .mutate(&self.layout_domain, self.options, |current| {
@@ -424,7 +424,7 @@ impl WorkspaceUiRuntime {
                         "pending legacy layout appeared while seeding a project",
                     ));
                 }
-                *current = append_project(current, container.clone(), [instance.clone()])?;
+                *current = append_project(current, surface.clone(), [instance.clone()])?;
                 Ok(())
             })
             .map_err(|error| format!("seed Nucleus project layout failed: {error}"))?;
@@ -440,7 +440,7 @@ impl WorkspaceUiRuntime {
         let target_id = project_surface_id(project_id)?;
         let pending = document
             .surface(&pending_id)
-            .ok_or_else(|| "pending Nucleus layout container disappeared".to_owned())?;
+            .ok_or_else(|| "pending Nucleus layout surface disappeared".to_owned())?;
         let mut presentations = self.load_presentations()?;
         let source_records = presentations
             .projects

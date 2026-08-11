@@ -28,7 +28,7 @@ fn chat_request_serializes_for_tauri_boundary() {
         model: Some("gpt-5.4-mini".to_owned()),
         reasoning_effort: Some("low".to_owned()),
         harness_mode: LocalCodexChatHarnessMode::Normal,
-    idioms_enabled: true,
+        idioms_enabled: true,
     };
     let value = serde_json::to_value(request).expect("serialize request");
     assert_eq!(value["conversation_id"], "panel:agent-chat");
@@ -368,7 +368,7 @@ fn live_chat_receives_active_task_context_without_polluting_history() {
                 model: None,
                 reasoning_effort: None,
                 harness_mode: LocalCodexChatHarnessMode::Normal,
-            idioms_enabled: true,
+                idioms_enabled: true,
             },
         )
         .expect("active task turn");
@@ -405,7 +405,7 @@ fn durable_chat_reopens_with_transcript_context_after_service_restart() {
         model: None,
         reasoning_effort: None,
         harness_mode: LocalCodexChatHarnessMode::Normal,
-    idioms_enabled: true,
+        idioms_enabled: true,
     };
     let first = LocalCodexChatService::default()
         .send_message(&state, request("Reply with exactly: durable first"))
@@ -989,7 +989,10 @@ fn live_plan_decision_accept_drives_normal_mode_follow_up() {
 /// the state service plus the created project id. Transient chats are
 /// resource-free: they resolve to the host home read-only context (card 090
 /// sentinel behavior), so the accept follow-up exercises that path live.
-fn transient_chat_project(path: &std::path::Path, suffix: &str) -> (ServerStateService<SqliteBackend>, String) {
+fn transient_chat_project(
+    path: &std::path::Path,
+    suffix: &str,
+) -> (ServerStateService<SqliteBackend>, String) {
     let backend = SqliteBackend::new(path.to_path_buf());
     let state = ServerStateService::new(backend.clone());
     let mut handler = LocalControlRequestHandler::new(backend, None);
@@ -1115,7 +1118,7 @@ fn request(conversation: &str, message: &str) -> LocalCodexChatRequest {
         model: None,
         reasoning_effort: None,
         harness_mode: LocalCodexChatHarnessMode::Normal,
-    idioms_enabled: true,
+        idioms_enabled: true,
     }
 }
 

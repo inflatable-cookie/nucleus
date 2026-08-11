@@ -175,12 +175,12 @@ fn convert(
     registry: &LayoutDefinitionRegistry,
 ) -> Result<(SurfaceDocument, PanelPresentationState), String> {
     let source = decode_project_layout_source(bytes)?;
-    let mut containers = Vec::new();
+    let mut surfaces = Vec::new();
     let mut instances = Vec::new();
     let mut presentations = PanelPresentationState::default();
     for (project_id, layout) in source.project_layouts {
         let converted = convert_project(&project_id, layout)?;
-        containers.push(converted.container);
+        surfaces.push(converted.surface);
         instances.extend(converted.instances);
         presentations
             .projects
@@ -188,7 +188,7 @@ fn convert(
     }
     if let Some(layout) = source.pending_legacy_layout {
         let converted = convert_project(PENDING_PROJECT_SCOPE, layout)?;
-        containers.push(converted.container);
+        surfaces.push(converted.surface);
         instances.extend(converted.instances);
         presentations
             .projects
@@ -196,7 +196,7 @@ fn convert(
     }
     let document = normalize_layout(
         registry,
-        &SurfaceDocument::new(SurfaceRevision::INITIAL, containers, instances, []),
+        &SurfaceDocument::new(SurfaceRevision::INITIAL, surfaces, instances, []),
     )
     .map_err(|error| format!("normalize migrated project layouts failed: {error}"))?;
     validate_layout(registry, &document)
@@ -205,7 +205,7 @@ fn convert(
 }
 
 struct ConvertedProject {
-    container: SurfaceRecord,
+    surface: SurfaceRecord,
     instances: Vec<PanelInstance>,
     presentations: BTreeMap<String, PanelPresentation>,
 }
@@ -273,7 +273,7 @@ fn convert_project(
         .collect::<Result<Vec<_>, String>>()?;
 
     Ok(ConvertedProject {
-        container: SurfaceRecord::new(
+        surface: SurfaceRecord::new(
             project_surface_id(project_id)?,
             longhorn_core::LayoutSchemaId::new(SCHEMA_ID).map_err(|error| error.to_string())?,
             None,

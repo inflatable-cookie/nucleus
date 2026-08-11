@@ -59,20 +59,20 @@ pub(super) fn seeded_container(project_id: &str) -> Result<SurfaceRecord, String
 
 pub(super) fn append_project(
     document: &SurfaceDocument,
-    container: SurfaceRecord,
+    surface: SurfaceRecord,
     instances: impl IntoIterator<Item = PanelInstance>,
 ) -> Result<SurfaceDocument, DomainIssue> {
     let revision = document
         .revision()
         .checked_next()
         .map_err(|error| layout_issue(error.to_string()))?;
-    let mut containers = document.surfaces().to_vec();
-    containers.push(container);
+    let mut surfaces = document.surfaces().to_vec();
+    surfaces.push(surface);
     let mut panel_instances = document.panel_instances().to_vec();
     panel_instances.extend(instances);
     Ok(SurfaceDocument::new(
         revision,
-        containers,
+        surfaces,
         panel_instances,
         [],
     ))
@@ -88,10 +88,10 @@ pub(super) fn claim_pending_document(
         .revision()
         .checked_next()
         .map_err(|error| layout_issue(error.to_string()))?;
-    let containers = document
+    let surfaces = document
         .surfaces()
         .iter()
-        .filter(|container| container.id() != pending_id)
+        .filter(|surface| surface.id() != pending_id)
         .cloned()
         .chain([target])
         .collect::<Vec<_>>();
@@ -107,7 +107,7 @@ pub(super) fn claim_pending_document(
         .collect::<Vec<_>>();
     Ok(SurfaceDocument::new(
         revision,
-        containers,
+        surfaces,
         panel_instances,
         [],
     ))
@@ -140,8 +140,8 @@ pub(super) fn remap_container(
     ))
 }
 
-pub(super) fn container_panel_ids(container: &SurfaceRecord) -> BTreeSet<PanelInstanceId> {
-    container
+pub(super) fn surface_panel_ids(surface: &SurfaceRecord) -> BTreeSet<PanelInstanceId> {
+    surface
         .regions()
         .iter()
         .flat_map(|region| region.panel_instance_ids().iter().cloned())
@@ -154,11 +154,11 @@ pub(super) fn validate_project_command(
     command: &LayoutMutationCommand,
 ) -> Result<(), String> {
     let expected_container_id = project_surface_id(project_id)?;
-    let container = document
+    let surface = document
         .surface(&expected_container_id)
         .ok_or_else(|| format!("Nucleus layout is missing for project {project_id}"))?;
     let contains_panel = |panel_instance_id: &PanelInstanceId| {
-        container
+        surface
             .regions()
             .iter()
             .any(|region| region.panel_instance_ids().contains(panel_instance_id))
