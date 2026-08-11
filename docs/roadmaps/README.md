@@ -415,11 +415,8 @@ shape.
 
 ## Next Task
 
-Subagent interface lane: the group rendering (093), composer-zone actor
-selector with stuck-view fallback (094), and the collab spawn admission fix
-(swallowtail 197 evidence → 198 contract → 199 implementation) are all
-merged. Operator retest: re-run the live Codex multi-agent spawn against
-the current build — the turn should survive the spawn ordering race and the
-groups should render with working click-through and return. If a capture
-shows the child lifecycle beating even the `subAgentActivity` confirmation,
-that becomes the bounded-deferral card (see research note 120).
+Shell quality lane: the message centre adoption (096) and failure
+notification routing (097) are merged — refused project commands now toast
+and archive; the sub-agent spawn retest passed. Next move is the
+operator's pick: the remaining native-island/review/forge/terminal failure
+classes flagged in 097's disposition catalog, or a new lane.
