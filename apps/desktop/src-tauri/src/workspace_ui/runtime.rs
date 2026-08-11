@@ -11,7 +11,7 @@ use longhorn_config::{
 };
 use longhorn_core::PanelInstanceId;
 use longhorn_surfaces::{LayoutMutationCommand, LayoutMutationEngine, SurfaceDocument};
-use longhorn_surfaces_config::{NoLayoutMigration, RegisteredLayoutDomain};
+use longhorn_surfaces_config::{load_or_default, NoLayoutMigration, RegisteredLayoutDomain};
 
 use super::dto::{
     WorkspaceLayoutDispatchResultDto, WorkspaceLayoutMutationDto,
@@ -484,17 +484,21 @@ impl WorkspaceUiRuntime {
         Ok(())
     }
 
+    /// The stored workspace, or the default when it cannot be read.
+    ///
+    /// A project opens rather than refusing to. Longhorn leaves the unreadable
+    /// source on disk untouched, so the arrangement stays recoverable and only
+    /// this session falls back. A `StoreError` still propagates: that is the
+    /// store failing rather than the document being wrong.
     fn load_layout(&self) -> Result<SurfaceDocument, String> {
-        match self
-            .store
-            .load(&self.layout_domain)
-            .map_err(|error| format!("load Nucleus layout domain failed: {error}"))?
-        {
-            LoadOutcome::Ready(loaded) => Ok(loaded.value),
-            other => Err(format!(
-                "Nucleus layout domain requires recovery: {other:?}"
-            )),
+        let (document, fallback) = load_or_default(&self.store, &self.layout_domain)
+            .map_err(|error| format!("load Nucleus layout domain failed: {error}"))?;
+        if fallback.discarded_stored_state() {
+            eprintln!(
+                "the stored Nucleus workspace could not be read ({fallback:?}); opening on the default arrangement"
+            );
         }
+        Ok(document)
     }
 
     fn load_presentations(&self) -> Result<PanelPresentationState, String> {
