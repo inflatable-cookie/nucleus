@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { Icon, IconButton, IconProvider, Menu, Popover, SplitView, type MenuItem } from "@inflatable-cookie/poodle-svelte";
+  import { Icon, IconButton, IconProvider, Menu, Popover, SplitView, ToastHost, type MenuItem } from "@inflatable-cookie/poodle-svelte";
   import { icons, info, plus, settings as settingsIcon } from "./icons.generated";
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
   import CommandPalette from "./lib/commands/CommandPalette.svelte";
@@ -9,8 +9,8 @@
   import OperationPopover from "./lib/operations/OperationPopover.svelte";
   import { createNucleusOperationSession } from "./lib/operations/runtime.svelte";
   import NotificationPopover from "./lib/notifications/NotificationPopover.svelte";
-  import { NotificationToastHost } from "@inflatable-cookie/longhorn-poodle-svelte/notifications/poodle";
   import { createNucleusNotificationSession } from "./lib/notifications/runtime.svelte";
+  import { createNotificationToastStore, executeNotificationToastAction } from "./lib/notifications/toastHost";
   import SettingsDialog from "./lib/settings/SettingsDialog.svelte";
   import WorkspaceSidebar from "./lib/WorkspaceSidebar.svelte";
   import type { ControlProjectRecordDto } from "./lib/control";
@@ -67,6 +67,7 @@
   });
   const operationSession = createNucleusOperationSession();
   const notificationSession = createNucleusNotificationSession(commandRuntime.session);
+  const notificationToastStore = createNotificationToastStore(notificationSession);
   const projectRailRatioStorageKey = "nucleus:desktop:project-rail-ratio";
   const newPanelItems = $derived<MenuItem[]>([
     { value: "agentChat", label: "Agent Chat" },
@@ -477,11 +478,12 @@
     />
   {/if}
   <CommandPalette session={commandRuntime.session} />
-  <NotificationToastHost
-    session={notificationSession}
+  <ToastHost
+    store={notificationToastStore}
     autoDismissMs={6000}
     stickyTones={["danger"]}
     placement="bottom-end"
+    onAction={(id) => executeNotificationToastAction(notificationSession, id)}
   />
 </main>
 </IconProvider>

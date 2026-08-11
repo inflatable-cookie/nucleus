@@ -36,12 +36,16 @@ export function shouldToastNotification(record: { draft: { severity: string } })
     || record.draft.severity === "critical";
 }
 
+export function isAdmittedNotificationAction(sourceId: string, referenceId: string): boolean {
+  return sourceId === OPERATIONS_SOURCE && referenceId === OPEN_FORGE_ACTION;
+}
+
 export function nucleusNotificationActionExecutor(
   commandSession: Pick<CommandSession, "select">,
 ): NotificationActionExecutor {
   return {
     admitAndExecute: async ({ sourceId, referenceId }) => {
-      if (sourceId !== OPERATIONS_SOURCE || referenceId !== OPEN_FORGE_ACTION) {
+      if (!isAdmittedNotificationAction(sourceId, referenceId)) {
         throw new Error("Notification action is not admitted by Nucleus.");
       }
       const outcome = await commandSession.select(referenceId);
