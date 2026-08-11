@@ -1,6 +1,6 @@
 # 097 Operator-Facing Failure Routing Into The Notification Ledger
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-11
 Milestone: none yet (shell quality lane)
@@ -75,13 +75,28 @@ poodle sources, notification severity taxonomy redesign.
 
 ## Acceptance
 
-- [ ] refused project commands produce warning notification records with
+- [x] refused project commands produce warning notification records with
   the refusal reason (toastable + archivable); inline permanent blocks for
   those paths removed
-- [ ] routing decision documented with contract citations
-- [ ] per-site disposition catalog for the remaining inline error blocks
-- [ ] fixtures + relevant suites pass (`effigy desktop:test`, plus server
+- [x] routing decision documented with contract citations
+- [x] per-site disposition catalog for the remaining inline error blocks
+- [x] fixtures + relevant suites pass (`effigy desktop:test`, plus server
   tests if the server emits the records); batch log pushed
+
+## Closeout
+
+Merged to main as `ee51da81` (worker commit `12f14670`). Two flash stream
+stalls and two poisoned-session resume failures on Luna; completed on a
+fresh Luna-high session (the `-c` resume state was the failure mode, not
+the providers — both probed healthy). Routing per contract 032: the Tauri
+host observes rejected project command receipts at `submit_control_envelope`
+and publishes warning records into `nucleus:desktop-notifications`; the
+renderer never calls `Add`. Refusal reason and project scope preserved;
+no action reference (retry is not yet an allowlisted notification action).
+The disposition catalog intentionally left agent-chat, editor, settings,
+memory/tasks, and panel-transport failures inline with their local
+recovery affordances; native-island/review/forge/terminal failure classes
+are flagged as their own future card.
 
 ## Evidence
 

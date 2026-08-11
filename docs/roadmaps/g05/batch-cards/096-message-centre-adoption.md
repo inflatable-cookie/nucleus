@@ -1,6 +1,6 @@
 # 096 Message Centre Adoption And Toast Delivery
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-11
 Milestone: none yet (shell quality lane)
@@ -83,12 +83,25 @@ requires a shape change — cite if so).
 
 ## Acceptance
 
-- [ ] titlebar trigger (next to Settings) opens the `MessageCenter`
+- [x] titlebar trigger (next to Settings) opens the `MessageCenter`
   archive with unread count; read/remove/mark-all work against the ledger
-- [ ] new warning/error/critical notifications appear as toasts and are
+- [x] new warning/error/critical notifications appear as toasts and are
   archived; dismissing a toast does not remove the archive record
-- [ ] native overlay geometry wiring intact (no native panel regressions)
-- [ ] fixtures + `effigy desktop:check` + `effigy desktop:test` pass
+- [x] native overlay geometry wiring intact (no native panel regressions)
+- [x] fixtures + `effigy desktop:check` + `effigy desktop:test` pass
+
+## Closeout
+
+Merged to main as `44ed434b` (worker commit `77548fc0`, deepseek flash
+xhigh, clean first run). `NotificationPopover` now renders through poodle
+`MessageCenter`; delivery moved from longhorn's `NotificationToastHost` to
+poodle `ToastHost` fed by a thin projection store over `session.toasts`.
+Two port limits handled per the card (no mark-unseen mutation; no bulk
+mark-all — per-record loop), cited in code and log. One poodle API gap
+worth feeding back: `MessageCenter` does not forward the underlying
+`Popover`'s surface-geometry callback, so the adapter observes the
+portalled surface directly to keep the native overlay plumbing working —
+a forwarding prop on `MessageCenter` would remove that workaround.
 
 ## Evidence
 

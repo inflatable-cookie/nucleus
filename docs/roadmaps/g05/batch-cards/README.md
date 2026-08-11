@@ -14,10 +14,7 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `096-message-centre-adoption.md` — worker thread
-  `thread/096-message-centre-adoption`
-- `097-failure-notification-routing.md` — worker thread
-  `thread/097-failure-notification-routing`
+- none
 
 ## Paused Cards
 
@@ -120,3 +117,5 @@ Updated: 2026-08-04
 - `092-subagent-rendering-survey.md`
 - `093-subagent-group-transcript.md`
 - `094-actor-selector-composer-placement.md`
+- `096-message-centre-adoption.md`
+- `097-failure-notification-routing.md`
