@@ -14,7 +14,10 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- none
+- `096-message-centre-adoption.md` — worker thread
+  `thread/096-message-centre-adoption`
+- `097-failure-notification-routing.md` — worker thread
+  `thread/097-failure-notification-routing`
 
 ## Paused Cards
 
