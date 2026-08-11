@@ -482,7 +482,7 @@
     store={notificationToastStore}
     autoDismissMs={6000}
     stickyTones={["danger"]}
-    placement="bottom-end"
+    placement="top-end"
     onAction={(id) => executeNotificationToastAction(notificationSession, id)}
   />
 </main>
