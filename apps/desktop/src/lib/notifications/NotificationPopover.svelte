@@ -1,12 +1,10 @@
 <script lang="ts">
-  import {
-    Icon,
-    Popover,
-    type OverlaySurfaceGeometryChangeHandler,
-  } from "@inflatable-cookie/poodle-svelte";
-  import { bell } from "../../icons.generated";
-  import { NotificationPanel } from "@inflatable-cookie/longhorn-poodle-svelte/notifications/poodle";
+  import { tick } from "svelte";
+  import { MessageCenter, type MessageCenterItem, type OverlaySurfaceGeometryChangeHandler } from "@inflatable-cookie/poodle-svelte";
+  import { createInstanceId, observeOverlaySurfaceGeometry } from "@inflatable-cookie/poodle-core";
+  import { notificationStatusTone } from "@inflatable-cookie/longhorn-poodle-svelte/notifications/poodle";
   import type { NotificationSession } from "@inflatable-cookie/longhorn-poodle-svelte/notifications/svelte";
+  import { isAdmittedNotificationAction } from "./runtime.svelte";
 
   let {
     session,
@@ -18,63 +16,100 @@
     onSurfaceGeometryChange?: OverlaySurfaceGeometryChangeHandler;
   } = $props();
 
-  const retainedCount = $derived(session.snapshot?.retainedCount ?? session.records.length);
-  const unseenCount = $derived(session.snapshot?.unseenCount ?? 0);
+  const items = $derived<MessageCenterItem[]>(
+    session.records.map((record) => ({
+      id: record.notificationId,
+      title: record.draft.title,
+      message: record.draft.summary,
+      meta: record.draft.sourceId,
+      timestamp: record.draft.presentationTimeUnixMs,
+      read: record.readState === "seen",
+      tone: notificationStatusTone(record.draft.severity),
+    })),
+  );
+
+  function handleReadChange(id: string, read: boolean): void {
+    // The port has no mark-unseen mutation (`NotificationMutationCommand`
+    // carries only per-record `markSeen`), so only the read direction is
+    // acted on; the request-style callback swallows the other.
+    if (read) void session.markSeen(id).catch(() => undefined);
+  }
+
+  function handleRemove(id: string): void {
+    void session.dismiss(id).catch(() => undefined);
+  }
+
+  function handleMarkAllRead(): void {
+    // No bulk read-state mutation on the port; mark each unseen record.
+    for (const record of session.records) {
+      if (record.readState !== "seen") {
+        void session.markSeen(record.notificationId).catch(() => undefined);
+      }
+    }
+  }
+
+  function handleItemSelect(id: string): void {
+    session.select(id);
+    const record = session.records.find((candidate) => candidate.notificationId === id);
+    const action = record?.draft.actions.find((candidate) =>
+      isAdmittedNotificationAction(record.draft.sourceId, candidate.referenceId),
+    );
+    if (action) void session.invokeAction(id, action.referenceId).catch(() => undefined);
+  }
+
+  // MessageCenter renders its own Popover and does not forward surface
+  // geometry changes, so the adapter observes the portalled surface directly
+  // to keep `onSurfaceGeometryChange` (native overlay plumbing) intact.
+  let surfaceObserver: ReturnType<typeof observeOverlaySurfaceGeometry> | null = null;
+
+  function findSurfaceElement(): HTMLElement | null {
+    const section = document.querySelector<HTMLElement>(".poodle-message-center");
+    return section?.closest<HTMLElement>(".poodle-popover__surface") ?? null;
+  }
+
+  async function attachSurfaceObserver(): Promise<void> {
+    if (!onSurfaceGeometryChange) return;
+    surfaceObserver?.destroy();
+    surfaceObserver = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const surface = findSurfaceElement();
+      if (surface) {
+        surfaceObserver = observeOverlaySurfaceGeometry(surface, createInstanceId("notification-surface"), {
+          placement: "bottom-end",
+          onChange: onSurfaceGeometryChange,
+        });
+        return;
+      }
+      if (typeof requestAnimationFrame === "function") {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      } else {
+        await tick();
+      }
+    }
+  }
+
+  function handleOpenChange(open: boolean): void {
+    onOpenChange?.(open);
+    if (open) {
+      void attachSurfaceObserver();
+    } else {
+      surfaceObserver?.destroy();
+      surfaceObserver = null;
+    }
+  }
+
+  $effect(() => () => {
+    surfaceObserver?.destroy();
+    surfaceObserver = null;
+  });
 </script>
 
-{#if retainedCount > 0}
-  <Popover
-    placement="bottom-end"
-    initialFocus="content"
-    ariaLabel="Notifications"
-    surfaceMinWidth="22rem"
-    {onOpenChange}
-    {onSurfaceGeometryChange}
-  >
-    {#snippet trigger()}
-      <button class:has-unseen={unseenCount > 0} class="notification-trigger" type="button" aria-label={`${unseenCount} unseen notifications`}>
-        <Icon icon={bell} size="sm" />
-        {#if unseenCount > 0}
-          <span>{unseenCount}</span>
-        {/if}
-      </button>
-    {/snippet}
-    <div class="notification-popover">
-      <NotificationPanel {session} title="Notifications" />
-    </div>
-  </Popover>
-{/if}
-
-<style>
-  .notification-trigger {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.3rem;
-    min-width: 2rem;
-    height: 2rem;
-    padding: 0 0.5rem;
-    color: var(--poodle-color-text-muted);
-    border: 0.0625rem solid var(--poodle-color-border-subtle);
-    border-radius: var(--poodle-radius-control);
-    background: transparent;
-    cursor: pointer;
-  }
-
-  .notification-trigger:hover,
-  .notification-trigger.has-unseen {
-    color: var(--poodle-color-text-primary);
-    background: var(--poodle-color-background-surface);
-  }
-
-  .notification-trigger span {
-    color: var(--poodle-color-text-primary);
-    font-size: 0.6875rem;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .notification-popover {
-    max-height: min(34rem, 70vh);
-    overflow: auto;
-  }
-</style>
+<MessageCenter
+  {items}
+  title="Notifications"
+  onOpenChange={handleOpenChange}
+  onItemSelect={handleItemSelect}
+  onReadChange={handleReadChange}
+  onRemove={handleRemove}
+  onMarkAllRead={handleMarkAllRead}
+/>
