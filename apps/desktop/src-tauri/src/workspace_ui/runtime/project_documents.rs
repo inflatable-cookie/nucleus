@@ -2,15 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use longhorn_config::{DomainDescriptor, DomainFilePath, DomainIssue, StorageClass};
 use longhorn_core::{DomainId, PanelInstanceId, SchemaVersion};
-use longhorn_layout::{
-    LayoutContainer, LayoutDefinitionRegistry, LayoutDocument, LayoutMutationCommand,
-    PanelInstance, RegionState,
+use longhorn_surfaces::{
+    LayoutDefinitionRegistry, LayoutMutationCommand, PanelInstance, RegionState, SurfaceDocument,
+    SurfaceRecord,
 };
-use longhorn_layout_config::{LayoutBackupPolicy, NoLayoutMigration, RegisteredLayoutDomain};
+use longhorn_surfaces_config::{LayoutBackupPolicy, NoLayoutMigration, RegisteredLayoutDomain};
 
 use super::{LayoutDomain, LAYOUT_DOMAIN_FILE, LAYOUT_DOMAIN_ID, LAYOUT_DOMAIN_SCHEMA};
 use crate::workspace_ui::registry::{
-    agent_chat_instance, container_id, empty_container, empty_document,
+    agent_chat_instance, empty_container, empty_document, project_surface_id,
 };
 
 pub(super) fn registered_layout_domain(
@@ -33,12 +33,13 @@ pub(super) fn registered_layout_domain(
     .map_err(|error| error.to_string())
 }
 
-pub(super) fn seeded_container(project_id: &str) -> Result<LayoutContainer, String> {
+pub(super) fn seeded_container(project_id: &str) -> Result<SurfaceRecord, String> {
     let base = empty_container(project_id)?;
     let instance = agent_chat_instance(project_id)?;
-    Ok(LayoutContainer::new(
+    Ok(SurfaceRecord::new(
         base.id().clone(),
         base.schema_id().clone(),
+        base.label().map(str::to_owned),
         base.regions().iter().map(|region| {
             if region.region_id().as_str() == "center_top" {
                 RegionState::new(
@@ -52,37 +53,43 @@ pub(super) fn seeded_container(project_id: &str) -> Result<LayoutContainer, Stri
             }
         }),
         base.sizing_slots().iter().cloned(),
+        base.host_preferences().iter().cloned(),
     ))
 }
 
 pub(super) fn append_project(
-    document: &LayoutDocument,
-    container: LayoutContainer,
+    document: &SurfaceDocument,
+    container: SurfaceRecord,
     instances: impl IntoIterator<Item = PanelInstance>,
-) -> Result<LayoutDocument, DomainIssue> {
+) -> Result<SurfaceDocument, DomainIssue> {
     let revision = document
         .revision()
         .checked_next()
         .map_err(|error| layout_issue(error.to_string()))?;
-    let mut containers = document.containers().to_vec();
+    let mut containers = document.surfaces().to_vec();
     containers.push(container);
     let mut panel_instances = document.panel_instances().to_vec();
     panel_instances.extend(instances);
-    Ok(LayoutDocument::new(revision, containers, panel_instances))
+    Ok(SurfaceDocument::new(
+        revision,
+        containers,
+        panel_instances,
+        [],
+    ))
 }
 
 pub(super) fn claim_pending_document(
-    document: &LayoutDocument,
-    pending_id: &longhorn_core::LayoutContainerId,
-    target: LayoutContainer,
+    document: &SurfaceDocument,
+    pending_id: &longhorn_core::SurfaceId,
+    target: SurfaceRecord,
     remap: &BTreeMap<PanelInstanceId, PanelInstanceId>,
-) -> Result<LayoutDocument, DomainIssue> {
+) -> Result<SurfaceDocument, DomainIssue> {
     let revision = document
         .revision()
         .checked_next()
         .map_err(|error| layout_issue(error.to_string()))?;
     let containers = document
-        .containers()
+        .surfaces()
         .iter()
         .filter(|container| container.id() != pending_id)
         .cloned()
@@ -98,17 +105,23 @@ pub(super) fn claim_pending_document(
             )
         })
         .collect::<Vec<_>>();
-    Ok(LayoutDocument::new(revision, containers, panel_instances))
+    Ok(SurfaceDocument::new(
+        revision,
+        containers,
+        panel_instances,
+        [],
+    ))
 }
 
 pub(super) fn remap_container(
-    source: &LayoutContainer,
-    target_id: longhorn_core::LayoutContainerId,
+    source: &SurfaceRecord,
+    target_id: longhorn_core::SurfaceId,
     remap: &BTreeMap<PanelInstanceId, PanelInstanceId>,
-) -> Result<LayoutContainer, String> {
-    Ok(LayoutContainer::new(
+) -> Result<SurfaceRecord, String> {
+    Ok(SurfaceRecord::new(
         target_id,
         source.schema_id().clone(),
+        source.label().map(str::to_owned),
         source.regions().iter().map(|region| {
             RegionState::new(
                 region.region_id().clone(),
@@ -123,10 +136,11 @@ pub(super) fn remap_container(
             )
         }),
         source.sizing_slots().iter().cloned(),
+        source.host_preferences().iter().cloned(),
     ))
 }
 
-pub(super) fn container_panel_ids(container: &LayoutContainer) -> BTreeSet<PanelInstanceId> {
+pub(super) fn container_panel_ids(container: &SurfaceRecord) -> BTreeSet<PanelInstanceId> {
     container
         .regions()
         .iter()
@@ -136,12 +150,12 @@ pub(super) fn container_panel_ids(container: &LayoutContainer) -> BTreeSet<Panel
 
 pub(super) fn validate_project_command(
     project_id: &str,
-    document: &LayoutDocument,
+    document: &SurfaceDocument,
     command: &LayoutMutationCommand,
 ) -> Result<(), String> {
-    let expected_container_id = container_id(project_id)?;
+    let expected_container_id = project_surface_id(project_id)?;
     let container = document
-        .container(&expected_container_id)
+        .surface(&expected_container_id)
         .ok_or_else(|| format!("Nucleus layout is missing for project {project_id}"))?;
     let contains_panel = |panel_instance_id: &PanelInstanceId| {
         container
@@ -150,11 +164,11 @@ pub(super) fn validate_project_command(
             .any(|region| region.panel_instance_ids().contains(panel_instance_id))
     };
     let valid = match command {
-        LayoutMutationCommand::CreatePanel { container_id, .. }
-        | LayoutMutationCommand::ReorderRegion { container_id, .. }
-        | LayoutMutationCommand::SetSizingSlot { container_id, .. }
-        | LayoutMutationCommand::SetRegionCollapsed { container_id, .. } => {
-            container_id == &expected_container_id
+        LayoutMutationCommand::CreatePanel { surface_id, .. }
+        | LayoutMutationCommand::ReorderRegion { surface_id, .. }
+        | LayoutMutationCommand::SetSizingSlot { surface_id, .. }
+        | LayoutMutationCommand::SetRegionCollapsed { surface_id, .. } => {
+            surface_id == &expected_container_id
         }
         LayoutMutationCommand::ClosePanel { panel_instance_id }
         | LayoutMutationCommand::ActivatePanel { panel_instance_id } => {
@@ -162,9 +176,9 @@ pub(super) fn validate_project_command(
         }
         LayoutMutationCommand::MovePanel {
             panel_instance_id,
-            target_container_id,
+            target_surface_id,
             ..
-        } => contains_panel(panel_instance_id) && target_container_id == &expected_container_id,
+        } => contains_panel(panel_instance_id) && target_surface_id == &expected_container_id,
     };
     if valid {
         Ok(())

@@ -25,8 +25,8 @@ longhorn-bridge = { path = "../../../../longhorn/crates/longhorn-bridge" }
 longhorn-config = { path = "../../../../longhorn/crates/longhorn-config" }
 longhorn-core = { path = "../../../../longhorn/crates/longhorn-core" }
 longhorn-display = { path = "../../../../longhorn/crates/longhorn-display" }
-longhorn-layout = { path = "../../../../longhorn/crates/longhorn-layout" }
-longhorn-layout-config = { path = "../../../../longhorn/crates/longhorn-layout-config" }
+longhorn-surfaces = { path = "../../../../longhorn/crates/longhorn-surfaces" }
+longhorn-surfaces-config = { path = "../../../../longhorn/crates/longhorn-surfaces-config" }
 longhorn-native-content = { path = "../../../../longhorn/crates/longhorn-native-content" }
 longhorn-operation = { path = "../../../../longhorn/crates/longhorn-operation" }
 longhorn-notifications = { path = "../../../../longhorn/crates/longhorn-notifications" }

@@ -99,11 +99,11 @@
   const binding = $derived(session?.binding);
   const document = $derived(session?.projected);
   const container = $derived(
-    document?.containers.find((candidate) => candidate.id === snapshot?.container_id),
+    document?.surfaces.find((candidate) => candidate.id === snapshot?.surface_id),
   );
   const activePanelsByRegion = $derived.by<Record<WorkspaceRegion, string | null>>(() => {
-    const regions = snapshot?.document.containers
-      .find((candidate) => candidate.id === snapshot.container_id)
+    const regions = snapshot?.document.surfaces
+      .find((candidate) => candidate.id === snapshot.surface_id)
       ?.regions;
     return {
       left: regions?.find(({ region_id }) => region_id === "left")?.active_panel_instance_id ?? null,
@@ -822,7 +822,7 @@
       {/if}
       <LayoutSplitView
         {binding}
-        containerId={snapshot.container_id}
+        containerId={snapshot.surface_id}
         sizingSlotId="left-center"
         primaryHidden={!visibleRegions.left}
         secondaryHidden={!hasMain}
@@ -846,7 +846,7 @@
   {#if binding && snapshot}
     <LayoutSplitView
       {binding}
-      containerId={snapshot.container_id}
+      containerId={snapshot.surface_id}
       sizingSlotId="center-right"
       primaryHidden={!hasCenter}
       secondaryHidden={!hasRight}
@@ -865,7 +865,7 @@
   {#if binding && snapshot}
     <LayoutSplitView
       {binding}
-      containerId={snapshot.container_id}
+      containerId={snapshot.surface_id}
       sizingSlotId="center-stack"
       orientation="vertical"
       secondaryRegionId="center_bottom"
@@ -886,7 +886,7 @@
   {#if binding && snapshot}
     <LayoutSplitView
       {binding}
-      containerId={snapshot.container_id}
+      containerId={snapshot.surface_id}
       sizingSlotId="right-stack"
       orientation="vertical"
       primaryRegionId="right_top"
@@ -920,7 +920,7 @@
       {#key activePanelInstanceId}
         <LayoutDockRegion
           {binding}
-          containerId={snapshot.container_id}
+          containerId={snapshot.surface_id}
           {regionId}
           {edge}
           resolvePanel={resolvePanel}

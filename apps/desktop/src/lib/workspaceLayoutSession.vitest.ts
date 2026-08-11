@@ -2,7 +2,7 @@ import { render, waitFor } from "@testing-library/svelte";
 import { describe, expect, it } from "vitest";
 
 import type {
-  LayoutDocument,
+  SurfaceDocument,
   LayoutMutationRequest,
   LayoutSchemaDefinition,
 } from "@inflatable-cookie/longhorn/layout";
@@ -89,7 +89,7 @@ describe("WorkspaceLayoutSession", () => {
       expected_revision: 1,
       command: {
         kind: "set_region_collapsed",
-        container_id: "container:workspace",
+        surface_id: "container:workspace",
         region_id: "main",
         collapsed: true,
       },
@@ -256,12 +256,15 @@ function snapshot(
     ],
     sizing_slots: [],
   };
-  const document: LayoutDocument = {
+  const document: SurfaceDocument = {
     revision: layoutRevision,
-    containers: [
+    surfaces: [
       {
-        id: "container:workspace",
+        id: "surface:workspace",
         schema_id: schema.id,
+        label: null,
+        presentation: { kind: "regional" },
+        host_preferences: [],
         regions: [
           {
             region_id: "main",
@@ -274,11 +277,12 @@ function snapshot(
       },
     ],
     panel_instances: [],
+    windows: [],
   };
   return {
     projection_revision: projectionRevision,
     project_id: projectId,
-    container_id: "container:workspace",
+    surface_id: "container:workspace",
     document,
     schemas: [schema],
     panel_definitions: [],
@@ -307,7 +311,7 @@ function committed(
         committed_revision: authoritative.document.revision,
         outcome: {
           kind: "region_collapsed_set",
-          container_id: request.command.container_id,
+          surface_id: request.command.surface_id,
           region_id: request.command.region_id,
           previous_collapsed: false,
           committed_collapsed: request.command.collapsed,

@@ -54,7 +54,7 @@ fn stale_rejections_and_invalid_scope_preserve_the_layout_document() {
         LayoutRequestId::new("request:test:stale").unwrap(),
         stale.document.revision(),
         LayoutMutationCommand::SetSizingSlot {
-            container_id: longhorn_core::LayoutContainerId::new(stale.container_id).unwrap(),
+            surface_id: longhorn_core::SurfaceId::new(stale.surface_id).unwrap(),
             sizing_slot_id: SizingSlotId::new("center-stack").unwrap(),
             ratio: LayoutRatio::from_millionths(600_000).unwrap(),
         },
@@ -82,7 +82,7 @@ fn stale_rejections_and_invalid_scope_preserve_the_layout_document() {
         LayoutRequestId::new("request:test:cross-scope").unwrap(),
         other.document.revision(),
         LayoutMutationCommand::SetSizingSlot {
-            container_id: longhorn_core::LayoutContainerId::new(other.container_id).unwrap(),
+            surface_id: longhorn_core::SurfaceId::new(other.surface_id).unwrap(),
             sizing_slot_id: SizingSlotId::new("center-stack").unwrap(),
             ratio: LayoutRatio::from_millionths(600_000).unwrap(),
         },

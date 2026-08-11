@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use longhorn_layout::{
-    LayoutDocument, LayoutMutationReceipt, LayoutMutationRejection, LayoutMutationRequest,
-    LayoutSchemaDefinition, PanelDefinition,
+use longhorn_surfaces::{
+    LayoutMutationReceipt, LayoutMutationRejection, LayoutMutationRequest, LayoutSchemaDefinition,
+    PanelDefinition, SurfaceDocument,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -56,8 +56,8 @@ pub struct WorkspaceProjectContextDto {
 pub struct WorkspaceLayoutSnapshotDto {
     pub projection_revision: u64,
     pub project_id: String,
-    pub container_id: String,
-    pub document: LayoutDocument,
+    pub surface_id: String,
+    pub document: SurfaceDocument,
     pub schemas: Vec<LayoutSchemaDefinition>,
     pub panel_definitions: Vec<PanelDefinition>,
     pub panels: Vec<WorkspacePanelPresentationDto>,

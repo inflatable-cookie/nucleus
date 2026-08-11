@@ -1,12 +1,12 @@
 use longhorn_config::Sha256Digest;
 use longhorn_core::{
-    LayoutContainerId, LayoutRevision, LayoutSchemaId, PanelDefinitionId, PanelInstanceId,
-    RegionFamilyId, RegionId, SizingSlotId,
+    LayoutSchemaId, PanelDefinitionId, PanelInstanceId, RegionFamilyId, RegionId, SizingSlotId,
+    SurfaceId, SurfaceRevision,
 };
-use longhorn_layout::{
-    EmptyRegionPolicy, LayoutContainer, LayoutDefinitionRegistry, LayoutDocument, LayoutLimits,
-    LayoutRatio, LayoutSchemaDefinition, PanelDefinition, PanelInstance, PanelInstancePolicy,
-    PlacementSelector, RegionDefinition, RegionState, SizingSlotDefinition, SizingSlotState,
+use longhorn_surfaces::{
+    EmptyRegionPolicy, LayoutDefinitionRegistry, LayoutLimits, LayoutRatio, LayoutSchemaDefinition,
+    PanelDefinition, PanelInstance, PanelInstancePolicy, PlacementSelector, RegionDefinition,
+    RegionState, SizingSlotDefinition, SizingSlotState, SurfaceDocument, SurfaceRecord,
 };
 
 pub const SCHEMA_ID: &str = "schema:nucleus";
@@ -93,14 +93,15 @@ pub fn definition_registry() -> Result<LayoutDefinitionRegistry, String> {
     .map_err(|error| error.to_string())
 }
 
-pub fn empty_document() -> LayoutDocument {
-    LayoutDocument::new(LayoutRevision::INITIAL, [], [])
+pub fn empty_document() -> SurfaceDocument {
+    SurfaceDocument::new(SurfaceRevision::INITIAL, [], [], [])
 }
 
-pub fn empty_container(project_id: &str) -> Result<LayoutContainer, String> {
-    Ok(LayoutContainer::new(
-        container_id(project_id)?,
+pub fn empty_container(project_id: &str) -> Result<SurfaceRecord, String> {
+    Ok(SurfaceRecord::new(
+        project_surface_id(project_id)?,
         schema_id()?,
+        None,
         [
             RegionState::new(region_id("left")?, [], None, None),
             RegionState::new(region_id("center_top")?, [], None, None),
@@ -114,6 +115,10 @@ pub fn empty_container(project_id: &str) -> Result<LayoutContainer, String> {
             SizingSlotState::new(sizing_slot_id("center-stack")?, ratio(740_000)?),
             SizingSlotState::new(sizing_slot_id("right-stack")?, ratio(740_000)?),
         ],
+        [longhorn_surfaces::SurfaceHostPreference::new(
+            workspace_window_id()?,
+            0,
+        )],
     ))
 }
 
@@ -124,9 +129,14 @@ pub fn agent_chat_instance(project_id: &str) -> Result<PanelInstance, String> {
     ))
 }
 
-pub fn container_id(project_id: &str) -> Result<LayoutContainerId, String> {
+/// Nucleus draws one project workspace in one window, so every Surface names it.
+pub fn workspace_window_id() -> Result<longhorn_core::WindowId, String> {
+    longhorn_core::WindowId::new("workspace").map_err(|error| error.to_string())
+}
+
+pub fn project_surface_id(project_id: &str) -> Result<SurfaceId, String> {
     validate_project_id(project_id)?;
-    LayoutContainerId::new(format!(
+    SurfaceId::new(format!(
         "container:{}",
         Sha256Digest::from_bytes(project_id.as_bytes()).as_str()
     ))

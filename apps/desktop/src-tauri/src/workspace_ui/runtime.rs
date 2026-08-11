@@ -10,8 +10,8 @@ use longhorn_config::{
     StorageRoots,
 };
 use longhorn_core::PanelInstanceId;
-use longhorn_layout::{LayoutDocument, LayoutMutationCommand, LayoutMutationEngine};
-use longhorn_layout_config::{NoLayoutMigration, RegisteredLayoutDomain};
+use longhorn_surfaces::{LayoutMutationCommand, LayoutMutationEngine, SurfaceDocument};
+use longhorn_surfaces_config::{NoLayoutMigration, RegisteredLayoutDomain};
 
 use super::dto::{
     WorkspaceLayoutDispatchResultDto, WorkspaceLayoutMutationDto,
@@ -24,8 +24,8 @@ use super::product_state::{
     normalize_project_context, PanelPresentation, PanelPresentationDomain, PanelPresentationState,
 };
 use super::registry::{
-    agent_chat_instance, container_id, definition_for_kind, definition_registry, panel_instance_id,
-    validate_project_id, PENDING_PROJECT_SCOPE, SCHEMA_ID,
+    agent_chat_instance, definition_for_kind, definition_registry, panel_instance_id,
+    project_surface_id, validate_project_id, PENDING_PROJECT_SCOPE, SCHEMA_ID,
 };
 
 mod project_documents;
@@ -222,7 +222,7 @@ impl WorkspaceUiRuntime {
         self.ensure_project(project_id)?;
         let document = self.load_layout()?;
         let container = document
-            .container(&container_id(project_id)?)
+            .surface(&project_surface_id(project_id)?)
             .ok_or_else(|| format!("Nucleus layout is missing for project {project_id}"))?;
         let instance_id =
             PanelInstanceId::new(panel_instance_id).map_err(|error| error.to_string())?;
@@ -278,9 +278,9 @@ impl WorkspaceUiRuntime {
 
     fn snapshot_locked(&self, project_id: &str) -> Result<WorkspaceLayoutSnapshotDto, String> {
         let document = self.load_layout()?;
-        let project_container_id = container_id(project_id)?;
+        let project_container_id = project_surface_id(project_id)?;
         let container = document
-            .container(&project_container_id)
+            .surface(&project_container_id)
             .ok_or_else(|| format!("Nucleus layout is missing for project {project_id}"))?;
         let presentations = self.load_presentations()?;
         let project_presentations = presentations
@@ -312,7 +312,7 @@ impl WorkspaceUiRuntime {
         Ok(WorkspaceLayoutSnapshotDto {
             projection_revision: self.projection_sequence.fetch_add(1, Ordering::Relaxed) + 1,
             project_id: project_id.to_owned(),
-            container_id: project_container_id.as_str().to_owned(),
+            surface_id: project_container_id.as_str().to_owned(),
             document,
             schemas: registry.schemas().cloned().collect(),
             panel_definitions: registry.panel_definitions().cloned().collect(),
@@ -389,8 +389,8 @@ impl WorkspaceUiRuntime {
 
     fn ensure_project(&self, project_id: &str) -> Result<(), String> {
         let document = self.load_layout()?;
-        let project_container = container_id(project_id)?;
-        if document.container(&project_container).is_some() {
+        let project_container = project_surface_id(project_id)?;
+        if document.surface(&project_container).is_some() {
             let presentations = self.load_presentations()?;
             if presentations.projects.contains_key(project_id) {
                 return Ok(());
@@ -400,8 +400,8 @@ impl WorkspaceUiRuntime {
             ));
         }
 
-        let pending_container = container_id(PENDING_PROJECT_SCOPE)?;
-        if document.container(&pending_container).is_some() {
+        let pending_container = project_surface_id(PENDING_PROJECT_SCOPE)?;
+        if document.surface(&pending_container).is_some() {
             return self.claim_pending_project(project_id, &document);
         }
 
@@ -416,10 +416,10 @@ impl WorkspaceUiRuntime {
         let instance = agent_chat_instance(project_id)?;
         self.store
             .mutate(&self.layout_domain, self.options, |current| {
-                if current.container(&project_container).is_some() {
+                if current.surface(&project_container).is_some() {
                     return Ok(());
                 }
-                if current.container(&pending_container).is_some() {
+                if current.surface(&pending_container).is_some() {
                     return Err(layout_issue(
                         "pending legacy layout appeared while seeding a project",
                     ));
@@ -434,12 +434,12 @@ impl WorkspaceUiRuntime {
     fn claim_pending_project(
         &self,
         project_id: &str,
-        document: &LayoutDocument,
+        document: &SurfaceDocument,
     ) -> Result<(), String> {
-        let pending_id = container_id(PENDING_PROJECT_SCOPE)?;
-        let target_id = container_id(project_id)?;
+        let pending_id = project_surface_id(PENDING_PROJECT_SCOPE)?;
+        let target_id = project_surface_id(project_id)?;
         let pending = document
-            .container(&pending_id)
+            .surface(&pending_id)
             .ok_or_else(|| "pending Nucleus layout container disappeared".to_owned())?;
         let mut presentations = self.load_presentations()?;
         let source_records = presentations
@@ -473,7 +473,7 @@ impl WorkspaceUiRuntime {
         let target_container = remap_container(pending, target_id, &remap)?;
         self.store
             .mutate(&self.layout_domain, self.options, |current| {
-                if current.container(&target_container.id().clone()).is_some() {
+                if current.surface(&target_container.id().clone()).is_some() {
                     return Ok(());
                 }
                 *current =
@@ -484,7 +484,7 @@ impl WorkspaceUiRuntime {
         Ok(())
     }
 
-    fn load_layout(&self) -> Result<LayoutDocument, String> {
+    fn load_layout(&self) -> Result<SurfaceDocument, String> {
         match self
             .store
             .load(&self.layout_domain)

@@ -1,5 +1,5 @@
 import type {
-  LayoutDocument,
+  SurfaceDocument,
   LayoutMutationRequest,
   PanelInstanceId,
 } from "@inflatable-cookie/longhorn/layout";
@@ -119,7 +119,7 @@ export class WorkspaceLayoutSession {
     return this.#binding;
   }
 
-  get projected(): LayoutDocument | undefined {
+  get projected(): SurfaceDocument | undefined {
     return this.layout.projected;
   }
 
@@ -185,8 +185,8 @@ export class WorkspaceLayoutSession {
     const snapshot = this.#snapshot;
     if (!document || !snapshot) return null;
     const prepared = await this.#port.prepare(this.projectId, presentation);
-    const container = document.containers.find(
-      (candidate) => candidate.id === snapshot.container_id,
+    const container = document.surfaces.find(
+      (candidate) => candidate.id === snapshot.surface_id,
     );
     const region = container?.regions.find(
       (candidate) => candidate.region_id === prepared.region_id,
@@ -201,7 +201,7 @@ export class WorkspaceLayoutSession {
         kind: "create_panel",
         panel_instance_id: prepared.panel_instance_id,
         panel_definition_id: prepared.panel_definition_id,
-        container_id: snapshot.container_id,
+        surface_id: snapshot.surface_id,
         region_id: prepared.region_id,
         insertion_index: region.panel_instance_ids.length,
       },
@@ -341,19 +341,19 @@ export class StaleWorkspaceLayoutEpochError extends Error {
 
 function projectCreatePanel(
   request: LayoutMutationRequest,
-): (document: LayoutDocument) => LayoutDocument {
+): (document: SurfaceDocument) => SurfaceDocument {
   if (request.command.kind !== "create_panel") {
     throw new TypeError("create projector requires a create-panel command");
   }
   const command = request.command;
   return (document) => ({
     ...document,
-    containers: document.containers.map((container) =>
-      container.id !== command.container_id
-        ? container
+    surfaces: document.surfaces.map((surface) =>
+      surface.id !== command.surface_id
+        ? surface
         : {
-            ...container,
-            regions: container.regions.map((region) =>
+            ...surface,
+            regions: surface.regions.map((region) =>
               region.region_id !== command.region_id
                 ? region
                 : {

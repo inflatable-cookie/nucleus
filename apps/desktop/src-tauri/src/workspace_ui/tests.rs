@@ -3,7 +3,7 @@ use std::fs;
 
 use longhorn_config::StorageRoots;
 use longhorn_core::{LayoutRequestId, SizingSlotId};
-use longhorn_layout::{LayoutMutationCommand, LayoutMutationRequest, LayoutRatio};
+use longhorn_surfaces::{LayoutMutationCommand, LayoutMutationRequest, LayoutRatio};
 use tempfile::TempDir;
 
 use super::dto::{
@@ -85,7 +85,7 @@ fn registry_matches_the_accepted_five_region_four_slot_shape() {
         .unwrap();
     assert!(matches!(
         tasks.instance_policy(),
-        longhorn_layout::PanelInstancePolicy::OnePerContainer
+        longhorn_surfaces::PanelInstancePolicy::OnePerContainer
     ));
 }
 
@@ -229,7 +229,7 @@ fn create_panel(
                 prepared.panel_definition_id,
             )
             .unwrap(),
-            container_id: longhorn_core::LayoutContainerId::new(snapshot.container_id).unwrap(),
+            surface_id: longhorn_core::SurfaceId::new(snapshot.surface_id).unwrap(),
             region_id: longhorn_core::RegionId::new(region_id).unwrap(),
             insertion_index,
         },
@@ -255,7 +255,7 @@ fn set_ratio(runtime: &WorkspaceUiRuntime, project_id: &str, slot: &str, value: 
         LayoutRequestId::new(format!("request:test:ratio:{project_id}:{slot}:{value}")).unwrap(),
         snapshot.document.revision(),
         LayoutMutationCommand::SetSizingSlot {
-            container_id: longhorn_core::LayoutContainerId::new(snapshot.container_id).unwrap(),
+            surface_id: longhorn_core::SurfaceId::new(snapshot.surface_id).unwrap(),
             sizing_slot_id: SizingSlotId::new(slot).unwrap(),
             ratio: LayoutRatio::from_millionths(value).unwrap(),
         },
@@ -288,7 +288,7 @@ fn region_ids<'a>(
 ) -> &'a [longhorn_core::PanelInstanceId] {
     snapshot
         .document
-        .container(&longhorn_core::LayoutContainerId::new(&snapshot.container_id).unwrap())
+        .surface(&longhorn_core::SurfaceId::new(&snapshot.surface_id).unwrap())
         .unwrap()
         .region(&longhorn_core::RegionId::new(region_id).unwrap())
         .unwrap()
@@ -298,7 +298,7 @@ fn region_ids<'a>(
 fn slot_ratio(snapshot: &WorkspaceLayoutSnapshotDto, slot: &str) -> u32 {
     snapshot
         .document
-        .container(&longhorn_core::LayoutContainerId::new(&snapshot.container_id).unwrap())
+        .surface(&longhorn_core::SurfaceId::new(&snapshot.surface_id).unwrap())
         .unwrap()
         .sizing_slot(&SizingSlotId::new(slot).unwrap())
         .unwrap()

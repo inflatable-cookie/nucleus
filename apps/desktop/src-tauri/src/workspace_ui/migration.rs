@@ -3,10 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use longhorn_config::Sha256Digest;
-use longhorn_core::LayoutRevision;
-use longhorn_layout::{
-    normalize_document, validate_document, LayoutContainer, LayoutDefinitionRegistry,
-    LayoutDocument, PanelInstance, RegionState, SizingSlotState,
+use longhorn_core::SurfaceRevision;
+use longhorn_surfaces::{
+    normalize_layout, validate_layout, LayoutDefinitionRegistry, PanelInstance, RegionState,
+    SizingSlotState, SurfaceDocument, SurfaceRecord,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -16,13 +16,13 @@ use super::product_state::{
     PanelPresentation, PanelPresentationState, DOMAIN_ID as PRESENTATION_DOMAIN_ID,
 };
 use super::registry::{
-    container_id, definition_for_kind, panel_instance_id, ratio, region_id, sizing_slot_id,
+    definition_for_kind, panel_instance_id, project_surface_id, ratio, region_id, sizing_slot_id,
     PENDING_PROJECT_SCOPE, REGION_IDS, SCHEMA_ID, SIZING_SLOT_IDS,
 };
 
 #[derive(Clone, Debug)]
 pub struct PreparedLayoutMigration {
-    pub document: LayoutDocument,
+    pub document: SurfaceDocument,
     pub presentations: PanelPresentationState,
     pub publish_layout: bool,
     pub publish_presentations: bool,
@@ -151,7 +151,7 @@ impl PreparedLayoutMigration {
 }
 
 fn prepared(
-    converted: (LayoutDocument, PanelPresentationState),
+    converted: (SurfaceDocument, PanelPresentationState),
     source: Vec<u8>,
     publish_layout: bool,
     publish_presentations: bool,
@@ -173,7 +173,7 @@ fn prepared(
 fn convert(
     bytes: &[u8],
     registry: &LayoutDefinitionRegistry,
-) -> Result<(LayoutDocument, PanelPresentationState), String> {
+) -> Result<(SurfaceDocument, PanelPresentationState), String> {
     let source = decode_project_layout_source(bytes)?;
     let mut containers = Vec::new();
     let mut instances = Vec::new();
@@ -194,18 +194,18 @@ fn convert(
             .projects
             .insert(PENDING_PROJECT_SCOPE.to_owned(), converted.presentations);
     }
-    let document = normalize_document(
+    let document = normalize_layout(
         registry,
-        &LayoutDocument::new(LayoutRevision::INITIAL, containers, instances),
+        &SurfaceDocument::new(SurfaceRevision::INITIAL, containers, instances, []),
     )
     .map_err(|error| format!("normalize migrated project layouts failed: {error}"))?;
-    validate_document(registry, &document)
+    validate_layout(registry, &document)
         .map_err(|error| format!("validate migrated project layouts failed: {error}"))?;
     Ok((document, presentations))
 }
 
 struct ConvertedProject {
-    container: LayoutContainer,
+    container: SurfaceRecord,
     instances: Vec<PanelInstance>,
     presentations: BTreeMap<String, PanelPresentation>,
 }
@@ -273,11 +273,16 @@ fn convert_project(
         .collect::<Result<Vec<_>, String>>()?;
 
     Ok(ConvertedProject {
-        container: LayoutContainer::new(
-            container_id(project_id)?,
+        container: SurfaceRecord::new(
+            project_surface_id(project_id)?,
             longhorn_core::LayoutSchemaId::new(SCHEMA_ID).map_err(|error| error.to_string())?,
+            None,
             region_states,
             sizing,
+            [longhorn_surfaces::SurfaceHostPreference::new(
+                super::registry::workspace_window_id()?,
+                0,
+            )],
         ),
         instances,
         presentations,

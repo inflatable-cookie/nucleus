@@ -8,11 +8,13 @@ import {
   assertValidLayoutMutationCommand,
   assertValidLayoutMutationOutcome,
   assertValidLayoutMutationRejectionCode,
-  type LayoutDocument,
   type LayoutMutationRequest,
   type LayoutSchemaDefinition,
   type PanelDefinition,
 } from "@inflatable-cookie/longhorn/layout";
+import {
+  type SurfaceDocument,
+} from "@inflatable-cookie/longhorn/surfaces";
 import type { LayoutDispatchResult } from "@inflatable-cookie/longhorn-poodle-svelte/layout";
 
 export const WORKSPACE_LAYOUT_CHANGED_EVENT = "nucleus://workspace-layout";
@@ -52,8 +54,8 @@ export type WorkspaceProjectContext = {
 export type WorkspaceLayoutSnapshot = {
   projection_revision: number;
   project_id: string;
-  container_id: string;
-  document: LayoutDocument;
+  surface_id: string;
+  document: SurfaceDocument;
   schemas: LayoutSchemaDefinition[];
   panel_definitions: PanelDefinition[];
   panels: WorkspacePanelPresentation[];
@@ -154,8 +156,8 @@ export function validateWorkspaceLayoutSnapshot(
   const record = object(value, "workspace layout snapshot");
   integer(record.projection_revision, "projection_revision");
   string(record.project_id, "project_id");
-  string(record.container_id, "container_id");
-  validateLayoutDocument(record.document);
+  string(record.surface_id, "surface_id");
+  validateSurfaceDocument(record.document);
   array(record.schemas, "schemas").forEach(validateLayoutSchema);
   array(record.panel_definitions, "panel_definitions").forEach(
     validatePanelDefinition,
@@ -174,14 +176,14 @@ function validateMutationResponse(value: unknown): WorkspaceLayoutMutationRespon
     integer(receipt.previous_revision, "previous_revision");
     integer(receipt.committed_revision, "committed_revision");
     assertValidLayoutMutationOutcome(receipt.outcome);
-    validateLayoutDocument(receipt.authoritative_document);
+    validateSurfaceDocument(receipt.authoritative_document);
   } else if (result.status === "rejected") {
     const rejection = object(result.rejection, "layout mutation rejection");
     string(rejection.request_id, "request_id");
     integer(rejection.current_revision, "current_revision");
     assertValidLayoutMutationRejectionCode(rejection.code);
     string(rejection.detail, "detail");
-    validateLayoutDocument(rejection.authoritative_document);
+    validateSurfaceDocument(rejection.authoritative_document);
   } else {
     throw new TypeError("layout dispatch result has an unknown status");
   }
@@ -205,14 +207,14 @@ function validateProjectContext(value: unknown): void {
   nullableString(record.active_conversation_id, "active_conversation_id");
 }
 
-function validateLayoutDocument(value: unknown): asserts value is LayoutDocument {
+function validateSurfaceDocument(value: unknown): asserts value is SurfaceDocument {
   const document = object(value, "layout document");
   integer(document.revision, "revision");
-  array(document.containers, "containers").forEach((candidate) => {
-    const container = object(candidate, "layout container");
-    string(container.id, "container.id");
-    string(container.schema_id, "container.schema_id");
-    array(container.regions, "container.regions").forEach((regionValue) => {
+  array(document.surfaces, "surfaces").forEach((candidate) => {
+    const surface = object(candidate, "Surface record");
+    string(surface.id, "surface.id");
+    string(surface.schema_id, "surface.schema_id");
+    array(surface.regions, "surface.regions").forEach((regionValue) => {
       const region = object(regionValue, "region state");
       string(region.region_id, "region_id");
       array(region.panel_instance_ids, "panel_instance_ids").forEach((id) =>
@@ -221,7 +223,7 @@ function validateLayoutDocument(value: unknown): asserts value is LayoutDocument
       nullableString(region.active_panel_instance_id, "active_panel_instance_id");
       nullableBoolean(region.collapsed, "collapsed");
     });
-    array(container.sizing_slots, "container.sizing_slots").forEach((slotValue) => {
+    array(surface.sizing_slots, "surface.sizing_slots").forEach((slotValue) => {
       const slot = object(slotValue, "sizing slot state");
       string(slot.sizing_slot_id, "sizing_slot_id");
       integer(slot.ratio, "ratio");
