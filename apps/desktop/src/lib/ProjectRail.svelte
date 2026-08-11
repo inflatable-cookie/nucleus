@@ -24,6 +24,7 @@
     projectRecordsFromResponse,
     submitControlEnvelope,
     type ControlProjectRecordDto,
+    ControlCommandRefusalError,
   } from "./control";
   import {
     createNativePanelOverlayId,
@@ -59,7 +60,6 @@
   let renameInput = $state<HTMLInputElement | null>(null);
   let pendingDeleteProjectId = $state<string | null>(null);
   let mutatingProjectId = $state<string | null>(null);
-  let mutationFailure = $state<string | null>(null);
   let projectManagerOpen = $state(false);
   let projectManagerView = $state<"all" | "parked" | "archived">("all");
   let managingResourcesProjectId = $state<string | null>(null);
@@ -179,7 +179,6 @@
     action: string,
     surface: "rail" | "manager",
   ) {
-    mutationFailure = null;
     pendingDeleteProjectId = null;
     if (action === "resources") {
       managingSharedFilesProjectId = null;
@@ -209,7 +208,6 @@
     renamingProjectId = null;
     renamingSurface = null;
     pendingDeleteProjectId = null;
-    mutationFailure = null;
     managingResourcesProjectId = null;
     managingSharedFilesProjectId = null;
   }
@@ -231,7 +229,6 @@
     const previousIds = new Set(projects.map((project) => project.project_id));
     const idempotencyKey = `project-create:${crypto.randomUUID()}`;
     mutatingProjectId = "create";
-    mutationFailure = null;
     try {
       await submitProjectCommand({
         kind: "project_create",
@@ -248,7 +245,9 @@
       selectedProjectId = projects.find((project) => !previousIds.has(project.project_id))?.project_id
         ?? selectedProjectId;
     } catch (error) {
-      mutationFailure = error instanceof Error ? error.message : String(error);
+      if (!(error instanceof ControlCommandRefusalError)) {
+        failure = error instanceof Error ? error.message : String(error);
+      }
     } finally {
       mutatingProjectId = null;
     }
@@ -262,9 +261,7 @@
     }
     if (mutatingProjectId) return;
     await mutateProject(project, "rename", displayName);
-    if (!mutationFailure) {
-      cancelProjectRename();
-    }
+    cancelProjectRename();
   }
 
   async function beginProjectRename(
@@ -307,7 +304,6 @@
     if (mutatingProjectId) return;
     const idempotencyKey = `project-${action}:${crypto.randomUUID()}`;
     mutatingProjectId = project.project_id;
-    mutationFailure = null;
     try {
       await submitProjectCommand({
         kind: "project_lifecycle",
@@ -323,7 +319,9 @@
       pendingDeleteProjectId = null;
       await loadProjectRail();
     } catch (error) {
-      mutationFailure = error instanceof Error ? error.message : String(error);
+      if (!(error instanceof ControlCommandRefusalError)) {
+        failure = error instanceof Error ? error.message : String(error);
+      }
     } finally {
       mutatingProjectId = null;
     }
@@ -335,7 +333,9 @@
       throw new Error("Project command returned an unexpected response.");
     }
     if (response.body.status !== "accepted_for_state_mutation") {
-      throw new Error(response.body.error_reason ?? "Project command was refused.");
+      throw new ControlCommandRefusalError(
+        response.body.error_reason ?? "Project command was refused.",
+      );
     }
   }
 
@@ -480,7 +480,6 @@
         renamingProjectId = null;
         renamingSurface = null;
         pendingDeleteProjectId = null;
-        mutationFailure = null;
         managingResourcesProjectId = null;
         managingSharedFilesProjectId = null;
       }
@@ -515,9 +514,6 @@
         ariaLabel="Project status filter"
         onValueChange={changeProjectManagerView}
       />
-      {#if mutationFailure}
-        <div class="manager-message"><Text tone="danger">{mutationFailure}</Text></div>
-      {/if}
       <div class="project-manager-list">
         {#each managedProjects as project (project.project_id)}
           <section class="managed-project">
@@ -573,10 +569,6 @@
       <button type="submit" disabled={!createName.trim() || mutatingProjectId !== null}>Create</button>
       <button type="button" onclick={() => { creating = false; createName = ""; }}>Cancel</button>
     </form>
-  {/if}
-
-  {#if mutationFailure}
-    <div class="rail-message rail-message-error" role="alert"><Text tone="danger">{mutationFailure}</Text></div>
   {/if}
 
   {#if failure}
@@ -926,7 +918,6 @@
     flex: 1;
   }
 
-  .manager-message,
   .manager-empty {
     padding: 0.5rem 0.25rem;
   }

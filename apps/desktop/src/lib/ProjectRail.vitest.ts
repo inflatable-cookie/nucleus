@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const fixtures = vi.hoisted(() => ({
   projectLoadFailuresRemaining: 0,
+  projectCommandRefusal: false,
   projects: [
     {
       project_id: "project:one",
@@ -42,6 +43,7 @@ const fixtures = vi.hoisted(() => ({
 }));
 
 vi.mock("./control", () => ({
+  ControlCommandRefusalError: class ControlCommandRefusalError extends Error {},
   buildControlCommandEnvelope: vi.fn((command) => command),
   buildStateListQuery: vi.fn((domain) => domain),
   projectRecordsFromResponse: vi.fn(() => fixtures.projects),
@@ -49,6 +51,16 @@ vi.mock("./control", () => ({
     if (request === "projects" && fixtures.projectLoadFailuresRemaining > 0) {
       fixtures.projectLoadFailuresRemaining -= 1;
       throw new Error("Project catalogue unavailable");
+    }
+    if (typeof request === "object" && request !== null && "kind" in request
+      && request.kind === "project_lifecycle" && fixtures.projectCommandRefusal) {
+      return {
+        body: {
+          type: "command_receipt",
+          status: "rejected",
+          error_reason: "project deletion refused: retained resources=1, tasks=6",
+        },
+      };
     }
     return { body: { type: "project_records", records: fixtures.projects } };
   }),
@@ -62,6 +74,7 @@ import ProjectRail from "./ProjectRail.svelte";
 
 afterEach(() => {
   fixtures.projectLoadFailuresRemaining = 0;
+  fixtures.projectCommandRefusal = false;
   cleanup();
 });
 
@@ -101,6 +114,24 @@ describe("ProjectRail semantic project interaction", () => {
     await fireEvent.dblClick(secondProject);
     const input = await screen.findByRole("textbox", { name: "Project name" });
     expect((input as HTMLInputElement).value).toBe("Second project");
+  });
+
+  it("routes a refused project mutation without a permanent rail alert", async () => {
+    fixtures.projectCommandRefusal = true;
+    const screen = render(ProjectRail, {
+      props: {
+        selectedProjectId: "project:one",
+        selectedProject: null,
+        selectedConversationId: null,
+      },
+    });
+
+    await screen.findByRole("button", { name: "First project" });
+    await fireEvent.click(screen.getByRole("button", { name: "Project actions for First project" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 
   it("announces a failed project read and retries the exact local query", async () => {

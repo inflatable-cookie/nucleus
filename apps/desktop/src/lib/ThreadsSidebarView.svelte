@@ -7,6 +7,7 @@
     buildStateListQuery,
     projectRecordsFromResponse,
     submitControlEnvelope,
+    ControlCommandRefusalError,
     type ControlProjectRecordDto,
   } from "./control";
   import {
@@ -92,7 +93,9 @@
       }
       notifyProjectsChanged();
     } catch (caught) {
-      failure = formatError(caught);
+      if (!(caught instanceof ControlCommandRefusalError)) {
+        failure = formatError(caught);
+      }
     } finally {
       creating = false;
     }
@@ -125,7 +128,9 @@
       await loadThreads();
       notifyProjectsChanged();
     } catch (caught) {
-      failure = formatError(caught);
+      if (!(caught instanceof ControlCommandRefusalError)) {
+        failure = formatError(caught);
+      }
     } finally {
       creating = false;
     }
@@ -139,7 +144,9 @@
       throw new Error("Project command returned an unexpected response.");
     }
     if (response.body.status !== "accepted_for_state_mutation") {
-      throw new Error(response.body.error_reason ?? "Project command was refused.");
+      throw new ControlCommandRefusalError(
+        response.body.error_reason ?? "Project command was refused.",
+      );
     }
   }
 
