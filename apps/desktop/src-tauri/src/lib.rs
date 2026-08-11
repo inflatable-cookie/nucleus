@@ -22,14 +22,14 @@ use nucleus_server::{
     recover_interrupted_chat_state, seed_local_memory_proposal, seed_local_planning_session,
     seed_local_project_with_resource_root, seed_local_research_run_brief, seed_local_task,
     select_chat_actor, write_command_evidence, AgentChatProviderCatalogue, ControlApiCodecError,
-    ControlRequestEnvelopeDto, ControlResponseBodyDto, ControlResponseEnvelopeDto,
-    EditorDirectoryEntry, EditorFileCreateRequest, EditorFileDeleteReceipt,
-    EditorFileDeleteRequest, EditorFileEntry, EditorFileRenameRequest, EditorFileSaveRequest,
-    EditorFileSnapshot, EditorFileWatchRuntime, ForgeCredentialStatusRefreshInput,
-    ForgeCredentialStatusRefreshPersistenceInput, ForgeNetworkCredentialKind,
-    ForgeNetworkCredentialResolutionBoundary, ForgeNetworkCredentialStatus,
-    ForgeNetworkExecutionCredentialRef, ForgeNetworkExecutionOperationFamily,
-    ForgePullRequestProvider, ForgePullRequestRefreshInput,
+    ControlCommandDto, ControlRequestBodyDto, ControlRequestEnvelopeDto, ControlResponseBodyDto,
+    ControlResponseEnvelopeDto, EditorDirectoryEntry, EditorFileCreateRequest,
+    EditorFileDeleteReceipt, EditorFileDeleteRequest, EditorFileEntry, EditorFileRenameRequest,
+    EditorFileSaveRequest, EditorFileSnapshot, EditorFileWatchRuntime,
+    ForgeCredentialStatusRefreshInput, ForgeCredentialStatusRefreshPersistenceInput,
+    ForgeNetworkCredentialKind, ForgeNetworkCredentialResolutionBoundary,
+    ForgeNetworkCredentialStatus, ForgeNetworkExecutionCredentialRef,
+    ForgeNetworkExecutionOperationFamily, ForgePullRequestProvider, ForgePullRequestRefreshInput,
     ForgePullRequestRefreshPersistenceInput, ForgePullRequestRefreshScope,
     ForgeRepositoryMetadataRefreshInput, ForgeRepositoryMetadataRefreshPersistenceInput,
     ForgeStatusCheckRefreshInput, ForgeStatusCheckRefreshPersistenceInput,
@@ -993,15 +993,57 @@ fn seed_local_provider_readiness_evidence(
     Ok(())
 }
 
+struct ProjectCommandRefusalContext {
+    command_id: String,
+    project_id: Option<String>,
+    label: &'static str,
+}
+
+fn project_command_refusal_context(
+    request: &ControlRequestEnvelopeDto,
+) -> Option<ProjectCommandRefusalContext> {
+    let ControlRequestBodyDto::Command { command } = &request.body else {
+        return None;
+    };
+    match command {
+        ControlCommandDto::ProjectCreate { command_id, .. } => Some(ProjectCommandRefusalContext {
+            command_id: command_id.clone(),
+            project_id: None,
+            label: "Project creation",
+        }),
+        ControlCommandDto::ProjectLifecycle {
+            command_id,
+            project_id,
+            ..
+        } => Some(ProjectCommandRefusalContext {
+            command_id: command_id.clone(),
+            project_id: Some(project_id.clone()),
+            label: "Project change",
+        }),
+        ControlCommandDto::ProjectResource {
+            command_id,
+            project_id,
+            ..
+        } => Some(ProjectCommandRefusalContext {
+            command_id: command_id.clone(),
+            project_id: Some(project_id.clone()),
+            label: "Project resource change",
+        }),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 async fn submit_control_envelope(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
     request: ControlRequestEnvelopeDto,
 ) -> Result<ControlResponseEnvelopeDto, ControlApiCodecError> {
+    let refusal_context = project_command_refusal_context(&request);
     // Storage IO runs off the main thread; the adapter mutex no longer
     // serializes panel queries through the UI thread.
     let adapter = state.adapter.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let response = tauri::async_runtime::spawn_blocking(move || {
         let mut adapter = adapter.lock().map_err(|_| ControlApiCodecError {
             failure: nucleus_server::ControlApiCodecFailure::ServerErrorPayload,
             reason: "desktop command adapter lock is poisoned".to_owned(),
@@ -1012,7 +1054,29 @@ async fn submit_control_envelope(
     .map_err(|_| ControlApiCodecError {
         failure: nucleus_server::ControlApiCodecFailure::ServerErrorPayload,
         reason: "desktop command worker failed".to_owned(),
-    })?
+    })??;
+
+    if let Some(context) = refusal_context {
+        if let ControlResponseBodyDto::CommandReceipt {
+            status,
+            error_reason,
+            ..
+        } = &response.body
+        {
+            if status == "rejected" {
+                notifications::publish_command_refusal(
+                    &app,
+                    &context.command_id,
+                    context.project_id.as_deref(),
+                    context.label,
+                    error_reason
+                        .as_deref()
+                        .unwrap_or("Project command was refused."),
+                );
+            }
+        }
+    }
+    Ok(response)
 }
 
 const WORKSPACE_LAYOUT_CHANGED_EVENT: &str = "nucleus://workspace-layout";

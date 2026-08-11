@@ -106,6 +106,15 @@ import {
   type AcceptedMemoryQueryResult,
 } from "./memory";
 
+export class ControlCommandRefusalError extends Error {
+  readonly kind = "control-command-refusal";
+
+  constructor(reason: string) {
+    super(reason);
+    this.name = "ControlCommandRefusalError";
+  }
+}
+
 export async function submitControlEnvelope(
   request: ControlRequestEnvelopeDto,
 ): Promise<ControlResponseEnvelopeDto> {

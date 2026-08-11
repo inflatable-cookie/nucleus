@@ -21,6 +21,7 @@ use tauri::{App, AppHandle, Emitter, Manager, Runtime};
 
 const AUTHORITY_ID: &str = "nucleus:desktop-notifications";
 const SOURCE_OPERATIONS: &str = "nucleus:operations";
+const SOURCE_COMMANDS: &str = "nucleus:commands";
 const ACTION_OPEN_FORGE: &str = "nucleus:sidebar.show-forge";
 const RETAINED_LIMIT: usize = 100;
 const SNAPSHOT_LIMIT: u64 = 100;
@@ -161,6 +162,48 @@ impl NucleusNotificationRuntime {
         Ok(result)
     }
 
+    fn command_refusal_mutation(
+        &self,
+        command_id: &str,
+        scope: Option<&str>,
+        label: &str,
+        reason: &str,
+    ) -> Result<NotificationMutationResult, String> {
+        let sequence = self.next_sequence()?;
+        let mut ledger = self
+            .ledger
+            .lock()
+            .map_err(|_| "notification authority unavailable")?;
+        let snapshot = NotificationSnapshot::from_ledger(&ledger, 0, SNAPSHOT_LIMIT)
+            .map_err(|error| error.to_string())?;
+        let scope_summary = scope
+            .map(|value| format!(" in {value}"))
+            .unwrap_or_default();
+        let result = ledger
+            .execute_protocol_mutation(NotificationMutationCommand::Add {
+                request_id: id(&format!("request:nucleus-notification:{sequence}:add"))?,
+                protocol_version: NotificationProtocolVersion::CURRENT,
+                authority: snapshot.authority,
+                expected_ledger_revision: snapshot.ledger_revision,
+                notification_id: id(&format!("notification:nucleus:{sequence}"))?,
+                draft: NotificationDraftProjection {
+                    source_id: id(SOURCE_COMMANDS)?,
+                    severity: NotificationSeverityProjection::Warning,
+                    title: format!("{label} refused"),
+                    summary: format!("{reason}{scope_summary}"),
+                    cause_id: id::<NotificationCauseId>(command_id).ok(),
+                    actions: Vec::new(),
+                    replacement_key: None,
+                    producer_token: None,
+                    retention_class: NotificationRetentionClassProjection::Standard,
+                    presentation_time_unix_ms: presentation_time(),
+                },
+            })
+            .map_err(|error| error.to_string())?;
+        persist_committed(&self.persistence_path, &result)?;
+        Ok(result)
+    }
+
     fn next_sequence(&self) -> Result<u64, String> {
         let mut sequence = self
             .sequence
@@ -244,6 +287,26 @@ pub(crate) fn publish_operation_failure<R: Runtime>(
             .publish_operation_failure(app, operation_id, kind, scope, label)
     {
         eprintln!("operation failure notification publication failed: {error}");
+    }
+}
+
+pub(crate) fn publish_command_refusal<R: Runtime>(
+    app: &AppHandle<R>,
+    command_id: &str,
+    scope: Option<&str>,
+    label: &str,
+    reason: &str,
+) {
+    let Some(state) = app.try_state::<NucleusNotificationState>() else {
+        return;
+    };
+    match state
+        .runtime
+        .command_refusal_mutation(command_id, scope, label, reason)
+        .and_then(|result| publish(app, &result))
+    {
+        Ok(()) => {}
+        Err(error) => eprintln!("command refusal notification publication failed: {error}"),
     }
 }
 

@@ -51,6 +51,45 @@ fn operation_failure_is_redacted_and_routes_through_semantic_action() {
 }
 
 #[test]
+fn command_refusal_is_warning_with_reason_and_project_scope() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let runtime = NucleusNotificationRuntime::new(directory.path().join("notifications.json"))
+        .expect("notification runtime");
+    runtime
+        .command_refusal_mutation(
+            "command:project-delete",
+            Some("project:nucleus-local"),
+            "Project deletion",
+            "project deletion refused: retained resources=1, tasks=6",
+        )
+        .expect("publish refusal");
+
+    let snapshot = snapshot(&runtime);
+    assert_eq!(snapshot.unseen_count, 1);
+    let record = &snapshot.page.records[0];
+    assert_eq!(record.draft.source_id.to_string(), SOURCE_COMMANDS);
+    assert_eq!(
+        record.draft.severity,
+        NotificationSeverityProjection::Warning
+    );
+    assert_eq!(record.draft.title, "Project deletion refused");
+    assert!(record
+        .draft
+        .summary
+        .contains("retained resources=1, tasks=6"));
+    assert_eq!(
+        record
+            .draft
+            .cause_id
+            .as_ref()
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("command:project-delete")
+    );
+    assert_eq!(record.draft.actions.len(), 0);
+}
+
+#[test]
 fn seen_and_dismissed_state_survive_restart() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("notifications.json");
