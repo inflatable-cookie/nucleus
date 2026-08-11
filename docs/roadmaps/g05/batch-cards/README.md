@@ -14,8 +14,7 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `095-pre-card179-layout-migration.md` — worker thread
-  `thread/095-pre-card179-layout-migration`
+- none
 
 ## Paused Cards
 

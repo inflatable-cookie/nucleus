@@ -1,6 +1,6 @@
 # 095 Pre-Card-179 Layout State Migration
 
-Status: dispatched
+Status: withdrawn
 Owner: Tom
 Created: 2026-08-11
 Milestone: none yet (shell quality / longhorn consumer lane)
@@ -116,3 +116,23 @@ preserved), any UI change, swallowtail.
   transform's contract says layout + surfaces only) → stop and report
 - The primary window id is not discoverable from nucleus source → stop and
   ask
+
+## Withdrawal
+
+Withdrawn 2026-08-11 before merge; worker diff discarded uncommitted.
+
+- The operator cleared local state and started fresh rather than migrating;
+  the parallel longhorn sweep staged-deleted `card179.rs` and the
+  `merge_pre_card179_state` export (transform exists only at longhorn
+  `6ac65fa6`), so the wiring target is gone upstream.
+- Consequence to remember: nucleus has **no** migration path for pre-179
+  layout state. Any install holding a `schemaVersion: 1`
+  `project-layouts.json` will hard-fail at startup with
+  `Nucleus layout domain requires recovery`; the remedy is archiving or
+  deleting that file (panel arrangement is the only casualty).
+- Worker evidence worth keeping: after any v1→v2 migration longhorn refuses
+  the first mutation with `MigrationBackupRequired { from: 1, to: 2 }` —
+  the v1 source is preserved byte-identical until backed up out-of-band
+  (`longhorn-config domain_store/mutation/basic.rs`). If migration ever
+  returns as a card, the backup step is part of the design, not an
+  afterthought.
