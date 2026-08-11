@@ -41,3 +41,7 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
   command's error output (it already points at the directory).
 - Surface: `effigy deps link bun`, TS side; first proven use of the flow
   (nucleus desktop ← poodle local source, 2026-08-10).
+- Addendum (2026-08-11): the linker prints `Errors (1)` for the
+  duplicate-svelte case but exits 0, so shell fallbacks
+  (`cmd || recovery`) do not fire — check output, not exit code, or fix
+  the exit contract in effigy.
