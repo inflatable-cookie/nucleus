@@ -1,20 +1,27 @@
+//! Swallowtail Codex task execution runtime.
+//!
+//! Module index over the task execution surface: the runtime adapter, turn
+//! driving, and outcome mapping.
+
+mod drive;
+mod outcome;
+#[cfg(test)]
+mod tests;
+
+use std::future::Future;
+use std::path::Path;
+use std::thread;
+
 use nucleus_agent_protocol::{
     TaskExecutionLinkage, TaskExecutionOutcome, TaskExecutionRequest, TaskExecutionRuntime,
     TaskExecutionStartedHandler,
 };
-use std::future::poll_fn;
-use std::future::Future;
-use std::path::Path;
-use std::task::Poll;
-use std::thread;
 use swallowtail_adapter_codex::{
-    codex_approval_request_extension, codex_user_input_request_extension, CodexAppServerDriver,
-    CodexSessionProfileInput,
+    CodexAppServerDriver, CodexSessionProfileInput,
 };
 use swallowtail_core::ReasoningMode;
 use swallowtail_runtime::{
-    CallbackRequestKind, CleanupOutcome, InteractiveSessionDriver, OperationContent,
-    RuntimeFailure, SessionOptions, TerminalOutcome, TerminalStatus, TurnHandle, TurnRequest,
+    InteractiveSessionDriver, OperationContent, SessionOptions, TurnRequest,
 };
 
 use super::{host, idioms, preparation, request_id, runtime_error};
@@ -122,7 +129,7 @@ impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {
             let session_cleanup = block_on_worker(session.close());
             return Ok(TaskExecutionOutcome::RecoveryRequired {
                 linkage: Some(linkage),
-                reason: cleanup_reason(
+                reason: outcome::cleanup_reason(
                     &format!("failed to persist provider start linkage: {reason}"),
                     None,
                     &turn_cleanup,
@@ -131,10 +138,10 @@ impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {
             });
         }
 
-        let terminal = block_on_worker(drive_task_turn(turn.as_mut()));
+        let terminal = block_on_worker(drive::drive_task_turn(turn.as_mut()));
         let turn_cleanup = block_on_worker(turn.close());
         let session_cleanup = block_on_worker(session.close());
-        Ok(map_outcome(
+        Ok(outcome::map_outcome(
             linkage,
             terminal,
             turn_cleanup,
@@ -154,348 +161,4 @@ where
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     })
-}
-
-enum TaskTurnActivity {
-    Terminal(TerminalOutcome),
-    Callback(CallbackRequestKind),
-    CallbackClosed,
-    CallbackFailed(RuntimeFailure),
-    Event,
-    EventsClosed,
-    EventFailed(RuntimeFailure),
-}
-
-async fn drive_task_turn(turn: &mut dyn TurnHandle) -> Result<TerminalOutcome, String> {
-    let mut events = turn
-        .take_events()
-        .ok_or_else(|| "Swallowtail returned no task event stream".to_owned())?;
-    let mut callbacks = turn
-        .take_callbacks()
-        .ok_or_else(|| "Swallowtail returned no provider-request stream".to_owned())?;
-    let mut callback_requests = callbacks
-        .take_requests()
-        .ok_or_else(|| "Swallowtail provider-request stream is unavailable".to_owned())?;
-    let mut terminal = turn
-        .take_terminal_outcome()
-        .ok_or_else(|| "Swallowtail returned no task terminal outcome".to_owned())?;
-    let mut callbacks_open = true;
-    let mut events_open = true;
-    let mut first_stream_error = None;
-    let mut cancellation_requested = false;
-
-    loop {
-        let activity = poll_fn(|context| {
-            if let Poll::Ready(outcome) = terminal.as_mut().poll(context) {
-                return Poll::Ready(TaskTurnActivity::Terminal(outcome));
-            }
-            if callbacks_open {
-                match callback_requests.as_mut().poll_next(context) {
-                    Poll::Ready(Some(Ok(request))) => {
-                        return Poll::Ready(TaskTurnActivity::Callback(request.kind().clone()));
-                    }
-                    Poll::Ready(Some(Err(error))) => {
-                        return Poll::Ready(TaskTurnActivity::CallbackFailed(error));
-                    }
-                    Poll::Ready(None) => return Poll::Ready(TaskTurnActivity::CallbackClosed),
-                    Poll::Pending => {}
-                }
-            }
-            if events_open {
-                match events.as_mut().poll_next(context) {
-                    Poll::Ready(Some(Ok(_))) => return Poll::Ready(TaskTurnActivity::Event),
-                    Poll::Ready(Some(Err(error))) => {
-                        return Poll::Ready(TaskTurnActivity::EventFailed(error));
-                    }
-                    Poll::Ready(None) => return Poll::Ready(TaskTurnActivity::EventsClosed),
-                    Poll::Pending => {}
-                }
-            }
-            Poll::Pending
-        })
-        .await;
-
-        match activity {
-            TaskTurnActivity::Terminal(outcome) => {
-                return first_stream_error.map_or(Ok(outcome), Err);
-            }
-            TaskTurnActivity::Callback(CallbackRequestKind::Extension(_))
-            | TaskTurnActivity::Event => {}
-            TaskTurnActivity::Callback(CallbackRequestKind::ToolCall { .. }) => {
-                first_stream_error.get_or_insert_with(|| {
-                    "task execution received an undeclared product tool call".to_owned()
-                });
-            }
-            TaskTurnActivity::Callback(CallbackRequestKind::HarnessUserInput(_)) => {
-                first_stream_error.get_or_insert_with(|| {
-                    "task execution received unsupported typed user input".to_owned()
-                });
-            }
-            TaskTurnActivity::CallbackClosed => callbacks_open = false,
-            TaskTurnActivity::CallbackFailed(error) => {
-                callbacks_open = false;
-                first_stream_error.get_or_insert_with(|| runtime_error(error));
-            }
-            TaskTurnActivity::EventsClosed => events_open = false,
-            TaskTurnActivity::EventFailed(error) => {
-                events_open = false;
-                first_stream_error.get_or_insert_with(|| runtime_error(error));
-            }
-        }
-
-        if first_stream_error.is_some() && !cancellation_requested {
-            let _ = turn.cancellation().request().await;
-            cancellation_requested = true;
-        }
-    }
-}
-
-fn map_outcome(
-    linkage: TaskExecutionLinkage,
-    terminal: Result<TerminalOutcome, String>,
-    turn_cleanup: CleanupOutcome,
-    session_cleanup: CleanupOutcome,
-) -> TaskExecutionOutcome {
-    let terminal = match terminal {
-        Ok(terminal) => terminal,
-        Err(reason) => {
-            return TaskExecutionOutcome::RecoveryRequired {
-                linkage: Some(linkage),
-                reason: cleanup_reason(&reason, None, &turn_cleanup, &session_cleanup),
-            };
-        }
-    };
-    if cleanup_failed(terminal.cleanup())
-        || cleanup_failed(&turn_cleanup)
-        || cleanup_failed(&session_cleanup)
-    {
-        return TaskExecutionOutcome::RecoveryRequired {
-            linkage: Some(linkage),
-            reason: cleanup_reason(
-                "Codex task execution ended with uncertain cleanup",
-                Some(terminal.cleanup()),
-                &turn_cleanup,
-                &session_cleanup,
-            ),
-        };
-    }
-    match terminal.status() {
-        TerminalStatus::Completed => TaskExecutionOutcome::Completed(linkage),
-        TerminalStatus::Detached => TaskExecutionOutcome::RecoveryRequired {
-            linkage: Some(linkage),
-            reason: "Codex task observation detached while provider work may continue.".to_owned(),
-        },
-        TerminalStatus::Cancelled => TaskExecutionOutcome::Cancelled {
-            linkage: Some(linkage),
-            reason: "Codex task turn was cancelled.".to_owned(),
-        },
-        TerminalStatus::TimedOut => TaskExecutionOutcome::RecoveryRequired {
-            linkage: Some(linkage),
-            reason: "Codex task turn timed out; workspace state requires recovery review."
-                .to_owned(),
-        },
-        TerminalStatus::ProviderRequestObserved(observation)
-            if observation.namespace() == &codex_approval_request_extension() =>
-        {
-            TaskExecutionOutcome::WaitingForApproval(linkage)
-        }
-        TerminalStatus::ProviderRequestObserved(observation)
-            if observation.namespace() == &codex_user_input_request_extension() =>
-        {
-            TaskExecutionOutcome::WaitingForUserInput(linkage)
-        }
-        TerminalStatus::ProviderRequestObserved(_) => TaskExecutionOutcome::Failed {
-            linkage: Some(linkage),
-            reason: "Codex task turn observed an undeclared provider request.".to_owned(),
-        },
-        TerminalStatus::ProviderFailed(diagnostic) => TaskExecutionOutcome::Failed {
-            linkage: Some(linkage),
-            reason: format!(
-                "Codex provider failed: [{}] {}",
-                diagnostic.code(),
-                diagnostic.message()
-            ),
-        },
-        TerminalStatus::HostFailed(diagnostic) => TaskExecutionOutcome::Failed {
-            linkage: Some(linkage),
-            reason: format!(
-                "Codex host failed: [{}] {}",
-                diagnostic.code(),
-                diagnostic.message()
-            ),
-        },
-        TerminalStatus::RuntimeFailed(diagnostic) => TaskExecutionOutcome::Failed {
-            linkage: Some(linkage),
-            reason: format!(
-                "Codex runtime failed: [{}] {}",
-                diagnostic.code(),
-                diagnostic.message()
-            ),
-        },
-    }
-}
-
-fn cleanup_failed(cleanup: &CleanupOutcome) -> bool {
-    matches!(
-        cleanup,
-        CleanupOutcome::Degraded(_) | CleanupOutcome::Failed(_)
-    )
-}
-
-fn cleanup_reason(
-    reason: &str,
-    terminal: Option<&CleanupOutcome>,
-    turn: &CleanupOutcome,
-    session: &CleanupOutcome,
-) -> String {
-    format!(
-        "{reason}; terminal_cleanup={}, turn_cleanup={}, session_cleanup={}",
-        cleanup_label(terminal.unwrap_or(&CleanupOutcome::NotApplicable)),
-        cleanup_label(turn),
-        cleanup_label(session)
-    )
-}
-
-fn cleanup_label(cleanup: &CleanupOutcome) -> &'static str {
-    match cleanup {
-        CleanupOutcome::Clean => "clean",
-        CleanupOutcome::Degraded(_) => "degraded",
-        CleanupOutcome::Failed(_) => "failed",
-        CleanupOutcome::NotApplicable => "not_applicable",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use swallowtail_core::{ProviderRequestRef, SafeDiagnostic};
-    use swallowtail_runtime::{CallbackId, ProviderRequestObservation};
-
-    fn linkage() -> TaskExecutionLinkage {
-        TaskExecutionLinkage {
-            session_id: "session-1".to_owned(),
-            thread_id: "thread-1".to_owned(),
-            turn_id: "turn-1".to_owned(),
-        }
-    }
-
-    fn observed(namespace: swallowtail_core::ExtensionNamespace) -> TerminalOutcome {
-        TerminalOutcome::new(
-            TerminalStatus::ProviderRequestObserved(ProviderRequestObservation::new(
-                CallbackId::new("callback-1").expect("callback id"),
-                namespace,
-                ProviderRequestRef::new("provider-request-1").expect("provider request"),
-            )),
-            CleanupOutcome::NotApplicable,
-        )
-    }
-
-    #[test]
-    fn provider_requests_keep_approval_and_user_input_distinct() {
-        assert!(matches!(
-            map_outcome(
-                linkage(),
-                Ok(observed(codex_approval_request_extension())),
-                CleanupOutcome::NotApplicable,
-                CleanupOutcome::Clean,
-            ),
-            TaskExecutionOutcome::WaitingForApproval(_)
-        ));
-        assert!(matches!(
-            map_outcome(
-                linkage(),
-                Ok(observed(codex_user_input_request_extension())),
-                CleanupOutcome::NotApplicable,
-                CleanupOutcome::Clean,
-            ),
-            TaskExecutionOutcome::WaitingForUserInput(_)
-        ));
-    }
-
-    #[test]
-    fn task_futures_can_run_from_inside_an_existing_local_executor() {
-        let result = futures_executor::block_on(async { block_on_worker(async { 42 }) });
-
-        assert_eq!(result, 42);
-    }
-
-    #[test]
-    fn timeout_detachment_and_cleanup_uncertainty_require_recovery() {
-        let timeout = TerminalOutcome::new(TerminalStatus::TimedOut, CleanupOutcome::NotApplicable);
-        assert!(matches!(
-            map_outcome(
-                linkage(),
-                Ok(timeout),
-                CleanupOutcome::NotApplicable,
-                CleanupOutcome::Clean,
-            ),
-            TaskExecutionOutcome::RecoveryRequired { .. }
-        ));
-        let detached =
-            TerminalOutcome::new(TerminalStatus::Detached, CleanupOutcome::NotApplicable);
-        assert!(matches!(
-            map_outcome(
-                linkage(),
-                Ok(detached),
-                CleanupOutcome::NotApplicable,
-                CleanupOutcome::Clean,
-            ),
-            TaskExecutionOutcome::RecoveryRequired { reason, .. }
-                if reason.contains("provider work may continue")
-        ));
-        let completed =
-            TerminalOutcome::new(TerminalStatus::Completed, CleanupOutcome::NotApplicable);
-        assert!(matches!(
-            map_outcome(
-                linkage(),
-                Ok(completed),
-                CleanupOutcome::NotApplicable,
-                CleanupOutcome::Failed(SafeDiagnostic::new("fixture.cleanup", "cleanup failed",)),
-            ),
-            TaskExecutionOutcome::RecoveryRequired { .. }
-        ));
-    }
-
-    #[test]
-    fn completed_cancelled_and_failed_outcomes_remain_distinct() {
-        assert!(matches!(
-            map_outcome(
-                linkage(),
-                Ok(TerminalOutcome::new(
-                    TerminalStatus::Completed,
-                    CleanupOutcome::NotApplicable,
-                )),
-                CleanupOutcome::NotApplicable,
-                CleanupOutcome::Clean,
-            ),
-            TaskExecutionOutcome::Completed(_)
-        ));
-        assert!(matches!(
-            map_outcome(
-                linkage(),
-                Ok(TerminalOutcome::new(
-                    TerminalStatus::Cancelled,
-                    CleanupOutcome::NotApplicable,
-                )),
-                CleanupOutcome::NotApplicable,
-                CleanupOutcome::Clean,
-            ),
-            TaskExecutionOutcome::Cancelled { .. }
-        ));
-        assert!(matches!(
-            map_outcome(
-                linkage(),
-                Ok(TerminalOutcome::new(
-                    TerminalStatus::ProviderFailed(SafeDiagnostic::new(
-                        "fixture.provider",
-                        "provider failed",
-                    )),
-                    CleanupOutcome::NotApplicable,
-                )),
-                CleanupOutcome::NotApplicable,
-                CleanupOutcome::Clean,
-            ),
-            TaskExecutionOutcome::Failed { .. }
-        ));
-    }
 }

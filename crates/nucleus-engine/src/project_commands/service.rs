@@ -1,18 +1,28 @@
 //! Engine project lifecycle command service.
+//!
+//! Module index over the command service surface: create and lifecycle
+//! execution, retention guards, and action application.
+
+mod actions;
+mod guards;
+mod helpers;
 
 use nucleus_core::{PersistenceDomain, PersistenceRecordId, PersistenceRecordKind, RevisionId};
 use nucleus_projects::{
     decode_project_storage_record, encode_project_storage_payload, encode_project_storage_record,
-    ImportanceBaseline, ImportanceLevel, Project, ProjectActivity, ProjectId, ProjectRetention,
+    ImportanceBaseline, ImportanceLevel, Project, ProjectActivity, ProjectRetention,
     ProjectStatus,
 };
 
 use super::model::{
     EngineProjectCommand, EngineProjectCommandError, EngineProjectCreateCommand,
     EngineProjectLifecycleAction, EngineProjectLifecycleCommand, EngineProjectLifecycleReceipt,
-    EngineProjectRepository, EngineProjectRetentionChoice, EngineProjectScanDomain,
+    EngineProjectRepository, EngineProjectRetentionChoice,
 };
 use crate::task_commands::{EngineRevisionExpectation, EngineTaskRecord};
+
+use actions::{action_name, action_value, apply_action};
+use helpers::{codec_error, invalid, project_id_for_create, request_fingerprint};
 
 pub struct EngineProjectCommandService<R> {
     repository: R,
@@ -226,95 +236,6 @@ where
             .map_err(EngineProjectCommandError::Storage)
     }
 
-    /// Transient expiry deletes only chat residue: any durable child (task,
-    /// goal, accepted memory, attached resource) blocks it and demands an
-    /// explicit retention decision instead. Conversations do not block —
-    /// transient chat expires with its project.
-    fn refuse_expiry_with_durable_children(
-        &self,
-        project: &nucleus_projects::ProjectStorageRecord,
-    ) -> CommandResult<R> {
-        if project.retention != nucleus_projects::ProjectRetentionStorage::Transient {
-            return Err(invalid("only transient projects can expire"));
-        }
-        let mut retained: Vec<String> = Vec::new();
-        if !project.resources.is_empty() {
-            retained.push(format!("resources={}", project.resources.len()));
-        }
-        let durable_domains = [
-            (EngineProjectScanDomain::Tasks, None),
-            (EngineProjectScanDomain::Planning, Some("Goal")),
-            (EngineProjectScanDomain::SharedMemory, None),
-        ];
-        for (domain, kind_filter) in durable_domains {
-            let matches = self
-                .repository
-                .domain_payloads(domain)
-                .map_err(EngineProjectCommandError::Storage)?
-                .into_iter()
-                .filter(|(_, kind, _)| kind_filter.map_or(true, |expected| kind == expected))
-                .try_fold(0_usize, |count, (record_id, _, payload)| {
-                    let value: serde_json::Value =
-                        serde_json::from_slice(&payload).map_err(|_| {
-                            invalid(&format!(
-                                "transient expiry cannot prove child safety: {record_id}"
-                            ))
-                        })?;
-                    Ok(count + usize::from(json_references_project(&value, &project.project_id)))
-                })?;
-            if matches > 0 {
-                retained.push(format!("{}={matches}", domain.label()));
-            }
-        }
-        if retained.is_empty() {
-            Ok(())
-        } else {
-            Err(invalid(&format!(
-                "transient expiry refused: durable children require a retention decision: {}",
-                retained.join(", ")
-            )))
-        }
-    }
-
-    /// A project deletes only when nothing still references it: no attached
-    /// resources, refs, or records in any scanned domain.
-    fn refuse_delete_with_retained_records(
-        &self,
-        project: &nucleus_projects::ProjectStorageRecord,
-    ) -> CommandResult<R> {
-        let mut retained: Vec<String> = Vec::new();
-        if !project.resources.is_empty() {
-            retained.push(format!("resources={}", project.resources.len()));
-        }
-        for domain in EngineProjectScanDomain::ALL {
-            let matches = self
-                .repository
-                .domain_payloads(domain)
-                .map_err(EngineProjectCommandError::Storage)?
-                .into_iter()
-                .try_fold(0_usize, |count, (record_id, _, payload)| {
-                    let value: serde_json::Value =
-                        serde_json::from_slice(&payload).map_err(|_| {
-                            invalid(&format!(
-                                "project deletion cannot prove retained record safety: {record_id}"
-                            ))
-                        })?;
-                    Ok(count + usize::from(json_references_project(&value, &project.project_id)))
-                })?;
-            if matches > 0 {
-                retained.push(format!("{}={matches}", domain.label()));
-            }
-        }
-        if retained.is_empty() {
-            Ok(())
-        } else {
-            Err(invalid(&format!(
-                "project deletion refused: retained {}",
-                retained.join(", ")
-            )))
-        }
-    }
-
     fn validate_common(
         &self,
         actor_ref: &str,
@@ -358,112 +279,5 @@ where
                     .to_owned(),
             })
         }
-    }
-}
-
-fn apply_action<E>(
-    project: &mut nucleus_projects::ProjectStorageRecord,
-    action: &EngineProjectLifecycleAction,
-) -> Result<(), EngineProjectCommandError<E>> {
-    match action {
-        EngineProjectLifecycleAction::Rename { display_name } => {
-            let display_name = display_name.trim();
-            if display_name.is_empty() {
-                return Err(invalid("project name must not be empty"));
-            }
-            project.display_name = display_name.to_owned();
-        }
-        EngineProjectLifecycleAction::Park => {
-            project.status = nucleus_projects::ProjectStorageStatus::Parked
-        }
-        EngineProjectLifecycleAction::Archive => {
-            project.status = nucleus_projects::ProjectStorageStatus::Archived
-        }
-        EngineProjectLifecycleAction::Restore => {
-            project.status = nucleus_projects::ProjectStorageStatus::Active
-        }
-        EngineProjectLifecycleAction::Promote { display_name } => {
-            if project.retention != nucleus_projects::ProjectRetentionStorage::Transient {
-                return Err(invalid("only transient projects can be promoted"));
-            }
-            project.retention = nucleus_projects::ProjectRetentionStorage::Durable;
-            if let Some(display_name) = display_name {
-                let display_name = display_name.trim();
-                if display_name.is_empty() {
-                    return Err(invalid("project name must not be empty"));
-                }
-                project.display_name = display_name.to_owned();
-            }
-        }
-        EngineProjectLifecycleAction::Delete | EngineProjectLifecycleAction::ExpireTransient => {
-            unreachable!("delete and expiry handled before update")
-        }
-    }
-    Ok(())
-}
-
-fn json_references_project(value: &serde_json::Value, project_id: &str) -> bool {
-    match value {
-        serde_json::Value::Object(values) => values.iter().any(|(key, value)| {
-            matches!(key.as_str(), "project_id" | "project_ref")
-                && value.as_str() == Some(project_id)
-                || json_references_project(value, project_id)
-        }),
-        serde_json::Value::Array(values) => values
-            .iter()
-            .any(|value| json_references_project(value, project_id)),
-        _ => false,
-    }
-}
-
-fn project_id_for_create(idempotency_key: &str) -> ProjectId {
-    let hash = blake3::hash(idempotency_key.as_bytes())
-        .to_hex()
-        .to_string();
-    ProjectId(format!("project:{}", &hash[..24]))
-}
-
-fn request_fingerprint(parts: &[&str]) -> String {
-    let mut hasher = blake3::Hasher::new();
-    for part in parts {
-        hasher.update(&(part.len() as u64).to_le_bytes());
-        hasher.update(part.as_bytes());
-    }
-    hasher.finalize().to_hex().to_string()
-}
-
-fn action_name(action: &EngineProjectLifecycleAction) -> &'static str {
-    match action {
-        EngineProjectLifecycleAction::Rename { .. } => "rename",
-        EngineProjectLifecycleAction::Park => "park",
-        EngineProjectLifecycleAction::Archive => "archive",
-        EngineProjectLifecycleAction::Restore => "restore",
-        EngineProjectLifecycleAction::Delete => "delete",
-        EngineProjectLifecycleAction::Promote { .. } => "promote",
-        EngineProjectLifecycleAction::ExpireTransient => "expire-transient",
-    }
-}
-
-fn action_value(action: &EngineProjectLifecycleAction) -> &str {
-    match action {
-        EngineProjectLifecycleAction::Rename { display_name } => display_name.trim(),
-        EngineProjectLifecycleAction::Promote {
-            display_name: Some(display_name),
-        } => display_name.trim(),
-        _ => "",
-    }
-}
-
-fn invalid<E>(reason: &str) -> EngineProjectCommandError<E> {
-    EngineProjectCommandError::InvalidRequest {
-        reason: reason.to_owned(),
-    }
-}
-
-fn codec_error<E>(
-    error: nucleus_projects::ProjectRecordCodecError,
-) -> EngineProjectCommandError<E> {
-    EngineProjectCommandError::Codec {
-        reason: error.reason,
     }
 }

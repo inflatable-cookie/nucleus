@@ -11,9 +11,10 @@ use swallowtail_runtime::{
     ConfiguredProviderInstanceSelectionReadiness, ConfiguredProviderModelCatalogueState,
 };
 
+use super::routing::CHAT_PROVIDER_INSTANCE_ID;
 use super::{
     credentials, LocalCodexChatModelOption, LocalCodexChatReasoningOption,
-    LocalCodexCredentialSummary, CHAT_PROVIDER_INSTANCE_ID,
+    LocalCodexCredentialSummary,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

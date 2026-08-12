@@ -19,10 +19,8 @@ use super::persistence::StoredChatSession;
 use super::task_authoring::{TaskAuthoringReceipt, TaskToolOutcome};
 use super::task_ledger::dynamic_tool_spec as task_ledger_spec;
 use super::task_workflow::{dynamic_tool_spec as task_workflow_spec, TaskWorkflowReceipt};
-use super::{
-    LocalCodexChatHarnessMode, LocalCodexChatReply, SelectedAgentChatRoute,
-    CHAT_TASK_TOOLSET_VERSION,
-};
+use super::routing::{CHAT_TASK_TOOLSET_VERSION, SelectedAgentChatRoute};
+use super::{LocalCodexChatHarnessMode, LocalCodexChatReply};
 use tool_calls::consolidate_task_receipts;
 
 const TASK_TOOL_INSTRUCTIONS: &str = "You are operating inside Nucleus. You have exactly two Nucleus portals. task_ledger inspects, creates, and updates durable Goals and tasks; use inspect before updates and fill every inferable field. task_workflow inspects or runs exactly one task or one Goal snapshot. Task inspection returns current review context; when it reports rework_ready, a newly authorized task run creates a fresh work item carrying that durable review note and its provenance. Call task_workflow run only when the current operator message explicitly authorizes execution; copy an exact authorizing excerpt, cite the current scope revision, and supply a stable idempotency key. Selection, readiness, and a review decision are not execution authority. Never invent task arrays, project sweeps, lifecycle transitions, delegation stages, or dispatch stages. Provider completion does not accept review, complete tasks, achieve Goals, or publish SCM changes. The portals are independent of the chat thread's read-only repository sandbox.";

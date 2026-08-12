@@ -1,365 +1,17 @@
+//! Project resource command tests, split from the project_resources god
+//! file; behavior unchanged.
+
 use super::*;
+
 use crate::commands::{
     ProjectCommand, ProjectCreateCommand, ProjectResourceAction, ProjectResourceCommand,
 };
 use nucleus_core::PersistenceRecordId;
-use nucleus_projects::{
-    decode_project_storage_record, ManagementProjectionSyncPolicy, ProjectResourceId,
-    ProjectResourceRole, ProjectResourceStorageKind, ProjectResourceStorageRole,
-};
 
-#[test]
-fn resource_commands_attach_detect_update_repair_and_remove_without_touching_files() {
-    let (temp_dir, mut handler) = handler(None);
-    assert_eq!(
-        handler
-            .handle(create_request("resource-project", "Resource Project"))
-            .status,
-        ServerControlResponseStatus::Accepted
-    );
-    let mut project_record = project_record(&handler);
+mod attachments_tests;
+mod management_tests;
 
-    let folder = temp_dir.path().join("plain-folder");
-    std::fs::create_dir(&folder).expect("plain folder");
-    let attach_folder = resource_request(
-        "attach-folder",
-        &project_record,
-        ProjectResourceAction::Attach {
-            locator: folder.clone(),
-        },
-    );
-    assert_accepted(handler.handle(attach_folder.clone()));
-    assert_accepted(handler.handle(attach_folder));
-    project_record = stored_project_record(&handler, &project_record.id);
-    let project = decode_project_storage_record(&project_record.payload.bytes).expect("project");
-    let folder_resource = project.resources.first().expect("folder resource");
-    let folder_resource_id = folder_resource.resource_id.clone();
-    assert_eq!(
-        folder_resource.kind,
-        ProjectResourceStorageKind::FilesystemFolder
-    );
-    assert_eq!(
-        project
-            .default_working_resource
-            .as_ref()
-            .map(|target| target.resource_id.as_str()),
-        Some(folder_resource_id.as_str())
-    );
-
-    let repository = temp_dir.path().join("repository");
-    let nested = repository.join("src");
-    std::fs::create_dir_all(repository.join(".git")).expect("git marker");
-    std::fs::create_dir(&nested).expect("nested folder");
-    assert_accepted(handler.handle(resource_request(
-        "attach-repository",
-        &project_record,
-        ProjectResourceAction::Attach { locator: nested },
-    )));
-    project_record = stored_project_record(&handler, &project_record.id);
-    let project = decode_project_storage_record(&project_record.payload.bytes).expect("project");
-    let git_resource = project.resources.get(1).expect("git resource");
-    assert_eq!(git_resource.kind, ProjectResourceStorageKind::GitRepository);
-    assert_eq!(
-        git_resource.current_locator.as_deref(),
-        Some(
-            std::fs::canonicalize(&repository)
-                .expect("repository path")
-                .to_string_lossy()
-                .as_ref()
-        )
-    );
-
-    assert_accepted(handler.handle(resource_request(
-        "update-folder",
-        &project_record,
-        ProjectResourceAction::Update {
-            resource_id: ProjectResourceId(folder_resource_id.clone()),
-            display_name: Some("Reference files".to_owned()),
-            role: Some(ProjectResourceRole::Reference),
-            set_as_default: Some(false),
-        },
-    )));
-    project_record = stored_project_record(&handler, &project_record.id);
-    let project = decode_project_storage_record(&project_record.payload.bytes).expect("project");
-    let folder_resource = project
-        .resource(&folder_resource_id)
-        .expect("folder resource");
-    assert_eq!(folder_resource.display_name, "Reference files");
-    assert_eq!(folder_resource.role, ProjectResourceStorageRole::Reference);
-    assert!(project.default_working_resource.is_none());
-
-    let moved_folder = temp_dir.path().join("moved-folder");
-    std::fs::rename(&folder, &moved_folder).expect("move folder");
-    assert_accepted(handler.handle(resource_request(
-        "repair-folder",
-        &project_record,
-        ProjectResourceAction::Repair {
-            resource_id: ProjectResourceId(folder_resource_id.clone()),
-            locator: moved_folder.clone(),
-        },
-    )));
-    project_record = stored_project_record(&handler, &project_record.id);
-    let project = decode_project_storage_record(&project_record.payload.bytes).expect("project");
-    let repaired = project
-        .resource(&folder_resource_id)
-        .expect("repaired resource");
-    assert_eq!(repaired.resource_id, folder_resource_id);
-    assert_eq!(
-        repaired.current_locator.as_deref(),
-        Some(
-            std::fs::canonicalize(&moved_folder)
-                .expect("moved path")
-                .to_string_lossy()
-                .as_ref()
-        )
-    );
-    assert!(repaired.locator_history.len() >= 3);
-
-    assert_accepted(handler.handle(resource_request(
-        "remove-folder",
-        &project_record,
-        ProjectResourceAction::Remove {
-            resource_id: ProjectResourceId(folder_resource_id),
-        },
-    )));
-    let project_record = stored_project_record(&handler, &project_record.id);
-    let project = decode_project_storage_record(&project_record.payload.bytes).expect("project");
-    assert_eq!(project.resources.len(), 1);
-    assert!(moved_folder.is_dir());
-}
-
-#[test]
-fn resource_command_requires_project_host_revision_and_actor() {
-    let (temp_dir, mut handler) = handler(None);
-    handler.handle(create_request("resource-authority", "Authority Project"));
-    let project_record = project_record(&handler);
-    let folder = temp_dir.path().join("folder");
-    std::fs::create_dir(&folder).expect("folder");
-
-    let mut wrong_host = resource_command(
-        &project_record,
-        ProjectResourceAction::Attach {
-            locator: folder.clone(),
-        },
-        "wrong-host",
-    );
-    wrong_host.authority_host_ref = "host:remote".to_owned();
-    assert_rejected_kind(
-        handler.handle(command_request("wrong-host", wrong_host)),
-        "unauthorized",
-    );
-
-    let mut stale = resource_command(
-        &project_record,
-        ProjectResourceAction::Attach {
-            locator: folder.clone(),
-        },
-        "stale",
-    );
-    stale.expected_revision = RevisionId("rev:stale".to_owned());
-    assert_rejected_kind(handler.handle(command_request("stale", stale)), "conflict");
-
-    let mut missing_actor = resource_command(
-        &project_record,
-        ProjectResourceAction::Attach { locator: folder },
-        "missing-actor",
-    );
-    missing_actor.actor_ref.clear();
-    assert_rejected_kind(
-        handler.handle(command_request("missing-actor", missing_actor)),
-        "invalidrequest",
-    );
-}
-
-#[test]
-fn failed_movement_repair_keeps_project_and_resource_identity_intact() {
-    let (temp_dir, mut handler) = handler(None);
-    assert_accepted(handler.handle(create_request("repair-project", "Repair Project")));
-    let mut project_record = project_record(&handler);
-    let original = temp_dir.path().join("original-folder");
-    std::fs::create_dir(&original).expect("original folder");
-    assert_accepted(handler.handle(resource_request(
-        "attach-original",
-        &project_record,
-        ProjectResourceAction::Attach {
-            locator: original.clone(),
-        },
-    )));
-    project_record = stored_project_record(&handler, &project_record.id);
-    let before = decode_project_storage_record(&project_record.payload.bytes).expect("project");
-    let resource_id = before.resources[0].resource_id.clone();
-    let replacement = temp_dir.path().join("replacement-repository");
-    std::fs::create_dir_all(replacement.join(".git")).expect("replacement repository");
-    std::fs::remove_dir(&original).expect("move original away");
-
-    assert_rejected_kind(
-        handler.handle(resource_request(
-            "repair-with-wrong-kind",
-            &project_record,
-            ProjectResourceAction::Repair {
-                resource_id: ProjectResourceId(resource_id.clone()),
-                locator: replacement,
-            },
-        )),
-        "invalidrequest",
-    );
-
-    let after_record = stored_project_record(&handler, &project_record.id);
-    let after = decode_project_storage_record(&after_record.payload.bytes).expect("project");
-    assert_eq!(after_record.revision_id, project_record.revision_id);
-    assert_eq!(after.project_id, before.project_id);
-    assert_eq!(after.resources[0].resource_id, resource_id);
-    assert_eq!(
-        after.resources[0].current_locator,
-        before.resources[0].current_locator
-    );
-}
-
-#[test]
-fn management_projection_binding_is_explicit_durable_and_repair_aware() {
-    let (temp_dir, mut handler) = handler(None);
-    assert_accepted(handler.handle(create_request("projection-project", "Projection Project")));
-    let mut project_record = project_record(&handler);
-
-    let folder = temp_dir.path().join("plain-folder");
-    std::fs::create_dir(&folder).expect("plain folder");
-    assert_accepted(handler.handle(resource_request(
-        "attach-plain-folder",
-        &project_record,
-        ProjectResourceAction::Attach { locator: folder },
-    )));
-    project_record = stored_project_record(&handler, &project_record.id);
-    let plain_resource_id = decode_project_storage_record(&project_record.payload.bytes)
-        .expect("project")
-        .resources[0]
-        .resource_id
-        .clone();
-    assert_rejected_kind(
-        handler.handle(resource_request(
-            "bind-plain-folder",
-            &project_record,
-            ProjectResourceAction::SetManagementProjection {
-                resource_id: ProjectResourceId(plain_resource_id),
-                sync_policy: ManagementProjectionSyncPolicy::Manual,
-            },
-        )),
-        "git resource",
-    );
-
-    let repository = temp_dir.path().join("management-repository");
-    std::fs::create_dir_all(repository.join(".git")).expect("git repository");
-    assert_accepted(handler.handle(resource_request(
-        "attach-management-repository",
-        &project_record,
-        ProjectResourceAction::Attach {
-            locator: repository.clone(),
-        },
-    )));
-    project_record = stored_project_record(&handler, &project_record.id);
-    let repository_resource_id = decode_project_storage_record(&project_record.payload.bytes)
-        .expect("project")
-        .resources
-        .iter()
-        .find(|resource| resource.kind == ProjectResourceStorageKind::GitRepository)
-        .expect("repository resource")
-        .resource_id
-        .clone();
-
-    assert_accepted(handler.handle(resource_request(
-        "bind-management-repository",
-        &project_record,
-        ProjectResourceAction::SetManagementProjection {
-            resource_id: ProjectResourceId(repository_resource_id.clone()),
-            sync_policy: ManagementProjectionSyncPolicy::Manual,
-        },
-    )));
-    project_record = stored_project_record(&handler, &project_record.id);
-    let project = decode_project_storage_record(&project_record.payload.bytes).expect("project");
-    let target = project
-        .management_projection
-        .expect("management projection");
-    assert_eq!(target.resource_id, repository_resource_id);
-    assert_eq!(target.sync_policy_ref.as_deref(), Some("manual"));
-
-    drop(handler);
-    let mut handler = LocalControlRequestHandler::new(
-        SqliteBackend::new(temp_dir.path().join("nucleus.sqlite")),
-        None,
-    );
-    project_record = stored_project_record(&handler, &project_record.id);
-    let dto = crate::control_envelope_dto::ControlProjectRecordDto::try_from(&project_record)
-        .expect("project dto");
-    assert_eq!(
-        dto.management_resource_id.as_deref(),
-        Some(repository_resource_id.as_str())
-    );
-    assert_eq!(dto.management_sync_policy.as_deref(), Some("manual"));
-    assert_eq!(dto.management_projection_status.as_deref(), Some("ready"));
-    let resolved = crate::management_projection_state::resolve_management_projection_target(
-        handler.state(),
-        &project_record.id.0,
-    )
-    .expect("resolved management projection");
-    assert_eq!(resolved.resource_id, repository_resource_id);
-    assert_eq!(resolved.sync_policy, "manual");
-    assert_eq!(
-        resolved.repo_root,
-        repository.canonicalize().expect("canonical repository")
-    );
-    let export =
-        crate::management_projection_state::write_project_management_projection_export_files(
-            handler.state(),
-            &project_record.id.0,
-            false,
-        )
-        .expect("bound management export");
-    assert_eq!(export.repo_root, resolved.repo_root);
-    assert!(repository.join("nucleus/project.toml").exists());
-    let staged =
-        crate::management_projection_state::stage_project_management_projection_import_files(
-            handler.state(),
-            &project_record.id.0,
-            vec![nucleus_engine::ManagementProjectionFileRef::project()],
-        )
-        .expect("bound management import staging");
-    assert_eq!(staged.staged.len(), 1);
-    assert!(!staged.authoritative_state_mutated);
-
-    std::fs::rename(
-        &repository,
-        temp_dir.path().join("moved-management-repository"),
-    )
-    .expect("move repository");
-    let dto = crate::control_envelope_dto::ControlProjectRecordDto::try_from(&project_record)
-        .expect("missing project dto");
-    assert_eq!(dto.management_projection_status.as_deref(), Some("missing"));
-    assert!(
-        crate::management_projection_state::resolve_management_projection_target(
-            handler.state(),
-            &project_record.id.0,
-        )
-        .expect_err("moved repository requires repair")
-        .contains("unavailable")
-    );
-
-    assert_accepted(handler.handle(resource_request(
-        "clear-management-repository",
-        &project_record,
-        ProjectResourceAction::ClearManagementProjection,
-    )));
-    project_record = stored_project_record(&handler, &project_record.id);
-    let project = decode_project_storage_record(&project_record.payload.bytes).expect("project");
-    assert!(project.management_projection.is_none());
-    assert_accepted(handler.handle(resource_request(
-        "remove-former-management-repository",
-        &project_record,
-        ProjectResourceAction::Remove {
-            resource_id: ProjectResourceId(repository_resource_id),
-        },
-    )));
-}
-
-fn create_request(idempotency_key: &str, display_name: &str) -> ServerControlRequest {
+pub(super) fn create_request(idempotency_key: &str, display_name: &str) -> ServerControlRequest {
     ServerControlRequest {
         id: ServerControlRequestId(format!("request:{idempotency_key}")),
         client_id: ClientId("client:desktop".to_owned()),
@@ -377,7 +29,7 @@ fn create_request(idempotency_key: &str, display_name: &str) -> ServerControlReq
     }
 }
 
-fn resource_request(
+pub(super) fn resource_request(
     command_id: &str,
     record: &nucleus_local_store::LocalStoreRecord,
     action: ProjectResourceAction,
@@ -385,7 +37,7 @@ fn resource_request(
     command_request(command_id, resource_command(record, action, command_id))
 }
 
-fn resource_command(
+pub(super) fn resource_command(
     record: &nucleus_local_store::LocalStoreRecord,
     action: ProjectResourceAction,
     idempotency_key: &str,
@@ -400,7 +52,10 @@ fn resource_command(
     }
 }
 
-fn command_request(command_id: &str, command: ProjectResourceCommand) -> ServerControlRequest {
+pub(super) fn command_request(
+    command_id: &str,
+    command: ProjectResourceCommand,
+) -> ServerControlRequest {
     ServerControlRequest {
         id: ServerControlRequestId(format!("request:{command_id}")),
         client_id: ClientId("client:desktop".to_owned()),
@@ -412,7 +67,7 @@ fn command_request(command_id: &str, command: ProjectResourceCommand) -> ServerC
     }
 }
 
-fn project_record(
+pub(super) fn project_record(
     handler: &LocalControlRequestHandler<SqliteBackend>,
 ) -> nucleus_local_store::LocalStoreRecord {
     handler
@@ -425,7 +80,7 @@ fn project_record(
         .expect("project")
 }
 
-fn stored_project_record(
+pub(super) fn stored_project_record(
     handler: &LocalControlRequestHandler<SqliteBackend>,
     id: &PersistenceRecordId,
 ) -> nucleus_local_store::LocalStoreRecord {
@@ -437,11 +92,11 @@ fn stored_project_record(
         .expect("project")
 }
 
-fn assert_accepted(response: crate::control_api::ServerControlResponse) {
+pub(super) fn assert_accepted(response: crate::control_api::ServerControlResponse) {
     assert_eq!(response.status, ServerControlResponseStatus::Accepted);
 }
 
-fn assert_rejected_kind(response: crate::control_api::ServerControlResponse, kind: &str) {
+pub(super) fn assert_rejected_kind(response: crate::control_api::ServerControlResponse, kind: &str) {
     assert_eq!(response.status, ServerControlResponseStatus::Rejected);
     assert!(format!("{response:?}").to_lowercase().contains(kind));
 }

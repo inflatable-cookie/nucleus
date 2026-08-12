@@ -1,16 +1,20 @@
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+//! Desktop notifications: the notification ledger host, its Tauri state,
+//! and operation-failure and command-refusal publications.
+//!
+//! Module index over the notifications surface: the runtime host and the
+//! ledger persistence.
 
-use longhorn_core::{NotificationAuthorityId, NotificationCauseId, NotificationId, OperationId};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use longhorn_core::{NotificationCauseId, NotificationId, OperationId};
 use longhorn_notifications::{
-    NotificationActionProjection, NotificationAuthorityEpoch, NotificationDraftProjection,
-    NotificationLedger, NotificationLedgerLimits, NotificationMutationCommand,
-    NotificationMutationResult, NotificationProtocolVersion, NotificationReadStateProjection,
-    NotificationRetentionClassProjection, NotificationSeverityProjection, NotificationSnapshot,
-    NotificationSnapshotQuery, NotificationSnapshotResponse,
+    NotificationActionProjection, NotificationDraftProjection, NotificationLedger,
+    NotificationMutationCommand, NotificationMutationResult, NotificationProtocolVersion,
+    NotificationReadStateProjection, NotificationRetentionClassProjection,
+    NotificationSeverityProjection, NotificationSnapshot, NotificationSnapshotQuery,
+    NotificationSnapshotResponse,
 };
 use longhorn_tauri_notifications::{
     notification_mutation_changed_event, NotificationHostError, NotificationHostService,
@@ -18,6 +22,12 @@ use longhorn_tauri_notifications::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::{App, AppHandle, Emitter, Manager, Runtime};
+
+mod persistence;
+
+use persistence::{
+    empty_ledger, persist_committed, presentation_time, read_persisted, restore,
+};
 
 const AUTHORITY_ID: &str = "nucleus:desktop-notifications";
 const SOURCE_OPERATIONS: &str = "nucleus:operations";
@@ -38,15 +48,13 @@ struct NucleusNotificationRuntime {
     sequence: Mutex<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct PersistedLedger {
-    schema_version: u16,
+    schema_version: u32,
     records_newest_first: Vec<PersistedRecord>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct PersistedRecord {
     notification_id: NotificationId,
     draft: NotificationDraftProjection,
@@ -310,93 +318,6 @@ pub(crate) fn publish_command_refusal<R: Runtime>(
     }
 }
 
-fn empty_ledger() -> Result<NotificationLedger, String> {
-    Ok(NotificationLedger::new(
-        id::<NotificationAuthorityId>(AUTHORITY_ID)?,
-        NotificationAuthorityEpoch::new(1).map_err(|error| error.to_string())?,
-        NotificationLedgerLimits::new(RETAINED_LIMIT, RETAINED_WEIGHT_LIMIT)
-            .map_err(|error| error.to_string())?,
-    ))
-}
-
-fn restore(ledger: &mut NotificationLedger, persisted: PersistedLedger) -> Result<(), String> {
-    if persisted.schema_version != 1 {
-        return Err(format!(
-            "unsupported notification ledger schema {}",
-            persisted.schema_version
-        ));
-    }
-    for (index, record) in persisted.records_newest_first.into_iter().rev().enumerate() {
-        let snapshot = NotificationSnapshot::from_ledger(ledger, 0, SNAPSHOT_LIMIT)
-            .map_err(|error| error.to_string())?;
-        let result = ledger
-            .execute_protocol_mutation(NotificationMutationCommand::Add {
-                request_id: id(&format!("request:nucleus-notification:restore:{index}:add"))?,
-                protocol_version: NotificationProtocolVersion::CURRENT,
-                authority: snapshot.authority,
-                expected_ledger_revision: snapshot.ledger_revision,
-                notification_id: record.notification_id.clone(),
-                draft: record.draft,
-            })
-            .map_err(|error| error.to_string())?;
-        if !matches!(result, NotificationMutationResult::Committed { .. }) {
-            return Err("persisted notification replay was rejected".to_owned());
-        }
-        if record.read_state == NotificationReadStateProjection::Seen {
-            let snapshot = NotificationSnapshot::from_ledger(ledger, 0, SNAPSHOT_LIMIT)
-                .map_err(|error| error.to_string())?;
-            let result = ledger
-                .execute_protocol_mutation(NotificationMutationCommand::MarkSeen {
-                    request_id: id(&format!(
-                        "request:nucleus-notification:restore:{index}:seen"
-                    ))?,
-                    protocol_version: NotificationProtocolVersion::CURRENT,
-                    authority: snapshot.authority,
-                    expected_ledger_revision: snapshot.ledger_revision,
-                    notification_id: record.notification_id,
-                })
-                .map_err(|error| error.to_string())?;
-            if !matches!(result, NotificationMutationResult::Committed { .. }) {
-                return Err("persisted notification read state was rejected".to_owned());
-            }
-        }
-    }
-    Ok(())
-}
-
-fn persist_committed(path: &Path, result: &NotificationMutationResult) -> Result<(), String> {
-    let NotificationMutationResult::Committed { snapshot, .. } = result else {
-        return Ok(());
-    };
-    let persisted = PersistedLedger {
-        schema_version: 1,
-        records_newest_first: snapshot
-            .page
-            .records
-            .iter()
-            .map(|record| PersistedRecord {
-                notification_id: record.notification_id.clone(),
-                draft: record.draft.clone(),
-                read_state: record.read_state,
-            })
-            .collect(),
-    };
-    let bytes = serde_json::to_vec_pretty(&persisted).map_err(|error| error.to_string())?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let temporary = path.with_extension("json.tmp");
-    let mut file = File::create(&temporary).map_err(|error| error.to_string())?;
-    file.write_all(&bytes).map_err(|error| error.to_string())?;
-    file.sync_all().map_err(|error| error.to_string())?;
-    fs::rename(&temporary, path).map_err(|error| error.to_string())
-}
-
-fn read_persisted(path: &Path) -> Result<PersistedLedger, String> {
-    let bytes = fs::read(path).map_err(|error| error.to_string())?;
-    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
-}
-
 fn publish<R: Runtime>(
     app: &AppHandle<R>,
     result: &NotificationMutationResult,
@@ -406,14 +327,6 @@ fn publish<R: Runtime>(
             .map_err(|error| error.to_string())?;
     }
     Ok(())
-}
-
-fn presentation_time() -> Option<i64> {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_millis();
-    i64::try_from(millis).ok()
 }
 
 fn id<T>(value: &str) -> Result<T, String>

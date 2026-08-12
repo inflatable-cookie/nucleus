@@ -1,17 +1,22 @@
-use std::collections::BTreeMap;
+//! Workspace UI runtime: layout and panel presentation state for each
+//! project, with serialized command dispatch.
+//!
+//! Module index over the runtime surface: the public API, snapshot
+//! projection, layout and presentation persistence, project seeding, and
+//! panel mutation validation.
+
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::AtomicU64,
     Mutex,
 };
 use std::time::Duration;
 
 use longhorn_config::{
-    ConfigStore, CoordinationAuthority, DurabilityRequirement, LoadOutcome, MutationOptions,
-    StorageRoots,
+    ConfigStore, CoordinationAuthority, DurabilityRequirement, MutationOptions, StorageRoots,
 };
 use longhorn_core::PanelInstanceId;
-use longhorn_surfaces::{LayoutMutationCommand, LayoutMutationEngine, SurfaceDocument};
-use longhorn_surfaces_config::{load_or_default, NoLayoutMigration, RegisteredLayoutDomain};
+use longhorn_surfaces::{LayoutMutationCommand, LayoutMutationEngine};
+use longhorn_surfaces_config::{NoLayoutMigration, RegisteredLayoutDomain};
 
 use super::dto::{
     WorkspaceLayoutDispatchResultDto, WorkspaceLayoutMutationDto,
@@ -21,18 +26,20 @@ use super::dto::{
 };
 use super::migration;
 use super::product_state::{
-    normalize_project_context, PanelPresentation, PanelPresentationDomain, PanelPresentationState,
+    normalize_project_context, PanelPresentation, PanelPresentationDomain,
 };
 use super::registry::{
-    agent_chat_instance, definition_for_kind, definition_registry, panel_instance_id,
-    project_surface_id, validate_project_id, PENDING_PROJECT_SCOPE, SCHEMA_ID,
+    definition_for_kind, definition_registry, project_surface_id, validate_project_id, SCHEMA_ID,
 };
 
+mod panels;
+mod project;
 mod project_documents;
+mod snapshot;
+mod store;
 
 use project_documents::{
-    append_project, claim_pending_document, layout_issue, registered_layout_domain,
-    remap_container, seeded_container, surface_panel_ids, validate_project_command,
+    layout_issue, registered_layout_domain, surface_panel_ids, validate_project_command,
 };
 
 const LAYOUT_DOMAIN_ID: &str = "nucleus.project-layouts";
@@ -274,253 +281,5 @@ impl WorkspaceUiRuntime {
             .insert(project_id.to_owned(), context);
         self.publish_presentations(presentations)?;
         self.snapshot_locked(project_id)
-    }
-
-    fn snapshot_locked(&self, project_id: &str) -> Result<WorkspaceLayoutSnapshotDto, String> {
-        let document = self.load_layout()?;
-        let project_container_id = project_surface_id(project_id)?;
-        let surface = document
-            .surface(&project_container_id)
-            .ok_or_else(|| format!("Nucleus layout is missing for project {project_id}"))?;
-        let presentations = self.load_presentations()?;
-        let project_presentations = presentations
-            .projects
-            .get(project_id)
-            .ok_or_else(|| format!("Nucleus panel presentations are missing for {project_id}"))?;
-        let context = presentations
-            .contexts
-            .get(project_id)
-            .cloned()
-            .unwrap_or_default();
-        let mut panels = Vec::new();
-        for region in surface.regions() {
-            for panel_instance_id in region.panel_instance_ids() {
-                let instance = document.panel_instance(panel_instance_id).ok_or_else(|| {
-                    format!("Nucleus layout references missing panel {panel_instance_id}")
-                })?;
-                let presentation = project_presentations
-                    .get(panel_instance_id.as_str())
-                    .ok_or_else(|| {
-                        format!("Nucleus panel presentation is missing for {panel_instance_id}")
-                    })?;
-                panels.push(
-                    presentation.project(panel_instance_id.as_str(), instance.definition_id())?,
-                );
-            }
-        }
-        let registry = self.layout_domain.registry();
-        Ok(WorkspaceLayoutSnapshotDto {
-            projection_revision: self.projection_sequence.fetch_add(1, Ordering::Relaxed) + 1,
-            project_id: project_id.to_owned(),
-            surface_id: project_container_id.as_str().to_owned(),
-            document,
-            schemas: registry.schemas().cloned().collect(),
-            panel_definitions: registry.panel_definitions().cloned().collect(),
-            panels,
-            context,
-        })
-    }
-
-    fn validate_create_presentation(
-        &self,
-        project_id: &str,
-        command: &LayoutMutationCommand,
-        input: Option<&WorkspacePanelPresentationInputDto>,
-    ) -> Result<Option<(String, PanelPresentation)>, String> {
-        match command {
-            LayoutMutationCommand::CreatePanel {
-                panel_instance_id,
-                panel_definition_id,
-                ..
-            } => {
-                let input = input.ok_or_else(|| {
-                    "Nucleus create-panel command requires product presentation".to_owned()
-                })?;
-                if definition_for_kind(&input.kind)? != *panel_definition_id {
-                    return Err(format!(
-                        "Nucleus panel kind {} does not match definition {panel_definition_id}",
-                        input.kind
-                    ));
-                }
-                let (derived_id, presentation) = PanelPresentation::from_input(project_id, input)?;
-                if derived_id != panel_instance_id.as_str() {
-                    return Err(
-                        "Nucleus create-panel identity does not match product presentation"
-                            .to_owned(),
-                    );
-                }
-                Ok(Some((derived_id, presentation)))
-            }
-            _ if input.is_some() => Err(
-                "Nucleus product presentation is only valid for create-panel commands".to_owned(),
-            ),
-            _ => Ok(None),
-        }
-    }
-
-    fn publish_migration(
-        &self,
-        prepared: &migration::PreparedLayoutMigration,
-    ) -> Result<(), String> {
-        if prepared.publish_presentations {
-            let value = prepared.presentations.clone();
-            self.store
-                .mutate(&self.presentation_domain, self.options, |current| {
-                    *current = value.clone();
-                    Ok(())
-                })
-                .map_err(|error| {
-                    format!("publish migrated Nucleus panel presentations failed: {error}")
-                })?;
-        }
-        if prepared.publish_layout {
-            let value = prepared.document.clone();
-            self.store
-                .mutate(&self.layout_domain, self.options, |current| {
-                    *current = value.clone();
-                    Ok(())
-                })
-                .map_err(|error| format!("publish migrated Nucleus layouts failed: {error}"))?;
-        }
-        self.load_layout()?;
-        self.load_presentations()?;
-        Ok(())
-    }
-
-    fn ensure_project(&self, project_id: &str) -> Result<(), String> {
-        let document = self.load_layout()?;
-        let project_container = project_surface_id(project_id)?;
-        if document.surface(&project_container).is_some() {
-            let presentations = self.load_presentations()?;
-            if presentations.projects.contains_key(project_id) {
-                return Ok(());
-            }
-            return Err(format!(
-                "Nucleus panel presentations are missing for project {project_id}"
-            ));
-        }
-
-        let pending_container = project_surface_id(PENDING_PROJECT_SCOPE)?;
-        if document.surface(&pending_container).is_some() {
-            return self.claim_pending_project(project_id, &document);
-        }
-
-        let mut presentations = self.load_presentations()?;
-        presentations
-            .projects
-            .entry(project_id.to_owned())
-            .or_insert(BTreeMap::from([PanelPresentation::agent_chat(project_id)?]));
-        self.publish_presentations(presentations)?;
-
-        let surface = seeded_container(project_id)?;
-        let instance = agent_chat_instance(project_id)?;
-        self.store
-            .mutate(&self.layout_domain, self.options, |current| {
-                if current.surface(&project_container).is_some() {
-                    return Ok(());
-                }
-                if current.surface(&pending_container).is_some() {
-                    return Err(layout_issue(
-                        "pending legacy layout appeared while seeding a project",
-                    ));
-                }
-                *current = append_project(current, surface.clone(), [instance.clone()])?;
-                Ok(())
-            })
-            .map_err(|error| format!("seed Nucleus project layout failed: {error}"))?;
-        Ok(())
-    }
-
-    fn claim_pending_project(
-        &self,
-        project_id: &str,
-        document: &SurfaceDocument,
-    ) -> Result<(), String> {
-        let pending_id = project_surface_id(PENDING_PROJECT_SCOPE)?;
-        let target_id = project_surface_id(project_id)?;
-        let pending = document
-            .surface(&pending_id)
-            .ok_or_else(|| "pending Nucleus layout surface disappeared".to_owned())?;
-        let mut presentations = self.load_presentations()?;
-        let source_records = presentations
-            .projects
-            .get(PENDING_PROJECT_SCOPE)
-            .or_else(|| presentations.projects.get(project_id))
-            .cloned()
-            .ok_or_else(|| "pending Nucleus panel presentations are missing".to_owned())?;
-        let remap = source_records
-            .iter()
-            .map(|(old, record)| {
-                Ok((
-                    PanelInstanceId::new(old).map_err(|error| error.to_string())?,
-                    panel_instance_id(project_id, &record.external_id)?,
-                ))
-            })
-            .collect::<Result<BTreeMap<_, _>, String>>()?;
-        let target_records = source_records
-            .into_values()
-            .map(|record| {
-                let id = panel_instance_id(project_id, &record.external_id)?;
-                Ok((id.as_str().to_owned(), record))
-            })
-            .collect::<Result<BTreeMap<_, _>, String>>()?;
-        presentations.projects.remove(PENDING_PROJECT_SCOPE);
-        presentations
-            .projects
-            .insert(project_id.to_owned(), target_records);
-        self.publish_presentations(presentations)?;
-
-        let target_container = remap_container(pending, target_id, &remap)?;
-        self.store
-            .mutate(&self.layout_domain, self.options, |current| {
-                if current.surface(&target_container.id().clone()).is_some() {
-                    return Ok(());
-                }
-                *current =
-                    claim_pending_document(current, &pending_id, target_container.clone(), &remap)?;
-                Ok(())
-            })
-            .map_err(|error| format!("claim pending Nucleus project layout failed: {error}"))?;
-        Ok(())
-    }
-
-    /// The stored workspace, or the default when it cannot be read.
-    ///
-    /// A project opens rather than refusing to. Longhorn leaves the unreadable
-    /// source on disk untouched, so the arrangement stays recoverable and only
-    /// this session falls back. A `StoreError` still propagates: that is the
-    /// store failing rather than the document being wrong.
-    fn load_layout(&self) -> Result<SurfaceDocument, String> {
-        let (document, fallback) = load_or_default(&self.store, &self.layout_domain)
-            .map_err(|error| format!("load Nucleus layout domain failed: {error}"))?;
-        if fallback.discarded_stored_state() {
-            eprintln!(
-                "the stored Nucleus workspace could not be read ({fallback:?}); opening on the default arrangement"
-            );
-        }
-        Ok(document)
-    }
-
-    fn load_presentations(&self) -> Result<PanelPresentationState, String> {
-        match self
-            .store
-            .load(&self.presentation_domain)
-            .map_err(|error| format!("load Nucleus panel presentations failed: {error}"))?
-        {
-            LoadOutcome::Ready(loaded) => Ok(loaded.value),
-            other => Err(format!(
-                "Nucleus panel presentation domain requires recovery: {other:?}"
-            )),
-        }
-    }
-
-    fn publish_presentations(&self, value: PanelPresentationState) -> Result<(), String> {
-        self.store
-            .mutate(&self.presentation_domain, self.options, |current| {
-                *current = value.clone();
-                Ok(())
-            })
-            .map_err(|error| format!("publish Nucleus panel presentations failed: {error}"))?;
-        Ok(())
     }
 }

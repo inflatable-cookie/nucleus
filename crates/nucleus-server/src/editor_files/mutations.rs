@@ -8,8 +8,9 @@ use crate::project_file_policy::{admitted_mutation_path, admitted_path};
 use crate::project_resource_target::resolve_project_resource_target;
 use crate::ServerStateService;
 
+use super::discovery::{discover_directory, invalidate_editor_file_discovery, resolve_entry_at_path};
+use super::read::snapshot;
 use super::{
-    discover_directory, invalidate_editor_file_discovery, resolve_entry_at_path, snapshot,
     EditorFileCreateRequest, EditorFileDeleteReceipt, EditorFileDeleteRequest, EditorFileEntry,
     EditorFileRenameRequest, EditorFileSnapshot, MAX_EDITOR_FILE_BYTES,
 };

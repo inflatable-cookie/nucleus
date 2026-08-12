@@ -118,6 +118,6 @@ mod persistence;
 mod rules;
 mod run_loop;
 #[cfg(test)]
-mod tests_split;
+mod tests;
 
 use run_loop::*;

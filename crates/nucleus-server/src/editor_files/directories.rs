@@ -7,10 +7,8 @@ use crate::project_file_policy::{admitted_existing_mutation_path, admitted_mutat
 use crate::project_resource_target::resolve_project_resource_target;
 use crate::ServerStateService;
 
-use super::{
-    discover, file_ref, invalidate_editor_file_discovery, language_hint, EditorFileDeleteReceipt,
-    EditorFileEntry,
-};
+use super::discovery::{discover, file_ref, invalidate_editor_file_discovery, language_hint};
+use super::{EditorFileDeleteReceipt, EditorFileEntry};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EditorDirectoryCreateRequest {
