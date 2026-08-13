@@ -3,33 +3,33 @@
 //! The dispatch dialog's explicit confirm act drives the whole sequence:
 //! propose the run record, execute the operator-confirmed dispatch (the
 //! server writes the durable branch/worktree runner effect intent and runs
-//! the gated `git worktree add` — never a bare spawn), then seed the worker
-//! brief as the first message of the deterministic run conversation
-//! (`conversation:run:<run_id>`) bound to the worktree resource. The turn
-//! hook transitions the run to running when the first activity is observed.
+//! the gated `git worktree add` — never a bare spawn), seed the worker brief,
+//! then, after the observed worker turn returns, drive the delivery pipeline.
 
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nucleus_engine::EngineRunId;
 use nucleus_local_store::SqliteBackend;
 use nucleus_server::{
-    commands::{RunCommand, RunDispatchExecutionCommand, RunProposeCommand},
+    commands::{
+        RunCommand, RunDeliveryExecutionCommand, RunDispatchExecutionCommand, RunProposeCommand,
+    },
     ClientId, ControlRequestEnvelopeDto, ControlResponseBodyDto, LocalCodexChatHarnessMode,
-    LocalCodexChatReply, LocalCodexChatRequest, ServerCommand, ServerCommandId,
-    ServerCommandKind, ServerControlRequest, ServerControlRequestId, ServerControlRequestKind,
+    LocalCodexChatReply, LocalCodexChatRequest, ServerCommand, ServerCommandId, ServerCommandKind,
+    ServerControlRequest, ServerControlRequestId, ServerControlRequestKind,
     TauriIpcControlCommandAdapter,
 };
+use tauri::Manager;
 
 use crate::chat_commands::send_agent_chat_message;
-use crate::DesktopState;
+use crate::{notifications, DesktopState};
 
-/// Objective form from the dispatch dialog (the run's contract-033 fields).
 #[derive(Clone, Debug, serde::Deserialize)]
 pub(crate) struct RunDispatchRequest {
     pub project_id: String,
-    /// Worktree slug; the server derives the worktree
-    /// (`<repo>-wt/<slug>` on branch `run/<slug>`) from the run id.
     pub slug: String,
     pub objective_scope: String,
     #[serde(default)]
@@ -45,7 +45,6 @@ pub(crate) struct RunDispatchRequest {
     pub operator_ref: String,
 }
 
-/// Dispatch result returned to the UI.
 #[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct RunDispatchOutcome {
     pub run_id: String,
@@ -55,12 +54,10 @@ pub(crate) struct RunDispatchOutcome {
     pub brief_reply: LocalCodexChatReply,
 }
 
-/// The run's deterministic worker conversation id.
 fn run_conversation_id(run_id: &str) -> String {
     format!("conversation:run:{run_id}")
 }
 
-/// Unique short run id suffix: monotonic counter + millis, hex.
 fn unique_run_suffix() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -94,15 +91,10 @@ pub(crate) async fn dispatch_run(
 
     let run_id = format!("run:{slug}-{}", unique_run_suffix());
     let conversation_id = run_conversation_id(&run_id);
-    // The server derives the worktree slug from the run id: `<slug>-<suffix>`.
-    let worktree_slug = run_id
-        .strip_prefix("run:")
-        .unwrap_or(&slug)
-        .to_owned();
+    let worktree_slug = run_id.strip_prefix("run:").unwrap_or(&slug).to_owned();
     let branch_ref = format!("run/{worktree_slug}");
     let adapter = std::sync::Arc::clone(&state.adapter);
 
-    // 1. Propose the run record (contract 033 Run Record Rule).
     let propose = ServerControlRequest {
         id: ServerControlRequestId(format!("request:run:propose:{run_id}")),
         client_id: ClientId("client:desktop".to_owned()),
@@ -126,10 +118,6 @@ pub(crate) async fn dispatch_run(
     };
     submit_control(&adapter, propose)?;
 
-    // 2. Dispatch execution: the dispatch command IS the operator
-    // confirmation; the server writes the durable effect intent and drives
-    // the gated isolated-worktree creation, registers the worktree resource,
-    // and binds the deterministic conversation to the run record.
     let dispatch = ServerControlRequest {
         id: ServerControlRequestId(format!("request:run:dispatch-exec:{run_id}")),
         client_id: ClientId("client:desktop".to_owned()),
@@ -145,12 +133,7 @@ pub(crate) async fn dispatch_run(
     };
     submit_control(&adapter, dispatch)?;
 
-    // 3. Locate the worktree resource the server registered: display name is
-    // the worktree directory basename (the run slug).
     let worktree_resource_id = worktree_resource_id(&state, &request.project_id, &worktree_slug)?;
-
-    // 4. Seed the brief as the worker conversation's first message; the
-    // turn-start hook transitions the run to running from observed activity.
     let brief = worker_brief(&request, &run_id, &worktree_slug, &branch_ref);
     let chat_request = LocalCodexChatRequest {
         conversation_id: conversation_id.clone(),
@@ -168,7 +151,45 @@ pub(crate) async fn dispatch_run(
         harness_mode: LocalCodexChatHarnessMode::Normal,
         idioms_enabled: true,
     };
-    let brief_reply = send_agent_chat_message(window, state, chat_request).await?;
+    let brief_reply = send_agent_chat_message(window.clone(), state.clone(), chat_request).await?;
+
+    // The chat turn has already marked `dispatched -> running` from observed
+    // provider activity. Only after that observed completion do we submit the
+    // pipeline: intent first, then the gated commit/push runner.
+    let remote_target = remote_target(&state, &request.project_id)?;
+    let pushed = !remote_target.is_empty();
+    let delivery = ServerControlRequest {
+        id: ServerControlRequestId(format!("request:run:delivery:{run_id}")),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Command(ServerCommand {
+            id: ServerCommandId(format!("command:run:delivery:{run_id}")),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerCommandKind::RunDeliveryExecution(RunDeliveryExecutionCommand {
+                run_id: EngineRunId(run_id.clone()),
+                closeout_summary: brief_reply.assistant_message.clone().unwrap_or_else(|| {
+                    "Worker turn completed without an assistant summary.".to_owned()
+                }),
+                closeout_evidence_refs: vec![format!("turn:{}", brief_reply.turn_id)],
+                closeout_diff_ref: Some(format!("worktree:{worktree_slug}")),
+                operator_ref: request.operator_ref.clone(),
+                commit_message: format!("Deliver {run_id}"),
+                remote_target,
+                idempotency_key: format!("delivery:{run_id}"),
+                expected_revision: None,
+            }),
+        }),
+    };
+    if let Err(error) = submit_control(&adapter, delivery) {
+        notifications::publish_command_refusal(
+            &window.app_handle(),
+            &format!("command:run:delivery:{run_id}"),
+            Some(&request.project_id),
+            "Run delivery",
+            &error,
+        );
+        return Err(error);
+    }
+    notifications::publish_run_delivery(&window.app_handle(), &run_id, pushed);
 
     Ok(RunDispatchOutcome {
         run_id,
@@ -183,8 +204,7 @@ fn submit_control(
     adapter: &Mutex<TauriIpcControlCommandAdapter<SqliteBackend>>,
     request: ServerControlRequest,
 ) -> Result<(), String> {
-    let envelope = ControlRequestEnvelopeDto::try_from(&request)
-        .map_err(|error| error.reason)?;
+    let envelope = ControlRequestEnvelopeDto::try_from(&request).map_err(|error| error.reason)?;
     let response = adapter
         .lock()
         .map_err(|_| "desktop command adapter lock is poisoned".to_owned())?
@@ -197,10 +217,10 @@ fn submit_control(
             Ok(())
         }
         ControlResponseBodyDto::CommandReceipt { status, .. } => {
-            Err(format!("run dispatch command was not accepted: {status}"))
+            Err(format!("run command was not accepted: {status}"))
         }
         ControlResponseBodyDto::Error { reason, .. } => Err(reason),
-        _ => Err("run dispatch command returned an unexpected response".to_owned()),
+        _ => Err("run command returned an unexpected response".to_owned()),
     }
 }
 
@@ -230,8 +250,26 @@ fn worktree_resource_id(
         })
 }
 
-/// The playbook-shaped worker brief rendered into the worker's first message:
-/// objective, scope, acceptance, stop conditions, and worker rules.
+fn remote_target(state: &DesktopState, project_id: &str) -> Result<String, String> {
+    let record = state
+        .server_state
+        .projects()
+        .get(&nucleus_core::PersistenceRecordId(project_id.to_owned()))
+        .map_err(|error| format!("project lookup failed: {error:?}"))?
+        .ok_or_else(|| format!("project not found: {project_id}"))?;
+    let project = nucleus_projects::decode_project_storage_record(&record.payload.bytes)
+        .map_err(|error| format!("project record decode failed: {error:?}"))?;
+    let Some(root) = project.primary_location().map(PathBuf::from) else {
+        return Ok(String::new());
+    };
+    let config = fs::read_to_string(root.join(".git").join("config")).unwrap_or_default();
+    Ok(if config.contains("[remote \"origin\"]") {
+        "origin".to_owned()
+    } else {
+        String::new()
+    })
+}
+
 fn worker_brief(
     request: &RunDispatchRequest,
     run_id: &str,

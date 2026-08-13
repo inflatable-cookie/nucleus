@@ -180,6 +180,20 @@ pub enum ControlCommandDto {
         expected_revision: Option<String>,
         operator_ref: String,
     },
+    RunDeliveryExecution {
+        command_id: String,
+        run_id: String,
+        closeout_summary: String,
+        #[serde(default)]
+        closeout_evidence_refs: Vec<String>,
+        closeout_diff_ref: Option<String>,
+        operator_ref: String,
+        commit_message: String,
+        #[serde(default)]
+        remote_target: String,
+        idempotency_key: String,
+        expected_revision: Option<String>,
+    },
 }
 
 /// Supported task command actions for the first command DTO subset.

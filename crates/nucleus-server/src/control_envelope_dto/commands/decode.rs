@@ -5,16 +5,16 @@
 use nucleus_core::RevisionId;
 use nucleus_tasks::TaskId;
 
+use super::super::ControlApiCodecError;
 use super::goal_authoring::goal_command_dto;
 use super::memory_proposal_review::memory_proposal_review_dto;
 use super::project_lifecycle::project_command_dto;
 use super::read_only::read_only_command_dto;
 use super::task_authoring::{task_create_dto, task_update_dto};
 use super::types::{ControlCommandDto, ControlTaskCommandActionDto};
-use super::super::ControlApiCodecError;
 use crate::commands::{
-    RunCommand, RunDispatchExecutionCommand, RunProposeCommand, ServerCommand, ServerCommandKind,
-    TaskCommand, TaskSeedPromotionCommand,
+    RunCommand, RunDeliveryExecutionCommand, RunDispatchExecutionCommand, RunProposeCommand,
+    ServerCommand, ServerCommandKind, TaskCommand, TaskSeedPromotionCommand,
 };
 use crate::ids::ServerCommandId;
 
@@ -40,6 +40,9 @@ impl TryFrom<&ServerCommand> for ControlCommandDto {
             ServerCommandKind::RunDispatchExecution(dispatch_command) => {
                 Ok(run_dispatch_execution_dto(&command.id, dispatch_command))
             }
+            ServerCommandKind::RunDeliveryExecution(delivery_command) => {
+                Ok(run_delivery_execution_dto(&command.id, delivery_command))
+            }
             _ => Err(ControlApiCodecError::unsupported(
                 "command shape is not supported by the first command DTO",
             )),
@@ -47,10 +50,7 @@ impl TryFrom<&ServerCommand> for ControlCommandDto {
     }
 }
 
-fn run_propose_dto(
-    command_id: &ServerCommandId,
-    command: &RunProposeCommand,
-) -> ControlCommandDto {
+fn run_propose_dto(command_id: &ServerCommandId, command: &RunProposeCommand) -> ControlCommandDto {
     ControlCommandDto::RunPropose {
         command_id: command_id.0.clone(),
         run_id: command.run_id.0.clone(),
@@ -79,6 +79,27 @@ fn run_dispatch_execution_dto(
             .as_ref()
             .map(|revision| revision.0.clone()),
         operator_ref: command.operator_ref.clone(),
+    }
+}
+
+fn run_delivery_execution_dto(
+    command_id: &ServerCommandId,
+    command: &RunDeliveryExecutionCommand,
+) -> ControlCommandDto {
+    ControlCommandDto::RunDeliveryExecution {
+        command_id: command_id.0.clone(),
+        run_id: command.run_id.0.clone(),
+        closeout_summary: command.closeout_summary.clone(),
+        closeout_evidence_refs: command.closeout_evidence_refs.clone(),
+        closeout_diff_ref: command.closeout_diff_ref.clone(),
+        operator_ref: command.operator_ref.clone(),
+        commit_message: command.commit_message.clone(),
+        remote_target: command.remote_target.clone(),
+        idempotency_key: command.idempotency_key.clone(),
+        expected_revision: command
+            .expected_revision
+            .as_ref()
+            .map(|revision| revision.0.clone()),
     }
 }
 
