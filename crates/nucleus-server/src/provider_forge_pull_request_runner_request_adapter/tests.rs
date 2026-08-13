@@ -63,6 +63,7 @@ fn authority_set() -> ForgePullRequestRunnerAuthoritySet {
         authorities: vec![authority()],
         skipped_preflight_ids: Vec::new(),
         request_preparation_permitted: true,
+        pull_request_creation_permitted: false,
         shell_execution_performed: false,
         no_effects: ForgeScmNoEffects::none(),
     }
@@ -92,6 +93,7 @@ fn authority() -> ForgePullRequestRunnerAuthorityRecord {
         status: ForgePullRequestRunnerAuthorityStatus::ReadyForRequest,
         blockers: Vec::new(),
         request_preparation_permitted: true,
+        pull_request_creation_permitted: false,
         shell_execution_performed: false,
         no_effects: ForgeScmNoEffects::none(),
     }

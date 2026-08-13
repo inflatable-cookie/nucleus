@@ -68,6 +68,90 @@ fn forge_pull_request_runner_authority_blocks_provider_widening() {
         .contains(&ForgePullRequestRunnerAuthorityBlocker::RawOutputRetentionRequested));
 }
 
+#[test]
+fn forge_pull_request_runner_authority_reaches_ready_for_creation() {
+    let set = forge_pull_request_runner_authority(creation_input(false));
+    let authority = &set.authorities[0];
+
+    assert_eq!(
+        authority.status,
+        ForgePullRequestRunnerAuthorityStatus::ReadyForCreation
+    );
+    assert!(authority.pull_request_creation_permitted);
+    assert!(!authority.request_preparation_permitted);
+    assert!(set.pull_request_creation_permitted);
+    assert!(!set.request_preparation_permitted);
+    assert!(!authority.no_effects.pull_request_created);
+    assert!(!authority.no_effects.provider_effect_executed);
+}
+
+#[test]
+fn forge_pull_request_runner_authority_blocks_creation_widening() {
+    let set = forge_pull_request_runner_authority(creation_input(true));
+    let authority = &set.authorities[0];
+
+    // The confirmed creation lane admits the PR open and forge effect, but
+    // never provider effects or raw output retention.
+    assert_eq!(
+        authority.status,
+        ForgePullRequestRunnerAuthorityStatus::Blocked
+    );
+    assert!(!authority.pull_request_creation_permitted);
+    assert!(!authority
+        .blockers
+        .contains(&ForgePullRequestRunnerAuthorityBlocker::PullRequestCreationRequested));
+    assert!(!authority
+        .blockers
+        .contains(&ForgePullRequestRunnerAuthorityBlocker::ForgeEffectRequested));
+    assert!(authority
+        .blockers
+        .contains(&ForgePullRequestRunnerAuthorityBlocker::ProviderEffectRequested));
+    assert!(authority
+        .blockers
+        .contains(&ForgePullRequestRunnerAuthorityBlocker::RawOutputRetentionRequested));
+}
+
+#[test]
+fn forge_pull_request_runner_authority_blocks_creation_scope_mismatch() {
+    let mut input = creation_input(false);
+    input.preflights.preflights[0].base_branch = Some("develop".to_owned());
+
+    let set = forge_pull_request_runner_authority(input);
+    let authority = &set.authorities[0];
+
+    assert_eq!(
+        authority.status,
+        ForgePullRequestRunnerAuthorityStatus::Blocked
+    );
+    assert!(!authority.pull_request_creation_permitted);
+    assert!(authority
+        .blockers
+        .contains(&ForgePullRequestRunnerAuthorityBlocker::PullRequestCreationScopeMismatch));
+}
+
+#[test]
+fn forge_pull_request_runner_authority_blocks_creation_scope_missing() {
+    let mut input = creation_input(false);
+    let ForgePullRequestRunnerOperatorEffectIntent::PullRequestCreationConfirmed { scope, .. } =
+        &mut input.operator_effect_intent
+    else {
+        unreachable!("creation intent");
+    };
+    scope.base_branch = String::new();
+
+    let set = forge_pull_request_runner_authority(input);
+    let authority = &set.authorities[0];
+
+    assert_eq!(
+        authority.status,
+        ForgePullRequestRunnerAuthorityStatus::Blocked
+    );
+    assert!(!authority.pull_request_creation_permitted);
+    assert!(authority
+        .blockers
+        .contains(&ForgePullRequestRunnerAuthorityBlocker::PullRequestCreationScopeMissing));
+}
+
 fn input(forbidden: bool) -> ForgePullRequestRunnerAuthorityInput {
     ForgePullRequestRunnerAuthorityInput {
         preflights: preflight_set(),
@@ -78,6 +162,31 @@ fn input(forbidden: bool) -> ForgePullRequestRunnerAuthorityInput {
         raw_output_retention_requested: forbidden,
         pull_request_creation_requested: forbidden,
         forge_effect_requested: forbidden,
+        provider_effect_requested: forbidden,
+        callback_effect_requested: forbidden,
+        interruption_effect_requested: forbidden,
+        recovery_effect_requested: forbidden,
+        task_mutation_requested: forbidden,
+    }
+}
+
+fn creation_input(forbidden: bool) -> ForgePullRequestRunnerAuthorityInput {
+    ForgePullRequestRunnerAuthorityInput {
+        preflights: preflight_set(),
+        operator_effect_intent:
+            ForgePullRequestRunnerOperatorEffectIntent::PullRequestCreationConfirmed {
+                confirmation_ref: "operator-confirmation:delivery:1".to_owned(),
+                scope: ForgePullRequestCreationScope {
+                    forge_provider: ForgePullRequestProvider::GitHub,
+                    base_branch: "main".to_owned(),
+                    head_branch: "feature/task".to_owned(),
+                    title_source: ForgePullRequestTextSource::GeneratedFromEvidence,
+                    body_source: ForgePullRequestTextSource::GeneratedFromEvidence,
+                },
+            },
+        raw_output_retention_requested: forbidden,
+        pull_request_creation_requested: true,
+        forge_effect_requested: true,
         provider_effect_requested: forbidden,
         callback_effect_requested: forbidden,
         interruption_effect_requested: forbidden,

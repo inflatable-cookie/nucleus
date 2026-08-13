@@ -1382,6 +1382,7 @@ mod tests {
             worktree_location_ref: WORKTREE_LOCATION.to_owned(),
             commit_message: "deliver run 1".to_owned(),
             remote_target: remote_target.to_owned(),
+            pull_request_creation: None,
             operator_ref: "operator:tom".to_owned(),
             idempotency_key: idempotency_key.to_owned(),
             status: GitBranchWorktreeRunnerDeliveryIntentStatus::Confirmed,

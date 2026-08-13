@@ -65,6 +65,22 @@ is reachable. Each command has bounded capture, sanitized outcomes, and a
 contract-020 receipt. A push failure preserves the local commit and records an
 explaining failed push receipt; it does not make the delivery authority wider.
 
+The same per-delivery confirmation may carry PR-creation scope — forge
+provider, base and head refs, title and body sources — on top of the confirmed
+remote. PR creation is then admitted only through the forge pull-request
+runner authority chain (`nucleus-server`
+`provider_forge_pull_request_runner_authority`) behind that intent: an
+admitted forge preflight (credential ready, remote branch visible),
+`ReadyForCreation` authority status, idempotency reconciliation against
+provider state before any open (a persisted completed outcome replays; an
+existing pull request for the head branch is adopted), an admitted forge test
+double for the open call, sanitized PR-created evidence, and a contract-020
+receipt whose summary carries the PR link. The reference and link are run
+delivery evidence. PR creation grants no merge, comment, label, reviewer,
+review-sync, or branch-mutation authority; a missing forge or a failed PR open
+never blocks delivery — the run stays delivered on its pushed branch with an
+explaining receipt.
+
 ## Orchestrator Designation Rule
 
 An orchestrator is a configured provider instance designated by the operator
@@ -120,7 +136,12 @@ Acceptance is a separate act from delivery. The default merge authority is
 the operator: the orchestrator prepares and may recommend; the operator
 merges. Agent-initiated merge remains separate. The per-delivery confirmation
 above is the explicit grant for pushing only that run's own branch; it does not
-grant force-push, branch deletion, or any other shared-remote mutation.
+grant force-push, branch deletion, or any other shared-remote mutation. Where
+the confirmation carries PR-creation scope, it is also the explicit grant for
+opening exactly one pull request for that run's own pushed branch through the
+forge pull-request runner authority chain (Run Delivery Authority Rule); it
+does not grant merge, comment, label, reviewer, review-sync, branch mutation,
+or stacked runs.
 
 ## Audit Rule
 

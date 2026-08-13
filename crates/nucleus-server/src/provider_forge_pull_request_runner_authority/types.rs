@@ -26,9 +26,32 @@ pub struct ForgePullRequestRunnerAuthoritySet {
     pub authorities: Vec<ForgePullRequestRunnerAuthorityRecord>,
     pub skipped_preflight_ids: Vec<String>,
     pub request_preparation_permitted: bool,
+    pub pull_request_creation_permitted: bool,
     pub shell_execution_performed: bool,
     #[serde(flatten)]
     pub no_effects: ForgeScmNoEffects,
+}
+
+/// Operator-confirmed PR-creation scope for one run delivery: the forge
+/// provider, base and head refs, and title/body sources on top of the
+/// confirmed remote. Title and body are source refs only; raw PR title/body
+/// text never travels through the intent records.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ForgePullRequestCreationScope {
+    pub forge_provider: ForgePullRequestProvider,
+    pub base_branch: String,
+    pub head_branch: String,
+    pub title_source: ForgePullRequestTextSource,
+    pub body_source: ForgePullRequestTextSource,
+}
+
+impl ForgePullRequestCreationScope {
+    pub fn is_complete(&self) -> bool {
+        !self.base_branch.trim().is_empty()
+            && !self.head_branch.trim().is_empty()
+            && !self.base_branch.contains('\0')
+            && !self.head_branch.contains('\0')
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -55,6 +78,7 @@ pub struct ForgePullRequestRunnerAuthorityRecord {
     pub status: ForgePullRequestRunnerAuthorityStatus,
     pub blockers: Vec<ForgePullRequestRunnerAuthorityBlocker>,
     pub request_preparation_permitted: bool,
+    pub pull_request_creation_permitted: bool,
     pub shell_execution_performed: bool,
     #[serde(flatten)]
     pub no_effects: ForgeScmNoEffects,
@@ -64,6 +88,7 @@ pub struct ForgePullRequestRunnerAuthorityRecord {
 #[serde(rename_all = "snake_case")]
 pub enum ForgePullRequestRunnerAuthorityStatus {
     ReadyForRequest,
+    ReadyForCreation,
     Blocked,
 }
 
@@ -73,6 +98,8 @@ pub enum ForgePullRequestRunnerAuthorityBlocker {
     PreflightNotReady,
     OperatorEffectIntentMissing,
     RequestPreparationNotConfirmed,
+    PullRequestCreationScopeMissing,
+    PullRequestCreationScopeMismatch,
     MissingForgeProvider,
     MissingBaseBranch,
     MissingHeadBranch,
@@ -94,6 +121,13 @@ pub enum ForgePullRequestRunnerOperatorEffectIntent {
     Confirmed {
         confirmation_ref: String,
         allow_request_preparation: bool,
+    },
+    /// Operator-confirmed per-delivery PR creation carrying the confirmed
+    /// creation scope (forge provider, base/head refs, title/body sources) on
+    /// top of the confirmed remote.
+    PullRequestCreationConfirmed {
+        confirmation_ref: String,
+        scope: ForgePullRequestCreationScope,
     },
 }
 

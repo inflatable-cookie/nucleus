@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: Tom
-Updated: 2026-06-21
+Updated: 2026-08-13
 
 ## Purpose
 
@@ -41,6 +41,14 @@ Having one domain does not imply another. A valid credential ref does not grant
 network write authority. A prepared PR request does not grant PR creation. A
 PR creation approval does not grant merge, comment, label, reviewer, or branch
 mutation authority.
+
+PR creation is admitted only as an operator-confirmed per-delivery effect
+(contract 033): the operator confirmation carries the PR-creation scope —
+forge provider, base and head refs, title and body sources — on top of the
+confirmed project remote for one run's delivery. The approval covers exactly
+opening one pull request for that run's own pushed branch; it does not grant
+merge, comment, label, reviewer assignment, review sync, branch mutation,
+stacked runs, or any other mutating family.
 
 ## Credential Ref Rule
 
@@ -149,8 +157,14 @@ Deferred mutating families:
 - destructive branch deletion
 - provider permission mutation
 
-Deferred families need separate admission records before implementation. A PR
-create lane must not silently grant merge or repository-setting authority.
+Deferred families need separate admission records before implementation. A
+PR create lane must not silently grant merge or repository-setting authority.
+
+`pull-request or merge-request create` is the one initial mutating family with
+a realized admission lane: operator-confirmed per-delivery PR creation behind
+the full spine (Per-Delivery Pull-Request Creation Lane below). Every other
+mutating family, including `pull-request or merge-request update`, remains
+admission-only until its own explicit lane.
 
 ## Admission Record
 
@@ -550,7 +564,8 @@ Blocked:
 
 - real credential material resolution
 - real provider network calls
-- pull-request creation
+- pull-request creation outside the admitted per-delivery lane (see
+  Per-Delivery Pull-Request Creation Lane below)
 - comment creation
 - merge
 - callback/webhook execution
@@ -559,6 +574,61 @@ Blocked:
 
 Real provider network writes require a later explicit lane after stopped
 admission, preflight, receipts, idempotency, and recovery surfaces are proven.
+That later explicit lane now exists only for one effect: operator-confirmed
+per-delivery pull-request creation behind the full spine below. All other
+network writes remain blocked until their own explicit lanes.
+
+## Per-Delivery Pull-Request Creation Lane
+
+The first admitted real forge network write is pull-request creation for a
+delivered run, granted by an operator-confirmed per-delivery intent (contract
+033 Run Delivery Authority Rule). It runs only through the forge pull-request
+runner authority chain (`nucleus-server`
+`provider_forge_pull_request_runner_authority`) behind that intent, and only
+through the admitted forge test double in the first implementation.
+
+The per-delivery confirmation carries the PR-creation scope on top of the
+confirmed remote:
+
+- forge provider
+- base branch ref
+- head branch ref (the run's own pushed branch)
+- title source
+- body source
+
+Title and body travel as source refs only; raw PR title/body text is not
+carried by the intent, the admission, the preflight, or the execution records
+unless stored as an approved artifact ref.
+
+The lane admits the full stopped spine:
+
+- admission records retain the operator approval ref for the mutating effect
+  (the per-delivery confirmation ref), the idempotency key, retry and recovery
+  policy refs, and the sanitization policy ref
+- preflight proves credential readiness, remote-branch visibility (the run's
+  branch was pushed), and that the target refs still match the prepared
+  evidence; preflight never calls a mutating provider API
+- idempotency reconciles against provider state before any open: a persisted
+  completed outcome replays without a provider call; otherwise the execution
+  boundary asks the adapter for an existing pull request for the head branch
+  and adopts it (reconciled outcome) before attempting a new open
+- execution produces sanitized evidence and receipts: provider object ref,
+  provider URL where allowed, status class, short sanitized summary; no raw
+  response body, raw headers, or authorization material
+- the PR reference and link are persisted as the run's delivery evidence and
+  carried by the operator notification (contract 020 receipt)
+
+Fallback discipline: no remote, no ready credential, or a PR API failure keeps
+the branch-only delivery from the 101 pipeline standing and records an
+explaining receipt — the run stays delivered on its pushed branch and the PR
+is simply not opened. A failed or uncertain open retains the idempotency key
+and must reconcile against provider state before any retry; a duplicate or
+uncertain write never opens a second PR blindly.
+
+The lane grants no other capability: no merge, comment, label, reviewer, or
+review-sync admission, no branch mutation, no provider effect beyond the
+admitted open call, no callback, interruption, recovery, or task mutation, no
+raw payload retention, and no stacked or follow-up PR creation.
 
 ## Live Read Executor Rule
 
