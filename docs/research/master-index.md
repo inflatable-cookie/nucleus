@@ -11,6 +11,8 @@ Updated: 2026-07-10
 | Harness communications | `source-hubs/harness-communications.md` | open |
 | Provider routing and model surfaces | `source-hubs/provider-routing-and-model-surfaces.md` | open |
 | SCM and forge implementation | `source-hubs/scm-forge-implementation.md` | promoted-first-pass |
+| Harness subagent rendering | `source-hubs/harness-subagent-rendering.md` | open |
+| Harness agent orchestration | `source-hubs/harness-agent-orchestration.md` | open |
 | Convergence backend surface | `translation-memos/convergence-scm-shape.md` | active |
 | T3 Code provider integrations | `specimen-dossiers/t3-code-provider-integrations.md` | promoted-first-pass |
 | Codex runtime boundary | `specimen-dossiers/codex-runtime-boundary.md` | promoted-first-pass |
@@ -20,5 +22,6 @@ Updated: 2026-07-10
 | Kimi runtime boundary | `specimen-dossiers/kimi-runtime-boundary.md` | promoted-first-pass |
 | Pi runtime boundary | `specimen-dossiers/pi-runtime-boundary.md` | promoted-implementation-ready |
 | Harness adapter contract translation | `translation-memos/harness-adapter-contract-first-pass.md` | promoted-first-pass |
+| Agent orchestration lane | `translation-memos/agent-orchestration-lane.md` | active |
 | Editor substrate selection | `translation-memos/editor-substrate-selection.md` | promoted-first-pass |
 | Provider implementation readiness | `../specs/001-provider-implementation-readiness.md` | active |

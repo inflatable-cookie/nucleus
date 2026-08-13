@@ -40,6 +40,7 @@ Updated: 2026-08-01
 | `030-swallowtail-agent-runtime-integration-contract.md` | draft-promoted-observable-activity | Swallowtail-owned AI communication and portable activity with Nucleus-owned sessions, tools, cancellation, deadlines, authority, persistence, and UI. |
 | `031-swallowtail-task-execution-runtime-contract.md` | draft-promoted-first-pass | Nucleus task-executor port over explicit Swallowtail workspace access, outcomes, linkage, and cleanup. |
 | `032-longhorn-desktop-systems-integration-contract.md` | active | Nucleus consumer boundary for adopted Longhorn settings plus later commands, operations, notifications, recovery, bridge, and conditional transfer systems. |
+| `033-orchestration-runs-and-delegation-authority-contract.md` | draft | Operator-designated orchestrator agents, harness-owned worker runs on worktrees, delegation tools, delivery/acceptance split, and audit. |
 
 ## Needed Contracts
 
@@ -80,6 +81,8 @@ When it overlaps focused contracts, the focused contract owns the durable rule:
   outcome mapping, and retained Nucleus workflow authority.
 - `032` owns additional Longhorn desktop-system adoption, retained Nucleus
   product authority, artifact evidence, and explicit deferrals.
+- `033` owns orchestration run identity, lifecycle, delegation authority,
+  delivery/acceptance split, and audit (draft; binds only after promotion).
 - `011`, `008`, and `002` own SCM/forge, storage, and harness-adapter rules.
 
 Source refs:

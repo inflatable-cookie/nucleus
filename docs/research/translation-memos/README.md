@@ -12,3 +12,4 @@ contracts.
 - `convergence-scm-shape.md`
 - `editor-substrate-selection.md`
 - `harness-runtime-target-selection.md`
+- `agent-orchestration-lane.md`

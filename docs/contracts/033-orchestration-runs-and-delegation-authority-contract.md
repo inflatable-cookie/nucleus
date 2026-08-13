@@ -1,0 +1,100 @@
+# 033 Orchestration Runs And Delegation Authority Contract
+
+Status: draft
+Owner: Tom
+Updated: 2026-08-13
+
+## Purpose
+
+Define managed delegation in Nucleus: an operator-designated orchestrator
+agent that dispatches work to worker agents as harness-owned runs, and the
+authority, lifecycle, delivery, and review rules those runs follow.
+
+A run is a first-class operation bound to a worktree and a run record. It is
+not a provider-owned child thread; swallowtail contract 045 governs
+provider-internal child work and does not apply to runs except where a
+worker's own provider spawns children inside it.
+
+Governing evidence and design translation:
+
+- `../research/source-hubs/harness-agent-orchestration.md`
+- `../research/translation-memos/agent-orchestration-lane.md`
+- `018-orchestration-contract.md` (command, event, projection, receipt spine)
+- `032-longhorn-desktop-systems-integration-contract.md` (consumer boundary)
+
+## Run Record Rule
+
+Every run has one durable run record carrying: objective (scope, acceptance,
+stop conditions), worktree identity, provider instance and model, owning
+orchestrator designation, operation and conversation identity, lifecycle
+state, budget envelope, and closeout (summary, evidence, diff reference).
+
+Lifecycle states: `proposed`, `dispatched`, `running`, `delivered`,
+`accepted`, `rejected`, `failed`, `cancelled`. Every transition is a
+command; every command produces an event; side effects (worktree creation,
+commit, push, PR) produce receipts under contract 020.
+
+A run without a closeout cannot be `delivered`. Structured completion is a
+precondition of review by either an orchestrator agent or the operator.
+
+## Orchestrator Designation Rule
+
+An orchestrator is a configured provider instance designated by the operator
+for one project. Designation carries a grant envelope:
+
+- allowed worker provider instances and models
+- concurrent-run budget and per-run token/time budgets
+- allowed delegation actions (delegate, message, cancel, accept, reject)
+- whether worker steering is permitted
+
+Grants are deny-by-default. An action outside the envelope is rejected
+before dispatch with the refusal recorded. Designation is revocable;
+revocation cancels no running work but blocks new delegation.
+
+## Delegation Action Rule
+
+The orchestrator acts only through harness-owned delegation tools:
+
+- `delegate` — objective, provider, model, budget; returns a run id
+- `run_status` — read one or all runs
+- `message_run` — post into the worker conversation (when steering is
+  granted)
+- `cancel_run` — request cancellation with deadline truth
+- `accept_delivery` / `reject_delivery` — disposition a delivered run
+
+Each tool call is validated against the grant envelope before dispatch.
+Rejection is explicit and recorded. No tool may impersonate the operator.
+
+## Worker Operation Rule
+
+A worker run executes as an ordinary operation on its own worktree. The
+objective is the worker's brief. The operator may open any run as a thread
+and interact with it directly; that interaction uses the ordinary
+conversation path and needs no child-control authority.
+
+Orchestrator messages inside a worker thread are attributed to the
+orchestrator designation, never to the operator.
+
+## Delivery Rule
+
+`delivered` means: the worker finished, the closeout is written, the
+validation hook ran, and the branch is committed and pushed with a PR opened
+(or a delivery packet prepared where no forge is configured). Delivery is a
+pipeline with receipts at each side effect.
+
+Acceptance is a separate act from delivery. The default merge authority is
+the operator: the orchestrator prepares and may recommend; the operator
+merges. Agent-initiated merge or push to a shared remote requires a
+separate, per-project grant not covered by this draft.
+
+## Audit Rule
+
+Every designation, grant change, delegation decision, refusal, delivery, and
+disposition is a durable receipt. The fleet projection renders from
+receipts, not from mutable run state alone.
+
+## Open Questions
+
+Tracked in `../research/translation-memos/agent-orchestration-lane.md`:
+permanence of operator-only merge, worker context inheritance, orchestrator
+surface shape, no-forge delivery packet. This draft does not bind them.
