@@ -152,7 +152,9 @@ export type ControlQueryDto =
   | {
       kind: "orchestration_runs";
       query_id: string;
-      action: "fleet";
+      action: "fleet" | "review" | "review_patch";
       project_id: string;
+      run_id: string | null;
+      file_ref: string | null;
     }
   | ControlSelectedTaskReviewDecisionQueryDto;

@@ -71,6 +71,10 @@ pub struct EngineRunStorageRecord {
     pub project_id: String,
     pub objective: EngineRunObjective,
     pub worktree_ref: Option<String>,
+    /// The commit the run branch forked from (primary repo HEAD at dispatch).
+    /// The delivery review diff is computed against this ref.
+    #[serde(default)]
+    pub base_ref: Option<String>,
     pub provider_instance: String,
     pub provider_model: String,
     pub orchestrator_designation: Option<String>,
@@ -135,6 +139,9 @@ pub struct EngineRunDispatchCommand {
     pub operation_id: Option<String>,
     pub conversation_id: Option<String>,
     pub worktree_ref: Option<String>,
+    /// Fork point of the run branch (primary repo HEAD at dispatch); the
+    /// delivery review diff is computed against this ref.
+    pub base_ref: Option<String>,
     pub expected_revision: Option<RevisionId>,
 }
 

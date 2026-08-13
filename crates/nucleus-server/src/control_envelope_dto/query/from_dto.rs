@@ -348,9 +348,13 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
                 ..
             } => project_authority_map_query_from_action(&action, project_id, expected_domains),
             ControlQueryDto::OrchestrationRuns {
-                action, project_id, ..
+                action,
+                project_id,
+                run_id,
+                file_ref,
+                ..
             } => super::orchestration_runs::orchestration_runs_query_from_action(
-                &action, project_id,
+                &action, project_id, run_id, file_ref,
             ),
         }
     }

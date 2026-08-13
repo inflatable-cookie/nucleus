@@ -134,6 +134,7 @@ mod tests {
                 stop_conditions: vec!["stop".to_owned()],
             },
             worktree_ref: Some("worktree:1".to_owned()),
+            base_ref: None,
             provider_instance: "provider:codex".to_owned(),
             provider_model: "codex-mini".to_owned(),
             orchestrator_designation: None,

@@ -231,8 +231,12 @@
       !request
       || request.requestId === appliedDraftRequestId
       || request.projectId !== projectId
-      || request.taskId !== activeTask?.task_id
     ) return;
+    if (request.runConversationId) {
+      if (activeConversationId !== request.runConversationId) return;
+    } else if (request.taskId !== activeTask?.task_id) {
+      return;
+    }
     const currentDraft = activeConversationId === conversationId
       ? draft
       : retainedDrafts.get(conversationId) ?? draft;

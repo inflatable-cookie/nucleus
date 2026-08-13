@@ -14,9 +14,11 @@ use super::project_lifecycle::{
 use super::read_only::read_only_command_kind;
 use super::task_authoring::{task_create_kind, task_update_kind};
 use super::types::{ControlCommandDto, ControlTaskCommandActionDto};
+use super::ControlRunTransitionActionDto;
 use crate::commands::{
     RunCommand, RunDeliveryExecutionCommand, RunDispatchExecutionCommand, RunProposeCommand,
-    ServerCommandKind, TaskCommand, TaskSeedPromotionCommand, TaskTransitionCommand,
+    RunTransitionCommand, ServerCommandKind, TaskCommand, TaskSeedPromotionCommand,
+    TaskTransitionCommand,
 };
 use crate::ids::ServerCommandId;
 use crate::memory_proposal_review_command::MemoryProposalReviewCommand;
@@ -322,6 +324,49 @@ impl ControlCommandDto {
                     expected_revision: expected_revision.map(RevisionId),
                 }),
             )),
+            Self::RunTransition {
+                command_id,
+                run_id,
+                action,
+                expected_revision,
+                reason,
+            } => {
+                let command_id = ServerCommandId(command_id);
+                let run_id = nucleus_engine::EngineRunId(run_id);
+                let expected_revision = expected_revision.map(RevisionId);
+                let kind = match action {
+                    ControlRunTransitionActionDto::Accept => {
+                        if reason.is_some() {
+                            return Err(ControlApiCodecError::malformed(
+                                "accept run command does not accept a reason",
+                            ));
+                        }
+                        RunCommand::Accept(RunTransitionCommand {
+                            run_id,
+                            operation_id: None,
+                            expected_revision,
+                            reason: None,
+                        })
+                    }
+                    ControlRunTransitionActionDto::Reject => {
+                        let reason = match reason {
+                            Some(reason) if !reason.trim().is_empty() => reason,
+                            _ => {
+                                return Err(ControlApiCodecError::malformed(
+                                    "reject run command requires a reason",
+                                ));
+                            }
+                        };
+                        RunCommand::Reject(RunTransitionCommand {
+                            run_id,
+                            operation_id: None,
+                            expected_revision,
+                            reason: Some(reason),
+                        })
+                    }
+                };
+                Ok((command_id, ServerCommandKind::Run(kind)))
+            }
             Self::ReadOnlyCommand {
                 command_id,
                 project_id,

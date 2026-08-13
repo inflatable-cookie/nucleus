@@ -104,6 +104,7 @@ pub use memory_proposals::{
     ControlMemoryProposalStatusCountDto, ControlMemoryProposalSummaryDto,
 };
 pub use orchestration_runs::{
+    ControlOrchestrationRunReviewDto, ControlOrchestrationRunReviewPatchDto,
     ControlOrchestrationRunStateCountDto, ControlOrchestrationRunSummaryDto,
 };
 pub use planning_capture_publication::{

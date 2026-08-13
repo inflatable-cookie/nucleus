@@ -326,6 +326,7 @@ fn panel_input(
             .unwrap_or_default(),
         editor_file: None,
         forge_diff: None,
+        run_review: None,
         conversation_id: None,
     }
 }

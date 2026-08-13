@@ -12,7 +12,8 @@ use super::provider_read_intent::ControlProviderReadIntentQueryResultDto;
 use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
     ControlCheckpointRecordDto, ControlDiagnosticsResultDto, ControlDiffSummaryRecordDto,
-    ControlMemoryProposalReviewDiagnosticsDto, ControlPlanningCapturePublicationDiagnosticsDto,
+    ControlMemoryProposalReviewDiagnosticsDto, ControlOrchestrationRunReviewDto,
+    ControlOrchestrationRunReviewPatchDto, ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticsDto,
     ControlPlanningProjectionImportActiveApplyDiagnosticsDto,
     ControlPlanningProjectionImportApplyDiagnosticsDto,
@@ -290,6 +291,16 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
             ServerControlResponseBody::Query(ServerQueryResult::OrchestrationRuns(projection)) => {
                 Ok(super::orchestration_runs::orchestration_runs_body_dto(projection))
             }
+            ServerControlResponseBody::Query(
+                ServerQueryResult::OrchestrationRunReview(review),
+            ) => Ok(ControlResponseBodyDto::OrchestrationRunReview {
+                review: ControlOrchestrationRunReviewDto::from(review),
+            }),
+            ServerControlResponseBody::Query(
+                ServerQueryResult::OrchestrationRunReviewPatch(patch),
+            ) => Ok(ControlResponseBodyDto::OrchestrationRunReviewPatch {
+                patch: ControlOrchestrationRunReviewPatchDto::from(patch),
+            }),
             ServerControlResponseBody::Query(ServerQueryResult::ProviderReadIntent(result)) => {
                 Ok(Self::ProviderReadIntent {
                     result: ControlProviderReadIntentQueryResultDto::from(result),

@@ -103,6 +103,9 @@ where
         if let Some(worktree_ref) = command.worktree_ref {
             storage.worktree_ref = Some(worktree_ref);
         }
+        if let Some(base_ref) = command.base_ref {
+            storage.base_ref = Some(base_ref);
+        }
         self.save_transition(command_id, &mut storage, EngineRunLifecycleState::Dispatched, expected)
     }
 

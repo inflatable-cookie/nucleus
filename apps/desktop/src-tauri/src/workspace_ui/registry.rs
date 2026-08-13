@@ -21,7 +21,7 @@ pub const REGION_IDS: [&str; 5] = [
 pub const SIZING_SLOT_IDS: [&str; 4] =
     ["left-center", "center-right", "center-stack", "right-stack"];
 
-const PANEL_KINDS: [(&str, &str); 11] = [
+const PANEL_KINDS: [(&str, &str); 12] = [
     ("activity", "panel:activity"),
     ("projectActivity", "panel:project-activity"),
     ("agentChat", "panel:agent-chat"),
@@ -31,6 +31,7 @@ const PANEL_KINDS: [(&str, &str); 11] = [
     ("editor", "panel:editor"),
     ("diff", "panel:diff"),
     ("forgeDiff", "panel:forge-diff"),
+    ("runReview", "panel:run-review"),
     ("memory", "panel:memory"),
     ("workspace", "panel:workspace"),
 ];
@@ -190,6 +191,7 @@ pub fn default_title(kind: &str) -> &'static str {
         "editor" => "Editor",
         "diff" => "Diff",
         "forgeDiff" => "Changes",
+        "runReview" => "Run Review",
         "memory" => "Memory",
         _ => "Panel",
     }

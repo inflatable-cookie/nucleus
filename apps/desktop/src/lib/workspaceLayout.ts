@@ -31,6 +31,10 @@ export type WorkspaceForgeDiff = {
   scope: "all" | "staged" | "working";
 };
 
+export type WorkspaceRunReview = {
+  run_id: string;
+};
+
 export type WorkspacePanelPresentationInput = {
   external_id: string;
   kind: string;
@@ -38,6 +42,7 @@ export type WorkspacePanelPresentationInput = {
   resource_targets: Record<string, string>;
   editor_file: WorkspaceEditorFile | null;
   forge_diff: WorkspaceForgeDiff | null;
+  run_review: WorkspaceRunReview | null;
   conversation_id: string | null;
 };
 
@@ -310,6 +315,10 @@ function validatePanelPresentationInput(value: unknown): void {
     if (!["all", "staged", "working"].includes(String(diff.scope))) {
       throw new TypeError("forge diff has an unknown scope");
     }
+  }
+  if (panel.run_review !== null) {
+    const review = object(panel.run_review, "run_review");
+    string(review.run_id, "run review run_id");
   }
   nullableString(panel.conversation_id, "conversation_id");
 }

@@ -229,6 +229,13 @@ where
         return ServerCommandReceiptStatus::Rejected(error);
     }
 
+    // The worktree HEAD right after creation is the run branch fork point
+    // (the worker has not committed yet); record it as the delivery-review
+    // diff base. Read-only git, mirroring the delivery pipeline's evidence
+    // reads; a failed read never blocks dispatch — the review surface fails
+    // closed when the base is absent.
+    let base_ref = resolve_run_base_ref(&worktree_path);
+
     // Bind the deterministic run conversation and the realized worktree;
     // the operation id binds when the first turn actually starts.
     let repository = ServerRunCommandRepository::new(handler.state());
@@ -242,6 +249,7 @@ where
                 &command.run_id.0,
             )),
             worktree_ref: Some(worktree_path.display().to_string()),
+            base_ref,
             expected_revision: command.expected_revision.clone(),
         })),
     ) {
@@ -263,6 +271,23 @@ fn run_slug(run_id: &EngineRunId) -> String {
         .filter(|slug| !slug.is_empty())
         .unwrap_or(&run_id.0)
         .to_owned()
+}
+
+/// Resolve the run branch fork point: the worktree HEAD right after
+/// creation, before the worker commits anything. Read-only git, bounded
+/// output, mirrors the delivery pipeline's evidence reads. `None` when the
+/// read fails — the review surface then fails closed without a diff base.
+fn resolve_run_base_ref(worktree: &std::path::Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(worktree)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!sha.is_empty()).then_some(sha)
 }
 
 /// Absolute worktree path: sibling `<repo>-wt/<run-slug>` per the playbook.
@@ -525,6 +550,7 @@ fn engine_dispatch_command(command: RunDispatchCommand) -> EngineRunDispatchComm
         operation_id: command.operation_id,
         conversation_id: command.conversation_id,
         worktree_ref: command.worktree_ref,
+        base_ref: command.base_ref,
         expected_revision: command.expected_revision,
     }
 }
@@ -768,10 +794,11 @@ mod tests {
             (
                 "command:run:dispatch:1",
                 RunCommand::Dispatch(RunDispatchCommand {
-        worktree_ref: None,
                     run_id: EngineRunId("run:1".to_owned()),
                     operation_id: Some("operation:1".to_owned()),
                     conversation_id: Some("conversation:1".to_owned()),
+                    worktree_ref: None,
+                    base_ref: None,
                     expected_revision: None,
                 }),
             ),

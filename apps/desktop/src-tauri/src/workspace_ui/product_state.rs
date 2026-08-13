@@ -10,6 +10,7 @@ use serde_json::Value;
 use super::dto::{
     default_forge_diff_scope, WorkspaceEditorFileDto, WorkspaceForgeDiffDto, WorkspacePanelDto,
     WorkspacePanelPresentationDto, WorkspacePanelPresentationInputDto, WorkspaceProjectContextDto,
+    WorkspaceRunReviewDto,
 };
 use super::registry::{default_title, kind_for_definition, panel_instance_id};
 
@@ -37,6 +38,8 @@ pub struct PanelPresentation {
     pub editor_file: Option<WorkspaceEditorFileDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forge_diff: Option<WorkspaceForgeDiffDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_review: Option<WorkspaceRunReviewDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
 }
@@ -73,6 +76,15 @@ impl PanelPresentation {
         } else {
             None
         };
+        let run_review = if panel.kind == "runReview" {
+            panel
+                .run_review
+                .clone()
+                .map(normalize_run_review)
+                .transpose()?
+        } else {
+            None
+        };
         Ok((
             internal_id.as_str().to_owned(),
             Self {
@@ -81,6 +93,7 @@ impl PanelPresentation {
                 resource_targets,
                 editor_file,
                 forge_diff,
+                run_review,
                 conversation_id: None,
             },
         ))
@@ -97,6 +110,7 @@ impl PanelPresentation {
                 resource_targets: BTreeMap::new(),
                 editor_file: None,
                 forge_diff: None,
+                run_review: None,
                 conversation_id: None,
             },
         ))
@@ -115,6 +129,7 @@ impl PanelPresentation {
             resource_targets: input.resource_targets.clone(),
             editor_file: input.editor_file.clone(),
             forge_diff: input.forge_diff.clone(),
+            run_review: input.run_review.clone(),
             allowed_regions: Vec::new(),
         };
         let (id, mut presentation) = Self::from_panel(project_id, &panel)?;
@@ -145,6 +160,7 @@ impl PanelPresentation {
             resource_targets: self.resource_targets.clone(),
             editor_file: self.editor_file.clone(),
             forge_diff: self.forge_diff.clone(),
+            run_review: self.run_review.clone(),
             conversation_id: self.conversation_id.clone(),
         })
     }
@@ -263,6 +279,9 @@ fn validate_record(record: &PanelPresentation) -> Result<(), String> {
     if let Some(diff) = record.forge_diff.clone() {
         normalize_forge_diff(diff)?;
     }
+    if let Some(review) = record.run_review.clone() {
+        normalize_run_review(review)?;
+    }
     normalize_optional_ref(record.conversation_id.as_deref(), "conversation id")?;
     Ok(())
 }
@@ -377,6 +396,14 @@ fn normalize_forge_diff(mut diff: WorkspaceForgeDiffDto) -> Result<WorkspaceForg
         return Err("Forge diff panel attachment is invalid".to_owned());
     }
     Ok(diff)
+}
+
+fn normalize_run_review(mut review: WorkspaceRunReviewDto) -> Result<WorkspaceRunReviewDto, String> {
+    review.run_id = review.run_id.trim().to_owned();
+    if !review.run_id.starts_with("run:") || review.run_id.len() > 512 {
+        return Err("run review panel attachment is invalid".to_owned());
+    }
+    Ok(review)
 }
 
 fn issue(detail: &str) -> DomainIssue {

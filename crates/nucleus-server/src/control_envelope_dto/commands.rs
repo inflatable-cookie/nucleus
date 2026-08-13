@@ -14,5 +14,5 @@ mod types;
 
 pub use types::{
     ControlCommandDto, ControlManagementProjectionSyncPolicyDto, ControlProjectLifecycleActionDto,
-    ControlProjectResourceActionDto, ControlProjectResourceRoleDto,
+    ControlProjectResourceActionDto, ControlProjectResourceRoleDto, ControlRunTransitionActionDto,
 };

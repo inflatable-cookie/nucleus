@@ -1,5 +1,6 @@
 use nucleus_agent_protocol::{AdapterIdentity, AgentSessionId};
 use nucleus_core::{PersistenceRecordId, RevisionId};
+use nucleus_engine::EngineRunId;
 use nucleus_projects::{ProjectId, ProjectResourceId};
 use nucleus_tasks::TaskId;
 use nucleus_workspaces::WorkspaceLayoutId;
@@ -84,12 +85,29 @@ pub enum ServerQueryKind {
     SelectedTaskReviewDecisionApply(SelectedTaskReviewDecisionApplyQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
     OrchestrationRuns(OrchestrationRunsQuery),
+    OrchestrationRunReview(OrchestrationRunReviewQuery),
+    OrchestrationRunReviewPatch(OrchestrationRunReviewPatchQuery),
 }
 
 /// Fleet projection query shape (contract 033 fleet view).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OrchestrationRunsQuery {
     pub project_id: ProjectId,
+}
+
+/// Single-run review query shape (delivery-review surface).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrchestrationRunReviewQuery {
+    pub project_id: ProjectId,
+    pub run_id: EngineRunId,
+}
+
+/// One-file diff patch query for the delivery-review surface.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrchestrationRunReviewPatchQuery {
+    pub project_id: ProjectId,
+    pub run_id: EngineRunId,
+    pub file_ref: String,
 }
 
 /// Generic persisted-state query scoped to one state domain.

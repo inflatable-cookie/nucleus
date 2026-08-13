@@ -4,7 +4,8 @@ use crate::control_api::{
     AcceptedMemoryProjectionImportDiagnosticsQuery, AcceptedMemoryProjectionWriteDiagnosticsQuery,
     AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery,
     AcceptedMemoryReviewReceiptStorageDiagnosticsQuery, MemoryProposalReviewDiagnosticsQuery,
-    MemoryProposalsQuery, PlanningCapturePublicationDiagnosticsQuery,
+    MemoryProposalsQuery, OrchestrationRunReviewPatchQuery, OrchestrationRunReviewQuery,
+    PlanningCapturePublicationDiagnosticsQuery,
     PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
@@ -252,8 +253,31 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                     query_id: query.id.0.clone(),
                     action: "fleet".to_owned(),
                     project_id: project_id.0.clone(),
+                    run_id: None,
+                    file_ref: None,
                 })
             }
+            ServerQueryKind::OrchestrationRunReview(OrchestrationRunReviewQuery {
+                project_id,
+                run_id,
+            }) => Ok(Self::OrchestrationRuns {
+                query_id: query.id.0.clone(),
+                action: "review".to_owned(),
+                project_id: project_id.0.clone(),
+                run_id: Some(run_id.0.clone()),
+                file_ref: None,
+            }),
+            ServerQueryKind::OrchestrationRunReviewPatch(OrchestrationRunReviewPatchQuery {
+                project_id,
+                run_id,
+                file_ref,
+            }) => Ok(Self::OrchestrationRuns {
+                query_id: query.id.0.clone(),
+                action: "review_patch".to_owned(),
+                project_id: project_id.0.clone(),
+                run_id: Some(run_id.0.clone()),
+                file_ref: Some(file_ref.clone()),
+            }),
             _ => Err(ControlApiCodecError::unsupported(
                 "query shape is not supported by the first control envelope",
             )),
