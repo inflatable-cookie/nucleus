@@ -36,7 +36,6 @@
 
 <SettingsShell
   {session}
-  host="modal"
   bind:open
   title="Settings"
   ariaLabel="Nucleus settings"
