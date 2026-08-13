@@ -1,6 +1,6 @@
 # 098 Orchestration Run Registry And Persistence
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 1)
@@ -44,10 +44,26 @@ delivery pipeline.
 
 ## Acceptance (planned)
 
-- [ ] run aggregate persists and round-trips; lifecycle transitions enforced
-- [ ] fleet projection query returns the contract-033 shape
-- [ ] receipts emitted for every transition; audit trail readable
-- [ ] server test suite green; batch log
+- [x] run aggregate persists and round-trips; lifecycle transitions enforced
+- [x] fleet projection query returns the contract-033 shape
+- [x] receipts emitted for every transition; audit trail readable
+- [x] server test suite green; batch log
+
+## Closeout
+
+Merged to main as `94028b31` (worker commit `c6e5312c`, deepseek flash
+xhigh, clean first run). Placement decision, ruled correct: the aggregate
+lives in nucleus-engine (`run_commands/`), not nucleus-server — the server
+module ratchet (`crates/nucleus-server/tests/module_ratchet.rs`, ceiling
+323) and contract 018's Implementation Boundary require it; server wiring
+composes the engine service like `task_commands`. The 018 spine took the
+work additively (`OrchestrationCommandFamily::Run`, no envelope change, so
+stop condition 1 did not trigger); every transition writes a contract-020
+receipt. Fleet projection is engine-owned, exposed as
+`ServerQueryKind::OrchestrationRuns` with TS-exported DTOs, the nucleusd
+query, and an effigy smoke task. Worker validation: 2042 server tests,
+bindings, smokes, qa:docs (nucleus-desktop excluded — pre-existing
+`tauri::generate_context!` needs the frontend dist).
 
 ## Stop Conditions
 

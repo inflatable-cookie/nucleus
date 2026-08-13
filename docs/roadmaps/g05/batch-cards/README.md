@@ -10,9 +10,8 @@ Updated: 2026-08-04
 
 ## Planned Cards
 
-- `099-operator-dispatched-runs.md` — waits for 098
-- `100-run-fleet-panel.md` — waits for 098, 099
-- `101-run-delivery-pipeline.md` — waits for 098, 099
+- `100-run-fleet-panel.md` — waits for 099
+- `101-run-delivery-pipeline.md` — waits for 099
 - `102-run-delivery-review-surface.md` — phase 2, waits for 101
 - `103-run-delivery-forge-pull-requests.md` — phase 2, waits for 101
 - `104-orchestrator-designation-and-delegation-tools.md` — phase 3, waits
@@ -20,8 +19,8 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `098-orchestration-run-registry.md` — worker thread
-  `thread/098-orchestration-run-registry`
+- `099-operator-dispatched-runs.md` — worker thread
+  `thread/099-operator-dispatched-runs`
 
 ## Paused Cards
 
@@ -126,3 +125,4 @@ Updated: 2026-08-04
 - `094-actor-selector-composer-placement.md`
 - `096-message-centre-adoption.md`
 - `097-failure-notification-routing.md`
+- `098-orchestration-run-registry.md`
