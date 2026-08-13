@@ -415,8 +415,8 @@ shape.
 
 ## Next Task
 
-Shell quality lane: the message centre adoption (096) and failure
-notification routing (097) are merged — refused project commands now toast
-and archive; the sub-agent spawn retest passed. Next move is the
-operator's pick: the remaining native-island/review/forge/terminal failure
-classes flagged in 097's disposition catalog, or a new lane.
+Agent orchestration lane, phase 1: card 098 (run registry) is dispatched;
+099 (operator-dispatched runs), 100 (fleet panel), 101 (delivery pipeline)
+are planned behind it. Phase 2 (102 review surface, 103 forge PRs) and
+phase 3 (104 orchestrator designation + delegation tools) are drafted.
+Contract 033 (draft) and the translation memo carry the decisions.
