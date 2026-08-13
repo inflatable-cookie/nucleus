@@ -1,6 +1,6 @@
 # 106 Run Delivery Commit And Push Authority
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 1 unblocker)
@@ -59,11 +59,24 @@ creation (103), merge authority, primary-tree mutations of any kind.
 
 ## Acceptance (planned)
 
-- [ ] contract text admits per-run commit + own-branch push through the
+- [x] contract text admits per-run commit + own-branch push through the
   chain, nothing wider
-- [ ] operator-confirmed delivery intent gates both effects; replay-safe
-- [ ] push failure preserves `delivered` with an explaining receipt
-- [ ] fixtures + server suite + ratchet green; batch log
+- [x] operator-confirmed delivery intent gates both effects; replay-safe
+- [x] push failure preserves `delivered` with an explaining receipt
+- [x] fixtures + server suite + ratchet green; batch log
+
+## Closeout
+
+Merged to main as `0034ad9c` (worker commit `875bddd8`, Luna-high, clean
+first run). The 007/011 realized exceptions now read as two distinct
+effects: dispatch-time worktree creation, and per-delivery `git add` /
+`git commit` in the run's isolated worktree plus `git push` of the run's
+own branch to the confirmed remote — each behind its own durable
+operator-confirmed intent, everything else (primary-tree mutations,
+force-push, branch deletion, other refs, PR/forge/merge) explicitly still
+excluded. Push failure keeps the local commit and produces a failed-push
+receipt without authorizing retry outside the intent. 033's authority rule
+updated to match.
 
 ## Stop Conditions
 

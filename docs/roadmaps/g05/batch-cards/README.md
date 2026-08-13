@@ -21,13 +21,11 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `106-run-delivery-commit-push-authority.md` — worker thread
-  `thread/106-run-delivery-commit-push-authority`
+- `101-run-delivery-pipeline.md` — worker thread
+  `thread/101-run-delivery-pipeline` (re-dispatch, post-106)
 
 ## Paused Cards
 
-- `101-run-delivery-pipeline.md` — blocked on commit/push authority (card
-  106; stop log `docs/logs/2026-08-13-run-delivery-pipeline.md`)
 - `050-production-remote-transport-gate.md` — needs a promoted Nucleus remote
   host pairing/session contract and selected production topology
 - `051-secondary-window-product-gate.md` — needs an operator-selected
@@ -133,3 +131,4 @@ Updated: 2026-08-04
 - `099-operator-dispatched-runs.md`
 - `100-run-fleet-panel.md`
 - `105-worktree-creation-authority.md`
+- `106-run-delivery-commit-push-authority.md`

@@ -19,5 +19,5 @@ One line per orchestrated worker thread. Orchestrator-only writes.
 | 099-operator-dispatched-runs | `g05/batch-cards/099-operator-dispatched-runs.md` | `thread/099-operator-dispatched-runs` | merged |
 | 105-worktree-creation-authority | `g05/batch-cards/105-worktree-creation-authority.md` | `thread/105-worktree-creation-authority` | merged |
 | 100-run-fleet-panel | `g05/batch-cards/100-run-fleet-panel.md` | `thread/100-run-fleet-panel` | merged |
-| 101-run-delivery-pipeline | `g05/batch-cards/101-run-delivery-pipeline.md` | `thread/101-run-delivery-pipeline` | paused (commit/push gate; stop log merged) |
-| 106-run-delivery-commit-push-authority | `g05/batch-cards/106-run-delivery-commit-push-authority.md` | `thread/106-run-delivery-commit-push-authority` | dispatched |
+| 101-run-delivery-pipeline | `g05/batch-cards/101-run-delivery-pipeline.md` | `thread/101-run-delivery-pipeline` | dispatched (2nd, post-106) |
+| 106-run-delivery-commit-push-authority | `g05/batch-cards/106-run-delivery-commit-push-authority.md` | `thread/106-run-delivery-commit-push-authority` | merged |
