@@ -7,8 +7,9 @@
 mod query;
 
 use nucleus_engine::{
-    EngineCheckpointRecord, EngineDiffSummaryRecord, EngineRuntimeReceiptRecord,
-    EngineTaskReadinessProjection, EngineTaskSeedCandidateProjection, EngineTaskTimelineProjection,
+    EngineCheckpointRecord, EngineDiffSummaryRecord, EngineRunFleetProjection,
+    EngineRuntimeReceiptRecord, EngineTaskReadinessProjection, EngineTaskSeedCandidateProjection,
+    EngineTaskTimelineProjection,
 };
 use nucleus_local_store::LocalStoreRecord;
 
@@ -177,6 +178,7 @@ pub enum ServerQueryResult {
     SelectedTaskReviewDecisionAdmission(crate::SelectedTaskReviewDecisionAdmission),
     SelectedTaskReviewDecisionApply(crate::SelectedTaskReviewDecisionRecord),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
+    OrchestrationRuns(EngineRunFleetProjection),
     Empty,
     Unsupported {
         reason: String,

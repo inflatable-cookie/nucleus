@@ -206,6 +206,14 @@ impl RepositoryBoundary {
             description: "runtime effect refs and latest-state records",
         }
     }
+
+    /// Planned orchestration run repository boundary.
+    pub fn orchestration_runs() -> Self {
+        Self {
+            domain: PersistenceDomain::OrchestrationRuns,
+            description: "durable orchestration run records and transition history",
+        }
+    }
 }
 
 #[cfg(test)]

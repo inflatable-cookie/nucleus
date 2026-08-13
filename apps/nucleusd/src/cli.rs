@@ -94,6 +94,7 @@ pub(crate) fn print_help() {
         "  nucleusd [--state <path>] query memory-proposal-review-diagnostics --project <project-id>"
     );
     println!("  nucleusd [--state <path>] query research-run-briefs --project <project-id>");
+    println!("  nucleusd [--state <path>] query orchestration-runs --project <project-id>");
     println!(
         "  nucleusd [--state <path>] query task-seed-promotion-diagnostics --project <project-id>"
     );

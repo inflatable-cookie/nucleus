@@ -21,6 +21,7 @@ use super::selected_task_to_dto::selected_task_query_dto;
 use super::{ControlQueryDto, ControlQueryScopeDto, ControlStateDomainDto};
 use crate::control_envelope_dto::protocol::{diagnostics_domain_dto, runtime_metadata_action};
 use crate::control_envelope_dto::ControlApiCodecError;
+use crate::control_api::OrchestrationRunsQuery;
 
 impl TryFrom<&ServerQuery> for ControlQueryDto {
     type Error = ControlApiCodecError;
@@ -246,6 +247,13 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                 project_id: project_id.0.clone(),
                 expected_domains: expected_domains.iter().map(authority_domain_dto).collect(),
             }),
+            ServerQueryKind::OrchestrationRuns(OrchestrationRunsQuery { project_id }) => {
+                Ok(Self::OrchestrationRuns {
+                    query_id: query.id.0.clone(),
+                    action: "fleet".to_owned(),
+                    project_id: project_id.0.clone(),
+                })
+            }
             _ => Err(ControlApiCodecError::unsupported(
                 "query shape is not supported by the first control envelope",
             )),

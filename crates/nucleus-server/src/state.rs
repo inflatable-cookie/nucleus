@@ -29,6 +29,7 @@ pub enum ServerStateDomain {
     CommandEvidence,
     ArtifactMetadata,
     RuntimeEffects,
+    OrchestrationRuns,
 }
 
 impl ServerStateDomain {
@@ -50,6 +51,7 @@ impl ServerStateDomain {
             Self::CommandEvidence => PersistenceDomain::CommandEvidence,
             Self::ArtifactMetadata => PersistenceDomain::ArtifactMetadata,
             Self::RuntimeEffects => PersistenceDomain::RuntimeEffects,
+            Self::OrchestrationRuns => PersistenceDomain::OrchestrationRuns,
         }
     }
 }
@@ -140,6 +142,10 @@ where
 
     pub fn runtime_effects(&self) -> ServerStateDomainService<'_, B> {
         self.domain(ServerStateDomain::RuntimeEffects)
+    }
+
+    pub fn orchestration_runs(&self) -> ServerStateDomainService<'_, B> {
+        self.domain(ServerStateDomain::OrchestrationRuns)
     }
 }
 

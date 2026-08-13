@@ -46,7 +46,8 @@ impl ControlQueryDto {
             | Self::SelectedTaskCommandAdmission { query_id, .. }
             | Self::SelectedTaskReviewDecisionAdmission { query_id, .. }
             | Self::SelectedTaskReviewDecisionApply { query_id, .. }
-            | Self::ProjectAuthorityMap { query_id, .. } => query_id.clone(),
+            | Self::ProjectAuthorityMap { query_id, .. }
+            | Self::OrchestrationRuns { query_id, .. } => query_id.clone(),
         }
     }
 }

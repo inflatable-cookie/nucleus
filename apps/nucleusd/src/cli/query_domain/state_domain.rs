@@ -28,6 +28,7 @@ pub(super) fn query_domain_state_domain(domain: &QueryDomain) -> Option<ServerSt
         | QueryDomain::MemoryProposals { .. }
         | QueryDomain::MemoryProposalReviewDiagnostics { .. }
         | QueryDomain::ResearchRunBriefs { .. }
+        | QueryDomain::OrchestrationRuns { .. }
         | QueryDomain::TaskSeedPromotionDiagnostics { .. }
         | QueryDomain::PlanningProjectionFileWriteDiagnostics { .. }
         | QueryDomain::PlanningProjectionImportDiagnostics { .. }

@@ -6,7 +6,7 @@ use nucleus_server::{
     AcceptedMemoryProjectionImportDiagnosticsQuery, AcceptedMemoryProjectionWriteDiagnosticsQuery,
     AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery,
     AcceptedMemoryReviewReceiptStorageDiagnosticsQuery, MemoryProposalReviewDiagnosticsQuery,
-    MemoryProposalsQuery, PlanningCapturePublicationDiagnosticsQuery,
+    MemoryProposalsQuery, OrchestrationRunsQuery, PlanningCapturePublicationDiagnosticsQuery,
     PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
@@ -135,6 +135,11 @@ pub(super) fn query_kind(query: &QueryDomain) -> ServerQueryKind {
         }
         QueryDomain::ResearchRunBriefs { project_id } => {
             ServerQueryKind::ResearchRunBriefs(ResearchRunBriefsQuery {
+                project_id: ProjectId(project_id.clone()),
+            })
+        }
+        QueryDomain::OrchestrationRuns { project_id } => {
+            ServerQueryKind::OrchestrationRuns(OrchestrationRunsQuery {
                 project_id: ProjectId(project_id.clone()),
             })
         }

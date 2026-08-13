@@ -12,6 +12,7 @@ pub struct OrchestrationCommandId(pub String);
 pub enum OrchestrationCommandFamily {
     Project,
     Task,
+    Run,
     Workspace,
     AgentSession,
     Runtime,
@@ -96,6 +97,7 @@ fn requires_target_ref(family: &OrchestrationCommandFamily) -> bool {
         family,
         OrchestrationCommandFamily::Project
             | OrchestrationCommandFamily::Task
+            | OrchestrationCommandFamily::Run
             | OrchestrationCommandFamily::Workspace
             | OrchestrationCommandFamily::AgentSession
             | OrchestrationCommandFamily::Runtime
@@ -124,12 +126,29 @@ mod tests {
     }
 
     #[test]
-    fn admission_rejects_task_command_without_target_ref() {
+    fn admission_accepts_run_command_with_target_ref() {
         let service = OrchestrationCommandAdmissionService::new();
 
         let decision = service.admit(OrchestrationCommandAdmission {
             command_id: OrchestrationCommandId("command:1".to_owned()),
-            family: OrchestrationCommandFamily::Task,
+            family: OrchestrationCommandFamily::Run,
+            target_ref: Some("run:1".to_owned()),
+            summary: Some("dispatch run".to_owned()),
+        });
+
+        assert!(matches!(
+            decision,
+            OrchestrationCommandDecision::Accepted(_)
+        ));
+    }
+
+    #[test]
+    fn admission_rejects_run_command_without_target_ref() {
+        let service = OrchestrationCommandAdmissionService::new();
+
+        let decision = service.admit(OrchestrationCommandAdmission {
+            command_id: OrchestrationCommandId("command:1".to_owned()),
+            family: OrchestrationCommandFamily::Run,
             target_ref: None,
             summary: None,
         });
