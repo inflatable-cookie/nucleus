@@ -11,6 +11,7 @@ mod command_events;
 pub mod command_projection;
 mod commands;
 mod event_store;
+mod git_branch_worktree_runner_commands;
 mod goal_commands;
 mod handler;
 mod project_commands;

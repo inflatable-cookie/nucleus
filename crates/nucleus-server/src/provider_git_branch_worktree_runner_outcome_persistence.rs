@@ -59,13 +59,13 @@ where
             "git-branch-worktree-runner-outcomes:{}",
             input.commands.command_set_id
         ),
+        shell_execution_performed: records.iter().any(|record| record.shell_execution_performed),
+        checkout_executed: records.iter().any(|record| record.checkout_executed),
+        branch_created: records.iter().any(|record| record.branch_created),
+        worktree_created: records.iter().any(|record| record.worktree_created),
+        commit_created: records.iter().any(|record| record.commit_created),
+        push_executed: records.iter().any(|record| record.push_executed),
         records,
-        shell_execution_performed: false,
-        checkout_executed: false,
-        branch_created: false,
-        worktree_created: false,
-        commit_created: false,
-        push_executed: false,
         no_effects: ForgeScmNoEffects::none(),
     })
 }

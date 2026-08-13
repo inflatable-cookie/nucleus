@@ -600,6 +600,16 @@ The first implementation must set provider mutation to false. It must not
 checkout, switch, branch, create worktrees, stage, commit, snap, publish, push,
 promote, open review requests, merge, or call a forge.
 
+Realized exception: isolated worktree creation for a dispatched run. The
+`create worktrees` exclusion admits exactly one effect: creating an isolated
+worktree for one run dispatch, and only through the branch/worktree runner
+authority chain — a durable operator-confirmed
+`GitBranchWorktreeRunnerOperatorEffectIntent::Confirmed` recorded per dispatch
+(`allow_isolated_worktree_creation` with the exact target refs), an admitted
+execution handoff, policy-approved target refs, `ReadyForRunner` authority
+status, and a runtime receipt. Provider mutation stays false, and every other
+effect in the exclusion list above stays excluded from this implementation.
+
 Authority levels stay distinct:
 
 - propose: record a recommendation or block reason
@@ -1066,6 +1076,13 @@ them to snapshot scopes or provider-managed surfaces.
 
 This implementation does not create branches, create worktrees, switch refs,
 delete directories, merge, publish, or mutate provider state.
+
+The single realized exception is isolated worktree creation for a dispatched
+run, admitted only through the branch/worktree runner authority chain:
+operator-confirmed effect intent per dispatch, admitted execution handoff,
+policy-approved target refs, `ReadyForRunner` status, and a runtime receipt.
+Nothing else in this exclusion list is widened; in particular the primary-tree
+checkout and branch-creation effects remain unadmitted here.
 
 ## Working Session Execution Prep
 

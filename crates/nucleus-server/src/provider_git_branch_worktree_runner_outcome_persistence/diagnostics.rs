@@ -46,12 +46,12 @@ pub fn git_branch_worktree_runner_outcome_diagnostics_from_persisted_records(
             .iter()
             .map(|record| record.evidence_refs.len())
             .sum(),
-        shell_execution_performed: false,
-        checkout_executed: false,
-        branch_created: false,
-        worktree_created: false,
-        commit_created: false,
-        push_executed: false,
+        shell_execution_performed: records.iter().any(|record| record.shell_execution_performed),
+        checkout_executed: records.iter().any(|record| record.checkout_executed),
+        branch_created: records.iter().any(|record| record.branch_created),
+        worktree_created: records.iter().any(|record| record.worktree_created),
+        commit_created: records.iter().any(|record| record.commit_created),
+        push_executed: records.iter().any(|record| record.push_executed),
         no_effects: ForgeScmNoEffects::none(),
     }
 }

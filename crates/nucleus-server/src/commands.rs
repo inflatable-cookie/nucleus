@@ -36,6 +36,31 @@ pub enum ServerCommandKind {
     MemoryProposalReview(MemoryProposalReviewCommand),
     ReadOnlyCommand(ReadOnlyCommand),
     ConfigureModelRoute(ModelRoute),
+    GitBranchWorktreeRunner(GitBranchWorktreeRunnerEffectConfirmationCommand),
+}
+
+/// Operator confirmation that one run dispatch may create its isolated
+/// worktree through the branch/worktree runner authority chain.
+///
+/// First git mutation on the control surface: this command records a durable
+/// operator effect intent (admission family `GitBranchWorktreeRunner`); the
+/// gated `git worktree add` execution path runs only when the authority chain
+/// reaches `ReadyForRunner` from this intent plus an admitted handoff and
+/// approved target refs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitBranchWorktreeRunnerEffectConfirmationCommand {
+    /// Run dispatch this confirmation binds.
+    pub run_id: nucleus_engine::EngineRunId,
+    /// Admitted execution handoff record id being confirmed.
+    pub handoff_id: String,
+    /// Exact target branch ref (`run/<run-slug>`).
+    pub branch_ref: String,
+    /// Exact target worktree location (`../<repo>-wt/<run-slug>`).
+    pub worktree_location_ref: String,
+    /// Operator identity recording the intent.
+    pub operator_ref: String,
+    /// Idempotency key; repeats replay the same durable confirmation.
+    pub idempotency_key: String,
 }
 
 /// Goal authoring commands. Lifecycle execution is intentionally absent.

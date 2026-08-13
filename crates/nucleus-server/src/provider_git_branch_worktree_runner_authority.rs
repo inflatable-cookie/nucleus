@@ -1,9 +1,24 @@
 //! Authority records for Git branch/worktree runner execution.
 
 mod blockers;
+mod execution;
+mod intent;
 mod record_builder;
 mod types;
 
+pub use execution::{
+    run_git_branch_worktree_runner, GitBranchWorktreeRunnerExecutionError,
+    GitBranchWorktreeRunnerExecutionInput, GitBranchWorktreeRunnerExecutionResult,
+    GitBranchWorktreeRunnerSpawnSummary,
+};
+pub use intent::{
+    read_git_branch_worktree_runner_operator_effect_intent_by_confirmation,
+    write_git_branch_worktree_runner_operator_effect_intent,
+    GitBranchWorktreeRunnerOperatorEffectIntentRecord,
+    GitBranchWorktreeRunnerOperatorEffectIntentStatus,
+    GitBranchWorktreeRunnerOperatorEffectIntentWriteError,
+    GitBranchWorktreeRunnerOperatorEffectIntentWriteOutcome,
+};
 pub use types::{
     GitBranchWorktreeRunnerAction, GitBranchWorktreeRunnerAuthorityBlocker,
     GitBranchWorktreeRunnerAuthorityInput, GitBranchWorktreeRunnerAuthorityRecord,

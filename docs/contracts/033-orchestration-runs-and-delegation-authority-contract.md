@@ -37,6 +37,22 @@ commit, push, PR) produce receipts under contract 020.
 A run without a closeout cannot be `delivered`. Structured completion is a
 precondition of review by either an orchestrator agent or the operator.
 
+## Run Worktree Authority Rule
+
+Run worktree creation is admitted only through the Git branch/worktree runner
+authority chain (`nucleus-server`
+`provider_git_branch_worktree_runner_authority`). The operator confirms the
+effect per dispatch with a control command that records a durable
+`GitBranchWorktreeRunnerOperatorEffectIntent::Confirmed` carrying
+`allow_isolated_worktree_creation` and the exact target refs (branch ref and
+worktree location) for that dispatch. The execution path runs
+`git worktree add <location> -b <branch>` only when the chain reaches
+`ReadyForRunner` — admitted execution handoff, operator-confirmed intent,
+and policy-approved target refs — and the outcome record flips
+`worktree_created: true` with a runtime receipt (contract 020). No other SCM
+mutation (checkout, switch, commit, push, PR, branch mutation) rides this
+chain or this confirmation.
+
 ## Orchestrator Designation Rule
 
 An orchestrator is a configured provider instance designated by the operator
