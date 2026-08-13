@@ -198,9 +198,44 @@ pub enum ControlCommandDto {
         commit_message: String,
         #[serde(default)]
         remote_target: String,
+        #[serde(default)]
+        pull_request_creation: Option<ControlForgePullRequestCreationScopeDto>,
         idempotency_key: String,
         expected_revision: Option<String>,
     },
+}
+
+/// Operator-confirmed PR-creation scope on the run delivery command DTO.
+/// Mirrors the durable `ForgePullRequestCreationScope`: forge provider, base
+/// and head refs, and title/body sources only — raw PR title/body text never
+/// crosses the command boundary.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub struct ControlForgePullRequestCreationScopeDto {
+    pub forge_provider: ControlForgePullRequestProviderDto,
+    pub base_branch: String,
+    pub head_branch: String,
+    pub title_source: ControlForgePullRequestTextSourceDto,
+    pub body_source: ControlForgePullRequestTextSourceDto,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlForgePullRequestProviderDto {
+    GitHub,
+    GitLab,
+    GenericForge,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlForgePullRequestTextSourceDto {
+    OperatorProvided,
+    AgentSuggested,
+    GeneratedFromEvidence,
 }
 
 /// Supported task command actions for the first command DTO subset.

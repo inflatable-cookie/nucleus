@@ -468,3 +468,55 @@ fn request_envelope_dto_rejects_reject_without_a_reason() {
     );
     assert!(error.reason.contains("reason"));
 }
+
+#[test]
+fn request_envelope_dto_round_trips_run_delivery_with_pull_request_scope() {
+    let scope = crate::ForgePullRequestCreationScope {
+        forge_provider: crate::ForgePullRequestProvider::GitHub,
+        base_branch: "main".to_owned(),
+        head_branch: "run/dto".to_owned(),
+        title_source: crate::ForgePullRequestTextSource::GeneratedFromEvidence,
+        body_source: crate::ForgePullRequestTextSource::GeneratedFromEvidence,
+    };
+    let request = ServerControlRequest {
+        id: ServerControlRequestId("request:dto:delivery".to_owned()),
+        client_id: ClientId("client:desktop".to_owned()),
+        kind: ServerControlRequestKind::Command(crate::commands::ServerCommand {
+            id: ServerCommandId("command:dto:delivery".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: crate::commands::ServerCommandKind::RunDeliveryExecution(
+                crate::commands::RunDeliveryExecutionCommand {
+                    run_id: nucleus_engine::EngineRunId("run:dto".to_owned()),
+                    closeout_summary: "delivered dto run".to_owned(),
+                    closeout_evidence_refs: vec!["turn:dto".to_owned()],
+                    closeout_diff_ref: Some("worktree:dto".to_owned()),
+                    operator_ref: "operator:tom".to_owned(),
+                    commit_message: "Deliver run:dto".to_owned(),
+                    remote_target: "origin".to_owned(),
+                    pull_request_creation: Some(scope.clone()),
+                    idempotency_key: "delivery:dto".to_owned(),
+                    expected_revision: Some(RevisionId("rev:run:dto".to_owned())),
+                },
+            ),
+        }),
+    };
+
+    let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+    let json = serde_json::to_string(&dto).expect("json");
+    assert!(json.contains("pull_request_creation"));
+    assert!(json.contains("git_hub"));
+    assert!(!json.contains("generic_forge"));
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+    let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+    assert_eq!(restored, request);
+    assert!(matches!(
+        restored.kind,
+        ServerControlRequestKind::Command(crate::commands::ServerCommand {
+            kind: crate::commands::ServerCommandKind::RunDeliveryExecution(command),
+            ..
+        }) if command.pull_request_creation == Some(scope)
+            && command.remote_target == "origin"
+            && command.idempotency_key == "delivery:dto"
+    ));
+}

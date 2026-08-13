@@ -13,7 +13,11 @@ use super::project_lifecycle::{
 };
 use super::read_only::read_only_command_kind;
 use super::task_authoring::{task_create_kind, task_update_kind};
-use super::types::{ControlCommandDto, ControlTaskCommandActionDto};
+use super::types::{
+    ControlCommandDto, ControlForgePullRequestCreationScopeDto,
+    ControlForgePullRequestProviderDto, ControlForgePullRequestTextSourceDto,
+    ControlTaskCommandActionDto,
+};
 use super::ControlRunTransitionActionDto;
 use crate::commands::{
     RunCommand, RunDeliveryExecutionCommand, RunDispatchExecutionCommand, RunProposeCommand,
@@ -308,6 +312,7 @@ impl ControlCommandDto {
                 operator_ref,
                 commit_message,
                 remote_target,
+                pull_request_creation,
                 idempotency_key,
                 expected_revision,
             } => Ok((
@@ -320,6 +325,8 @@ impl ControlCommandDto {
                     operator_ref,
                     commit_message,
                     remote_target,
+                    pull_request_creation: pull_request_creation
+                        .map(forge_pull_request_creation_scope),
                     idempotency_key,
                     expected_revision: expected_revision.map(RevisionId),
                 }),
@@ -452,4 +459,36 @@ fn reject_reason(action: &str, reason: Option<String>) -> Result<(), ControlApiC
         )));
     }
     Ok(())
+}
+
+fn forge_pull_request_creation_scope(
+    scope: ControlForgePullRequestCreationScopeDto,
+) -> crate::ForgePullRequestCreationScope {
+    crate::ForgePullRequestCreationScope {
+        forge_provider: match scope.forge_provider {
+            ControlForgePullRequestProviderDto::GitHub => crate::ForgePullRequestProvider::GitHub,
+            ControlForgePullRequestProviderDto::GitLab => crate::ForgePullRequestProvider::GitLab,
+            ControlForgePullRequestProviderDto::GenericForge => {
+                crate::ForgePullRequestProvider::GenericForge
+            }
+        },
+        base_branch: scope.base_branch,
+        head_branch: scope.head_branch,
+        title_source: text_source(scope.title_source),
+        body_source: text_source(scope.body_source),
+    }
+}
+
+fn text_source(source: ControlForgePullRequestTextSourceDto) -> crate::ForgePullRequestTextSource {
+    match source {
+        ControlForgePullRequestTextSourceDto::OperatorProvided => {
+            crate::ForgePullRequestTextSource::OperatorProvided
+        }
+        ControlForgePullRequestTextSourceDto::AgentSuggested => {
+            crate::ForgePullRequestTextSource::AgentSuggested
+        }
+        ControlForgePullRequestTextSourceDto::GeneratedFromEvidence => {
+            crate::ForgePullRequestTextSource::GeneratedFromEvidence
+        }
+    }
 }

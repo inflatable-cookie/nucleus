@@ -7,7 +7,7 @@
 //! then, after the observed worker turn returns, drive the delivery pipeline.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -155,9 +155,11 @@ pub(crate) async fn dispatch_run(
 
     // The chat turn has already marked `dispatched -> running` from observed
     // provider activity. Only after that observed completion do we submit the
-    // pipeline: intent first, then the gated commit/push runner.
+    // pipeline: intent first, then the gated commit/push runner, then the
+    // forge pull-request lane under the confirmed scope.
     let remote_target = remote_target(&state, &request.project_id)?;
     let pushed = !remote_target.is_empty();
+    let pull_request_creation = forge_pull_request_scope(&state, &request.project_id, &branch_ref);
     let delivery = ServerControlRequest {
         id: ServerControlRequestId(format!("request:run:delivery:{run_id}")),
         client_id: ClientId("client:desktop".to_owned()),
@@ -174,6 +176,7 @@ pub(crate) async fn dispatch_run(
                 operator_ref: request.operator_ref.clone(),
                 commit_message: format!("Deliver {run_id}"),
                 remote_target,
+                pull_request_creation,
                 idempotency_key: format!("delivery:{run_id}"),
                 expected_revision: None,
             }),
@@ -189,7 +192,13 @@ pub(crate) async fn dispatch_run(
         );
         return Err(error);
     }
-    notifications::publish_run_delivery(&window.app_handle(), &run_id, pushed);
+    let pr_url = delivered_pr_url(&state, &run_id);
+    notifications::publish_run_delivery(
+        &window.app_handle(),
+        &run_id,
+        pushed,
+        pr_url.as_deref(),
+    );
 
     Ok(RunDispatchOutcome {
         run_id,
@@ -268,6 +277,89 @@ fn remote_target(state: &DesktopState, project_id: &str) -> Result<String, Strin
     } else {
         String::new()
     })
+}
+
+/// Operator-confirmed PR-creation scope for one run delivery: forge provider
+/// inferred from the configured origin remote URL, base branch from the
+/// project's default branch, head the run's own branch, title/body generated
+/// from the closeout evidence. `None` keeps the delivery branch-only (no
+/// forge call) when the project has no origin remote.
+fn forge_pull_request_scope(
+    state: &DesktopState,
+    project_id: &str,
+    branch_ref: &str,
+) -> Option<nucleus_server::ForgePullRequestCreationScope> {
+    let record = state
+        .server_state
+        .projects()
+        .get(&nucleus_core::PersistenceRecordId(project_id.to_owned()))
+        .ok()??;
+    let project = nucleus_projects::decode_project_storage_record(&record.payload.bytes).ok()?;
+    let root = project.primary_location().map(PathBuf::from)?;
+    let remote_url = origin_remote_url(&root)?;
+    let provider = if remote_url.to_ascii_lowercase().contains("github") {
+        nucleus_server::ForgePullRequestProvider::GitHub
+    } else if remote_url.to_ascii_lowercase().contains("gitlab") {
+        nucleus_server::ForgePullRequestProvider::GitLab
+    } else {
+        nucleus_server::ForgePullRequestProvider::GenericForge
+    };
+    Some(nucleus_server::ForgePullRequestCreationScope {
+        forge_provider: provider,
+        base_branch: project_default_branch(&project),
+        head_branch: branch_ref.to_owned(),
+        title_source: nucleus_server::ForgePullRequestTextSource::GeneratedFromEvidence,
+        body_source: nucleus_server::ForgePullRequestTextSource::GeneratedFromEvidence,
+    })
+}
+
+fn origin_remote_url(root: &Path) -> Option<String> {
+    let config = fs::read_to_string(root.join(".git").join("config")).ok()?;
+    let mut in_origin = false;
+    for line in config.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_origin = trimmed.contains("\"origin\"");
+            continue;
+        }
+        if in_origin {
+            if let Some(url) = trimmed.strip_prefix("url =") {
+                let url = url.trim();
+                if !url.is_empty() {
+                    return Some(url.to_owned());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn project_default_branch(project: &nucleus_projects::ProjectStorageRecord) -> String {
+    project
+        .default_working_resource
+        .as_ref()
+        .and_then(|target| project.resource(&target.resource_id))
+        .and_then(|resource| resource.default_branch.as_deref())
+        .filter(|branch| !branch.trim().is_empty())
+        .unwrap_or("main")
+        .to_owned()
+}
+
+/// Read the pull-request link from the delivered run's closeout evidence
+/// (`delivery:pr-url:<url>`), published by the server-owned delivery pipeline
+/// after the forge pull-request lane ran.
+fn delivered_pr_url(state: &DesktopState, run_id: &str) -> Option<String> {
+    let record = state
+        .server_state
+        .orchestration_runs()
+        .get(&nucleus_core::PersistenceRecordId(run_id.to_owned()))
+        .ok()??;
+    let run = nucleus_engine::decode_run_storage_record(&record.payload.bytes).ok()?;
+    let closeout = run.closeout.as_ref()?;
+    closeout
+        .evidence_refs
+        .iter()
+        .find_map(|reference| reference.strip_prefix("delivery:pr-url:").map(str::to_owned))
 }
 
 fn worker_brief(

@@ -172,6 +172,7 @@ impl NucleusNotificationRuntime {
         &self,
         run_id: &str,
         pushed: bool,
+        pr_url: Option<&str>,
     ) -> Result<NotificationMutationResult, String> {
         let sequence = self.next_sequence()?;
         let mut ledger = self
@@ -180,10 +181,12 @@ impl NucleusNotificationRuntime {
             .map_err(|_| "notification authority unavailable")?;
         let snapshot = NotificationSnapshot::from_ledger(&ledger, 0, SNAPSHOT_LIMIT)
             .map_err(|error| error.to_string())?;
-        let summary = if pushed {
-            "The run branch was committed and pushed."
-        } else {
-            "The run branch was committed locally; no remote is configured."
+        let summary = match (pushed, pr_url) {
+            (true, Some(url)) => {
+                format!("The run branch was committed, pushed, and opened as a pull request: {url}.")
+            }
+            (true, None) => "The run branch was committed and pushed.".to_owned(),
+            (false, _) => "The run branch was committed locally; no remote is configured.".to_owned(),
         };
         let result = ledger
             .execute_protocol_mutation(NotificationMutationCommand::Add {
@@ -358,13 +361,18 @@ pub(crate) fn publish_command_refusal<R: Runtime>(
     }
 }
 
-pub(crate) fn publish_run_delivery<R: Runtime>(app: &AppHandle<R>, run_id: &str, pushed: bool) {
+pub(crate) fn publish_run_delivery<R: Runtime>(
+    app: &AppHandle<R>,
+    run_id: &str,
+    pushed: bool,
+    pr_url: Option<&str>,
+) {
     let Some(state) = app.try_state::<NucleusNotificationState>() else {
         return;
     };
     match state
         .runtime
-        .delivery_mutation(run_id, pushed)
+        .delivery_mutation(run_id, pushed, pr_url)
         .and_then(|result| publish(app, &result))
     {
         Ok(()) => {}

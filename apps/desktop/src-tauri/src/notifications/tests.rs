@@ -51,6 +51,51 @@ fn operation_failure_is_redacted_and_routes_through_semantic_action() {
 }
 
 #[test]
+fn delivery_with_pr_link_surfaces_the_url_in_the_notification() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let runtime = NucleusNotificationRuntime::new(directory.path().join("notifications.json"))
+        .expect("notification runtime");
+    runtime
+        .delivery_mutation(
+            "run:fixture",
+            true,
+            Some("https://forge.example/pr/42"),
+        )
+        .expect("publish delivery");
+
+    let snapshot = snapshot(&runtime);
+    assert_eq!(snapshot.unseen_count, 1);
+    let record = &snapshot.page.records[0];
+    assert_eq!(record.draft.source_id.to_string(), SOURCE_OPERATIONS);
+    assert_eq!(record.draft.severity, NotificationSeverityProjection::Info);
+    assert_eq!(record.draft.title, "Run run:fixture delivered");
+    assert!(record.draft.summary.contains("https://forge.example/pr/42"));
+    assert_eq!(
+        record
+            .draft
+            .cause_id
+            .as_ref()
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("run:fixture")
+    );
+    assert_eq!(record.draft.actions.len(), 0);
+}
+
+#[test]
+fn delivery_without_pr_link_keeps_branch_summary() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let runtime = NucleusNotificationRuntime::new(directory.path().join("notifications.json"))
+        .expect("notification runtime");
+    runtime
+        .delivery_mutation("run:fixture", true, None)
+        .expect("publish delivery");
+
+    let snapshot = snapshot(&runtime);
+    assert_eq!(snapshot.page.records[0].draft.summary, "The run branch was committed and pushed.");
+}
+
+#[test]
 fn command_refusal_is_warning_with_reason_and_project_scope() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let runtime = NucleusNotificationRuntime::new(directory.path().join("notifications.json"))

@@ -32,8 +32,9 @@ use serde::{Deserialize, Serialize};
 use super::forge_adapter::{
     ForgePullRequestCreationAdapter, ForgePullRequestCreationError,
     ForgePullRequestCreationReference, ForgePullRequestCreationRequest,
-    ForgePullRequestCreationTestDouble,
 };
+#[cfg(test)]
+use super::forge_adapter::ForgePullRequestCreationTestDouble;
 use super::types::{
     ForgePullRequestCreationScope, ForgePullRequestRunnerAuthorityInput,
     ForgePullRequestRunnerAuthorityRecord, ForgePullRequestRunnerAuthoritySet,
@@ -630,17 +631,6 @@ where
     .map_err(ForgePullRequestCreationExecutionError::Persistence)
 }
 
-impl ForgePullRequestCreationOutcomeStatus {
-    fn as_slug(&self) -> &'static str {
-        match self {
-            Self::Completed => "completed",
-            Self::Reconciled => "reconciled",
-            Self::Failed => "failed",
-            Self::Blocked => "blocked",
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -782,6 +772,7 @@ mod tests {
                     operation_id: None,
                     conversation_id: Some(format!("conversation:run:{RUN_ID}")),
                     worktree_ref: Some("../repo-wt/pr-fixture".to_owned()),
+                    base_ref: Some("main".to_owned()),
                     expected_revision: None,
                 }),
             )

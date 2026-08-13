@@ -1,6 +1,6 @@
 # 102 Run Delivery Review Surface
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 2)
@@ -39,10 +39,22 @@ automation.
 
 ## Acceptance (planned)
 
-- [ ] delivered run renders closeout + validation + diff in one surface
-- [ ] accept/reject from the surface transitions the registry with receipts
-- [ ] rework routes through the existing 063-066 handoff
-- [ ] fixtures + desktop suites green; batch log
+- [x] delivered run renders closeout + validation + diff in one surface
+- [x] accept/reject from the surface transitions the registry with receipts
+- [x] rework routes through the existing 063-066 handoff
+- [x] fixtures + desktop suites green; batch log
+
+## Closeout
+
+Merged to main as `d2266ceb` (commit `7b4fbeef`). Unusual execution: two
+flash sessions died mid-card (stream stall, then a silent exit) — the
+second left a complete, verified-but-uncommitted implementation in the
+worktree. The orchestrator verified it (desktop check clean, 71 bun +
+37 vitest with only the known settings drift, 9 server + 13 engine tests)
+and committed it with the batch log. The surface is read-only over the run
+aggregate (closeout, parsed validation evidence, diff against the
+dispatch-bound fork point); accept/reject ride the ordinary run command
+path with receipts.
 
 ## Stop Conditions
 

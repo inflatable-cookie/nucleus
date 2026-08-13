@@ -367,6 +367,11 @@ pub struct RunDeliveryExecutionCommand {
     /// Empty means the project has no configured remote; the local commit is
     /// still a deliverable branch.
     pub remote_target: String,
+    /// Operator-confirmed per-delivery PR-creation scope on top of the
+    /// confirmed remote. `None` keeps the delivery branch-only (no forge
+    /// call); `Some` admits exactly one pull-request open for the run's own
+    /// pushed branch through the forge pull-request runner authority chain.
+    pub pull_request_creation: Option<crate::ForgePullRequestCreationScope>,
     pub idempotency_key: String,
     pub expected_revision: Option<RevisionId>,
 }
