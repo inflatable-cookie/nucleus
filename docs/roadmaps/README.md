@@ -415,10 +415,11 @@ shape.
 
 ## Next Task
 
-Agent orchestration lane: phase 1 is merged — registry (098), gated
-worktree authority (105), operator-dispatched runs (099), fleet panel
-(100), delivery commit/push authority (106), and the delivery pipeline
-(101). Operator checkpoint: dispatch a real run from the project surface,
-watch it in the Runs tab, and confirm the delivery loop end to end against
-a live provider. Then phase 2 (102 review surface, 103 forge PRs) or the
-operator's pick.
+Agent orchestration lane: phases 1 and 2 are merged — registry (098),
+dispatch (099), fleet panel (100), delivery pipeline (101), review surface
+(102), forge PR lane (103, via authority cards 105-107). Operator
+checkpoint: run the full loop live — dispatch a run, watch it in the Runs
+tab, review the delivery, accept. Note real forge providers report
+`ProviderUnavailable` until a real forge route lands its own lane (contract
+027). Then phase 3: card 104 (orchestrator designation + delegation
+tools).

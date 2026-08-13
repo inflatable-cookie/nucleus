@@ -1,6 +1,6 @@
 # 103 Run Delivery Forge Pull Requests
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 2)
@@ -52,11 +52,25 @@ Out of scope: merge automation, PR review comment sync, stacked runs.
 
 ## Acceptance (planned)
 
-- [ ] forge-backed projects deliver as PRs linked from the run record
-- [ ] no-forge/no-credential projects keep the 101 packet with an
+- [x] forge-backed projects deliver as PRs linked from the run record
+- [x] no-forge/no-credential projects keep the 101 packet with an
   explaining receipt
-- [ ] PR API failure leaves the branch delivered and records the failure
-- [ ] fixtures + suites green; batch log
+- [x] PR API failure leaves the branch delivered and records the failure
+- [x] fixtures + suites green; batch log
+
+## Closeout
+
+Merged to main as `01a52221` (flash xhigh, second dispatch after the 107
+gate opened). The delivery pipeline now invokes the 107 PR-creation lane
+after the gated push under the confirmed intent, appends
+`delivery:pr-reference` evidence to the closeout, and surfaces the link in
+the host notification. Honest route caveat: the admitted forge adapter is
+the test double — real forge routes report `ProviderUnavailable` (recorded
+with a receipt; branch-only delivery stands) until a real provider route
+lands its own lane per contract 027. Merge conflicts with 102's DTO union
+were resolved by the orchestrator (both variants kept, `base_ref` fixture
+updated, bindings regenerated). First dispatch stopped on the PR-creation
+gate (stop log merged `dfbac4c0`); 107 opened it.
 
 ## Stop Conditions
 
