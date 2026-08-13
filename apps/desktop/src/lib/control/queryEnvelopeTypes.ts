@@ -149,4 +149,10 @@ export type ControlQueryDto =
       reason: string | null;
       operator_ref: string;
     }
+  | {
+      kind: "orchestration_runs";
+      query_id: string;
+      action: "fleet";
+      project_id: string;
+    }
   | ControlSelectedTaskReviewDecisionQueryDto;
