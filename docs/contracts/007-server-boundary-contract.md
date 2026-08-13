@@ -1735,6 +1735,22 @@ The first runner must reject:
 - unbounded output
 - raw stdout/stderr retention without an artifact policy
 
+Realized exception: isolated worktree creation for a dispatched run. The
+`SCM mutation` and `worktree mutation` rejections above admit exactly one
+effect: `git worktree add <location> -b <branch>` creating an isolated
+worktree for one run dispatch. That effect is admitted only through the Git
+branch/worktree runner authority chain: an operator-confirmed effect intent
+recorded by a control command per dispatch (durable
+`GitBranchWorktreeRunnerOperatorEffectIntent::Confirmed` carrying
+`allow_isolated_worktree_creation` and the exact target refs), an admitted
+execution handoff, policy-approved target refs, `ReadyForRunner` authority
+status, structured executable plus argv (never shell text), a bounded spawn
+with required timeout, sanitized outcome records, and a runtime receipt.
+Every other rejected effect stays rejected: no checkout or switch on the
+primary tree, no branch mutation, no commit, push, pull-request, forge,
+provider, callback, interruption, recovery, task mutation, or raw-output
+retention is admitted by this exception.
+
 Process spawning requirements:
 
 - the server must decide the command policy before spawning
@@ -1825,6 +1841,13 @@ The first process supervisor must not support:
 - provider process lifecycle commands
 - unbounded output
 - background processes detached from the server
+
+The supervisor surface itself is not widened by the isolated-worktree
+exception above. That exception runs through the dedicated branch/worktree
+runner execution path (operator-confirmed intent, admitted handoff, approved
+target refs, structured `git worktree add` argv, bounded spawn, sanitized
+outcome records, runtime receipt), not through this general supervisor
+surface.
 
 Structured invocation record requirements:
 

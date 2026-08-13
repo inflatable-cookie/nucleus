@@ -17,6 +17,7 @@ pub enum OrchestrationCommandFamily {
     AgentSession,
     Runtime,
     ModelRoute,
+    GitBranchWorktreeRunner,
     Custom(String),
 }
 
@@ -101,6 +102,7 @@ fn requires_target_ref(family: &OrchestrationCommandFamily) -> bool {
             | OrchestrationCommandFamily::Workspace
             | OrchestrationCommandFamily::AgentSession
             | OrchestrationCommandFamily::Runtime
+            | OrchestrationCommandFamily::GitBranchWorktreeRunner
     )
 }
 
@@ -140,6 +142,43 @@ mod tests {
             decision,
             OrchestrationCommandDecision::Accepted(_)
         ));
+    }
+
+    #[test]
+    fn admission_accepts_git_branch_worktree_runner_command_with_target_ref() {
+        let service = OrchestrationCommandAdmissionService::new();
+
+        let decision = service.admit(OrchestrationCommandAdmission {
+            command_id: OrchestrationCommandId("command:1".to_owned()),
+            family: OrchestrationCommandFamily::GitBranchWorktreeRunner,
+            target_ref: Some("run:1".to_owned()),
+            summary: Some("confirm run worktree creation".to_owned()),
+        });
+
+        assert!(matches!(
+            decision,
+            OrchestrationCommandDecision::Accepted(_)
+        ));
+    }
+
+    #[test]
+    fn admission_rejects_git_branch_worktree_runner_command_without_target_ref() {
+        let service = OrchestrationCommandAdmissionService::new();
+
+        let decision = service.admit(OrchestrationCommandAdmission {
+            command_id: OrchestrationCommandId("command:1".to_owned()),
+            family: OrchestrationCommandFamily::GitBranchWorktreeRunner,
+            target_ref: None,
+            summary: None,
+        });
+
+        assert_eq!(
+            decision,
+            OrchestrationCommandDecision::Rejected(OrchestrationCommandRejection {
+                command_id: OrchestrationCommandId("command:1".to_owned()),
+                reason: OrchestrationCommandRejectionReason::MissingTargetRef,
+            })
+        );
     }
 
     #[test]

@@ -31,6 +31,7 @@ pub(super) fn outcome_record(
         duplicate_outcome_detected,
     );
 
+    let executed = command.status == GitBranchWorktreeRunnerCommandAdapterStatus::Ready;
     GitBranchWorktreeRunnerOutcomePersistenceRecord {
         persisted_outcome_id,
         command_id: command.command_id,
@@ -62,10 +63,10 @@ pub(super) fn outcome_record(
         checkout_requested: command.checkout_requested,
         branch_creation_requested: command.branch_creation_requested,
         worktree_creation_requested: command.worktree_creation_requested,
-        shell_execution_performed: false,
-        checkout_executed: false,
-        branch_created: false,
-        worktree_created: false,
+        shell_execution_performed: executed && input.shell_execution_performed,
+        checkout_executed: executed && input.checkout_executed,
+        branch_created: executed && input.branch_created,
+        worktree_created: executed && input.worktree_created,
         commit_created: false,
         push_executed: false,
         no_effects: ForgeScmNoEffects::none(),

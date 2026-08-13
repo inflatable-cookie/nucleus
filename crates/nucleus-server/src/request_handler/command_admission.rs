@@ -47,6 +47,16 @@ fn orchestration_admission_from_command(
             target_ref: run_command_target_ref(run_command),
             summary: Some("run lifecycle command admission".to_owned()),
         }),
+        ServerCommandKind::GitBranchWorktreeRunner(confirmation_command) => {
+            Some(OrchestrationCommandAdmission {
+                command_id: OrchestrationCommandId(command.id.0.clone()),
+                family: OrchestrationCommandFamily::GitBranchWorktreeRunner,
+                target_ref: Some(confirmation_command.run_id.0.clone()),
+                summary: Some(
+                    "git branch/worktree runner operator effect intent confirmation".to_owned(),
+                ),
+            })
+        }
         _ => None,
     }
 }
@@ -109,6 +119,29 @@ mod tests {
                 expected_revision: None,
                 changes: TaskUpdateChanges::default(),
             })),
+        };
+
+        assert!(matches!(
+            admit_state_command(&command),
+            CommandAdmissionOutcome::Accepted(_)
+        ));
+    }
+
+    #[test]
+    fn git_branch_worktree_runner_confirmation_passes_orchestration_admission() {
+        let command = ServerCommand {
+            id: ServerCommandId("command:confirm-run:1".to_owned()),
+            client_id: ClientId("client:1".to_owned()),
+            kind: ServerCommandKind::GitBranchWorktreeRunner(
+                crate::commands::GitBranchWorktreeRunnerEffectConfirmationCommand {
+                    run_id: nucleus_engine::EngineRunId("run:1".to_owned()),
+                    handoff_id: "git-branch-worktree-execution-handoff:handoff:1".to_owned(),
+                    branch_ref: "run/run-1".to_owned(),
+                    worktree_location_ref: "../nucleus-wt/run-1".to_owned(),
+                    operator_ref: "operator:tom".to_owned(),
+                    idempotency_key: "confirm:run-1".to_owned(),
+                },
+            ),
         };
 
         assert!(matches!(

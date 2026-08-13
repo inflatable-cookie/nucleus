@@ -2,6 +2,7 @@ use nucleus_local_store::LocalStoreBackend;
 
 use super::command_admission::{admit_state_command, CommandAdmissionOutcome};
 use super::command_events::append_command_admitted_event;
+use super::git_branch_worktree_runner_commands::handle_git_branch_worktree_runner_command;
 use super::goal_commands::handle_goal_command;
 use super::handler::LocalControlRequestHandler;
 use super::project_commands::handle_project_command;
@@ -109,6 +110,9 @@ where
         }
         ServerCommandKind::ReadOnlyCommand(read_only_command) => {
             return handle_read_only_command(handler, request_id, command_id, read_only_command);
+        }
+        ServerCommandKind::GitBranchWorktreeRunner(confirmation_command) => {
+            handle_git_branch_worktree_runner_command(handler, &command_id.0, confirmation_command)
         }
     };
 

@@ -52,6 +52,7 @@ fn handler(
 
 mod checkpoint_diff;
 mod diagnostics_queries;
+mod git_branch_worktree_runner;
 mod goal_queries;
 mod host_authority;
 mod memory_proposal_review;
