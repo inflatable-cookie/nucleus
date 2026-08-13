@@ -1,6 +1,6 @@
 # 100 Run Fleet Panel
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 1)
@@ -43,12 +43,23 @@ poodle source changes.
 
 ## Acceptance (planned)
 
-- [ ] fleet panel lists runs with state, provider, recency; grouped by
+- [x] fleet panel lists runs with state, provider, recency; grouped by
   lifecycle
-- [ ] run → worker thread navigation works for live and terminal runs
-- [ ] failed/detached runs render honestly with receipt reason
-- [ ] fixtures + `effigy desktop:check` + `effigy desktop:test` pass; batch
+- [x] run → worker thread navigation works for live and terminal runs
+- [x] failed/detached runs render honestly with receipt reason
+- [x] fixtures + `effigy desktop:check` + `effigy desktop:test` pass; batch
   log
+
+## Closeout
+
+Merged to main as `18ff85be` (worker commit `45bce8f9`, Luna-high, clean
+first run). A Runs tab in the workspace sidebar renders the fleet
+projection grouped by lifecycle with provider/model/recency and degraded
+failure truth; opening a run navigates to its deterministic worker
+conversation. Composed from existing poodle primitives — no component
+candidate needed. Main verification: check clean, 71 bun + 30 vitest pass;
+the single vitest failure is the pre-existing settingsDialog tabindex
+drift from the longhorn sweep, documented in the batch log.
 
 ## Stop Conditions
 

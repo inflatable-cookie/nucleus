@@ -1,6 +1,6 @@
 # 106 Run Delivery Commit And Push Authority
 
-Status: ready
+Status: dispatched
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 1 unblocker)

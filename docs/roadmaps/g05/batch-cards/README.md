@@ -10,7 +10,7 @@ Updated: 2026-08-04
 
 ## Ready Cards
 
-- `106-run-delivery-commit-push-authority.md` — unblocks 101
+- none
 
 ## Planned Cards
 
@@ -21,7 +21,8 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `100-run-fleet-panel.md` — worker thread `thread/100-run-fleet-panel`
+- `106-run-delivery-commit-push-authority.md` — worker thread
+  `thread/106-run-delivery-commit-push-authority`
 
 ## Paused Cards
 
@@ -130,4 +131,5 @@ Updated: 2026-08-04
 - `097-failure-notification-routing.md`
 - `098-orchestration-run-registry.md`
 - `099-operator-dispatched-runs.md`
+- `100-run-fleet-panel.md`
 - `105-worktree-creation-authority.md`
