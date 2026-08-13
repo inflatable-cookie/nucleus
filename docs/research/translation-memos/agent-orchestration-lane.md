@@ -108,12 +108,14 @@ New work, in dependency order:
   labeled, never impersonate the operator); audit requirements (every
   delegation decision is a receipt).
 - **Swallowtail contract (new or 045-adjacent): Host-Tool Surface For
-  Managed Sessions.** Narrower than first scoped: the Codex dynamic-tool
-  channel exists and is proven (`task_ledger`). The contract work is
-  admission and qualification — which routes may carry consumer-declared
-  tools, per-route capability declaration, bounded tool counts and schema
-  sizes (already enforced for Codex), and pre-dispatch rejection where a
-  route cannot carry them. 045's bound-role framework is the template.
+  Managed Sessions.** Narrower than first scoped: portable tool declaration
+  is already a runtime-level capability (`ToolDeclaration`,
+  `SessionOptions::with_tools`, `roles/api`), realized per adapter (Codex
+  `dynamicTools` proven by `task_ledger`; Anthropic managed requests carry
+  tools). The contract work is admission and qualification — which routes
+  may carry consumer-declared tools, honest per-route capability
+  declaration, bounded counts and schema sizes (already enforced for
+  Codex), and pre-dispatch rejection where a route cannot carry them.
 - **Amendments**: nucleus 032 (consumer boundary — orchestration runs join
   the adopted-systems list); nucleus 018 if the run aggregate needs envelope
   changes (expected: none, it composes); swallowtail 045 only if a provider
