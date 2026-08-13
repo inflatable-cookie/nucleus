@@ -112,14 +112,14 @@ pub(super) fn delivery_command_records(
     {
         blockers.push(GitBranchWorktreeRunnerCommandAdapterBlocker::MissingCommitMessage);
     }
-    if input.remote_target.trim().is_empty()
-        || input.remote_target.starts_with('-')
-        || input.remote_target.contains('\0')
+    let push_requested = !input.remote_target.trim().is_empty();
+    if push_requested
+        && (input.remote_target.starts_with('-') || input.remote_target.contains('\0'))
     {
         blockers.push(GitBranchWorktreeRunnerCommandAdapterBlocker::MissingRemoteTarget);
     }
     let status = status(&blockers);
-    let kinds = [
+    let mut kinds = vec![
         (
             "stage",
             GitBranchWorktreeRunnerCommandKind::StageRunWorktree,
@@ -128,8 +128,10 @@ pub(super) fn delivery_command_records(
             "commit",
             GitBranchWorktreeRunnerCommandKind::CommitRunWorktree,
         ),
-        ("push", GitBranchWorktreeRunnerCommandKind::PushRunBranch),
     ];
+    if push_requested {
+        kinds.push(("push", GitBranchWorktreeRunnerCommandKind::PushRunBranch));
+    }
     kinds
         .into_iter()
         .map(|(suffix, command_kind)| {

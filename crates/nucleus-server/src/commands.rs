@@ -39,6 +39,7 @@ pub enum ServerCommandKind {
     GitBranchWorktreeRunner(GitBranchWorktreeRunnerEffectConfirmationCommand),
     GitBranchWorktreeRunnerDelivery(GitBranchWorktreeRunnerDeliveryEffectConfirmationCommand),
     RunDispatchExecution(RunDispatchExecutionCommand),
+    RunDeliveryExecution(RunDeliveryExecutionCommand),
 }
 
 /// Operator confirmation that one run dispatch may create its isolated
@@ -57,7 +58,7 @@ pub struct GitBranchWorktreeRunnerEffectConfirmationCommand {
     pub handoff_id: String,
     /// Exact target branch ref (`run/<run-slug>`).
     pub branch_ref: String,
-    /// Exact target worktree location (`../<repo>-wt/<run-slug>`).
+    /// Exact target worktree location (`../<repo>-wt/<slug>`).
     pub worktree_location_ref: String,
     /// Operator identity recording the intent.
     pub operator_ref: String,
@@ -336,17 +337,31 @@ pub struct RunDispatchCommand {
 /// worktree as a project resource, and transition the run
 /// `proposed -> dispatched` binding the deterministic run conversation
 /// (`conversation:run:<run_id>`).
-///
-/// The dispatch dialog's explicit confirmation IS this command: it records
-/// the operator effect intent, so no separate confirmation round-trip is
-/// needed. The server derives the branch (`run/<slug>`) and worktree
-/// location (`../<repo>-wt/<slug>` per the playbook) from the run and
-/// project records.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunDispatchExecutionCommand {
     pub run_id: nucleus_engine::EngineRunId,
     pub expected_revision: Option<RevisionId>,
     pub operator_ref: String,
+}
+
+/// Complete one worker run through the delivery pipeline.
+///
+/// The server records closeout evidence, writes the per-delivery operator
+/// intent, then invokes the gated branch/worktree runner for commit and (when
+/// configured) push before transitioning the run to `delivered`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunDeliveryExecutionCommand {
+    pub run_id: nucleus_engine::EngineRunId,
+    pub closeout_summary: String,
+    pub closeout_evidence_refs: Vec<String>,
+    pub closeout_diff_ref: Option<String>,
+    pub operator_ref: String,
+    pub commit_message: String,
+    /// Empty means the project has no configured remote; the local commit is
+    /// still a deliverable branch.
+    pub remote_target: String,
+    pub idempotency_key: String,
+    pub expected_revision: Option<RevisionId>,
 }
 
 /// One lifecycle transition with optional reason. `operation_id` binds the
@@ -377,7 +392,7 @@ pub enum WorkspaceCommand {
     Archive(WorkspaceLayoutId),
 }
 
-/// Agent session commands routed through adapter instances.
+/// Agent sessions routed through adapter instances.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentSessionCommand {
     RegisterAdapter(AdapterIdentity),

@@ -19,6 +19,7 @@ pub(super) fn blockers(
         &context.operator_effect_intent,
         &handoff.worktree_mode,
         target_ref,
+        context.push_requested,
         &mut blockers,
     );
     target_blockers(target_ref, &handoff.worktree_mode, &mut blockers);
@@ -30,6 +31,7 @@ fn operator_blockers(
     intent: &GitBranchWorktreeRunnerOperatorEffectIntent,
     mode: &GitBranchWorktreeMode,
     target_ref: Option<&GitBranchWorktreeRunnerTargetRef>,
+    push_requested: bool,
     blockers: &mut Vec<GitBranchWorktreeRunnerAuthorityBlocker>,
 ) {
     match intent {
@@ -69,10 +71,7 @@ fn operator_blockers(
                 blockers
                     .push(GitBranchWorktreeRunnerAuthorityBlocker::DeliveryCommitMessageMissing);
             }
-            if remote_target.trim().is_empty()
-                || remote_target.starts_with('-')
-                || remote_target.contains('\0')
-            {
+            if push_requested && (remote_target.starts_with('-') || remote_target.contains('\0')) {
                 blockers.push(GitBranchWorktreeRunnerAuthorityBlocker::DeliveryRemoteTargetMissing);
             }
             if let Some(target_ref) = target_ref {

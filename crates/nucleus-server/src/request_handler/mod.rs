@@ -18,6 +18,7 @@ mod project_commands;
 mod project_resource_commands;
 mod queries;
 pub(crate) mod run_commands;
+pub(crate) mod run_delivery;
 mod steward_commands;
 mod task_commands;
 

@@ -5,6 +5,7 @@
 use nucleus_core::RevisionId;
 use nucleus_tasks::TaskId;
 
+use super::super::ControlApiCodecError;
 use super::goal_authoring::{goal_create_kind, goal_update_kind};
 use super::memory_proposal_review::memory_proposal_review_action;
 use super::project_lifecycle::{
@@ -13,10 +14,9 @@ use super::project_lifecycle::{
 use super::read_only::read_only_command_kind;
 use super::task_authoring::{task_create_kind, task_update_kind};
 use super::types::{ControlCommandDto, ControlTaskCommandActionDto};
-use super::super::ControlApiCodecError;
 use crate::commands::{
-    RunCommand, RunDispatchExecutionCommand, RunProposeCommand, ServerCommandKind, TaskCommand,
-    TaskSeedPromotionCommand, TaskTransitionCommand,
+    RunCommand, RunDeliveryExecutionCommand, RunDispatchExecutionCommand, RunProposeCommand,
+    ServerCommandKind, TaskCommand, TaskSeedPromotionCommand, TaskTransitionCommand,
 };
 use crate::ids::ServerCommandId;
 use crate::memory_proposal_review_command::MemoryProposalReviewCommand;
@@ -295,6 +295,31 @@ impl ControlCommandDto {
                     run_id: nucleus_engine::EngineRunId(run_id),
                     expected_revision: expected_revision.map(RevisionId),
                     operator_ref,
+                }),
+            )),
+            Self::RunDeliveryExecution {
+                command_id,
+                run_id,
+                closeout_summary,
+                closeout_evidence_refs,
+                closeout_diff_ref,
+                operator_ref,
+                commit_message,
+                remote_target,
+                idempotency_key,
+                expected_revision,
+            } => Ok((
+                ServerCommandId(command_id),
+                ServerCommandKind::RunDeliveryExecution(RunDeliveryExecutionCommand {
+                    run_id: nucleus_engine::EngineRunId(run_id),
+                    closeout_summary,
+                    closeout_evidence_refs,
+                    closeout_diff_ref,
+                    operator_ref,
+                    commit_message,
+                    remote_target,
+                    idempotency_key,
+                    expected_revision: expected_revision.map(RevisionId),
                 }),
             )),
             Self::ReadOnlyCommand {

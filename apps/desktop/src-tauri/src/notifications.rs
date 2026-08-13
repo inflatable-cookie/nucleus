@@ -1,8 +1,8 @@
 //! Desktop notifications: the notification ledger host, its Tauri state,
-//! and operation-failure and command-refusal publications.
+//! and operation-failure, command-refusal, and run-delivery publications.
 //!
-//! Module index over the notifications surface: the runtime host and the
-//! ledger persistence.
+//! The renderer may read and mutate read state, but publication remains in
+//! this host-owned authority.
 
 use std::fs;
 use std::path::PathBuf;
@@ -25,9 +25,7 @@ use tauri::{App, AppHandle, Emitter, Manager, Runtime};
 
 mod persistence;
 
-use persistence::{
-    empty_ledger, persist_committed, presentation_time, read_persisted, restore,
-};
+use persistence::{empty_ledger, persist_committed, presentation_time, read_persisted, restore};
 
 const AUTHORITY_ID: &str = "nucleus:desktop-notifications";
 const SOURCE_OPERATIONS: &str = "nucleus:operations";
@@ -159,6 +157,48 @@ impl NucleusNotificationRuntime {
                     summary: format!("Background work{scope_summary} stopped without success."),
                     cause_id: id::<NotificationCauseId>(&operation_id.to_string()).ok(),
                     actions,
+                    replacement_key: None,
+                    producer_token: None,
+                    retention_class: NotificationRetentionClassProjection::Standard,
+                    presentation_time_unix_ms: presentation_time(),
+                },
+            })
+            .map_err(|error| error.to_string())?;
+        persist_committed(&self.persistence_path, &result)?;
+        Ok(result)
+    }
+
+    fn delivery_mutation(
+        &self,
+        run_id: &str,
+        pushed: bool,
+    ) -> Result<NotificationMutationResult, String> {
+        let sequence = self.next_sequence()?;
+        let mut ledger = self
+            .ledger
+            .lock()
+            .map_err(|_| "notification authority unavailable")?;
+        let snapshot = NotificationSnapshot::from_ledger(&ledger, 0, SNAPSHOT_LIMIT)
+            .map_err(|error| error.to_string())?;
+        let summary = if pushed {
+            "The run branch was committed and pushed."
+        } else {
+            "The run branch was committed locally; no remote is configured."
+        };
+        let result = ledger
+            .execute_protocol_mutation(NotificationMutationCommand::Add {
+                request_id: id(&format!("request:nucleus-notification:{sequence}:add"))?,
+                protocol_version: NotificationProtocolVersion::CURRENT,
+                authority: snapshot.authority,
+                expected_ledger_revision: snapshot.ledger_revision,
+                notification_id: id(&format!("notification:nucleus:{sequence}"))?,
+                draft: NotificationDraftProjection {
+                    source_id: id(SOURCE_OPERATIONS)?,
+                    severity: NotificationSeverityProjection::Info,
+                    title: format!("Run {run_id} delivered"),
+                    summary: summary.to_owned(),
+                    cause_id: id::<NotificationCauseId>(run_id).ok(),
+                    actions: Vec::new(),
                     replacement_key: None,
                     producer_token: None,
                     retention_class: NotificationRetentionClassProjection::Standard,
@@ -315,6 +355,20 @@ pub(crate) fn publish_command_refusal<R: Runtime>(
     {
         Ok(()) => {}
         Err(error) => eprintln!("command refusal notification publication failed: {error}"),
+    }
+}
+
+pub(crate) fn publish_run_delivery<R: Runtime>(app: &AppHandle<R>, run_id: &str, pushed: bool) {
+    let Some(state) = app.try_state::<NucleusNotificationState>() else {
+        return;
+    };
+    match state
+        .runtime
+        .delivery_mutation(run_id, pushed)
+        .and_then(|result| publish(app, &result))
+    {
+        Ok(()) => {}
+        Err(error) => eprintln!("run delivery notification publication failed: {error}"),
     }
 }
 

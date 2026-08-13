@@ -561,21 +561,23 @@ pub fn run_git_branch_worktree_runner_delivery<B>(
 where
     B: LocalStoreBackend,
 {
-    let intent = read_git_branch_worktree_runner_delivery_intent_by_confirmation(
+    let delivery_intent = read_git_branch_worktree_runner_delivery_intent_by_confirmation(
         state,
         &input.confirmation_ref,
     )
     .map_err(GitBranchWorktreeRunnerExecutionError::Persistence)?
-    .map(GitBranchWorktreeRunnerDeliveryIntentRecord::into_authority_intent)
-    .unwrap_or(GitBranchWorktreeRunnerOperatorEffectIntent::Missing);
+    .ok_or_else(|| GitBranchWorktreeRunnerExecutionError::CommandNotReady {
+        reason: "delivery intent disappeared before execution".to_owned(),
+    })?;
+    let push_requested = !delivery_intent.remote_target.trim().is_empty();
 
     let authority = git_branch_worktree_runner_authority(GitBranchWorktreeRunnerAuthorityInput {
         handoffs: input.handoffs.clone(),
-        operator_effect_intent: intent,
+        operator_effect_intent: delivery_intent.clone().into_authority_intent(),
         target_refs: input.target_refs.clone(),
         raw_output_retention_requested: false,
         commit_requested: true,
-        push_requested: true,
+        push_requested,
         pull_request_requested: false,
         forge_effect_requested: false,
         provider_effect_requested: false,
@@ -597,14 +599,6 @@ where
         });
     }
 
-    let delivery_intent = read_git_branch_worktree_runner_delivery_intent_by_confirmation(
-        state,
-        &input.confirmation_ref,
-    )
-    .map_err(GitBranchWorktreeRunnerExecutionError::Persistence)?
-    .ok_or_else(|| GitBranchWorktreeRunnerExecutionError::CommandNotReady {
-        reason: "delivery intent disappeared before execution".to_owned(),
-    })?;
     let commands = crate::git_branch_worktree_runner_delivery_command_adapter(
         GitBranchWorktreeRunnerDeliveryCommandAdapterInput {
             authorities: authority.clone(),
@@ -766,7 +760,7 @@ where
                 provider_payload_present: false,
                 raw_output_retention_requested: false,
                 commit_requested: true,
-                push_requested: true,
+                push_requested,
                 delivery_authority_granted: true,
                 pull_request_requested: false,
                 forge_effect_requested: false,

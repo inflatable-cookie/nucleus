@@ -9,6 +9,7 @@ use super::goal_commands::handle_goal_command;
 use super::handler::LocalControlRequestHandler;
 use super::project_commands::handle_project_command;
 use super::run_commands::{handle_run_command, handle_run_dispatch_execution};
+use super::run_delivery::handle_run_delivery_execution;
 use super::steward_commands::handle_steward_command;
 use super::task_commands::handle_task_command;
 use crate::memory_proposal_review_persistence::review_memory_proposal;
@@ -74,6 +75,9 @@ where
         }
         ServerCommandKind::RunDispatchExecution(dispatch_command) => {
             handle_run_dispatch_execution(handler, &command_id.0, dispatch_command)
+        }
+        ServerCommandKind::RunDeliveryExecution(delivery_command) => {
+            handle_run_delivery_execution(handler, &command_id.0, delivery_command)
         }
         ServerCommandKind::Goal(goal_command) => {
             handle_goal_command(handler, &command_id.0, goal_command)
