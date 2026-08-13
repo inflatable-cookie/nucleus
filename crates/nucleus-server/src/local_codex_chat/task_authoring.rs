@@ -36,6 +36,7 @@ pub struct TaskAuthoringReceipt {
     pub goals_updated: Vec<GoalCreationReceipt>,
 }
 
+#[derive(Debug)]
 pub(super) struct TaskToolOutcome {
     pub text: String,
     pub receipt: Option<TaskAuthoringReceipt>,

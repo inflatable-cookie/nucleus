@@ -12,7 +12,7 @@ use super::project_lifecycle::project_command_dto;
 use super::read_only::read_only_command_dto;
 use super::task_authoring::{task_create_dto, task_update_dto};
 use super::types::{
-    ControlCommandDto, ControlForgePullRequestCreationScopeDto,
+    ControlCommandDto, ControlDelegationActionDto, ControlForgePullRequestCreationScopeDto,
     ControlForgePullRequestProviderDto, ControlForgePullRequestTextSourceDto,
     ControlRunTransitionActionDto, ControlTaskCommandActionDto,
 };
@@ -55,10 +55,73 @@ impl TryFrom<&ServerCommand> for ControlCommandDto {
             ServerCommandKind::RunDeliveryExecution(delivery_command) => {
                 Ok(run_delivery_execution_dto(&command.id, delivery_command))
             }
+            ServerCommandKind::OrchestratorDesignation(
+                crate::commands::OrchestratorDesignationCommand::Designate(designate_command),
+            ) => Ok(designate_orchestrator_dto(&command.id, designate_command)),
+            ServerCommandKind::OrchestratorDesignation(
+                crate::commands::OrchestratorDesignationCommand::Revoke(revoke_command),
+            ) => Ok(revoke_orchestrator_dto(&command.id, revoke_command)),
             _ => Err(ControlApiCodecError::unsupported(
                 "command shape is not supported by the first command DTO",
             )),
         }
+    }
+}
+
+fn designate_orchestrator_dto(
+    command_id: &ServerCommandId,
+    command: &crate::commands::OrchestratorDesignateCommand,
+) -> ControlCommandDto {
+    ControlCommandDto::DesignateOrchestrator {
+        command_id: command_id.0.clone(),
+        designation_id: command.designation_id.clone(),
+        project_id: command.project_id.0.clone(),
+        orchestrator_provider_instance: command.orchestrator_provider_instance.clone(),
+        allowed_worker_provider_instances: command.allowed_worker_provider_instances.clone(),
+        allowed_worker_models: command.allowed_worker_models.clone(),
+        concurrent_run_budget: command.concurrent_run_budget,
+        per_run_token_budget: command.per_run_token_budget,
+        per_run_time_budget_seconds: command.per_run_time_budget_seconds,
+        allowed_actions: command
+            .allowed_actions
+            .iter()
+            .map(|action| match action {
+                nucleus_engine::EngineDelegationAction::Delegate => {
+                    ControlDelegationActionDto::Delegate
+                }
+                nucleus_engine::EngineDelegationAction::RunStatus => {
+                    ControlDelegationActionDto::RunStatus
+                }
+                nucleus_engine::EngineDelegationAction::CancelRun => {
+                    ControlDelegationActionDto::CancelRun
+                }
+                nucleus_engine::EngineDelegationAction::AcceptDelivery => {
+                    ControlDelegationActionDto::AcceptDelivery
+                }
+                nucleus_engine::EngineDelegationAction::RejectDelivery => {
+                    ControlDelegationActionDto::RejectDelivery
+                }
+            })
+            .collect(),
+        steering_permitted: command.steering_permitted,
+        expected_revision: command
+            .expected_revision
+            .as_ref()
+            .map(|revision| revision.0.clone()),
+    }
+}
+
+fn revoke_orchestrator_dto(
+    command_id: &ServerCommandId,
+    command: &crate::commands::OrchestratorRevokeDesignationCommand,
+) -> ControlCommandDto {
+    ControlCommandDto::RevokeOrchestrator {
+        command_id: command_id.0.clone(),
+        designation_id: command.designation_id.clone(),
+        expected_revision: command
+            .expected_revision
+            .as_ref()
+            .map(|revision| revision.0.clone()),
     }
 }
 

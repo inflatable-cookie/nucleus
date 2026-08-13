@@ -157,4 +157,11 @@ export type ControlQueryDto =
       run_id: string | null;
       file_ref: string | null;
     }
+  | {
+      kind: "orchestrator_designations";
+      query_id: string;
+      action: "list";
+      project_id: string;
+      provider_instance: string | null;
+    }
   | ControlSelectedTaskReviewDecisionQueryDto;

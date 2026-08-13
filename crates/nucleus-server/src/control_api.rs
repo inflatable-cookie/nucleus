@@ -181,6 +181,7 @@ pub enum ServerQueryResult {
     OrchestrationRuns(EngineRunFleetProjection),
     OrchestrationRunReview(crate::request_handler::run_review::OrchestrationRunReview),
     OrchestrationRunReviewPatch(crate::request_handler::run_review::OrchestrationRunReviewPatch),
+    OrchestratorDesignations(Vec<OrchestratorDesignationView>),
     Empty,
     Unsupported {
         reason: String,
@@ -208,6 +209,14 @@ pub enum ServerDiagnosticsQueryResult {
     ScmCaptureReviewDecision(crate::ScmCaptureReviewDecisionControlDto),
     ScmChangeRequestPreparation(crate::ScmChangeRequestPrepControlDto),
     All(ServerDiagnosticsSnapshot),
+}
+
+/// One designation as the query surface renders it: the envelope plus the
+/// persisted revision the desktop needs to re-designate or revoke.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrchestratorDesignationView {
+    pub designation: nucleus_engine::EngineOrchestratorDesignation,
+    pub revision_id: String,
 }
 
 /// Combined diagnostics snapshot.

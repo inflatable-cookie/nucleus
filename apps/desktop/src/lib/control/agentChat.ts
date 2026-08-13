@@ -116,6 +116,10 @@ export type AgentChatProviderInstance = {
   model_catalogue_state: "available" | "unavailable";
   model_catalogue_diagnostic: string | null;
   models: AgentChatModelOption[];
+  /** Route realizes consumer tool exchange (contract 041); required for orchestrator designation. */
+  tool_capable: boolean;
+  /** Why the route is not tool-capable; present exactly when tool_capable is false. */
+  tool_capable_reason: string | null;
 };
 
 export type AgentChatProviderCatalogue = {

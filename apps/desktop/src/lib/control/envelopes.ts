@@ -45,6 +45,7 @@ import type { ControlSelectedTaskReworkPreparationDto } from "./selectedTaskRewo
 import type { ControlSelectedTaskReviewDecisionResponseBodyDto } from "./selectedTaskReviewDecisionEnvelope";
 import type { ControlSelectedTaskScmHandoffDto } from "./selectedTaskScmHandoff";
 import type { ControlQueryDto } from "./queryEnvelopeTypes";
+import type { ControlDelegationActionDto } from "./generated/ControlDelegationActionDto";
 
 export type { ControlQueryDto } from "./queryEnvelopeTypes";
 
@@ -128,6 +129,27 @@ export type ControlCommandDto =
       action: "accept" | "reject";
       expected_revision: string | null;
       reason: string | null;
+    }
+  | {
+      kind: "designate_orchestrator";
+      command_id: string;
+      designation_id: string;
+      project_id: string;
+      orchestrator_provider_instance: string;
+      allowed_worker_provider_instances: string[] | null;
+      allowed_worker_models: string[] | null;
+      concurrent_run_budget: bigint;
+      per_run_token_budget: bigint | null;
+      per_run_time_budget_seconds: bigint | null;
+      allowed_actions: ControlDelegationActionDto[];
+      steering_permitted: boolean;
+      expected_revision: string | null;
+    }
+  | {
+      kind: "revoke_orchestrator";
+      command_id: string;
+      designation_id: string;
+      expected_revision: string | null;
     };
 
 export type ControlRequestEnvelopeDto = {

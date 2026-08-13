@@ -1,4 +1,5 @@
 export * from "./control/client";
+export * from "./control/designations";
 export * from "./control/envelopes";
 export * from "./control/memory";
 export * from "./control/planningResearch";

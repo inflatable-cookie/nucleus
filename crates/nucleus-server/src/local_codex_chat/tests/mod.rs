@@ -87,6 +87,8 @@ fn test_catalogue() -> AgentChatProviderCatalogue {
                     },
                 ],
             }],
+            tool_capable: true,
+            tool_capable_reason: None,
         }],
     }
 }

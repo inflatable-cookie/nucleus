@@ -24,6 +24,7 @@ pub(super) const ALL_TABLES: &[&str] = &[
     "artifact_metadata",
     "runtime_effects",
     "orchestration_runs",
+    "orchestrator_designations",
 ];
 
 pub(super) fn table_for_domain(domain: &PersistenceDomain) -> LocalStoreResult<&'static str> {
@@ -43,6 +44,7 @@ pub(super) fn table_for_domain(domain: &PersistenceDomain) -> LocalStoreResult<&
         PersistenceDomain::ArtifactMetadata => Ok("artifact_metadata"),
         PersistenceDomain::RuntimeEffects => Ok("runtime_effects"),
         PersistenceDomain::OrchestrationRuns => Ok("orchestration_runs"),
+        PersistenceDomain::OrchestratorDesignations => Ok("orchestrator_designations"),
         other => Err(LocalStoreError::UnsupportedDomain {
             domain: other.clone(),
         }),

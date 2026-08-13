@@ -13,7 +13,8 @@ use super::provider_readiness_overview::ControlProviderReadinessOverviewDto;
 use super::records::{
     ControlCheckpointRecordDto, ControlDiagnosticsResultDto, ControlDiffSummaryRecordDto,
     ControlMemoryProposalReviewDiagnosticsDto, ControlOrchestrationRunReviewDto,
-    ControlOrchestrationRunReviewPatchDto, ControlPlanningCapturePublicationDiagnosticsDto,
+    ControlOrchestrationRunReviewPatchDto, ControlOrchestratorDesignationDto,
+    ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticsDto,
     ControlPlanningProjectionImportActiveApplyDiagnosticsDto,
     ControlPlanningProjectionImportApplyDiagnosticsDto,
@@ -300,6 +301,22 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                 ServerQueryResult::OrchestrationRunReviewPatch(patch),
             ) => Ok(ControlResponseBodyDto::OrchestrationRunReviewPatch {
                 patch: ControlOrchestrationRunReviewPatchDto::from(patch),
+            }),
+            ServerControlResponseBody::Query(ServerQueryResult::OrchestratorDesignations(
+                views,
+            )) => Ok(ControlResponseBodyDto::OrchestratorDesignations {
+                project_id: views
+                    .first()
+                    .map(|view| view.designation.project_id.clone())
+                    .unwrap_or_default(),
+                designations: views
+                    .iter()
+                    .map(|view| {
+                        let mut dto = ControlOrchestratorDesignationDto::from(&view.designation);
+                        dto.revision_id = view.revision_id.clone();
+                        dto
+                    })
+                    .collect(),
             }),
             ServerControlResponseBody::Query(ServerQueryResult::ProviderReadIntent(result)) => {
                 Ok(Self::ProviderReadIntent {

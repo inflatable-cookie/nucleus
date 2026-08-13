@@ -5,6 +5,7 @@
   import { icons, info, plus, settings as settingsIcon } from "./icons.generated";
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
   import RunDispatchDialog from "./lib/RunDispatchDialog.svelte";
+  import OrchestratorDesignationDialog from "./lib/OrchestratorDesignationDialog.svelte";
   import CommandPalette from "./lib/commands/CommandPalette.svelte";
   import { NucleusCommandRuntime } from "./lib/commands/runtime.svelte";
   import OperationPopover from "./lib/operations/OperationPopover.svelte";
@@ -65,6 +66,7 @@
   let selectedProject = $state<ControlProjectRecordDto | null>(null);
   let selectedConversationId = $state<string | null>(null);
   let runDispatchOpen = $state(false);
+  let designationOpen = $state(false);
   let activePanelKind = $state<string | null>(null);
   let editorDirty = $state(false);
   let agentTurnRunning = $state(false);
@@ -459,6 +461,14 @@
               >
                 Dispatch run
               </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={!selectedProject}
+                onClick={() => (designationOpen = true)}
+              >
+                Designate orchestrator
+              </Button>
               <IconButton
                 variant="secondary"
                 icon={settingsIcon}
@@ -515,6 +525,13 @@
     onDispatched={(outcome) => {
       selectedConversationId = outcome.conversation_id;
       window.dispatchEvent(new CustomEvent("nucleus:threads-changed"));
+    }}
+  />
+  <OrchestratorDesignationDialog
+    bind:open={designationOpen}
+    project={selectedProject}
+    onDesignationChanged={() => {
+      window.dispatchEvent(new CustomEvent("nucleus:designations-changed"));
     }}
   />
   <CommandPalette session={commandRuntime.session} />

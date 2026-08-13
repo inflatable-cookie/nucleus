@@ -60,6 +60,7 @@ mod diagnostics;
 mod memory_proposal_review_diagnostics;
 mod memory_proposals;
 mod orchestration_runs;
+mod orchestrator_designations;
 mod planning_capture_publication_diagnostics;
 mod planning_projection_file_write_diagnostics;
 mod planning_projection_import_active_apply_diagnostics;
@@ -276,6 +277,9 @@ where
         }
         ServerQueryKind::OrchestrationRunReviewPatch(query) => {
             run_review::orchestration_run_review_patch_query(handler, query)
+        }
+        ServerQueryKind::OrchestratorDesignations(query) => {
+            orchestrator_designations::orchestrator_designations_query(handler, query)
         }
     }
 }

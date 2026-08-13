@@ -214,6 +214,14 @@ impl RepositoryBoundary {
             description: "durable orchestration run records and transition history",
         }
     }
+
+    /// Planned orchestrator designation repository boundary.
+    pub fn orchestrator_designations() -> Self {
+        Self {
+            domain: PersistenceDomain::OrchestratorDesignations,
+            description: "durable per-project orchestrator designations and grant envelopes",
+        }
+    }
 }
 
 #[cfg(test)]

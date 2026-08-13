@@ -10,6 +10,7 @@ mod command_admission;
 mod command_events;
 pub mod command_projection;
 mod commands;
+pub(crate) mod designations;
 mod event_store;
 mod git_branch_worktree_runner_commands;
 mod goal_commands;

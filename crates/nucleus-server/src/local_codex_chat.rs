@@ -8,6 +8,7 @@ use nucleus_local_store::LocalStoreBackend;
 
 mod cancellation;
 mod credentials;
+mod delegation;
 mod goal_authoring;
 mod goal_execution;
 mod goal_inspection;

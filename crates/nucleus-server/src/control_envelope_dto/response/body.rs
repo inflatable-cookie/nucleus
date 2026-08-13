@@ -28,6 +28,7 @@ use super::records::{
     ControlMemoryProposalStatusCountDto, ControlMemoryProposalSummaryDto,
     ControlOrchestrationRunReviewDto, ControlOrchestrationRunReviewPatchDto,
     ControlOrchestrationRunStateCountDto, ControlOrchestrationRunSummaryDto,
+    ControlOrchestratorDesignationDto,
     ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticsDto,
     ControlPlanningProjectionImportActiveApplyDiagnosticsDto,
@@ -269,6 +270,10 @@ pub enum ControlResponseBodyDto {
     },
     OrchestrationRunReviewPatch {
         patch: ControlOrchestrationRunReviewPatchDto,
+    },
+    OrchestratorDesignations {
+        project_id: String,
+        designations: Vec<ControlOrchestratorDesignationDto>,
     },
     ProviderReadIntent {
         result: ControlProviderReadIntentQueryResultDto,

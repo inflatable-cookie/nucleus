@@ -40,6 +40,7 @@ pub enum ServerCommandKind {
     GitBranchWorktreeRunnerDelivery(GitBranchWorktreeRunnerDeliveryEffectConfirmationCommand),
     RunDispatchExecution(RunDispatchExecutionCommand),
     RunDeliveryExecution(RunDeliveryExecutionCommand),
+    OrchestratorDesignation(OrchestratorDesignationCommand),
 }
 
 /// Operator confirmation that one run dispatch may create its isolated
@@ -393,6 +394,40 @@ pub struct RunDeliverCommand {
     pub closeout_summary: String,
     pub closeout_evidence_refs: Vec<String>,
     pub closeout_diff_ref: Option<String>,
+    pub expected_revision: Option<RevisionId>,
+}
+
+/// Orchestrator designation lifecycle commands (contract 033 Orchestrator
+/// Designation Rule): operator-designate with a grant envelope, or revoke.
+/// Revocation cancels no running work but blocks new delegation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OrchestratorDesignationCommand {
+    Designate(OrchestratorDesignateCommand),
+    Revoke(OrchestratorRevokeDesignationCommand),
+}
+
+/// Designate (create) or re-designate (replace the envelope) one project
+/// orchestrator. `expected_revision: None` creates; `Some` replaces at that
+/// revision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrchestratorDesignateCommand {
+    pub designation_id: String,
+    pub project_id: ProjectId,
+    pub orchestrator_provider_instance: String,
+    pub allowed_worker_provider_instances: Option<Vec<String>>,
+    pub allowed_worker_models: Option<Vec<String>>,
+    pub concurrent_run_budget: u64,
+    pub per_run_token_budget: Option<u64>,
+    pub per_run_time_budget_seconds: Option<u64>,
+    pub allowed_actions: Vec<nucleus_engine::EngineDelegationAction>,
+    pub steering_permitted: bool,
+    pub expected_revision: Option<RevisionId>,
+}
+
+/// Revoke a designation by id.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrchestratorRevokeDesignationCommand {
+    pub designation_id: String,
     pub expected_revision: Option<RevisionId>,
 }
 

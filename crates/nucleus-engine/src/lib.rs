@@ -10,6 +10,7 @@ pub mod change_request_prep;
 pub mod checkpoint_diff;
 pub mod codex_runtime_receipts;
 pub mod commands;
+pub mod designations;
 pub mod effects;
 pub mod goal_commands;
 pub mod goal_run_rules;
@@ -48,6 +49,15 @@ pub use checkpoint_diff::{
     EngineDiffSummaryRecord, EngineDiffSummaryRecordId,
 };
 pub use codex_runtime_receipts::runtime_receipt_from_codex_fixture;
+pub use designations::{
+    decode_orchestrator_designation, designation_id_for, encode_orchestrator_designation,
+    EngineDelegationAction, EngineDesignateCommand, EngineOrchestratorDesignation,
+    EngineOrchestratorDesignationCodecError, EngineOrchestratorDesignationCommand,
+    EngineOrchestratorDesignationCommandError, EngineOrchestratorDesignationCommandOutcome,
+    EngineOrchestratorDesignationId, EngineOrchestratorDesignationRecord,
+    EngineOrchestratorDesignationRepository, EngineOrchestratorDesignationService,
+    EngineOrchestratorDesignationStatus, EngineRevokeDesignationCommand,
+};
 pub use goal_commands::{
     EngineGoalCommand, EngineGoalCommandError, EngineGoalCommandService, EngineGoalCreateCommand,
     EngineGoalRepository, EngineGoalUpdateChanges, EngineGoalUpdateCommand,

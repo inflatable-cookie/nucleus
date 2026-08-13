@@ -87,6 +87,10 @@ impl LocalStoreDomainSet {
                     domain: PersistenceDomain::OrchestrationRuns,
                     required_for_first_slice: true,
                 },
+                LocalStoreDomainBoundary {
+                    domain: PersistenceDomain::OrchestratorDesignations,
+                    required_for_first_slice: true,
+                },
             ],
         }
     }
