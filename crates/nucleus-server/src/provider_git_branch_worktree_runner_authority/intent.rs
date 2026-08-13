@@ -36,8 +36,10 @@ pub struct GitBranchWorktreeRunnerOperatorEffectIntentRecord {
     pub status: GitBranchWorktreeRunnerOperatorEffectIntentStatus,
 }
 
-/// Durable operator effect intent for one delivery's local commit and own
-/// branch push. This is intentionally separate from dispatch-time intent.
+/// Durable operator effect intent for one delivery's local commit, own branch
+/// push, and (when the operator confirmation carries PR-creation scope) the
+/// per-delivery pull-request creation for that branch. This is intentionally
+/// separate from dispatch-time intent.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct GitBranchWorktreeRunnerDeliveryIntentRecord {
     pub confirmation_ref: String,
@@ -47,6 +49,9 @@ pub struct GitBranchWorktreeRunnerDeliveryIntentRecord {
     pub worktree_location_ref: String,
     pub commit_message: String,
     pub remote_target: String,
+    /// Operator-confirmed PR-creation scope on top of the confirmed remote.
+    /// `None` keeps the delivery branch-only (commit + push, no forge call).
+    pub pull_request_creation: Option<crate::ForgePullRequestCreationScope>,
     pub operator_ref: String,
     pub idempotency_key: String,
     pub status: GitBranchWorktreeRunnerDeliveryIntentStatus,
@@ -306,6 +311,7 @@ fn same_delivery_effect(
         && existing.worktree_location_ref == incoming.worktree_location_ref
         && existing.commit_message == incoming.commit_message
         && existing.remote_target == incoming.remote_target
+        && existing.pull_request_creation == incoming.pull_request_creation
         && existing.operator_ref == incoming.operator_ref
 }
 
@@ -394,6 +400,7 @@ mod tests {
             worktree_location_ref: "../nucleus-wt/run-1".to_owned(),
             commit_message: "deliver run 1".to_owned(),
             remote_target: "origin".to_owned(),
+            pull_request_creation: None,
             operator_ref: "operator:tom".to_owned(),
             idempotency_key: idempotency_key.to_owned(),
             status: GitBranchWorktreeRunnerDeliveryIntentStatus::Confirmed,

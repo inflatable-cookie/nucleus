@@ -601,8 +601,9 @@ checkout, switch, branch, create worktrees, stage, commit, snap, publish, push,
 promote, open review requests, merge, or call a forge except for the realized
 run authority exceptions below.
 
-Realized exceptions: isolated worktree creation for a dispatched run and
-per-run delivery in that isolated worktree. The first exception creates the
+Realized exceptions: isolated worktree creation for a dispatched run,
+per-run delivery in that isolated worktree, and per-delivery pull-request
+creation for the delivered run. The first exception creates the
 isolated worktree only through the branch/worktree runner authority chain — a
 durable operator-confirmed `GitBranchWorktreeRunnerOperatorEffectIntent::Confirmed`
 recorded per dispatch (`allow_isolated_worktree_creation` with exact target
@@ -615,9 +616,25 @@ worktree location, and remote target; it uses the same handoff, target,
 `ReadyForRunner`, structured-argv, bounded-spawn, sanitized-outcome, and
 receipt discipline. This is the local Git runner's explicitly confirmed
 remote effect; it does not grant provider API or forge authority under contract
-027. Provider/forge mutation stays false, force-push and every other effect in
-the exclusion list above stays excluded. A failed push retains
-the local commit and records the failed push receipt.
+027.
+
+The third is the same per-delivery confirmation carrying PR-creation scope
+(forge provider, base and head refs, title and body sources) on top of the
+confirmed remote. It is the one admitted provider/forge write under contract
+027's per-delivery pull-request creation lane: it runs only through the forge
+pull-request runner authority chain with a durable operator-confirmed intent,
+an admitted forge preflight (credential ready, remote branch visible), an
+admitted forge test double for the open call, idempotency reconciliation
+against provider state before any open, sanitized PR-created evidence
+(provider object ref and URL where allowed), and a runtime receipt carrying
+the link. It grants no merge, comment, label, reviewer, review-sync, branch
+mutation, stacked-run, or any other provider/forge mutation.
+
+Provider/forge mutation stays false outside that single admitted lane:
+force-push and every other effect in the exclusion list above stays excluded.
+A failed push retains the local commit and records the failed push receipt; a
+failed or unavailable PR creation (no remote, no ready credential, or PR API
+failure) leaves the pushed branch delivered and records an explaining receipt.
 
 Authority levels stay distinct:
 

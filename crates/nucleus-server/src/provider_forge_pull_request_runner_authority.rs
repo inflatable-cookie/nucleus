@@ -1,13 +1,27 @@
-//! Stopped authority records for forge pull-request request preparation.
+//! Authority records for forge pull-request request preparation and
+//! operator-confirmed per-delivery pull-request creation.
 
 mod blockers;
+mod execution;
+mod forge_adapter;
 mod record_builder;
 mod types;
 
+pub use execution::{
+    run_forge_pull_request_creation, ForgePullRequestCreationExecutionError,
+    ForgePullRequestCreationExecutionInput, ForgePullRequestCreationExecutionResult,
+    ForgePullRequestCreationOutcomeRecord, ForgePullRequestCreationOutcomeStatus,
+};
+pub use forge_adapter::{
+    ForgePullRequestCreationAdapter, ForgePullRequestCreationError,
+    ForgePullRequestCreationReference, ForgePullRequestCreationRequest,
+    ForgePullRequestCreationTestDouble,
+};
 pub use types::{
-    ForgePullRequestRunnerAuthorityBlocker, ForgePullRequestRunnerAuthorityInput,
-    ForgePullRequestRunnerAuthorityRecord, ForgePullRequestRunnerAuthoritySet,
-    ForgePullRequestRunnerAuthorityStatus, ForgePullRequestRunnerOperatorEffectIntent,
+    ForgePullRequestCreationScope, ForgePullRequestRunnerAuthorityBlocker,
+    ForgePullRequestRunnerAuthorityInput, ForgePullRequestRunnerAuthorityRecord,
+    ForgePullRequestRunnerAuthoritySet, ForgePullRequestRunnerAuthorityStatus,
+    ForgePullRequestRunnerOperatorEffectIntent,
 };
 
 use crate::provider_no_effects::ForgeScmNoEffects;
@@ -38,18 +52,26 @@ pub fn forge_pull_request_runner_authority(
     let request_preparation_permitted = authorities
         .iter()
         .any(|authority| authority.request_preparation_permitted);
+    let pull_request_creation_permitted = authorities
+        .iter()
+        .any(|authority| authority.pull_request_creation_permitted);
 
     ForgePullRequestRunnerAuthoritySet {
         authority_set_id: "forge-pull-request-runner-authority".to_owned(),
         skipped_preflight_ids: authorities
             .iter()
             .filter(|authority| {
-                authority.status != ForgePullRequestRunnerAuthorityStatus::ReadyForRequest
+                !matches!(
+                    authority.status,
+                    ForgePullRequestRunnerAuthorityStatus::ReadyForRequest
+                        | ForgePullRequestRunnerAuthorityStatus::ReadyForCreation
+                )
             })
             .map(|authority| authority.preflight_id.clone())
             .collect(),
         authorities,
         request_preparation_permitted,
+        pull_request_creation_permitted,
         shell_execution_performed: false,
         no_effects: ForgeScmNoEffects::none(),
     }

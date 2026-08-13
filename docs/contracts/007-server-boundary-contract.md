@@ -1735,9 +1735,10 @@ The first runner must reject:
 - unbounded output
 - raw stdout/stderr retention without an artifact policy
 
-Realized exceptions: isolated worktree creation for a dispatched run and
-per-run delivery in that isolated worktree. The `SCM mutation` and `worktree
-mutation` rejections above admit exactly these effects:
+Realized exceptions: isolated worktree creation for a dispatched run,
+per-run delivery in that isolated worktree, and per-delivery pull-request
+creation for the delivered run. The `SCM mutation` and `worktree mutation`
+rejections above admit exactly these effects:
 `git worktree add <location> -b <branch>` for one dispatch, followed by
 `git add`/`git commit` in that run's isolated worktree and `git push` of that
 run's own branch to the confirmed project remote. Worktree creation is admitted
@@ -1749,12 +1750,30 @@ policy-approved target refs, `ReadyForRunner` authority status, structured
 executable plus argv (never shell text), bounded spawn with required timeout,
 sanitized outcome records, and runtime receipts.
 
+PR creation is the same per-delivery confirmation carrying PR-creation scope
+(forge provider, base and head refs, title and body sources) on top of the
+confirmed remote. It runs only through the dedicated forge pull-request runner
+authority chain — a durable operator-confirmed per-delivery intent, an
+admitted forge preflight (credential ready, remote branch visible, target refs
+matching the prepared evidence), `ReadyForCreation` authority status, an
+admitted forge test double for the open call, idempotency reconciliation
+against provider state (a persisted completed outcome replays; an existing
+pull request for the head branch is adopted before any new open), sanitized
+PR-created evidence (provider object ref and URL where allowed), and a
+contract-020 receipt whose summary carries the link. No merge, comment, label,
+reviewer, or review-sync capability exists anywhere in this lane.
+
 Every other rejected effect stays rejected: no checkout or switch on the
 primary tree, force-push, branch deletion, any ref beyond the run's own branch,
-pull-request, forge, provider, callback, interruption, recovery, task mutation,
-or raw-output retention is admitted by these exceptions. A push failure leaves
-the local commit and produces a failed push receipt; it does not authorize a
-retry outside the same delivery intent.
+pull-request outside the admitted per-delivery creation lane, merge, comment,
+label, reviewer, review-sync, forge/provider effect beyond the admitted open
+call, callback, interruption, recovery, task mutation, or raw-output retention
+is admitted by these exceptions. A push failure leaves the local commit and
+produces a failed push receipt; a PR API failure (or no remote, or no ready
+credential) leaves the pushed branch delivered and produces an explaining
+receipt; neither authorizes a retry outside the same delivery intent, and a
+duplicate or uncertain PR write must reconcile against provider state before
+any retry.
 
 Process spawning requirements:
 

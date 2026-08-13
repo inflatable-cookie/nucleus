@@ -120,6 +120,7 @@ where
             worktree_location_ref: worktree_location_ref.clone(),
             commit_message: command.commit_message.clone(),
             remote_target: command.remote_target.clone(),
+            pull_request_creation: None,
             operator_ref: command.operator_ref.clone(),
             idempotency_key: command.idempotency_key.clone(),
             status: crate::provider_git_branch_worktree_runner_authority::GitBranchWorktreeRunnerDeliveryIntentStatus::Confirmed,

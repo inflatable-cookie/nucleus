@@ -67,6 +67,23 @@ where
             reason: "delivery commit message exceeds its size limit".to_owned(),
         });
     }
+    if let Some(scope) = &command.pull_request_creation {
+        if !scope.is_complete() {
+            return ServerCommandReceiptStatus::Rejected(ServerControlError::InvalidRequest {
+                reason: "delivery PR-creation scope requires a complete forge provider, base branch, head branch, title source, and body source".to_owned(),
+            });
+        }
+        if scope.head_branch != command.branch_ref {
+            return ServerCommandReceiptStatus::Rejected(ServerControlError::InvalidRequest {
+                reason: "delivery PR-creation head branch must be the run's own branch".to_owned(),
+            });
+        }
+        if scope.base_branch == command.branch_ref {
+            return ServerCommandReceiptStatus::Rejected(ServerControlError::InvalidRequest {
+                reason: "delivery PR-creation base branch must differ from the run's own branch".to_owned(),
+            });
+        }
+    }
     let record = GitBranchWorktreeRunnerDeliveryIntentRecord {
         confirmation_ref: delivery_confirmation_ref(&command.idempotency_key),
         run_id: command.run_id.0.clone(),
@@ -75,6 +92,7 @@ where
         worktree_location_ref: command.worktree_location_ref,
         commit_message: command.commit_message,
         remote_target: command.remote_target,
+        pull_request_creation: command.pull_request_creation,
         operator_ref: command.operator_ref,
         idempotency_key: command.idempotency_key,
         status: GitBranchWorktreeRunnerDeliveryIntentStatus::Confirmed,

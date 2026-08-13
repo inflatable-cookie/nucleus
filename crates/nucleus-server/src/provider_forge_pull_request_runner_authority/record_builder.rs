@@ -13,12 +13,21 @@ pub(super) fn authority_record(
 ) -> ForgePullRequestRunnerAuthorityRecord {
     let blockers = blockers(context, &preflight);
     let status = if blockers.is_empty() {
-        ForgePullRequestRunnerAuthorityStatus::ReadyForRequest
+        if matches!(
+            context.operator_effect_intent,
+            ForgePullRequestRunnerOperatorEffectIntent::PullRequestCreationConfirmed { .. }
+        ) {
+            ForgePullRequestRunnerAuthorityStatus::ReadyForCreation
+        } else {
+            ForgePullRequestRunnerAuthorityStatus::ReadyForRequest
+        }
     } else {
         ForgePullRequestRunnerAuthorityStatus::Blocked
     };
     let request_preparation_permitted =
         status == ForgePullRequestRunnerAuthorityStatus::ReadyForRequest;
+    let pull_request_creation_permitted =
+        status == ForgePullRequestRunnerAuthorityStatus::ReadyForCreation;
 
     ForgePullRequestRunnerAuthorityRecord {
         authority_id: format!(
@@ -46,6 +55,7 @@ pub(super) fn authority_record(
         status,
         blockers,
         request_preparation_permitted,
+        pull_request_creation_permitted,
         shell_execution_performed: false,
         no_effects: ForgeScmNoEffects::none(),
     }
@@ -56,6 +66,10 @@ fn confirmation_ref(intent: &ForgePullRequestRunnerOperatorEffectIntent) -> Opti
         ForgePullRequestRunnerOperatorEffectIntent::Missing => None,
         ForgePullRequestRunnerOperatorEffectIntent::Confirmed {
             confirmation_ref, ..
+        }
+        | ForgePullRequestRunnerOperatorEffectIntent::PullRequestCreationConfirmed {
+            confirmation_ref,
+            ..
         } => Some(confirmation_ref.clone()),
     }
 }

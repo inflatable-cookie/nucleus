@@ -68,6 +68,9 @@ pub struct GitBranchWorktreeRunnerEffectConfirmationCommand {
 
 /// Operator confirmation for one delivery's local commit and push of the
 /// run's own branch. This is distinct from dispatch-time worktree creation.
+/// When `pull_request_creation` carries an operator-confirmed scope, the same
+/// confirmation admits per-delivery pull-request creation for that branch on
+/// top of the confirmed remote.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitBranchWorktreeRunnerDeliveryEffectConfirmationCommand {
     pub run_id: nucleus_engine::EngineRunId,
@@ -76,6 +79,7 @@ pub struct GitBranchWorktreeRunnerDeliveryEffectConfirmationCommand {
     pub worktree_location_ref: String,
     pub commit_message: String,
     pub remote_target: String,
+    pub pull_request_creation: Option<crate::ForgePullRequestCreationScope>,
     pub operator_ref: String,
     pub idempotency_key: String,
 }
