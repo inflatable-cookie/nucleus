@@ -1,6 +1,6 @@
 # 103 Run Delivery Forge Pull Requests
 
-Status: dispatched
+Status: paused — blocked on forge PR-creation authority (card 107)
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 2)

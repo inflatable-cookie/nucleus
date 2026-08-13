@@ -10,7 +10,7 @@ Updated: 2026-08-04
 
 ## Ready Cards
 
-- none
+- `107-forge-pr-creation-authority.md` — unblocks 103
 
 ## Planned Cards
 
@@ -21,11 +21,12 @@ Updated: 2026-08-04
 
 - `102-run-delivery-review-surface.md` — worker thread
   `thread/102-run-delivery-review-surface`
-- `103-run-delivery-forge-pull-requests.md` — worker thread
-  `thread/103-run-delivery-forge-pull-requests`
 
 ## Paused Cards
 
+- `103-run-delivery-forge-pull-requests.md` — blocked on PR-creation
+  authority (card 107; stop log
+  `docs/logs/2026-08-13-run-delivery-forge-pull-requests.md`)
 - `050-production-remote-transport-gate.md` — needs a promoted Nucleus remote
   host pairing/session contract and selected production topology
 - `051-secondary-window-product-gate.md` — needs an operator-selected

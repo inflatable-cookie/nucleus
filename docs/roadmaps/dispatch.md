@@ -21,3 +21,6 @@ One line per orchestrated worker thread. Orchestrator-only writes.
 | 100-run-fleet-panel | `g05/batch-cards/100-run-fleet-panel.md` | `thread/100-run-fleet-panel` | merged |
 | 101-run-delivery-pipeline | `g05/batch-cards/101-run-delivery-pipeline.md` | `thread/101-run-delivery-pipeline` | merged |
 | 106-run-delivery-commit-push-authority | `g05/batch-cards/106-run-delivery-commit-push-authority.md` | `thread/106-run-delivery-commit-push-authority` | merged |
+| 102-run-delivery-review-surface | `g05/batch-cards/102-run-delivery-review-surface.md` | `thread/102-run-delivery-review-surface` | dispatched |
+| 103-run-delivery-forge-pull-requests | `g05/batch-cards/103-run-delivery-forge-pull-requests.md` | `thread/103-run-delivery-forge-pull-requests` | paused (PR-creation gate; stop log merged) |
+| 107-forge-pr-creation-authority | `g05/batch-cards/107-forge-pr-creation-authority.md` | — | ready |
