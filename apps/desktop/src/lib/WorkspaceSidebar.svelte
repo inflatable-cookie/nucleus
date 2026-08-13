@@ -1,14 +1,15 @@
 <script lang="ts">
   import { Tabs, type TabItem } from "@inflatable-cookie/poodle-svelte";
-  import { files, folderTree, gitBranch, messagesSquare } from "../icons.generated";
+  import { activity, files, folderTree, gitBranch, messagesSquare } from "../icons.generated";
   import { onMount } from "svelte";
   import type { ControlProjectRecordDto } from "./control";
   import FilesSidebarView from "./FilesSidebarView.svelte";
   import ForgeSidebarView from "./ForgeSidebarView.svelte";
   import ProjectRail from "./ProjectRail.svelte";
+  import RunFleetPanel from "./RunFleetPanel.svelte";
   import ThreadsSidebarView from "./ThreadsSidebarView.svelte";
 
-  type SidebarMode = "projects" | "threads" | "files" | "forge";
+  type SidebarMode = "projects" | "threads" | "files" | "forge" | "runs";
 
   let {
     selectedProjectId = $bindable(null),
@@ -24,6 +25,7 @@
   const items: TabItem[] = [
     { value: "projects", label: "Projects", icon: folderTree },
     { value: "threads", label: "Threads", icon: messagesSquare },
+    { value: "runs", label: "Runs", icon: activity },
     { value: "files", label: "Files", icon: files },
     { value: "forge", label: "Forge", icon: gitBranch },
   ];
@@ -55,6 +57,7 @@
   function isSidebarMode(value: string | null): value is SidebarMode {
     return value === "projects"
       || value === "threads"
+      || value === "runs"
       || value === "files"
       || value === "forge";
   }
@@ -67,6 +70,19 @@
   function showThreads(): void { selectMode("threads"); }
   function showFiles(): void { selectMode("files"); }
   function showForge(): void { selectMode("forge"); }
+
+  function openRun(runId: string): void {
+    const conversationId = `conversation:run:${runId}`;
+    selectedConversationId = conversationId;
+    window.dispatchEvent(
+      new CustomEvent("nucleus:open-agent-chat-thread", {
+        detail: {
+          projectId: selectedProjectId,
+          conversationId,
+        },
+      }),
+    );
+  }
 </script>
 
 <section class="workspace-sidebar" aria-label="Workspace sidebar">
@@ -95,6 +111,11 @@
     </div>
     {#if activeMode === "threads"}
       <ThreadsSidebarView bind:selectedProjectId bind:selectedConversationId />
+    {:else if activeMode === "runs"}
+      <RunFleetPanel
+        {selectedProjectId}
+        onOpenRun={(run) => openRun(run.run_id)}
+      />
     {:else if activeMode === "files"}
       <FilesSidebarView {selectedProject} />
     {:else if activeMode === "forge"}
