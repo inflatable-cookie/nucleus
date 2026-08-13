@@ -10,7 +10,10 @@ Updated: 2026-08-04
 
 ## Planned Cards
 
-- none
+- `098-orchestration-run-registry.md` — orchestration lane phase 1
+- `099-operator-dispatched-runs.md` — waits for 098
+- `100-run-fleet-panel.md` — waits for 098, 099
+- `101-run-delivery-pipeline.md` — waits for 098, 099
 
 ## Dispatched Cards
 

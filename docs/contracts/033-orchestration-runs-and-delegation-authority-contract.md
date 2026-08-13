@@ -79,8 +79,11 @@ orchestrator designation, never to the operator.
 
 `delivered` means: the worker finished, the closeout is written, the
 validation hook ran, and the branch is committed and pushed with a PR opened
-(or a delivery packet prepared where no forge is configured). Delivery is a
-pipeline with receipts at each side effect.
+— or, where no forge is configured, the delivery packet is prepared: the
+closeout, the branch (pushed where a remote exists), and a notification to
+the operator. Review rides the existing diff/review workflow; a missing
+forge never blocks delivery. Delivery is a pipeline with receipts at each
+side effect.
 
 Acceptance is a separate act from delivery. The default merge authority is
 the operator: the orchestrator prepares and may recommend; the operator
@@ -95,6 +98,8 @@ receipts, not from mutable run state alone.
 
 ## Open Questions
 
-Tracked in `../research/translation-memos/agent-orchestration-lane.md`:
-permanence of operator-only merge, worker context inheritance, orchestrator
-surface shape, no-forge delivery packet. This draft does not bind them.
+Resolved 2026-08-13 (see the translation memo's Decisions section):
+operator-merge is the posture (agent-merge deferred to a later per-project
+grant), workers start from fresh playbook-shaped briefs, the orchestrator
+is a mode of the agent chat panel, and no-forge delivery is closeout +
+branch + notification.

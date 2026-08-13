@@ -144,20 +144,20 @@ budget burn, closeout link) and a delivery-review surface (summary + diff +
 accept/reject). Everything else reuses AgentTranscript, AgentSubagent,
 AgentQuestion, MessageCenter.
 
-## Open Questions For The Operator
+## Decisions (2026-08-13, operator)
 
-- Merge authority: is operator-merge the permanent posture, or a starting
-  gate with agent-merge as a later grant? (Proposal assumes the latter,
-  gated per project.)
-- Worker context: fresh brief per run (cheap, lossy) versus fork/inherit
-  (ACP fork RFD territory, provider-dependent)? Proposal starts with fresh
-  briefs shaped like playbook cards.
-- Does the orchestrator run as a special mode of the existing agent chat
-  panel, or a distinct surface? Proposal: a mode — the panel already
-  handles questions, plans, and subagents; orchestration adds its tools and
-  the fleet affordance.
-- Forge integration: PRs need a forge remote; what is the no-forge delivery
-  packet shape (branch + summary only)?
+- **Merge authority**: the orchestrator prepares and recommends; the
+  operator merges. Agent-merge may become a separate per-project grant
+  later if trust builds; the lane does not build it now.
+- **Worker context**: fresh playbook-shaped briefs (objective, scope, stop
+  conditions). Fork/inherit becomes its own card only if the context loss
+  shows up in practice.
+- **Orchestrator surface**: a mode of the existing agent chat panel —
+  designation adds the delegation tools and the fleet affordance to the
+  panel that already handles questions, plans, and subagents.
+- **No-forge delivery**: `delivered` without a forge means closeout +
+  branch (pushed where possible) + notification; review rides the existing
+  diff/review workflow. No forge is not a blocker.
 
 ## Validation Needs
 
