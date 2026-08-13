@@ -108,14 +108,22 @@ New work, in dependency order:
   labeled, never impersonate the operator); audit requirements (every
   delegation decision is a receipt).
 - **Swallowtail contract (new or 045-adjacent): Host-Tool Surface For
-  Managed Sessions.** Narrower than first scoped: portable tool declaration
-  is already a runtime-level capability (`ToolDeclaration`,
-  `SessionOptions::with_tools`, `roles/api`), realized per adapter (Codex
-  `dynamicTools` proven by `task_ledger`; Anthropic managed requests carry
-  tools). The contract work is admission and qualification — which routes
-  may carry consumer-declared tools, honest per-route capability
-  declaration, bounded counts and schema sizes (already enforced for
-  Codex), and pre-dispatch rejection where a route cannot carry them.
+  Managed Sessions.** Largely dissolved on inspection (2026-08-13): contract
+  041 §Consumer Tool Exchange already governs native client tools —
+  consumer declares, provider calls, consumer executes and returns exact
+  results — with swallowtail validating transport and correlation, never
+  business meaning. Portable `ToolDeclaration` is runtime-level
+  (`SessionOptions::with_tools`). What remains is a realization matrix, not
+  a contract: Codex (`dynamicTools`, proven by nucleus `task_ledger`),
+  Anthropic Messages (client-tool continuation under contract 030), and
+  DeepSeek (prepared-profile plumbing) realize it today; the CLI/ACP routes
+  (claude-agent, gemini, kimi, cursor, opencode, pi, oh-my-pi) do not —
+  their tools come from provider configuration, not the transport.
+  Consequence for this lane: **orchestrator designation must select a
+  tool-capable route**, and the designation surface must show that
+  capability. If an ACP route later needs host tools, the ACP subagent
+  discussion's delegation vocabulary is the evidence base for a bridge
+  contract then — not before.
 - **Amendments**: nucleus 032 (consumer boundary — orchestration runs join
   the adopted-systems list); nucleus 018 if the run aggregate needs envelope
   changes (expected: none, it composes); swallowtail 045 only if a provider

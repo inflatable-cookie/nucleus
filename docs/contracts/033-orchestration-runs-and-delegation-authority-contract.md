@@ -40,7 +40,10 @@ precondition of review by either an orchestrator agent or the operator.
 ## Orchestrator Designation Rule
 
 An orchestrator is a configured provider instance designated by the operator
-for one project. Designation carries a grant envelope:
+for one project. The instance's route must realize consumer tool exchange
+under swallowtail contract 041 (Codex, Anthropic Messages, and DeepSeek
+routes qualify at drafting time; CLI/ACP routes do not). Designation carries
+a grant envelope:
 
 - allowed worker provider instances and models
 - concurrent-run budget and per-run token/time budgets
