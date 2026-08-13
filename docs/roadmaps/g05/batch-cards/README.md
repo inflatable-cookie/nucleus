@@ -10,7 +10,7 @@ Updated: 2026-08-04
 
 ## Ready Cards
 
-- `105-worktree-creation-authority.md` — unblocks 099
+- none
 
 ## Planned Cards
 
@@ -23,7 +23,8 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- none
+- `105-worktree-creation-authority.md` — worker thread
+  `thread/105-worktree-creation-authority`
 
 ## Paused Cards
 

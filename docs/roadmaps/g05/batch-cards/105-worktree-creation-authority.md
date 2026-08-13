@@ -1,6 +1,6 @@
 # 105 Isolated Worktree Creation Authority And Runner
 
-Status: ready
+Status: dispatched
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 1 unblocker)
