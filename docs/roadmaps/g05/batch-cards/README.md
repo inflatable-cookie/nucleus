@@ -23,8 +23,7 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `099-operator-dispatched-runs.md` — worker thread
-  `thread/099-operator-dispatched-runs` (re-dispatch)
+- none
 
 ## Paused Cards
 
@@ -130,4 +129,5 @@ Updated: 2026-08-04
 - `096-message-centre-adoption.md`
 - `097-failure-notification-routing.md`
 - `098-orchestration-run-registry.md`
+- `099-operator-dispatched-runs.md`
 - `105-worktree-creation-authority.md`

@@ -1,6 +1,6 @@
 # 099 Operator-Dispatched Runs
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 1)
@@ -101,12 +101,29 @@ designation or delegation tools, steering.
 
 ## Acceptance (planned)
 
-- [ ] operator can dispatch a run; worktree + worker operation start and
+- [x] operator can dispatch a run; worktree + worker operation start and
   bind to the run record
-- [ ] run state tracks observed operation truth; failures transition to
+- [x] run state tracks observed operation truth; failures transition to
   `failed` with receipts
-- [ ] the worker conversation opens as an ordinary interactable thread
-- [ ] fixtures + suites green; batch log
+- [x] the worker conversation opens as an ordinary interactable thread
+- [x] fixtures + suites green; batch log
+
+## Closeout
+
+Merged to main as `2644ead9` (worker commit `d8de49cb`, Luna-high fresh
+session after two flash stalls and one flash balance exhaustion — the
+opencode workspace credits ran out mid-lane). Dispatch drives the 105
+chain end to end: run-scoped handoff lane, durable confirmed intent, gated
+`git worktree add` (the only spawn path), worktree registered as a
+`GitRepository` project resource, brief seeded into
+`conversation:run:<run_id>`, turn-start marks running and binds the
+operation, turn failure records a failed run with the observed reason. The
+desktop dispatch dialog's confirm action IS the operator confirmation.
+Main verification: engine/server/ratchet green; desktop check clean; the
+one vitest failure (`settingsDialog` tabindex) is pre-existing on main —
+traced to the in-flight longhorn/poodle sweep (stale file: install copy
+masked it as missing generated files; after refresh it is a real assertion
+drift owned by that sweep, not this lane).
 
 ## Stop Conditions
 
