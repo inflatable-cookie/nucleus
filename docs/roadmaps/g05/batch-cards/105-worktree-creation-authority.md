@@ -1,6 +1,6 @@
 # 105 Isolated Worktree Creation Authority And Runner
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 1 unblocker)
@@ -61,13 +61,28 @@ gates), checkout/switch on the primary tree.
 
 ## Acceptance (planned)
 
-- [ ] 007/011/033 text admits this one effect through the chain, nothing
+- [x] 007/011/033 text admits this one effect through the chain, nothing
   wider
-- [ ] operator-confirmed intent + admitted handoff + approved target →
+- [x] operator-confirmed intent + admitted handoff + approved target →
   worktree exists on disk with `worktree_created: true` and receipts
-- [ ] every blocker path refuses with its named blocker; no intent, no
+- [x] every blocker path refuses with its named blocker; no intent, no
   worktree
-- [ ] fixtures + server suite green; batch log
+- [x] fixtures + server suite green; batch log
+
+## Closeout
+
+Merged to main as `d85adc4d` (worker commit `33ebb626`, deepseek flash
+xhigh, clean first run). Contract amendments reviewed narrow: 007/011 carry
+"realized exception" passages admitting only isolated worktree creation for
+a dispatched run through the chain, the supervisor surface explicitly not
+widened, every other exclusion restated; 033 gained the Run Worktree
+Authority Rule. `ServerCommandKind::GitBranchWorktreeRunner` records the
+durable operator-confirmed intent (idempotency-keyed); the gated execution
+path spawns `git worktree add` only at `ReadyForRunner`, flips
+`worktree_created: true`, and replays the persisted outcome on repeat
+dispatch. Module ratchet respected (execution lives in a submodule of the
+authority module). Worker validation: orchestration 22 + server 2055 +
+integration, ratchet at 323, qa:docs.
 
 ## Stop Conditions
 

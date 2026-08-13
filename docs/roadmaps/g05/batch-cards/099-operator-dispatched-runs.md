@@ -1,24 +1,26 @@
 # 099 Operator-Dispatched Runs
 
-Status: paused — blocked on the worktree-creation authority decision
+Status: dispatched
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 1)
-Depends on: 098 (run registry, merged `94028b31`); the worktree-creation
-  authority decision (stop log
-  `docs/logs/2026-08-13-operator-dispatched-runs.md`)
+Depends on: 098 (run registry, merged `94028b31`); 105 (worktree-creation
+  authority, merged `d85adc4d`)
 Auto-start next card: no
 
-## Authority Gate (2026-08-13 stop finding)
+## Authority Gate (resolved 2026-08-13)
 
-The first dispatch hit stop condition 1: worktree creation is deliberately
-outside the current authority surface. Contracts 007 and 011 exclude
-worktree mutation; the declared gate
-(`provider_git_branch_worktree_runner_authority`) is stopped-by-default and
-unwired (records keep `worktree_created: false`; no runner executes Git);
-no git mutation command exists on the control surface at all. Full
-citations and the three operator options are in the stop log. The
-composition trace below remains valid but is downstream of that decision.
+The first dispatch stopped on the worktree-creation authority gate (stop
+log `docs/logs/2026-08-13-operator-dispatched-runs.md`). Card 105 wired the
+chain: contracts 007/011 now admit exactly isolated worktree creation for a
+dispatched run through `provider_git_branch_worktree_runner_authority`
+(operator-confirmed intent per dispatch via
+`ServerCommandKind::GitBranchWorktreeRunner`, admitted handoff, approved
+target refs, `ReadyForRunner`, bounded spawn, receipts), and contract 033
+carries the Run Worktree Authority Rule. Dispatch must drive that chain —
+confirmation command first, gated execution second — never a bare spawn.
+The operator-confirmation step is a deliberate UX act: surface it in the
+dispatch dialog as the explicit confirmation, not a nag.
 
 ## Implementation Map (traced 2026-08-13, orchestrator takeover)
 

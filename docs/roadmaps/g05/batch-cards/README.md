@@ -23,13 +23,11 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `105-worktree-creation-authority.md` — worker thread
-  `thread/105-worktree-creation-authority`
+- `099-operator-dispatched-runs.md` — worker thread
+  `thread/099-operator-dispatched-runs` (re-dispatch)
 
 ## Paused Cards
 
-- `099-operator-dispatched-runs.md` — blocked on the worktree-creation
-  authority decision (stop log `docs/logs/2026-08-13-operator-dispatched-runs.md`)
 - `050-production-remote-transport-gate.md` — needs a promoted Nucleus remote
   host pairing/session contract and selected production topology
 - `051-secondary-window-product-gate.md` — needs an operator-selected
@@ -132,3 +130,4 @@ Updated: 2026-08-04
 - `096-message-centre-adoption.md`
 - `097-failure-notification-routing.md`
 - `098-orchestration-run-registry.md`
+- `105-worktree-creation-authority.md`
