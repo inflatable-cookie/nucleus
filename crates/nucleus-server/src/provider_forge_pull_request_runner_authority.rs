@@ -4,6 +4,7 @@
 mod blockers;
 mod execution;
 mod forge_adapter;
+mod pipeline;
 mod record_builder;
 mod types;
 
@@ -17,6 +18,7 @@ pub use forge_adapter::{
     ForgePullRequestCreationReference, ForgePullRequestCreationRequest,
     ForgePullRequestCreationTestDouble,
 };
+pub use pipeline::{admitted_delivery_forge_adapter, delivery_pull_request_creation_preflights};
 pub use types::{
     ForgePullRequestCreationScope, ForgePullRequestRunnerAuthorityBlocker,
     ForgePullRequestRunnerAuthorityInput, ForgePullRequestRunnerAuthorityRecord,

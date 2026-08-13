@@ -77,7 +77,12 @@ where
             handle_run_dispatch_execution(handler, &command_id.0, dispatch_command)
         }
         ServerCommandKind::RunDeliveryExecution(delivery_command) => {
-            handle_run_delivery_execution(handler, &command_id.0, delivery_command)
+            handle_run_delivery_execution(
+                handler,
+                &command_id.0,
+                delivery_command,
+                crate::admitted_delivery_forge_adapter(),
+            )
         }
         ServerCommandKind::Goal(goal_command) => {
             handle_goal_command(handler, &command_id.0, goal_command)

@@ -11,7 +11,11 @@ use super::memory_proposal_review::memory_proposal_review_dto;
 use super::project_lifecycle::project_command_dto;
 use super::read_only::read_only_command_dto;
 use super::task_authoring::{task_create_dto, task_update_dto};
-use super::types::{ControlCommandDto, ControlTaskCommandActionDto};
+use super::types::{
+    ControlCommandDto, ControlForgePullRequestCreationScopeDto,
+    ControlForgePullRequestProviderDto, ControlForgePullRequestTextSourceDto,
+    ControlTaskCommandActionDto,
+};
 use crate::commands::{
     RunCommand, RunDeliveryExecutionCommand, RunDispatchExecutionCommand, RunProposeCommand,
     ServerCommand, ServerCommandKind, TaskCommand, TaskSeedPromotionCommand,
@@ -95,11 +99,51 @@ fn run_delivery_execution_dto(
         operator_ref: command.operator_ref.clone(),
         commit_message: command.commit_message.clone(),
         remote_target: command.remote_target.clone(),
+        pull_request_creation: command
+            .pull_request_creation
+            .as_ref()
+            .map(forge_pull_request_creation_scope_dto),
         idempotency_key: command.idempotency_key.clone(),
         expected_revision: command
             .expected_revision
             .as_ref()
             .map(|revision| revision.0.clone()),
+    }
+}
+
+fn forge_pull_request_creation_scope_dto(
+    scope: &crate::ForgePullRequestCreationScope,
+) -> ControlForgePullRequestCreationScopeDto {
+    ControlForgePullRequestCreationScopeDto {
+        forge_provider: match scope.forge_provider {
+            crate::ForgePullRequestProvider::GitHub => {
+                ControlForgePullRequestProviderDto::GitHub
+            }
+            crate::ForgePullRequestProvider::GitLab => {
+                ControlForgePullRequestProviderDto::GitLab
+            }
+            crate::ForgePullRequestProvider::GenericForge => {
+                ControlForgePullRequestProviderDto::GenericForge
+            }
+        },
+        base_branch: scope.base_branch.clone(),
+        head_branch: scope.head_branch.clone(),
+        title_source: text_source_dto(scope.title_source.clone()),
+        body_source: text_source_dto(scope.body_source.clone()),
+    }
+}
+
+fn text_source_dto(source: crate::ForgePullRequestTextSource) -> ControlForgePullRequestTextSourceDto {
+    match source {
+        crate::ForgePullRequestTextSource::OperatorProvided => {
+            ControlForgePullRequestTextSourceDto::OperatorProvided
+        }
+        crate::ForgePullRequestTextSource::AgentSuggested => {
+            ControlForgePullRequestTextSourceDto::AgentSuggested
+        }
+        crate::ForgePullRequestTextSource::GeneratedFromEvidence => {
+            ControlForgePullRequestTextSourceDto::GeneratedFromEvidence
+        }
     }
 }
 
