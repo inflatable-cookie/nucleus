@@ -5,6 +5,7 @@ use super::command_events::append_command_admitted_event;
 use super::goal_commands::handle_goal_command;
 use super::handler::LocalControlRequestHandler;
 use super::project_commands::handle_project_command;
+use super::run_commands::handle_run_command;
 use super::steward_commands::handle_steward_command;
 use super::task_commands::handle_task_command;
 use crate::memory_proposal_review_persistence::review_memory_proposal;
@@ -64,6 +65,9 @@ where
         }
         ServerCommandKind::Task(task_command) => {
             handle_task_command(handler, &command_id.0, task_command)
+        }
+        ServerCommandKind::Run(run_command) => {
+            handle_run_command(handler, &command_id.0, run_command)
         }
         ServerCommandKind::Goal(goal_command) => {
             handle_goal_command(handler, &command_id.0, goal_command)

@@ -28,6 +28,7 @@ pub struct ServerCommand {
 pub enum ServerCommandKind {
     Project(ProjectCommand),
     Task(TaskCommand),
+    Run(RunCommand),
     Goal(GoalCommand),
     Workspace(WorkspaceCommand),
     AgentSession(AgentSessionCommand),
@@ -243,6 +244,64 @@ pub struct TaskUpdateChanges {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskTransitionCommand {
     pub task_id: TaskId,
+    pub expected_revision: Option<RevisionId>,
+}
+
+/// Orchestration run lifecycle commands (contract 033 Run Record Rule).
+/// Every transition is a command; invalid transitions are rejected.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RunCommand {
+    Propose(RunProposeCommand),
+    Dispatch(RunDispatchCommand),
+    MarkRunning(RunTransitionCommand),
+    Deliver(RunDeliverCommand),
+    Accept(RunTransitionCommand),
+    Reject(RunTransitionCommand),
+    Fail(RunTransitionCommand),
+    Cancel(RunTransitionCommand),
+}
+
+/// Propose a run record: objective, worktree, provider, budget envelope.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunProposeCommand {
+    pub run_id: nucleus_engine::EngineRunId,
+    pub project_id: ProjectId,
+    pub objective_scope: String,
+    pub acceptance: Vec<String>,
+    pub stop_conditions: Vec<String>,
+    pub worktree_ref: Option<String>,
+    pub provider_instance: String,
+    pub provider_model: String,
+    pub orchestrator_designation: Option<String>,
+    pub token_budget: Option<u64>,
+    pub time_budget_seconds: Option<u64>,
+}
+
+/// Dispatch transitions `proposed -> dispatched` and binds the worker
+/// operation identity when the spawn side knows it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunDispatchCommand {
+    pub run_id: nucleus_engine::EngineRunId,
+    pub operation_id: Option<String>,
+    pub conversation_id: Option<String>,
+    pub expected_revision: Option<RevisionId>,
+}
+
+/// One lifecycle transition with optional reason.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunTransitionCommand {
+    pub run_id: nucleus_engine::EngineRunId,
+    pub expected_revision: Option<RevisionId>,
+    pub reason: Option<String>,
+}
+
+/// Deliver transitions `running -> delivered`; carries the closeout.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunDeliverCommand {
+    pub run_id: nucleus_engine::EngineRunId,
+    pub closeout_summary: String,
+    pub closeout_evidence_refs: Vec<String>,
+    pub closeout_diff_ref: Option<String>,
     pub expected_revision: Option<RevisionId>,
 }
 

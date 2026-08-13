@@ -117,6 +117,14 @@ pub(super) fn initialize_schema(connection: &Connection) -> LocalStoreResult<()>
                 payload BLOB NOT NULL,
                 seq INTEGER
             );
+            CREATE TABLE IF NOT EXISTS orchestration_runs (
+                id TEXT PRIMARY KEY NOT NULL,
+                kind TEXT NOT NULL,
+                revision_id TEXT NOT NULL,
+                media_type TEXT,
+                payload BLOB NOT NULL,
+                seq INTEGER
+            );
             ",
         )
         .map_err(sqlite_error)?;

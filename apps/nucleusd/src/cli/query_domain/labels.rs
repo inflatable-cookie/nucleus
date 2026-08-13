@@ -34,6 +34,7 @@ pub(super) fn query_domain_label(domain: &QueryDomain) -> &'static str {
         QueryDomain::MemoryProposals { .. } => "memory-proposals",
         QueryDomain::MemoryProposalReviewDiagnostics { .. } => "memory-proposal-review-diagnostics",
         QueryDomain::ResearchRunBriefs { .. } => "research-run-briefs",
+        QueryDomain::OrchestrationRuns { .. } => "orchestration-runs",
         QueryDomain::TaskSeedPromotionDiagnostics { .. } => "task-seed-promotion-diagnostics",
         QueryDomain::PlanningProjectionFileWriteDiagnostics { .. } => {
             "planning-projection-file-write-diagnostics"

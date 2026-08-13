@@ -58,6 +58,7 @@ mod authority_map;
 mod diagnostics;
 mod memory_proposal_review_diagnostics;
 mod memory_proposals;
+mod orchestration_runs;
 mod planning_capture_publication_diagnostics;
 mod planning_projection_file_write_diagnostics;
 mod planning_projection_import_active_apply_diagnostics;
@@ -265,6 +266,9 @@ where
         }
         ServerQueryKind::ProjectAuthorityMap(query) => {
             authority_map::project_authority_map_query(query)
+        }
+        ServerQueryKind::OrchestrationRuns(query) => {
+            orchestration_runs::orchestration_runs_query(handler, query)
         }
     }
 }

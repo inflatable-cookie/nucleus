@@ -287,6 +287,9 @@ impl TryFrom<&ServerControlResponseBody> for ControlResponseBodyDto {
                     record: ControlProjectAuthorityMapDto::from(record),
                 })
             }
+            ServerControlResponseBody::Query(ServerQueryResult::OrchestrationRuns(projection)) => {
+                Ok(super::orchestration_runs::orchestration_runs_body_dto(projection))
+            }
             ServerControlResponseBody::Query(ServerQueryResult::ProviderReadIntent(result)) => {
                 Ok(Self::ProviderReadIntent {
                     result: ControlProviderReadIntentQueryResultDto::from(result),

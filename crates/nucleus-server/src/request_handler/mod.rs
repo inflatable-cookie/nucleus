@@ -16,6 +16,7 @@ mod handler;
 mod project_commands;
 mod project_resource_commands;
 mod queries;
+mod run_commands;
 mod steward_commands;
 mod task_commands;
 

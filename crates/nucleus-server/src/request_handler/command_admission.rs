@@ -4,7 +4,7 @@ use nucleus_orchestration::{
     OrchestrationCommandId, OrchestrationCommandRejectionReason,
 };
 
-use crate::commands::{ServerCommand, ServerCommandKind, TaskCommand};
+use crate::commands::{RunCommand, ServerCommand, ServerCommandKind, TaskCommand};
 use crate::control_api::{ServerCommandReceiptStatus, ServerControlError};
 
 pub(crate) enum CommandAdmissionOutcome {
@@ -41,7 +41,26 @@ fn orchestration_admission_from_command(
             target_ref: task_command_target_ref(task_command),
             summary: Some("task command admission".to_owned()),
         }),
+        ServerCommandKind::Run(run_command) => Some(OrchestrationCommandAdmission {
+            command_id: OrchestrationCommandId(command.id.0.clone()),
+            family: OrchestrationCommandFamily::Run,
+            target_ref: run_command_target_ref(run_command),
+            summary: Some("run lifecycle command admission".to_owned()),
+        }),
         _ => None,
+    }
+}
+
+fn run_command_target_ref(command: &RunCommand) -> Option<String> {
+    match command {
+        RunCommand::Propose(command) => Some(command.run_id.0.clone()),
+        RunCommand::Dispatch(command) => Some(command.run_id.0.clone()),
+        RunCommand::MarkRunning(command) => Some(command.run_id.0.clone()),
+        RunCommand::Deliver(command) => Some(command.run_id.0.clone()),
+        RunCommand::Accept(command) => Some(command.run_id.0.clone()),
+        RunCommand::Reject(command) => Some(command.run_id.0.clone()),
+        RunCommand::Fail(command) => Some(command.run_id.0.clone()),
+        RunCommand::Cancel(command) => Some(command.run_id.0.clone()),
     }
 }
 

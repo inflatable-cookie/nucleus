@@ -28,6 +28,7 @@ pub(super) fn kind_to_text(kind: &PersistenceRecordKind) -> Option<&'static str>
         PersistenceRecordKind::CommandEvidence => Some("command_evidence"),
         PersistenceRecordKind::ArtifactMetadata => Some("artifact_metadata"),
         PersistenceRecordKind::RuntimeEffect => Some("runtime_effect"),
+        PersistenceRecordKind::OrchestrationRun => Some("orchestration_run"),
         _ => None,
     }
 }
@@ -58,6 +59,7 @@ pub(super) fn kind_from_text(value: &str) -> LocalStoreResult<PersistenceRecordK
         "command_evidence" => Ok(PersistenceRecordKind::CommandEvidence),
         "artifact_metadata" => Ok(PersistenceRecordKind::ArtifactMetadata),
         "runtime_effect" => Ok(PersistenceRecordKind::RuntimeEffect),
+        "orchestration_run" => Ok(PersistenceRecordKind::OrchestrationRun),
         other => Err(LocalStoreError::UnsupportedRecordKind {
             reason: format!("unsupported SQLite record kind in row: {other}"),
         }),

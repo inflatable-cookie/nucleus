@@ -19,6 +19,8 @@ pub mod planning_task_seed;
 pub mod project_commands;
 pub mod projections;
 pub mod repositories;
+pub mod run_commands;
+pub mod run_fleet_projection;
 pub mod runtime_receipts;
 pub mod scm_work_item_linkage;
 pub mod services;
@@ -120,6 +122,17 @@ pub use runtime_receipts::{
     decode_runtime_receipt_record, encode_runtime_receipt_record, EngineRuntimeReceiptEffectFamily,
     EngineRuntimeReceiptRecord, EngineRuntimeReceiptRecordId, EngineRuntimeReceiptRef,
     EngineRuntimeReceiptStatus, RuntimeReceiptRecordCodecError,
+};
+pub use run_commands::{
+    decode_run_storage_record, encode_run_storage_payload, encode_run_storage_record,
+    EngineRunBudgetEnvelope, EngineRunCloseout, EngineRunCommand, EngineRunCommandError,
+    EngineRunCommandOutcome, EngineRunCommandService, EngineRunDeliverCommand,
+    EngineRunDispatchCommand, EngineRunId, EngineRunLifecycleState, EngineRunObjective,
+    EngineRunProposeCommand, EngineRunRecord, EngineRunRecordCodecError, EngineRunRepository,
+    EngineRunStorageRecord, EngineRunTransitionCommand, EngineRunTransitionRecord,
+};
+pub use run_fleet_projection::{
+    EngineRunFleetEntry, EngineRunFleetProjection, EngineRunStateCount,
 };
 pub use scm_work_item_linkage::{
     EngineScmWorkItemLinkId, EngineScmWorkItemLinkRecord, EngineScmWorkItemLinkState,

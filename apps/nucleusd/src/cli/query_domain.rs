@@ -69,6 +69,9 @@ pub(crate) enum QueryDomain {
     ResearchRunBriefs {
         project_id: String,
     },
+    OrchestrationRuns {
+        project_id: String,
+    },
     TaskSeedPromotionDiagnostics {
         project_id: String,
     },

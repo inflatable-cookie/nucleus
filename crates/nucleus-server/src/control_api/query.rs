@@ -83,6 +83,13 @@ pub enum ServerQueryKind {
     SelectedTaskReviewDecisionAdmission(SelectedTaskReviewDecisionAdmissionQuery),
     SelectedTaskReviewDecisionApply(SelectedTaskReviewDecisionApplyQuery),
     ProjectAuthorityMap(ProjectAuthorityMapQuery),
+    OrchestrationRuns(OrchestrationRunsQuery),
+}
+
+/// Fleet projection query shape (contract 033 fleet view).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrchestrationRunsQuery {
+    pub project_id: ProjectId,
 }
 
 /// Generic persisted-state query scoped to one state domain.

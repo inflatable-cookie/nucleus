@@ -14,6 +14,7 @@ mod authority;
 mod diagnostics;
 mod memory_proposal_review;
 mod memory_proposals;
+mod orchestration_runs;
 mod planning_capture_publication;
 mod planning_projection_file_write;
 mod planning_projection_import;
@@ -101,6 +102,9 @@ pub use memory_proposals::{
     ControlMemoryProposalRetentionCountDto, ControlMemoryProposalScopeCountDto,
     ControlMemoryProposalSensitivityCountDto, ControlMemoryProposalSourceCountsDto,
     ControlMemoryProposalStatusCountDto, ControlMemoryProposalSummaryDto,
+};
+pub use orchestration_runs::{
+    ControlOrchestrationRunStateCountDto, ControlOrchestrationRunSummaryDto,
 };
 pub use planning_capture_publication::{
     ControlPlanningCapturePublicationBucketDto, ControlPlanningCapturePublicationDiagnosticsDto,

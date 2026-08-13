@@ -98,6 +98,9 @@ impl QueryDomain {
             "research-run-briefs" => project_query(iter, "research-run-briefs", |project_id| {
                 Self::ResearchRunBriefs { project_id }
             }),
+            "orchestration-runs" => project_query(iter, "orchestration-runs", |project_id| {
+                Self::OrchestrationRuns { project_id }
+            }),
             "task-seed-promotion-diagnostics" => {
                 project_query(iter, "task-seed-promotion-diagnostics", |project_id| {
                     Self::TaskSeedPromotionDiagnostics { project_id }

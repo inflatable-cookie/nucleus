@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 mod authority_domains;
 mod from_dto;
 mod id;
+mod orchestration_runs;
 mod planning_projection;
 mod project_authority;
 mod provider;
@@ -282,5 +283,10 @@ pub enum ControlQueryDto {
         action: String,
         project_id: String,
         expected_domains: Vec<String>,
+    },
+    OrchestrationRuns {
+        query_id: String,
+        action: String,
+        project_id: String,
     },
 }

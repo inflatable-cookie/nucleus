@@ -83,6 +83,10 @@ impl LocalStoreDomainSet {
                     domain: PersistenceDomain::RuntimeEffects,
                     required_for_first_slice: true,
                 },
+                LocalStoreDomainBoundary {
+                    domain: PersistenceDomain::OrchestrationRuns,
+                    required_for_first_slice: true,
+                },
             ],
         }
     }

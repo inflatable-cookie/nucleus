@@ -23,6 +23,7 @@ pub enum PersistenceDomain {
     CommandEvidence,
     ArtifactMetadata,
     RuntimeEffects,
+    OrchestrationRuns,
     ClientAuth,
 }
 
@@ -58,6 +59,7 @@ pub enum PersistenceRecordKind {
     CommandEvidence,
     ArtifactMetadata,
     RuntimeEffect,
+    OrchestrationRun,
     ClientAuth,
 }
 
