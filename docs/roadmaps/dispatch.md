@@ -24,3 +24,4 @@ One line per orchestrated worker thread. Orchestrator-only writes.
 | 102-run-delivery-review-surface | `g05/batch-cards/102-run-delivery-review-surface.md` | `thread/102-run-delivery-review-surface` | merged |
 | 103-run-delivery-forge-pull-requests | `g05/batch-cards/103-run-delivery-forge-pull-requests.md` | `thread/103-run-delivery-forge-pull-requests` | merged |
 | 107-forge-pr-creation-authority | `g05/batch-cards/107-forge-pr-creation-authority.md` | `thread/107-forge-pr-creation-authority` | merged |
+| 104-orchestrator-designation | `g05/batch-cards/104-orchestrator-designation-and-delegation-tools.md` | `thread/104-orchestrator-designation` | merged |

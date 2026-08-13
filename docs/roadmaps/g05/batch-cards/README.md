@@ -18,8 +18,7 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `104-orchestrator-designation-and-delegation-tools.md` — worker thread
-  `thread/104-orchestrator-designation`
+- none
 
 ## Paused Cards
 
@@ -130,6 +129,7 @@ Updated: 2026-08-04
 - `101-run-delivery-pipeline.md`
 - `102-run-delivery-review-surface.md`
 - `103-run-delivery-forge-pull-requests.md`
+- `104-orchestrator-designation-and-delegation-tools.md`
 - `105-worktree-creation-authority.md`
 - `106-run-delivery-commit-push-authority.md`
 - `107-forge-pr-creation-authority.md`

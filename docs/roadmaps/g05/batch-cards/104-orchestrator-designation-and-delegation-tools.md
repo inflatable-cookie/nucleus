@@ -1,6 +1,6 @@
 # 104 Orchestrator Designation And Delegation Tools
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 3)
@@ -53,13 +53,31 @@ cross-project orchestration.
 
 ## Acceptance (planned)
 
-- [ ] operator designates an orchestrator per project with a grant envelope
-- [ ] the orchestrator session receives the delegation verbs; a
+- [x] operator designates an orchestrator per project with a grant envelope
+- [x] the orchestrator session receives the delegation verbs; a
   non-designated session never does
-- [ ] every verb validates against the envelope pre-dispatch; rejections
+- [x] every verb validates against the envelope pre-dispatch; rejections
   are tool results + receipts
-- [ ] budgets fail closed and visibly
-- [ ] fixtures + suites green; batch log
+- [x] budgets fail closed and visibly
+- [x] fixtures + suites green; batch log
+
+## Closeout
+
+Merged to main as `525b3ebf` (commit `543a6cb7`). The flash worker died
+silently after completing the implementation and batch log; the
+orchestrator verified the worktree state (engine 8 + server designations 8
++ delegation 21 tests, desktop check clean) and committed it. Designation
+aggregate rides the phase-1 persistence/spine pattern with an additive
+`OrchestratorDesignation` command family; the provider catalogue carries
+`tool_capable` + reason per the realization matrix, so tool-incapable
+routes refuse at designation. Delegation verbs declare through the
+dynamic-tool channel only for designated sessions (tool-set presence is
+session identity; designation changes force a session restart with
+migration context). Every call revalidates against the envelope; refusals
+are tool results AND Blocked receipts. Recorded decisions: synchronous
+delegate, no PR creation for delegated runs (operator-only act),
+orchestrator attribution (never the operator), project-scoped
+`run_status`. Steering (`message_run`) remains phase 4.
 
 ## Stop Conditions
 
