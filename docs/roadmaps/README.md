@@ -415,8 +415,8 @@ shape.
 
 ## Next Task
 
-Agent orchestration lane, phase 1: card 098 (run registry) is dispatched;
-099 (operator-dispatched runs), 100 (fleet panel), 101 (delivery pipeline)
-are planned behind it. Phase 2 (102 review surface, 103 forge PRs) and
-phase 3 (104 orchestrator designation + delegation tools) are drafted.
-Contract 033 (draft) and the translation memo carry the decisions.
+Agent orchestration lane, phase 1: card 098 (run registry) merged. 099 is
+paused on the worktree-creation authority gate (stop log merged); card 105
+(wire the branch/worktree runner authority chain) is ready and unblocks it.
+Then 100 (fleet panel), 101 (delivery pipeline); phases 2-3 (102-104)
+drafted behind them.

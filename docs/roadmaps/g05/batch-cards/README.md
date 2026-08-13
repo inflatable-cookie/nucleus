@@ -10,7 +10,7 @@ Updated: 2026-08-04
 
 ## Ready Cards
 
-- none
+- `105-worktree-creation-authority.md` — unblocks 099
 
 ## Planned Cards
 
