@@ -1,11 +1,22 @@
 # 101 Run Delivery Pipeline
 
-Status: dispatched
+Status: paused — blocked on commit/push authority (card 106)
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 1)
-Depends on: 098 (run registry), 099 (operator-dispatched runs)
+Depends on: 098 (run registry, merged `94028b31`), 099 (operator-dispatched
+  runs, merged `2644ead9`), 106 (commit/push authority)
 Auto-start next card: no
+
+## Authority Gate (2026-08-13 stop finding)
+
+First dispatch stopped on stop condition 1: the 105 chain admits isolated
+worktree creation only; commit and push stay gated (stop log
+`docs/logs/2026-08-13-run-delivery-pipeline.md`, merged `c9f618ec`). Card
+106 extends the chain with per-run commit and own-branch push,
+operator-confirmed per delivery. The pipeline must drive that chain —
+delivery confirmation intent first, gated execution second — never a bare
+git spawn.
 
 ## Objective
 
