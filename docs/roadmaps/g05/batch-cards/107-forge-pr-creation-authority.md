@@ -1,6 +1,6 @@
 # 107 Run Delivery Forge PR-Creation Authority
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 2 unblocker)
@@ -63,13 +63,29 @@ beyond the admitted test double + one real route.
 
 ## Acceptance (planned)
 
-- [ ] 027 admits the per-delivery PR-creation lane with the full spine;
+- [x] 027 admits the per-delivery PR-creation lane with the full spine;
   007/011/033 extended narrowly
-- [ ] confirmed delivery intent + preflight + idempotency → PR opened,
+- [x] confirmed delivery intent + preflight + idempotency → PR opened,
   reference on the run, notification with link
-- [ ] fallbacks keep branch-only delivery with explaining receipts
-- [ ] no merge/comment/review-sync capability introduced
-- [ ] fixtures + server suite + ratchet green; batch log
+- [x] fallbacks keep branch-only delivery with explaining receipts
+- [x] no merge/comment/review-sync capability introduced
+- [x] fixtures + server suite + ratchet green; batch log
+
+## Closeout
+
+Merged to main as `c1927e31` (worker commit `eb7f4cc9`, flash xhigh, clean
+after a spawn-mechanics respawn). Contract 027 gained the per-delivery
+PR-creation lane — admission with operator approval ref + idempotency key,
+preflight (never calls a mutating provider API), provider-state
+reconciliation (adopts an existing PR before opening one), sanitized
+evidence, receipts. The delivery intent carries an optional validated
+`pull_request_creation` scope; scope drift and incomplete scope block,
+merge/comment/label/reviewer/review-sync/branch-mutation stay excluded
+everywhere. Execution lives under the existing forge runner module
+(ratchet untouched at 323); the admitted adapter is a test double with
+shared call counters — the real forge route lands with 103's integration
+or its own follow-up. Failed/blocked outcomes are supersedable; completed
+never re-opens.
 
 ## Stop Conditions
 

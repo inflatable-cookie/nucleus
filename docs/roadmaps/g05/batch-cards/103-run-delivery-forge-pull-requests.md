@@ -1,11 +1,25 @@
 # 103 Run Delivery Forge Pull Requests
 
-Status: paused — blocked on forge PR-creation authority (card 107)
+Status: dispatched
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 2)
-Depends on: 101 (run delivery pipeline)
+Depends on: 101 (run delivery pipeline, merged `bbe74b7e`), 107 (forge
+  PR-creation authority, merged `c1927e31`)
 Auto-start next card: no
+
+## Authority Gate (resolved 2026-08-13)
+
+First dispatch stopped on the PR-creation gate (stop log
+`docs/logs/2026-08-13-run-delivery-forge-pull-requests.md`, merged
+`dfbac4c0`). Card 107 opened it: contract 027's per-delivery PR-creation
+lane, the delivery intent's `pull_request_creation` scope, and
+`run_forge_pull_request_creation`
+(`provider_forge_pull_request_runner_authority/execution.rs`) with
+provider-state reconciliation and replay. Wire the pipeline to that path —
+after the gated push, invoke PR creation under the confirmed intent, append
+`delivery:pr-reference` evidence to the run closeout, and surface the link
+in the operator notification. Never a bare forge call.
 
 ## Objective
 
