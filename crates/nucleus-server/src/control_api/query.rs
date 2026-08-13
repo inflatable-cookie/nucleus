@@ -87,6 +87,16 @@ pub enum ServerQueryKind {
     OrchestrationRuns(OrchestrationRunsQuery),
     OrchestrationRunReview(OrchestrationRunReviewQuery),
     OrchestrationRunReviewPatch(OrchestrationRunReviewPatchQuery),
+    OrchestratorDesignations(OrchestratorDesignationsQuery),
+}
+
+/// Orchestrator designation query shape (contract 033 Orchestrator
+/// Designation Rule): list a project's designations, or the active
+/// designation for one provider instance (session-mode lookup).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrchestratorDesignationsQuery {
+    pub project_id: ProjectId,
+    pub provider_instance: Option<String>,
 }
 
 /// Fleet projection query shape (contract 033 fleet view).

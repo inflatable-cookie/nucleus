@@ -67,6 +67,8 @@ vi.mock("@tauri-apps/api/core", () => ({
       },
       model_catalogue_state: "available",
       model_catalogue_diagnostic: null,
+      tool_capable: true,
+      tool_capable_reason: null,
       models: [{
         provider_id: null,
         model: "gpt-5.4-mini",

@@ -13,6 +13,7 @@ mod task_authoring;
 mod types;
 
 pub use types::{
-    ControlCommandDto, ControlManagementProjectionSyncPolicyDto, ControlProjectLifecycleActionDto,
-    ControlProjectResourceActionDto, ControlProjectResourceRoleDto, ControlRunTransitionActionDto,
+    ControlCommandDto, ControlDelegationActionDto, ControlManagementProjectionSyncPolicyDto,
+    ControlProjectLifecycleActionDto, ControlProjectResourceActionDto,
+    ControlProjectResourceRoleDto, ControlRunTransitionActionDto,
 };

@@ -84,6 +84,13 @@ where
                 crate::admitted_delivery_forge_adapter(),
             )
         }
+        ServerCommandKind::OrchestratorDesignation(designation_command) => {
+            super::designations::handle_orchestrator_designation_command(
+                handler,
+                &command_id.0,
+                designation_command,
+            )
+        }
         ServerCommandKind::Goal(goal_command) => {
             handle_goal_command(handler, &command_id.0, goal_command)
         }

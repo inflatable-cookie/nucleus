@@ -47,6 +47,7 @@ fn live_chat_keeps_follow_up_turns_on_one_thread() {
         },
         CHAT_TURN_TIMEOUT,
         true,
+        false,
     )
     .expect("start chat session");
     let mut task_tool = |_: &str, _: &str, _: &str, _| {

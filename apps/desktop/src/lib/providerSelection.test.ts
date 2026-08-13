@@ -40,6 +40,8 @@ const instance = (
   credential: null,
   model_catalogue_state: readiness === "ready" ? "available" : "unavailable",
   model_catalogue_diagnostic: null,
+  tool_capable: id === "one",
+  tool_capable_reason: id === "one" ? null : `route ${id} does not realize consumer tools`,
   models: readiness === "ready"
     ? [{
         provider_id: id === "two" ? "provider:two" : null,

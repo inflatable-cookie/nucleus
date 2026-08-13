@@ -203,6 +203,26 @@ pub enum ControlCommandDto {
         idempotency_key: String,
         expected_revision: Option<String>,
     },
+    DesignateOrchestrator {
+        command_id: String,
+        designation_id: String,
+        project_id: String,
+        orchestrator_provider_instance: String,
+        allowed_worker_provider_instances: Option<Vec<String>>,
+        allowed_worker_models: Option<Vec<String>>,
+        concurrent_run_budget: u64,
+        per_run_token_budget: Option<u64>,
+        per_run_time_budget_seconds: Option<u64>,
+        #[serde(default)]
+        allowed_actions: Vec<ControlDelegationActionDto>,
+        steering_permitted: bool,
+        expected_revision: Option<String>,
+    },
+    RevokeOrchestrator {
+        command_id: String,
+        designation_id: String,
+        expected_revision: Option<String>,
+    },
 }
 
 /// Operator-confirmed PR-creation scope on the run delivery command DTO.
@@ -257,6 +277,19 @@ pub enum ControlTaskCommandActionDto {
 pub enum ControlRunTransitionActionDto {
     Accept,
     Reject,
+}
+
+/// Delegation actions a designation envelope may grant (contract 033
+/// Delegation Action Rule). `message_run` is lane phase 4.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlDelegationActionDto {
+    Delegate,
+    RunStatus,
+    CancelRun,
+    AcceptDelivery,
+    RejectDelivery,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]

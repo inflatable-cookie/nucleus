@@ -356,6 +356,14 @@ impl TryFrom<ControlQueryDto> for ServerQueryKind {
             } => super::orchestration_runs::orchestration_runs_query_from_action(
                 &action, project_id, run_id, file_ref,
             ),
+            ControlQueryDto::OrchestratorDesignations {
+                action,
+                project_id,
+                provider_instance,
+                ..
+            } => super::orchestrator_designations::orchestrator_designations_query_from_action(
+                &action, project_id, provider_instance,
+            ),
         }
     }
 }

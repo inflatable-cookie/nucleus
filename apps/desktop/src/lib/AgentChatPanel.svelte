@@ -138,6 +138,8 @@
     selectAgentChatActor,
     sendAgentChatMessage,
   } from "./control/agentChat";
+  import { queryActiveDesignationForSession } from "./control/designations";
+  import type { ControlOrchestratorDesignationDto } from "./control/generated/ControlOrchestratorDesignationDto";
   import {
     mergePreparedReworkDraft,
     type AgentChatDraftRequest,
@@ -218,11 +220,45 @@
   let hydrationVersion = 0;
   let historyOwnsRoute = $state(false);
   let appliedDraftRequestId = $state(0);
+  /** Active orchestrator designation for (project, provider instance), if any. */
+  let orchestratorDesignation = $state<ControlOrchestratorDesignationDto | null>(null);
+  let designationRefresh = $state(0);
 
   $effect(() => {
     window.dispatchEvent(new CustomEvent("nucleus:agent-turn-command-state", {
       detail: { running: pending },
     }));
+  });
+
+  // Orchestration mode indicator: an active designation binding this
+  // project to the session's provider instance means the session carries the
+  // delegation verbs (contract 033). Re-queried on route change and on the
+  // designations-changed event (designate/revoke).
+  $effect(() => {
+    const conversation = activeConversationId || conversationId;
+    const instance = providerInstanceId;
+    void designationRefresh;
+    if (!projectId || !instance || !conversation) {
+      orchestratorDesignation = null;
+      return;
+    }
+    let cancelled = false;
+    void queryActiveDesignationForSession(projectId, instance).then((designation) => {
+      if (!cancelled) orchestratorDesignation = designation;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  $effect(() => {
+    const handleDesignationsChanged = () => {
+      designationRefresh += 1;
+    };
+    window.addEventListener("nucleus:designations-changed", handleDesignationsChanged);
+    return () => {
+      window.removeEventListener("nucleus:designations-changed", handleDesignationsChanged);
+    };
   });
 
   $effect(() => {
@@ -1314,6 +1350,14 @@
         {/snippet}
         {#snippet toolbar()}
           <div class="chat-route-controls">
+            {#if orchestratorDesignation}
+              <span
+                class="orchestrator-badge"
+                title={`Designated orchestrator (${orchestratorDesignation.designation_id}): delegation verbs active, ${orchestratorDesignation.concurrent_run_budget} concurrent runs`}
+              >
+                Orchestrator
+              </span>
+            {/if}
             {#if shouldShowProviderSelector(providerCatalogue)}
               <Select
                 value={providerInstanceId}
@@ -1383,6 +1427,19 @@
     align-items: center;
     gap: 0.25rem;
     min-width: 0;
+  }
+
+  .orchestrator-badge {
+    flex: none;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    color: var(--poodle-color-text-primary);
+    background: color-mix(in srgb, var(--poodle-color-accent-default) 20%, transparent);
+    border: 1px solid color-mix(in srgb, var(--poodle-color-accent-default) 40%, transparent);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
   }
 
   .agent-chat::after {

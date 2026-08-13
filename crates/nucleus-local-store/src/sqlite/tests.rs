@@ -115,6 +115,11 @@ pub(super) fn sqlite_supported_domains() -> Vec<(PersistenceDomain, PersistenceR
             PersistenceRecordKind::OrchestrationRun,
             "run:1",
         ),
+        (
+            PersistenceDomain::OrchestratorDesignations,
+            PersistenceRecordKind::OrchestratorDesignation,
+            "designation:1",
+        ),
     ]
 }
 

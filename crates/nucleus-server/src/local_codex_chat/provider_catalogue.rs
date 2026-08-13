@@ -40,6 +40,15 @@ pub struct AgentChatProviderInstance {
     pub model_catalogue_state: String,
     pub model_catalogue_diagnostic: Option<String>,
     pub models: Vec<LocalCodexChatModelOption>,
+    /// Whether this route realizes consumer tool exchange (swallowtail
+    /// contract 041 §Consumer Tool Exchange): the route carries
+    /// consumer-declared dynamic tools to the provider. Only tool-capable
+    /// routes may be designated as a project orchestrator (contract 033
+    /// Orchestrator Designation Rule; 2026-08-13 realization matrix).
+    pub tool_capable: bool,
+    /// Why the route is not tool-capable, present exactly when
+    /// `tool_capable` is false. Deny-by-default with the documented reason.
+    pub tool_capable_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -87,6 +96,31 @@ impl AgentChatProviderCatalogue {
     }
 }
 
+/// Runtime adapter ids that realize consumer tool exchange under swallowtail
+/// contract 041 (the 2026-08-13 realization matrix): Codex (`dynamicTools`,
+/// proven by the nucleus `task_ledger` path). Anthropic Messages and DeepSeek
+/// qualify at drafting time but are not registered in this repo yet; the
+/// CLI/ACP routes (claude-agent, gemini, kimi, cursor, opencode, pi,
+/// oh-my-pi) do not — their tools come from provider configuration, not the
+/// transport. Deny-by-default for anything unlisted.
+pub(crate) const TOOL_CAPABLE_RUNTIME_ADAPTER_IDS: &[&str] = &["codex-app-server"];
+
+/// Whether a route realizes consumer tool exchange for orchestrator
+/// designation (contract 033 Orchestrator Designation Rule).
+pub(crate) fn route_supports_consumer_tools(runtime_adapter_id: &str) -> bool {
+    TOOL_CAPABLE_RUNTIME_ADAPTER_IDS.contains(&runtime_adapter_id)
+}
+
+fn tool_capable_reason(runtime_adapter_id: &str) -> Option<String> {
+    (!route_supports_consumer_tools(runtime_adapter_id)).then(|| {
+        format!(
+            "the {runtime_adapter_id} route does not realize consumer tool exchange \
+             (swallowtail contract 041 §Consumer Tool Exchange); only Codex, Anthropic \
+             Messages, and DeepSeek routes qualify at drafting time"
+        )
+    })
+}
+
 fn project_instance(
     registered: &RegisteredProviderInstanceCatalogue,
     record: &ConfiguredProviderInstanceRecord,
@@ -94,6 +128,7 @@ fn project_instance(
     let runtime_adapter_id = registered
         .runtime_adapter_id(record.instance_id())
         .ok_or_else(|| "configured provider instance has no Nucleus runtime binding".to_owned())?;
+    let tool_capable = route_supports_consumer_tools(runtime_adapter_id);
     let model_catalogue = record.model_catalogue();
     let models = model_catalogue
         .into_iter()
@@ -181,6 +216,8 @@ fn project_instance(
             .and_then(|catalogue| catalogue.unavailable_diagnostic())
             .map(ToString::to_string),
         models,
+        tool_capable,
+        tool_capable_reason: tool_capable_reason(runtime_adapter_id),
     })
 }
 
@@ -264,5 +301,50 @@ fn support_authority(value: SupportAuthority) -> &'static str {
         SupportAuthority::IntegrationMaintainerSupported => "integration_maintainer_supported",
         SupportAuthority::ExperimentalObserved => "experimental_observed",
         SupportAuthority::Prohibited => "prohibited",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_route_realizes_consumer_tool_exchange() {
+        assert!(route_supports_consumer_tools("codex-app-server"));
+        assert_eq!(tool_capable_reason("codex-app-server"), None);
+    }
+
+    #[test]
+    fn cli_and_acp_routes_are_refused_with_the_reason() {
+        // The 2026-08-13 realization matrix: CLI/ACP routes take tools from
+        // provider configuration, not the transport, so they cannot carry
+        // the delegation verbs (contract 033: designation requires a
+        // tool-capable route).
+        for adapter_id in [
+            "claude-agent",
+            "gemini",
+            "kimi",
+            "cursor",
+            "opencode",
+            "pi",
+            "oh-my-pi",
+        ] {
+            assert!(
+                !route_supports_consumer_tools(adapter_id),
+                "route {adapter_id} must not realize consumer tools"
+            );
+            let reason = tool_capable_reason(adapter_id).expect("refusal reason");
+            assert!(
+                reason.contains("does not realize consumer tool exchange"),
+                "reason for {adapter_id}: {reason}"
+            );
+            assert!(reason.contains("contract 041"));
+        }
+    }
+
+    #[test]
+    fn unknown_routes_deny_by_default() {
+        assert!(!route_supports_consumer_tools("adapter:not-registered"));
+        assert!(tool_capable_reason("adapter:not-registered").is_some());
     }
 }

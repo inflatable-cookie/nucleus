@@ -18,6 +18,7 @@ pub enum OrchestrationCommandFamily {
     Runtime,
     ModelRoute,
     GitBranchWorktreeRunner,
+    OrchestratorDesignation,
     Custom(String),
 }
 
@@ -103,6 +104,7 @@ fn requires_target_ref(family: &OrchestrationCommandFamily) -> bool {
             | OrchestrationCommandFamily::AgentSession
             | OrchestrationCommandFamily::Runtime
             | OrchestrationCommandFamily::GitBranchWorktreeRunner
+            | OrchestrationCommandFamily::OrchestratorDesignation
     )
 }
 

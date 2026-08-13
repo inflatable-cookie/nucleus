@@ -93,6 +93,37 @@ impl super::LocalCodexChatService {
         A: FnMut(StoredChatActivity, Option<StoredChatSubagentDirectory>) -> Result<(), String>,
         Q: FnMut(StoredChatQuestionExchange) -> Result<(), String>,
     {
+        self.send_turn_inner(
+            state,
+            request,
+            cancellation,
+            questions,
+            execute,
+            on_activity,
+            on_question,
+        )
+    }
+
+    /// Non-generic turn core behind the public generic wrapper. Keeping the
+    /// body non-generic lets the `delegate` tool's worker-brief seeding call
+    /// back into this same core (through `dyn` callbacks) without the
+    /// compiler instantiating an unbounded closure-type chain.
+    fn send_turn_inner<B>(
+        &mut self,
+        state: &ServerStateService<B>,
+        request: LocalCodexChatRequest,
+        cancellation: AgentTurnCancellation,
+        questions: &LocalCodexChatQuestionRegistry,
+        execute: &mut dyn FnMut(ServerControlRequest) -> Result<(), String>,
+        on_activity: &mut dyn FnMut(
+            StoredChatActivity,
+            Option<StoredChatSubagentDirectory>,
+        ) -> Result<(), String>,
+        on_question: &mut dyn FnMut(StoredChatQuestionExchange) -> Result<(), String>,
+    ) -> Result<LocalCodexChatReply, String>
+    where
+        B: LocalStoreBackend + Clone,
+    {
         let message = request.message.trim();
         if message.is_empty() {
             return Err("chat message must not be empty".to_owned());
@@ -123,12 +154,24 @@ impl super::LocalCodexChatService {
         }
         let catalogue = super::AgentChatProviderCatalogue::discover()?;
         let selected_route = selected_route(&request, stored.as_ref(), &catalogue)?;
+        // The session's dynamic tool set includes the orchestrator delegation
+        // verbs exactly when an active designation binds this project to the
+        // session's provider instance. The flag is part of session identity:
+        // a designation created/revoked since the session started forces a
+        // restart (with migration context) so declared tools track the
+        // designation (contract 033 Orchestrator Designation Rule).
+        let delegation_tools = super::delegation::session_delegation_active(
+            state,
+            &request.project_id,
+            &selected_route.provider_instance_id,
+        )?;
         let existing_session_matches =
             self.sessions
                 .get(&request.conversation_id)
                 .is_some_and(|session| {
                     session.targets_resource(&target_resource_id)
                         && session.targets_route(&selected_route)
+                        && session.has_delegation_tools() == delegation_tools
                 });
         if self.sessions.contains_key(&request.conversation_id) && !existing_session_matches {
             self.sessions.remove(&request.conversation_id);
@@ -143,27 +186,71 @@ impl super::LocalCodexChatService {
             None
         };
         let turn_timeout = self.turn_timeout;
-        let session = match self.sessions.entry(request.conversation_id.clone()) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(LocalCodexChatSession::start(
-                    &request.conversation_id,
-                    &project_root,
-                    &target_resource_id,
-                    stored.as_ref(),
-                    migration_context.as_deref(),
-                    &selected_route,
-                    turn_timeout,
-                    request.idioms_enabled,
-                )?)
-            }
+        // The session is taken OUT of the map for the duration of the turn:
+        // delegation tool calls re-enter the service to seed worker briefs,
+        // and the session must not be aliased through the map while that
+        // happens. It is re-inserted on every exit path below.
+        let mut session = match self.sessions.remove(&request.conversation_id) {
+            Some(session) => session,
+            None => LocalCodexChatSession::start(
+                &request.conversation_id,
+                &project_root,
+                &target_resource_id,
+                stored.as_ref(),
+                migration_context.as_deref(),
+                &selected_route,
+                turn_timeout,
+                request.idioms_enabled,
+                delegation_tools,
+            )?,
         };
         let project_id = request.project_id.clone();
         let resource_id = project_target
             .as_ref()
             .map(|target| target.resource_id.clone());
         let conversation_id = request.conversation_id.clone();
-        let snapshot_store = self.task_review_snapshot_store.as_ref();
+        let snapshot_store = self.task_review_snapshot_store.clone();
+        // Worker-brief seeder for `delegate`: sends the worker's first chat
+        // turn through the SAME chat service (reentrant — the orchestrator's
+        // session is owned locally, not aliased through the map). The worker
+        // turn runs to completion; its activities persist to the run
+        // conversation and the run transitions `dispatched -> running` from
+        // observed provider activity. The orchestrator's panel sees the tool
+        // call; the worker's transcript lives in the run thread.
+        let mut seed_worker = |seed_request: super::delegation::WorkerSeedRequest,
+                               worker_execute: &mut dyn FnMut(ServerControlRequest)
+                                   -> Result<(), String>| {
+            let worker_request = LocalCodexChatRequest {
+                conversation_id: seed_request.conversation_id.clone(),
+                project_id: request.project_id.clone(),
+                resource_id: Some(seed_request.resource_id.clone()),
+                message: seed_request.brief.clone(),
+                active_task_id: None,
+                active_goal_id: None,
+                provider_instance_id: Some(seed_request.provider_instance.clone()),
+                provider_instance_revision: None,
+                protocol_facade_id: None,
+                provider_id: None,
+                model: Some(seed_request.model.clone()),
+                reasoning_effort: None,
+                harness_mode: LocalCodexChatHarnessMode::Normal,
+                idioms_enabled: true,
+            };
+            let reply = self.send_turn_inner(
+                state,
+                worker_request,
+                AgentTurnCancellation::new(),
+                questions,
+                worker_execute,
+                &mut |_activity, _directory| Ok(()),
+                &mut |_question| Ok(()),
+            )?;
+            Ok(super::delegation::WorkerSeedOutcome {
+                turn_id: reply.turn_id,
+                assistant_message: reply.assistant_message,
+            })
+        };
+        let session_provider_instance = selected_route.provider_instance_id.clone();
         let mut task_tool = |tool: &str, turn_id: &str, call_id: &str, arguments| match tool {
             "task_ledger" => execute_task_ledger(
                 state,
@@ -176,11 +263,23 @@ impl super::LocalCodexChatService {
             ),
             "task_workflow" => task_workflow::execute(
                 state,
-                snapshot_store,
+                snapshot_store.as_ref(),
                 &project_id,
                 &conversation_id,
                 resource_id.as_deref(),
                 arguments,
+            ),
+            "delegate" | "run_status" | "cancel_run" | "accept_delivery"
+            | "reject_delivery" => super::delegation::execute(
+                state,
+                &project_id,
+                &session_provider_instance,
+                turn_id,
+                call_id,
+                tool,
+                arguments,
+                execute,
+                &mut seed_worker,
             ),
             _ => Err(format!("unsupported dynamic tool: {tool}")),
         };
@@ -307,9 +406,17 @@ impl super::LocalCodexChatService {
                     &reason,
                 );
                 persist_turn_failure(state, &canonical_turn_id, status, &reason)?;
+                // Release the tool-closure borrows, then restore the session
+                // to the map so the conversation stays resumable.
+                drop(task_tool);
+                drop(seed_worker);
+                self.sessions.insert(request.conversation_id.clone(), session);
                 return Err(reason);
             }
         };
+        // Release the tool-closure borrows before the session is restored.
+        drop(task_tool);
+        drop(seed_worker);
         settle_pending_questions_for_turn(state, &canonical_turn_id, "abandoned")?;
         persist_session(
             state,
@@ -320,6 +427,7 @@ impl super::LocalCodexChatService {
                 turn_count,
             ),
         )?;
+        self.sessions.insert(request.conversation_id.clone(), session);
         persist_turn_completion(
             state,
             &canonical_turn_id,

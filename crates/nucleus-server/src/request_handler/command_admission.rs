@@ -83,6 +83,14 @@ fn orchestration_admission_from_command(
                 ),
             })
         }
+        ServerCommandKind::OrchestratorDesignation(designation_command) => {
+            Some(OrchestrationCommandAdmission {
+                command_id: OrchestrationCommandId(command.id.0.clone()),
+                family: OrchestrationCommandFamily::OrchestratorDesignation,
+                target_ref: Some(designation_command_target_ref(designation_command).to_owned()),
+                summary: Some("orchestrator designation command admission".to_owned()),
+            })
+        }
         _ => None,
     }
 }
@@ -110,6 +118,19 @@ fn task_command_target_ref(command: &TaskCommand) -> Option<String> {
         TaskCommand::Block { task_id, .. } => Some(task_id.0.clone()),
         TaskCommand::Complete(command) => Some(command.task_id.0.clone()),
         TaskCommand::Archive(command) => Some(command.task_id.0.clone()),
+    }
+}
+
+fn designation_command_target_ref(
+    command: &crate::commands::OrchestratorDesignationCommand,
+) -> &str {
+    match command {
+        crate::commands::OrchestratorDesignationCommand::Designate(command) => {
+            &command.designation_id
+        }
+        crate::commands::OrchestratorDesignationCommand::Revoke(command) => {
+            &command.designation_id
+        }
     }
 }
 

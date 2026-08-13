@@ -6,6 +6,7 @@ mod authority_domains;
 mod from_dto;
 mod id;
 mod orchestration_runs;
+mod orchestrator_designations;
 mod planning_projection;
 mod project_authority;
 mod provider;
@@ -290,5 +291,11 @@ pub enum ControlQueryDto {
         project_id: String,
         run_id: Option<String>,
         file_ref: Option<String>,
+    },
+    OrchestratorDesignations {
+        query_id: String,
+        action: String,
+        project_id: String,
+        provider_instance: Option<String>,
     },
 }

@@ -15,6 +15,7 @@ mod diagnostics;
 mod memory_proposal_review;
 mod memory_proposals;
 mod orchestration_runs;
+mod orchestrator_designations;
 mod planning_capture_publication;
 mod planning_projection_file_write;
 mod planning_projection_import;
@@ -107,6 +108,7 @@ pub use orchestration_runs::{
     ControlOrchestrationRunReviewDto, ControlOrchestrationRunReviewPatchDto,
     ControlOrchestrationRunStateCountDto, ControlOrchestrationRunSummaryDto,
 };
+pub use orchestrator_designations::ControlOrchestratorDesignationDto;
 pub use planning_capture_publication::{
     ControlPlanningCapturePublicationBucketDto, ControlPlanningCapturePublicationDiagnosticsDto,
 };

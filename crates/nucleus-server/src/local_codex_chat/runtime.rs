@@ -19,6 +19,7 @@ use super::persistence::StoredChatSession;
 use super::task_authoring::{TaskAuthoringReceipt, TaskToolOutcome};
 use super::task_ledger::dynamic_tool_spec as task_ledger_spec;
 use super::task_workflow::{dynamic_tool_spec as task_workflow_spec, TaskWorkflowReceipt};
+use super::delegation;
 use super::routing::{CHAT_TASK_TOOLSET_VERSION, SelectedAgentChatRoute};
 use super::{LocalCodexChatHarnessMode, LocalCodexChatReply};
 use tool_calls::consolidate_task_receipts;
@@ -53,6 +54,13 @@ fn chat_developer_instructions(
 pub(super) struct LocalCodexChatSession {
     session_id: String,
     resource_id: String,
+    /// Whether this session was started with the orchestrator delegation
+    /// tool set (the session's project had an active designation for its
+    /// provider instance at start). Part of session identity: when the
+    /// designation appears, changes, or is revoked, the session must be
+    /// restarted (with migration context) so the declared tool set matches
+    /// the designation state.
+    delegation_tools: bool,
     live: Box<dyn AgentLiveSession + Send>,
 }
 
@@ -98,6 +106,7 @@ impl LocalCodexChatSession {
         route: &SelectedAgentChatRoute,
         turn_timeout: Duration,
         idioms_enabled: bool,
+        delegation_tools: bool,
     ) -> Result<Self, String> {
         let developer_instructions =
             chat_developer_instructions(migration_context, route.harness_mode);
@@ -112,7 +121,7 @@ impl LocalCodexChatSession {
                 reasoning_effort: route.reasoning_effort.clone(),
                 harness_mode: route.harness_mode.agent_mode(),
                 developer_instructions,
-                dynamic_tools: dynamic_tool_specs(),
+                dynamic_tools: dynamic_tool_specs(delegation_tools),
                 // Current Codex schema evidence cannot safely redeclare dynamic
                 // tools on thread/resume. Nucleus supplies transcript context and
                 // opens fresh instead of resuming from a provider id alone.
@@ -126,6 +135,7 @@ impl LocalCodexChatSession {
                 .map(|stored| stored.session_id.clone())
                 .unwrap_or_else(|| format!("session:chat:{conversation_id}")),
             resource_id: resource_id.to_owned(),
+            delegation_tools,
             live,
         })
     }
@@ -144,6 +154,13 @@ impl LocalCodexChatSession {
             && info.model == route.model
             && info.reasoning_effort.as_deref() == Some(route.reasoning_effort.as_str())
             && info.harness_mode == route.harness_mode.agent_mode()
+    }
+
+    /// Whether the session was started with the orchestrator delegation tool
+    /// set. Sessions must be restarted when this changes (designation
+    /// created/revoked) so the declared tool set tracks the designation.
+    pub(super) fn has_delegation_tools(&self) -> bool {
+        self.delegation_tools
     }
 
     pub(super) fn send_turn<F>(
@@ -214,8 +231,17 @@ fn chat_runtime(
     AgentAdapterRegistry::with_builtin_adapters().runtime(adapter_id)
 }
 
-fn dynamic_tool_specs() -> Vec<Value> {
-    vec![task_ledger_spec(), task_workflow_spec()]
+/// Dynamic tool declarations for one session start. The task portals are
+/// always declared; the orchestrator delegation verbs are declared only when
+/// the session's project has an active designation binding its provider
+/// instance (contract 033: a non-designated session never receives the
+/// delegation tools).
+fn dynamic_tool_specs(delegation_tools: bool) -> Vec<Value> {
+    let mut specs = vec![task_ledger_spec(), task_workflow_spec()];
+    if delegation_tools {
+        specs.extend(delegation::dynamic_tool_specs());
+    }
+    specs
 }
 
 #[cfg(test)]
@@ -246,14 +272,35 @@ mod tests {
     }
 
     #[test]
-    fn chat_projects_exactly_the_two_nucleus_portals() {
-        let specs = dynamic_tool_specs();
+    fn chat_projects_exactly_the_two_nucleus_portals_without_delegation() {
+        let specs = dynamic_tool_specs(false);
         let names: Vec<&str> = specs
             .iter()
             .filter_map(|spec| spec.get("name").and_then(Value::as_str))
             .collect();
 
         assert_eq!(names, vec!["task_ledger", "task_workflow"]);
+    }
+
+    #[test]
+    fn chat_projects_the_delegation_verbs_only_for_designated_sessions() {
+        let plain = dynamic_tool_specs(false);
+        let delegated = dynamic_tool_specs(true);
+        assert!(delegated.len() > plain.len());
+
+        let names: Vec<&str> = delegated
+            .iter()
+            .filter_map(|spec| spec.get("name").and_then(Value::as_str))
+            .collect();
+        for verb in [
+            "delegate",
+            "run_status",
+            "cancel_run",
+            "accept_delivery",
+            "reject_delivery",
+        ] {
+            assert!(names.contains(&verb), "missing delegation verb {verb}");
+        }
     }
 
     #[test]
@@ -291,6 +338,7 @@ mod tests {
         let session = LocalCodexChatSession {
             session_id: "session:test".to_owned(),
             resource_id: "resource:test".to_owned(),
+            delegation_tools: false,
             live: Box::new(FixtureLiveSession {
                 info: AgentStartedSessionInfo {
                     provider_thread_id: "thread:test".to_owned(),

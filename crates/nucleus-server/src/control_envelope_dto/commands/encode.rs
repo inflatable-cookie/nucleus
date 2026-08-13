@@ -18,6 +18,7 @@ use super::types::{
     ControlForgePullRequestProviderDto, ControlForgePullRequestTextSourceDto,
     ControlTaskCommandActionDto,
 };
+use super::ControlDelegationActionDto;
 use super::ControlRunTransitionActionDto;
 use crate::commands::{
     RunCommand, RunDeliveryExecutionCommand, RunDispatchExecutionCommand, RunProposeCommand,
@@ -374,6 +375,73 @@ impl ControlCommandDto {
                 };
                 Ok((command_id, ServerCommandKind::Run(kind)))
             }
+            Self::DesignateOrchestrator {
+                command_id,
+                designation_id,
+                project_id,
+                orchestrator_provider_instance,
+                allowed_worker_provider_instances,
+                allowed_worker_models,
+                concurrent_run_budget,
+                per_run_token_budget,
+                per_run_time_budget_seconds,
+                allowed_actions,
+                steering_permitted,
+                expected_revision,
+            } => Ok((
+                ServerCommandId(command_id),
+                ServerCommandKind::OrchestratorDesignation(
+                    crate::commands::OrchestratorDesignationCommand::Designate(
+                        crate::commands::OrchestratorDesignateCommand {
+                            designation_id,
+                            project_id: nucleus_projects::ProjectId(project_id),
+                            orchestrator_provider_instance,
+                            allowed_worker_provider_instances,
+                            allowed_worker_models,
+                            concurrent_run_budget,
+                            per_run_token_budget,
+                            per_run_time_budget_seconds,
+                            allowed_actions: allowed_actions
+                                .into_iter()
+                                .map(|action| match action {
+                                    ControlDelegationActionDto::Delegate => {
+                                        nucleus_engine::EngineDelegationAction::Delegate
+                                    }
+                                    ControlDelegationActionDto::RunStatus => {
+                                        nucleus_engine::EngineDelegationAction::RunStatus
+                                    }
+                                    ControlDelegationActionDto::CancelRun => {
+                                        nucleus_engine::EngineDelegationAction::CancelRun
+                                    }
+                                    ControlDelegationActionDto::AcceptDelivery => {
+                                        nucleus_engine::EngineDelegationAction::AcceptDelivery
+                                    }
+                                    ControlDelegationActionDto::RejectDelivery => {
+                                        nucleus_engine::EngineDelegationAction::RejectDelivery
+                                    }
+                                })
+                                .collect(),
+                            steering_permitted,
+                            expected_revision: expected_revision.map(RevisionId),
+                        },
+                    ),
+                ),
+            )),
+            Self::RevokeOrchestrator {
+                command_id,
+                designation_id,
+                expected_revision,
+            } => Ok((
+                ServerCommandId(command_id),
+                ServerCommandKind::OrchestratorDesignation(
+                    crate::commands::OrchestratorDesignationCommand::Revoke(
+                        crate::commands::OrchestratorRevokeDesignationCommand {
+                            designation_id,
+                            expected_revision: expected_revision.map(RevisionId),
+                        },
+                    ),
+                ),
+            )),
             Self::ReadOnlyCommand {
                 command_id,
                 project_id,

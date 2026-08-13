@@ -5,7 +5,7 @@ use crate::control_api::{
     AcceptedMemoryQuery, AcceptedMemoryReviewReadinessQuery,
     AcceptedMemoryReviewReceiptStorageDiagnosticsQuery, MemoryProposalReviewDiagnosticsQuery,
     MemoryProposalsQuery, OrchestrationRunReviewPatchQuery, OrchestrationRunReviewQuery,
-    PlanningCapturePublicationDiagnosticsQuery,
+    OrchestratorDesignationsQuery, PlanningCapturePublicationDiagnosticsQuery,
     PlanningProjectionFileWriteDiagnosticsQuery,
     PlanningProjectionImportActiveApplyDiagnosticsQuery,
     PlanningProjectionImportApplyDiagnosticsQuery, PlanningProjectionImportDiagnosticsQuery,
@@ -277,6 +277,15 @@ impl TryFrom<&ServerQuery> for ControlQueryDto {
                 project_id: project_id.0.clone(),
                 run_id: Some(run_id.0.clone()),
                 file_ref: Some(file_ref.clone()),
+            }),
+            ServerQueryKind::OrchestratorDesignations(OrchestratorDesignationsQuery {
+                project_id,
+                provider_instance,
+            }) => Ok(Self::OrchestratorDesignations {
+                query_id: query.id.0.clone(),
+                action: "list".to_owned(),
+                project_id: project_id.0.clone(),
+                provider_instance: provider_instance.clone(),
             }),
             _ => Err(ControlApiCodecError::unsupported(
                 "query shape is not supported by the first control envelope",

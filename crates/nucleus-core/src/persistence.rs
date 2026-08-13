@@ -24,6 +24,7 @@ pub enum PersistenceDomain {
     ArtifactMetadata,
     RuntimeEffects,
     OrchestrationRuns,
+    OrchestratorDesignations,
     ClientAuth,
 }
 
@@ -60,6 +61,7 @@ pub enum PersistenceRecordKind {
     ArtifactMetadata,
     RuntimeEffect,
     OrchestrationRun,
+    OrchestratorDesignation,
     ClientAuth,
 }
 
