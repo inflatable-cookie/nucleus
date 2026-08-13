@@ -37,6 +37,7 @@ pub enum ServerCommandKind {
     ReadOnlyCommand(ReadOnlyCommand),
     ConfigureModelRoute(ModelRoute),
     GitBranchWorktreeRunner(GitBranchWorktreeRunnerEffectConfirmationCommand),
+    GitBranchWorktreeRunnerDelivery(GitBranchWorktreeRunnerDeliveryEffectConfirmationCommand),
     RunDispatchExecution(RunDispatchExecutionCommand),
 }
 
@@ -61,6 +62,20 @@ pub struct GitBranchWorktreeRunnerEffectConfirmationCommand {
     /// Operator identity recording the intent.
     pub operator_ref: String,
     /// Idempotency key; repeats replay the same durable confirmation.
+    pub idempotency_key: String,
+}
+
+/// Operator confirmation for one delivery's local commit and push of the
+/// run's own branch. This is distinct from dispatch-time worktree creation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitBranchWorktreeRunnerDeliveryEffectConfirmationCommand {
+    pub run_id: nucleus_engine::EngineRunId,
+    pub handoff_id: String,
+    pub branch_ref: String,
+    pub worktree_location_ref: String,
+    pub commit_message: String,
+    pub remote_target: String,
+    pub operator_ref: String,
     pub idempotency_key: String,
 }
 

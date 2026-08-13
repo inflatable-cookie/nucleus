@@ -8,13 +8,19 @@ mod run_dispatch;
 mod types;
 
 pub use execution::{
-    run_git_branch_worktree_runner, GitBranchWorktreeRunnerExecutionError,
-    GitBranchWorktreeRunnerExecutionInput, GitBranchWorktreeRunnerExecutionResult,
-    GitBranchWorktreeRunnerSpawnSummary,
+    run_git_branch_worktree_runner, run_git_branch_worktree_runner_delivery,
+    GitBranchWorktreeRunnerDeliveryExecutionInput, GitBranchWorktreeRunnerDeliveryExecutionResult,
+    GitBranchWorktreeRunnerExecutionError, GitBranchWorktreeRunnerExecutionInput,
+    GitBranchWorktreeRunnerExecutionResult, GitBranchWorktreeRunnerSpawnSummary,
 };
 pub use intent::{
+    read_git_branch_worktree_runner_delivery_intent_by_confirmation,
     read_git_branch_worktree_runner_operator_effect_intent_by_confirmation,
+    write_git_branch_worktree_runner_delivery_intent,
     write_git_branch_worktree_runner_operator_effect_intent,
+    GitBranchWorktreeRunnerDeliveryIntentRecord, GitBranchWorktreeRunnerDeliveryIntentStatus,
+    GitBranchWorktreeRunnerDeliveryIntentWriteError,
+    GitBranchWorktreeRunnerDeliveryIntentWriteOutcome,
     GitBranchWorktreeRunnerOperatorEffectIntentRecord,
     GitBranchWorktreeRunnerOperatorEffectIntentStatus,
     GitBranchWorktreeRunnerOperatorEffectIntentWriteError,

@@ -75,6 +75,7 @@ pub struct GitBranchWorktreeRunnerAuthorityRecord {
 pub enum GitBranchWorktreeRunnerAction {
     CheckoutTemporaryBranch,
     CreateIsolatedWorktree,
+    CommitAndPushDelivery,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -94,6 +95,10 @@ pub enum GitBranchWorktreeRunnerAuthorityBlocker {
     MissingRunnerTarget,
     MissingBranchRef,
     MissingIsolatedWorktreeLocationRef,
+    DeliveryRequiresIsolatedWorktree,
+    DeliveryTargetMismatch,
+    DeliveryCommitMessageMissing,
+    DeliveryRemoteTargetMissing,
     RawOutputRetentionRequested,
     CommitRequested,
     PushRequested,
@@ -113,6 +118,13 @@ pub enum GitBranchWorktreeRunnerOperatorEffectIntent {
         confirmation_ref: String,
         allow_primary_tree_checkout: bool,
         allow_isolated_worktree_creation: bool,
+    },
+    DeliveryConfirmed {
+        confirmation_ref: String,
+        branch_ref: String,
+        worktree_location_ref: String,
+        commit_message: String,
+        remote_target: String,
     },
 }
 

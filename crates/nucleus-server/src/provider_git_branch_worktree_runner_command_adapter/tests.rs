@@ -111,6 +111,73 @@ fn git_branch_worktree_runner_command_adapter_repairs_missing_authority_inputs()
     ));
 }
 
+#[test]
+fn git_branch_worktree_runner_delivery_adapter_builds_stage_commit_push_argv() {
+    let authorities = authority_set(GitBranchWorktreeMode::IsolatedWorktree);
+    let record = git_branch_worktree_runner_delivery_command_adapter(
+        GitBranchWorktreeRunnerDeliveryCommandAdapterInput {
+            authorities,
+            executable: "git".to_owned(),
+            repo_working_directory_ref: "repo-worktree-ref:run".to_owned(),
+            commit_message: "deliver run".to_owned(),
+            remote_target: "origin".to_owned(),
+            stdout_limit_bytes: 4096,
+            stderr_limit_bytes: 4096,
+        },
+    );
+    assert_eq!(record.commands.len(), 3);
+    assert_eq!(
+        record.commands[0].command_kind,
+        GitBranchWorktreeRunnerCommandKind::StageRunWorktree
+    );
+    assert_eq!(record.commands[0].argv, vec!["add", "--all"]);
+    assert_eq!(
+        record.commands[1].command_kind,
+        GitBranchWorktreeRunnerCommandKind::CommitRunWorktree
+    );
+    assert_eq!(
+        record.commands[1].argv,
+        vec!["commit", "--no-gpg-sign", "-m", "deliver run"]
+    );
+    assert_eq!(
+        record.commands[2].command_kind,
+        GitBranchWorktreeRunnerCommandKind::PushRunBranch
+    );
+    assert_eq!(
+        record.commands[2].argv,
+        vec!["push", "origin", "branch-ref:task"]
+    );
+    assert!(record
+        .commands
+        .iter()
+        .all(|command| command.executable_argv_created));
+}
+
+#[test]
+fn git_branch_worktree_runner_delivery_adapter_blocks_unsafe_targets() {
+    let record = git_branch_worktree_runner_delivery_command_adapter(
+        GitBranchWorktreeRunnerDeliveryCommandAdapterInput {
+            authorities: authority_set(GitBranchWorktreeMode::IsolatedWorktree),
+            executable: "git".to_owned(),
+            repo_working_directory_ref: "repo-worktree-ref:run".to_owned(),
+            commit_message: "".to_owned(),
+            remote_target: "--force".to_owned(),
+            stdout_limit_bytes: 4096,
+            stderr_limit_bytes: 4096,
+        },
+    );
+    assert!(record.commands.iter().all(|command| {
+        command.status == GitBranchWorktreeRunnerCommandAdapterStatus::RepairRequired
+            && command.argv.is_empty()
+            && command
+                .blockers
+                .contains(&GitBranchWorktreeRunnerCommandAdapterBlocker::MissingCommitMessage)
+            && command
+                .blockers
+                .contains(&GitBranchWorktreeRunnerCommandAdapterBlocker::MissingRemoteTarget)
+    }));
+}
+
 fn input(
     mode: GitBranchWorktreeMode,
     forbidden: bool,

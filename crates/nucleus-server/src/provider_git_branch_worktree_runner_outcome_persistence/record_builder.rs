@@ -67,8 +67,8 @@ pub(super) fn outcome_record(
         checkout_executed: executed && input.checkout_executed,
         branch_created: executed && input.branch_created,
         worktree_created: executed && input.worktree_created,
-        commit_created: false,
-        push_executed: false,
+        commit_created: executed && input.commit_created,
+        push_executed: executed && input.push_executed,
         no_effects: ForgeScmNoEffects::none(),
     }
 }

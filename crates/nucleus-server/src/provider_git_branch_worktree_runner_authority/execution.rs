@@ -25,8 +25,9 @@ use nucleus_engine::{
 use nucleus_local_store::{LocalStoreBackend, LocalStoreError, RevisionExpectation};
 
 use super::intent::{
+    read_git_branch_worktree_runner_delivery_intent_by_confirmation,
     read_git_branch_worktree_runner_operator_effect_intent_by_confirmation,
-    GitBranchWorktreeRunnerOperatorEffectIntentRecord,
+    GitBranchWorktreeRunnerDeliveryIntentRecord, GitBranchWorktreeRunnerOperatorEffectIntentRecord,
 };
 use super::types::GitBranchWorktreeRunnerOperatorEffectIntent;
 use crate::provider_no_effects::ForgeScmNoEffects;
@@ -38,6 +39,7 @@ use crate::{
     GitBranchWorktreeRunnerAuthorityBlocker, GitBranchWorktreeRunnerAuthorityInput,
     GitBranchWorktreeRunnerAuthoritySet, GitBranchWorktreeRunnerCommandAdapterInput,
     GitBranchWorktreeRunnerCommandAdapterRecord, GitBranchWorktreeRunnerCommandAdapterStatus,
+    GitBranchWorktreeRunnerDeliveryCommandAdapterInput,
     GitBranchWorktreeRunnerOutcomePersistenceSet, GitBranchWorktreeRunnerOutcomeStatus,
     GitBranchWorktreeRunnerTargetRef, ServerStateService,
 };
@@ -158,8 +160,8 @@ where
         });
     }
 
-    let commands = git_branch_worktree_runner_command_adapter(
-        GitBranchWorktreeRunnerCommandAdapterInput {
+    let commands =
+        git_branch_worktree_runner_command_adapter(GitBranchWorktreeRunnerCommandAdapterInput {
             authorities: authority.clone(),
             executable: "git".to_owned(),
             repo_working_directory_ref: input.repo_working_directory.display().to_string(),
@@ -176,8 +178,7 @@ where
             interruption_effect_requested: false,
             recovery_effect_requested: false,
             task_mutation_requested: false,
-        },
-    );
+        });
     if !commands.executable_argv_created {
         return Err(GitBranchWorktreeRunnerExecutionError::CommandNotReady {
             reason: "branch/worktree runner adapter built no executable argv".to_owned(),
@@ -187,9 +188,7 @@ where
     let ready = commands
         .commands
         .iter()
-        .filter(|command| {
-            command.status == GitBranchWorktreeRunnerCommandAdapterStatus::Ready
-        })
+        .filter(|command| command.status == GitBranchWorktreeRunnerCommandAdapterStatus::Ready)
         .cloned()
         .collect::<Vec<_>>();
 
@@ -200,9 +199,9 @@ where
     let replayed_records = existing
         .iter()
         .filter(|record| {
-            ready
-                .iter()
-                .any(|command| persisted_outcome_id(&command.command_id) == record.persisted_outcome_id)
+            ready.iter().any(|command| {
+                persisted_outcome_id(&command.command_id) == record.persisted_outcome_id
+            })
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -331,12 +330,15 @@ where
             checkout_executed: false,
             branch_created,
             worktree_created,
+            commit_created: false,
+            push_executed: false,
             raw_stdout_present: false,
             raw_stderr_present: false,
             provider_payload_present: false,
             raw_output_retention_requested: false,
             commit_requested: false,
             push_requested: false,
+            delivery_authority_granted: false,
             pull_request_requested: false,
             forge_effect_requested: false,
             provider_effect_requested: false,
@@ -355,7 +357,9 @@ fn replayed_outcome_set(
 ) -> GitBranchWorktreeRunnerOutcomePersistenceSet {
     GitBranchWorktreeRunnerOutcomePersistenceSet {
         outcome_set_id: format!("git-branch-worktree-runner-outcomes:{command_set_id}"),
-        shell_execution_performed: records.iter().any(|record| record.shell_execution_performed),
+        shell_execution_performed: records
+            .iter()
+            .any(|record| record.shell_execution_performed),
         checkout_executed: records.iter().any(|record| record.checkout_executed),
         branch_created: records.iter().any(|record| record.branch_created),
         worktree_created: records.iter().any(|record| record.worktree_created),
@@ -403,13 +407,21 @@ fn spawn_git(
     input: &GitBranchWorktreeRunnerExecutionInput,
     command: &GitBranchWorktreeRunnerCommandAdapterRecord,
 ) -> Result<SpawnOutcome, GitBranchWorktreeRunnerExecutionError> {
+    spawn_git_in(input, command, &input.repo_working_directory)
+}
+
+fn spawn_git_in(
+    input: &GitBranchWorktreeRunnerExecutionInput,
+    command: &GitBranchWorktreeRunnerCommandAdapterRecord,
+    working_directory: &PathBuf,
+) -> Result<SpawnOutcome, GitBranchWorktreeRunnerExecutionError> {
     let mut child = Command::new("git")
         .arg("--no-optional-locks")
         .args(&command.argv)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("LC_ALL", "C")
-        .current_dir(&input.repo_working_directory)
+        .current_dir(working_directory)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -491,12 +503,410 @@ where
             "git-branch-worktree-runner:worktree-created:{}",
             input.run_id
         ))),
-        evidence_refs: vec![EngineRuntimeReceiptRef::Custom(input.confirmation_ref.clone())],
+        evidence_refs: vec![EngineRuntimeReceiptRef::Custom(
+            input.confirmation_ref.clone(),
+        )],
         artifact_refs: Vec::new(),
         summary: Some(format!(
             "isolated worktree created for run {} at {}",
             input.run_id, location
         )),
+    };
+    write_runtime_receipt(
+        state,
+        &receipt,
+        RevisionId(format!("rev:{}", receipt.receipt_id.0)),
+        RevisionExpectation::MustNotExist,
+    )
+    .map(|_| ())
+    .map_err(GitBranchWorktreeRunnerExecutionError::Persistence)
+}
+
+/// Delivery-time runner input. Its confirmation is separate from the
+/// dispatch-time worktree intent and binds the commit message, own branch, and
+/// remote target for exactly one delivery attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitBranchWorktreeRunnerDeliveryExecutionInput {
+    pub confirmation_ref: String,
+    pub handoffs: GitBranchWorktreeExecutionHandoffSet,
+    pub target_refs: Vec<GitBranchWorktreeRunnerTargetRef>,
+    pub repo_working_directory: PathBuf,
+    pub run_id: String,
+    pub operator_ref: String,
+    pub idempotency_key: String,
+    pub timeout: Duration,
+    pub stdout_limit_bytes: usize,
+    pub stderr_limit_bytes: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitBranchWorktreeRunnerDeliveryExecutionResult {
+    pub authority: GitBranchWorktreeRunnerAuthoritySet,
+    pub commands: crate::GitBranchWorktreeRunnerCommandAdapterSet,
+    pub outcomes: GitBranchWorktreeRunnerOutcomePersistenceSet,
+    pub replayed: bool,
+    pub worktree_path: PathBuf,
+    pub commit_created: bool,
+    pub push_executed: bool,
+    pub push_failed: bool,
+    pub spawns: Vec<GitBranchWorktreeRunnerSpawnSummary>,
+}
+
+/// Execute delivery's `git add`, `git commit`, and `git push` in the run's
+/// isolated worktree. Only a delivery-confirmed authority reaches spawn.
+pub fn run_git_branch_worktree_runner_delivery<B>(
+    state: &ServerStateService<B>,
+    input: GitBranchWorktreeRunnerDeliveryExecutionInput,
+) -> Result<GitBranchWorktreeRunnerDeliveryExecutionResult, GitBranchWorktreeRunnerExecutionError>
+where
+    B: LocalStoreBackend,
+{
+    let intent = read_git_branch_worktree_runner_delivery_intent_by_confirmation(
+        state,
+        &input.confirmation_ref,
+    )
+    .map_err(GitBranchWorktreeRunnerExecutionError::Persistence)?
+    .map(GitBranchWorktreeRunnerDeliveryIntentRecord::into_authority_intent)
+    .unwrap_or(GitBranchWorktreeRunnerOperatorEffectIntent::Missing);
+
+    let authority = git_branch_worktree_runner_authority(GitBranchWorktreeRunnerAuthorityInput {
+        handoffs: input.handoffs.clone(),
+        operator_effect_intent: intent,
+        target_refs: input.target_refs.clone(),
+        raw_output_retention_requested: false,
+        commit_requested: true,
+        push_requested: true,
+        pull_request_requested: false,
+        forge_effect_requested: false,
+        provider_effect_requested: false,
+        callback_effect_requested: false,
+        interruption_effect_requested: false,
+        recovery_effect_requested: false,
+        task_mutation_requested: false,
+    });
+    if !authority.runner_invocation_permitted {
+        let blockers = authority
+            .authorities
+            .iter()
+            .flat_map(|record| record.blockers.iter().cloned())
+            .collect::<Vec<_>>();
+        return Err(GitBranchWorktreeRunnerExecutionError::Blocked {
+            authority,
+            blockers,
+            reason: "delivery authority did not reach ReadyForRunner".to_owned(),
+        });
+    }
+
+    let delivery_intent = read_git_branch_worktree_runner_delivery_intent_by_confirmation(
+        state,
+        &input.confirmation_ref,
+    )
+    .map_err(GitBranchWorktreeRunnerExecutionError::Persistence)?
+    .ok_or_else(|| GitBranchWorktreeRunnerExecutionError::CommandNotReady {
+        reason: "delivery intent disappeared before execution".to_owned(),
+    })?;
+    let commands = crate::git_branch_worktree_runner_delivery_command_adapter(
+        GitBranchWorktreeRunnerDeliveryCommandAdapterInput {
+            authorities: authority.clone(),
+            executable: "git".to_owned(),
+            repo_working_directory_ref: input.repo_working_directory.display().to_string(),
+            commit_message: delivery_intent.commit_message.clone(),
+            remote_target: delivery_intent.remote_target.clone(),
+            stdout_limit_bytes: input.stdout_limit_bytes,
+            stderr_limit_bytes: input.stderr_limit_bytes,
+        },
+    );
+    if !commands.executable_argv_created {
+        return Err(GitBranchWorktreeRunnerExecutionError::CommandNotReady {
+            reason: "delivery adapter built no executable argv".to_owned(),
+        });
+    }
+
+    let ready = commands
+        .commands
+        .iter()
+        .filter(|command| command.status == GitBranchWorktreeRunnerCommandAdapterStatus::Ready)
+        .cloned()
+        .collect::<Vec<_>>();
+    let worktree_location = ready
+        .first()
+        .and_then(|command| command.worktree_location_ref.clone())
+        .ok_or_else(|| GitBranchWorktreeRunnerExecutionError::CommandNotReady {
+            reason: "delivery target has no isolated worktree location".to_owned(),
+        })?;
+    let worktree_path = normalize_path(&input.repo_working_directory.join(worktree_location));
+    let repo_path = normalize_path(&input.repo_working_directory);
+    if worktree_path == repo_path || !worktree_path.join(".git").exists() {
+        return Err(GitBranchWorktreeRunnerExecutionError::CommandNotReady {
+            reason: "delivery target is not an isolated Git worktree".to_owned(),
+        });
+    }
+    if !worktree_path.is_dir() {
+        return Err(GitBranchWorktreeRunnerExecutionError::CommandNotReady {
+            reason: "delivery isolated worktree location is not a directory".to_owned(),
+        });
+    }
+
+    let delivery_command_ids = ready
+        .iter()
+        .map(|command| persisted_outcome_id(&command.command_id))
+        .collect::<Vec<_>>();
+    let existing = read_git_branch_worktree_runner_outcomes(state)
+        .map_err(GitBranchWorktreeRunnerExecutionError::Persistence)?;
+    let existing_delivery = existing
+        .iter()
+        .filter(|record| delivery_command_ids.contains(&record.persisted_outcome_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    if existing_delivery.len() == ready.len() {
+        let command_set_id = commands.command_set_id.clone();
+        let commit_created = existing_delivery.iter().any(|record| record.commit_created);
+        let push_executed = existing_delivery.iter().any(|record| record.push_executed);
+        let push_failed = existing_delivery.iter().any(|record| {
+            record.command_kind == crate::GitBranchWorktreeRunnerCommandKind::PushRunBranch
+                && record.outcome_status == GitBranchWorktreeRunnerOutcomeStatus::Failed
+        });
+        return Ok(GitBranchWorktreeRunnerDeliveryExecutionResult {
+            authority,
+            commands,
+            outcomes: replayed_outcome_set(&command_set_id, existing_delivery),
+            replayed: true,
+            worktree_path,
+            commit_created,
+            push_executed,
+            push_failed,
+            spawns: Vec::new(),
+        });
+    }
+
+    let mut existing_ids = existing
+        .iter()
+        .map(|record| record.persisted_outcome_id.clone())
+        .collect::<Vec<_>>();
+    let mut spawns = Vec::new();
+    let mut commit_created = existing_delivery.iter().any(|record| record.commit_created);
+    let mut push_executed = existing_delivery.iter().any(|record| record.push_executed);
+    let mut push_failed = existing_delivery.iter().any(|record| {
+        record.command_kind == crate::GitBranchWorktreeRunnerCommandKind::PushRunBranch
+            && record.outcome_status == GitBranchWorktreeRunnerOutcomeStatus::Failed
+    });
+
+    for command in ordered_delivery_commands(&ready) {
+        if existing_ids.contains(&persisted_outcome_id(&command.command_id)) {
+            continue;
+        }
+        let outcome = spawn_git_in(
+            &GitBranchWorktreeRunnerExecutionInput {
+                confirmation_ref: input.confirmation_ref.clone(),
+                handoffs: input.handoffs.clone(),
+                target_refs: input.target_refs.clone(),
+                repo_working_directory: worktree_path.clone(),
+                run_id: input.run_id.clone(),
+                operator_ref: input.operator_ref.clone(),
+                idempotency_key: input.idempotency_key.clone(),
+                timeout: input.timeout,
+                stdout_limit_bytes: input.stdout_limit_bytes,
+                stderr_limit_bytes: input.stderr_limit_bytes,
+            },
+            &command,
+            &worktree_path,
+        )?;
+        spawns.push(GitBranchWorktreeRunnerSpawnSummary {
+            success: outcome.success,
+            exit_status: outcome.exit_status,
+            stdout_captured_bytes: outcome.stdout_captured_bytes,
+            stderr_captured_bytes: outcome.stderr_captured_bytes,
+            stdout_truncated: outcome.stdout_truncated,
+            stderr_truncated: outcome.stderr_truncated,
+        });
+        let is_commit =
+            command.command_kind == crate::GitBranchWorktreeRunnerCommandKind::CommitRunWorktree;
+        let is_push =
+            command.command_kind == crate::GitBranchWorktreeRunnerCommandKind::PushRunBranch;
+        commit_created |= is_commit && outcome.success;
+        push_executed |= is_push && outcome.success;
+        push_failed |= is_push && !outcome.success;
+
+        let status = if outcome.success {
+            GitBranchWorktreeRunnerOutcomeStatus::Completed
+        } else {
+            GitBranchWorktreeRunnerOutcomeStatus::Failed
+        };
+        let command_set = crate::GitBranchWorktreeRunnerCommandAdapterSet {
+            command_set_id: commands.command_set_id.clone(),
+            commands: vec![command.clone()],
+            skipped_authority_ids: Vec::new(),
+            executable_argv_created: true,
+            shell_passthrough_used: false,
+            shell_execution_performed: false,
+            checkout_executed: false,
+            branch_created: false,
+            worktree_created: false,
+            commit_created,
+            push_executed,
+            no_effects: ForgeScmNoEffects::none(),
+        };
+        let persisted = persist_git_branch_worktree_runner_outcomes(
+            state,
+            crate::GitBranchWorktreeRunnerOutcomePersistenceInput {
+                commands: command_set,
+                requested_status: status,
+                inspected_path_count: 1,
+                affected_path_count: 1,
+                evidence_refs: vec![input.confirmation_ref.clone()],
+                existing_outcome_ids: existing_ids.clone(),
+                shell_execution_performed: true,
+                checkout_executed: false,
+                branch_created: false,
+                worktree_created: false,
+                commit_created: is_commit && outcome.success,
+                push_executed: is_push && outcome.success,
+                raw_stdout_present: false,
+                raw_stderr_present: false,
+                provider_payload_present: false,
+                raw_output_retention_requested: false,
+                commit_requested: true,
+                push_requested: true,
+                delivery_authority_granted: true,
+                pull_request_requested: false,
+                forge_effect_requested: false,
+                provider_effect_requested: false,
+                callback_effect_requested: false,
+                interruption_effect_requested: false,
+                recovery_effect_requested: false,
+                task_mutation_requested: false,
+            },
+        )
+        .map_err(GitBranchWorktreeRunnerExecutionError::Persistence)?;
+        existing_ids.extend(
+            persisted
+                .records
+                .iter()
+                .map(|record| record.persisted_outcome_id.clone()),
+        );
+        write_delivery_receipt(
+            state,
+            &input,
+            &delivery_intent,
+            &command,
+            &outcome,
+            commit_created,
+            push_executed,
+        )?;
+
+        if !outcome.success {
+            break;
+        }
+    }
+
+    let all_outcomes = read_git_branch_worktree_runner_outcomes(state)
+        .map_err(GitBranchWorktreeRunnerExecutionError::Persistence)?;
+    let outcomes = all_outcomes
+        .into_iter()
+        .filter(|record| delivery_command_ids.contains(&record.persisted_outcome_id))
+        .collect::<Vec<_>>();
+    let command_set_id = commands.command_set_id.clone();
+    Ok(GitBranchWorktreeRunnerDeliveryExecutionResult {
+        authority,
+        commands,
+        outcomes: replayed_outcome_set(&command_set_id, outcomes),
+        replayed: false,
+        worktree_path,
+        commit_created,
+        push_executed,
+        push_failed,
+        spawns,
+    })
+}
+
+fn ordered_delivery_commands(
+    commands: &[GitBranchWorktreeRunnerCommandAdapterRecord],
+) -> Vec<GitBranchWorktreeRunnerCommandAdapterRecord> {
+    let order = |kind: &crate::GitBranchWorktreeRunnerCommandKind| match kind {
+        crate::GitBranchWorktreeRunnerCommandKind::StageRunWorktree => 0,
+        crate::GitBranchWorktreeRunnerCommandKind::CommitRunWorktree => 1,
+        crate::GitBranchWorktreeRunnerCommandKind::PushRunBranch => 2,
+        _ => 3,
+    };
+    let mut ordered = commands.to_vec();
+    ordered.sort_by_key(|command| order(&command.command_kind));
+    ordered
+}
+
+fn write_delivery_receipt<B>(
+    state: &ServerStateService<B>,
+    input: &GitBranchWorktreeRunnerDeliveryExecutionInput,
+    intent: &GitBranchWorktreeRunnerDeliveryIntentRecord,
+    command: &GitBranchWorktreeRunnerCommandAdapterRecord,
+    outcome: &SpawnOutcome,
+    commit_created: bool,
+    push_executed: bool,
+) -> Result<(), GitBranchWorktreeRunnerExecutionError>
+where
+    B: LocalStoreBackend,
+{
+    let (effect, status, summary) = match command.command_kind {
+        crate::GitBranchWorktreeRunnerCommandKind::StageRunWorktree => (
+            "staged",
+            if outcome.success {
+                EngineRuntimeReceiptStatus::Completed
+            } else {
+                EngineRuntimeReceiptStatus::Failed
+            },
+            format!("staged run {} worktree", input.run_id),
+        ),
+        crate::GitBranchWorktreeRunnerCommandKind::CommitRunWorktree => (
+            "committed",
+            if outcome.success {
+                EngineRuntimeReceiptStatus::Completed
+            } else {
+                EngineRuntimeReceiptStatus::Failed
+            },
+            if outcome.success {
+                format!(
+                    "committed run {} locally with the operator-confirmed message",
+                    input.run_id
+                )
+            } else {
+                format!(
+                    "commit failed for run {}; branch remains unpushed",
+                    input.run_id
+                )
+            },
+        ),
+        crate::GitBranchWorktreeRunnerCommandKind::PushRunBranch => (
+            "pushed",
+            if outcome.success {
+                EngineRuntimeReceiptStatus::Completed
+            } else {
+                EngineRuntimeReceiptStatus::Failed
+            },
+            if outcome.success {
+                format!(
+                    "pushed run {} branch {} to {}",
+                    input.run_id, intent.branch_ref, intent.remote_target
+                )
+            } else {
+                format!("run {} committed locally but push of {} to {} failed; delivery remains deliverable", input.run_id, intent.branch_ref, intent.remote_target)
+            },
+        ),
+        _ => return Ok(()),
+    };
+    let receipt = EngineRuntimeReceiptRecord {
+        receipt_id: EngineRuntimeReceiptRecordId(format!(
+            "receipt:git-branch-worktree-runner-delivery:{}:{}:{}",
+            input.run_id, input.idempotency_key, effect
+        )),
+        family: EngineRuntimeReceiptEffectFamily::CommandExecution,
+        status,
+        command_ref: Some(EngineRuntimeReceiptRef::Custom(command.command_id.clone())),
+        effect_ref: Some(EngineRuntimeReceiptRef::Custom(format!(
+            "git-branch-worktree-runner:delivery-{effect}:{}",
+            input.run_id
+        ))),
+        evidence_refs: vec![EngineRuntimeReceiptRef::Custom(input.confirmation_ref.clone())],
+        artifact_refs: Vec::new(),
+        summary: Some(format!("{summary} (commit_created={commit_created}, push_executed={push_executed}, exit_status={:?})", outcome.exit_status)),
     };
     write_runtime_receipt(
         state,
@@ -518,16 +928,18 @@ mod tests {
     use nucleus_local_store::SqliteBackend;
 
     use super::*;
+    use crate::provider_git_branch_worktree_runner_authority::intent::{
+        write_git_branch_worktree_runner_delivery_intent,
+        write_git_branch_worktree_runner_operator_effect_intent,
+        GitBranchWorktreeRunnerDeliveryIntentStatus,
+        GitBranchWorktreeRunnerOperatorEffectIntentRecord,
+        GitBranchWorktreeRunnerOperatorEffectIntentStatus,
+    };
     use crate::{
         git_branch_worktree_execution_handoff, read_runtime_receipts,
         GitBranchWorktreeAdmissionInput, GitBranchWorktreeCommandDescriptorsInput,
         GitBranchWorktreeExecutionHandoffInput, GitBranchWorktreePreflightInput,
         GitBranchWorktreeRunnerAuthorityBlocker, GitBranchWorktreeRunnerTargetRef,
-    };
-    use crate::provider_git_branch_worktree_runner_authority::intent::{
-        write_git_branch_worktree_runner_operator_effect_intent,
-        GitBranchWorktreeRunnerOperatorEffectIntentRecord,
-        GitBranchWorktreeRunnerOperatorEffectIntentStatus,
     };
 
     const BRANCH_REF: &str = "run/run-1";
@@ -556,17 +968,16 @@ mod tests {
 
         assert!(!result.replayed);
         let worktree = result.worktree_path.expect("worktree path");
-        assert_eq!(
-            worktree,
-            directory.path().join("nucleus-wt").join("run-1")
-        );
+        assert_eq!(worktree, directory.path().join("nucleus-wt").join("run-1"));
         assert!(worktree.is_dir());
         assert!(worktree.join(".git").exists());
         assert_eq!(
             std::fs::read_to_string(worktree.join(".git")).expect("gitdir file"),
             format!(
                 "gitdir: {}/.git/worktrees/run-1\n",
-                std::fs::canonicalize(&repo).expect("canonical repo").display()
+                std::fs::canonicalize(&repo)
+                    .expect("canonical repo")
+                    .display()
             )
         );
         assert!(result.outcomes.worktree_created);
@@ -575,11 +986,11 @@ mod tests {
         assert!(record.worktree_created);
         assert!(record.branch_created);
         assert!(record.shell_execution_performed);
-        assert_eq!(record.outcome_status, GitBranchWorktreeRunnerOutcomeStatus::Completed);
         assert_eq!(
-            record.branch_ref.as_deref(),
-            Some(BRANCH_REF)
+            record.outcome_status,
+            GitBranchWorktreeRunnerOutcomeStatus::Completed
         );
+        assert_eq!(record.branch_ref.as_deref(), Some(BRANCH_REF));
         assert_eq!(
             record.worktree_location_ref.as_deref(),
             Some(WORKTREE_LOCATION)
@@ -591,13 +1002,14 @@ mod tests {
         assert!(spawn.stderr_captured_bytes <= 4096);
 
         let receipts = read_runtime_receipts(&state).expect("receipts");
-        assert!(receipts.iter().any(|receipt| receipt
-            .effect_ref
-            .as_ref()
-            .is_some_and(|effect| effect
-                == &EngineRuntimeReceiptRef::Custom(
-                    "git-branch-worktree-runner:worktree-created:run:1".to_owned()
-                ))));
+        assert!(receipts
+            .iter()
+            .any(
+                |receipt| receipt.effect_ref.as_ref().is_some_and(|effect| effect
+                    == &EngineRuntimeReceiptRef::Custom(
+                        "git-branch-worktree-runner:worktree-created:run:1".to_owned()
+                    ))
+            ));
         let persisted = read_git_branch_worktree_runner_outcomes(&state).expect("outcomes");
         assert_eq!(persisted.len(), 1);
         assert!(persisted[0].worktree_created);
@@ -609,7 +1021,9 @@ mod tests {
             .output()
             .expect("branch");
         assert_eq!(
-            String::from_utf8(branch_check.stdout).expect("branch name").trim(),
+            String::from_utf8(branch_check.stdout)
+                .expect("branch name")
+                .trim(),
             BRANCH_REF
         );
     }
@@ -770,9 +1184,217 @@ mod tests {
         assert_eq!(receipts.len(), 1);
     }
 
-    fn result_authority_worktree_created(
-        error: &GitBranchWorktreeRunnerExecutionError,
-    ) -> bool {
+    #[test]
+    fn delivery_commits_and_pushes_only_the_run_branch() {
+        let (directory, repo) = temp_repo();
+        let state = test_state(&directory);
+        let remote = directory.path().join("remote.git");
+        run_git(
+            &directory.path().to_path_buf(),
+            &["init", "--bare", "-q", remote.to_str().unwrap()],
+        );
+        run_git(
+            &repo,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        let handoffs = single_handoff(&handoffs(GitBranchWorktreeMode::IsolatedWorktree));
+        let targets = target_refs(&handoffs);
+        std::fs::create_dir_all(directory.path().join("nucleus-wt")).expect("wt parent");
+        write_git_branch_worktree_runner_operator_effect_intent(
+            &state,
+            confirmed_intent(&handoffs, "delivery-dispatch"),
+        )
+        .expect("dispatch intent");
+        run_git_branch_worktree_runner(
+            &state,
+            input(&repo, &handoffs, &targets, "delivery-dispatch"),
+        )
+        .expect("worktree");
+        let worktree = directory.path().join("nucleus-wt").join("run-1");
+        std::fs::write(worktree.join("delivery.txt"), "delivered\n").expect("change");
+        let delivery_key = "delivery-success";
+        write_git_branch_worktree_runner_delivery_intent(
+            &state,
+            delivery_intent(&handoffs, delivery_key, "origin"),
+        )
+        .expect("delivery intent");
+
+        let result = run_git_branch_worktree_runner_delivery(
+            &state,
+            delivery_input(&repo, &handoffs, &targets, delivery_key),
+        )
+        .expect("delivery");
+
+        assert!(!result.replayed);
+        assert!(result.commit_created);
+        assert!(result.push_executed);
+        assert!(!result.push_failed);
+        assert_eq!(result.spawns.len(), 3);
+        assert!(result.outcomes.commit_created);
+        assert!(result.outcomes.push_executed);
+        let branch = SystemCommand::new("git")
+            .args(["ls-remote", remote.to_str().unwrap(), BRANCH_REF])
+            .output()
+            .expect("remote branch");
+        assert!(branch.status.success());
+        assert!(!branch.stdout.is_empty());
+    }
+
+    #[test]
+    fn delivery_push_failure_keeps_local_commit_and_failed_receipt() {
+        let (directory, repo) = temp_repo();
+        let state = test_state(&directory);
+        let handoffs = single_handoff(&handoffs(GitBranchWorktreeMode::IsolatedWorktree));
+        let targets = target_refs(&handoffs);
+        std::fs::create_dir_all(directory.path().join("nucleus-wt")).expect("wt parent");
+        write_git_branch_worktree_runner_operator_effect_intent(
+            &state,
+            confirmed_intent(&handoffs, "delivery-failure-dispatch"),
+        )
+        .expect("dispatch intent");
+        run_git_branch_worktree_runner(
+            &state,
+            input(&repo, &handoffs, &targets, "delivery-failure-dispatch"),
+        )
+        .expect("worktree");
+        let worktree = directory.path().join("nucleus-wt").join("run-1");
+        std::fs::write(worktree.join("delivery.txt"), "delivered\n").expect("change");
+        let delivery_key = "delivery-push-failure";
+        write_git_branch_worktree_runner_delivery_intent(
+            &state,
+            delivery_intent(&handoffs, delivery_key, "missing-remote"),
+        )
+        .expect("delivery intent");
+
+        let result = run_git_branch_worktree_runner_delivery(
+            &state,
+            delivery_input(&repo, &handoffs, &targets, delivery_key),
+        )
+        .expect("delivery outcome");
+
+        assert!(result.commit_created);
+        assert!(!result.push_executed);
+        assert!(result.push_failed);
+        assert!(result.outcomes.commit_created);
+        assert!(!result.outcomes.push_executed);
+        let head = SystemCommand::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(worktree)
+            .output()
+            .expect("local head");
+        assert!(head.status.success());
+        let receipts = read_runtime_receipts(&state).expect("receipts");
+        assert!(receipts.iter().any(|receipt| {
+            receipt.status == EngineRuntimeReceiptStatus::Failed
+                && receipt.summary.as_deref().is_some_and(|summary| {
+                    summary.contains("committed locally")
+                        && summary.contains("delivery remains deliverable")
+                })
+        }));
+    }
+
+    #[test]
+    fn delivery_replays_without_second_spawn() {
+        let (directory, repo) = temp_repo();
+        let state = test_state(&directory);
+        let remote = directory.path().join("remote.git");
+        run_git(
+            &directory.path().to_path_buf(),
+            &["init", "--bare", "-q", remote.to_str().unwrap()],
+        );
+        run_git(
+            &repo,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        let handoffs = single_handoff(&handoffs(GitBranchWorktreeMode::IsolatedWorktree));
+        let targets = target_refs(&handoffs);
+        std::fs::create_dir_all(directory.path().join("nucleus-wt")).expect("wt parent");
+        write_git_branch_worktree_runner_operator_effect_intent(
+            &state,
+            confirmed_intent(&handoffs, "delivery-replay-dispatch"),
+        )
+        .expect("dispatch intent");
+        run_git_branch_worktree_runner(
+            &state,
+            input(&repo, &handoffs, &targets, "delivery-replay-dispatch"),
+        )
+        .expect("worktree");
+        std::fs::write(
+            directory
+                .path()
+                .join("nucleus-wt")
+                .join("run-1")
+                .join("delivery.txt"),
+            "delivered\n",
+        )
+        .expect("change");
+        let delivery_key = "delivery-replay";
+        write_git_branch_worktree_runner_delivery_intent(
+            &state,
+            delivery_intent(&handoffs, delivery_key, "origin"),
+        )
+        .expect("delivery intent");
+        let first = run_git_branch_worktree_runner_delivery(
+            &state,
+            delivery_input(&repo, &handoffs, &targets, delivery_key),
+        )
+        .expect("first delivery");
+        let second = run_git_branch_worktree_runner_delivery(
+            &state,
+            delivery_input(&repo, &handoffs, &targets, delivery_key),
+        )
+        .expect("replay delivery");
+        assert!(!first.replayed);
+        assert!(second.replayed);
+        assert!(second.spawns.is_empty());
+        assert!(second.commit_created);
+        assert!(second.push_executed);
+    }
+
+    fn delivery_input(
+        repo: &Path,
+        handoffs: &GitBranchWorktreeExecutionHandoffSet,
+        targets: &[GitBranchWorktreeRunnerTargetRef],
+        idempotency_key: &str,
+    ) -> GitBranchWorktreeRunnerDeliveryExecutionInput {
+        GitBranchWorktreeRunnerDeliveryExecutionInput {
+            confirmation_ref: format!(
+                "operator-confirmation:git-branch-worktree-runner-delivery:{idempotency_key}"
+            ),
+            handoffs: handoffs.clone(),
+            target_refs: targets.to_vec(),
+            repo_working_directory: repo.to_path_buf(),
+            run_id: "run:1".to_owned(),
+            operator_ref: "operator:tom".to_owned(),
+            idempotency_key: idempotency_key.to_owned(),
+            timeout: Duration::from_secs(30),
+            stdout_limit_bytes: 4096,
+            stderr_limit_bytes: 4096,
+        }
+    }
+
+    fn delivery_intent(
+        handoffs: &GitBranchWorktreeExecutionHandoffSet,
+        idempotency_key: &str,
+        remote_target: &str,
+    ) -> GitBranchWorktreeRunnerDeliveryIntentRecord {
+        GitBranchWorktreeRunnerDeliveryIntentRecord {
+            confirmation_ref: format!(
+                "operator-confirmation:git-branch-worktree-runner-delivery:{idempotency_key}"
+            ),
+            run_id: "run:1".to_owned(),
+            handoff_id: handoffs.handoffs[0].handoff_id.clone(),
+            branch_ref: BRANCH_REF.to_owned(),
+            worktree_location_ref: WORKTREE_LOCATION.to_owned(),
+            commit_message: "deliver run 1".to_owned(),
+            remote_target: remote_target.to_owned(),
+            operator_ref: "operator:tom".to_owned(),
+            idempotency_key: idempotency_key.to_owned(),
+            status: GitBranchWorktreeRunnerDeliveryIntentStatus::Confirmed,
+        }
+    }
+
+    fn result_authority_worktree_created(error: &GitBranchWorktreeRunnerExecutionError) -> bool {
         match error {
             GitBranchWorktreeRunnerExecutionError::Blocked { authority, .. } => {
                 authority.worktree_created
