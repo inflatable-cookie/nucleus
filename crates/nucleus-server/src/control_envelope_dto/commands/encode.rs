@@ -14,7 +14,10 @@ use super::read_only::read_only_command_kind;
 use super::task_authoring::{task_create_kind, task_update_kind};
 use super::types::{ControlCommandDto, ControlTaskCommandActionDto};
 use super::super::ControlApiCodecError;
-use crate::commands::{ServerCommandKind, TaskCommand, TaskSeedPromotionCommand, TaskTransitionCommand};
+use crate::commands::{
+    RunCommand, RunDispatchExecutionCommand, RunProposeCommand, ServerCommandKind, TaskCommand,
+    TaskSeedPromotionCommand, TaskTransitionCommand,
+};
 use crate::ids::ServerCommandId;
 use crate::memory_proposal_review_command::MemoryProposalReviewCommand;
 
@@ -250,6 +253,48 @@ impl ControlCommandDto {
                     action: memory_proposal_review_action(action),
                     reviewer_ref,
                     note,
+                }),
+            )),
+            Self::RunPropose {
+                command_id,
+                run_id,
+                project_id,
+                objective_scope,
+                acceptance,
+                stop_conditions,
+                worktree_ref,
+                provider_instance,
+                provider_model,
+                orchestrator_designation,
+                token_budget,
+                time_budget_seconds,
+            } => Ok((
+                ServerCommandId(command_id),
+                ServerCommandKind::Run(RunCommand::Propose(RunProposeCommand {
+                    run_id: nucleus_engine::EngineRunId(run_id),
+                    project_id: nucleus_projects::ProjectId(project_id),
+                    objective_scope,
+                    acceptance,
+                    stop_conditions,
+                    worktree_ref,
+                    provider_instance,
+                    provider_model,
+                    orchestrator_designation,
+                    token_budget,
+                    time_budget_seconds,
+                })),
+            )),
+            Self::RunDispatchExecution {
+                command_id,
+                run_id,
+                expected_revision,
+                operator_ref,
+            } => Ok((
+                ServerCommandId(command_id),
+                ServerCommandKind::RunDispatchExecution(RunDispatchExecutionCommand {
+                    run_id: nucleus_engine::EngineRunId(run_id),
+                    expected_revision: expected_revision.map(RevisionId),
+                    operator_ref,
                 }),
             )),
             Self::ReadOnlyCommand {

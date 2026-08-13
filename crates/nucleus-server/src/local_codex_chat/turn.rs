@@ -217,6 +217,11 @@ impl super::LocalCodexChatService {
         )?;
         let mut plan_draft = PlanDraftAccumulator::default();
         let mut subagent_directories = ChatSubagentDirectories::default();
+        // A dispatched run's worker operation starts when its conversation
+        // emits its first activity: transition dispatched -> running from
+        // that observed truth (never timers), binding the provider-minted
+        // operation identity.
+        let mut run_marked_running = false;
         let mut project_and_forward_activity = |event: AgentActivityEvent| -> Result<(), String> {
             let directory = subagent_directories.observe(
                 &request.project_id,
@@ -231,6 +236,14 @@ impl super::LocalCodexChatService {
                 turn_count,
                 event,
             );
+            if !run_marked_running {
+                run_marked_running = super::run_transitions::mark_run_running_on_first_activity(
+                    state,
+                    &request.conversation_id,
+                    &canonical_turn_id,
+                    &activity.runtime_operation_id,
+                )?;
+            }
             plan_draft.observe(&activity);
             persist_activity(state, &activity)?;
             if let Some(directory) = &directory {
@@ -273,6 +286,14 @@ impl super::LocalCodexChatService {
                     AgentTurnFailure::Failed(_) => ChatTurnFailureStatus::Failed,
                 };
                 let reason = error.to_string();
+                // A failed worker turn fails the run (observed terminal
+                // truth); best effort so the turn error is not masked.
+                let _ = super::run_transitions::fail_run_on_turn_failure(
+                    state,
+                    &request.conversation_id,
+                    &canonical_turn_id,
+                    &reason,
+                );
                 let question_status = match status {
                     ChatTurnFailureStatus::Cancelled => "cancelled",
                     ChatTurnFailureStatus::TimedOut => "timed_out",

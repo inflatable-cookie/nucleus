@@ -37,6 +37,7 @@ pub enum ServerCommandKind {
     ReadOnlyCommand(ReadOnlyCommand),
     ConfigureModelRoute(ModelRoute),
     GitBranchWorktreeRunner(GitBranchWorktreeRunnerEffectConfirmationCommand),
+    RunDispatchExecution(RunDispatchExecutionCommand),
 }
 
 /// Operator confirmation that one run dispatch may create its isolated
@@ -309,13 +310,36 @@ pub struct RunDispatchCommand {
     pub run_id: nucleus_engine::EngineRunId,
     pub operation_id: Option<String>,
     pub conversation_id: Option<String>,
+    pub worktree_ref: Option<String>,
     pub expected_revision: Option<RevisionId>,
 }
 
-/// One lifecycle transition with optional reason.
+/// Operator-confirmed run dispatch execution: create the isolated worktree
+/// through the branch/worktree runner authority chain (durable
+/// `GitBranchWorktreeRunnerOperatorEffectIntent::Confirmed` written first,
+/// gated `git worktree add` second — never a bare spawn), register the
+/// worktree as a project resource, and transition the run
+/// `proposed -> dispatched` binding the deterministic run conversation
+/// (`conversation:run:<run_id>`).
+///
+/// The dispatch dialog's explicit confirmation IS this command: it records
+/// the operator effect intent, so no separate confirmation round-trip is
+/// needed. The server derives the branch (`run/<slug>`) and worktree
+/// location (`../<repo>-wt/<slug>` per the playbook) from the run and
+/// project records.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunDispatchExecutionCommand {
+    pub run_id: nucleus_engine::EngineRunId,
+    pub expected_revision: Option<RevisionId>,
+    pub operator_ref: String,
+}
+
+/// One lifecycle transition with optional reason. `operation_id` binds the
+/// observed worker operation identity and is only honored on `MarkRunning`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunTransitionCommand {
     pub run_id: nucleus_engine::EngineRunId,
+    pub operation_id: Option<String>,
     pub expected_revision: Option<RevisionId>,
     pub reason: Option<String>,
 }

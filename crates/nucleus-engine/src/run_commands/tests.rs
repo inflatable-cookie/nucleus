@@ -38,6 +38,7 @@ fn propose_command(run_id: &str) -> EngineRunCommand {
 fn transition_command(run_id: &str) -> EngineRunTransitionCommand {
     EngineRunTransitionCommand {
         run_id: EngineRunId(run_id.to_owned()),
+        operation_id: None,
         expected_revision: None,
         reason: None,
     }
@@ -130,6 +131,7 @@ fn full_lifecycle_transitions_to_accepted() {
                 run_id: EngineRunId("run:1".to_owned()),
                 operation_id: Some("operation:1".to_owned()),
                 conversation_id: Some("conversation:1".to_owned()),
+                worktree_ref: Some("worktree:1".to_owned()),
                 expected_revision: None,
             }),
             EngineRunLifecycleState::Dispatched,
@@ -174,6 +176,84 @@ fn full_lifecycle_transitions_to_accepted() {
         storage.operation_id.as_deref(),
         Some("operation:1")
     );
+}
+
+#[test]
+fn mark_running_binds_observed_operation_id_and_dispatch_binds_worktree_ref() {
+    let repository = InMemoryRunRepository::new();
+    let service = EngineRunCommandService::new(repository);
+    service
+        .execute("command:run:propose:1", propose_command("run:1"))
+        .expect("propose accepted");
+
+    // Dispatch binds the deterministic conversation and the realized
+    // worktree; the operation id is not yet observable.
+    service
+        .execute(
+            "command:run:dispatch:1",
+            EngineRunCommand::Dispatch(EngineRunDispatchCommand {
+                run_id: EngineRunId("run:1".to_owned()),
+                operation_id: None,
+                conversation_id: Some("conversation:run:run:1".to_owned()),
+                worktree_ref: Some("worktree:run:1".to_owned()),
+                expected_revision: None,
+            }),
+        )
+        .expect("dispatch accepted");
+
+    // The first observed turn activity binds the operation identity while
+    // transitioning dispatched -> running (observed operation truth).
+    let mut running = transition_command("run:1");
+    running.operation_id = Some("run:runtime:run:1".to_owned());
+    service
+        .execute("command:run:running:1", EngineRunCommand::MarkRunning(running))
+        .expect("mark running accepted");
+
+    let record = service
+        .repository
+        .records()
+        .into_iter()
+        .find(|record| record.id.0 == "run:1")
+        .expect("run record");
+    let storage = decode_run_storage_record(&record.payload).expect("decode");
+    assert_eq!(storage.state, EngineRunLifecycleState::Running);
+    assert_eq!(
+        storage.conversation_id.as_deref(),
+        Some("conversation:run:run:1")
+    );
+    assert_eq!(storage.worktree_ref.as_deref(), Some("worktree:run:1"));
+    assert_eq!(storage.operation_id.as_deref(), Some("run:runtime:run:1"));
+}
+
+#[test]
+fn operation_id_cannot_bind_outside_mark_running() {
+    let repository = InMemoryRunRepository::new();
+    let service = EngineRunCommandService::new(repository);
+    service
+        .execute("command:run:propose:1", propose_command("run:1"))
+        .expect("propose accepted");
+
+    let mut cancel = transition_command("run:1");
+    cancel.operation_id = Some("run:stray".to_owned());
+    let error = service
+        .execute("command:run:cancel:1", EngineRunCommand::Cancel(cancel))
+        .expect_err("operation binding on cancel rejected");
+    assert!(matches!(
+        error,
+        EngineRunCommandError::InvalidRequest { reason }
+            if reason.contains("can only bind on mark-running")
+    ));
+
+    let record = service
+        .repository
+        .records()
+        .into_iter()
+        .find(|record| record.id.0 == "run:1")
+        .expect("run record");
+    let storage = decode_run_storage_record(&record.payload).expect("decode");
+    assert_eq!(storage.state, EngineRunLifecycleState::Proposed);
+    assert_eq!(storage.transitions.len(), 1);
+    assert_eq!(storage.operation_id, None);
 }
 
 impl EngineRunLifecycleState {
@@ -267,6 +347,7 @@ fn terminal_states_do_not_accept_further_transitions() {
                 run_id: EngineRunId("run:1".to_owned()),
                 operation_id: None,
                 conversation_id: None,
+                worktree_ref: None,
                 expected_revision: None,
             }),
         )
@@ -322,6 +403,7 @@ fn delivered_requires_a_closeout() {
                 run_id: EngineRunId("run:1".to_owned()),
                 operation_id: None,
                 conversation_id: None,
+                worktree_ref: None,
                 expected_revision: None,
             }),
         )
@@ -436,6 +518,7 @@ fn expected_revision_conflict_is_rejected() {
             "command:run:cancel:1",
             EngineRunCommand::Cancel(EngineRunTransitionCommand {
                 run_id: EngineRunId("run:1".to_owned()),
+                operation_id: None,
                 expected_revision: Some(RevisionId("rev:stale".to_owned())),
                 reason: None,
             }),

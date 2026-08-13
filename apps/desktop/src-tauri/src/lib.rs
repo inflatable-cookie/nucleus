@@ -25,6 +25,7 @@ mod editor_drafts;
 mod editor_file_watch;
 mod notifications;
 mod operations;
+mod run_dispatch;
 mod scm_working_copy;
 mod settings;
 mod state;
@@ -115,6 +116,7 @@ pub fn run() {
             chat_commands::delete_agent_chat_thread,
             chat_commands::agent_chat_provider_catalogue,
             chat_commands::agent_chat_credential_action,
+            run_dispatch::dispatch_run,
             workspace_commands::workspace_layout_snapshot,
             workspace_commands::prepare_workspace_panel,
             workspace_commands::mutate_workspace_layout,

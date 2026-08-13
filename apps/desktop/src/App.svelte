@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { AppHeader, Icon, IconButton, IconProvider, Menu, Popover, SplitView, ToastHost, type MenuItem } from "@inflatable-cookie/poodle-svelte";
+  import { AppHeader, Button, Icon, IconButton, IconProvider, Menu, Popover, SplitView, ToastHost, type MenuItem } from "@inflatable-cookie/poodle-svelte";
   import { icons, info, plus, settings as settingsIcon } from "./icons.generated";
   import ProjectWorkspaceStage from "./lib/ProjectWorkspaceStage.svelte";
+  import RunDispatchDialog from "./lib/RunDispatchDialog.svelte";
   import CommandPalette from "./lib/commands/CommandPalette.svelte";
   import { NucleusCommandRuntime } from "./lib/commands/runtime.svelte";
   import OperationPopover from "./lib/operations/OperationPopover.svelte";
@@ -63,6 +64,7 @@
   let selectedProjectId = $state<string | null>(null);
   let selectedProject = $state<ControlProjectRecordDto | null>(null);
   let selectedConversationId = $state<string | null>(null);
+  let runDispatchOpen = $state(false);
   let activePanelKind = $state<string | null>(null);
   let editorDirty = $state(false);
   let agentTurnRunning = $state(false);
@@ -449,6 +451,14 @@
                 onOpenChange={(open) => setNativePanelOverlayOpen(operationsOverlayId, open)}
                 onSurfaceGeometryChange={(change) => updateNativePanelOverlayGeometry(operationsOverlayId, change)}
               />
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={!selectedProject}
+                onClick={() => (runDispatchOpen = true)}
+              >
+                Dispatch run
+              </Button>
               <IconButton
                 variant="secondary"
                 icon={settingsIcon}
@@ -498,6 +508,15 @@
       onOpenChange={(open) => (settingsOpen = open)}
     />
   {/if}
+  <RunDispatchDialog
+    bind:open={runDispatchOpen}
+    project={selectedProject}
+    {agentChatDefaults}
+    onDispatched={(outcome) => {
+      selectedConversationId = outcome.conversation_id;
+      window.dispatchEvent(new CustomEvent("nucleus:threads-changed"));
+    }}
+  />
   <CommandPalette session={commandRuntime.session} />
   <ToastHost
     store={notificationToastStore}

@@ -158,6 +158,28 @@ pub enum ControlCommandDto {
         stderr_limit_bytes: usize,
         command_display: Option<String>,
     },
+    RunPropose {
+        command_id: String,
+        run_id: String,
+        project_id: String,
+        objective_scope: String,
+        #[serde(default)]
+        acceptance: Vec<String>,
+        #[serde(default)]
+        stop_conditions: Vec<String>,
+        worktree_ref: Option<String>,
+        provider_instance: String,
+        provider_model: String,
+        orchestrator_designation: Option<String>,
+        token_budget: Option<u64>,
+        time_budget_seconds: Option<u64>,
+    },
+    RunDispatchExecution {
+        command_id: String,
+        run_id: String,
+        expected_revision: Option<String>,
+        operator_ref: String,
+    },
 }
 
 /// Supported task command actions for the first command DTO subset.

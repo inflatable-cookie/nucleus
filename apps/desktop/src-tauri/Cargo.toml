@@ -44,7 +44,9 @@ longhorn-windowing = { path = "../../../../longhorn/crates/longhorn-windowing" }
 longhorn-windowing-config = { path = "../../../../longhorn/crates/longhorn-windowing-config" }
 nucleus-command-policy = { path = "../../../crates/nucleus-command-policy" }
 nucleus-core = { path = "../../../crates/nucleus-core" }
+nucleus-engine = { path = "../../../crates/nucleus-engine" }
 nucleus-local-store = { path = "../../../crates/nucleus-local-store" }
+nucleus-projects = { path = "../../../crates/nucleus-projects" }
 nucleus-server = { path = "../../../crates/nucleus-server" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

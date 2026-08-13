@@ -98,6 +98,28 @@ export type ControlCommandDto =
       actor_ref: string;
       authority_host_ref: string;
       idempotency_key: string;
+    }
+  | {
+      kind: "run_propose";
+      command_id: string;
+      run_id: string;
+      project_id: string;
+      objective_scope: string;
+      acceptance: string[];
+      stop_conditions: string[];
+      worktree_ref: string | null;
+      provider_instance: string;
+      provider_model: string;
+      orchestrator_designation: string | null;
+      token_budget: bigint | null;
+      time_budget_seconds: bigint | null;
+    }
+  | {
+      kind: "run_dispatch_execution";
+      command_id: string;
+      run_id: string;
+      expected_revision: string | null;
+      operator_ref: string;
     };
 
 export type ControlRequestEnvelopeDto = {
@@ -155,6 +177,56 @@ export function buildControlCommandEnvelope(command: ControlCommandDto): Control
       },
     },
   };
+}
+
+/** Propose a run record (contract 033 Run Record Rule). */
+export function buildRunProposeEnvelope(input: {
+  run_id: string;
+  project_id: string;
+  objective_scope: string;
+  acceptance: string[];
+  stop_conditions: string[];
+  worktree_ref?: string | null;
+  provider_instance: string;
+  provider_model: string;
+  orchestrator_designation?: string | null;
+  token_budget?: bigint | null;
+  time_budget_seconds?: bigint | null;
+}): ControlRequestEnvelopeDto {
+  return buildControlCommandEnvelope({
+    kind: "run_propose",
+    command_id: "",
+    run_id: input.run_id,
+    project_id: input.project_id,
+    objective_scope: input.objective_scope,
+    acceptance: input.acceptance,
+    stop_conditions: input.stop_conditions,
+    worktree_ref: input.worktree_ref ?? null,
+    provider_instance: input.provider_instance,
+    provider_model: input.provider_model,
+    orchestrator_designation: input.orchestrator_designation ?? null,
+    token_budget: input.token_budget ?? null,
+    time_budget_seconds: input.time_budget_seconds ?? null,
+  });
+}
+
+/**
+ * Execute an operator-confirmed run dispatch: the server writes the durable
+ * worktree-creation intent, drives the gated `git worktree add`, registers
+ * the worktree resource, and dispatches the run.
+ */
+export function buildRunDispatchExecutionEnvelope(input: {
+  run_id: string;
+  expected_revision?: string | null;
+  operator_ref: string;
+}): ControlRequestEnvelopeDto {
+  return buildControlCommandEnvelope({
+    kind: "run_dispatch_execution",
+    command_id: "",
+    run_id: input.run_id,
+    expected_revision: input.expected_revision ?? null,
+    operator_ref: input.operator_ref,
+  });
 }
 
 export function buildRuntimeMetadataQuery(

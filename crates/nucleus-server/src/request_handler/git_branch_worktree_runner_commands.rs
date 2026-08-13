@@ -28,6 +28,7 @@ use crate::provider_git_branch_worktree_runner_authority::{
     GitBranchWorktreeRunnerOperatorEffectIntentWriteOutcome,
 };
 use crate::runtime_receipt_state::write_runtime_receipt;
+use crate::ServerStateService;
 
 pub(crate) fn handle_git_branch_worktree_runner_command<B>(
     handler: &LocalControlRequestHandler<B>,
@@ -58,10 +59,8 @@ where
         });
     }
 
-    let confirmation_ref =
-        confirmation_ref(&command.idempotency_key);
     let record = GitBranchWorktreeRunnerOperatorEffectIntentRecord {
-        confirmation_ref: confirmation_ref.clone(),
+        confirmation_ref: confirmation_ref(&command.idempotency_key),
         run_id: command.run_id.0.clone(),
         handoff_id: command.handoff_id.clone(),
         branch_ref: command.branch_ref.clone(),
@@ -73,7 +72,25 @@ where
         status: GitBranchWorktreeRunnerOperatorEffectIntentStatus::Confirmed,
     };
 
-    let write = write_git_branch_worktree_runner_operator_effect_intent(handler.state(), record);
+    write_confirmed_worktree_effect_intent(handler.state(), command_id, record)
+}
+
+/// Write one durable operator effect intent confirmation and its contract-020
+/// receipt. Shared by the standalone confirmation command and run dispatch
+/// (the dispatch dialog's explicit confirmation is the dispatch command).
+pub(crate) fn write_confirmed_worktree_effect_intent<B>(
+    state: &ServerStateService<B>,
+    command_id: &str,
+    record: GitBranchWorktreeRunnerOperatorEffectIntentRecord,
+) -> ServerCommandReceiptStatus
+where
+    B: LocalStoreBackend,
+{
+    let confirmation_ref = record.confirmation_ref.clone();
+    let run_id = record.run_id.clone();
+    let branch_ref = record.branch_ref.clone();
+    let worktree_location_ref = record.worktree_location_ref.clone();
+    let write = write_git_branch_worktree_runner_operator_effect_intent(state, record);
     let created = match write {
         Ok(GitBranchWorktreeRunnerOperatorEffectIntentWriteOutcome::Created(_)) => true,
         Ok(GitBranchWorktreeRunnerOperatorEffectIntentWriteOutcome::Replayed(_)) => false,
@@ -96,8 +113,7 @@ where
             status: EngineRuntimeReceiptStatus::Completed,
             command_ref: Some(EngineRuntimeReceiptRef::CommandId(command_id.to_owned())),
             effect_ref: Some(EngineRuntimeReceiptRef::Custom(format!(
-                "git-branch-worktree-runner:operator-effect-intent:confirmed:{}",
-                command.run_id.0
+                "git-branch-worktree-runner:operator-effect-intent:confirmed:{run_id}"
             ))),
             evidence_refs: vec![EngineRuntimeReceiptRef::EventId(format!(
                 "event:{command_id}:admitted"
@@ -105,11 +121,11 @@ where
             artifact_refs: Vec::new(),
             summary: Some(format!(
                 "operator confirmed isolated worktree creation for run {} ({}@{})",
-                command.run_id.0, command.branch_ref, command.worktree_location_ref
+                run_id, branch_ref, worktree_location_ref
             )),
         };
         if let Err(error) = write_runtime_receipt(
-            handler.state(),
+            state,
             &receipt,
             RevisionId(format!("rev:{confirmation_ref}")),
             RevisionExpectation::MustNotExist,

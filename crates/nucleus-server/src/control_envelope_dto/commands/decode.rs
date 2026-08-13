@@ -13,7 +13,8 @@ use super::task_authoring::{task_create_dto, task_update_dto};
 use super::types::{ControlCommandDto, ControlTaskCommandActionDto};
 use super::super::ControlApiCodecError;
 use crate::commands::{
-    ServerCommand, ServerCommandKind, TaskCommand, TaskSeedPromotionCommand,
+    RunCommand, RunDispatchExecutionCommand, RunProposeCommand, ServerCommand, ServerCommandKind,
+    TaskCommand, TaskSeedPromotionCommand,
 };
 use crate::ids::ServerCommandId;
 
@@ -33,10 +34,51 @@ impl TryFrom<&ServerCommand> for ControlCommandDto {
             ServerCommandKind::MemoryProposalReview(review_command) => {
                 Ok(memory_proposal_review_dto(&command.id, review_command))
             }
+            ServerCommandKind::Run(RunCommand::Propose(run_propose_command)) => {
+                Ok(run_propose_dto(&command.id, run_propose_command))
+            }
+            ServerCommandKind::RunDispatchExecution(dispatch_command) => {
+                Ok(run_dispatch_execution_dto(&command.id, dispatch_command))
+            }
             _ => Err(ControlApiCodecError::unsupported(
                 "command shape is not supported by the first command DTO",
             )),
         }
+    }
+}
+
+fn run_propose_dto(
+    command_id: &ServerCommandId,
+    command: &RunProposeCommand,
+) -> ControlCommandDto {
+    ControlCommandDto::RunPropose {
+        command_id: command_id.0.clone(),
+        run_id: command.run_id.0.clone(),
+        project_id: command.project_id.0.clone(),
+        objective_scope: command.objective_scope.clone(),
+        acceptance: command.acceptance.clone(),
+        stop_conditions: command.stop_conditions.clone(),
+        worktree_ref: command.worktree_ref.clone(),
+        provider_instance: command.provider_instance.clone(),
+        provider_model: command.provider_model.clone(),
+        orchestrator_designation: command.orchestrator_designation.clone(),
+        token_budget: command.token_budget,
+        time_budget_seconds: command.time_budget_seconds,
+    }
+}
+
+fn run_dispatch_execution_dto(
+    command_id: &ServerCommandId,
+    command: &RunDispatchExecutionCommand,
+) -> ControlCommandDto {
+    ControlCommandDto::RunDispatchExecution {
+        command_id: command_id.0.clone(),
+        run_id: command.run_id.0.clone(),
+        expected_revision: command
+            .expected_revision
+            .as_ref()
+            .map(|revision| revision.0.clone()),
+        operator_ref: command.operator_ref.clone(),
     }
 }
 

@@ -4,6 +4,7 @@ mod blockers;
 mod execution;
 mod intent;
 mod record_builder;
+mod run_dispatch;
 mod types;
 
 pub use execution::{
@@ -18,6 +19,9 @@ pub use intent::{
     GitBranchWorktreeRunnerOperatorEffectIntentStatus,
     GitBranchWorktreeRunnerOperatorEffectIntentWriteError,
     GitBranchWorktreeRunnerOperatorEffectIntentWriteOutcome,
+};
+pub use run_dispatch::{
+    run_dispatch_handoff_lane, run_dispatch_target_refs, RunDispatchLane, RunDispatchLaneInput,
 };
 pub use types::{
     GitBranchWorktreeRunnerAction, GitBranchWorktreeRunnerAuthorityBlocker,
