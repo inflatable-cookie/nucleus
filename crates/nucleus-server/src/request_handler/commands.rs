@@ -6,7 +6,7 @@ use super::git_branch_worktree_runner_commands::handle_git_branch_worktree_runne
 use super::goal_commands::handle_goal_command;
 use super::handler::LocalControlRequestHandler;
 use super::project_commands::handle_project_command;
-use super::run_commands::handle_run_command;
+use super::run_commands::{handle_run_command, handle_run_dispatch_execution};
 use super::steward_commands::handle_steward_command;
 use super::task_commands::handle_task_command;
 use crate::memory_proposal_review_persistence::review_memory_proposal;
@@ -69,6 +69,9 @@ where
         }
         ServerCommandKind::Run(run_command) => {
             handle_run_command(handler, &command_id.0, run_command)
+        }
+        ServerCommandKind::RunDispatchExecution(dispatch_command) => {
+            handle_run_dispatch_execution(handler, &command_id.0, dispatch_command)
         }
         ServerCommandKind::Goal(goal_command) => {
             handle_goal_command(handler, &command_id.0, goal_command)

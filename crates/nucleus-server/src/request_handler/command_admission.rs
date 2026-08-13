@@ -47,6 +47,14 @@ fn orchestration_admission_from_command(
             target_ref: run_command_target_ref(run_command),
             summary: Some("run lifecycle command admission".to_owned()),
         }),
+        ServerCommandKind::RunDispatchExecution(dispatch_command) => {
+            Some(OrchestrationCommandAdmission {
+                command_id: OrchestrationCommandId(command.id.0.clone()),
+                family: OrchestrationCommandFamily::Run,
+                target_ref: Some(dispatch_command.run_id.0.clone()),
+                summary: Some("run dispatch execution admission".to_owned()),
+            })
+        }
         ServerCommandKind::GitBranchWorktreeRunner(confirmation_command) => {
             Some(OrchestrationCommandAdmission {
                 command_id: OrchestrationCommandId(command.id.0.clone()),

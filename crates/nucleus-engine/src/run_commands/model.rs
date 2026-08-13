@@ -123,19 +123,31 @@ pub struct EngineRunProposeCommand {
 
 /// Dispatch transitions `proposed -> dispatched` and binds the worker
 /// operation identity when the spawn side knows it.
+///
+/// `conversation_id` is the deterministic run conversation
+/// (`conversation:run:<run_id>`); `operation_id` binds when the first turn
+/// actually starts (see `EngineRunTransitionCommand::operation_id` for
+/// `MarkRunning`). `worktree_ref` binds the realized isolated worktree
+/// identity once the gated creation succeeded.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EngineRunDispatchCommand {
     pub run_id: EngineRunId,
     pub operation_id: Option<String>,
     pub conversation_id: Option<String>,
+    pub worktree_ref: Option<String>,
     pub expected_revision: Option<RevisionId>,
 }
 
 /// One run lifecycle transition with optional reason (running, accept,
 /// reject, fail, cancel).
+///
+/// `operation_id` binds the observed worker operation identity and is only
+/// accepted on `MarkRunning` (contract 033: the run transitions to running
+/// from observed operation truth, not timers).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EngineRunTransitionCommand {
     pub run_id: EngineRunId,
+    pub operation_id: Option<String>,
     pub expected_revision: Option<RevisionId>,
     pub reason: Option<String>,
 }

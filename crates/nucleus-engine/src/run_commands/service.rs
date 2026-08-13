@@ -100,6 +100,9 @@ where
 
         storage.operation_id = command.operation_id;
         storage.conversation_id = command.conversation_id;
+        if let Some(worktree_ref) = command.worktree_ref {
+            storage.worktree_ref = Some(worktree_ref);
+        }
         self.save_transition(command_id, &mut storage, EngineRunLifecycleState::Dispatched, expected)
     }
 
@@ -122,8 +125,23 @@ where
         command: EngineRunTransitionCommand,
         to: EngineRunLifecycleState,
     ) -> Result<EngineRunCommandOutcome, EngineRunCommandError<R::Error>> {
+        if let Some(operation_id) = command.operation_id.as_deref() {
+            if to != EngineRunLifecycleState::Running {
+                return Err(EngineRunCommandError::InvalidRequest {
+                    reason: format!(
+                        "operation identity {} can only bind on mark-running, not on {:?}",
+                        operation_id, to
+                    ),
+                });
+            }
+        }
         let (mut storage, expected) = self.load_run(&command.run_id, command.expected_revision)?;
         validate_transition::<R::Error>(storage.state, to)?;
+        if to == EngineRunLifecycleState::Running {
+            if let Some(operation_id) = command.operation_id {
+                storage.operation_id = Some(operation_id);
+            }
+        }
         self.save_transition(command_id, &mut storage, to, expected)
     }
 
