@@ -23,4 +23,4 @@ One line per orchestrated worker thread. Orchestrator-only writes.
 | 106-run-delivery-commit-push-authority | `g05/batch-cards/106-run-delivery-commit-push-authority.md` | `thread/106-run-delivery-commit-push-authority` | merged |
 | 102-run-delivery-review-surface | `g05/batch-cards/102-run-delivery-review-surface.md` | `thread/102-run-delivery-review-surface` | dispatched |
 | 103-run-delivery-forge-pull-requests | `g05/batch-cards/103-run-delivery-forge-pull-requests.md` | `thread/103-run-delivery-forge-pull-requests` | paused (PR-creation gate; stop log merged) |
-| 107-forge-pr-creation-authority | `g05/batch-cards/107-forge-pr-creation-authority.md` | — | ready |
+| 107-forge-pr-creation-authority | `g05/batch-cards/107-forge-pr-creation-authority.md` | `thread/107-forge-pr-creation-authority` | dispatched |

@@ -1,6 +1,6 @@
 # 107 Run Delivery Forge PR-Creation Authority
 
-Status: ready
+Status: dispatched
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 2 unblocker)

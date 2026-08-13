@@ -10,7 +10,7 @@ Updated: 2026-08-04
 
 ## Ready Cards
 
-- `107-forge-pr-creation-authority.md` — unblocks 103
+- none
 
 ## Planned Cards
 
@@ -21,6 +21,8 @@ Updated: 2026-08-04
 
 - `102-run-delivery-review-surface.md` — worker thread
   `thread/102-run-delivery-review-surface`
+- `107-forge-pr-creation-authority.md` — worker thread
+  `thread/107-forge-pr-creation-authority`
 
 ## Paused Cards
 
