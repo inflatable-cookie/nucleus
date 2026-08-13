@@ -385,3 +385,86 @@ fn request_envelope_dto_serializes_memory_proposal_review_command() {
             && command.reviewer_ref == Some("user:tom".to_owned())
     ));
 }
+
+#[test]
+fn request_envelope_dto_round_trips_run_accept_and_reject_transitions() {
+    for (action, reason, command_kind) in [
+        (
+            crate::control_envelope_dto::commands::ControlRunTransitionActionDto::Accept,
+            None,
+            crate::commands::RunCommand::Accept(crate::commands::RunTransitionCommand {
+                run_id: nucleus_engine::EngineRunId("run:delivered:1".to_owned()),
+                operation_id: None,
+                expected_revision: Some(RevisionId("rev:run:delivered:1".to_owned())),
+                reason: None,
+            }),
+        ),
+        (
+            crate::control_envelope_dto::commands::ControlRunTransitionActionDto::Reject,
+            Some("acceptance criterion not met".to_owned()),
+            crate::commands::RunCommand::Reject(crate::commands::RunTransitionCommand {
+                run_id: nucleus_engine::EngineRunId("run:delivered:1".to_owned()),
+                operation_id: None,
+                expected_revision: Some(RevisionId("rev:run:delivered:1".to_owned())),
+                reason: Some("acceptance criterion not met".to_owned()),
+            }),
+        ),
+    ] {
+        let request = ServerControlRequest {
+            id: ServerControlRequestId("request:run:transition".to_owned()),
+            client_id: ClientId("client:desktop".to_owned()),
+            kind: ServerControlRequestKind::Command(crate::commands::ServerCommand {
+                id: ServerCommandId("command:run:transition".to_owned()),
+                client_id: ClientId("client:desktop".to_owned()),
+                kind: crate::commands::ServerCommandKind::Run(command_kind),
+            }),
+        };
+
+        let dto = ControlRequestEnvelopeDto::try_from(&request).expect("request dto");
+        let json = serde_json::to_string(&dto).expect("json");
+        let decoded: ControlRequestEnvelopeDto = serde_json::from_str(&json).expect("decoded dto");
+        let restored = ServerControlRequest::try_from(decoded).expect("restored request");
+
+        assert_eq!(restored, request);
+        match action {
+            crate::control_envelope_dto::commands::ControlRunTransitionActionDto::Accept => {
+                assert!(matches!(
+                    restored.kind,
+                    ServerControlRequestKind::Command(crate::commands::ServerCommand {
+                        kind: crate::commands::ServerCommandKind::Run(
+                            crate::commands::RunCommand::Accept(_)
+                        ),
+                        ..
+                    })
+                ));
+            }
+            crate::control_envelope_dto::commands::ControlRunTransitionActionDto::Reject => {
+                assert!(matches!(
+                    restored.kind,
+                    ServerControlRequestKind::Command(crate::commands::ServerCommand {
+                        kind: crate::commands::ServerCommandKind::Run(
+                            crate::commands::RunCommand::Reject(command)
+                        ),
+                        ..
+                    }) if command.reason == reason
+                ));
+            }
+        }
+        assert!(json.contains("run_transition"));
+        assert!(json.contains("accept") || json.contains("reject"));
+    }
+}
+
+#[test]
+fn request_envelope_dto_rejects_reject_without_a_reason() {
+    let decoded: ControlRequestEnvelopeDto = serde_json::from_str(
+        r#"{"protocol_family":"nucleus.control","protocol_version":1,"request_id":"request:run:reject","client_id":"client:desktop","body":{"type":"command","command":{"kind":"run_transition","command_id":"command:run:reject","run_id":"run:delivered:1","action":"reject","expected_revision":null,"reason":null}}}"#,
+    )
+    .expect("decoded dto");
+    let error = ServerControlRequest::try_from(decoded).expect_err("reject without reason fails");
+    assert_eq!(
+        error.failure,
+        crate::control_serialization_readiness::ControlApiCodecFailure::MalformedEnvelope
+    );
+    assert!(error.reason.contains("reason"));
+}

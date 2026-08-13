@@ -179,6 +179,8 @@ pub enum ServerQueryResult {
     SelectedTaskReviewDecisionApply(crate::SelectedTaskReviewDecisionRecord),
     ProjectAuthorityMap(ProjectAuthorityMapPublicationRecord),
     OrchestrationRuns(EngineRunFleetProjection),
+    OrchestrationRunReview(crate::request_handler::run_review::OrchestrationRunReview),
+    OrchestrationRunReviewPatch(crate::request_handler::run_review::OrchestrationRunReviewPatch),
     Empty,
     Unsupported {
         reason: String,

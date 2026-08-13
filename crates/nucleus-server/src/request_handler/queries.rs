@@ -1,6 +1,7 @@
 use nucleus_local_store::{LocalStoreBackend, LocalStoreError};
 
 use super::handler::LocalControlRequestHandler;
+use super::run_review;
 use crate::control_api::{
     DiagnosticsQuery, ServerControlError, ServerControlResponse, ServerControlResponseBody,
     ServerControlResponseStatus, ServerDiagnosticsQueryResult, ServerDiagnosticsSnapshot,
@@ -269,6 +270,12 @@ where
         }
         ServerQueryKind::OrchestrationRuns(query) => {
             orchestration_runs::orchestration_runs_query(handler, query)
+        }
+        ServerQueryKind::OrchestrationRunReview(query) => {
+            run_review::orchestration_run_review_query(handler, query)
+        }
+        ServerQueryKind::OrchestrationRunReviewPatch(query) => {
+            run_review::orchestration_run_review_patch_query(handler, query)
         }
     }
 }

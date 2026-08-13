@@ -110,6 +110,7 @@ pub(crate) fn storage_record_from_propose(
         project_id: command.project_id.0.clone(),
         objective: command.objective.clone(),
         worktree_ref: command.worktree_ref.clone(),
+        base_ref: None,
         provider_instance: command.provider_instance.clone(),
         provider_model: command.provider_model.clone(),
         orchestrator_designation: command.orchestrator_designation.clone(),

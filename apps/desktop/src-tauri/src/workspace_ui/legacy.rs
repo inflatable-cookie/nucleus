@@ -319,6 +319,7 @@ fn default_project_layout() -> LegacyProjectLayout {
                 resource_targets: BTreeMap::new(),
                 editor_file: None,
                 forge_diff: None,
+                run_review: None,
                 allowed_regions: Vec::new(),
             }],
             center_bottom: Vec::new(),

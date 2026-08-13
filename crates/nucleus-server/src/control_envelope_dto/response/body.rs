@@ -26,6 +26,7 @@ use super::records::{
     ControlMemoryProposalReviewDiagnosticsDto, ControlMemoryProposalScopeCountDto,
     ControlMemoryProposalSensitivityCountDto, ControlMemoryProposalSourceCountsDto,
     ControlMemoryProposalStatusCountDto, ControlMemoryProposalSummaryDto,
+    ControlOrchestrationRunReviewDto, ControlOrchestrationRunReviewPatchDto,
     ControlOrchestrationRunStateCountDto, ControlOrchestrationRunSummaryDto,
     ControlPlanningCapturePublicationDiagnosticsDto,
     ControlPlanningProjectionFileWriteDiagnosticsDto,
@@ -262,6 +263,12 @@ pub enum ControlResponseBodyDto {
         runs: Vec<ControlOrchestrationRunSummaryDto>,
         state_counts: Vec<ControlOrchestrationRunStateCountDto>,
         client_can_mutate: bool,
+    },
+    OrchestrationRunReview {
+        review: ControlOrchestrationRunReviewDto,
+    },
+    OrchestrationRunReviewPatch {
+        patch: ControlOrchestrationRunReviewPatchDto,
     },
     ProviderReadIntent {
         result: ControlProviderReadIntentQueryResultDto,

@@ -11,10 +11,12 @@ use super::memory_proposal_review::memory_proposal_review_dto;
 use super::project_lifecycle::project_command_dto;
 use super::read_only::read_only_command_dto;
 use super::task_authoring::{task_create_dto, task_update_dto};
-use super::types::{ControlCommandDto, ControlTaskCommandActionDto};
+use super::types::{
+    ControlCommandDto, ControlRunTransitionActionDto, ControlTaskCommandActionDto,
+};
 use crate::commands::{
     RunCommand, RunDeliveryExecutionCommand, RunDispatchExecutionCommand, RunProposeCommand,
-    ServerCommand, ServerCommandKind, TaskCommand, TaskSeedPromotionCommand,
+    RunTransitionCommand, ServerCommand, ServerCommandKind, TaskCommand, TaskSeedPromotionCommand,
 };
 use crate::ids::ServerCommandId;
 
@@ -36,6 +38,14 @@ impl TryFrom<&ServerCommand> for ControlCommandDto {
             }
             ServerCommandKind::Run(RunCommand::Propose(run_propose_command)) => {
                 Ok(run_propose_dto(&command.id, run_propose_command))
+            }
+            ServerCommandKind::Run(RunCommand::Accept(run_transition_command))
+            | ServerCommandKind::Run(RunCommand::Reject(run_transition_command)) => {
+                Ok(run_transition_dto(
+                    &command.id,
+                    run_transition_command,
+                    matches!(command.kind, ServerCommandKind::Run(RunCommand::Accept(_))),
+                ))
             }
             ServerCommandKind::RunDispatchExecution(dispatch_command) => {
                 Ok(run_dispatch_execution_dto(&command.id, dispatch_command))
@@ -100,6 +110,27 @@ fn run_delivery_execution_dto(
             .expected_revision
             .as_ref()
             .map(|revision| revision.0.clone()),
+    }
+}
+
+fn run_transition_dto(
+    command_id: &ServerCommandId,
+    command: &RunTransitionCommand,
+    accepted: bool,
+) -> ControlCommandDto {
+    ControlCommandDto::RunTransition {
+        command_id: command_id.0.clone(),
+        run_id: command.run_id.0.clone(),
+        action: if accepted {
+            ControlRunTransitionActionDto::Accept
+        } else {
+            ControlRunTransitionActionDto::Reject
+        },
+        expected_revision: command
+            .expected_revision
+            .as_ref()
+            .map(|revision| revision.0.clone()),
+        reason: command.reason.clone(),
     }
 }
 

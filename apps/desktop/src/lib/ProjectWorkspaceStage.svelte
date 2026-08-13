@@ -15,6 +15,7 @@
   import MemoryPanel from "./MemoryPanel.svelte";
   import PanelResourceTargetControl from "./PanelResourceTargetControl.svelte";
   import { effectiveResourceTarget } from "./resourceTargetSupport";
+  import RunReviewPanel from "./RunReviewPanel.svelte";
   import TaskListPanel from "./TaskListPanel.svelte";
   import TerminalPanel from "./TerminalPanel.svelte";
   import { destroyBrowserIsland } from "./browserPanel";
@@ -36,10 +37,12 @@
     WorkspaceForgeDiff,
     WorkspacePanelPresentation,
     WorkspacePanelPresentationInput,
+    WorkspaceRunReview,
   } from "./workspaceLayout";
   import type { AgentChatDefaults } from "./settings/client";
   import {
     REVIEW_REWORK_PROMPT,
+    RUN_REWORK_PROMPT,
     type AgentChatDraftRequest,
   } from "./reviewRework";
 
@@ -89,6 +92,10 @@
     resourceId: string;
     path: string;
     scope: "all" | "staged" | "working";
+  } | null>(null);
+  let pendingRunReviewOpen = $state<{
+    projectId: string;
+    runId: string;
   } | null>(null);
   let pendingAgentChatDraft = $state<(
     AgentChatDraftRequest & { panelInstanceId: string }
@@ -261,11 +268,19 @@
   });
 
   $effect(() => {
+    const request = pendingRunReviewOpen;
+    if (!request || request.projectId !== selectedProject?.project_id || !snapshot) return;
+    pendingRunReviewOpen = null;
+    void openRunReview(request.runId);
+  });
+
+  $effect(() => {
     window.addEventListener("nucleus:create-workspace-panel", handleCreateWorkspacePanel);
     window.addEventListener("nucleus:open-task", handleOpenTask);
     window.addEventListener("nucleus:open-goal", handleOpenGoal);
     window.addEventListener("nucleus:open-file", handleOpenFile);
     window.addEventListener("nucleus:open-forge-diff", handleOpenForgeDiff);
+    window.addEventListener("nucleus:open-run-review", handleOpenRunReview);
     window.addEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
     window.addEventListener("nucleus:agent-chat-thread-deleted", handleAgentChatThreadDeleted);
     window.addEventListener("nucleus:tasks-changed", handleTasksChanged);
@@ -276,6 +291,7 @@
       window.removeEventListener("nucleus:open-goal", handleOpenGoal);
       window.removeEventListener("nucleus:open-file", handleOpenFile);
       window.removeEventListener("nucleus:open-forge-diff", handleOpenForgeDiff);
+      window.removeEventListener("nucleus:open-run-review", handleOpenRunReview);
       window.removeEventListener("nucleus:open-agent-chat-thread", handleOpenAgentChatThread);
       window.removeEventListener("nucleus:agent-chat-thread-deleted", handleAgentChatThreadDeleted);
       window.removeEventListener("nucleus:tasks-changed", handleTasksChanged);
@@ -351,6 +367,18 @@
     };
   }
 
+  function handleOpenRunReview(event: Event): void {
+    if (
+      !(event instanceof CustomEvent) ||
+      typeof event.detail?.projectId !== "string" ||
+      typeof event.detail?.runId !== "string"
+    ) return;
+    pendingRunReviewOpen = {
+      projectId: event.detail.projectId,
+      runId: event.detail.runId,
+    };
+  }
+
   function handleOpenAgentChatThread(event: Event): void {
     if (
       !(event instanceof CustomEvent) ||
@@ -418,7 +446,39 @@
       panelInstanceId: panel.panel_instance_id,
       projectId: selectedProject.project_id,
       taskId: selectedTask.task_id,
+      runConversationId: null,
       text: REVIEW_REWORK_PROMPT,
+    };
+    session.binding?.activate(panel.panel_instance_id);
+  }
+
+  /** Run-scoped rework handoff: focus the run's worker conversation and
+   * prepare a bounded rework draft there (card 065 lineage; never submits). */
+  async function prepareRunRework(runId: string): Promise<void> {
+    if (!session || !snapshot || !selectedProject) return;
+    const conversationId = `conversation:run:${runId}`;
+    const candidates = snapshot.panels.filter((panel) => panel.kind === "agentChat");
+    const panel = candidates.find(
+      (candidate) => panelConversationId(candidate) === conversationId,
+    ) ?? candidates[0] ?? await addPanel("agentChat");
+    if (!panel) return;
+    if (panel.conversation_id !== conversationId) {
+      await session.updatePanel(panel.panel_instance_id, {
+        ...toInput(panel),
+        conversation_id: conversationId,
+      });
+    }
+    appliedConversationRequest = conversationId;
+    selectedConversationId = conversationId;
+    queueContextWrite(true);
+    agentChatDraftSequence += 1;
+    pendingAgentChatDraft = {
+      requestId: agentChatDraftSequence,
+      panelInstanceId: panel.panel_instance_id,
+      projectId: selectedProject.project_id,
+      taskId: null,
+      runConversationId: conversationId,
+      text: RUN_REWORK_PROMPT,
     };
     session.binding?.activate(panel.panel_instance_id);
   }
@@ -575,11 +635,26 @@
     session.binding?.activate(panel.panel_instance_id);
   }
 
+  async function openRunReview(runId: string): Promise<void> {
+    if (!session || !snapshot || !selectedProject) return;
+    const target: WorkspaceRunReview = { run_id: runId };
+    const panel = snapshot.panels.find(
+      (candidate) => candidate.kind === "runReview" && candidate.run_review?.run_id === runId,
+    ) ?? await addPanel("runReview", null, null, null, target);
+    if (!panel) return;
+    session.binding?.activate(panel.panel_instance_id);
+  }
+
+  async function openRunReviewThread(runId: string): Promise<void> {
+    await openAgentChatThread(`conversation:run:${runId}`);
+  }
+
   async function addPanel(
     kind: string,
     resourceId: string | null = null,
     editorFile: WorkspaceEditorFile | null = null,
     forgeDiff: WorkspaceForgeDiff | null = null,
+    runReview: WorkspaceRunReview | null = null,
   ): Promise<WorkspacePanelPresentation | null> {
     if (!session || !snapshot) return null;
     if (kind === "tasks") {
@@ -602,6 +677,7 @@
       resource_targets: resourceTargets,
       editor_file: kind === "editor" ? editorFile : null,
       forge_diff: kind === "forgeDiff" ? forgeDiff : null,
+      run_review: kind === "runReview" ? runReview : null,
       conversation_id: null,
     };
     try {
@@ -744,6 +820,7 @@
       resource_targets: { ...panel.resource_targets },
       editor_file: panel.editor_file,
       forge_diff: panel.forge_diff,
+      run_review: panel.run_review,
       conversation_id: panel.conversation_id,
     };
   }
@@ -757,6 +834,7 @@
       case "editor": return "Editor";
       case "diff": return "Diff";
       case "forgeDiff": return "Changes";
+      case "runReview": return "Run Review";
       case "memory": return "Memory";
       default: return "Panel";
     }
@@ -1023,6 +1101,20 @@
       path={panel.forge_diff?.path ?? null}
       scope={panel.forge_diff?.scope ?? "all"}
       onOpenEditor={(fileRef, resourceId, path) => void openFileInEditor(fileRef, resourceId, path)}
+    />
+  {:else if panel.kind === "runReview"}
+    <RunReviewPanel
+      projectId={selectedProject?.project_id ?? null}
+      runId={panel.run_review?.run_id ?? null}
+      onOpenThread={() => {
+        const runId = panel.run_review?.run_id;
+        if (runId) void openRunReviewThread(runId);
+      }}
+      onPrepareRework={() => {
+        const runId = panel.run_review?.run_id;
+        if (runId) void prepareRunRework(runId);
+      }}
+      onReviewed={() => window.dispatchEvent(new CustomEvent("nucleus:runs-changed"))}
     />
   {:else if panel.kind === "memory"}
     <MemoryPanel projectId={selectedProject?.project_id ?? null} />

@@ -180,6 +180,13 @@ pub enum ControlCommandDto {
         expected_revision: Option<String>,
         operator_ref: String,
     },
+    RunTransition {
+        command_id: String,
+        run_id: String,
+        action: ControlRunTransitionActionDto,
+        expected_revision: Option<String>,
+        reason: Option<String>,
+    },
     RunDeliveryExecution {
         command_id: String,
         run_id: String,
@@ -205,6 +212,16 @@ pub enum ControlTaskCommandActionDto {
     Block,
     Complete,
     Archive,
+}
+
+/// Supported run lifecycle disposition actions for the first command DTO
+/// subset (accept/reject are the operator dispositions on a delivered run).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlRunTransitionActionDto {
+    Accept,
+    Reject,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ts_rs::TS)]

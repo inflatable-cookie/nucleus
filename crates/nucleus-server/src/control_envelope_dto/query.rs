@@ -288,5 +288,7 @@ pub enum ControlQueryDto {
         query_id: String,
         action: String,
         project_id: String,
+        run_id: Option<String>,
+        file_ref: Option<String>,
     },
 }

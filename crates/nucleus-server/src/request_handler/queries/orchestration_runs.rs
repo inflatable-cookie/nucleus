@@ -95,6 +95,7 @@ mod tests {
                 stop_conditions: Vec::new(),
             },
             worktree_ref: None,
+            base_ref: None,
             provider_instance: format!("provider:{run_id}"),
             provider_model: "model".to_owned(),
             orchestrator_designation: None,

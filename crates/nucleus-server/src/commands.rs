@@ -327,6 +327,9 @@ pub struct RunDispatchCommand {
     pub operation_id: Option<String>,
     pub conversation_id: Option<String>,
     pub worktree_ref: Option<String>,
+    /// Fork point of the run branch (primary repo HEAD at dispatch); the
+    /// delivery review diff is computed against this ref.
+    pub base_ref: Option<String>,
     pub expected_revision: Option<RevisionId>,
 }
 

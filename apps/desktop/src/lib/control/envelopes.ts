@@ -120,6 +120,14 @@ export type ControlCommandDto =
       run_id: string;
       expected_revision: string | null;
       operator_ref: string;
+    }
+  | {
+      kind: "run_transition";
+      command_id: string;
+      run_id: string;
+      action: "accept" | "reject";
+      expected_revision: string | null;
+      reason: string | null;
     };
 
 export type ControlRequestEnvelopeDto = {

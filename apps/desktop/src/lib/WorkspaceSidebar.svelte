@@ -3,6 +3,7 @@
   import { activity, files, folderTree, gitBranch, messagesSquare } from "../icons.generated";
   import { onMount } from "svelte";
   import type { ControlProjectRecordDto } from "./control";
+  import type { ControlOrchestrationRunSummaryDto } from "./control/generated/ControlOrchestrationRunSummaryDto";
   import FilesSidebarView from "./FilesSidebarView.svelte";
   import ForgeSidebarView from "./ForgeSidebarView.svelte";
   import ProjectRail from "./ProjectRail.svelte";
@@ -71,13 +72,27 @@
   function showFiles(): void { selectMode("files"); }
   function showForge(): void { selectMode("forge"); }
 
-  function openRun(runId: string): void {
+  function openRun(run: ControlOrchestrationRunSummaryDto): void {
+    const runId = run.run_id;
+    const projectId = selectedProjectId;
+    if (!projectId) return;
+    // Delivered and terminal runs open the delivery-review surface (closeout +
+    // validation + diff + disposition); everything else opens the worker
+    // conversation.
+    if (run.state === "delivered" || run.state === "accepted" || run.state === "rejected") {
+      window.dispatchEvent(
+        new CustomEvent("nucleus:open-run-review", {
+          detail: { projectId, runId },
+        }),
+      );
+      return;
+    }
     const conversationId = `conversation:run:${runId}`;
     selectedConversationId = conversationId;
     window.dispatchEvent(
       new CustomEvent("nucleus:open-agent-chat-thread", {
         detail: {
-          projectId: selectedProjectId,
+          projectId,
           conversationId,
         },
       }),
@@ -114,7 +129,7 @@
     {:else if activeMode === "runs"}
       <RunFleetPanel
         {selectedProjectId}
-        onOpenRun={(run) => openRun(run.run_id)}
+        onOpenRun={(run) => openRun(run)}
       />
     {:else if activeMode === "files"}
       <FilesSidebarView {selectedProject} />

@@ -21,6 +21,8 @@ pub struct WorkspacePanelPresentationInputDto {
     #[serde(default)]
     pub forge_diff: Option<WorkspaceForgeDiffDto>,
     #[serde(default)]
+    pub run_review: Option<WorkspaceRunReviewDto>,
+    #[serde(default)]
     pub conversation_id: Option<String>,
 }
 
@@ -37,6 +39,8 @@ pub struct WorkspacePanelPresentationDto {
     pub editor_file: Option<WorkspaceEditorFileDto>,
     #[serde(default)]
     pub forge_diff: Option<WorkspaceForgeDiffDto>,
+    #[serde(default)]
+    pub run_review: Option<WorkspaceRunReviewDto>,
     #[serde(default)]
     pub conversation_id: Option<String>,
 }
@@ -207,7 +211,14 @@ pub struct WorkspacePanelDto {
     #[serde(default)]
     pub forge_diff: Option<WorkspaceForgeDiffDto>,
     #[serde(default)]
+    pub run_review: Option<WorkspaceRunReviewDto>,
+    #[serde(default)]
     pub allowed_regions: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WorkspaceRunReviewDto {
+    pub run_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

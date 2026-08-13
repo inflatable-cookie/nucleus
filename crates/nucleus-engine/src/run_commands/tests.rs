@@ -132,6 +132,7 @@ fn full_lifecycle_transitions_to_accepted() {
                 operation_id: Some("operation:1".to_owned()),
                 conversation_id: Some("conversation:1".to_owned()),
                 worktree_ref: Some("worktree:1".to_owned()),
+                base_ref: None,
                 expected_revision: None,
             }),
             EngineRunLifecycleState::Dispatched,
@@ -196,6 +197,7 @@ fn mark_running_binds_observed_operation_id_and_dispatch_binds_worktree_ref() {
                 operation_id: None,
                 conversation_id: Some("conversation:run:run:1".to_owned()),
                 worktree_ref: Some("worktree:run:1".to_owned()),
+                base_ref: None,
                 expected_revision: None,
             }),
         )
@@ -348,6 +350,7 @@ fn terminal_states_do_not_accept_further_transitions() {
                 operation_id: None,
                 conversation_id: None,
                 worktree_ref: None,
+                base_ref: None,
                 expected_revision: None,
             }),
         )
@@ -404,6 +407,7 @@ fn delivered_requires_a_closeout() {
                 operation_id: None,
                 conversation_id: None,
                 worktree_ref: None,
+                base_ref: None,
                 expected_revision: None,
             }),
         )
@@ -446,6 +450,7 @@ fn run_storage_record_round_trips() {
             stop_conditions: vec!["s".to_owned()],
         },
         worktree_ref: Some("worktree:1".to_owned()),
+        base_ref: None,
         provider_instance: "provider:codex".to_owned(),
         provider_model: "codex-mini".to_owned(),
         orchestrator_designation: None,
