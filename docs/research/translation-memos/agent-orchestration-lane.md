@@ -167,6 +167,19 @@ AgentQuestion, MessageCenter.
   branch (pushed where possible) + notification; review rides the existing
   diff/review workflow. No forge is not a blocker.
 
+## Lane State (2026-08-14)
+
+Phases 1-3 are merged and verified on main: run registry (098), gated
+worktree authority (105), operator-dispatched runs (099), fleet panel
+(100), delivery pipeline (101), review surface (102), forge PR-creation
+lane (107 + 103), orchestrator designation + delegation tools (104).
+Contract 033 stays draft: phase 4 (`message_run` steering) is part of its
+Delegation Action Rule and remains unimplemented by decision. The admitted
+forge adapter is a test double; real forge routes report
+`ProviderUnavailable` until a provider route lands its own 027 lane.
+Operator live checkpoint is pending (dispatch a run; designate an
+orchestrator; let it delegate).
+
 ## Validation Needs
 
 - A two-worker proof against real providers before phase 3 widens: one
