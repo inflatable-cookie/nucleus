@@ -13,6 +13,10 @@ Updated: 2026-08-04
 - `099-operator-dispatched-runs.md` — waits for 098
 - `100-run-fleet-panel.md` — waits for 098, 099
 - `101-run-delivery-pipeline.md` — waits for 098, 099
+- `102-run-delivery-review-surface.md` — phase 2, waits for 101
+- `103-run-delivery-forge-pull-requests.md` — phase 2, waits for 101
+- `104-orchestrator-designation-and-delegation-tools.md` — phase 3, waits
+  for 099, 101
 
 ## Dispatched Cards
 
