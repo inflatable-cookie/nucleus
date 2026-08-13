@@ -14,12 +14,12 @@ Updated: 2026-08-04
 
 ## Planned Cards
 
-- `104-orchestrator-designation-and-delegation-tools.md` — phase 3, waits
-  for 099, 101
+- none
 
 ## Dispatched Cards
 
-- none
+- `104-orchestrator-designation-and-delegation-tools.md` — worker thread
+  `thread/104-orchestrator-designation`
 
 ## Paused Cards
 

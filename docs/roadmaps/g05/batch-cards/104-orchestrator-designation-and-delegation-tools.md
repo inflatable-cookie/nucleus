@@ -1,6 +1,6 @@
 # 104 Orchestrator Designation And Delegation Tools
 
-Status: planned
+Status: dispatched
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 3)
