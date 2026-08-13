@@ -16,4 +16,4 @@ One line per orchestrated worker thread. Orchestrator-only writes.
 | 096-message-centre-adoption | `g05/batch-cards/096-message-centre-adoption.md` | `thread/096-message-centre-adoption` | merged |
 | 097-failure-notification-routing | `g05/batch-cards/097-failure-notification-routing.md` | `thread/097-failure-notification-routing` | merged |
 | 098-orchestration-run-registry | `g05/batch-cards/098-orchestration-run-registry.md` | `thread/098-orchestration-run-registry` | merged |
-| 099-operator-dispatched-runs | `g05/batch-cards/099-operator-dispatched-runs.md` | `thread/099-operator-dispatched-runs` | dispatched |
+| 099-operator-dispatched-runs | `g05/batch-cards/099-operator-dispatched-runs.md` | `thread/099-operator-dispatched-runs` | paused (authority gate; stop log merged) |

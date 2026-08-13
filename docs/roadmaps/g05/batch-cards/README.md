@@ -8,6 +8,10 @@ Updated: 2026-08-04
 
 - none
 
+## Ready Cards
+
+- none
+
 ## Planned Cards
 
 - `100-run-fleet-panel.md` — waits for 099
@@ -19,11 +23,12 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `099-operator-dispatched-runs.md` — worker thread
-  `thread/099-operator-dispatched-runs`
+- none
 
 ## Paused Cards
 
+- `099-operator-dispatched-runs.md` — blocked on the worktree-creation
+  authority decision (stop log `docs/logs/2026-08-13-operator-dispatched-runs.md`)
 - `050-production-remote-transport-gate.md` — needs a promoted Nucleus remote
   host pairing/session contract and selected production topology
 - `051-secondary-window-product-gate.md` — needs an operator-selected

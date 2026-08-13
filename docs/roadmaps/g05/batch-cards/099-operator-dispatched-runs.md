@@ -1,11 +1,66 @@
 # 099 Operator-Dispatched Runs
 
-Status: dispatched
+Status: paused — blocked on the worktree-creation authority decision
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 1)
-Depends on: 098 (run registry)
+Depends on: 098 (run registry, merged `94028b31`); the worktree-creation
+  authority decision (stop log
+  `docs/logs/2026-08-13-operator-dispatched-runs.md`)
 Auto-start next card: no
+
+## Authority Gate (2026-08-13 stop finding)
+
+The first dispatch hit stop condition 1: worktree creation is deliberately
+outside the current authority surface. Contracts 007 and 011 exclude
+worktree mutation; the declared gate
+(`provider_git_branch_worktree_runner_authority`) is stopped-by-default and
+unwired (records keep `worktree_created: false`; no runner executes Git);
+no git mutation command exists on the control surface at all. Full
+citations and the three operator options are in the stop log. The
+composition trace below remains valid but is downstream of that decision.
+
+## Implementation Map (traced 2026-08-13, orchestrator takeover)
+
+The composition path is verified against source; execute it, don't
+re-derive it:
+
+- **Worker cwd**: `AgentSessionStartRequest.working_directory`
+  (`local_codex_chat/runtime.rs:106`) is fed by
+  `resolve_chat_working_context` (`local_codex_chat/routing.rs:31`), which
+  resolves a **project resource target** root. So a run's worker runs
+  against a worktree by registering the worktree as a project resource —
+  no new cwd plumbing.
+- **Resource registration**: project resource mutation machinery exists —
+  `ProjectResourceMutationCandidate` / kinds `FilesystemFolder` /
+  `GitRepository` (`control_envelope_dto/projects.rs`,
+  `project_resource_control`). Register the worktree as a `GitRepository`
+  resource.
+- **Git execution**: no `git worktree add` exists today (the
+  `provider_git_branch_worktree_runner_authority` modules are authority
+  records only). Follow the `Command::new("git")` + `--no-optional-locks`
+  pattern in
+  `provider_git_read_only_runner/working_copy/mutation.rs:124`. Worktree
+  path convention: sibling `<repo>-wt/<run-slug>` per the operator
+  playbook; branch `run/<slug>`.
+- **Run transitions**: propose → dispatch (binds `operation_id` +
+  `conversation_id`) → mark-running via
+  `EngineRunCommandService`
+  (`nucleus-engine/src/run_commands/service.rs`); server composition in
+  `request_handler/run_commands.rs` with fixtures in the same file
+  (`handler()` test support at :341).
+- **Conversation creation**: implicit — `send_agent_chat_message` with a
+  fresh conversation id + the worktree resource id starts the worker
+  conversation and seeds the brief as the first message. Dispatch creates
+  the conversation id deterministically (`conversation:run:<run_id>`);
+  `operation_id` binds when the first turn actually starts.
+- **Module ratchet**: no new top-level server modules (ceiling 323,
+  `crates/nucleus-server/tests/module_ratchet.rs`). Grow
+  `request_handler/run_commands.rs` or the engine.
+- **Open wiring decision**: `mark-running`/`fail` must come from observed
+  operation truth — the chat runtime's activity/session events need a hook
+  into run transitions. Locate the turn-start/terminal emission point in
+  `local_codex_chat/turn.rs` and wire the transition there, not on timers.
 
 ## Objective
 
