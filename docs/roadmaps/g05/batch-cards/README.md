@@ -21,8 +21,7 @@ Updated: 2026-08-04
 
 ## Dispatched Cards
 
-- `101-run-delivery-pipeline.md` — worker thread
-  `thread/101-run-delivery-pipeline` (re-dispatch, post-106)
+- none
 
 ## Paused Cards
 
@@ -130,5 +129,6 @@ Updated: 2026-08-04
 - `098-orchestration-run-registry.md`
 - `099-operator-dispatched-runs.md`
 - `100-run-fleet-panel.md`
+- `101-run-delivery-pipeline.md`
 - `105-worktree-creation-authority.md`
 - `106-run-delivery-commit-push-authority.md`

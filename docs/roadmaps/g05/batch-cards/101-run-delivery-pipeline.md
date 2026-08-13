@@ -1,6 +1,6 @@
 # 101 Run Delivery Pipeline
 
-Status: dispatched
+Status: completed
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 1)
@@ -57,11 +57,25 @@ the delivery-review UI surface (a phase-2 candidate).
 
 ## Acceptance (planned)
 
-- [ ] finished worker → closeout + validation + commit/push + notification
+- [x] finished worker → closeout + validation + commit/push + notification
   → `delivered`, each side effect receipted
-- [ ] no-remote projects still deliver (local branch + notification)
-- [ ] push failure keeps the run deliverable with an explaining receipt
-- [ ] accept/reject transitions work; fixtures + suites green; batch log
+- [x] no-remote projects still deliver (local branch + notification)
+- [x] push failure keeps the run deliverable with an explaining receipt
+- [x] accept/reject transitions work; fixtures + suites green; batch log
+
+## Closeout
+
+Merged to main as `bbe74b7e` (worker commits `f18b4ff7` + `7df83b76`,
+Luna-high, clean after the authority re-dispatch). A completed worker turn
+supplies closeout evidence; the server runs the repo validation hook in the
+isolated worktree, records evidence, writes the per-delivery
+operator-confirmed intent, and drives the 106 gated runner for add/commit
+(and own-branch push when a remote exists) before transitioning to
+`delivered`. Push failure keeps the local commit with a failed-push
+receipt; no-remote projects deliver the local branch. Delivery success and
+refusal both publish through the desktop host notification authority (097
+precedent); the renderer never publishes. First dispatch stopped on the
+commit/push gate (stop log merged `c9f618ec`); card 106 opened it.
 
 ## Stop Conditions
 

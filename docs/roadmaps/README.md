@@ -415,8 +415,10 @@ shape.
 
 ## Next Task
 
-Agent orchestration lane, phase 1: card 098 (run registry) merged. 099 is
-paused on the worktree-creation authority gate (stop log merged); card 105
-(wire the branch/worktree runner authority chain) is ready and unblocks it.
-Then 100 (fleet panel), 101 (delivery pipeline); phases 2-3 (102-104)
-drafted behind them.
+Agent orchestration lane: phase 1 is merged — registry (098), gated
+worktree authority (105), operator-dispatched runs (099), fleet panel
+(100), delivery commit/push authority (106), and the delivery pipeline
+(101). Operator checkpoint: dispatch a real run from the project surface,
+watch it in the Runs tab, and confirm the delivery loop end to end against
+a live provider. Then phase 2 (102 review surface, 103 forge PRs) or the
+operator's pick.
