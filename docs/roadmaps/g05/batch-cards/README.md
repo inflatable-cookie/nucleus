@@ -14,14 +14,15 @@ Updated: 2026-08-04
 
 ## Planned Cards
 
-- `102-run-delivery-review-surface.md` — phase 2, waits for 101
-- `103-run-delivery-forge-pull-requests.md` — phase 2, waits for 101
 - `104-orchestrator-designation-and-delegation-tools.md` — phase 3, waits
   for 099, 101
 
 ## Dispatched Cards
 
-- none
+- `102-run-delivery-review-surface.md` — worker thread
+  `thread/102-run-delivery-review-surface`
+- `103-run-delivery-forge-pull-requests.md` — worker thread
+  `thread/103-run-delivery-forge-pull-requests`
 
 ## Paused Cards
 

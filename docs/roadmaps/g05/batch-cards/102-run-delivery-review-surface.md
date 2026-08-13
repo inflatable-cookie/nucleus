@@ -1,6 +1,6 @@
 # 102 Run Delivery Review Surface
 
-Status: planned
+Status: dispatched
 Owner: Tom
 Created: 2026-08-13
 Milestone: none yet (agent orchestration lane, phase 2)
