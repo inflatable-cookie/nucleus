@@ -598,17 +598,26 @@ They must include:
 
 The first implementation must set provider mutation to false. It must not
 checkout, switch, branch, create worktrees, stage, commit, snap, publish, push,
-promote, open review requests, merge, or call a forge.
+promote, open review requests, merge, or call a forge except for the realized
+run authority exceptions below.
 
-Realized exception: isolated worktree creation for a dispatched run. The
-`create worktrees` exclusion admits exactly one effect: creating an isolated
-worktree for one run dispatch, and only through the branch/worktree runner
-authority chain — a durable operator-confirmed
-`GitBranchWorktreeRunnerOperatorEffectIntent::Confirmed` recorded per dispatch
-(`allow_isolated_worktree_creation` with the exact target refs), an admitted
-execution handoff, policy-approved target refs, `ReadyForRunner` authority
-status, and a runtime receipt. Provider mutation stays false, and every other
-effect in the exclusion list above stays excluded from this implementation.
+Realized exceptions: isolated worktree creation for a dispatched run and
+per-run delivery in that isolated worktree. The first exception creates the
+isolated worktree only through the branch/worktree runner authority chain — a
+durable operator-confirmed `GitBranchWorktreeRunnerOperatorEffectIntent::Confirmed`
+recorded per dispatch (`allow_isolated_worktree_creation` with exact target
+refs), an admitted execution handoff, policy-approved target refs,
+`ReadyForRunner` authority status, and a runtime receipt. The second is a
+distinct durable, operator-confirmed per-delivery intent that admits exactly
+`git add`/`git commit` in the run worktree and `git push` of the run's own
+branch to the confirmed remote. It carries the commit message, branch ref,
+worktree location, and remote target; it uses the same handoff, target,
+`ReadyForRunner`, structured-argv, bounded-spawn, sanitized-outcome, and
+receipt discipline. This is the local Git runner's explicitly confirmed
+remote effect; it does not grant provider API or forge authority under contract
+027. Provider/forge mutation stays false, force-push and every other effect in
+the exclusion list above stays excluded. A failed push retains
+the local commit and records the failed push receipt.
 
 Authority levels stay distinct:
 

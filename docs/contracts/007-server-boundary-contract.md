@@ -1735,21 +1735,26 @@ The first runner must reject:
 - unbounded output
 - raw stdout/stderr retention without an artifact policy
 
-Realized exception: isolated worktree creation for a dispatched run. The
-`SCM mutation` and `worktree mutation` rejections above admit exactly one
-effect: `git worktree add <location> -b <branch>` creating an isolated
-worktree for one run dispatch. That effect is admitted only through the Git
-branch/worktree runner authority chain: an operator-confirmed effect intent
-recorded by a control command per dispatch (durable
-`GitBranchWorktreeRunnerOperatorEffectIntent::Confirmed` carrying
-`allow_isolated_worktree_creation` and the exact target refs), an admitted
-execution handoff, policy-approved target refs, `ReadyForRunner` authority
-status, structured executable plus argv (never shell text), a bounded spawn
-with required timeout, sanitized outcome records, and a runtime receipt.
+Realized exceptions: isolated worktree creation for a dispatched run and
+per-run delivery in that isolated worktree. The `SCM mutation` and `worktree
+mutation` rejections above admit exactly these effects:
+`git worktree add <location> -b <branch>` for one dispatch, followed by
+`git add`/`git commit` in that run's isolated worktree and `git push` of that
+run's own branch to the confirmed project remote. Worktree creation is admitted
+through a dispatch-time `GitBranchWorktreeRunnerOperatorEffectIntent::Confirmed`
+record. Delivery is admitted through a distinct durable, operator-confirmed
+per-delivery intent carrying the commit message, exact branch ref, worktree
+location, and remote target. Both use an admitted execution handoff,
+policy-approved target refs, `ReadyForRunner` authority status, structured
+executable plus argv (never shell text), bounded spawn with required timeout,
+sanitized outcome records, and runtime receipts.
+
 Every other rejected effect stays rejected: no checkout or switch on the
-primary tree, no branch mutation, no commit, push, pull-request, forge,
-provider, callback, interruption, recovery, task mutation, or raw-output
-retention is admitted by this exception.
+primary tree, force-push, branch deletion, any ref beyond the run's own branch,
+pull-request, forge, provider, callback, interruption, recovery, task mutation,
+or raw-output retention is admitted by these exceptions. A push failure leaves
+the local commit and produces a failed push receipt; it does not authorize a
+retry outside the same delivery intent.
 
 Process spawning requirements:
 

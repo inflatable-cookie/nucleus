@@ -117,6 +117,55 @@ fn git_branch_worktree_runner_authority_blocks_non_admitted_handoffs() {
     }));
 }
 
+#[test]
+fn git_branch_worktree_runner_authority_accepts_delivery_confirmation() {
+    let handoffs = handoffs(GitBranchWorktreeMode::IsolatedWorktree, true);
+    let target_refs = target_refs(&handoffs, true);
+    let mut input = input(handoffs, target_refs);
+    input.operator_effect_intent = GitBranchWorktreeRunnerOperatorEffectIntent::DeliveryConfirmed {
+        confirmation_ref: "operator-confirmation:delivery".to_owned(),
+        branch_ref: "branch-ref:task".to_owned(),
+        worktree_location_ref: "worktree-ref:task".to_owned(),
+        commit_message: "deliver".to_owned(),
+        remote_target: "origin".to_owned(),
+    };
+    input.commit_requested = true;
+    input.push_requested = true;
+    let record = git_branch_worktree_runner_authority(input);
+    assert!(record.runner_invocation_permitted);
+    assert_eq!(
+        record.authorities[0].runner_action,
+        GitBranchWorktreeRunnerAction::CommitAndPushDelivery
+    );
+    assert!(!record.authorities[0]
+        .blockers
+        .contains(&GitBranchWorktreeRunnerAuthorityBlocker::CommitRequested));
+    assert!(!record.authorities[0]
+        .blockers
+        .contains(&GitBranchWorktreeRunnerAuthorityBlocker::PushRequested));
+}
+
+#[test]
+fn git_branch_worktree_runner_authority_blocks_delivery_target_mismatch() {
+    let handoffs = handoffs(GitBranchWorktreeMode::IsolatedWorktree, true);
+    let target_refs = target_refs(&handoffs, true);
+    let mut input = input(handoffs, target_refs);
+    input.operator_effect_intent = GitBranchWorktreeRunnerOperatorEffectIntent::DeliveryConfirmed {
+        confirmation_ref: "operator-confirmation:delivery".to_owned(),
+        branch_ref: "run/wrong".to_owned(),
+        worktree_location_ref: "worktree-ref:task".to_owned(),
+        commit_message: "deliver".to_owned(),
+        remote_target: "origin".to_owned(),
+    };
+    input.commit_requested = true;
+    input.push_requested = true;
+    let record = git_branch_worktree_runner_authority(input);
+    assert!(!record.runner_invocation_permitted);
+    assert!(record.authorities[0]
+        .blockers
+        .contains(&GitBranchWorktreeRunnerAuthorityBlocker::DeliveryTargetMismatch));
+}
+
 fn input(
     handoffs: GitBranchWorktreeExecutionHandoffSet,
     target_refs: Vec<GitBranchWorktreeRunnerTargetRef>,

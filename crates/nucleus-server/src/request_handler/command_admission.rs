@@ -65,6 +65,16 @@ fn orchestration_admission_from_command(
                 ),
             })
         }
+        ServerCommandKind::GitBranchWorktreeRunnerDelivery(confirmation_command) => {
+            Some(OrchestrationCommandAdmission {
+                command_id: OrchestrationCommandId(command.id.0.clone()),
+                family: OrchestrationCommandFamily::GitBranchWorktreeRunner,
+                target_ref: Some(confirmation_command.run_id.0.clone()),
+                summary: Some(
+                    "git branch/worktree runner delivery effect intent confirmation".to_owned(),
+                ),
+            })
+        }
         _ => None,
     }
 }

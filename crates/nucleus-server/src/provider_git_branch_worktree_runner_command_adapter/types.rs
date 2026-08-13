@@ -23,6 +23,17 @@ pub struct GitBranchWorktreeRunnerCommandAdapterInput {
     pub task_mutation_requested: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitBranchWorktreeRunnerDeliveryCommandAdapterInput {
+    pub authorities: GitBranchWorktreeRunnerAuthoritySet,
+    pub executable: String,
+    pub repo_working_directory_ref: String,
+    pub commit_message: String,
+    pub remote_target: String,
+    pub stdout_limit_bytes: usize,
+    pub stderr_limit_bytes: usize,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct GitBranchWorktreeRunnerCommandAdapterSet {
     pub command_set_id: String,
@@ -86,6 +97,9 @@ pub struct GitBranchWorktreeRunnerCommandAdapterRecord {
 pub enum GitBranchWorktreeRunnerCommandKind {
     CheckoutTemporaryBranch,
     CreateIsolatedWorktree,
+    StageRunWorktree,
+    CommitRunWorktree,
+    PushRunBranch,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -104,6 +118,9 @@ pub enum GitBranchWorktreeRunnerCommandAdapterBlocker {
     MissingRepoWorkingDirectoryRef,
     MissingBranchRef,
     MissingIsolatedWorktreeLocationRef,
+    MissingCommitMessage,
+    MissingRemoteTarget,
+    DeliveryRequiresIsolatedWorktree,
     ShellPassthroughRequested,
     RawOutputRetentionRequested,
     CommitRequested,

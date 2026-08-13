@@ -49,9 +49,21 @@ worktree location) for that dispatch. The execution path runs
 `git worktree add <location> -b <branch>` only when the chain reaches
 `ReadyForRunner` — admitted execution handoff, operator-confirmed intent,
 and policy-approved target refs — and the outcome record flips
-`worktree_created: true` with a runtime receipt (contract 020). No other SCM
-mutation (checkout, switch, commit, push, PR, branch mutation) rides this
-chain or this confirmation.
+`worktree_created: true` with a runtime receipt (contract 020). Commit and
+push do not ride this dispatch confirmation.
+
+## Run Delivery Authority Rule
+
+Run delivery commit and push are admitted only through the same Git
+branch/worktree runner authority chain, but use a distinct operator-confirmed
+per-delivery intent. The delivery confirmation carries the commit message,
+exact run branch ref, isolated worktree location, and confirmed project remote.
+At `ReadyForRunner`, structured argv runs `git add` and `git commit` in the run's
+isolated worktree, then `git push <remote> <run-branch>`; no shell text, force
+push, branch deletion, primary-tree mutation, or ref beyond the run's own branch
+is reachable. Each command has bounded capture, sanitized outcomes, and a
+contract-020 receipt. A push failure preserves the local commit and records an
+explaining failed push receipt; it does not make the delivery authority wider.
 
 ## Orchestrator Designation Rule
 
@@ -106,8 +118,9 @@ side effect.
 
 Acceptance is a separate act from delivery. The default merge authority is
 the operator: the orchestrator prepares and may recommend; the operator
-merges. Agent-initiated merge or push to a shared remote requires a
-separate, per-project grant not covered by this draft.
+merges. Agent-initiated merge remains separate. The per-delivery confirmation
+above is the explicit grant for pushing only that run's own branch; it does not
+grant force-push, branch deletion, or any other shared-remote mutation.
 
 ## Audit Rule
 

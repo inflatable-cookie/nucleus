@@ -18,6 +18,7 @@ pub(super) fn blockers(
     operator_blockers(
         &context.operator_effect_intent,
         &handoff.worktree_mode,
+        target_ref,
         &mut blockers,
     );
     target_blockers(target_ref, &handoff.worktree_mode, &mut blockers);
@@ -28,6 +29,7 @@ pub(super) fn blockers(
 fn operator_blockers(
     intent: &GitBranchWorktreeRunnerOperatorEffectIntent,
     mode: &GitBranchWorktreeMode,
+    target_ref: Option<&GitBranchWorktreeRunnerTargetRef>,
     blockers: &mut Vec<GitBranchWorktreeRunnerAuthorityBlocker>,
 ) {
     match intent {
@@ -48,6 +50,40 @@ fn operator_blockers(
             }
             _ => {}
         },
+        GitBranchWorktreeRunnerOperatorEffectIntent::DeliveryConfirmed {
+            branch_ref,
+            worktree_location_ref,
+            commit_message,
+            remote_target,
+            ..
+        } => {
+            if mode != &GitBranchWorktreeMode::IsolatedWorktree {
+                blockers.push(
+                    GitBranchWorktreeRunnerAuthorityBlocker::DeliveryRequiresIsolatedWorktree,
+                );
+            }
+            if commit_message.trim().is_empty()
+                || commit_message.len() > 16 * 1024
+                || commit_message.contains('\0')
+            {
+                blockers
+                    .push(GitBranchWorktreeRunnerAuthorityBlocker::DeliveryCommitMessageMissing);
+            }
+            if remote_target.trim().is_empty()
+                || remote_target.starts_with('-')
+                || remote_target.contains('\0')
+            {
+                blockers.push(GitBranchWorktreeRunnerAuthorityBlocker::DeliveryRemoteTargetMissing);
+            }
+            if let Some(target_ref) = target_ref {
+                if target_ref.branch_ref.as_deref() != Some(branch_ref.as_str())
+                    || target_ref.worktree_location_ref.as_deref()
+                        != Some(worktree_location_ref.as_str())
+                {
+                    blockers.push(GitBranchWorktreeRunnerAuthorityBlocker::DeliveryTargetMismatch);
+                }
+            }
+        }
     }
 }
 
@@ -86,10 +122,14 @@ fn forbidden_authority_blockers(
     if context.raw_output_retention_requested {
         blockers.push(GitBranchWorktreeRunnerAuthorityBlocker::RawOutputRetentionRequested);
     }
-    if context.commit_requested {
+    let delivery_confirmed = matches!(
+        context.operator_effect_intent,
+        GitBranchWorktreeRunnerOperatorEffectIntent::DeliveryConfirmed { .. }
+    );
+    if context.commit_requested && !delivery_confirmed {
         blockers.push(GitBranchWorktreeRunnerAuthorityBlocker::CommitRequested);
     }
-    if context.push_requested {
+    if context.push_requested && !delivery_confirmed {
         blockers.push(GitBranchWorktreeRunnerAuthorityBlocker::PushRequested);
     }
     if context.pull_request_requested {

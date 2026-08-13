@@ -59,7 +59,9 @@ where
             "git-branch-worktree-runner-outcomes:{}",
             input.commands.command_set_id
         ),
-        shell_execution_performed: records.iter().any(|record| record.shell_execution_performed),
+        shell_execution_performed: records
+            .iter()
+            .any(|record| record.shell_execution_performed),
         checkout_executed: records.iter().any(|record| record.checkout_executed),
         branch_created: records.iter().any(|record| record.branch_created),
         worktree_created: records.iter().any(|record| record.worktree_created),
@@ -104,10 +106,10 @@ fn blockers(input: &GitBranchWorktreeRunnerOutcomePersistenceInput) -> Vec<Block
     if input.raw_output_retention_requested {
         blockers.push(Blocker::RawOutputRetentionRequested);
     }
-    if input.commit_requested {
+    if input.commit_requested && !input.delivery_authority_granted {
         blockers.push(Blocker::CommitRequested);
     }
-    if input.push_requested {
+    if input.push_requested && !input.delivery_authority_granted {
         blockers.push(Blocker::PushRequested);
     }
     if input.pull_request_requested {

@@ -23,7 +23,7 @@ pub(super) fn authority_record(
         GitBranchWorktreeRunnerAuthorityStatus::Blocked
     };
     let operator_confirmation_ref = operator_confirmation_ref(&context.operator_effect_intent);
-    let runner_action = runner_action(&handoff.worktree_mode);
+    let runner_action = runner_action(&context.operator_effect_intent, &handoff.worktree_mode);
     let runner_invocation_permitted =
         status == GitBranchWorktreeRunnerAuthorityStatus::ReadyForRunner;
 
@@ -70,11 +70,23 @@ fn operator_confirmation_ref(
         GitBranchWorktreeRunnerOperatorEffectIntent::Missing => None,
         GitBranchWorktreeRunnerOperatorEffectIntent::Confirmed {
             confirmation_ref, ..
+        }
+        | GitBranchWorktreeRunnerOperatorEffectIntent::DeliveryConfirmed {
+            confirmation_ref, ..
         } => Some(confirmation_ref.clone()),
     }
 }
 
-fn runner_action(mode: &GitBranchWorktreeMode) -> GitBranchWorktreeRunnerAction {
+fn runner_action(
+    intent: &GitBranchWorktreeRunnerOperatorEffectIntent,
+    mode: &GitBranchWorktreeMode,
+) -> GitBranchWorktreeRunnerAction {
+    if matches!(
+        intent,
+        GitBranchWorktreeRunnerOperatorEffectIntent::DeliveryConfirmed { .. }
+    ) {
+        return GitBranchWorktreeRunnerAction::CommitAndPushDelivery;
+    }
     match mode {
         GitBranchWorktreeMode::PrimaryTree => {
             GitBranchWorktreeRunnerAction::CheckoutTemporaryBranch
