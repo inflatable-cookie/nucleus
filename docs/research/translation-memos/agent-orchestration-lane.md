@@ -43,6 +43,7 @@ layer that owns their lifecycle.
 | Working copy observation, staging, commit | cards 011-013 |
 | Review workflow (diff → editor, rework handoff) | cards 063-066 |
 | Command admission and policy | `nucleus-command-policy`; contracts 032 + longhorn command contracts |
+| Host tools offered to an agent session | Codex route already carries consumer-declared dynamic tools: nucleus `ToolDeclaration`s flow through swallowtail `dynamicTools` (`nucleus-agent-adapters/src/swallowtail_codex/tools.rs`, `swallowtail-adapter-codex/src/session_input.rs`) — this is how `task_ledger` works today |
 | Durable orchestration spine | contract 018 (event-sourced commands, events, projections, receipts) |
 | Operator notification of run events | notification ledger (042-044) + message centre (096-097) |
 | Control-role framework for children | swallowtail 045 §Operator Inspection And Control |
@@ -68,10 +69,13 @@ layer that owns their lifecycle.
 3. **Delegation tools are harness tools offered to the orchestrator's
    session.** The stable verb set from the evidence: `delegate` (objective,
    provider, model, budget; returns run id), `run_status`, `message_run`,
-   `cancel_run`, `accept_delivery` / `reject_delivery`. Swallowtail exposes
-   the host-tool surface; nucleus-server implements them against the run
-   registry. This mirrors how collab tools ride the provider, except the
-   harness owns the effect.
+   `cancel_run`, `accept_delivery` / `reject_delivery`. The Codex route
+   already carries consumer-declared dynamic tools end to end (the
+   `task_ledger` path), so nucleus implements the verbs as server-side
+   tools admitted only to designated orchestrator sessions; the swallowtail
+   work is per-route qualification of the dynamic-tool channel (Codex has
+   it; ACP routes need evidence) plus admission rules, not a new surface
+   from scratch.
 4. **Workers are ordinary operations on worktrees.** Spawning = create
    worktree + start a conversation/operation with the run's objective as the
    brief. The operator can open any run as a thread and interact directly —
@@ -104,10 +108,12 @@ New work, in dependency order:
   labeled, never impersonate the operator); audit requirements (every
   delegation decision is a receipt).
 - **Swallowtail contract (new or 045-adjacent): Host-Tool Surface For
-  Managed Sessions.** What a host tool is, how tools are admitted to a
-  provider session per route, capability declaration per provider, and
-  pre-dispatch rejection when a route cannot carry host tools. 045's
-  bound-role framework is the template.
+  Managed Sessions.** Narrower than first scoped: the Codex dynamic-tool
+  channel exists and is proven (`task_ledger`). The contract work is
+  admission and qualification — which routes may carry consumer-declared
+  tools, per-route capability declaration, bounded tool counts and schema
+  sizes (already enforced for Codex), and pre-dispatch rejection where a
+  route cannot carry them. 045's bound-role framework is the template.
 - **Amendments**: nucleus 032 (consumer boundary — orchestration runs join
   the adopted-systems list); nucleus 018 if the run aggregate needs envelope
   changes (expected: none, it composes); swallowtail 045 only if a provider
