@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-08-01
+Updated: 2026-08-17
 
 ## Active Contracts
 
@@ -41,6 +41,8 @@ Updated: 2026-08-01
 | `031-swallowtail-task-execution-runtime-contract.md` | draft-promoted-first-pass | Nucleus task-executor port over explicit Swallowtail workspace access, outcomes, linkage, and cleanup. |
 | `032-longhorn-desktop-systems-integration-contract.md` | active | Nucleus consumer boundary for adopted Longhorn settings plus later commands, operations, notifications, recovery, bridge, and conditional transfer systems. |
 | `033-orchestration-runs-and-delegation-authority-contract.md` | draft | Operator-designated orchestrator agents, harness-owned worker runs on worktrees, delegation tools, delivery/acceptance split, and audit. |
+| `034-agent-instruction-surface-contract.md` | active | Root and nested agent instruction surfaces, continuation, batch size, reporting, worker mode, and papercuts loop. |
+| `035-agent-local-paths-contract.md` | active | Repository-local agent path registry and manual worktree container rules. |
 
 ## Needed Contracts
 

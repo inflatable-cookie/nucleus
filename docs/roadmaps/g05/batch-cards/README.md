@@ -2,11 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-08-04
-
-## Ready Cards
-
-- none
+Updated: 2026-08-17
 
 ## Ready Cards
 

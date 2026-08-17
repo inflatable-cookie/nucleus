@@ -36,6 +36,9 @@ Contracts define durable rules and interfaces.
 - `030-swallowtail-agent-runtime-integration-contract.md`
 - `031-swallowtail-task-execution-runtime-contract.md`
 - `032-longhorn-desktop-systems-integration-contract.md`
+- `033-orchestration-runs-and-delegation-authority-contract.md`
+- `034-agent-instruction-surface-contract.md`
+- `035-agent-local-paths-contract.md`
 - `contract-index.md`
 
 ## Promotion Rule

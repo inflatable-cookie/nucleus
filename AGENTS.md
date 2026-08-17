@@ -1,21 +1,35 @@
 # Nucleus Agents
 
-This file applies to the whole repository.
+Scope: whole repository.
 
-## Start Here
+## Always-loaded boundaries
+
+- Use the repository's canonical docs and ready-card surfaces; do not invent a
+  parallel planning authority.
+- In this repo, normal-mode agents use the current checkout and follow the
+  task's canonical docs. Worker mode is active only when an orchestrator-
+  dispatched handoff under `docs/handoffs/` declares worker mode; read that
+  handoff for its execution contract instead of inferring worker mode from a
+  path, branch, or harness.
+- If planning authority does not settle the next direction, stop and ask. Keep
+  continuation inside the current bounded lane.
+- Do not implement server, Tauri, or harness behavior before the relevant
+  contracts are clear enough to test.
+- Do not run release mutations or change CI or workflow files without an explicit
+  request.
+
+## Common commands
 
 ```sh
 effigy tasks
-effigy doctor
+effigy doctor       # only when routing or environment state is uncertain
 effigy test --plan
 ```
 
 Then prefer `effigy <task>` for supported repo work before falling back to raw
-tools.
+tools. Do not add `package.json` scripts that re-export Effigy tasks.
 
-Do not add `package.json` scripts that re-export Effigy tasks.
-
-## Docs Authority
+## Docs authority
 
 - `docs/README.md`
 - `docs/vision/README.md`
@@ -24,8 +38,15 @@ Do not add `package.json` scripts that re-export Effigy tasks.
 - `docs/specs/README.md`
 - `docs/roadmaps/README.md`
 - `docs/logs/README.md`
+- `docs/contracts/001-working-rules.md`
+- `docs/contracts/034-agent-instruction-surface-contract.md`
+- `docs/contracts/035-agent-local-paths-contract.md`
 
-## Project Posture
+During execution, record a small recurring solvable hurdle in `PAPERCUTS.md`
+according to the working-rules contract; do not make that observation unplanned
+work.
+
+## Project posture
 
 Nucleus starts in strict Northstar posture.
 
@@ -35,10 +56,7 @@ Nucleus starts in strict Northstar posture.
 - roadmaps sequence work
 - logs record meaningful decisions and evidence
 
-Do not implement server, Tauri, or harness behavior before the relevant
-contracts are clear enough to test.
-
-## Rust Code Shape
+## Rust code shape
 
 Keep Rust code in small, focused modules.
 
@@ -47,47 +65,11 @@ Keep Rust code in small, focused modules.
 - avoid large catch-all modules unless a crate is still only a placeholder
 - prefer clear module boundaries over dumping unrelated types into one file
 
-## Continuation Rule
+## Read on demand
 
-In a strict Northstar lane, a bare `continue` should be enough.
-
-Treat it as:
-
-- resume from the previous closeout's `Next Task`
-- re-anchor on the current ready card or explicit stop/reassessment step
-- stay inside the bounded lane unless file state requires a stop
-
-Keep the active `## Next Task` pointer only in `docs/roadmaps/README.md`.
-Do not duplicate it into README files, contracts, specs, research notes,
-architecture docs, batch cards, or other docs front doors.
-
-## Batch Size Rule
-
-Work in complete, meaningful chunks.
-
-- before editing, inspect the current ready card plus nearby planned cards
-- plan a multi-card stretch when the cards are small or tightly related
-- execute several related cards in one turn when validation can cover them
-  together
-- avoid one-card turns unless the card is genuinely large, risky, blocked, or
-  the operator explicitly asks for a narrow step
-- close and advance multiple cards together when they form one coherent lane
-- run validation after the full chunk, not after each tiny edit
-- if the work starts becoming nitpicky, pause and re-scope around the broader
-  lane goal before continuing
-
-## Planning Ambiguity Rule
-
-When planning is needed and the next direction is not settled in the repo's
-authority surfaces, stop and ask for operator intent instead of guessing.
-
-## Reporting Rule
-
-For meaningful checkpoint replies:
-
-- lead with what changed
-- state current lane state
-- mention validation only when it failed or changes confidence
-- state the next move
-
-Use glue-light writing. See `docs/policy/internal-writing-style.md`.
+Use nested `AGENTS.md` files for path-specific rules, contracts for durable
+boundaries, guides for procedures, and skills for task-specific workflows.
+Continuation, batch size, planning ambiguity, reporting, worker mode, and
+papercuts rules live in `034-agent-instruction-surface-contract.md`. Local path
+registry rules live in `035-agent-local-paths-contract.md`. Writing style lives
+in `docs/policy/internal-writing-style.md`.

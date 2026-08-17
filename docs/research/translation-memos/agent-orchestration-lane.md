@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-08-13
+Updated: 2026-08-17
 
 ## Purpose
 
@@ -167,9 +167,9 @@ AgentQuestion, MessageCenter.
   branch (pushed where possible) + notification; review rides the existing
   diff/review workflow. No forge is not a blocker.
 
-## Lane State (2026-08-14)
+## Lane State (2026-08-17)
 
-Phases 1-3 are merged and verified on main: run registry (098), gated
+Phases 1-3 remain merged and verified on main: run registry (098), gated
 worktree authority (105), operator-dispatched runs (099), fleet panel
 (100), delivery pipeline (101), review surface (102), forge PR-creation
 lane (107 + 103), orchestrator designation + delegation tools (104).
@@ -179,6 +179,12 @@ forge adapter is a test double; real forge routes report
 `ProviderUnavailable` until a provider route lands its own 027 lane.
 Operator live checkpoint is pending (dispatch a run; designate an
 orchestrator; let it delegate).
+
+Next planning authority:
+
+- `docs/roadmaps/README.md`
+- `docs/roadmaps/long-term-plan.md`
+- `docs/roadmaps/g06/README.md`
 
 ## Validation Needs
 

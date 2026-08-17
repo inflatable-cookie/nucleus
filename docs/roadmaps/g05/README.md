@@ -2,7 +2,7 @@
 
 Status: active
 Owner: Tom
-Updated: 2026-08-04
+Updated: 2026-08-17
 
 ## Purpose
 
@@ -29,6 +29,8 @@ Runway bands:
 - Swallowtail application-scale readiness and bounded native proof
 - Longhorn consumer admission, Settings, commands, cross-panel work,
   notifications, backup/recovery, and optional host/window extensions
+- agent orchestration phases 1-3: run registry, delivery pipeline,
+  orchestrator designation, and delegation tools
 
 The operator sets the shape of each inward step after using the previous one.
 Do not compile speculative specialist-panel redesigns ahead of that feedback.
@@ -89,6 +91,9 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 - `025-plan-decision-agent-chat.md` - completed; contracts, failure detail,
   server/desktop implementation, and native acceptance all pass (operator GUI
   pass plus the recorded live provider proof, cards 086 and 091)
+- agent orchestration phases 1-3 - completed on main; operator live checkpoint
+  pending. See `../../research/translation-memos/agent-orchestration-lane.md`
+  and batch cards 098-107.
 
 The secondary-system sequence starts with structural admission, then Settings
 as the first product-facing lane. Hosted Surfaces, generic history,

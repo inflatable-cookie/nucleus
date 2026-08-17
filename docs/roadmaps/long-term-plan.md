@@ -1,16 +1,16 @@
 # Long Term Plan
 
-Status: proposed
+Status: active
 Owner: Tom
-Updated: 2026-06-21
+Updated: 2026-08-17
 
 ## Purpose
 
-Provide a stable high-level plan so Nucleus does not keep advancing by small
-ad hoc batch cards.
+Provide a stable high-level runway so Nucleus does not keep advancing by small
+ad hoc batch cards alone.
 
-This plan should govern the next generations. Batch cards should only be
-created inside an approved phase when the phase is ready for execution.
+Batch cards execute inside an approved generation theme. This plan governs
+generation transitions and strategic horizons.
 
 ## Planning Rules
 
@@ -19,618 +19,148 @@ created inside an approved phase when the phase is ready for execution.
 - Do not open more implementation lanes until the current phase goal is
   explicit.
 - Prefer phase closeouts over micro-card churn.
-- Promote durable findings into architecture/contracts before implementation
-  depends on them.
+- Promote durable findings into architecture and contracts before
+  implementation depends on them.
 - Keep T3 Code as a specimen, not a template to clone blindly.
 
-## Current G03 Runway
+## Closed Generations
 
-G02 is closed. It proved the orchestration and engine-core path through
-task-backed runtime evidence, explicit review, task completion, SCM capture,
-operator review, review decisions, adapter-neutral change-request preparation,
-and adapter-specific change-request planning.
+| Generation | Theme | Result |
+| --- | --- | --- |
+| `g01` | Foundation, harness research, runtime boundaries, proof diagnostics | closed |
+| `g02` | Orchestration spine, Codex runtime, task-backed work, SCM record lanes | closed |
+| `g03` | Effect-gated SCM execution, provider reads, planning projection, memory | closed |
+| `g04` | Product workflow vertical slice, editor, review, resources, panels | closed |
 
-G03 is the effect-gated SCM execution generation. It starts with Git because
-G02 selected Git as the first executable adapter lane from evidence. The first
-g03 milestone admits intent and authority only; it still does not create
-branches, commits, pushes, pull requests, forge requests, or provider writes.
+See `generation-index.md` for the canonical generation table.
 
-Completed workflow proof:
+## Active Generation: g05 Product Consolidation
 
-- task-backed agent work unit
-
-First bridged runtime target:
-
-- Codex
-
-Reason:
-
-- this proves the core product loop most directly
-- Codex supervision has the strongest existing runtime runway
-- native steward and repo-backed management sync remain follow-on workflows,
-  not parallel implementation lanes
-
-Current G02 continuation sequence:
-
-1. code-health repair for the red doctor gate - complete enough to proceed with
-   doctor risk recorded
-2. task-backed agent workflow contract hardening - complete
-3. task work-unit source records and admission path - complete
-4. Codex runtime bridge proof for task-backed work - complete
-5. checkpoint/review loop for completed work units - complete
-6. desktop proof surface for task-agent progress - complete
-7. validation and next workflow selection - complete
-8. repo-backed management sync hardening - complete
-9. management sync apply and review - complete
-10. SCM management capture and share foundation - complete
-11. Git management capture adapter proof - complete
-12. SCM working-session execution prep - complete
-13. change-request preparation boundary - complete
-14. steward SCM sync automation gate - complete
-15. SCM workflow closeout and next phase selection - complete
-16. god-file health gate rebaseline - complete
-17. management projection state test split - complete
-18. SCM work sessions module split - complete
-19. diagnostics read-model test split - complete
-20. engine management sync test split - complete
-21. management projection apply/import split - complete
-22. change-request prep module split - complete
-23. health reset validation and next runtime lane - complete
-24. harness runtime rebaseline - complete
-25. Codex live event acceptance - complete
-26. Codex process and transport acceptance - complete
-27. Codex live spawn smoke gate - complete
-28. Codex turn-start admission gate - complete
-29. Codex turn-start send/subscription gate - complete
-30. Codex callback response gate - complete
-31. Codex provider interruption gate - complete
-32. Codex session recovery gate - complete
-33. provider runtime materialisation gate - complete
-34. provider command reactor gate - complete
-35. Codex live provider send readiness - complete
-36. Codex `turn/start` transport-executor handoff - complete
-37. task-backed workflow hardening - complete
-38. Codex direct-connection smoke gate - complete
-39. Codex live executor integration - complete through durable dispatch records
-40. durable dispatch invocation gate - complete
-41. Codex provider session and stdio persistence - complete
-42. runtime observation event-store linkage - complete
-43. task work transition admission from live observations - complete
-44. durable wait/callback/interruption/recovery persistence - complete
-45. provider runtime hardening - complete
-46. provider observability diagnostics - complete
-47. task-backed live workflow closeout and next lane selection - complete
-48. durable Codex live smoke execution - complete
-49. SCM capture workflow composition - complete
-50. SCM capture workflow control integration - complete
-51. SCM capture operator review readiness - complete
-52. SCM capture review control integration - complete
-53. SCM capture review decision persistence - complete
-54. SCM capture review decision control integration - complete
-55. SCM capture change-request preparation admission - complete
-56. SCM capture change-request preparation control - complete
-57. SCM change-request adapter plan selection - complete
-58. health and runway rebaseline - complete
-59. g03 Git change-request execution gate - active
-
-Current extended goal list:
-
-1. Finish the durable dispatch invocation path without adding unattended
-   provider execution.
-2. Persist provider session, stdio frame, decode, and transport evidence so
-   live runtime state survives restart and can be replayed.
-3. Promote accepted provider observations into the orchestration event store
-   with deterministic identity and idempotent ingestion.
-4. Admit task work-item runtime transitions from live observations without
-   letting provider completion imply task completion or review acceptance.
-5. Persist callback, interruption, and recovery evidence around the durable
-   executor instead of treating these as ephemeral provider facts.
-6. Harden runtime retry, idempotency, backpressure, retention, and repair
-   paths before broadening automation.
-7. Add read-only observability and support evidence so failures can be
-   diagnosed without raw payload exposure.
-8. Close the task-backed live workflow as a reusable proof, then choose the
-   next product lane deliberately.
-9. Promote the direct Codex smoke into a durable server-owned live smoke lane
-   using existing dispatch, invocation, handoff, outcome persistence, and
-   replay evidence.
-
-Selected current workflow:
-
-- Codex live executor integration
-
-Reason:
-
-- task-backed agent work now has a proof path, but task/project state still
-  needs committable projection discipline before multi-user workflow,
-  steward automation, or richer UI work should expand
-- export/import/conflict staging and explicit apply/review behavior now exist,
-  including revision gates, receipts, and review read models
-- provider-neutral SCM capture/share preparation now exists for accepted
-  management projection changes
-- Git-specific dry-run planning and sanitized status/diff evidence now exist
-  without committing or pushing
-- working-session execution prep now models primary-tree and isolated-location
-  guard checks, cleanup policy, repair records, and no-provider-mutation gates
-- provider-neutral change-request candidates, GitHub descriptor mapping, and
-  evidence packages now exist without forge network calls
-- steward SCM sync decision records and diagnostics now sit over
-  capture/apply/review evidence without provider mutation authority
-- the SCM closeout confirmed the runway is complete as record, policy, and
-  diagnostics work, not as a provider-executing SCM engine
-- `effigy doctor` still has recorded god-file risk; this should be handled as
-  a bounded health lane, not mixed into live-provider execution work
-- widening remote transport, workspace panels, or provider SCM execution would
-  still distract from the next core runtime question
-- harness runtime rebaseline confirmed the current Codex code is descriptor,
-  fixture, compile-only supervision, wait-state, task admission, progress,
-  receipt, and recovery-gate proof work
-- durable Codex live event acceptance is complete as record, projection, and
-  diagnostics work
-- the next Phase 4 lane is Codex process and transport acceptance before
-  callback, cancellation, resume, or task mutation behavior widens
-- Codex callback response request, admission, envelope, receipt, and
-  diagnostics records are complete without raw provider payload retention
-- provider-reaching interruption/cancellation records are complete without raw
-  provider payload retention
-- session recovery/resume is complete as record, admission, envelope, receipt,
-  and diagnostics work
-- provider runtime materialisation is complete as read-only diagnostics,
-  provider-service ownership, provider instance registry/config, and service
-  outcome receipt/event linkage
-- provider command reactor dry-run work is complete as admission, queue,
-  dispatch, outcome persistence, and Codex turn-start/callback dry-run routing
-- Codex live-send readiness is complete as record-layer preflight evidence,
-  transport write attempts, receipt/event linkage, and opt-in smoke-boundary
-  gating
-- `turn/start` is the selected first live-write target; execution remains
-  blocked until explicit operator intent and a transport-executor handoff are
-  planned
-- the next handoff lane must define executor authority, sanitized execution
-  envelopes, persistence, frame/decode evidence, diagnostics, and a
-  stopped-by-default smoke boundary before any provider write runs
-- the handoff lane and task-backed workflow hardening are complete; `nucleusd`
-  exposes a direct-connection smoke gate whose confirmed mode reports
-  eligibility and whose execution mode requires a separate effect flag
-- the approved direct Codex provider smoke executed through local app-server
-  and reached `turn/completed` with sanitized output only
-- the next lane must turn the smoke path into durable server-owned executor
-  records, persisted receipts, and read-only diagnostics before task-backed
-  provider execution widens
-- task-backed live workflow closeout now has a deterministic replay fixture, a
-  stopped-by-default `nucleusd` durable runtime smoke dry-run, and authority
-  regressions across provider, callback, cancellation, resume, task, review,
-  SCM, and raw-material boundaries
-- the next selected lane is durable Codex live smoke execution: prove one
-  explicit, operator-confirmed provider write through the durable server-owned
-  runtime path, then compare the resulting evidence against the replay fixture
-- checkout, worktree creation, push, publish, promote, forge review requests,
-  merge, and steward automatic sync remain later gates
-
-This keeps execution focused on one real workflow while protecting the core
-engine boundary from more proof-surface sprawl.
-
-## 2026-07-03 Stocktake Direction
-
-Current selected workflow:
-
-- planning-memory proposal foundation
-
-Reason:
-
-- task/project workflow, task seeds, task seed promotion, planning projection
-  payloads, deterministic file export, publication/share gates, and
-  import/admission diagnostics are now represented as controlled server
-  surfaces
-- continuing into active import apply would overbuild synchronization
-  mechanics before there is an app-native planning domain to apply into
-- shared memory and deep research should attach to planning sessions,
-  exploration outputs, accepted artifacts, and task seeds rather than stand as
-  disconnected systems
-- guided planning and open-ended exploration are core product surfaces from the
-  original Nucleus goal
-
-Near runway:
-
-1. Complete structured planning domain foundation. Done.
-2. Create the focused `nucleus-memory` proposal boundary.
-3. Model proposed memory scope, kind, status, review, sensitivity, confidence,
-   retention, and source refs without accepting memory automatically.
-4. Link memory proposals to planning sessions, exploration output, planning
-   artifacts, research brief refs, task seeds, tasks, and evidence refs.
-5. Add storage and read-only inspection only after the record model is stable.
-6. Reassess whether the next lane is deep research run briefs, accepted memory
-   review commands, planning import apply/review, or a disposable
-   planning/memory UI proof.
-
-## 2026-07-06 G04 Rollover Direction
-
-Current selected workflow:
-
-- product workflow vertical slice
-
-Reason:
-
-- g03 has become large and has delivered enough backend proof surfaces for SCM,
-  provider reads, planning projection, memory proposals, accepted memory,
-  projection import, review, durable review receipts, and stopped active-apply
-  admission diagnostics
-- continuing into active accepted-memory apply would deepen one subsystem
-  before the project/task/agent workflow feels coherent
-- deferred lanes now have an explicit return queue in
-  `docs/roadmaps/deferred-lanes.md`
-- the next useful pressure is product coherence: project, task, planning,
-  runtime evidence, review, and SCM readiness in one understandable workflow
-
-Near runway:
-
-1. Close g03 as an effect-gated backend proof generation. Done.
-2. Mark accepted-memory active apply executor work superseded and deferred.
-   Done.
-3. Open g04 around a product workflow vertical slice. Done.
-4. Define the workflow slice boundary before implementation.
-5. Compose a read-only workflow summary from existing records.
-6. Expose the summary through `nucleusd` and Effigy.
-7. Add a disposable desktop proof only after the server read model is useful.
-
-Do not return to accepted-memory active apply, provider expansion, SCM/forge
-mutation, panel layout, plugin runtime, final UI, or broad automation until a
-visible workflow proves the need.
-
-## Phase 0: Reassessment And Planning Base
-
-Goal: make the planning base trustworthy.
-
-Work:
-
-- Review `docs/logs/2026-06-17-stocktake.md`.
-- Split or summarize oversized authority surfaces:
-  `system-architecture.md` and `007-server-boundary-contract.md`.
-- Normalize roadmap status vocabulary.
-- Decide whether the current pause is a suitable switch-gear point where `g01`
-  closes and `g02` starts. Large generations are fine; rollover should happen
-  only when the development mode changes.
-- Maintain `architecture/architecture-gap-index.md`.
-- Maintain `architecture/implementation-gap-index.md`.
-- Decide the first real product workflow to prove.
-
-Exit criteria:
-
-- one approved next generation theme
-- no ambiguous active implementation lane
-- roadmap front door points at the approved next phase
-
-## Phase 1: Core Orchestration Model
-
-Goal: define and implement the central work/event spine.
-
-Work:
-
-- Decide whether Nucleus uses event-sourced orchestration as the core model.
-- Define project, task, session, thread, turn, message, activity, checkpoint,
-  and runtime receipt relationships.
-- Add a Rust orchestration crate or split server internals so the engine owns
-  commands, events, projections, and replay.
-- Define durable event identity and projection rebuild rules.
-- Define how tasks map to agent work units and conversation threads.
-
-Exit criteria:
-
-- durable orchestration contract
-- first Rust command/event/projection implementation
-- tests proving deterministic projection and replay
-
-Current roadmap coverage:
-
-- `g02/001-orchestration-and-engine-boundary.md`
-- `g02/002-event-store-persistence-hardening.md`
-- `g02/003-engine-task-command-boundary.md`
-- `g02/004-task-timeline-and-history-projection.md`
-- `g02/005-runtime-receipts-and-effect-reactors.md`
-- `g02/006-checkpoint-and-diff-foundation.md`
-- `g02/012-health-and-authority-surface-reset.md`
-
-## Phase 2: Project Management Persistence And Projection
-
-Goal: make Nucleus project state portable and committable where policy allows.
-
-Work:
-
-- Define repo-backed management projection files.
-- Implement import/export for project, tasks, planning artifacts, accepted
-  memories, and accepted research synthesis.
-- Add conflict detection and steward-assisted sync policy.
-- Keep live runtime state, secrets, local caches, and provider state out of the
-  projection by default.
-- Support adapter-based SCM terminology, not Git-only terms.
-
-Exit criteria:
-
-- one project can persist management state in a repo
-- another clone can import that state
-- conflicts are detected and surfaced without silent overwrite
-
-Current roadmap coverage:
-
-- `g02/007-management-projection-sync-foundation.md`
-- `g02/016-management-projection-file-io-and-sync.md`
-- `g02/037-repo-backed-management-sync-hardening.md`
-- `g02/038-management-sync-apply-and-review.md`
-- `g02/039-scm-management-capture-and-share-foundation.md`
-
-## Phase 3: SCM And Forge Workflow Engine
-
-Goal: support real branch/worktree/change-request workflows.
-
-Work:
-
-- Implement SCM adapter registry and at least one Git adapter.
-- Implement forge provider discovery and at least GitHub support.
-- Implement branch/session modes:
-  primary tree temporary branch and per-thread worktree branch.
-- Define change request creation and review workflows.
-- Model non-Git SCMs through adapter capabilities, snapshots, publication, and
-  provider-specific terminology.
-
-Exit criteria:
-
-- Nucleus can inspect repo status, create/switch branches, create worktrees,
-  and prepare a change request through policy-gated host APIs.
-
-Current roadmap coverage:
-
-- `g02/008-scm-forge-driver-runway.md`
-- `g02/017-scm-working-copy-and-change-request-workflows.md`
-- `g02/039-scm-management-capture-and-share-foundation.md`
-- `g02/040-git-management-capture-adapter-proof.md`
-- `g02/041-scm-working-session-execution-prep.md`
-- `g02/042-change-request-preparation-boundary.md`
-- `g02/043-steward-scm-sync-automation-gate.md`
-- `g02/044-scm-workflow-closeout-and-next-phase-selection.md`
+Goal: turn proven product features into one coherent application from the shell
+inward.
 
 Current result:
 
-- Phase 3 is complete as a record, policy, descriptor, and diagnostics runway.
-- Provider-executing SCM and forge behavior remains a later runtime lane.
+- project-scoped workspace composition and Agent Chat-first defaults
+- Swallowtail application-scale proof and portable activity adoption
+- Longhorn settings, commands, operations, notifications, backup and restore
+- shell context, editor or diff or rework cohesion, terminal and browser
+  cohesion, memory and provider cohesion, accessibility and failure cohesion
+- plan-decision Agent Chat with native acceptance
+- agent orchestration phases 1-3 merged; operator live checkpoint pending
 
-## Phase 3b: Code Health Gate
+Remaining g05 gates:
 
-Goal: clear red god-file pressure before expanding runtime behavior.
+- operator checkpoint: designate an orchestrator, delegate a real run, review
+  delivery
+- real forge provider routes for orchestrated delivery
+- conditional-paused secondary-window and remote-transport lanes
 
-Work:
+Canonical refs:
 
-- Split current error-sized test and implementation files.
-- Preserve public behavior and re-exports.
-- Keep validation scoped by crate.
-- Rebaseline `effigy doctor` after the splits.
+- `g05/README.md`
+- `research/translation-memos/agent-orchestration-lane.md`
+- `roadmaps/README.md`
 
-Exit criteria:
+## Horizon Model
 
-- current god-file error findings are cleared or explicit blockers are logged
-- `cargo check --workspace` passes
-- docs and roadmap front doors point at the next runtime lane
+### Horizon 1 — Orchestration Proof And Forge Reality (`g06` proposed)
 
-Current roadmap coverage:
+Outcome: orchestrated worker runs are trustworthy in daily use, not only as
+merged server and desktop surfaces.
 
-- `g02/045-god-file-health-gate-rebaseline.md`
-- `g02/046-management-projection-state-test-split.md`
-- `g02/047-scm-work-sessions-module-split.md`
-- `g02/048-diagnostics-read-model-test-split.md`
-- `g02/049-engine-management-sync-test-split.md`
-- `g02/050-management-projection-apply-import-split.md`
-- `g02/051-change-request-prep-module-split.md`
-- `g02/052-health-reset-validation-and-next-runtime-lane.md`
+Depends on:
 
-Current result:
+- operator live checkpoint for designation, delegation, delivery, and review
+- contract `033` promotion after checkpoint evidence
+- provider `027` lane for real forge routes used by delivery
+- optional phase-4 steering (`message_run`) only if operator selects it
 
-- the red god-file gate is clear
-- 137 warning-sized files remain as pressure when touched
-- behavior was preserved through mechanical module/test splits
-- warning-only cleanup is not the active product path
+Unlocks:
 
-## Phase 4: Harness Runtime Foundation
+- multi-worker, multi-provider orchestration without manual playbook glue
+- real PR delivery instead of test-double forge routes
 
-Goal: run useful agent sessions through stable runtime boundaries.
+Deliberately excludes:
 
-Work:
+- agent-initiated merge authority
+- provider-native child steering before evidence
+- broad automation outside orchestrated runs
 
-- Pick first real harness target.
-- Implement provider runtime ingestion, command reactor, cancellation,
-  permission request, message identity, and session recovery surfaces.
-- Keep provider capability differences explicit.
-- Add canonical event logging and runtime receipts.
-- Decide how Nucleus-native harness personas fit beside bridged harnesses.
+Rollover trigger: operator checkpoint passes and forge reality is explicit, or
+orchestration lane stalls on missing provider authority.
 
-Exit criteria:
+### Horizon 2 — Workflow Depth And Deferred Returns (`g07` proposed)
 
-- one real provider can run an agent thread through Nucleus-owned session,
-  event, and projection surfaces
-- failure/restart behavior is explicit
+Outcome: the visible project, task, agent, planning, and memory workflow feels
+complete enough to return deferred backend lanes.
 
-Current roadmap coverage:
+Candidate returns:
 
-- `g02/009-harness-runtime-target-selection.md`
-- `g02/011-codex-app-server-runtime-runway.md`
-- `g02/014-codex-live-runtime-supervision.md`
-- `g02/053-harness-runtime-rebaseline.md`
-- `g02/054-codex-live-event-acceptance.md`
-- `g02/055-codex-process-and-transport-acceptance.md`
-- `g02/056-codex-live-spawn-smoke-gate.md`
-- `g02/057-codex-turn-start-admission-gate.md`
-- `g02/058-codex-turn-start-send-and-subscription-gate.md`
-- `g02/059-codex-callback-response-gate.md`
+- planning import active apply
+- accepted-memory active apply
+- selected-task delegation scheduling
+- secondary-window transfer
+- production remote transport
 
-## Phase 5: Native Harness And Steward
+Depends on:
 
-Goal: make the Nucleus-owned steward useful.
+- a visible product workflow that needs each deferred lane
+- fresh roadmap compilation before resuming any deferred card
 
-Work:
+Deliberately excludes:
 
-- Define steward authority over tasks, planning, SCM sync, and project hygiene.
-- Add local/small-model backend support if viable.
-- Add Effigy tool knowledge and selector-routing support.
-- Add memory write proposals and review flows.
-- Keep autonomous actions bounded by host policy.
+- resuming deferred lanes because they are already specified
+- panel or UI sprawl ahead of workflow proof
 
-Exit criteria:
+Rollover trigger: one deferred lane proves product need and passes a fresh
+roadmap gate.
 
-- steward can propose and perform limited project-organization work with
-  evidence and review
+### Horizon 3 — Platform Hardening And Multi-Host Maturity (`g08` proposed)
 
-Current roadmap coverage:
+Outcome: Nucleus is usable for sustained real projects across hosts and clients.
 
-- `g02/018-steward-native-harness-and-effigy-tools.md`
+Work bands:
 
-## Phase 6: Client Protocol And Multi-Host Transport
+- steward native harness maturity
+- client protocol and multi-host transport beyond local proof
+- observability and diagnostics contract
+- release posture, migrations, backups, and repair at product scale
+- code-health rebaseline when touched, not as a standalone product lane
 
-Goal: move beyond embedded proof UI.
+Depends on:
 
-Work:
+- coherent product workflow from horizons 1 and 2
+- explicit contracts for remote pairing, diagnostics, and release posture
 
-- Define stable client protocol versioning.
-- Add local socket or HTTP/WebSocket transport.
-- Add pairing/auth posture beyond local-only proof mode.
-- Add host authority maps to client-visible state.
-- Support multiple host connections in the client.
+Deliberately excludes:
 
-Exit criteria:
+- pretending Tauri or one desktop session is the authority surface
+- provider flattening or hidden automation
 
-- desktop can connect to an embedded host or sidecar host through the same
-  durable protocol
-- clients can show which host owns which authority domains
+Rollover trigger: product workflow proof is stable and platform contracts are
+promoted.
 
-Current roadmap coverage:
-
-- `g02/010-client-protocol-and-host-transport-runway.md`
-- `g02/013-host-authority-map-and-client-protocol-records.md`
-
-## Phase 7: Workspace Panels
-
-Goal: expose real project work surfaces.
-
-Work:
-
-- Adopt or recreate Loophole's display/window/surface hosting model before
-  serious panel implementation, but adapt it for Nucleus' multi-project model:
-  global display/window/surface config, per-project panel rules.
-- Terminal panels.
-- Browser/preview panels.
-- Text/code editor panel with language-service boundary.
-- SCM diff and commit panel.
-- Runtime diagnostics, command timeline, artifact metadata, and approvals.
-- Local client layout persistence: global shell config plus per-project panel
-  rules.
-
-Exit criteria:
-
-- a user can work inside a project workspace without leaving Nucleus for basic
-  inspect/edit/run/review loops
-- desktop workspace state can adapt across multiple displays, multiple
-  windows, and multiple hosted surfaces without making the renderer the layout
-  authority
-- panel arrangement state stays out of committable project-management files by
-  default
-- project switching can reuse the same global shell while applying the active
-  project's panel rules
-
-Current roadmap coverage:
-
-- none in active implementation; workspace panel work remains gated behind
-  host/client protocol and product workflow proof
-
-## Phase 8: Planning, Research, Memory, And Effigy Integration
-
-Goal: make Nucleus a project-management environment, not just a harness shell.
-
-Work:
-
-- Scaffold and implement planning, research, memory, and Effigy integration
-  crates.
-- Add open-ended exploration conversations for ideation, assumption probing,
-  question discovery, option mapping, and promotion into structured planning
-  only when the user accepts the output.
-- Add guided planning sessions.
-- Add deep research runs with source provenance and synthesis.
-- Add memory proposals, review, scope, sensitivity, and retention.
-- Add Effigy task discovery, health summaries, validation planning, and
-  steward tooling.
-- Add harness mediation and tool projection so bridged agents can receive
-  Nucleus-owned portal tools without large flat tool menus.
-- Add goal, loop, pathway, and next-task records so proactive steering follows
-  known plans instead of invented prompts.
-
-Exit criteria:
-
-- a new project can be planned, researched, tasked, validated, and maintained
-  through Nucleus-owned flows
-
-Current roadmap coverage:
-
-- `g02/018-steward-native-harness-and-effigy-tools.md`
-- `docs/contracts/024-harness-mediation-tool-projection-contract.md`
-- `docs/contracts/025-goal-loop-next-task-contract.md`
-
-## Phase 8a: Product Workflow Proof
-
-Goal: prove the first end-to-end Nucleus workflow before expanding UI panels
-or broad automation.
-
-Work:
-
-- Link tasks to work items.
-- Delegate one bounded unit of agentic work.
-- Preserve provider session refs, runtime receipts, checkpoints, validation,
-  and operator acceptance separately.
-- Rebuild task timeline state from events.
-
-Exit criteria:
-
-- one task-backed work item can move through delegation, runtime progress,
-  review, and acceptance without clients becoming state authorities
-
-Current roadmap coverage:
-
-- `g02/015-task-backed-agent-work-unit-proof.md`
-
-## Phase 9: Product Hardening
-
-Goal: prepare for sustained use.
-
-Work:
-
-- Observability.
-- Diagnostics.
-- Migrations.
-- Backups and repair flows.
-- Performance budgets.
-- Plugin boundaries.
-- Release/update channels.
-- Security review.
-
-Exit criteria:
-
-- Nucleus can be used for real projects without relying on proof-only paths
-
-## Open Decisions
-
-- Should the first SCM implementation focus on GitHub/Git or include
-  Convergence from the start as an adapter-shape test?
-- How much of T3's remote/auth/relay design should influence Nucleus?
-- Which workflow best proves Nucleus's project-management differentiation?
-
-Resolved decisions:
-
-- Event-sourced orchestration is the core model.
-- `nucleus-engine` and `nucleus-orchestration` exist as the portable engine and
-  orchestration boundaries.
-- `nucleusd` remains a host wrapper, not the system core.
-- Codex is the first bridged runtime target for task-backed agent work.
-- Codex `turn/start` transport-executor handoff is complete through a
-  stopped-by-default real-write smoke boundary; actual provider writes remain
-  blocked until explicit operator intent.
-- Product workflow hardening has persisted task-agent source records, moved
-  progress/diagnostics reads onto durable task history, and added first-pass
-  runtime/review transition validation.
-- The first explicitly confirmed Codex `turn/start` real-write smoke completed
-  through `turn/completed` with sanitized evidence only.
-- The current runtime lane is durable Codex dispatch invocation.
+## Open Operator Decisions
+
+- Run the orchestration operator checkpoint now or defer until forge provider
+  routes land?
+- Promote phase-4 worker steering (`message_run`) in this generation or keep it
+  undesigned until live orchestration proves the need?
+- Which deferred lane should return first once orchestration proof closes?
+
+## Promotion Map
+
+| Outcome | Destination |
+| --- | --- |
+| Strategic horizons and generation themes | this file, `generation-index.md` |
+| Orchestration lane architecture and phase model | `research/translation-memos/agent-orchestration-lane.md` |
+| Durable orchestration authority | `contracts/033-orchestration-runs-and-delegation-authority-contract.md` |
+| Time-ordered g06 milestones | future `roadmaps/g06/README.md` after operator checkpoint |
+| Refresh and atlas evidence | `logs/2026-08-17-northstar-refresh-and-atlas.md` |
+
+## Historical Phase Map
+
+The pre-2026-06 phase list remains useful as background for closed work, but it
+is no longer the live planning authority. Use generation READMEs and batch-card
+closeouts for execution history instead of this file's older phase numbering.

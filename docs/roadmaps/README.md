@@ -353,9 +353,8 @@ shape.
 - `g05/024-shell-accessibility-responsive-and-failure-cohesion.md` - completed;
   semantic interaction, container-relative panels, bounded local recovery, and
   supported-minimum native acceptance pass
-- `g05/025-plan-decision-agent-chat.md` - active; contracts, failure-detail
-  preservation, and server/desktop plan-decision implementation completed;
-  native acceptance operator-held
+- `g05/025-plan-decision-agent-chat.md` - completed; contracts, failure-detail
+  preservation, server/desktop implementation, and native acceptance pass
 - `deferred-lanes.md` - active
 
 ## Previous Generation
@@ -412,6 +411,7 @@ shape.
 - `generation-index.md`
 - `long-term-plan.md`
 - `reassessment-decision-queue.md`
+- `g06/README.md` - proposed orchestration proof and forge reality generation
 
 ## Next Task
 
