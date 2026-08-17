@@ -14,7 +14,7 @@ use longhorn_tauri_windowing::{
     DefaultDisplayMetadata, NoWindowFactory, PredeclaredTauriWindow, ProcessMonotonicClock,
     TauriAsyncWindowLifecycleScheduler, TauriDesktopReadback, TauriWindowCaptureBackend,
     TauriWindowHost, TauriWindowLifecycleServices, TauriWindowMutationBackend,
-    TauriWindowRevealBackend, UniformScaleMapper, UniformWindowGeometryMapper,
+    TauriWindowRevealBackend, UniformWindowGeometryMapper,
     WindowLifecycleReport, WindowRevealReceipt, WindowUserCloseHandler,
 };
 use longhorn_windowing::{
@@ -276,7 +276,6 @@ fn apply_hidden_restore(
         app,
         &managed,
         &mut DefaultDisplayMetadata,
-        &UniformScaleMapper,
     )
     .map_err(|error| format!("observe Nucleus desktop failed: {error:?}"))?;
     let state = load_state(&runtime.sink)?;
@@ -353,7 +352,7 @@ fn apply_hidden_restore(
             input,
             NoWindowFactory,
             TauriWindowMutationBackend,
-            TauriDesktopReadback::new(DefaultDisplayMetadata, UniformScaleMapper),
+            TauriDesktopReadback::new(DefaultDisplayMetadata),
         )
         .map_err(|error| format!("apply Nucleus hidden restore failed: {error:?}"))?;
     if let Err(error) = receipt.reveal() {
