@@ -5,6 +5,24 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 ## Open
 
+### [ ] Worker handoff path not in Nucleus checkout — 2026-08-24
+- Friction: Operator prompt cited `docs/handoffs/20260824-231356-g16-011-nucleus-v022-adoption.md` relative to the Nucleus worktree, but the file lives only under Poodle (`/Users/tom/Dev/projects/poodle/docs/handoffs/...`). Nucleus has no `docs/handoffs/` directory.
+- Impact: Worker startup required a filesystem search before reading the execution contract.
+- Fix: Either copy/link the worker handoff into the target repo worktree at dispatch, or make the launcher prompt use the absolute Poodle planning path.
+- Surface: Poodle orchestrator worker handoffs for cross-repo adoption lanes.
+
+### [ ] Nucleus worktree missing sibling Longhorn symlink — 2026-08-24
+- Friction: Launcher worktree at `.t3/worktrees/nucleus/<id>` has no `../longhorn` symlink; `apps/desktop` `file:../../../longhorn/...` deps and `check:longhorn-consumer` both need `/Users/tom/.t3/worktrees/nucleus/longhorn` → main Longhorn checkout. Soundcheck/bovine-accelerator-desktop worktree containers already ship that sibling link.
+- Impact: First `bun install` failed with ENOENT for the three Longhorn packages until the symlink was created by hand.
+- Fix: Have the Nucleus worktree launcher create the Longhorn sibling symlink the same way other Longhorn consumers do.
+- Surface: T3/nucleus worktree bootstrap; local `file:` Longhorn deps.
+
+### [x] `check:longhorn-consumer` red on main before Poodle bump — 2026-08-24
+- Friction: Verifier still expected packed Poodle preview artifacts, Rust `longhorn-layout*` allowlist, and forbade `longhorn-surfaces*`; also `workspaceLayout.ts` imported `SurfaceDocument` from `@inflatable-cookie/longhorn/surfaces`. Fails on clean `91316dbe` against Longhorn after Card 179 / g16.008.
+- Impact: Required g16.011 validation could not pass.
+- Fix: Point verifier at published Poodle 0.2.2, admit surfaces crates, import `SurfaceDocument` from `longhorn/layout`. Consider a CI signal so the consumer check cannot stay red unnoticed.
+- Surface: `scripts/verify-longhorn-consumer-boundary.ts`, workspace layout module.
+
 ## Closed
 
 ### [x] `effigy deps link bun` blocked by nested duplicate svelte copy — 2026-08-10

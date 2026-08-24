@@ -17,6 +17,8 @@ import { spawnSync } from "node:child_process";
 const repoRoot = resolve(import.meta.dir, "..");
 const desktopRoot = resolve(repoRoot, "apps/desktop");
 const longhornRoot = resolve(repoRoot, "../longhorn");
+const POODLE_CORE = "@inflatable-cookie/poodle-core";
+const POODLE_SVELTE = "@inflatable-cookie/poodle-svelte";
 
 const rendererPackages = {
   "@inflatable-cookie/longhorn": "longhorn",
@@ -32,8 +34,9 @@ const rustCrates = [
   "longhorn-config",
   "longhorn-core",
   "longhorn-display",
-  "longhorn-layout",
-  "longhorn-layout-config",
+  // Longhorn Card 179 absorbed layout into surfaces; Nucleus follows that graph.
+  "longhorn-surfaces",
+  "longhorn-surfaces-config",
   "longhorn-native-content",
   "longhorn-notifications",
   "longhorn-operation",
@@ -76,7 +79,7 @@ const forbiddenRustCrates = [
   "longhorn-history",
   "longhorn-surface-transfer",
   "longhorn-surface-windowing",
-  "longhorn-surfaces",
+  // longhorn-surfaces is admitted after Card 179; transfer/windowing stay optional.
 ] as const;
 
 const manifest = JSON.parse(
@@ -262,16 +265,6 @@ interface PackageManifest {
   overrides?: Record<string, string>;
 }
 
-interface ArtifactEvidence {
-  artifactSetId: string;
-  artifacts: Array<{
-    name: string;
-    version: string;
-    filename: string;
-    sha256: string;
-  }>;
-}
-
 function command(cwd: string, argv: readonly string[]): string {
   const result = spawnSync(argv[0], argv.slice(1), {
     cwd,
@@ -318,22 +311,60 @@ function verifyRendererArtifacts() {
       },
     );
 
-    const workspaceManifest = JSON.parse(
+    // Longhorn g16.008 moved Poodle from packed preview artifacts to the
+    // public registry. Prove the same published identity Nucleus and Longhorn
+    // both pin, plus the adapter peer, then install that registry release.
+    const longhornManifest = JSON.parse(
       readFileSync(resolve(longhornRoot, "package.json"), "utf8"),
     ) as PackageManifest & { devDependencies?: Record<string, string> };
-    const poodleRef = workspaceManifest.devDependencies?.["@inflatable-cookie/poodle-core"];
-    assert(poodleRef?.startsWith("file:"), "Longhorn Poodle artifact reference is missing");
-    const poodlePack = resolve(longhornRoot, poodleRef.slice("file:".length));
-    const poodlePackRoot = dirname(poodlePack);
-    const poodleEvidence = JSON.parse(
-      readFileSync(resolve(poodlePackRoot, "../evidence.json"), "utf8"),
-    ) as ArtifactEvidence;
-    const poodleArtifacts: Record<string, string> = {};
-    for (const artifact of poodleEvidence.artifacts) {
-      const path = resolve(poodlePackRoot, artifact.filename);
-      assert(sha256(readFileSync(path)) === artifact.sha256, `${artifact.name} digest mismatch`);
-      poodleArtifacts[artifact.name] = `file:${path}`;
-    }
+    const longhornPoodleAdapter = JSON.parse(
+      readFileSync(
+        resolve(longhornRoot, "packages/longhorn-poodle-svelte/package.json"),
+        "utf8",
+      ),
+    ) as PackageManifest & { peerDependencies?: Record<string, string> };
+    const longhornCorePin =
+      longhornManifest.devDependencies?.[POODLE_CORE] ??
+      longhornManifest.dependencies?.[POODLE_CORE];
+    const longhornSveltePin =
+      longhornManifest.devDependencies?.[POODLE_SVELTE] ??
+      longhornManifest.dependencies?.[POODLE_SVELTE];
+    const nucleusCorePin = manifest.dependencies?.[POODLE_CORE];
+    const nucleusSveltePin = manifest.dependencies?.[POODLE_SVELTE];
+    const adapterPeer = longhornPoodleAdapter.peerDependencies?.[POODLE_SVELTE];
+    assert(
+      Boolean(longhornCorePin) && !longhornCorePin!.startsWith("file:") && !longhornCorePin!.startsWith("link:"),
+      "Longhorn must pin published Poodle core, not a path preview",
+    );
+    assert(
+      Boolean(longhornSveltePin) && !longhornSveltePin!.startsWith("file:") && !longhornSveltePin!.startsWith("link:"),
+      "Longhorn must pin published Poodle Svelte, not a path preview",
+    );
+    assert(
+      Boolean(nucleusCorePin) && !nucleusCorePin!.startsWith("file:") && !nucleusCorePin!.startsWith("link:"),
+      "Nucleus must pin published Poodle core, not a path preview",
+    );
+    assert(
+      Boolean(nucleusSveltePin) && !nucleusSveltePin!.startsWith("file:") && !nucleusSveltePin!.startsWith("link:"),
+      "Nucleus must pin published Poodle Svelte, not a path preview",
+    );
+    assert(
+      nucleusCorePin === longhornCorePin,
+      `Nucleus Poodle core pin ${nucleusCorePin} diverges from Longhorn ${longhornCorePin}`,
+    );
+    assert(
+      nucleusSveltePin === longhornSveltePin,
+      `Nucleus Poodle Svelte pin ${nucleusSveltePin} diverges from Longhorn ${longhornSveltePin}`,
+    );
+    assert(
+      adapterPeer === nucleusSveltePin,
+      `longhorn-poodle-svelte peer ${adapterPeer} diverges from Nucleus pin ${nucleusSveltePin}`,
+    );
+
+    const poodleArtifacts = {
+      [POODLE_CORE]: nucleusCorePin!,
+      [POODLE_SVELTE]: nucleusSveltePin!,
+    };
 
     const dependencies = {
       ...longhornArtifacts,
@@ -399,9 +430,24 @@ function verifyRendererArtifacts() {
       `artifact graph installs ${installedLonghorn.join(", ")}`,
     );
 
+    const installedPoodle = [
+      { name: POODLE_CORE, expected: nucleusCorePin! },
+      { name: POODLE_SVELTE, expected: nucleusSveltePin! },
+    ].map(({ name, expected }) => {
+      const packageJson = resolve(consumer, "node_modules", ...name.split("/"), "package.json");
+      assert(existsSync(packageJson), `${name} registry package is not installed`);
+      const version = (JSON.parse(readFileSync(packageJson, "utf8")) as PackageManifest).version;
+      assert(version === expected, `${name} installed ${version}, expected ${expected}`);
+      return { name, version: version! };
+    });
+
     return {
       packages: longhornIdentities,
-      poodleArtifactSet: poodleEvidence.artifactSetId,
+      poodleRelease: {
+        version: nucleusCorePin,
+        packages: installedPoodle,
+        source: "npm-registry",
+      },
       producedArtifactsInstalledOutsideWorkspace: true,
       svelteRuntime: svelteRuntime.map(({ root }) =>
         root.replace(resolvedTemporaryRoot, "<proof>"),

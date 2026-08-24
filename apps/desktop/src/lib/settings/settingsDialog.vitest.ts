@@ -99,7 +99,11 @@ test("Settings dialog guards staged work, applies both modes, tears down, and re
   for (const absentPage of ["Workspace", "Browser", "Terminal", "Forge", "Advanced"]) {
     expect(screen.queryByRole("button", { name: absentPage })).toBeNull();
   }
-  expect(screen.getByLabelText("General").getAttribute("tabindex")).toBe("-1");
+  // Poodle 0.2.2 labels the page stack; Longhorn keeps the focus target on an
+  // inner section. Assert the focus contract on that inner node.
+  expect(
+    screen.getByLabelText("General").querySelector(".longhorn-settings-shell__page-focus")?.getAttribute("tabindex"),
+  ).toBe("-1");
 
   await fireEvent.click(screen.getByRole("switch", { name: "Show fixture status" }));
   await waitFor(() => expect(transport.generalValue()).toBe(false));
@@ -111,7 +115,7 @@ test("Settings dialog guards staged work, applies both modes, tears down, and re
   await fireEvent.click(screen.getByRole("radio", { name: "Comfortable" }));
   expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(false);
 
-  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
   await screen.findByText("Unsaved changes");
   await fireEvent.click(screen.getByRole("button", { name: "Stay" }));
   expect(closed).not.toHaveBeenCalled();
@@ -123,7 +127,7 @@ test("Settings dialog guards staged work, applies both modes, tears down, and re
   await fireEvent.click(screen.getByRole("switch", { name: "Show fixture status" }));
   await waitFor(() => expect(transport.generalValue()).toBe(true));
   expect(screen.queryByText("Settings changed elsewhere")).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
   await waitFor(() => expect(closed).toHaveBeenCalled());
   screen.unmount();
   await waitFor(() => expect(transport.activeListenerCount()).toBe(0));
