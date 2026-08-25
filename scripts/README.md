@@ -12,5 +12,6 @@ Default policy:
 ## Checks
 
 - `verify-longhorn-consumer-boundary.ts` packs the selected private Longhorn
-  renderer graph, installs it with the admitted Poodle artifacts outside all
-  workspaces, checks the Rust graph, and emits sanitized consumer evidence.
+  renderer graph, installs it with the published Poodle registry release
+  outside all workspaces, checks the Rust graph, and emits sanitized consumer
+  evidence.

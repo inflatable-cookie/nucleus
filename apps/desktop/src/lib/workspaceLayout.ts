@@ -11,10 +11,8 @@ import {
   type LayoutMutationRequest,
   type LayoutSchemaDefinition,
   type PanelDefinition,
-} from "@inflatable-cookie/longhorn/layout";
-import {
   type SurfaceDocument,
-} from "@inflatable-cookie/longhorn/surfaces";
+} from "@inflatable-cookie/longhorn/layout";
 import type { LayoutDispatchResult } from "@inflatable-cookie/longhorn-poodle-svelte/layout";
 
 export const WORKSPACE_LAYOUT_CHANGED_EVENT = "nucleus://workspace-layout";
