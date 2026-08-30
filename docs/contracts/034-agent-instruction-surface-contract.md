@@ -83,7 +83,10 @@ docs. Worker mode is active only when an orchestrator-dispatched handoff under
 `docs/handoffs/` declares `handoff_mode: worker-pr-loop`,
 `worker_mode: implementation`, and `dispatch_authority: orchestrator`. Read
 that handoff for its worker execution contract instead of inferring worker mode
-from a path, branch, or harness.
+from a path, branch, or harness. The operator-facing dispatch path is absolute
+and names the owning repo (Poodle for Poodle-planned adoption lanes; Nucleus
+for Nucleus-owned lanes). Do not treat a sibling repo's handoff as a relative
+file under this checkout.
 
 ## Papercuts Loop
 
