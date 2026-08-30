@@ -17,6 +17,14 @@ Scope: whole repository.
   contracts are clear enough to test.
 - Do not run release mutations or change CI or workflow files without an explicit
   request.
+- Worktree layout: launcher checkouts under `.t3/worktrees/nucleus/<id>` need
+  `../longhorn` → the primary Longhorn checkout (for example
+  `/Users/tom/Dev/projects/longhorn`, typically as
+  `.t3/worktrees/nucleus/longhorn`). `apps/desktop` path deps resolve through
+  that sibling (`../../../longhorn/...`). Create the symlink when absent;
+  reuse only a symlink that already resolves to that source; stop on any other
+  existing path; never overwrite. Do not replace these path deps with a git
+  pin.
 
 ## Common commands
 
