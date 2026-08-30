@@ -61,7 +61,8 @@ The next cross-repo lane still looked like a missing Nucleus file.
 
 ## Boundaries
 
-- Close the copy. Do not import Poodle handoffs. Do not merge.
+- Copy closeout is done (see Current State). Do not import Poodle
+  handoffs. Review-only from here; merge is operator-authorised only.
 
 ## Important Context
 
