@@ -5,12 +5,6 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 ## Open
 
-### [ ] Worker handoff path not in Nucleus checkout — 2026-08-24
-- Friction: Operator prompt cited `docs/handoffs/20260824-231356-g16-011-nucleus-v022-adoption.md` relative to the Nucleus worktree, but the file lives only under Poodle (`/Users/tom/Dev/projects/poodle/docs/handoffs/...`). Nucleus has no `docs/handoffs/` directory.
-- Impact: Worker startup required a filesystem search before reading the execution contract.
-- Fix: Either copy/link the worker handoff into the target repo worktree at dispatch, or make the launcher prompt use the absolute Poodle planning path.
-- Surface: Poodle orchestrator worker handoffs for cross-repo adoption lanes.
-
 ### [x] `check:longhorn-consumer` red on main before Poodle bump — 2026-08-24
 - Friction: Verifier still expected packed Poodle preview artifacts, Rust `longhorn-layout*` allowlist, and forbade `longhorn-surfaces*`; also `workspaceLayout.ts` imported `SurfaceDocument` from `@inflatable-cookie/longhorn/surfaces`. Fails on clean `91316dbe` against Longhorn after Card 179 / g16.008.
 - Impact: Required g16.011 validation could not pass.
@@ -18,6 +12,13 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 - Surface: `scripts/verify-longhorn-consumer-boundary.ts`, workspace layout module.
 
 ## Closed
+
+### [x] Worker handoff path not in Nucleus checkout — 2026-08-24
+- Friction: Operator prompt cited `docs/handoffs/20260824-231356-g16-011-nucleus-v022-adoption.md` relative to the Nucleus worktree, but the file lives only under Poodle (`/Users/tom/Dev/projects/poodle/docs/handoffs/...`). Nucleus had no `docs/handoffs/` then; it now holds Nucleus-owned handoffs only.
+- Impact: Worker startup required a filesystem search before reading the execution contract.
+- Fix: Northstar PR 8 (`1840c9f6d4f7127240622a09e462b06adc094971`) requires the owning repo's absolute handoff path for operator-facing dispatch. `AGENTS.md` and `034-agent-instruction-surface-contract.md` state that rule; do not copy Poodle handoffs into Nucleus.
+- Surface: Poodle orchestrator worker handoffs for cross-repo adoption lanes; Nucleus `docs/handoffs/` for Nucleus-owned lanes.
+- Closed: 2026-08-30 (papercuts wave 18).
 
 ### [x] Nucleus worktree missing sibling Longhorn symlink — 2026-08-24
 - Friction: Launcher worktree at `.t3/worktrees/nucleus/<id>` has no `../longhorn` symlink; `apps/desktop` `file:../../../longhorn/...` deps and `check:longhorn-consumer` both need `/Users/tom/.t3/worktrees/nucleus/longhorn` → main Longhorn checkout. Soundcheck/bovine-accelerator-desktop worktree containers already ship that sibling link.
