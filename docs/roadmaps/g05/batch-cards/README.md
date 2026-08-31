@@ -6,7 +6,7 @@ Updated: 2026-08-17
 
 ## Ready Cards
 
-- none
+- `108-northstar-agents-rust-typescript-audit.md`
 
 ## Planned Cards
 

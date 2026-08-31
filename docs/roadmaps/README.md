@@ -415,11 +415,8 @@ shape.
 
 ## Next Task
 
-Agent orchestration lane: phases 1-3 are merged — registry (098), dispatch
-(099), fleet panel (100), delivery pipeline (101), review surface (102),
-forge PR lane (103), orchestrator designation + delegation tools (104),
-authority cards 105-107. Operator checkpoint: designate an orchestrator on
-a project (tool-capable route), let it delegate a real run, and review the
-delivery. Remaining known gaps: real forge routes report
-`ProviderUnavailable` until a provider lane lands (contract 027); phase 4
-(worker steering, `message_run`) is undesigned in the memo.
+Run g05 card 108 through one isolated worker: repository-scope Rust and desktop
+TypeScript/Svelte audit-and-repair plus the target-aware AGENTS review. The
+agent-orchestration product checkpoint remains paused behind this independent
+maintenance lane. After card 108 closes, return to designating an orchestrator
+on a real project and reviewing one delegated delivery.

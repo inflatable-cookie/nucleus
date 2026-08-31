@@ -91,6 +91,8 @@ Do not compile speculative specialist-panel redesigns ahead of that feedback.
 - `025-plan-decision-agent-chat.md` - completed; contracts, failure detail,
   server/desktop implementation, and native acceptance all pass (operator GUI
   pass plus the recorded live provider proof, cards 086 and 091)
+- `026-northstar-instruction-and-language-quality-audit.md` - in progress;
+  independent AGENTS, Rust, and desktop TypeScript/Svelte maintenance lane
 - agent orchestration phases 1-3 - completed on main; operator live checkpoint
   pending. See `../../research/translation-memos/agent-orchestration-lane.md`
   and batch cards 098-107.
