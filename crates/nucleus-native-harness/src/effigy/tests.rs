@@ -403,3 +403,80 @@ fn effigy_validation_plan_rejects_raw_output_refs() {
 
     assert!(!plan.uses_sanitized_refs());
 }
+
+#[test]
+fn integration_debug_redacts_content_and_keeps_structure() {
+    let integration = NativeEffigyProjectIntegration {
+        status: NativeEffigyIntegrationStatus::Enabled,
+        scope: NativeEffigyScope::Repo {
+            repo_membership_ref: "membership:secret-repo".to_owned(),
+            subsystem: Some("provider transcript subsystem".to_owned()),
+        },
+        manifest_ref: Some(NativeEffigyManifestRef(
+            "manifest:credential-store".to_owned(),
+        )),
+        selectors: vec![NativeEffigySelectorRecord {
+            selector_ref: NativeEffigySelectorRef("token:refresh".to_owned()),
+            kind: NativeEffigySelectorKind::Custom("raw_stderr dump".to_owned()),
+            scope: NativeEffigyScope::Custom("secret scope".to_owned()),
+            command_scope_hint: NativeEffigyCommandScopeHint::ReadOnly,
+            purpose: Some("print the provider transcript".to_owned()),
+            evidence_refs: vec![NativeEffigyEvidenceRef("evidence:raw_stdout".to_owned())],
+        }],
+        evidence_refs: vec![NativeEffigyEvidenceRef("evidence:local cache".to_owned())],
+        summary: Some("ghp_examplevalue leaked into the summary".to_owned()),
+    };
+
+    let rendered = format!("{integration:?}");
+
+    for forbidden in [
+        "secret",
+        "credential",
+        "token",
+        "raw_stdout",
+        "raw_stderr",
+        "local cache",
+        "provider transcript",
+        "ghp_examplevalue",
+        "membership:",
+        "manifest:",
+        "evidence:",
+    ] {
+        assert!(
+            !rendered.to_lowercase().contains(forbidden),
+            "redacted Debug leaked {forbidden}: {rendered}"
+        );
+    }
+
+    for structure in [
+        "NativeEffigyProjectIntegration",
+        "status: Enabled",
+        "scope: \"repo\"",
+        "manifest_ref_present: true",
+        "selector_count: 1",
+        "evidence_ref_count: 1",
+        "summary_present: true",
+        "uses_sanitized_refs: false",
+        "supports_steward_recommendations: true",
+    ] {
+        assert!(
+            rendered.contains(structure),
+            "redacted Debug lost {structure}: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn integration_debug_reports_sanitized_records_as_clean() {
+    let integration = NativeEffigyProjectIntegration::disabled("no Effigy manifest detected");
+
+    let rendered = format!("{integration:?}");
+
+    assert!(rendered.contains("status: Disabled"));
+    assert!(rendered.contains("scope: \"project_root\""));
+    assert!(rendered.contains("manifest_ref_present: false"));
+    assert!(rendered.contains("selector_count: 0"));
+    assert!(rendered.contains("summary_present: true"));
+    assert!(rendered.contains("uses_sanitized_refs: true"));
+    assert!(rendered.contains("supports_steward_recommendations: false"));
+}
