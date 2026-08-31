@@ -136,10 +136,16 @@ Closeout: `../../../logs/2026-08-31-northstar-agents-rust-typescript-audit-close
 
 Rust 1.95 is the workspace MSRV, inherited by all 19 packages and verified with
 `cargo +1.95.0 check --workspace --all-targets`. Both recorders finalized:
-Rust over 22 units (16 findings, 12 repaired, 4 retained, 21 files changed,
-result `degraded` from 15 warning-bearing evidence records and the retained
-findings); TypeScript/Svelte over 7 units and 131 hand-written files (7
-findings, 4 repaired, 3 retained, 4 files changed). `AGENTS.md` gained an
+Rust over 22 units (16 findings — 7 `RUST-READ-001` and 5 `RUST-API-001`
+repaired, 4 retained — 21 files changed, result `degraded` from 15
+warning-bearing evidence records and the retained findings); TypeScript/Svelte
+over 7 units and 131 hand-written files (7 findings, 4 repaired, 3 retained,
+4 files changed).
+
+One orchestrator review wave followed: `F-HARN-API-1`'s derived `Debug` on
+`NativeEffigyProjectIntegration` exposed unconstrained caller strings and was
+replaced with a redacted manual implementation plus regression tests, recorded
+outside the finalized first-wave evidence. `AGENTS.md` gained an
 orientation opening and a harness-neutral Longhorn sibling rule with every hard
 boundary intact; `CLAUDE.md` is unchanged.
 

@@ -9,10 +9,22 @@ Opened: `2026-08-31-northstar-instruction-language-quality-audit-opened.md`
 
 Card 108 ran as one worker lane on `worker/northstar-agents-rust-typescript-audit`.
 Both recorders finalized, the instruction chain was reviewed and optimized, and
-51 files changed across four commits: 20 Cargo manifests and 4 policy records
-from the approved setup tranche, 21 Rust sources and 4 TypeScript/Svelte
-sources from recorded repair plans, and 2 `AGENTS.md` files. No report-only,
+one orchestrator review wave corrected a finding. No report-only,
 operator-decision, generated, read-only, or excluded file was touched.
+
+Branch totals, stated by layer so the audit surface and the paperwork are not
+confused for each other:
+
+| Layer | Files | Commits |
+| --- | --- | --- |
+| Audit setup, repair, and instruction surfaces | 51 | 4 |
+| Planning, evidence, and papercut records | 8 | 2 |
+| Review-wave correction (adds `effigy/tests.rs`; re-touches files already counted above) | 1 | 2 |
+| **Branch total** | **60** | **8** |
+
+The 51 are 20 Cargo manifests and 4 policy records from the approved setup
+tranche, 21 Rust sources and 4 TypeScript/Svelte sources from recorded repair
+plans, and 2 `AGENTS.md` files.
 
 ## Compatibility Decision Applied
 
@@ -53,11 +65,17 @@ repair wave.
 - findings: 16 (12 repaired under bounded plans, 4 retained)
 - changed files: 21
 
-Repaired: eight `RUST-READ-001` simplifications (identical-branch merge in the
-command policy, an unreachable `cancelled` arm, `is_empty()` consistency,
-derived `Default`, `is_none_or`, `&Path` parameters, `slice::from_ref`,
-needless borrows, `is_multiple_of`) and four `RUST-API-001` `Debug` derives on
-public types that carry no protected data.
+Repaired: **7 `RUST-READ-001` findings and 5 `RUST-API-001` findings**.
+
+The 7 `RUST-READ-001` findings cover nine distinct simplification kinds across
+11 files: identical-branch merge in the command policy, an unreachable
+`cancelled` arm, `is_empty()` consistency, derived `Default`, `is_none_or`,
+`&Path` parameters, `slice::from_ref`, needless borrows, and `is_multiple_of`.
+
+The 5 `RUST-API-001` findings cover 11 public types across 10 files. Ten take a
+derived `Debug`. The eleventh, `NativeEffigyProjectIntegration`, took a derive
+in the first wave and a redacted manual implementation after review — see
+[Review Wave](#review-wave).
 
 Retained findings:
 
@@ -88,6 +106,41 @@ candidates, each classified independently under `RUST-READ-001` and retained:
   naming seam
 - `crates/nucleus-server/src/accepted_memory_projection_write_admission.rs:274`
   — test-facing naming seam
+
+## Review Wave
+
+Orchestrator review of head `f72d265a` requested one code change, applied on
+this branch after the first-wave recorder was finalized.
+
+`crates/nucleus-native-harness/src/effigy/integration.rs` had taken
+`#[derive(Debug)]` under finding `F-HARN-API-1`, whose evidence claimed every
+field was safe. That claim was false. `manifest_ref`, `selectors`,
+`evidence_refs`, `summary`, and the string payloads inside `scope` are
+unconstrained caller input; `uses_sanitized_refs()` is a predicate callers
+check, not an invariant construction enforces; and `disabled(summary)` accepts
+arbitrary content. The derived implementation therefore printed exactly the
+material `contains_forbidden_effigy_term` exists to catch — `secret`,
+`credential`, `token`, `raw_stdout`, `raw_stderr`, `local cache`, provider
+transcript text — before any caller checked it, contradicting the root AGENTS
+invariant added by this same lane.
+
+The derive is replaced with a manual `Debug` that renders structure rather than
+content: status, scope variant label, manifest and summary presence flags,
+selector and evidence counts, the `uses_sanitized_refs` verdict, and the
+steward-recommendation verdict. `missing_debug_implementations` remains
+satisfied. Two regression tests in
+`crates/nucleus-native-harness/src/effigy/tests.rs` pin the behaviour: one
+injects every forbidden term plus a token-like summary and asserts none of it
+survives formatting while the structural fields remain, the other pins the
+sanitized `disabled()` rendering.
+
+Recorder status: the finalized `nucleus-card108-rust` result, its per-unit
+completion attribution, and its evidence hashes cover the **first wave only**.
+They do not cover `effigy/integration.rs` or `effigy/tests.rs` as those files
+now stand, and `F-HARN-API-1`'s recorded evidence text remains as originally
+written — falsified by this review and corrected here rather than rewritten in
+the sealed record. Validation for this wave is the focused test run below, not
+a recorder evidence id.
 
 ## TypeScript And Svelte Audit
 
@@ -220,6 +273,8 @@ Recorder records live outside the tracked tree and are not committed:
 ## Validation
 
 - `cargo +1.95.0 check --workspace --all-targets` — exit 0
+- `cargo test -p nucleus-native-harness --lib effigy` — 21 passed, 0 failed
+  (review-wave redacted-`Debug` regression tests)
 - `effigy qa` — exit 0 (docs, northstar, Longhorn consumer boundary, cargo check,
   cargo test --workspace, nucleusd smoke, svelte-check, desktop tests)
 - `effigy qa:docs` — pass
