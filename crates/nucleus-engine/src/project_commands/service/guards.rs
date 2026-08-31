@@ -40,7 +40,7 @@ where
                 .domain_payloads(domain)
                 .map_err(EngineProjectCommandError::Storage)?
                 .into_iter()
-                .filter(|(_, kind, _)| kind_filter.map_or(true, |expected| kind == expected))
+                .filter(|(_, kind, _)| kind_filter.is_none_or(|expected| kind == expected))
                 .try_fold(0_usize, |count, (record_id, _, payload)| {
                     let value: serde_json::Value =
                         serde_json::from_slice(&payload).map_err(|_| {

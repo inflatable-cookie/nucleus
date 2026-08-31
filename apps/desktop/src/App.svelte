@@ -256,12 +256,21 @@
     );
   }
 
+  // Panel command-state events cross a DOM boundary as untyped CustomEvents, so
+  // the flag is read structurally instead of through `detail: any`.
+  function commandStateFlag(event: Event, flag: string): boolean {
+    if (!(event instanceof CustomEvent)) return false;
+    const detail: unknown = event.detail;
+    if (detail === null || detail === undefined || typeof detail !== "object") return false;
+    return (detail as Record<string, unknown>)[flag] === true;
+  }
+
   function handleEditorCommandState(event: Event): void {
-    editorDirty = event instanceof CustomEvent && event.detail?.dirty === true;
+    editorDirty = commandStateFlag(event, "dirty");
   }
 
   function handleAgentTurnCommandState(event: Event): void {
-    agentTurnRunning = event instanceof CustomEvent && event.detail?.running === true;
+    agentTurnRunning = commandStateFlag(event, "running");
   }
 
   function applyDesktopPreferences(preferences: DesktopPreferencesProjection): void {

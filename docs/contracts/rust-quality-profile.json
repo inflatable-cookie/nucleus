@@ -1,0 +1,37 @@
+{
+  "deviations_file": "docs/contracts/rust-quality-deviations.json",
+  "exclusions": {
+    "generated": [],
+    "vendored": []
+  },
+  "language": "rust",
+  "msrv": {
+    "cargo_manifests": [
+      "Cargo.toml",
+      "apps/desktop/src-tauri/Cargo.toml",
+      "apps/nucleusd/Cargo.toml",
+      "crates/nucleus-agent-adapters/Cargo.toml",
+      "crates/nucleus-agent-protocol/Cargo.toml",
+      "crates/nucleus-command-policy/Cargo.toml",
+      "crates/nucleus-contract-fixtures/Cargo.toml",
+      "crates/nucleus-core/Cargo.toml",
+      "crates/nucleus-engine/Cargo.toml",
+      "crates/nucleus-local-store/Cargo.toml",
+      "crates/nucleus-memory/Cargo.toml",
+      "crates/nucleus-native-harness/Cargo.toml",
+      "crates/nucleus-orchestration/Cargo.toml",
+      "crates/nucleus-planning/Cargo.toml",
+      "crates/nucleus-projects/Cargo.toml",
+      "crates/nucleus-research/Cargo.toml",
+      "crates/nucleus-scm-forge/Cargo.toml",
+      "crates/nucleus-server/Cargo.toml",
+      "crates/nucleus-tasks/Cargo.toml",
+      "crates/nucleus-workspaces/Cargo.toml"
+    ],
+    "source": "repository_policy",
+    "toolchain_policy_paths": [],
+    "when_unresolved": "stop"
+  },
+  "profile": "strict",
+  "schema_version": "1.0.0"
+}

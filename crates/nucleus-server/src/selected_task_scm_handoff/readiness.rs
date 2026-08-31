@@ -65,10 +65,10 @@ fn readiness_state(
         return SelectedTaskScmHandoffState::PublicationPending;
     }
     if !evidence.change_request_prep_refs.is_empty()
-        && evidence.checkpoint_refs.len() > 0
-        && evidence.diff_summary_refs.len() > 0
-        && evidence.runtime_receipt_refs.len() > 0
-        && evidence.review_refs.len() > 0
+        && !evidence.checkpoint_refs.is_empty()
+        && !evidence.diff_summary_refs.is_empty()
+        && !evidence.runtime_receipt_refs.is_empty()
+        && !evidence.review_refs.is_empty()
     {
         return SelectedTaskScmHandoffState::PrepReady;
     }

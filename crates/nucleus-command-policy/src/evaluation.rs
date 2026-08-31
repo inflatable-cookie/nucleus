@@ -233,16 +233,15 @@ fn inline_code_flag(name: &str, argv: &[String]) -> Option<String> {
         &["eval"]
     } else if name == "perl" {
         &["-e", "-E"]
-    } else if name.starts_with("ruby") {
+    } else if name.starts_with("ruby")
+        || name.starts_with("lua")
+        || name == "osascript"
+        || name == "rscript"
+        || name == "julia"
+    {
         &["-e"]
     } else if name.starts_with("php") {
         &["-r"]
-    } else if name.starts_with("lua") {
-        &["-e"]
-    } else if name == "osascript" {
-        &["-e"]
-    } else if name == "rscript" || name == "julia" {
-        &["-e"]
     } else if name == "elixir" || name == "erl" {
         &["-e", "-eval"]
     } else {

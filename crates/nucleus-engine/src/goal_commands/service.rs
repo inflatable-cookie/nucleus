@@ -16,6 +16,7 @@ use super::model::{
 };
 use crate::task_commands::{EngineRevisionExpectation, EngineTaskRecord};
 
+#[derive(Debug)]
 pub struct EngineGoalCommandService<R> {
     repository: R,
 }

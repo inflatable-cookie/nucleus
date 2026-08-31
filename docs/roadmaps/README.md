@@ -415,8 +415,7 @@ shape.
 
 ## Next Task
 
-Run g05 card 108 through one isolated worker: repository-scope Rust and desktop
-TypeScript/Svelte audit-and-repair plus the target-aware AGENTS review. The
-agent-orchestration product checkpoint remains paused behind this independent
-maintenance lane. After card 108 closes, return to designating an orchestrator
-on a real project and reviewing one delegated delivery.
+Review the g05 card 108 worker PR against roadmap 026, then return to the
+agent-orchestration product checkpoint: designate an orchestrator on a real
+project and review one delegated delivery. The independent instruction and
+language-quality maintenance lane is complete and does not select g06.

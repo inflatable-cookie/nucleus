@@ -1,6 +1,6 @@
 # 108 Northstar AGENTS, Rust, And TypeScript Audit
 
-Status: ready
+Status: complete
 Owner: Tom
 Created: 2026-08-31
 Roadmap: `../026-northstar-instruction-and-language-quality-audit.md`
@@ -113,22 +113,47 @@ initialization. No audit-owned source repair may.
 
 ## Acceptance
 
-- [ ] Rust 1.95 resolves as the effective MSRV for every Cargo package; no
+- [x] Rust 1.95 resolves as the effective MSRV for every Cargo package; no
   wider version policy changed
-- [ ] Rust activation, strict profile, and deviations record are valid
-- [ ] TypeScript activation, strict profile, deviations record, and Svelte 5
+- [x] Rust activation, strict profile, and deviations record are valid
+- [x] TypeScript activation, strict profile, deviations record, and Svelte 5
   overlay resolution are valid
-- [ ] complete Rust and TypeScript recorder results reconcile every unit,
+- [x] complete Rust and TypeScript recorder results reconcile every unit,
   finding, repair plan, evidence record, mutation, exclusion, and limitation
-- [ ] no report-only, operator-decision, generated, read-only, excluded, or
+- [x] no report-only, operator-decision, generated, read-only, excluded, or
   unrelated file changed
-- [ ] repairs preserve public API, persistence, security, concurrency,
+- [x] repairs preserve public API, persistence, security, concurrency,
   serialization, host/client authority, and visible product behavior
-- [ ] AGENTS has an evidence-backed reader journey, all hard boundaries remain,
+- [x] AGENTS has an evidence-backed reader journey, all hard boundaries remain,
   and `CLAUDE.md` is the exact bridge
-- [ ] baseline doctor degradation is reported honestly and not treated as
+- [x] baseline doctor degradation is reported honestly and not treated as
   blanket repair authority
-- [ ] one reviewable PR targets `main`; the worker does not merge
+- [x] one reviewable PR targets `main`; the worker does not merge
+
+## Outcome
+
+Closeout: `../../../logs/2026-08-31-northstar-agents-rust-typescript-audit-closed.md`
+
+Rust 1.95 is the workspace MSRV, inherited by all 19 packages and verified with
+`cargo +1.95.0 check --workspace --all-targets`. Both recorders finalized:
+Rust over 22 units (16 findings — 7 `RUST-READ-001` and 5 `RUST-API-001`
+repaired, 4 retained — 21 files changed, result `degraded` from 15
+warning-bearing evidence records and the retained findings); TypeScript/Svelte
+over 7 units and 131 hand-written files (7 findings, 4 repaired, 3 retained,
+4 files changed).
+
+One orchestrator review wave followed: `F-HARN-API-1`'s derived `Debug` on
+`NativeEffigyProjectIntegration` exposed unconstrained caller strings and was
+replaced with a redacted manual implementation plus regression tests, recorded
+outside the finalized first-wave evidence. `AGENTS.md` gained an
+orientation opening and a harness-neutral Longhorn sibling rule with every hard
+boundary intact; `CLAUDE.md` is unchanged.
+
+Retained for a later decision: the report-only `unsafe` SAFETY obligation in
+`local_read_only_spawn/spawn.rs`, the desktop snapshot-store panic that needs a
+public constructor decision, four public types whose `Debug` would render
+operator or provider content, and the package-wide TypeScript strict-option
+programme (280 errors across 81 files).
 
 ## Validation
 

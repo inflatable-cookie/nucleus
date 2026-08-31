@@ -22,6 +22,7 @@ use crate::{
     EngineTaskWorkItemRuntimeState,
 };
 
+#[derive(Debug)]
 pub struct EngineTaskCommandService<R> {
     repository: R,
 }

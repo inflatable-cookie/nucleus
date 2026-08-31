@@ -47,6 +47,7 @@ const CATALOG_TIMEOUT: Duration = Duration::from_secs(30);
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Debug)]
 pub struct SwallowtailCodexSessionRuntime;
 
 impl AgentSessionRuntime for SwallowtailCodexSessionRuntime {

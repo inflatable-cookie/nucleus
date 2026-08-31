@@ -122,18 +122,13 @@ pub struct EngineDiffSummaryCounts {
     pub metadata_only: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineDiffCoverageState {
     Complete,
     Partial,
+    #[default]
     Unavailable,
-}
-
-impl Default for EngineDiffCoverageState {
-    fn default() -> Self {
-        Self::Unavailable
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

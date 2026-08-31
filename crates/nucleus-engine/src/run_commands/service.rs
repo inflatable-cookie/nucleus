@@ -16,6 +16,7 @@ use super::model::{
 use crate::EngineRevisionExpectation;
 
 /// Engine run command service.
+#[derive(Debug)]
 pub struct EngineRunCommandService<R> {
     pub(super) repository: R,
 }

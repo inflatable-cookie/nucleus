@@ -5,6 +5,12 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 ## Open
 
+### [ ] `check:rust` fails in a fresh worktree until the desktop frontend is built — 2026-08-31
+- Friction: `cargo check --workspace` fails with `proc macro panicked ... frontendDist is set to "../dist" but this path doesn't exist` in any freshly branched worktree, because `apps/desktop/dist` is git-ignored build output that `tauri::generate_context!` needs at compile time. `effigy doctor` reports it as a `health.task.execute` error that looks like a source defect.
+- Impact: Every worker worktree starts with a red `check:rust`, `effigy qa`, and `effigy doctor` until someone works out that `effigy desktop:build` has to run once. Card 108 lost a validation cycle to it.
+- Fix: Either make `check:rust`/`health` depend on `desktop:build`, or have `effigy doctor` name the missing `apps/desktop/dist` as the cause and the one-line remedy.
+- Surface: `effigy.toml` `check:rust`, `health`, `qa`; `apps/desktop/src-tauri/src/lib.rs` `tauri::generate_context!`.
+
 ### [x] `check:longhorn-consumer` red on main before Poodle bump — 2026-08-24
 - Friction: Verifier still expected packed Poodle preview artifacts, Rust `longhorn-layout*` allowlist, and forbade `longhorn-surfaces*`; also `workspaceLayout.ts` imported `SurfaceDocument` from `@inflatable-cookie/longhorn/surfaces`. Fails on clean `91316dbe` against Longhorn after Card 179 / g16.008.
 - Impact: Required g16.011 validation could not pass.

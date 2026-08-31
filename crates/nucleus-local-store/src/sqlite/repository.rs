@@ -23,6 +23,7 @@ use crate::transactions::LocalStoreTransactionPosture;
 /// This implements generic record persistence for first-slice durable domains.
 /// It does not implement backend transactions, projection import/export,
 /// migrations beyond the initial schema, or domain object serialization.
+#[derive(Debug)]
 pub struct SqliteRepository {
     pub(super) domain: PersistenceDomain,
     pub(super) table: &'static str,

@@ -13,7 +13,7 @@
 //! branch mutation) is reachable through this path.
 
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -376,7 +376,7 @@ fn persisted_outcome_id(command_id: &str) -> String {
 
 /// Collapse `.`/`..` components lexically (no symlink resolution) so the
 /// playbook's `../<repo>-wt/<slug>` location yields a stable absolute path.
-fn normalize_path(path: &PathBuf) -> PathBuf {
+fn normalize_path(path: &Path) -> PathBuf {
     use std::path::Component;
     let mut normalized = PathBuf::new();
     for component in path.components() {

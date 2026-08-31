@@ -1,3 +1,5 @@
+use std::fmt;
+
 use super::safety::contains_forbidden_effigy_term;
 use crate::tools::{NativeRuntimeReceiptRef, NativeToolActionId};
 
@@ -45,6 +47,43 @@ impl NativeEffigyProjectIntegration {
 
     pub fn supports_steward_recommendations(&self) -> bool {
         self.status == NativeEffigyIntegrationStatus::Enabled && !self.selectors.is_empty()
+    }
+}
+
+/// Redacted `Debug`: shape, counts, presence, and the sanitization verdict.
+///
+/// `manifest_ref`, `selectors`, `evidence_refs`, `summary`, and the string
+/// payloads inside `scope` are unconstrained caller input. `uses_sanitized_refs`
+/// is a predicate callers check, not an invariant construction enforces, so
+/// `disabled(summary)` and direct struct literals can hold forbidden terms
+/// (`secret`, `credential`, `token`, `raw_stderr`, provider transcript text).
+/// A derived `Debug` would print that material before anything checks it, so
+/// this implementation renders structure instead of content.
+impl fmt::Debug for NativeEffigyProjectIntegration {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeEffigyProjectIntegration")
+            .field("status", &self.status)
+            .field("scope", &scope_shape(&self.scope))
+            .field("manifest_ref_present", &self.manifest_ref.is_some())
+            .field("selector_count", &self.selectors.len())
+            .field("evidence_ref_count", &self.evidence_refs.len())
+            .field("summary_present", &self.summary.is_some())
+            .field("uses_sanitized_refs", &self.uses_sanitized_refs())
+            .field(
+                "supports_steward_recommendations",
+                &self.supports_steward_recommendations(),
+            )
+            .finish()
+    }
+}
+
+/// Scope variant label without its caller-supplied string payload.
+fn scope_shape(scope: &NativeEffigyScope) -> &'static str {
+    match scope {
+        NativeEffigyScope::ProjectRoot => "project_root",
+        NativeEffigyScope::Repo { .. } => "repo",
+        NativeEffigyScope::Custom(_) => "custom",
     }
 }
 

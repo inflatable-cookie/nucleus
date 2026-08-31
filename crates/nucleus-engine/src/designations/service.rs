@@ -18,6 +18,7 @@ use super::model::{
 use crate::EngineRevisionExpectation;
 
 /// Engine designation command service.
+#[derive(Debug)]
 pub struct EngineOrchestratorDesignationService<R> {
     pub(super) repository: R,
 }
