@@ -48,3 +48,13 @@ its Paseo worktree. It must not merge; the orchestrator reviews the exact PR
 head, returns requested changes to that same worker, and merges accepted checked
 work without another approval prompt.
 
+## Closed
+
+Card 108 closed on 2026-08-31. See
+`2026-08-31-northstar-agents-rust-typescript-audit-closed.md`.
+
+Two baseline items above were corrected against the worker environment: the
+local Bun and Cargo path-dependency registrations report `healthy` in the Paseo
+worktree, and the `health.task.execute` error reproduces only while
+`apps/desktop/dist` is missing, which is a fresh-worktree condition. The
+god-file, generated-in-source, and graph findings stand and were not touched.

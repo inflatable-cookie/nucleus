@@ -46,10 +46,12 @@ The current execution focus is the agent orchestration lane:
 - real forge routes still report `ProviderUnavailable` until a provider `027`
   lane lands
 
-An independent g05 maintenance lane is active at
-`roadmaps/g05/026-northstar-instruction-and-language-quality-audit.md`: one
-AGENTS, Rust, and desktop TypeScript/Svelte audit worker. It does not select
-g06 or satisfy the orchestration product checkpoint.
+The independent g05 maintenance lane at
+`roadmaps/g05/026-northstar-instruction-and-language-quality-audit.md` is
+complete: Rust 1.95 is the workspace MSRV, both language-quality recorders are
+finalized with their retained findings, and the AGENTS surface leads with
+project orientation. It did not select g06 or satisfy the orchestration product
+checkpoint.
 
 Canonical lane refs:
 
