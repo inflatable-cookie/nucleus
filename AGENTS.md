@@ -84,3 +84,16 @@ Continuation, batch size, planning ambiguity, reporting, worker mode, and
 papercuts rules live in `034-agent-instruction-surface-contract.md`. Local path
 registry rules live in `035-agent-local-paths-contract.md`. Writing style lives
 in `docs/policy/internal-writing-style.md`.
+
+<!-- northstar:rust-quality:start -->
+## Northstar Rust Quality
+
+Scope: Rust source, Cargo manifests, build files, tests, and directly related
+documentation under this directory.
+
+Use Northstar's strict everyday-authoring route for ordinary Rust work. Resolve
+the repository-owned profile and deviations under `docs/contracts/`; never
+assume a universal MSRV. Re-enter at task start and coherent batch closeout.
+Preserve unrelated work. A quality audit, no-slop pass, or audit-and-fix request
+is explicit audit intent; never route it through everyday authoring.
+<!-- northstar:rust-quality:end -->

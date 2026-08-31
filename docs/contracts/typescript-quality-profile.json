@@ -1,0 +1,151 @@
+{
+  "deviations_file": "docs/contracts/typescript-quality-deviations.json",
+  "evidence_selectors": {
+    "compiler": [
+      "bun run check"
+    ],
+    "framework": [
+      "effigy desktop:check"
+    ],
+    "lint": [],
+    "test": [
+      "effigy desktop:test"
+    ]
+  },
+  "exclusions": {
+    "build_output": [
+      "apps/desktop/dist"
+    ],
+    "documentation": [],
+    "fixtures": [],
+    "generated": [
+      "apps/desktop/src/icons.generated.ts",
+      "apps/desktop/src/lib/control/generated"
+    ],
+    "vendored": []
+  },
+  "language": "typescript",
+  "packages": [
+    {
+      "manifest": "apps/desktop/package.json",
+      "overlays": [
+        "base",
+        "svelte"
+      ],
+      "ownership": "independent_root",
+      "root": "apps/desktop",
+      "typescript_evidence": {
+        "sources": [
+          "apps/desktop/src/app.d.ts",
+          "apps/desktop/src/lib/MemoryPanel.vitest.ts",
+          "apps/desktop/src/lib/ProjectRail.vitest.ts",
+          "apps/desktop/src/lib/RunFleetPanel.vitest.ts",
+          "apps/desktop/src/lib/RunReviewPanel.vitest.ts",
+          "apps/desktop/src/lib/TaskListPanel.vitest.ts",
+          "apps/desktop/src/lib/agentChatTranscript.fixtures.ts",
+          "apps/desktop/src/lib/agentChatTranscript.test.ts",
+          "apps/desktop/src/lib/agentChatTranscript/index.ts",
+          "apps/desktop/src/lib/agentChatTranscript/labels.ts",
+          "apps/desktop/src/lib/agentChatTranscript/questions.ts",
+          "apps/desktop/src/lib/agentChatTranscript/turn.ts",
+          "apps/desktop/src/lib/agentChatTranscriptFiltering.test.ts",
+          "apps/desktop/src/lib/agentChatTranscriptPanel.test.ts",
+          "apps/desktop/src/lib/agentChatTranscriptPlans.test.ts",
+          "apps/desktop/src/lib/agentChatTranscriptTurnState.test.ts",
+          "apps/desktop/src/lib/browserPanel.test.ts",
+          "apps/desktop/src/lib/browserPanel.ts",
+          "apps/desktop/src/lib/commands/commandPalette.vitest.ts",
+          "apps/desktop/src/lib/commands/runtime.svelte.ts",
+          "apps/desktop/src/lib/commands/runtime.vitest.ts",
+          "apps/desktop/src/lib/control.ts",
+          "apps/desktop/src/lib/control/agentChat.ts",
+          "apps/desktop/src/lib/control/client.ts",
+          "apps/desktop/src/lib/control/designations.ts",
+          "apps/desktop/src/lib/control/editorDrafts.ts",
+          "apps/desktop/src/lib/control/editorFileWatch.ts",
+          "apps/desktop/src/lib/control/editorFiles.ts",
+          "apps/desktop/src/lib/control/envelopes.ts",
+          "apps/desktop/src/lib/control/generatedContract.ts",
+          "apps/desktop/src/lib/control/memory.ts",
+          "apps/desktop/src/lib/control/planningResearch.ts",
+          "apps/desktop/src/lib/control/productWorkflow.ts",
+          "apps/desktop/src/lib/control/queryEnvelopeTypes.ts",
+          "apps/desktop/src/lib/control/responses.test.ts",
+          "apps/desktop/src/lib/control/responses.ts",
+          "apps/desktop/src/lib/control/runFleet.ts",
+          "apps/desktop/src/lib/control/scmWorkingCopy.ts",
+          "apps/desktop/src/lib/control/selectedTaskCompletionRouteApply.ts",
+          "apps/desktop/src/lib/control/selectedTaskProductAggregate.ts",
+          "apps/desktop/src/lib/control/selectedTaskReviewDecision.ts",
+          "apps/desktop/src/lib/control/selectedTaskReviewDecisionEnvelope.ts",
+          "apps/desktop/src/lib/control/selectedTaskReviewNext.ts",
+          "apps/desktop/src/lib/control/selectedTaskReviewOutcomeRoute.ts",
+          "apps/desktop/src/lib/control/selectedTaskReworkPreparation.ts",
+          "apps/desktop/src/lib/control/selectedTaskRouteAdmission.ts",
+          "apps/desktop/src/lib/control/selectedTaskScmHandoff.ts",
+          "apps/desktop/src/lib/control/singleRecordResponse.ts",
+          "apps/desktop/src/lib/control/taskCommandEnvelopes.ts",
+          "apps/desktop/src/lib/control/taskDiff.ts",
+          "apps/desktop/src/lib/control/taskWorkflow.ts",
+          "apps/desktop/src/lib/control/types.ts",
+          "apps/desktop/src/lib/diffSupport.test.ts",
+          "apps/desktop/src/lib/diffSupport.ts",
+          "apps/desktop/src/lib/editorNavigation.ts",
+          "apps/desktop/src/lib/editorSupport.test.ts",
+          "apps/desktop/src/lib/editorSupport.ts",
+          "apps/desktop/src/lib/fileTree.test.ts",
+          "apps/desktop/src/lib/fileTree.ts",
+          "apps/desktop/src/lib/nativePanelVisibility.test.ts",
+          "apps/desktop/src/lib/nativePanelVisibility.ts",
+          "apps/desktop/src/lib/notifications/notifications.vitest.ts",
+          "apps/desktop/src/lib/notifications/runtime.svelte.ts",
+          "apps/desktop/src/lib/notifications/toastHost.ts",
+          "apps/desktop/src/lib/operations/operationPopover.vitest.ts",
+          "apps/desktop/src/lib/operations/runtime.svelte.ts",
+          "apps/desktop/src/lib/panelResponsiveCss.test.ts",
+          "apps/desktop/src/lib/providerSelection.test.ts",
+          "apps/desktop/src/lib/providerSelection.ts",
+          "apps/desktop/src/lib/resourceTargetSupport.test.ts",
+          "apps/desktop/src/lib/resourceTargetSupport.ts",
+          "apps/desktop/src/lib/reviewRework.test.ts",
+          "apps/desktop/src/lib/reviewRework.ts",
+          "apps/desktop/src/lib/runFleetPanel.fixture.ts",
+          "apps/desktop/src/lib/runReviewPanel.fixture.ts",
+          "apps/desktop/src/lib/settings/client.ts",
+          "apps/desktop/src/lib/settings/pages/NucleusRestoreSettingsPage.vitest.ts",
+          "apps/desktop/src/lib/settings/settingsDialog.fixture.ts",
+          "apps/desktop/src/lib/settings/settingsDialog.vitest.ts",
+          "apps/desktop/src/lib/terminalClient.ts",
+          "apps/desktop/src/lib/terminalPresentation.test.ts",
+          "apps/desktop/src/lib/terminalPresentation.ts",
+          "apps/desktop/src/lib/workspaceLayout.svelte.ts",
+          "apps/desktop/src/lib/workspaceLayout.ts",
+          "apps/desktop/src/lib/workspaceLayoutSession.vitest.ts",
+          "apps/desktop/src/main.ts",
+          "apps/desktop/vite.config.ts",
+          "apps/desktop/vitest.config.ts",
+          "apps/desktop/package.json",
+          "apps/desktop/tsconfig.json"
+        ],
+        "status": "supported"
+      },
+      "version_evidence": {
+        "svelte": {
+          "source": "apps/desktop/package.json",
+          "status": "supported",
+          "version": "^5.56.8"
+        },
+        "sveltekit": {
+          "source": null,
+          "status": "absent",
+          "version": null
+        }
+      }
+    }
+  ],
+  "profile": "strict",
+  "schema_version": "1.0.0",
+  "unregistered_candidates": [],
+  "when_unresolved": "stop",
+  "workflow": "explicit_audit_repair"
+}
