@@ -24,6 +24,7 @@
     serializeFileTreeExpansionState,
   } from "./fileTree";
   import {
+    activeEditorFileFromEvent,
     consumeEditorFileReveal,
     getActiveEditorFile,
     type ActiveEditorFile,
@@ -325,7 +326,7 @@
 
   function handleActiveEditorFileChanged(event: Event): void {
     if (!(event instanceof CustomEvent)) return;
-    activeEditorFile = event.detail as ActiveEditorFile | null;
+    activeEditorFile = activeEditorFileFromEvent(event);
   }
 
   function handleEditorFileReveal(): void {
