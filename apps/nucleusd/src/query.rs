@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use nucleus_local_store::{LocalStoreRecord, SqliteBackend};
 use nucleus_server::{
@@ -16,7 +16,7 @@ use kind::{query_kind, state_query_kind};
 
 pub(crate) fn print_status(
     handler: &mut LocalControlRequestHandler<SqliteBackend>,
-    state_path: &PathBuf,
+    state_path: &Path,
 ) -> Result<(), String> {
     let project_count = list_count(handler, ServerStateDomain::Projects, "projects")?;
     let task_count = list_count(handler, ServerStateDomain::Tasks, "tasks")?;

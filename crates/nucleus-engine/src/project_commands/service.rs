@@ -24,6 +24,7 @@ use crate::task_commands::{EngineRevisionExpectation, EngineTaskRecord};
 use actions::{action_name, action_value, apply_action};
 use helpers::{codec_error, invalid, project_id_for_create, request_fingerprint};
 
+#[derive(Debug)]
 pub struct EngineProjectCommandService<R> {
     repository: R,
 }

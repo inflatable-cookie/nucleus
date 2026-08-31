@@ -2,6 +2,7 @@ use super::safety::contains_forbidden_effigy_term;
 use crate::tools::{NativeRuntimeReceiptRef, NativeToolActionId};
 
 /// Project-level Effigy integration record.
+#[derive(Debug)]
 pub struct NativeEffigyProjectIntegration {
     pub status: NativeEffigyIntegrationStatus,
     pub scope: NativeEffigyScope,

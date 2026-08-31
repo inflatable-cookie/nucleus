@@ -184,7 +184,7 @@ pub(crate) async fn dispatch_run(
     };
     if let Err(error) = submit_control(&adapter, delivery) {
         notifications::publish_command_refusal(
-            &window.app_handle(),
+            window.app_handle(),
             &format!("command:run:delivery:{run_id}"),
             Some(&request.project_id),
             "Run delivery",
@@ -194,7 +194,7 @@ pub(crate) async fn dispatch_run(
     }
     let pr_url = delivered_pr_url(&state, &run_id);
     notifications::publish_run_delivery(
-        &window.app_handle(),
+        window.app_handle(),
         &run_id,
         pushed,
         pr_url.as_deref(),

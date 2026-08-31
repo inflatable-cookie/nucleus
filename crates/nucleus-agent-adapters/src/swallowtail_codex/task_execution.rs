@@ -28,6 +28,7 @@ use super::{host, idioms, preparation, request_id, runtime_error};
 
 pub const CODEX_PROVIDER_INSTANCE_ID: &str = "codex:local-default";
 
+#[derive(Debug)]
 pub struct SwallowtailCodexTaskExecutionRuntime;
 
 impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {

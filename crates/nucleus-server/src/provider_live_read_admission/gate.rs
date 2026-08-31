@@ -12,10 +12,12 @@ use super::types::{
     ProviderLiveReadAdmissionStatus,
 };
 
+#[derive(Debug)]
 pub struct ProviderLiveReadAdmissionGate;
 
 /// Gate input: the admission request plus the provider context ref under
 /// evaluation.
+#[derive(Debug)]
 pub struct ProviderLiveReadGateInput {
     pub input: ProviderLiveReadAdmissionInput,
     pub provider_context_ref: String,

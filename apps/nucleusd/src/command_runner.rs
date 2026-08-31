@@ -25,7 +25,7 @@ mod durable_live_provider_write_smoke;
 
 pub(crate) fn print_command_runner(
     handler: &mut LocalControlRequestHandler<SqliteBackend>,
-    state_path: &PathBuf,
+    state_path: &Path,
     command_runner: CommandRunnerCommand,
 ) -> Result<(), String> {
     match command_runner {
@@ -157,7 +157,7 @@ fn print_command_runner_smoke(
 
 fn print_read_only_spawn_smoke(
     handler: &mut LocalControlRequestHandler<SqliteBackend>,
-    state_path: &PathBuf,
+    state_path: &Path,
 ) -> Result<(), String> {
     let working_directory =
         env::current_dir().map_err(|error| format!("failed to read current dir: {error}"))?;

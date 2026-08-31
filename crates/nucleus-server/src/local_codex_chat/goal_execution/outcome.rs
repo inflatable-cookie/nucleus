@@ -186,12 +186,12 @@ where
         task_record.provider_turn_id = Some(linkage.turn_id);
     }
     if !continue_run {
+        // `cancelled` has no separate execution status: GoalRunExecutionStatus
+        // has no Cancelled variant, so cancellation is a Stopped run.
         execution.status = if status == "recovery_required"
             || matches!(status, "waiting_for_approval" | "waiting_for_user_input")
         {
             GoalRunExecutionStatus::RecoveryRequired
-        } else if status == "cancelled" {
-            GoalRunExecutionStatus::Stopped
         } else {
             GoalRunExecutionStatus::Stopped
         };

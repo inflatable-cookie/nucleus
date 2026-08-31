@@ -83,9 +83,9 @@ pub(crate) fn build_codex_turn_start_real_write_smoke_boundary(
     let execution = execution();
     let diagnostics = codex_transport_executor_diagnostics(
         &[],
-        &[authority.clone()],
-        &[envelope.clone()],
-        &[execution.clone()],
+        std::slice::from_ref(&authority),
+        std::slice::from_ref(&envelope),
+        std::slice::from_ref(&execution),
         &[],
         &[],
         &[],
