@@ -138,6 +138,7 @@ fn activity_kind(kind: &ActivityKind) -> &'static str {
         ActivityKind::ContextCompaction => "context_compaction",
         ActivityKind::Task => "task",
         ActivityKind::Hook => "hook",
+        ActivityKind::HostWatcher => "host_watcher",
         ActivityKind::WarningOrError => "warning_or_error",
         ActivityKind::Unknown(_) => "unknown",
     }

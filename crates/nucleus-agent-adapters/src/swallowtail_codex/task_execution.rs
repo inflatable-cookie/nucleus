@@ -16,9 +16,7 @@ use nucleus_agent_protocol::{
     TaskExecutionLinkage, TaskExecutionOutcome, TaskExecutionRequest, TaskExecutionRuntime,
     TaskExecutionStartedHandler,
 };
-use swallowtail_adapter_codex::{
-    CodexAppServerDriver, CodexSessionProfileInput,
-};
+use swallowtail_adapter_codex::{CodexAppServerDriver, CodexSessionProfileInput};
 use swallowtail_core::ReasoningMode;
 use swallowtail_runtime::{
     InteractiveSessionDriver, OperationContent, SessionOptions, TurnRequest,
@@ -88,25 +86,34 @@ impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {
         let provider_thread_id = match session.provider_session_ref() {
             Some(reference) => reference.as_provider_value().to_owned(),
             None => {
-                let _ = block_on_worker(session.close());
+                let _ = block_on_worker(session.close(
+                    host::cleanup_request(&services, request.timeout),
+                    services.clone(),
+                ));
                 return Err("Codex task session did not return a provider thread id".to_owned());
             }
         };
         let deadline = match services.time() {
             Some(time) => host::deadline_after(time.as_ref(), request.timeout),
             None => {
-                let _ = block_on_worker(session.close());
+                let _ = block_on_worker(session.close(
+                    host::cleanup_request(&services, request.timeout),
+                    services.clone(),
+                ));
                 return Err("Codex task time service is unavailable".to_owned());
             }
         };
         let turn = block_on_worker(session.start_turn(
             TurnRequest::new(runtime_turn_id, prompt).with_deadline(deadline),
-            services,
+            services.clone(),
         ));
         let mut turn = match turn {
             Ok(turn) => turn,
             Err(error) => {
-                let _ = block_on_worker(session.close());
+                let _ = block_on_worker(session.close(
+                    host::cleanup_request(&services, request.timeout),
+                    services.clone(),
+                ));
                 return Err(runtime_error(error));
             }
         };
@@ -115,7 +122,10 @@ impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {
             None => {
                 let _ = block_on_worker(turn.cancellation().request());
                 let _ = block_on_worker(turn.close());
-                let _ = block_on_worker(session.close());
+                let _ = block_on_worker(session.close(
+                    host::cleanup_request(&services, request.timeout),
+                    services.clone(),
+                ));
                 return Err("Codex task turn did not return a provider turn id".to_owned());
             }
         };
@@ -127,7 +137,10 @@ impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {
         if let Err(reason) = on_started(&linkage) {
             let _ = block_on_worker(turn.cancellation().request());
             let turn_cleanup = block_on_worker(turn.close());
-            let session_cleanup = block_on_worker(session.close());
+            let session_cleanup = block_on_worker(session.close(
+                host::cleanup_request(&services, request.timeout),
+                services.clone(),
+            ));
             return Ok(TaskExecutionOutcome::RecoveryRequired {
                 linkage: Some(linkage),
                 reason: outcome::cleanup_reason(
@@ -141,7 +154,9 @@ impl TaskExecutionRuntime for SwallowtailCodexTaskExecutionRuntime {
 
         let terminal = block_on_worker(drive::drive_task_turn(turn.as_mut()));
         let turn_cleanup = block_on_worker(turn.close());
-        let session_cleanup = block_on_worker(session.close());
+        let session_cleanup = block_on_worker(
+            session.close(host::cleanup_request(&services, request.timeout), services),
+        );
         Ok(outcome::map_outcome(
             linkage,
             terminal,

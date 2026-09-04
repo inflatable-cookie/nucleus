@@ -9,7 +9,8 @@ use swallowtail_core::{ExecutionHostId, InterfaceVersionAxis};
 use swallowtail_host_local::{LocalHostServices, LocalProcessHost, LocalProcessLimits};
 use swallowtail_runtime::{
     Deadline, DiagnosticObserver, EnvironmentRef, ExecutableRef, HostServices,
-    InstalledExecutableTarget, MonotonicInstant, TimeService, WorkingResourceRef,
+    InstalledExecutableTarget, MonotonicInstant, SessionCleanupRequest, TimeService,
+    WorkingResourceRef,
 };
 
 const HOST_ID: &str = "nucleus.embedded";
@@ -82,6 +83,14 @@ pub(super) fn deadline_after(time: &dyn TimeService, duration: Duration) -> Dead
     Deadline::at(MonotonicInstant::from_ticks(
         time.now().ticks().saturating_add(ticks),
     ))
+}
+
+pub(super) fn cleanup_request(services: &HostServices, timeout: Duration) -> SessionCleanupRequest {
+    let deadline = services
+        .time()
+        .map(|time| deadline_after(time.as_ref(), timeout))
+        .unwrap_or_else(|| Deadline::at(MonotonicInstant::from_ticks(0)));
+    SessionCleanupRequest::new(deadline)
 }
 
 pub(super) fn host_id() -> ExecutionHostId {
@@ -180,7 +189,8 @@ fn approved_environment() -> Vec<(OsString, OsString)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_executable_in_path, is_direct_executable};
+    use super::{cleanup_request, find_executable_in_path, is_direct_executable};
+    use std::time::Duration;
     use std::sync::Arc;
     use swallowtail_idioms::{
         BoundedText, Idiom, IdiomConstraint, IdiomId, IdiomScope, MonotonicInstant, Provenance,
@@ -207,6 +217,18 @@ mod tests {
         assert!(resolved.is_absolute());
         assert_eq!(resolved, current);
         assert!(is_direct_executable(&resolved));
+    }
+
+    #[test]
+    fn cleanup_request_uses_zero_boundary_without_host_time() {
+        let services = HostServices::new(
+            swallowtail_core::ExecutionHostId::new("fixture.nucleus.host")
+                .expect("fixture host id"),
+        );
+
+        let request = cleanup_request(&services, Duration::from_secs(30));
+
+        assert_eq!(request.deadline().instant().ticks(), 0);
     }
 
     #[test]

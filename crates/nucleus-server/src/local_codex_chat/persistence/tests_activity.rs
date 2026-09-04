@@ -68,6 +68,30 @@ fn activity_projection_preserves_portable_reasoning_summary_evidence() {
 }
 
 #[test]
+fn activity_projection_preserves_host_watcher_kind() {
+    let observation = ActivityObservation::new(
+        ActivityId::new("watcher:1").expect("activity id"),
+        ActivityOperationId::Run(RuntimeRunId::new("run:1").expect("run id")),
+        ActivityKind::HostWatcher,
+        ActivityLifecyclePhase::Updated,
+        ActivityStatus::InProgress,
+        None,
+        ActivityDisclosure::IdentityAndLifecycleOnly,
+    )
+    .expect("observation");
+
+    let activity = project_activity(
+        "conversation:1",
+        "turn:1",
+        1,
+        AgentActivityEvent::new(8, observation),
+    );
+
+    assert_eq!(activity.kind, "host_watcher");
+    assert_eq!(activity.kind_namespace, None);
+}
+
+#[test]
 fn activity_projection_upserts_by_portable_key_and_separates_operations() {
     let observation = |operation: &str,
                        phase: ActivityLifecyclePhase,
