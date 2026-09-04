@@ -15,7 +15,9 @@ use std::time::Duration;
 use futures_executor::block_on;
 use swallowtail_adapter_codex::{CodexAppServerDriver, CodexSessionProfileInput};
 use swallowtail_core::ReasoningMode;
-use swallowtail_runtime::{InteractiveSessionDriver, OperationContent, SessionOptions, TurnRequest};
+use swallowtail_runtime::{
+    InteractiveSessionDriver, OperationContent, SessionOptions, TurnRequest,
+};
 
 use super::{host, preparation, request_id, runtime_error, runtime_turn_id};
 
@@ -80,7 +82,9 @@ pub fn run_codex_read_only_smoke(
     let thread_id = match session.provider_session_ref() {
         Some(reference) => reference.as_provider_value().to_owned(),
         None => {
-            let cleanup = block_on(session.close());
+            let cleanup = block_on(
+                session.close(host::cleanup_request(&services, timeout), services.clone()),
+            );
             return Err(format!(
                 "Codex diagnostic session returned no provider thread id; session_cleanup={}",
                 outcome::cleanup_label(&cleanup)
@@ -90,7 +94,9 @@ pub fn run_codex_read_only_smoke(
     let deadline = match services.time() {
         Some(time) => host::deadline_after(time.as_ref(), timeout),
         None => {
-            let cleanup = block_on(session.close());
+            let cleanup = block_on(
+                session.close(host::cleanup_request(&services, timeout), services.clone()),
+            );
             return Err(format!(
                 "Codex diagnostic time service is unavailable; session_cleanup={}",
                 outcome::cleanup_label(&cleanup)
@@ -104,13 +110,15 @@ pub fn run_codex_read_only_smoke(
                 OperationContent::new(prompt).map_err(|error| error.to_string())?,
             )
             .with_deadline(deadline),
-            services,
+            services.clone(),
         ),
     );
     let mut turn = match turn {
         Ok(turn) => turn,
         Err(error) => {
-            let cleanup = block_on(session.close());
+            let cleanup = block_on(
+                session.close(host::cleanup_request(&services, timeout), services.clone()),
+            );
             return Err(format!(
                 "{}; session_cleanup={}",
                 runtime_error(error),
@@ -123,7 +131,9 @@ pub fn run_codex_read_only_smoke(
         None => {
             let _ = block_on(turn.cancellation().request());
             let turn_cleanup = block_on(turn.close());
-            let session_cleanup = block_on(session.close());
+            let session_cleanup = block_on(
+                session.close(host::cleanup_request(&services, timeout), services.clone()),
+            );
             return Err(format!(
                 "Codex diagnostic turn returned no provider turn id; turn_cleanup={}, session_cleanup={}",
                 outcome::cleanup_label(&turn_cleanup),
@@ -134,7 +144,8 @@ pub fn run_codex_read_only_smoke(
 
     let observation = block_on(drive::drive_smoke_turn(turn.as_mut()));
     let turn_cleanup = block_on(turn.close());
-    let session_cleanup = block_on(session.close());
+    let session_cleanup =
+        block_on(session.close(host::cleanup_request(&services, timeout), services));
     Ok(outcome::finish_outcome(
         thread_id,
         turn_id,

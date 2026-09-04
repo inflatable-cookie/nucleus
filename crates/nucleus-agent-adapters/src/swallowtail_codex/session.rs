@@ -10,9 +10,7 @@ use nucleus_agent_protocol::{
     AgentToolCallHandler, AgentTurnFailure, AgentTurnReply, AgentTurnRequest,
     AgentUserInputHandler,
 };
-use swallowtail_runtime::{
-    HostServices, InteractiveSessionHandle, OperationContent, TurnRequest,
-};
+use swallowtail_runtime::{HostServices, InteractiveSessionHandle, OperationContent, TurnRequest};
 
 use super::host;
 use super::runtime_error;
@@ -94,7 +92,10 @@ impl AgentLiveSession for SwallowtailCodexLiveSession {
 impl Drop for SwallowtailCodexLiveSession {
     fn drop(&mut self) {
         if let Some(session) = self.session.take() {
-            let _ = block_on(session.close());
+            let _ = block_on(session.close(
+                host::cleanup_request(&self.services, self.turn_timeout),
+                self.services.clone(),
+            ));
         }
     }
 }

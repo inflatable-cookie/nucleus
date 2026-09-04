@@ -10,9 +10,9 @@ rust-version.workspace = true
 futures-executor = "0.3"
 serde_json = "1"
 nucleus-agent-protocol = { path = "../nucleus-agent-protocol" }
-swallowtail-adapter-codex = { git = "https://github.com/inflatable-cookie/swallowtail", tag = "v0.3.2" }
-swallowtail-core = { git = "https://github.com/inflatable-cookie/swallowtail", tag = "v0.3.2" }
-swallowtail-host-local = { git = "https://github.com/inflatable-cookie/swallowtail", tag = "v0.3.2" }
-swallowtail-idioms = { git = "https://github.com/inflatable-cookie/swallowtail", tag = "v0.3.2" }
-swallowtail-runtime = { git = "https://github.com/inflatable-cookie/swallowtail", tag = "v0.3.2" }
+swallowtail-adapter-codex = { git = "https://github.com/inflatable-cookie/swallowtail", rev = "56f3913ac99af44b6ff45384cfc53a0adea587ba" }
+swallowtail-core = { git = "https://github.com/inflatable-cookie/swallowtail", rev = "56f3913ac99af44b6ff45384cfc53a0adea587ba" }
+swallowtail-host-local = { git = "https://github.com/inflatable-cookie/swallowtail", rev = "56f3913ac99af44b6ff45384cfc53a0adea587ba" }
+swallowtail-idioms = { git = "https://github.com/inflatable-cookie/swallowtail", rev = "56f3913ac99af44b6ff45384cfc53a0adea587ba" }
+swallowtail-runtime = { git = "https://github.com/inflatable-cookie/swallowtail", rev = "56f3913ac99af44b6ff45384cfc53a0adea587ba" }
 uuid = { version = "1", features = ["v4"] }
