@@ -7,6 +7,7 @@ describe("agent chat panel composition", () => {
     ).text();
 
     expect(panel).toContain("AgentTranscript");
+    expect(panel).toContain('from "@inflatable-cookie/poodle-svelte/markdown"');
     expect(panel).toContain('listen<AgentChatActivity>("agent-chat:activity"');
     expect(panel).toContain('listen<AgentChatQuestionExchange>("agent-chat:question"');
     expect(panel).toContain('"agent-chat:subagents"');

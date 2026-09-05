@@ -26,8 +26,8 @@
     "@inflatable-cookie/longhorn": "file:../../../longhorn/packages/longhorn",
     "@inflatable-cookie/longhorn-poodle-svelte": "file:../../../longhorn/packages/longhorn-poodle-svelte",
     "@inflatable-cookie/longhorn-tauri": "file:../../../longhorn/packages/longhorn-tauri",
-    "@inflatable-cookie/poodle-core": "0.2.2",
-    "@inflatable-cookie/poodle-svelte": "0.2.2",
+    "@inflatable-cookie/poodle-core": "0.3.0",
+    "@inflatable-cookie/poodle-svelte": "0.3.0",
     "@lezer/highlight": "^1.2.3",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",
@@ -36,6 +36,7 @@
     "@xterm/xterm": "^6.0.0",
     "codemirror": "^6.0.2",
     "lucide-static": "^1.31.0",
+    "marked": "18.0.9",
     "svelte": "^5.56.8"
   },
   "devDependencies": {
