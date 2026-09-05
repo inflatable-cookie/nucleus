@@ -86,9 +86,7 @@
   import { onDestroy } from "svelte";
   import {
     AgentChatInput,
-    AgentPlan,
     AgentQuestion,
-    AgentTranscript,
     Button,
     Icon,
     ModelPicker,
@@ -103,6 +101,10 @@
     type ModelSelection,
     type StatusTone,
   } from "@inflatable-cookie/poodle-svelte";
+  import {
+    AgentPlan,
+    AgentTranscript,
+  } from "@inflatable-cookie/poodle-svelte/markdown";
   import {
     subagentStatusLabel,
     type AgentSubagentStatus,

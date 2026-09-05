@@ -5,6 +5,18 @@ they hit a solvable hurdle; they do not stop the current task to fix one.
 
 ## Open
 
+### [ ] `desktop:check` misses Poodle optional peer `marked` — 2026-09-05
+- Friction: After pinning Poodle `0.3.0`, `effigy desktop:check` was green while `marked` was absent. `effigy desktop:build` then failed because `poodle-svelte` markdown (`AgentMessage` / `MarkdownEditor`) imports `marked`, now an optional peer instead of a dependency.
+- Impact: The card's `desktop:check` selector is not enough to prove markdown-family adoption. A green check can hide a red build.
+- Fix: Keep `desktop:build` on the adoption board, or teach `svelte-check` to resolve optional peers used by imported markdown barrels.
+- Surface: `apps/desktop` Poodle markdown imports; `effigy desktop:check` vs `desktop:build`.
+
+### [ ] `bun install` leaves stale `file:` peer metadata in `bun.lock` — 2026-09-05
+- Friction: After Longhorn's merged `0.3.0` pin, `bun install` in `apps/desktop` updated the registry Poodle entries but left `longhorn-poodle-svelte`'s locked peer at `poodle-svelte` `0.2.2`. `bun update @inflatable-cookie/longhorn-poodle-svelte` refreshed it to `0.3.0`.
+- Impact: A lock grep for one Poodle identity still shows `0.2.2` until that extra update, even though `package.json` and `node_modules` are already `0.3.0`.
+- Fix: After a sibling Longhorn pin, `bun update` the `file:` Longhorn packages, or document that `bun install` alone does not rewrite their lock peers.
+- Surface: `apps/desktop/bun.lock`; local `file:../../../longhorn/packages/longhorn-poodle-svelte`.
+
 ### [ ] `check:rust` fails in a fresh worktree until the desktop frontend is built — 2026-08-31
 - Friction: `cargo check --workspace` fails with `proc macro panicked ... frontendDist is set to "../dist" but this path doesn't exist` in any freshly branched worktree, because `apps/desktop/dist` is git-ignored build output that `tauri::generate_context!` needs at compile time. `effigy doctor` reports it as a `health.task.execute` error that looks like a source defect.
 - Impact: Every worker worktree starts with a red `check:rust`, `effigy qa`, and `effigy doctor` until someone works out that `effigy desktop:build` has to run once. Card 108 lost a validation cycle to it.
