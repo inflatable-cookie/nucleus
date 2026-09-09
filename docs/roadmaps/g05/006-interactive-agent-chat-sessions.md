@@ -35,23 +35,20 @@ without freezing the workspace or weakening session-plan truth.
 
 ## Execution Plan
 
-### Batch 6.1 — Contract And Compatibility
+### Contract And Compatibility
 
-- [x] Execute card 018.
 - [x] Promote lifecycle, timeline, mediation, and integration rules.
 - [x] Restore the Rust build without pretending task execution is interactive.
 
-### Batch 6.2 — Typed Question Exchange
+### Typed Question Exchange
 
-- [x] Execute cards 019 and 020.
 - [x] Add the non-blocking rendezvous, durable records, IPC, and Poodle
       composition.
 - [x] Prove duplicate, stale, cancellation, timeout, terminal, and restart
       behavior without provider effects.
 
-### Batch 6.3 — Explicit Plan Mode
+### Explicit Plan Mode
 
-- [x] Execute card 021.
 - [x] Carry selected and effective mode through request, preparation,
       persistence, and the composer.
 - [x] Replace sessions when mode changes.

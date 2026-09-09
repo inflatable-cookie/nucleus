@@ -256,10 +256,9 @@ Decision:
 - select server/client workflow hardening around existing read models before
   adding more provider execution.
 
-Likely documents:
+Likely documents (g03 compacted 2026-09-09; see `../roadmaps/archive/g03.md`):
 
-- `docs/roadmaps/g03/107-provider-live-read-reassessment.md`
-- `docs/roadmaps/g03/108-server-client-workflow-hardening.md`
+- `../roadmaps/archive/g03.md` (tasks `107-provider-live-read-reassessment.md` and `108-server-client-workflow-hardening.md`)
 
 ## Non-Blocking Gaps
 

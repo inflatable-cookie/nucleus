@@ -942,6 +942,5 @@ available but still unusable for a command without command authority.
 
 ## Interfaces With Roadmaps
 
-This architecture unlocks:
-
-- `docs/roadmaps/g02/001-orchestration-and-engine-boundary.md`
+This architecture unlocks the orchestration and engine boundary proven in g02
+(compacted 2026-09-09; see `../roadmaps/archive/g02.md`).

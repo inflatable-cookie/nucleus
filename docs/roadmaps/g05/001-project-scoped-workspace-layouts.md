@@ -41,10 +41,12 @@ width global.
 - [x] a newly created project contains exactly one Agent Chat tab
 - [x] desktop checks, focused Rust tests, client tests, and docs QA pass
 
-## Batch Cards
+## Delivered Through
 
-Completed:
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
 
-- `batch-cards/001-project-layout-store-and-migration.md`
-- `batch-cards/002-project-layout-desktop-binding.md`
-- `batch-cards/003-project-layout-validation.md`
+
+
+- `001-project-layout-store-and-migration.md` — completed (collapsed into this task)
+- `002-project-layout-desktop-binding.md` — completed (collapsed into this task)
+- `003-project-layout-validation.md` — completed (collapsed into this task)

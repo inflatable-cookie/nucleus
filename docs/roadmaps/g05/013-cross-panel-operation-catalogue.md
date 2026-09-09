@@ -29,21 +29,18 @@ Let work remain understandable when its initiating panel is no longer active.
 
 ## Execution Plan
 
-### Batch 13.1 — Authority Mapping
+### Authority Mapping
 
-- [x] Execute card 039.
 - [x] start with Forge, resource, indexing, and recovery-shaped fixtures
 - [x] exclude provider questions, plans, Tasks, and transcript detail
 
-### Batch 13.2 — Renderer Projection
+### Renderer Projection
 
-- [x] Execute card 040.
 - [x] add one isolated Svelte session and compact Poodle presentation
 - [x] keep cancellation requests distinct from confirmed cancellation
 
-### Batch 13.3 — Operation Acceptance
+### Operation Acceptance
 
-- [x] Execute card 041.
 - [x] prove races, retry lineage, remount, project switch, and shutdown
 - [x] verify no duplicate durable authority
 
@@ -55,8 +52,11 @@ Let work remain understandable when its initiating panel is no longer active.
 - [x] renderer teardown does not cancel host work
 - [x] Tasks and Agent Chat retain their full product models
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/039-operation-authority-mapping.md`
-- `batch-cards/040-operation-session-and-presentation.md`
-- `batch-cards/041-operation-catalogue-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `039-operation-authority-mapping.md` — completed (collapsed into this task)
+- `040-operation-session-and-presentation.md` — completed (collapsed into this task)
+- `041-operation-catalogue-acceptance.md` — completed (collapsed into this task)

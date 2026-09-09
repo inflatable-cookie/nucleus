@@ -29,38 +29,31 @@ workflow.
 
 ## Execution Plan
 
-### Batch 17.1 — Product Gate
+### Product Gate (paused)
 
-- [ ] Execute card 051 after operator selection of a concrete secondary-window
-  use case.
-- [ ] promote window roles, defaults, close, recovery, and project-switch rules
+- [ ] define one useful secondary-window workflow after the operator selects a concrete use case
+- [ ] contract window role, project behavior, defaults, close, restart, and recovery
+- [ ] keep movable and fixed panel classes explicit
 - [ ] keep dormant window state out of current layouts
 
-### Batch 17.2 — Surface-Free Transfer
+### Surface-Free Transfer (paused behind the product gate)
 
-- [ ] Execute card 052.
-- [ ] compose sessions, complete leases, geometry, and authoritative moves
+- [ ] compose sessions, complete measured target leases, geometry, and authoritative moves
+- [ ] move panels through authoritative layout mutation
 - [ ] retain panel bodies and resource bindings in Nucleus
 
-### Batch 17.3 — Native Acceptance
+### Native Acceptance (paused behind transfer)
 
-- [ ] Execute card 053.
 - [ ] prove drag, stale targets, display changes, restart, close, and rollback
 - [ ] audit exact absence of hosted Surface state
 
-## Acceptance Criteria
+## Delivered Through
 
-- [ ] the primary-window workflow is unchanged until a secondary window exists
-- [ ] only allowed movable panels can transfer
-- [ ] stale or incomplete target leases cannot mutate layouts
-- [ ] panel identity and product attachments survive the move
-- [ ] Nucleus still has no hosted Surface dependency
+Batch cards collapsed by the flattened-task migration (2026-09-09): `051-secondary-window-product-gate.md`, `052-surface-free-panel-transfer.md`, and `053-secondary-window-native-acceptance.md`, all paused and absorbed above. Dispatch evidence lives in `../dispatch.md`.
 
-## Batch Cards
+## Stop Conditions
 
-- `batch-cards/051-secondary-window-product-gate.md` — paused
-- `batch-cards/052-surface-free-panel-transfer.md` — paused behind card 051
-- `batch-cards/053-secondary-window-native-acceptance.md` — paused behind card 052
+- infrastructure interest alone is not product authority
 
 ## Resume Condition
 

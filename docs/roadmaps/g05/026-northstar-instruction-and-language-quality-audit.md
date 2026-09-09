@@ -97,7 +97,7 @@ Oracle reconciliation:
 | Instructions retain intent | Section-intent map in the closeout log. Every authority, stop, release, worktree, sibling-link, validation, papercut, and activation boundary is present after the rewrite; `CLAUDE.md` is byte-identical at `@AGENTS.md`; the marked `northstar:rust-quality` block hashes identically before and after. |
 | Baseline is not laundered | The PR and closeout report `effigy doctor` as still degraded, name the untouched god-file and generated-in-source findings, and correct one opening-log baseline item against the observed worker environment rather than silently dropping it. |
 
-## Runway
+## Delivered Through
 
-- `batch-cards/108-northstar-agents-rust-typescript-audit.md` — complete
+Card `108-northstar-agents-rust-typescript-audit.md` — complete, merged as PR #5, collapsed into this task by the flattened-task migration (2026-09-09). Dispatch evidence lives in `../dispatch.md`; closeout evidence in the log cited under Outcome above.
 

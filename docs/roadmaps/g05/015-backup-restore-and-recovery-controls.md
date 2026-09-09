@@ -29,19 +29,17 @@ Make local client recovery usable without widening storage authority.
 
 ## Execution Plan
 
-### Batch 15.1 — Backup Adapters And Inventory
+### Backup Adapters And Inventory
 
-- [x] Execute card 045.
 - [x] preserve SQLite consistency and bounded retention
 - [x] exclude credentials, Browser data, raw streams, and expired evidence
 
-### Batch 15.2 — Restore And Recovery
+### Restore And Recovery
 
-- [x] Execute card 046 after its resume condition is met.
 - [x] stage and inspect before publication
 - [x] preserve exact rollback and interrupted-recovery behavior
 
-### Batch 15.3 — Settings And Native Acceptance
+### Settings And Native Acceptance
 
 - [x] Execute the recovery portion of card 047 after card 046.
 - [x] compose available shared pages inside the existing Settings shell
@@ -55,11 +53,14 @@ Make local client recovery usable without widening storage authority.
 - [x] sensitive and expired material remains excluded
 - [x] recovery state survives restart and remains actionable
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/045-backup-inventory-and-capture.md`
-- `batch-cards/046-restore-and-recovery.md`
-- `batch-cards/047-backup-recovery-settings-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `045-backup-inventory-and-capture.md` — completed (collapsed into this task)
+- `046-restore-and-recovery.md` — completed (collapsed into this task)
+- `047-backup-recovery-settings-acceptance.md` — completed (collapsed into this task)
 
 ## Current Boundary
 

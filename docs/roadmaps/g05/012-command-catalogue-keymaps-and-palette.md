@@ -29,21 +29,18 @@ adding visible controls.
 
 ## Execution Plan
 
-### Batch 12.1 — Catalogue And Fresh Admission
+### Catalogue And Fresh Admission
 
-- [x] Execute card 036.
 - [x] register shell, project, thread, panel, editor, Forge, and turn actions
 - [x] rerun product admission at execution time
 
-### Batch 12.2 — Keyboard And Keymaps
+### Keyboard And Keymaps
 
-- [x] Execute card 037.
 - [x] promote only global semantic shortcuts
 - [x] retain component-local editing and accessibility keys locally
 
-### Batch 12.3 — Palette And Acceptance
+### Palette And Acceptance
 
-- [x] Execute card 038.
 - [x] compose palette, menu projections, and settings integration
 - [x] prove focus, text-input, IME, conflict, and stale-state behavior
 
@@ -55,8 +52,11 @@ adding visible controls.
 - [x] shortcuts resolve consistently across supported platforms
 - [x] no command bypasses Nucleus product authority
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/036-command-catalogue-and-admission.md`
-- `batch-cards/037-keymap-persistence-and-resolution.md`
-- `batch-cards/038-command-palette-and-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `036-command-catalogue-and-admission.md` — completed (collapsed into this task)
+- `037-keymap-persistence-and-resolution.md` — completed (collapsed into this task)
+- `038-command-palette-and-acceptance.md` — completed (collapsed into this task)

@@ -27,21 +27,18 @@ Surface important background outcomes without permanent diagnostic chrome.
 
 ## Execution Plan
 
-### Batch 14.1 — Ledger And Product Projection
+### Ledger And Product Projection
 
-- [x] Execute card 042.
 - [x] map selected failures, interruptions, and attention-worthy completions
 - [x] keep wording, severity, and redaction in Nucleus
 
-### Batch 14.2 — Toasts, Popover, And Actions
+### Toasts, Popover, And Actions
 
-- [x] Execute card 043.
 - [x] compose public Poodle feedback primitives
 - [x] keep toast expiry separate from seen and dismissed state
 
-### Batch 14.3 — Notification Acceptance
+### Notification Acceptance
 
-- [x] Execute card 044.
 - [x] prove replacement, retention, remount, multi-window observation, and
   action authorization
 - [x] validate that routine success stays quiet
@@ -54,8 +51,12 @@ Surface important background outcomes without permanent diagnostic chrome.
 - [x] toast expiry never removes the retained record
 - [x] normal shell attention remains visually minimal
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/042-notification-ledger-and-projector.md`
-- `batch-cards/043-notification-presentation-and-actions.md`
-- `batch-cards/044-notification-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+- `042-notification-ledger-and-projector.md` — completed (collapsed into this task)
+- `043-notification-presentation-and-actions.md` — completed (collapsed into this task)
+- `044-notification-acceptance.md` — completed (collapsed into this task)
+- `096-message-centre-adoption.md` — completed (MessageCentre and toast delivery; collapsed into this task)
+- `097-failure-notification-routing.md` — completed (operator-facing failure routing into this ledger; collapsed into this task)

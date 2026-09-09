@@ -38,31 +38,27 @@ Nucleus-owned conversation state and the sparse project workspace.
 
 ## Execution Plan
 
-### Batch 5.1 — Portable Projection And Persistence
+### Portable Projection And Persistence
 
-- [x] Execute card 014.
 - [x] Extend the Nucleus adapter boundary with Swallowtail activity and exact
       sequence.
 - [x] Persist and replay bounded activity observations.
 
-### Batch 5.2 — Desktop Transcript Adoption
+### Desktop Transcript Adoption
 
-- [x] Execute card 015.
 - [x] Emit caller-window activity DTOs only after durable projection.
 - [x] Map history and live activity into Poodle transcript items.
 
-### Batch 5.3 — Focused Closeout
+### Focused Closeout
 
-- [x] Execute card 017.
 - [x] Prove rich, completion-only, reasoning-summary, unknown, failure, and
       final-output separation without live provider effects.
 - [x] Leave native visual and authenticated proof as explicit operator gates.
 - [x] Inspect the current app bundle, stored transcript readability, and
       non-stealing scroll behavior without provider effects.
 
-### Batch 5.4 — Portable Activity Key Adoption
+### Portable Activity Key Adoption
 
-- [x] Execute card 082.
 - [x] Upsert durable activity by Swallowtail's complete portable `ActivityKey`.
 - [x] Keep Nucleus thread, turn, and transcript-message identity separate.
 - [x] Prevent consumer runtime-operation identity reuse across retained state.

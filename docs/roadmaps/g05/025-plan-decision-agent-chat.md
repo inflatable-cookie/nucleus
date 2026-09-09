@@ -45,14 +45,17 @@ explicit plan-decision boundary while keeping normal state quiet.
 - [x] accepting a plan opens a Normal-mode prepared session per contract 010
 - [x] native acceptance proves the composer plan-review and settled record (operator GUI pass 2026-08-07 + recorded live proof, card 091)
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/083-failure-detail-preservation.md`
-- `batch-cards/084-plan-decision-contract-amendments.md`
-- `batch-cards/085-plan-decision-server-implementation.md`
-- `batch-cards/086-plan-decision-desktop-wiring-and-native-acceptance.md`
-- `batch-cards/087-plan-mode-proposed-plan-instructions.md`
-- `batch-cards/088-plan-terminal-turn-completion.md`
-- `batch-cards/089-chat-thread-deletion.md`
-- `batch-cards/090-resource-free-chat-sentinel-resolution.md`
-- `batch-cards/091-plan-decision-live-provider-proof.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `083-failure-detail-preservation.md` — completed (collapsed into this task)
+- `084-plan-decision-contract-amendments.md` — completed (collapsed into this task)
+- `085-plan-decision-server-implementation.md` — completed (collapsed into this task)
+- `086-plan-decision-desktop-wiring-and-native-acceptance.md` — completed (collapsed into this task)
+- `087-plan-mode-proposed-plan-instructions.md` — completed (collapsed into this task)
+- `088-plan-terminal-turn-completion.md` — completed (collapsed into this task)
+- `089-chat-thread-deletion.md` — completed (collapsed into this task)
+- `090-resource-free-chat-sentinel-resolution.md` — completed (collapsed into this task)
+- `091-plan-decision-live-provider-proof.md` — completed (collapsed into this task)

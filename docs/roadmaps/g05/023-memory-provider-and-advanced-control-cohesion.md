@@ -35,21 +35,21 @@ diagnostic chrome or pretending unavailable providers are configured.
 
 ## Execution Plan
 
-### Batch 23.1 — Product Memory Projection
+### Product Memory Projection
 
 - [x] execute cards 071 and 072
 - [x] promote bounded Memory display rules into Contract 013
 - [x] carry sanitized title and summary through the existing read model
 - [x] simplify the Memory panel around readable content and quiet metadata
 
-### Batch 23.2 — Provider Selection Placement
+### Provider Selection Placement
 
 - [x] execute card 073
 - [x] reconcile provider identity, route selection, model discovery, and new-session defaults
 - [x] show a provider selector only when more than one admitted provider instance is selectable
 - [x] preserve fresh-session replacement for provider, model, reasoning, or harness-mode changes
 
-### Batch 23.3 — Advanced Controls And Acceptance
+### Advanced Controls And Acceptance
 
 - [x] execute cards 074 and 075
 - [x] audit normal panel chrome against Settings, menu, popover, and disclosure placement
@@ -84,10 +84,13 @@ catalogue without adding a router. Card 073 is re-admitted against Contracts
 004, 010, and 030. The original pause remains historical checkpoint evidence,
 not an active stop.
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/071-memory-product-display-projection.md`
-- `batch-cards/072-memory-panel-product-composition.md`
-- `batch-cards/073-provider-selection-and-session-defaults.md`
-- `batch-cards/074-advanced-control-placement.md`
-- `batch-cards/075-memory-provider-control-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `071-memory-product-display-projection.md` — completed (collapsed into this task)
+- `072-memory-panel-product-composition.md` — completed (collapsed into this task)
+- `073-provider-selection-and-session-defaults.md` — completed (collapsed into this task)
+- `074-advanced-control-placement.md` — completed (collapsed into this task)
+- `075-memory-provider-control-acceptance.md` — completed (collapsed into this task)

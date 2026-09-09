@@ -29,19 +29,19 @@ project's panel or command context.
 
 ## Execution Plan
 
-### Batch 19.1 — Switch Epoch And Context Isolation
+### Switch Epoch And Context Isolation
 
 - [x] execute card 056
 - [x] stop rendering the previous project before the next layout arrives
 - [x] clear old launcher and active-panel facts during the transition
 
-### Batch 19.2 — Sparse Workspace Recovery
+### Sparse Workspace Recovery
 
 - [x] execute card 057
 - [x] preserve an intentionally empty persisted layout
 - [x] expose direct Agent Chat recovery and bounded reconnect states
 
-### Batch 19.3 — Acceptance
+### Acceptance
 
 - [x] complete card 058 after next-lane selection
 - [x] prove rapid switching, empty recovery, failure isolation, and restart
@@ -55,11 +55,14 @@ project's panel or command context.
 - [x] layout failure does not disable project navigation or invent a reset
 - [x] one clear g05 next task remains
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/056-shell-switch-epoch-and-context-isolation.md`
-- `batch-cards/057-empty-workspace-and-reconnect-recovery.md`
-- `batch-cards/058-shell-context-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `056-shell-switch-epoch-and-context-isolation.md` — completed (collapsed into this task)
+- `057-empty-workspace-and-reconnect-recovery.md` — completed (collapsed into this task)
+- `058-shell-context-acceptance.md` — completed (collapsed into this task)
 
 ## Current Boundary
 

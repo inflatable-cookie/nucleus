@@ -25,14 +25,9 @@ product focus. Do not use it as a dumping ground for vague ideas.
 
 Status: deferred
 
-Refs:
+Refs (g03 compacted 2026-09-09; see `archive/g03.md` for the roll-up):
 
-- `g03/136-accepted-memory-active-apply-executor-boundary.md`
-- `g03/batch-cards/596-accepted-memory-active-apply-executor-boundary.md`
-- `g03/batch-cards/597-accepted-memory-active-apply-storage-mutation.md`
-- `g03/batch-cards/598-accepted-memory-active-apply-receipts-idempotency.md`
-- `g03/batch-cards/599-accepted-memory-active-apply-diagnostics-control.md`
-- `g03/batch-cards/600-accepted-memory-active-apply-validation-next-lane.md`
+- `archive/g03.md` (task `136-accepted-memory-active-apply-executor-boundary.md` and its batch cards `596`–`600`)
 
 Return when:
 
@@ -51,12 +46,9 @@ Do not return just to complete the memory subsystem.
 
 Status: deferred
 
-Refs:
+Refs (g03 compacted 2026-09-09; see `archive/g03.md` for the roll-up):
 
-- `g03/125-planning-import-active-apply-executor-boundary.md`
-- `g03/batch-cards/550-planning-import-active-apply-executor-persistence.md`
-- `g03/batch-cards/551-planning-import-active-apply-executor-diagnostics-query-cli-effigy.md`
-- `g03/batch-cards/552-planning-import-active-apply-executor-validation-next-lane.md`
+- `archive/g03.md` (task `125-planning-import-active-apply-executor-boundary.md` and its batch cards `550`–`552`)
 
 Return when:
 
@@ -86,9 +78,9 @@ larger blocker.
 
 Status: deferred
 
-Refs:
+Refs (g03 compacted 2026-09-09; see `archive/g03.md` for the roll-up):
 
-- `g03/034-convergence-exit-and-next-lane-selection.md`
+- `archive/g03.md` (task `034-convergence-exit-and-next-lane-selection.md`)
 - `../convergence`
 
 Return when:
@@ -98,3 +90,19 @@ Return when:
 
 Do not let Convergence become the active path before the core product loop is
 usable.
+
+### Selected-Task Delegation Scheduling
+
+Status: deferred
+
+Refs (g04 compacted 2026-09-09; see `archive/g04.md` for the roll-up):
+
+- `archive/g04.md` (task `017-selected-task-delegation-scheduling-admission.md`, paused)
+
+Return when:
+
+- a visible product workflow needs scheduled delegation for a selected task
+- the first real product workflow UI architecture is defined (g05 has since
+  defined it; the lane itself was never resumed)
+
+Do not resume just to complete the delegation subsystem.

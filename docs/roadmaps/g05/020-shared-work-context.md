@@ -32,7 +32,7 @@ normal entry point and Tasks as an optional ledger view.
 
 ## Execution Plan
 
-### Batch 20.1 — Context Authority And Persistence
+### Context Authority And Persistence
 
 - [x] execute card 059
 - [x] extend the existing local presentation domain instead of creating a
@@ -40,7 +40,7 @@ normal entry point and Tasks as an optional ledger view.
 - [x] project typed context and panel conversation attachments through the
   existing workspace snapshot boundary
 
-### Batch 20.2 — Cross-Panel Cohesion
+### Cross-Panel Cohesion
 
 - [x] execute cards 060 and 061
 - [x] replace competing Goal, Task, and conversation stores with one workspace
@@ -48,7 +48,7 @@ normal entry point and Tasks as an optional ledger view.
 - [x] synchronize sidebar thread selection, Agent Chat activation, composer
   chips, Tasks detail, and Diff focus
 
-### Batch 20.3 — Acceptance
+### Acceptance
 
 - [x] execute card 062
 - [x] prove switch, close, reopen, stale-record, restart, and multi-chat behavior
@@ -63,9 +63,12 @@ normal entry point and Tasks as an optional ledger view.
 - [x] closing or moving panels does not erase project working focus
 - [x] selected focus remains advisory and grants no task or execution authority
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/059-work-context-authority-and-persistence.md`
-- `batch-cards/060-goal-task-cross-panel-focus.md`
-- `batch-cards/061-conversation-attachment-and-sidebar-sync.md`
-- `batch-cards/062-shared-work-context-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `059-work-context-authority-and-persistence.md` — completed (collapsed into this task)
+- `060-goal-task-cross-panel-focus.md` — completed (collapsed into this task)
+- `061-conversation-attachment-and-sidebar-sync.md` — completed (collapsed into this task)
+- `062-shared-work-context-acceptance.md` — completed (collapsed into this task)

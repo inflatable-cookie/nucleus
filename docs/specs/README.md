@@ -18,9 +18,9 @@ architecture, contracts, and roadmaps.
 - `013-shared-agent-runtime-extraction.md`
 - `templates/`
 
-Batch cards live under the active roadmap lane:
-
-- `../roadmaps/g01/batch-cards/`
+Northstar has one execution level: each `docs/roadmaps/gNN/NNN-<slug>.md`
+file is the sole executable planning unit for its outcome. There are no
+milestone wrappers and no nested `batch-cards/` directories.
 
 ## Archive
 

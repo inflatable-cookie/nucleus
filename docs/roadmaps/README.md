@@ -3,331 +3,25 @@
 Roadmaps sequence work after vision, architecture, and contracts define enough
 shape.
 
+Northstar has one execution level: the generation README owns the roadmap and
+approved frontier, and `docs/roadmaps/gNN/NNN-<slug>.md` is the sole
+executable planning unit, referenced as `gNN.NNN`. There are no milestone
+wrappers and no nested `batch-cards/` directories. `dispatch.md` is the
+closed orchestrator dispatch ledger, not a planning surface.
+
 ## Current Generation
 
-- `g02/001-orchestration-and-engine-boundary.md` - completed
-- `g02/002-event-store-persistence-hardening.md` - completed
-- `g02/003-engine-task-command-boundary.md` - completed
-- `g02/004-task-timeline-and-history-projection.md` - completed
-- `g02/005-runtime-receipts-and-effect-reactors.md` - completed
-- `g02/006-checkpoint-and-diff-foundation.md` - completed
-- `g02/007-management-projection-sync-foundation.md` - completed
-- `g02/008-scm-forge-driver-runway.md` - completed
-- `g02/009-harness-runtime-target-selection.md` - completed
-- `g02/010-client-protocol-and-host-transport-runway.md` - completed
-- `g02/011-codex-app-server-runtime-runway.md` - completed
-- `g02/012-health-and-authority-surface-reset.md` - completed
-- `g02/013-host-authority-map-and-client-protocol-records.md` - completed
-- `g02/014-codex-live-runtime-supervision.md` - completed
-- `g02/015-task-backed-agent-work-unit-proof.md` - completed
-- `g02/016-management-projection-file-io-and-sync.md` - completed
-- `g02/017-scm-working-copy-and-change-request-workflows.md` - completed
-- `g02/018-steward-native-harness-and-effigy-tools.md` - completed
-- `g02/019-native-steward-command-boundary.md` - completed
-- `g02/020-effigy-command-backed-inspection.md` - completed
-- `g02/021-management-projection-sync-runtime.md` - completed
-- `g02/022-scm-working-session-runtime.md` - completed
-- `g02/023-client-read-model-and-diagnostics-runway.md` - completed
-- `g02/024-diagnostics-control-api-query-surface.md` - completed
-- `g02/025-diagnostics-control-dto-serialization.md` - completed
-- `g02/026-desktop-diagnostics-proof-surface.md` - completed
-- `g02/027-diagnostics-read-model-source-integration.md` - completed
-- `g02/028-next-product-workflow-selection.md` - completed
-- `g02/029-health-and-module-boundary-reset.md` - completed
-- `g02/030-task-backed-agent-workflow-contract-reset.md` - completed
-- `g02/031-task-agent-work-unit-source-model.md` - completed
-- `g02/032-codex-task-runtime-admission-bridge.md` - completed
-- `g02/033-codex-task-event-ingestion-and-receipts.md` - completed
-- `g02/034-task-work-checkpoint-and-review-loop.md` - completed
-- `g02/035-desktop-task-agent-progress-proof.md` - completed
-- `g02/036-task-backed-workflow-validation-and-next-lane.md` - completed
-- `g02/037-repo-backed-management-sync-hardening.md` - completed
-- `g02/038-management-sync-apply-and-review.md` - completed
-- `g02/039-scm-management-capture-and-share-foundation.md` - completed
-- `g02/040-git-management-capture-adapter-proof.md` - completed
-- `g02/041-scm-working-session-execution-prep.md` - completed
-- `g02/042-change-request-preparation-boundary.md` - completed
-- `g02/043-steward-scm-sync-automation-gate.md` - completed
-- `g02/044-scm-workflow-closeout-and-next-phase-selection.md` - completed
-- `g02/045-god-file-health-gate-rebaseline.md` - completed
-- `g02/046-management-projection-state-test-split.md` - completed
-- `g02/047-scm-work-sessions-module-split.md` - completed
-- `g02/048-diagnostics-read-model-test-split.md` - completed
-- `g02/049-engine-management-sync-test-split.md` - completed
-- `g02/050-management-projection-apply-import-split.md` - completed
-- `g02/051-change-request-prep-module-split.md` - completed
-- `g02/052-health-reset-validation-and-next-runtime-lane.md` - completed
-- `g02/053-harness-runtime-rebaseline.md` - completed
-- `g02/054-codex-live-event-acceptance.md` - completed
-- `g02/055-codex-process-and-transport-acceptance.md` - completed
-- `g02/056-codex-live-spawn-smoke-gate.md` - completed
-- `g02/057-codex-turn-start-admission-gate.md` - completed
-- `g02/058-codex-turn-start-send-and-subscription-gate.md` - completed
-- `g02/059-codex-callback-response-gate.md` - completed
-- `g02/060-codex-provider-interruption-gate.md` - completed
-- `g02/061-codex-session-recovery-gate.md` - completed
-- `g02/062-provider-runtime-materialisation-gate.md` - completed
-- `g02/063-provider-command-reactor-gate.md` - completed
-- `g02/064-codex-live-provider-send-readiness.md` - completed
-- `g02/065-codex-turn-start-transport-executor-handoff.md` - completed
-- `g02/066-task-backed-workflow-hardening.md` - completed
-- `g02/067-codex-direct-connection-smoke-gate.md` - completed
-- `g02/068-codex-live-executor-integration.md` - completed
-- `g02/069-codex-task-backed-live-execution-gate.md` - completed
-- `g02/070-codex-callback-response-execution-gate.md` - completed
-- `g02/071-codex-provider-interruption-execution-gate.md` - completed
-- `g02/072-codex-provider-recovery-execution-gate.md` - completed
-- `g02/073-codex-provider-durable-executor-gate.md` - completed
-- `g02/074-codex-durable-executor-dispatch-gate.md` - completed
-- `g02/075-codex-durable-dispatch-invocation-gate.md` - completed
-- `g02/076-codex-provider-session-and-stdio-persistence.md` - completed
-- `g02/077-codex-runtime-observation-event-store-linkage.md` - completed
-- `g02/078-task-transition-admission-from-live-observations.md` - completed
-- `g02/079-durable-wait-callback-interruption-recovery-persistence.md` - completed
-- `g02/080-provider-runtime-hardening.md` - completed
-- `g02/081-provider-observability-diagnostics.md` - completed
-- `g02/082-task-backed-live-workflow-closeout.md` - completed
-- `g02/083-durable-codex-live-smoke-execution.md` - completed
-- `g02/084-durable-codex-live-provider-write-invocation.md` - completed
-- `g02/085-durable-codex-live-provider-write-execution.md` - completed
-- `g02/086-durable-live-evidence-task-work-linkage.md` - completed
-- `g02/087-explicit-live-evidence-review-acceptance.md` - completed
-- `g02/088-explicit-live-evidence-task-completion.md` - completed
-- `g02/089-live-evidence-completion-projection.md` - completed
-- `g02/090-live-evidence-completion-control-read-model.md` - completed
-- `g02/091-live-evidence-completion-request-handler-diagnostics.md` - completed
-- `g02/092-live-evidence-completion-task-state-transition.md` - completed
-- `g02/093-live-evidence-task-state-control-integration.md` - completed
-- `g02/094-completion-to-scm-change-request-readiness.md` - completed
-- `g02/095-completion-scm-readiness-control-integration.md` - completed
-- `g02/096-live-evidence-task-state-history-persistence.md` - completed
-- `g02/097-completion-scm-capture-admission.md` - completed
-- `g02/098-completion-scm-capture-admission-persistence.md` - completed
-- `g02/099-completion-scm-capture-diagnostics-control-integration.md` - completed
-- `g02/100-completion-scm-capture-preparation-records.md` - completed
-- `g02/101-completion-scm-capture-preparation-persistence.md` - completed
-- `g02/102-completion-scm-capture-preparation-control-integration.md` - completed
-- `g02/103-scm-capture-driver-dry-run-planning.md` - completed
-- `g02/104-scm-capture-dry-run-planning-persistence.md` - completed
-- `g02/105-scm-capture-dry-run-control-integration.md` - completed
-- `g02/106-scm-capture-dry-run-execution-gate.md` - completed
-- `g02/107-scm-capture-dry-run-execution-persistence.md` - completed
-- `g02/108-scm-capture-dry-run-execution-control.md` - completed
-- `g02/109-git-scm-capture-dry-run-adapter-proof.md` - completed
-- `g02/110-git-dry-run-command-execution-boundary.md` - completed
-- `g02/111-git-dry-run-command-execution-persistence.md` - completed
-- `g02/112-git-dry-run-execution-control-integration.md` - completed
-- `g02/113-git-read-only-runner-proof.md` - completed
-- `g02/114-git-read-only-runner-evidence-composition.md` - completed
-- `g02/115-scm-capture-workflow-composition.md` - completed
-- `g02/116-scm-capture-workflow-control-integration.md` - completed
-- `g02/117-scm-capture-operator-review-readiness.md` - completed
-- `g02/118-scm-capture-review-control-integration.md` - completed
-- `g02/119-scm-capture-review-decision-persistence.md` - completed
-- `g02/120-scm-capture-review-decision-control-integration.md` - completed
-- `g02/121-scm-capture-change-request-preparation-admission.md` - completed
-- `g02/122-scm-capture-change-request-preparation-control.md` - completed
-- `g02/123-scm-change-request-adapter-plan-selection.md` - completed
-- `g02/124-health-and-runway-rebaseline.md` - completed
-- `g03/001-git-change-request-execution-gate.md` - completed
-- `g03/002-git-change-request-dry-run-runner.md` - completed
-- `g03/003-git-branch-worktree-admission.md` - completed
-- `g03/004-git-branch-worktree-execution-handoff.md` - completed
-- `g03/005-git-commit-admission.md` - completed
-- `g03/006-git-push-admission.md` - completed
-- `g03/007-forge-pull-request-descriptor-dry-run.md` - completed
-- `g03/008-forge-pull-request-execution-admission.md` - completed
-- `g03/009-git-change-request-execution-closeout.md` - completed
-- `g03/010-adapter-neutral-change-request-chain-projection.md` - completed
-- `g03/011-adapter-neutral-chain-persistence-control.md` - completed
-- `g03/012-convergence-publication-admission.md` - completed
-- `g03/013-convergence-publication-command-boundary.md` - completed
-- `g03/014-convergence-publication-request-persistence.md` - completed
-- `g03/015-convergence-publication-runner-proof.md` - completed
-- `g03/016-g03-health-validation-rebaseline.md` - completed
-- `g03/017-server-provider-front-door-consolidation.md` - completed
-- `g03/018-convergence-runner-evidence-persistence.md` - completed
-- `g03/019-convergence-stopped-runner-command-adapter.md` - completed
-- `g03/020-convergence-backend-surface-research.md` - completed
-- `g03/021-convergence-runner-replay-boundary.md` - completed
-- `g03/022-convergence-local-snap-admission.md` - completed
-- `g03/023-convergence-local-snap-command-boundary.md` - completed
-- `g03/024-convergence-local-snap-request-persistence.md` - completed
-- `g03/025-convergence-local-snap-runner-proof.md` - completed
-- `g03/026-convergence-local-snap-runner-evidence-persistence.md` - completed
-- `g03/027-convergence-local-snap-stopped-runner-command-adapter.md` - completed
-- `g03/028-convergence-local-snap-runner-replay-boundary.md` - completed
-- `g03/029-convergence-local-snap-execution-preflight.md` - completed
-- `g03/030-convergence-local-snap-spawn-request-boundary.md` - completed
-- `g03/031-convergence-local-snap-spawn-handoff-boundary.md` - completed
-- `g03/032-convergence-local-snap-spawn-receipt-boundary.md` - completed
-- `g03/033-convergence-local-snap-spawn-receipt-control.md` - completed
-- `g03/034-convergence-exit-and-next-lane-selection.md` - completed
-- `g03/035-post-convergence-health-and-boundary-rebaseline.md` - completed
-- `g03/036-control-envelope-request-boundary-split.md` - completed
-- `g03/037-durable-live-provider-smoke-command-runner-split.md` - completed
-- `g03/038-scm-capture-dry-run-execution-persistence-split.md` - completed
-- `g03/039-durable-executor-dispatch-selection-split.md` - completed
-- `g03/040-codex-callback-request-persistence-split.md` - completed
-- `g03/041-durable-dispatch-invocation-preflight-split.md` - completed
-- `g03/042-runtime-observation-event-store-persistence-split.md` - completed
-- `g03/043-completion-scm-capture-preparation-persistence-split.md` - completed
-- `g03/044-scm-capture-dry-run-persistence-split.md` - completed
-- `g03/045-turn-start-executor-smoke-boundary-split.md` - completed
-- `g03/046-turn-start-stdio-execution-envelope-split.md` - completed
-- `g03/047-stdio-frame-ingestion-persistence-split.md` - completed
-- `g03/048-durable-executor-dispatch-admission-split.md` - completed
-- `g03/049-doctor-green-health-closeout-and-next-lane-selection.md` - completed
-- `g03/050-git-branch-worktree-runner-proof.md` - completed
-- `g03/051-git-commit-runner-proof.md` - completed
-- `g03/052-git-push-runner-proof.md` - completed
-- `g03/053-forge-pull-request-runner-proof.md` - completed
-- `g03/054-git-forge-runner-health-boundary-rebaseline.md` - completed
-- `g03/055-provider-auth-forge-execution-contract-lane.md` - completed
-- `g03/056-stopped-provider-auth-forge-admission-records.md` - completed
-- `g03/057-stopped-forge-network-preflight-control.md` - completed
-- `g03/058-stopped-forge-network-request-receipt.md` - completed
-- `g03/059-stopped-forge-network-outcome-persistence-control.md` - completed
-- `g03/060-forge-network-stopped-runner-health-boundary-rebaseline.md` - completed
-- `g03/061-stopped-provider-credential-status-refresh-control.md` - completed
-- `g03/062-stopped-provider-credential-status-refresh-persistence.md` - completed
-- `g03/063-provider-auth-stopped-boundary-health-rebaseline.md` - completed
-- `g03/064-stopped-provider-repository-metadata-refresh-control.md` - completed
-- `g03/065-stopped-provider-repository-metadata-refresh-persistence.md` - completed
-- `g03/066-stopped-provider-pull-request-refresh-control.md` - completed
-- `g03/067-stopped-provider-pull-request-refresh-persistence.md` - completed
-- `g03/068-provider-forge-read-pattern-consolidation.md` - completed
-- `g03/069-provider-read-intent-projection-control.md` - completed
-- `g03/070-provider-read-intent-query-composition.md` - completed
-- `g03/071-provider-read-intent-control-boundary.md` - completed
-- `g03/072-provider-read-intent-boundary-rebaseline.md` - completed
-- `g03/073-provider-read-intent-serialized-control-envelope.md` - completed
-- `g03/074-provider-read-intent-nucleusd-query.md` - completed
-- `g03/075-provider-read-intent-tauri-ipc-consumption.md` - completed
-- `g03/076-provider-read-intent-product-consumption-decision.md` - completed
-- `g03/077-provider-readiness-overview-projection.md` - completed
-- `g03/078-provider-readiness-overview-query-control.md` - completed
-- `g03/079-provider-readiness-overview-nucleusd-query.md` - completed
-- `g03/080-provider-readiness-overview-tauri-ipc-consumption.md` - completed
-- `g03/081-provider-readiness-overview-product-consumption-decision.md` - completed
-- `g03/082-provider-readiness-overview-desktop-proof-surface.md` - completed
-- `g03/083-provider-readiness-overview-seeded-evidence-proof.md` - completed
-- `g03/084-provider-readiness-overview-drilldown-read-model.md` - completed
-- `g03/085-provider-readiness-product-closeout-and-next-lane-selection.md` - completed
-- `g03/086-stopped-provider-status-check-refresh.md` - completed
-- `g03/087-provider-readiness-coverage-and-next-provider-gate.md` - completed
-- `g03/088-provider-live-read-admission-gate.md` - completed
-- `g03/089-provider-live-read-execution-contract-and-adapter-boundary.md` - completed
-- `g03/090-provider-live-read-smoke-approval-gate.md` - completed
-- `g03/091-provider-live-read-smoke-operator-approval-checkpoint.md` - completed
-- `g03/092-provider-live-read-smoke-closeout-and-executor-selection.md` - completed
-- `g03/093-provider-live-read-server-owned-executor.md` - completed
-- `g03/094-provider-live-read-executor-control-surface.md` - completed
-- `g03/095-provider-live-read-executor-command-runner-handoff.md` - completed
-- `g03/096-provider-live-read-command-runner-smoke-approval.md` - completed
-- `g03/097-provider-live-read-approved-smoke-evidence-promotion.md` - completed
-- `g03/098-provider-live-read-approved-smoke-evidence-control-surface.md` - completed
-- `g03/099-provider-live-read-approved-smoke-evidence-persistence.md` - completed
-- `g03/100-provider-live-read-smoke-evidence-state-backed-query.md` - completed
-- `g03/101-provider-live-read-smoke-evidence-seed-replay.md` - completed
-- `g03/102-provider-live-read-smoke-evidence-readiness-integration.md` - completed
-- `g03/103-provider-live-read-second-family-selection.md` - completed
-- `g03/104-provider-live-read-second-family-stopped-request.md` - completed
-- `g03/105-provider-live-read-boundary-stocktake.md` - completed
-- `g03/106-provider-live-read-status-check-smoke.md` - completed
-- `g03/107-provider-live-read-reassessment.md` - completed
-- `g03/108-server-client-workflow-hardening.md` - completed
-- `g03/109-task-timeline-authority-map-control-parity.md` - completed
-- `g03/110-task-project-workflow-depth.md` - completed
-- `g03/111-planning-artifact-task-seed-promotion.md` - completed
-- `g03/112-planning-task-seed-persistence-and-projection.md` - completed
-- `g03/113-task-seed-promotion-command.md` - completed
-- `g03/114-planning-management-projection-payloads.md` - completed
-- `g03/115-planning-projection-file-export-capture.md` - completed
-- `g03/116-planning-projection-capture-publication-gate.md` - completed
-- `g03/117-planning-projection-import-admission.md` - completed
-- `g03/118-structured-planning-domain-foundation.md` - completed
-- `g03/119-planning-memory-proposal-foundation.md` - completed
-- `g03/120-deep-research-run-brief-foundation.md` - completed
-- `g03/121-disposable-planning-research-ui-proof.md` - completed
-- `g03/122-memory-proposal-review-command-foundation.md` - completed
-- `g03/123-planning-projection-import-review-apply.md` - completed
-- `g03/124-planning-import-active-apply-admission.md` - completed
-- `g03/125-planning-import-active-apply-executor-boundary.md` - paused
-- `g03/126-minimum-planning-import-apply-proof.md` - completed
-- `g03/127-accepted-memory-authority-proof.md` - completed
-- `g03/128-accepted-memory-read-only-inspection.md` - completed
-- `g03/129-accepted-memory-projection-policy-gate.md` - completed
-- `g03/130-accepted-memory-projection-file-materialization.md` - completed
-- `g03/131-accepted-memory-projection-import-validation.md` - completed
-- `g03/132-accepted-memory-import-apply-admission.md` - completed
-- `g03/133-accepted-memory-review-product-consumption-readiness.md` - completed
-- `g03/134-accepted-memory-import-apply-review-commands.md` - completed
-- `g03/135-accepted-memory-review-receipt-persistence-and-apply-admission.md` - completed
-- `g03/136-accepted-memory-active-apply-executor-boundary.md` - superseded
-- `g04/001-product-workflow-rebaseline-and-vertical-slice.md` - completed
-- `g04/002-product-workflow-source-composition.md` - completed
-- `g04/003-task-workflow-drilldown-and-handoff-readiness.md` - completed
-- `g04/004-selected-task-work-loop-composition.md` - completed
-- `g04/005-selected-task-action-readiness.md` - completed
-- `g04/006-selected-task-operator-action-gate.md` - completed
-- `g04/007-selected-task-command-admission-controls.md` - completed
-- `g04/008-task-command-outcome-coherence.md` - completed
-- `g04/009-selected-task-review-next-step-presentation.md` - completed
-- `g04/010-selected-task-scm-handoff-readiness.md` - completed
-- `g04/011-product-workflow-closeout-and-next-phase-selection.md` - completed
-- `g04/012-selected-task-review-decision-controls.md` - completed
-- `g04/013-selected-task-review-outcome-routing.md` - completed
-- `g04/014-selected-task-route-admission.md` - completed
-- `g04/015-selected-task-completion-from-route-admission.md` - completed
-- `g04/016-selected-task-rework-from-review-outcome.md` - completed
-- `g04/017-selected-task-delegation-scheduling-admission.md` - paused
-- `g04/018-product-workflow-ui-architecture-refocus.md` - completed
-- `g04/019-workspace-hosting-model-extraction.md` - completed
-- `g04/020-selected-task-product-aggregate-query.md` - completed
-- `g04/021-product-shell-project-rail.md` - completed
-- `g04/022-selected-task-aggregate-product-shell-placement.md` - superseded
-- `g04/023-product-shell-design-checkpoint.md` - completed
-- `g04/024-workspace-surface-shell-skeleton.md` - completed
-- `g04/025-initial-agent-chat-vertical-slice.md` - completed
-- `g04/026-agent-chat-task-context.md` - completed
-- `g04/027-agent-chat-task-workflow-run.md` - completed
-- `g04/028-initial-code-editor-vertical-slice.md` - completed
-- `g04/029-task-attributed-diff-review.md` - completed
-- `g04/030-review-guided-rework-execution.md` - completed
-- `g04/031-window-region-panel-simplification.md` - completed
-- `g04/032-native-window-geometry-persistence.md` - completed
-- `g04/033-floating-agent-chat-composer.md` - completed
-- `g04/034-four-main-region-workspace-grid.md` - completed
-- `g04/035-host-routed-terminal-panel.md` - completed
-- `g04/036-project-memory-panel.md` - completed
-- `g04/037-project-resource-foundation.md` - completed
-- `g04/038-project-control-workflow.md` - completed
-- `g04/039-multi-resource-attachment-and-targeting.md` - completed
-- `g04/040-transient-chat-and-promotion.md` - completed
-- `g04/041-shared-project-files-control.md` - completed
-- `g04/042-execution-safety-honesty-and-enforcement.md` - completed
-- `g04/043-ci-and-validation-runway.md` - completed
-- `g04/044-persistence-correctness-hardening.md` - completed
-- `g04/045-admission-vocabulary-consolidation.md` - completed
-- `g04/046-engine-boundary-migration.md` - completed
-- `g04/047-desktop-contract-integrity.md` - completed
-- `g04/048-roadmap-residue-archival.md` - superseded
-- `g04/049-swallowtail-agent-chat-adoption.md` - completed
-- `g04/050-swallowtail-task-execution-adoption.md` - completed
-- `g05/001-project-scoped-workspace-layouts.md` - completed; native project
-  isolation and Agent Chat-only new-project defaults accepted
+Active generation `g05` (product consolidation). One top-level task per
+outcome:
+
+- `g05/001-project-scoped-workspace-layouts.md` - completed
 - `g05/002-workspace-sidebar-modes.md` - completed
-- `g05/003-swallowtail-application-proof-readiness.md` - completed; native
-  pilot passed at the exact live ceiling
-- `g05/004-forge-working-copy-controls.md` - completed; native compact
-  interaction acceptance passes
-- `g05/005-observable-agent-chat-transcript.md` - completed; portable
-  `ActivityKey` persistence adoption passes focused acceptance
+- `g05/003-swallowtail-application-proof-readiness.md` - completed
+- `g05/004-forge-working-copy-controls.md` - completed
+- `g05/005-observable-agent-chat-transcript.md` - completed
 - `g05/006-interactive-agent-chat-sessions.md` - completed
 - `g05/007-structured-provider-work.md` - completed
-- `g05/008-structured-agent-chat-acceptance.md` - completed; deterministic and
-  authenticated structured Agent Chat acceptance passed
+- `g05/008-structured-agent-chat-acceptance.md` - completed
 - `g05/009-longhorn-secondary-system-admission.md` - completed
 - `g05/010-longhorn-settings-shell.md` - completed
 - `g05/011-provider-and-product-settings.md` - completed
@@ -335,76 +29,29 @@ shape.
 - `g05/013-cross-panel-operation-catalogue.md` - completed
 - `g05/014-notification-ledger-and-attention.md` - completed
 - `g05/015-backup-restore-and-recovery-controls.md` - completed
-- `g05/016-optional-backend-bridge-alignment.md` - local alignment and
-  consumer-native invocation completed; production remote transport gated
-- `g05/017-secondary-window-panel-transfer.md` - conditional-paused
+- `g05/016-optional-backend-bridge-alignment.md` - local alignment completed; production remote transport gated and paused
+- `g05/017-secondary-window-panel-transfer.md` - conditional-paused until the operator selects a concrete secondary-window workflow
 - `g05/018-longhorn-adoption-closeout-and-deferrals.md` - completed
-- `g05/019-shell-context-cohesion.md` - completed; native switching and sparse
-  recovery pass
-- `g05/020-shared-work-context.md` - completed; local Goal, Task, and active
-  conversation focus now survives panel closure, project switching, and restart
-- `g05/021-editor-diff-review-rework-cohesion.md` - completed; exact review
-  resource navigation and explicit Agent Chat rework preparation pass
-- `g05/022-terminal-browser-resource-host-cohesion.md` - completed; exact
-  resource targeting and sparse panel-local host recovery pass native use
-- `g05/023-memory-provider-and-advanced-control-cohesion.md` - completed;
-  project Memory, provider-scoped defaults, fresh-session routing, and sparse
-  advanced-control placement pass focused acceptance
-- `g05/024-shell-accessibility-responsive-and-failure-cohesion.md` - completed;
-  semantic interaction, container-relative panels, bounded local recovery, and
-  supported-minimum native acceptance pass
-- `g05/025-plan-decision-agent-chat.md` - completed; contracts, failure-detail
-  preservation, server/desktop implementation, and native acceptance pass
-- `deferred-lanes.md` - active
+- `g05/019-shell-context-cohesion.md` - completed
+- `g05/020-shared-work-context.md` - completed
+- `g05/021-editor-diff-review-rework-cohesion.md` - completed
+- `g05/022-terminal-browser-resource-host-cohesion.md` - completed
+- `g05/023-memory-provider-and-advanced-control-cohesion.md` - completed
+- `g05/024-shell-accessibility-responsive-and-failure-cohesion.md` - completed
+- `g05/025-plan-decision-agent-chat.md` - completed
+- `g05/026-northstar-instruction-and-language-quality-audit.md` - completed
+- `g05/027-agent-orchestration-product-checkpoint.md` - paused; operator live checkpoint pending
+- `deferred-lanes.md` - active return queue
 
-## Previous Generation
+## Previous Generations
 
-- `g01/001-foundation-and-research.md`
-- `g01/002-management-state-and-scm-forge.md`
-- `g01/003-native-harness-and-steward.md`
-- `g01/004-adapter-contracts-fixtures-and-effects.md`
-- `g01/005-server-runtime-boundaries.md`
-- `g01/006-server-local-state-implementation-runway.md`
-- `g01/007-server-control-api-and-runtime-sequencing.md`
-- `g01/008-local-request-handling-and-transport-readiness.md`
-- `g01/009-local-transport-and-desktop-bootstrap-prep.md`
-- `g01/010-server-module-decomposition-and-ipc-readiness.md`
-- `g01/011-desktop-serialization-and-shell-bootstrap.md`
-- `g01/012-desktop-control-diagnostics-and-panel-foundation.md`
-- `g01/013-project-state-records-and-switcher-readiness.md`
-- `g01/014-read-only-desktop-project-switcher.md`
-- `g01/015-task-records-and-read-only-list-readiness.md`
-- `g01/016-read-only-desktop-task-list.md`
-- `g01/017-read-only-task-detail-display.md`
-- `g01/018-task-mutation-command-boundary-readiness.md`
-- `g01/019-desktop-task-transition-controls.md`
-- `g01/020-task-authoring-and-edit-semantics.md`
-- `g01/021-nucleusd-local-server-runtime.md`
-- `g01/022-command-runner-execution-readiness.md`
-- `g01/023-command-evidence-persistence-and-query.md`
-- `g01/024-local-process-supervision-readiness.md`
-- `g01/025-process-supervisor-module-and-events.md`
-- `g01/026-engine-host-authority-correction.md`
-- `g01/027-host-authority-map-vocabulary.md`
-- `g01/028-host-execution-safety-and-artifact-policy.md`
-- `g01/029-host-spawn-readiness-gate-composition.md`
-- `g01/030-host-runtime-backend-readiness-descriptors.md`
-- `g01/031-local-host-runtime-capability-discovery.md`
-- `g01/032-local-runtime-backend-implementation-runway.md`
-- `g01/033-server-runtime-module-splits-for-backend-work.md`
-- `g01/034-local-artifact-store-backend-implementation.md`
-- `g01/035-local-event-transport-backend-implementation.md`
-- `g01/036-local-sandbox-backend-implementation.md`
-- `g01/037-local-process-control-backend-implementation.md`
-- `g01/038-first-read-only-spawn-implementation.md`
-- `g01/039-read-only-spawn-server-integration.md`
-- `g01/040-read-only-command-request-control-api.md`
-- `g01/041-nucleusd-constrained-read-only-command-input.md`
-- `g01/042-read-only-command-history-query-shape.md`
-- `g01/043-command-diagnostics-client-read-model.md`
-- `g01/044-command-diagnostics-panel-hardening.md`
-- `g01/045-runtime-readiness-diagnostics-query-shape.md`
-- `g01/046-runtime-readiness-diagnostics-panel.md`
+Closed generations are compacted to roll-ups. Their expanded task trees are
+removed; full-fidelity history remains in `git log` on `main`.
+
+- `archive/g01.md` - foundation (closed 2026-06-17)
+- `archive/g02.md` - orchestration and engine core (completed 2026-06-21)
+- `archive/g03.md` - effect-gated SCM execution (closed 2026-07-06)
+- `archive/g04.md` - product workflow vertical slice (completed 2026-07-20)
 
 ## Index
 
@@ -415,7 +62,8 @@ shape.
 
 ## Next Task
 
-Review the g05 card 108 worker PR against roadmap 026, then return to the
-agent-orchestration product checkpoint: designate an orchestrator on a real
-project and review one delegated delivery. The independent instruction and
-language-quality maintenance lane is complete and does not select g06.
+Review the agent-orchestration product checkpoint in
+`g05/027-agent-orchestration-product-checkpoint.md`: designate an
+orchestrator on a real project and review one delegated delivery. The
+independent instruction and language-quality maintenance lane is complete
+and does not select g06.
