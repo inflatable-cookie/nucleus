@@ -43,7 +43,7 @@ Treat it as:
 
 Keep the active `## Next Task` pointer only in `docs/roadmaps/README.md`.
 Do not duplicate it into README files, contracts, specs, research notes,
-architecture docs, batch cards, or other docs front doors.
+architecture docs, roadmap task files, or other docs front doors.
 
 ## Batch Size Rule
 

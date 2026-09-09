@@ -12,8 +12,18 @@ Updated: 2026-08-17
 | `g02` | closed | Orchestration spine, engine command boundary, health reset, client/host protocol, live Codex runtime, task-backed work units, management projection IO, SCM workflows, and steward tooling. |
 | `g03` | closed | Effect-gated SCM execution, provider read proofs, planning projection, memory proposal/review, accepted-memory projection/import/review, and deferred active apply. |
 | `g04` | closed | Product workflow source composition and first usable project, agent, task, editor, review, resource, and panel workflows. |
-| `g05` | active | Product consolidation from the app shell inward, ending with plan-decision Agent Chat and agent orchestration phases 1-3. |
+| `g05` | active | Product consolidation from the app shell inward, ending with plan-decision Agent Chat and the agent orchestration product checkpoint (`027`). |
 | `g06` | proposed | Orchestration live proof, contract 033 promotion, real forge delivery routes, and optional worker steering. |
+
+## Archive
+
+Closed generations are compacted to roll-ups; their expanded task trees are
+removed and full-fidelity history remains in `git log` on `main`.
+
+- `archive/g01.md`
+- `archive/g02.md`
+- `archive/g03.md`
+- `archive/g04.md`
 
 ## Next Task
 

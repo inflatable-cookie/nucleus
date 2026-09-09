@@ -29,30 +29,26 @@ live authority is explicit.
 
 ## Execution Plan
 
-### Batch 3.1 — Isolated Native Profile
+### Isolated Native Profile
 
-- [x] Execute card 007.
 - [x] Resolve one explicit desktop data root at startup.
 - [x] Keep database, review snapshots, and UI configuration under that root.
 - [x] Add the bounded Agent Chat deadline setting.
 
-### Batch 3.2 — Cancellation And Terminal Truth
+### Cancellation And Terminal Truth
 
-- [x] Execute card 008.
 - [x] Carry a consumer cancellation signal into the active Swallowtail turn.
 - [x] Add the normal Tauri and Agent Chat UI cancellation path.
 - [x] Persist cancellation and deadline separately from failure.
 
-### Batch 3.3 — Deterministic Native Readiness
+### Deterministic Native Readiness
 
-- [x] Execute card 009.
 - [x] Add the isolated native Effigy selector and safe evidence summary.
 - [x] Pass focused Rust, client, desktop, and docs validation without
   credentials or provider calls.
 
-### Batch 3.4 — Live Pilot Handoff
+### Live Pilot Handoff
 
-- [x] Execute card 010 without an authenticated provider call.
 - [x] Freeze exact versions, route, state root, fixture, workload, and stops.
 - [x] Return control before the first provider call.
 
@@ -81,11 +77,13 @@ product-path change.
 The sustained read-only workload is a new live-effect decision owned by
 Swallowtail card 042. Writable proof remains separately gated.
 
-## Batch Cards
+## Delivered Through
 
-Completed:
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
 
-- `batch-cards/007-isolated-native-proof-profile.md`
-- `batch-cards/008-agent-chat-cancellation-and-terminal-truth.md`
-- `batch-cards/009-native-proof-selector-and-readiness.md`
-- `batch-cards/010-live-pilot-handoff.md`
+
+
+- `007-isolated-native-proof-profile.md` — completed (collapsed into this task)
+- `008-agent-chat-cancellation-and-terminal-truth.md` — completed (collapsed into this task)
+- `009-native-proof-selector-and-readiness.md` — completed (collapsed into this task)
+- `010-live-pilot-handoff.md` — completed (collapsed into this task)

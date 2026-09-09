@@ -170,8 +170,4 @@ parallel repo-only and resource-aware product models.
   migration behavior settle
 - `../contracts/019-conversation-timeline-contract.md` when transient chat is
   implemented
-- `../roadmaps/g04/037-project-resource-foundation.md`
-- `../roadmaps/g04/038-project-control-workflow.md`
-- `../roadmaps/g04/039-multi-resource-attachment-and-targeting.md`
-- `../roadmaps/g04/040-transient-chat-and-promotion.md`
-- `../roadmaps/g04/041-shared-project-files-control.md`
+- `../roadmaps/archive/g04.md` (g04 compacted 2026-09-09; tasks `037`–`041` collapsed into the roll-up)

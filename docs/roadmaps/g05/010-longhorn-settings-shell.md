@@ -28,21 +28,18 @@ Keep advanced controls discoverable without expanding permanent shell chrome.
 
 ## Execution Plan
 
-### Batch 10.1 — Registry And Authority
+### Registry And Authority
 
-- [x] Execute card 030.
 - [x] register bounded Nucleus pages and typed apply units
 - [x] retain product schemas and effects in Nucleus
 
-### Batch 10.2 — Sparse Dialog Composition
+### Sparse Dialog Composition
 
-- [x] Execute card 031.
 - [x] compose one public-Poodle modal and isolated session
 - [x] keep page bodies lazy and consumer-owned
 
-### Batch 10.3 — Settings Acceptance
+### Settings Acceptance
 
-- [x] Execute card 032.
 - [x] prove stale apply, reset, close guards, remount, and restart
 - [x] validate the final sibling-scope refresh path natively
 
@@ -54,8 +51,11 @@ Keep advanced controls discoverable without expanding permanent shell chrome.
 - [x] staged dirty state is guarded on page switch and close
 - [x] no setting bypasses host or domain authorization
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/030-settings-registry-and-authority.md`
-- `batch-cards/031-settings-dialog-and-session.md`
-- `batch-cards/032-settings-shell-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `030-settings-registry-and-authority.md` — completed (collapsed into this task)
+- `031-settings-dialog-and-session.md` — completed (collapsed into this task)
+- `032-settings-shell-acceptance.md` — completed (collapsed into this task)

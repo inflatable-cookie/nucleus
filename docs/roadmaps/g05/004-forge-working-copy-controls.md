@@ -32,10 +32,12 @@ expanding into a full Git client.
   and forge effects remain blocked
 - [x] operator confirms the Forge interaction remains visually sparse
 
-## Batch Cards
+## Delivered Through
 
-Completed:
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
 
-- `batch-cards/011-working-copy-observation-and-scoped-diffs.md`
-- `batch-cards/012-index-staging-controls.md`
-- `batch-cards/013-local-commit-control.md`
+
+
+- `011-working-copy-observation-and-scoped-diffs.md` — completed (collapsed into this task)
+- `012-index-staging-controls.md` — completed (collapsed into this task)
+- `013-local-commit-control.md` — completed (collapsed into this task)

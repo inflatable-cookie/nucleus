@@ -32,21 +32,21 @@ and Agent Chat as the normal execution-control surface.
 
 ## Execution Plan
 
-### Batch 21.1 — Authority And Resource Lineage
+### Authority And Resource Lineage
 
 - [x] execute cards 063 and 064
 - [x] settle the product boundary before runtime changes
 - [x] carry exact snapshot resource identity through the task-diff read model
   and Editor navigation
 
-### Batch 21.2 — Review-To-Rework Handoff
+### Review-To-Rework Handoff
 
 - [x] execute card 065
 - [x] focus or create Agent Chat from a durable Needs changes result
 - [x] prepare a bounded prompt without replacing composer text or submitting a
   turn
 
-### Batch 21.3 — Acceptance
+### Acceptance
 
 - [x] execute card 066
 - [x] prove single-resource, multi-resource, existing-draft, panel-closed,
@@ -63,9 +63,12 @@ and Agent Chat as the normal execution-control surface.
   rework authority
 - [x] the normal path gains no permanent workflow bar or duplicate task model
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/063-review-workflow-contract-and-resource-lineage.md`
-- `batch-cards/064-exact-diff-to-editor-navigation.md`
-- `batch-cards/065-review-to-agent-chat-rework-handoff.md`
-- `batch-cards/066-editor-review-rework-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `063-review-workflow-contract-and-resource-lineage.md` — completed (collapsed into this task)
+- `064-exact-diff-to-editor-navigation.md` — completed (collapsed into this task)
+- `065-review-to-agent-chat-rework-handoff.md` — completed (collapsed into this task)
+- `066-editor-review-rework-acceptance.md` — completed (collapsed into this task)

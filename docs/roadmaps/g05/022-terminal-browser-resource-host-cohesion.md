@@ -32,19 +32,19 @@ runtime host evidence, and recovery inside the panel that owns them.
 
 ## Execution Plan
 
-### Batch 22.1 — Authority And Shared Target Projection
+### Authority And Shared Target Projection
 
 - [x] execute cards 067 and 068
 - [x] promote sparse status and target rules into the governing contracts
 - [x] remove duplicated client effective-target selection
 
-### Batch 22.2 — Panel Runtime Presentation
+### Panel Runtime Presentation
 
 - [x] execute card 069
 - [x] align Terminal rendering with theme tokens and exact retry semantics
 - [x] add bounded Browser child recovery without broadening its trust boundary
 
-### Batch 22.3 — Acceptance
+### Acceptance
 
 - [x] execute card 070
 - [x] prove zero, one, multiple, broken, and non-local resource contexts
@@ -59,9 +59,12 @@ runtime host evidence, and recovery inside the panel that owns them.
 - [x] target or host failure never resets layout or silently falls back
 - [x] the normal path gains no global connection bar or duplicate resource model
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/067-panel-runtime-authority-and-status.md`
-- `batch-cards/068-shared-resource-target-projection.md`
-- `batch-cards/069-terminal-browser-runtime-presentation.md`
-- `batch-cards/070-terminal-browser-resource-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `067-panel-runtime-authority-and-status.md` — completed (collapsed into this task)
+- `068-shared-resource-target-projection.md` — completed (collapsed into this task)
+- `069-terminal-browser-runtime-presentation.md` — completed (collapsed into this task)
+- `070-terminal-browser-resource-acceptance.md` — completed (collapsed into this task)

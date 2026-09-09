@@ -33,28 +33,28 @@ semantic interaction, and bounded recovery while keeping normal state quiet.
 
 ## Execution Plan
 
-### Batch 24.1 — Semantic Shell Interaction
+### Semantic Shell Interaction
 
 - [x] execute cards 076 and 077
 - [x] inventory current shell interaction and state-presentation gaps
 - [x] replace event-bearing static controls with semantic controls
 - [x] retain keyboard routes for selection, rename, tabs, menus, and dialogs
 
-### Batch 24.2 — Container-Relative Composition
+### Container-Relative Composition
 
 - [x] execute card 078
 - [x] establish container ownership at panel roots
 - [x] replace panel viewport media queries with container-relative rules
 - [x] keep primary controls visible and content overflow bounded
 
-### Batch 24.3 — Failure And Recovery Composition
+### Failure And Recovery Composition
 
 - [x] execute cards 079 and 080
 - [x] converge shell and sidebar loading, empty, failed, and retry states
 - [x] keep failures local and announce only actionable transitions
 - [x] prove exact retry without fallback routing or duplicate panels
 
-### Batch 24.4 — Acceptance
+### Acceptance
 
 - [x] execute card 081
 - [x] run mounted keyboard and state fixtures, responsive policy fixtures, and narrow native acceptance
@@ -76,11 +76,14 @@ After card 078, inspect the actual narrow shell before applying one presentation
 pattern across specialist panels. Stop if a panel needs product-specific rules
 rather than forcing generic error or empty-state composition.
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/076-shell-quality-contract-and-audit.md`
-- `batch-cards/077-semantic-shell-interaction.md`
-- `batch-cards/078-container-relative-panel-composition.md`
-- `batch-cards/079-shell-state-presentation.md`
-- `batch-cards/080-specialist-panel-recovery-convergence.md`
-- `batch-cards/081-shell-quality-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `076-shell-quality-contract-and-audit.md` — completed (collapsed into this task)
+- `077-semantic-shell-interaction.md` — completed (collapsed into this task)
+- `078-container-relative-panel-composition.md` — completed (collapsed into this task)
+- `079-shell-state-presentation.md` — completed (collapsed into this task)
+- `080-specialist-panel-recovery-convergence.md` — completed (collapsed into this task)
+- `081-shell-quality-acceptance.md` — completed (collapsed into this task)

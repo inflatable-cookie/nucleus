@@ -7,18 +7,18 @@ Updated: 2026-08-17
 ## Purpose
 
 Provide a stable high-level runway so Nucleus does not keep advancing by small
-ad hoc batch cards alone.
+ad hoc tasks alone.
 
-Batch cards execute inside an approved generation theme. This plan governs
+Tasks execute inside an approved generation theme. This plan governs
 generation transitions and strategic horizons.
 
 ## Planning Rules
 
 - Work in generations with clear themes.
-- Keep batch cards as execution aids, not the planning source of truth.
+- Keep Northstar tasks as the execution unit, not the planning source of truth.
 - Do not open more implementation lanes until the current phase goal is
   explicit.
-- Prefer phase closeouts over micro-card churn.
+- Prefer phase closeouts over micro-task churn.
 - Promote durable findings into architecture and contracts before
   implementation depends on them.
 - Keep T3 Code as a specimen, not a template to clone blindly.
@@ -156,11 +156,11 @@ promoted.
 | Strategic horizons and generation themes | this file, `generation-index.md` |
 | Orchestration lane architecture and phase model | `research/translation-memos/agent-orchestration-lane.md` |
 | Durable orchestration authority | `contracts/033-orchestration-runs-and-delegation-authority-contract.md` |
-| Time-ordered g06 milestones | future `roadmaps/g06/README.md` after operator checkpoint |
+| Time-ordered g06 tasks | future `roadmaps/g06/README.md` after operator checkpoint |
 | Refresh and atlas evidence | `logs/2026-08-17-northstar-refresh-and-atlas.md` |
 
 ## Historical Phase Map
 
 The pre-2026-06 phase list remains useful as background for closed work, but it
-is no longer the live planning authority. Use generation READMEs and batch-card
-closeouts for execution history instead of this file's older phase numbering.
+is no longer the live planning authority. Use generation READMEs and archive
+roll-ups for execution history instead of this file's older phase numbering.

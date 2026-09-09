@@ -30,23 +30,23 @@ Prepare local and remote host forms to share connection and authority semantics.
 
 ## Execution Plan
 
-### Batch 16.1 — Protocol And Authority Reconciliation
+### Protocol And Authority Reconciliation
 
-- [x] Execute card 048.
 - [x] map session, host, capability, authority, revision, and correlation types
 - [x] reject duplicate payload or command vocabularies
 
-### Batch 16.2 — Local Composition
+### Local Composition
 
-- [x] Execute card 049 through consumer-native Tauri invocation.
+- [x] compose through consumer-native Tauri invocation
 - [x] preserve direct and Tauri-local semantics through one assembly
 - [x] expose reconnect, incompatible, unauthorized, and offline truth
 
-### Batch 16.3 — Remote Transport Gate
+### Remote Transport Gate (paused)
 
-- [ ] Execute card 050 only after the remote host pairing/session contract is
-  promoted.
-- [ ] select production transport, discovery, security, and lifecycle evidence
+- [ ] contract remote identity, pairing, authentication, revocation, and trust
+- [ ] select production transport and discovery with explicit platform evidence
+- [ ] prove authority epochs, stale sessions, reconnect, and uncertain writes fail safely
+- [ ] support any production-readiness claim with gated native remote evidence
 - [ ] do not infer remote readiness from loopback conformance
 
 ## Acceptance Criteria
@@ -57,17 +57,25 @@ Prepare local and remote host forms to share connection and authority semantics.
 - [x] uncertain writes are never retried silently
 - [x] no production remote-support claim exists before native evidence
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/048-bridge-authority-reconciliation.md`
-- `batch-cards/049-local-bridge-composition.md`
-- `batch-cards/050-production-remote-transport-gate.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+- `048-bridge-authority-reconciliation.md` — completed (collapsed into this task)
+- `049-local-bridge-composition.md` — completed (collapsed into this task)
+- `050-production-remote-transport-gate.md` — paused, absorbed below (collapsed into this task)
+
+## Paused Gate
+
+Status: paused. The remote host pairing/session contract is not promoted, and the operator has not selected a production topology.
+
+Resume only when Nucleus promotes a remote host pairing/session contract and the operator selects the production topology to prove. Depends on the completed local composition above. No auto-start.
 
 ## Planning Gap
 
 Contract 032 permits bridge alignment but not production remote transport. The
 needed remote host pairing/session contract remains listed in the contract
-index and must be promoted before card 050 becomes ready.
+index and must be promoted before the paused gate above becomes ready.
 
 Consumer-native Tauri invocation now passes against Nucleus's real generated
 capability context and the production command registrations. This remains a

@@ -36,7 +36,8 @@ through workspace composition, Agent Chat, Longhorn adoption, settings,
 commands, notifications, backup and restore, shell cohesion, and plan-decision
 Agent Chat is closed.
 
-The current execution focus is the agent orchestration lane:
+The current execution focus is the agent orchestration product checkpoint
+(`roadmaps/g05/027-agent-orchestration-product-checkpoint.md`):
 
 - phases 1-3 are merged on main: run registry, operator-dispatched runs,
   worktree authority, fleet panel, delivery pipeline, review surface, forge PR
@@ -46,7 +47,7 @@ The current execution focus is the agent orchestration lane:
 - real forge routes still report `ProviderUnavailable` until a provider `027`
   lane lands
 
-The independent g05 maintenance lane at
+The independent g05 maintenance task at
 `roadmaps/g05/026-northstar-instruction-and-language-quality-audit.md` is
 complete: Rust 1.95 is the workspace MSRV, both language-quality recorders are
 finalized with their retained findings, and the AGENTS surface leads with
@@ -56,7 +57,7 @@ checkpoint.
 Canonical lane refs:
 
 - `roadmaps/README.md` — live next task
-- `roadmaps/g05/README.md` — generation runway and closeout state
+- `roadmaps/g05/README.md` — generation roadmap and approved frontier
 - `research/translation-memos/agent-orchestration-lane.md` — lane architecture
   and phase model
 - `roadmaps/long-term-plan.md` — multi-generation horizon model

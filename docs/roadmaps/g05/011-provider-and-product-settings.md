@@ -31,21 +31,18 @@ Move provider and advanced configuration behind one coherent product surface.
 
 ## Execution Plan
 
-### Batch 11.1 — Provider And Model Projection
+### Provider And Model Projection
 
-- [x] Execute card 033.
 - [x] map current model discovery and provider readiness into settings
 - [x] retain immutable prepared-session behavior
 
-### Batch 11.2 — Credential Workflows
+### Credential Workflows
 
-- [x] Execute card 034.
 - [x] expose setup, repair, and revoke actions without credential values
 - [x] preserve OpenAI OAuth, API-key, and future provider distinctions
 
-### Batch 11.3 — Product Pages And Acceptance
+### Product Pages And Acceptance
 
-- [x] Execute card 035.
 - [x] add only contract-backed product pages
 - [x] validate persistence, restart, and narrow layout behavior
 
@@ -57,8 +54,11 @@ Move provider and advanced configuration behind one coherent product surface.
 - [x] unsupported provider features remain explicit
 - [x] normal Agent Chat chrome stays minimal
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/033-provider-and-model-settings.md`
-- `batch-cards/034-credential-reference-settings.md`
-- `batch-cards/035-product-settings-and-acceptance.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `033-provider-and-model-settings.md` — completed (collapsed into this task)
+- `034-credential-reference-settings.md` — completed (collapsed into this task)
+- `035-product-settings-and-acceptance.md` — completed (collapsed into this task)

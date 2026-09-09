@@ -29,16 +29,14 @@ honest native evidence.
 
 ## Execution Plan
 
-### Batch 8.1 — Deterministic Closeout
+### Deterministic Closeout
 
-- [x] Execute card 025.
 - [x] Validate the complete lane without credentials or provider calls.
 - [x] Record pre-existing Doctor structural debt separately.
 
-### Batch 8.2 — Native Acceptance
+### Native Acceptance
 
-- [x] Start card 026 after explicit operator approval.
-- [x] Run bounded question, plan-mode, task-list, and child-observation cases.
+- [x] Run bounded question, plan-mode, task-list, and child-observation cases after explicit operator approval.
 - [x] Confirm representation-aware request correlation through exact-turn
   continuation.
 - [x] Record Codex `0.146.0` child lifecycle, attribution, restart, and terminal
@@ -64,3 +62,11 @@ active. A separate bounded Normal-mode case therefore proved authoritative
 task-list replacement, every status transition, null-priority preservation,
 persistence, restart replay, and explicit status presentation. No provider
 task list was promoted into the Nucleus Task domain.
+
+## Delivered Through
+
+Related completed cards collapsed by the flattened-task migration (2026-09-09); dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+- `092-subagent-rendering-survey.md` — completed (subagent interface survey; collapsed into this task)
+- `093-subagent-group-transcript.md` — completed (`subagent-group` transcript rendering; collapsed into this task)
+- `094-actor-selector-composer-placement.md` — completed (actor navigation gaps from the first live subagent test; collapsed into this task)

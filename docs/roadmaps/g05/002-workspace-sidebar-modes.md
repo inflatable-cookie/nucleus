@@ -40,10 +40,12 @@ preserving project selection and the existing project-management controls.
 - [x] selecting a file opens or focuses an Editor panel for the correct resource
 - [x] desktop checks, focused client tests, production build, and docs QA pass
 
-## Batch Cards
+## Delivered Through
 
-Completed:
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
 
-- `batch-cards/004-sidebar-tab-shell-and-projects.md`
-- `batch-cards/005-threads-and-files-foundation.md`
-- `batch-cards/006-forge-overview-and-validation.md`
+
+
+- `004-sidebar-tab-shell-and-projects.md` — completed (collapsed into this task)
+- `005-threads-and-files-foundation.md` — completed (collapsed into this task)
+- `006-forge-overview-and-validation.md` — completed (collapsed into this task)

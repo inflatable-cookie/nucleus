@@ -109,6 +109,5 @@ Durable decisions live in:
 - `docs/architecture/product-workflow-ui-architecture.md`
 - `docs/contracts/006-workspace-layout-contract.md`
 
-Execution is sequenced by:
-
-- `docs/roadmaps/g04/028-initial-code-editor-vertical-slice.md`
+Execution was sequenced by the g04 editor lane (compacted 2026-09-09; see
+`docs/roadmaps/archive/g04.md`).

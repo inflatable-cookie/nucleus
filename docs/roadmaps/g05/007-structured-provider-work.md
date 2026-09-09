@@ -34,21 +34,18 @@ authority separate.
 
 ## Execution Plan
 
-### Batch 7.1 — Lossless Durable Projection
+### Lossless Durable Projection
 
-- [x] Execute card 022.
 - [x] Extend storage and DTOs with the exact portable structure.
 - [x] Prove snapshot replacement, omission, clear, and unknown preservation.
 
-### Batch 7.2 — Structured Transcript
+### Structured Transcript
 
-- [x] Execute card 023.
 - [x] Present plan and task-list structure with current Poodle primitives.
 - [x] Keep provider checklist rows distinct from durable product Tasks.
 
-### Batch 7.3 — Child Directory And Navigation
+### Child Directory And Navigation
 
-- [x] Execute card 024.
 - [x] Fold snapshots into one directory per operation.
 - [x] Add durable child selection and attributed transcript filtering without
       control actions.

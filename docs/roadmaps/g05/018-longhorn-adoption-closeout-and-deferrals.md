@@ -37,21 +37,19 @@ authority.
 
 ## Execution Plan
 
-### Batch 18.1 — Artifact And Authority Closeout
+### Artifact And Authority Closeout
 
-- [x] Execute card 054 after the implemented adoption lanes settle.
 - [x] run dependency, capability, restart, rollback, and duplicate-authority
   audits
 - [x] record remaining adapter structural debt honestly
 
-### Batch 18.2 — Deferrals And Reassessment
+### Deferrals And Reassessment
 
-- [x] Execute card 055.
 - [x] retain hosted Surfaces, generic history, isolated windows, backing
   surfaces, native notifications, and offline queues as explicit non-adoptions
 - [x] reassess bridge and transfer gates without promoting them by inertia
 
-### Batch 18.3 — Product Checkpoint
+### Product Checkpoint
 
 - [x] perform one end-to-end operator pass through Settings, commands,
   background work, attention, and recovery
@@ -66,10 +64,13 @@ authority.
 - [x] deferred systems have concrete resume conditions
 - [x] one clear g05 next task remains
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/054-longhorn-adoption-conformance-closeout.md`
-- `batch-cards/055-longhorn-deferral-and-g05-checkpoint.md`
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `054-longhorn-adoption-conformance-closeout.md` — completed (collapsed into this task)
+- `055-longhorn-deferral-and-g05-checkpoint.md` — completed (collapsed into this task)
 
 ## Current Boundary
 

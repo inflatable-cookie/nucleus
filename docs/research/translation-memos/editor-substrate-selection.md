@@ -97,4 +97,4 @@ Promoted into:
 - `docs/architecture/product-workflow-ui-architecture.md`
 - `docs/contracts/006-workspace-layout-contract.md`
 - `docs/specs/006-initial-code-editor-vertical-slice.md`
-- `docs/roadmaps/g04/028-initial-code-editor-vertical-slice.md`
+- `docs/roadmaps/archive/g04.md` (g04 compacted 2026-09-09; task `028` collapsed into the roll-up)

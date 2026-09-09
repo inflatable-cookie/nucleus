@@ -29,21 +29,18 @@ Create a stable shared-system edge before adding more app-shell capability.
 
 ## Execution Plan
 
-### Batch 9.1 — Consumer Admission
+### Consumer Admission
 
-- [x] Execute card 027.
 - [x] record exact source/artifact policy and package boundaries
 - [x] prove no duplicate Svelte or Poodle runtime
 
-### Batch 9.2 — Adapter Decomposition
+### Adapter Decomposition
 
-- [x] Execute card 028.
 - [x] split structural findings without changing behavior or storage authority
 - [x] keep product policy in focused Nucleus modules
 
-### Batch 9.3 — Conformance Baseline
+### Conformance Baseline
 
-- [x] Execute card 029.
 - [x] add narrow reusable validation for each admitted Longhorn edge
 - [x] close with the next Settings card ready
 
@@ -55,11 +52,14 @@ Create a stable shared-system edge before adding more app-shell capability.
 - [x] exact clean Longhorn source and produced-package evidence are recorded
 - [x] Settings can start without reopening migration choices
 
-## Batch Cards
+## Delivered Through
 
-- `batch-cards/027-longhorn-consumer-admission.md` — completed
-- `batch-cards/028-retained-adapter-decomposition.md` — completed
-- `batch-cards/029-secondary-system-conformance-baseline.md` — completed
+Batch cards collapsed by the flattened-task migration (2026-09-09). Each card below is complete; dispatch and merge evidence lives in `../dispatch.md`, with per-card implementation logs under `../../logs/`.
+
+
+- `027-longhorn-consumer-admission.md` — completed (collapsed into this task)
+- `028-retained-adapter-decomposition.md` — completed (collapsed into this task)
+- `029-secondary-system-conformance-baseline.md` — completed (collapsed into this task)
 
 ## Planning Checkpoint
 

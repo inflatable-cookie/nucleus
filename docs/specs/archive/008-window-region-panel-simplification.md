@@ -42,7 +42,7 @@ display -> window -> region -> panel
 - `../../architecture/product-workflow-ui-architecture.md`
 - `../../contracts/006-workspace-layout-contract.md`
 - `../../contracts/008-storage-state-persistence-contract.md`
-- `../../roadmaps/g04/031-window-region-panel-simplification.md`
+- `../../roadmaps/archive/g04.md` (g04 compacted 2026-09-09; task `031` collapsed into the roll-up)
 - desktop UI config, Tauri persistence, and workspace stage
 - `nucleus-workspaces` window/panel layout types
 
