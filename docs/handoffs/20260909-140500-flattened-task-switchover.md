@@ -4,7 +4,7 @@ title: "Flatten Northstar tasks and compact historic generations in nucleus"
 handoff_mode: worker-pr-loop
 worker_mode: implementation
 dispatch_authority: orchestrator
-status: ready-to-launch
+status: closed
 base_required: pushed-main
 queue_dispatch: northstar-queue
 queue_approval: "The operator authorized Chatterbox on 2026-09-09 to orchestrate the flattened-task migration across projects without Orchestrator-tagged Paseo threads, and explicitly required Northstar Queue for dispatch."
@@ -118,3 +118,14 @@ retire only the queue-owned migration threads/workspace. Final report must give
 historic classifications, preservation manifest, old-to-new mapping, exact
 changes, validation/review evidence, retained exceptions, new frontier, and
 whether normal dispatch resumed.
+
+### Handoff closeout
+
+Closed 2026-09-09 after PR #8 merged as
+`4b001fe1c2d3013cf956dc4682ef58f89254c7ba`. The historic generations were
+compacted, active `g05` was flattened to one task file per `g05.NNN`, and the
+fix round resolved the independent review findings. The accepted review is
+comment `5602848283` at worker head
+`120ee4430981b4ec4822963844b74c54fcb3529c`.
+
+Canonical closeout record: `../logs/2026-09-09-flattened-task-switchover-closeout.md`.

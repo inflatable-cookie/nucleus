@@ -25,6 +25,9 @@ removed and full-fidelity history remains in `git log` on `main`.
 - `archive/g03.md`
 - `archive/g04.md`
 
+The 2026-09-09 flattened-task switchover completed in PR #8 and is recorded in
+`../logs/2026-09-09-flattened-task-switchover-closeout.md`.
+
 ## Next Task
 
 See `README.md`.

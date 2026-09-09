@@ -9,6 +9,11 @@ executable planning unit, referenced as `gNN.NNN`. There are no milestone
 wrappers and no nested `batch-cards/` directories. `dispatch.md` is the
 closed orchestrator dispatch ledger, not a planning surface.
 
+The flattened-task switchover and historic-generation compaction closed on
+2026-09-09 in PR #8. See
+`../logs/2026-09-09-flattened-task-switchover-closeout.md` for the preserved
+manifest, review, validation, and retained exceptions.
+
 ## Current Generation
 
 Active generation `g05` (product consolidation). One top-level task per
