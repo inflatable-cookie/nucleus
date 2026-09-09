@@ -9,9 +9,9 @@ Updated: 2026-06-17
 Choose the first bridged harness runtime target for Nucleus and one comparison
 target that stresses different adapter assumptions.
 
-This memo does not authorize provider runtime implementation by itself. It
-feeds `docs/roadmaps/g02/009-harness-runtime-target-selection.md` and the
-follow-on implementation runway.
+This memo does not authorize provider runtime implementation by itself. It fed
+the g02 harness runtime target lane (compacted 2026-09-09; see
+`docs/roadmaps/archive/g02.md`) and the follow-on implementation runway.
 
 ## Selection Criteria
 

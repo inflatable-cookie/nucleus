@@ -38,5 +38,5 @@ worker steering only if the operator selects it.
 - `../../contracts/033-orchestration-runs-and-delegation-authority-contract.md`
 - `../../contracts/027-provider-auth-forge-execution-contract.md`
 
-Do not compile batch cards here until the operator checkpoint closes and the
+Do not open g06 task files here until the operator checkpoint closes and the
 first band is selected.
