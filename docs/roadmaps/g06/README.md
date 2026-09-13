@@ -40,3 +40,11 @@ worker steering only if the operator selects it.
 
 Do not open g06 task files here until the operator checkpoint closes and the
 first band is selected.
+
+## Queue lifecycle adoption
+
+- [g06.001 Effigy-hosted lifecycle hook](001-adopt-effigy-hosted-lifecycle-hook.md)
+  is an operator-approved, configuration-only maintenance lane. It follows its
+  declared Queue dependencies and may run without changing product priority.
+  Existing next-task text continues to describe product sequencing; this entry
+  authorizes no sibling product work.
