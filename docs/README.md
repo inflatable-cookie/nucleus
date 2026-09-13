@@ -68,11 +68,12 @@ Canonical lane refs:
 Do not resume deferred lanes, provider expansion, remote transport, secondary
 windows, or broad automation until a current product workflow proves the need.
 See `roadmaps/deferred-lanes.md`.
-<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:7a223569d0d4216763c61b9b6c01b1b8c3c1f518801a3403836e35098986565d -->
+<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:905c979981e2ba75817f34f590824bc13b8aaca09a647c281c39a2afb5a8e6b5 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |
 | g06 | open | planning_required |
 | Task | Status | Stage | Revision | Record digest |
 | --- | --- | --- | --- | --- |
 | g06.001 | complete | none | 8 | sha256:6fe5c4a39d04302298dc0ee8cdb13757e88d7391f78eea63ebd0c5697ccdae74 |
+| g06.002 | complete | none | 8 | sha256:ba9dbbe729cff5023975ff61fe5678e16863835882dff837a6f165d8b94f7d63 |
 <!-- northstar:lifecycle:end -->
