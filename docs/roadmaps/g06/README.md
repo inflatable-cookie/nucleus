@@ -48,3 +48,11 @@ first band is selected.
   declared Queue dependencies and may run without changing product priority.
   Existing next-task text continues to describe product sequencing; this entry
   authorizes no sibling product work.
+<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:7a223569d0d4216763c61b9b6c01b1b8c3c1f518801a3403836e35098986565d -->
+| Generation | Disposition | Runway state |
+| --- | --- | --- |
+| g06 | open | planning_required |
+| Task | Status | Stage | Revision | Record digest |
+| --- | --- | --- | --- | --- |
+| g06.001 | complete | none | 8 | sha256:6fe5c4a39d04302298dc0ee8cdb13757e88d7391f78eea63ebd0c5697ccdae74 |
+<!-- northstar:lifecycle:end -->
