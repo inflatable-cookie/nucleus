@@ -1,6 +1,5 @@
 # g06 Orchestration Proof And Forge Reality
 
-Status: proposed
 Owner: Tom
 Updated: 2026-08-17
 
