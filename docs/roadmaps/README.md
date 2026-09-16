@@ -72,7 +72,7 @@ Review the agent-orchestration product checkpoint in
 orchestrator on a real project and review one delegated delivery. The
 independent instruction and language-quality maintenance lane is complete
 and does not select g06.
-<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:905c979981e2ba75817f34f590824bc13b8aaca09a647c281c39a2afb5a8e6b5 -->
+<!-- northstar:lifecycle:begin schema=northstar.lifecycle.projection.v2 digest=sha256:6cf0fd3f4528b7dbdf9d91a29ae21a9187353923be88126c62f242d15cc05033 -->
 | Generation | Disposition | Runway state |
 | --- | --- | --- |
 | g06 | open | planning_required |
@@ -80,4 +80,5 @@ and does not select g06.
 | --- | --- | --- | --- | --- |
 | g06.001 | complete | none | 8 | sha256:6fe5c4a39d04302298dc0ee8cdb13757e88d7391f78eea63ebd0c5697ccdae74 |
 | g06.002 | complete | none | 8 | sha256:ba9dbbe729cff5023975ff61fe5678e16863835882dff837a6f165d8b94f7d63 |
+| g06.003 | complete | none | 8 | sha256:4226492a4c8f7eedca169aa0ab888b665304c4bb4f31a82181442d130b5ad545 |
 <!-- northstar:lifecycle:end -->
