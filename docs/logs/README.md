@@ -4,6 +4,7 @@ Logs record meaningful decisions, evidence, and closeouts.
 
 ## Current Logs
 
+- `2026-09-16-published-longhorn-0-1-0-adoption.md`
 - `2026-09-09-flattened-task-switchover-closeout.md`
 - `2026-09-04-swallowtail-v0-4-candidate-adoption.md`
 - `2026-08-09-swallowtail-idioms-route-opt-in-adoption.md`

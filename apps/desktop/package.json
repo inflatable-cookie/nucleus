@@ -23,11 +23,11 @@
     "@codemirror/language": "^6.12.4",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.7",
-    "@inflatable-cookie/longhorn": "file:../../../longhorn/packages/longhorn",
-    "@inflatable-cookie/longhorn-poodle-svelte": "file:../../../longhorn/packages/longhorn-poodle-svelte",
-    "@inflatable-cookie/longhorn-tauri": "file:../../../longhorn/packages/longhorn-tauri",
-    "@inflatable-cookie/poodle-core": "0.3.0",
-    "@inflatable-cookie/poodle-svelte": "0.3.0",
+    "@inflatable-cookie/longhorn": "0.1.0",
+    "@inflatable-cookie/longhorn-poodle-svelte": "0.1.0",
+    "@inflatable-cookie/longhorn-tauri": "0.1.0",
+    "@inflatable-cookie/poodle-core": "0.4.2",
+    "@inflatable-cookie/poodle-svelte": "0.4.2",
     "@lezer/highlight": "^1.2.3",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",
@@ -49,10 +49,5 @@
     "typescript": "~6.0.3",
     "vite": "^8.2.0",
     "vitest": "^4.0.16"
-  },
-  "overrides": {
-    "@inflatable-cookie/longhorn": "file:../../../longhorn/packages/longhorn",
-    "@inflatable-cookie/longhorn-poodle-svelte": "file:../../../longhorn/packages/longhorn-poodle-svelte",
-    "@inflatable-cookie/longhorn-tauri": "file:../../../longhorn/packages/longhorn-tauri"
   }
 }

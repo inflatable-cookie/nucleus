@@ -35,14 +35,10 @@ Four properties must survive a change here.
   contracts are clear enough to test.
 - Do not run release mutations or change CI or workflow files without an
   explicit request.
-- This checkout's parent directory must contain `longhorn` resolving to the
-  primary Longhorn checkout (for example `/Users/tom/Dev/projects/longhorn`).
-  The `apps/desktop/src-tauri` Cargo path dependencies and the `apps/desktop`
-  Bun `file:` dependencies both reach Longhorn that way, so a missing sibling
-  fails the desktop build outright. Create the link when it is absent; reuse
-  only a link that already resolves to that checkout; stop on any other
-  existing path and never overwrite one. Do not replace those path
-  dependencies with a git pin. Manual worktree locations come from
+- Longhorn is consumed as a published release: `@inflatable-cookie/longhorn{,-poodle-svelte,-tauri}` from npm and the `longhorn-*` crates by git tag. No
+  sibling Longhorn checkout is required for the build. Do not repoint these
+  dependencies back to a sibling checkout, `file:` path, or Cargo path
+  dependency. Manual worktree locations come from
   `docs/contracts/035-agent-local-paths-contract.md`.
 
 ## Common commands
