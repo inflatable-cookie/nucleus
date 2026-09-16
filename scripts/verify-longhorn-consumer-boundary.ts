@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -16,7 +15,13 @@ import { spawnSync } from "node:child_process";
 
 const repoRoot = resolve(import.meta.dir, "..");
 const desktopRoot = resolve(repoRoot, "apps/desktop");
-const longhornRoot = resolve(repoRoot, "../longhorn");
+
+// Longhorn 0.1.0 is published: three TypeScript packages on npm and the Rust
+// crates by git tag. Nucleus consumes exactly those identities; the private
+// sibling checkout is no longer a dependency or a proof source.
+const longhornVersion = "0.1.0";
+const longhornGitTag = "v0.1.0";
+const longhornGitRepository = "ssh://git@github.com/inflatable-cookie/longhorn.git";
 const POODLE_CORE = "@inflatable-cookie/poodle-core";
 const POODLE_SVELTE = "@inflatable-cookie/poodle-svelte";
 
@@ -54,13 +59,6 @@ const rustCrates = [
   "longhorn-windowing-config",
 ] as const;
 
-const selectedLonghornSources = [
-  "Cargo.toml",
-  "Cargo.lock",
-  ...Object.values(rendererPackages).map((path) => `packages/${path}`),
-  ...rustCrates.map((name) => `crates/${name}`),
-] as const;
-
 // Card 164 collapsed Longhorn's eighteen renderer packages into three, so
 // "nucleus does not install Surfaces" is no longer expressible or true: the
 // domains ship in one package whether or not they are composed. The half of
@@ -86,30 +84,22 @@ const manifest = JSON.parse(
   readFileSync(resolve(desktopRoot, "package.json"), "utf8"),
 ) as PackageManifest;
 
-const longhornCommit = command(longhornRoot, ["git", "rev-parse", "HEAD"]);
-const selectedStatus = command(longhornRoot, [
-  "git",
-  "status",
-  "--porcelain",
-  "--",
-  ...selectedLonghornSources,
-]);
-assert(!selectedStatus, `selected Longhorn sources are dirty:\n${selectedStatus}`);
-
-const selectedTree = command(longhornRoot, [
-  "git",
-  "ls-tree",
-  "-r",
-  "HEAD",
-  "--",
-  ...selectedLonghornSources,
-]);
-
-for (const [name, sourceDirectory] of Object.entries(rendererPackages)) {
-    const expected = `file:../../../longhorn/packages/${sourceDirectory}`;
-    assert(manifest.dependencies?.[name] === expected, `${name} source mismatch`);
-    assert(manifest.overrides?.[name] === expected, `${name} override mismatch`);
+for (const name of Object.keys(rendererPackages)) {
+  const pin = manifest.dependencies?.[name];
+  assert(
+    pin === longhornVersion,
+    `${name} must pin published ${longhornVersion}, got ${pin ?? "nothing"}`,
+  );
+  assert(
+    manifest.overrides?.[name] === undefined,
+    `${name} must not carry a registry override`,
+  );
 }
+assert(
+  !manifest.overrides ||
+    Object.keys(manifest.overrides).every((key) => !key.includes("longhorn")),
+  "overrides must not repoint Longhorn",
+);
 
 const rendererSource = command(desktopRoot, [
   "git",
@@ -145,7 +135,12 @@ const installedRust = rustCrates.map((name) => {
       .map((line) => line.split(" ")[1]),
   );
   assert(versions.size === 1, `${name} resolved ${versions.size} versions`);
-  return { name, version: [...versions][0] };
+  const version = [...versions][0]?.replace(/^v/, "");
+  assert(
+    version === longhornVersion,
+    `${name} resolved ${version}, expected ${longhornVersion}`,
+  );
+  return { name, version };
 });
 for (const name of forbiddenRustCrates) {
   assert(!cargoTree.includes(`${name} `), `forbidden Rust dependency ${name}`);
@@ -218,10 +213,10 @@ console.log(
       schema: "nucleus.longhorn-consumer-boundary.v1",
       outcome: "pass",
       source: {
-        commit: longhornCommit,
-        selectedTreeSha256: sha256(selectedTree),
-        selectedSourcesClean: true,
-        siblingWorktreeMayContainUnrelatedChanges: true,
+        release: longhornVersion,
+        registry: "npm",
+        rustTag: longhornGitTag,
+        rustRepository: longhornGitRepository,
       },
       renderer: {
         ...rendererArtifactProof,
@@ -283,63 +278,20 @@ function verifyRendererArtifacts() {
   const temporaryRoot = mkdtempSync(join(tmpdir(), "nucleus-longhorn-consumer-"));
   try {
     const resolvedTemporaryRoot = realpathSync(temporaryRoot);
-    const packs = resolve(temporaryRoot, "packs");
     const consumer = resolve(temporaryRoot, "consumer");
-    mkdirSync(packs);
     mkdirSync(consumer);
 
-    const longhornArtifacts: Record<string, string> = {};
-    const longhornIdentities = Object.entries(rendererPackages).map(
-      ([name, sourceDirectory]) => {
-        command(resolve(longhornRoot, "packages", sourceDirectory), [
-          "bun",
-          "pm",
-          "pack",
-          "--destination",
-          packs,
-          "--ignore-scripts",
-          "--quiet",
-        ]);
-        const filename = `${name.replace("@", "").replace("/", "-")}-0.1.0.tgz`;
-        const path = resolve(packs, filename);
-        assert(existsSync(path), `${name} artifact was not produced`);
-        const listing = command(packs, ["tar", "-tzf", path]);
-        assert(!listing.includes("node_modules/"), `${name} artifact contains node_modules`);
-        assert(!listing.includes("workspace:"), `${name} artifact contains a workspace alias`);
-        longhornArtifacts[name] = `file:${path}`;
-        return { name, version: "0.1.0", filename, sha256: sha256(readFileSync(path)) };
-      },
-    );
+    const longhornIdentities = Object.keys(rendererPackages).map((name) => ({
+      name,
+      version: longhornVersion,
+      source: "npm-registry",
+    }));
 
-    // Longhorn g16.008 moved Poodle from packed preview artifacts to the
-    // public registry. Prove the same published identity Nucleus and Longhorn
-    // both pin, plus the adapter peer, then install that registry release.
-    const longhornManifest = JSON.parse(
-      readFileSync(resolve(longhornRoot, "package.json"), "utf8"),
-    ) as PackageManifest & { devDependencies?: Record<string, string> };
-    const longhornPoodleAdapter = JSON.parse(
-      readFileSync(
-        resolve(longhornRoot, "packages/longhorn-poodle-svelte/package.json"),
-        "utf8",
-      ),
-    ) as PackageManifest & { peerDependencies?: Record<string, string> };
-    const longhornCorePin =
-      longhornManifest.devDependencies?.[POODLE_CORE] ??
-      longhornManifest.dependencies?.[POODLE_CORE];
-    const longhornSveltePin =
-      longhornManifest.devDependencies?.[POODLE_SVELTE] ??
-      longhornManifest.dependencies?.[POODLE_SVELTE];
+    // The published Longhorn 0.1.0 release pins Poodle through the adapter's
+    // peer requirement. Prove Nucleus pins a published registry release; the
+    // installed-adapter peer check below closes the loop after install.
     const nucleusCorePin = manifest.dependencies?.[POODLE_CORE];
     const nucleusSveltePin = manifest.dependencies?.[POODLE_SVELTE];
-    const adapterPeer = longhornPoodleAdapter.peerDependencies?.[POODLE_SVELTE];
-    assert(
-      Boolean(longhornCorePin) && !longhornCorePin!.startsWith("file:") && !longhornCorePin!.startsWith("link:"),
-      "Longhorn must pin published Poodle core, not a path preview",
-    );
-    assert(
-      Boolean(longhornSveltePin) && !longhornSveltePin!.startsWith("file:") && !longhornSveltePin!.startsWith("link:"),
-      "Longhorn must pin published Poodle Svelte, not a path preview",
-    );
     assert(
       Boolean(nucleusCorePin) && !nucleusCorePin!.startsWith("file:") && !nucleusCorePin!.startsWith("link:"),
       "Nucleus must pin published Poodle core, not a path preview",
@@ -348,18 +300,6 @@ function verifyRendererArtifacts() {
       Boolean(nucleusSveltePin) && !nucleusSveltePin!.startsWith("file:") && !nucleusSveltePin!.startsWith("link:"),
       "Nucleus must pin published Poodle Svelte, not a path preview",
     );
-    assert(
-      nucleusCorePin === longhornCorePin,
-      `Nucleus Poodle core pin ${nucleusCorePin} diverges from Longhorn ${longhornCorePin}`,
-    );
-    assert(
-      nucleusSveltePin === longhornSveltePin,
-      `Nucleus Poodle Svelte pin ${nucleusSveltePin} diverges from Longhorn ${longhornSveltePin}`,
-    );
-    assert(
-      adapterPeer === nucleusSveltePin,
-      `longhorn-poodle-svelte peer ${adapterPeer} diverges from Nucleus pin ${nucleusSveltePin}`,
-    );
 
     const poodleArtifacts = {
       [POODLE_CORE]: nucleusCorePin!,
@@ -367,7 +307,9 @@ function verifyRendererArtifacts() {
     };
 
     const dependencies = {
-      ...longhornArtifacts,
+      ...Object.fromEntries(
+        Object.keys(rendererPackages).map((name) => [name, longhornVersion]),
+      ),
       ...poodleArtifacts,
       svelte: "5.56.8",
     };
@@ -414,6 +356,13 @@ function verifyRendererArtifacts() {
         resolvedRoot.startsWith(resolvedTemporaryRoot),
         `${name} resolved outside proof root: ${resolvedRoot}`,
       );
+      const installedVersion = (
+        JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as PackageManifest
+      ).version;
+      assert(
+        installedVersion === longhornVersion,
+        `${name} installed ${installedVersion}, expected ${longhornVersion}`,
+      );
     }
     // Subpath absence is not checkable in a consolidated package, so assert
     // the stronger property instead: exactly the three Longhorn packages are
@@ -428,6 +377,23 @@ function verifyRendererArtifacts() {
           Object.values(rendererPackages).slice().sort(),
         ),
       `artifact graph installs ${installedLonghorn.join(", ")}`,
+    );
+
+    // The adapter's exact peer is the one thing the old overrides entry
+    // existed to satisfy; prove the installed release still accepts the pin.
+    const adapterPackageJson = resolve(
+      consumer,
+      "node_modules/@inflatable-cookie/longhorn-poodle-svelte/package.json",
+    );
+    assert(existsSync(adapterPackageJson), "longhorn-poodle-svelte package is not installed");
+    const adapterPeer = (
+      JSON.parse(readFileSync(adapterPackageJson, "utf8")) as PackageManifest & {
+        peerDependencies?: Record<string, string>;
+      }
+    ).peerDependencies?.[POODLE_SVELTE];
+    assert(
+      adapterPeer === nucleusSveltePin,
+      `longhorn-poodle-svelte peer ${adapterPeer} diverges from Nucleus pin ${nucleusSveltePin}`,
     );
 
     const installedPoodle = [
@@ -459,10 +425,6 @@ function verifyRendererArtifacts() {
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }
-}
-
-function sha256(value: string | Buffer): string {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 function assert(condition: unknown, message: string): asserts condition {

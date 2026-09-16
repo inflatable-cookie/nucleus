@@ -2276,6 +2276,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 [[package]]
 name = "longhorn-bridge"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "serde",
@@ -2284,6 +2285,7 @@ dependencies = [
 [[package]]
 name = "longhorn-command"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "serde",
@@ -2294,6 +2296,7 @@ dependencies = [
 [[package]]
 name = "longhorn-command-config"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-command",
  "longhorn-config",
@@ -2306,6 +2309,7 @@ dependencies = [
 [[package]]
 name = "longhorn-command-settings"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "longhorn-settings",
@@ -2314,6 +2318,7 @@ dependencies = [
 [[package]]
 name = "longhorn-config"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "cap-std",
  "fs4",
@@ -2328,6 +2333,7 @@ dependencies = [
 [[package]]
 name = "longhorn-core"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "serde",
 ]
@@ -2335,6 +2341,7 @@ dependencies = [
 [[package]]
 name = "longhorn-display"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "serde",
@@ -2343,6 +2350,7 @@ dependencies = [
 [[package]]
 name = "longhorn-native-content"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "serde",
@@ -2351,6 +2359,7 @@ dependencies = [
 [[package]]
 name = "longhorn-notifications"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "serde",
@@ -2359,6 +2368,7 @@ dependencies = [
 [[package]]
 name = "longhorn-operation"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "serde",
@@ -2367,6 +2377,7 @@ dependencies = [
 [[package]]
 name = "longhorn-settings"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "serde",
@@ -2377,6 +2388,7 @@ dependencies = [
 [[package]]
 name = "longhorn-settings-config"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-config",
  "longhorn-core",
@@ -2389,6 +2401,7 @@ dependencies = [
 [[package]]
 name = "longhorn-surfaces"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "serde",
@@ -2397,6 +2410,7 @@ dependencies = [
 [[package]]
 name = "longhorn-surfaces-config"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-config",
  "longhorn-core",
@@ -2408,6 +2422,7 @@ dependencies = [
 [[package]]
 name = "longhorn-tauri-bridge"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-bridge",
  "longhorn-core",
@@ -2419,6 +2434,7 @@ dependencies = [
 [[package]]
 name = "longhorn-tauri-command"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-command-config",
  "longhorn-core",
@@ -2429,6 +2445,7 @@ dependencies = [
 [[package]]
 name = "longhorn-tauri-config"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-config",
  "serde",
@@ -2438,6 +2455,7 @@ dependencies = [
 [[package]]
 name = "longhorn-tauri-native-content-child-view"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "longhorn-native-content",
@@ -2448,6 +2466,7 @@ dependencies = [
 [[package]]
 name = "longhorn-tauri-notifications"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "longhorn-notifications",
@@ -2458,6 +2477,7 @@ dependencies = [
 [[package]]
 name = "longhorn-tauri-operation"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "longhorn-operation",
@@ -2468,6 +2488,7 @@ dependencies = [
 [[package]]
 name = "longhorn-tauri-settings"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "longhorn-settings",
@@ -2478,6 +2499,7 @@ dependencies = [
 [[package]]
 name = "longhorn-tauri-windowing"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "longhorn-display",
@@ -2489,6 +2511,7 @@ dependencies = [
 [[package]]
 name = "longhorn-windowing"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-core",
  "longhorn-display",
@@ -2498,6 +2521,7 @@ dependencies = [
 [[package]]
 name = "longhorn-windowing-config"
 version = "0.1.0"
+source = "git+ssh://git@github.com/inflatable-cookie/longhorn.git?tag=v0.1.0#7e81daa2df0a158f3d3ab3df141ca3f029842fd9"
 dependencies = [
  "longhorn-config",
  "longhorn-core",
