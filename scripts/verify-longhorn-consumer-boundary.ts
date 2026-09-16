@@ -128,19 +128,35 @@ const cargoTree = command(repoRoot, [
   "none",
 ]);
 const installedRust = rustCrates.map((name) => {
-  const versions = new Set(
+  const identities = new Set(
     cargoTree
       .split("\n")
       .filter((line) => line.startsWith(`${name} `))
-      .map((line) => line.split(" ")[1]),
+      // cargo tree marks deduplicated repeats with a trailing (*).
+      .map((line) =>
+        line
+          .replace(/(?: \(\*\))+$/, "")
+          .split(" ")
+          .slice(1)
+          .join(" "),
+      ),
   );
-  assert(versions.size === 1, `${name} resolved ${versions.size} versions`);
-  const version = [...versions][0]?.replace(/^v/, "");
+  assert(identities.size === 1, `${name} resolved ${identities.size} identities`);
+  const identity = [...identities][0]!;
+  const version = identity.split(" ")[0]?.replace(/^v/, "");
   assert(
     version === longhornVersion,
     `${name} resolved ${version}, expected ${longhornVersion}`,
   );
-  return { name, version };
+  // The version alone cannot prove the published identity: a path checkout
+  // at the same version would match. Cargo tree prints the resolved source,
+  // so require the exact git tag before recording the crate.
+  const expectedSource = `(${longhornGitRepository}?tag=${longhornGitTag}#`;
+  assert(
+    identity.includes(expectedSource),
+    `${name} resolved from ${identity}, expected git tag ${longhornGitTag} of ${longhornGitRepository}`,
+  );
+  return { name, version, source: `git-tag ${longhornGitTag}` };
 });
 for (const name of forbiddenRustCrates) {
   assert(!cargoTree.includes(`${name} `), `forbidden Rust dependency ${name}`);
@@ -379,21 +395,25 @@ function verifyRendererArtifacts() {
       `artifact graph installs ${installedLonghorn.join(", ")}`,
     );
 
-    // The adapter's exact peer is the one thing the old overrides entry
-    // existed to satisfy; prove the installed release still accepts the pin.
+    // The adapter's exact peers are what the old overrides entry existed to
+    // satisfy; prove the installed release still accepts both Poodle pins.
     const adapterPackageJson = resolve(
       consumer,
       "node_modules/@inflatable-cookie/longhorn-poodle-svelte/package.json",
     );
     assert(existsSync(adapterPackageJson), "longhorn-poodle-svelte package is not installed");
-    const adapterPeer = (
+    const adapterPeers = (
       JSON.parse(readFileSync(adapterPackageJson, "utf8")) as PackageManifest & {
         peerDependencies?: Record<string, string>;
       }
-    ).peerDependencies?.[POODLE_SVELTE];
+    ).peerDependencies;
     assert(
-      adapterPeer === nucleusSveltePin,
-      `longhorn-poodle-svelte peer ${adapterPeer} diverges from Nucleus pin ${nucleusSveltePin}`,
+      adapterPeers?.[POODLE_SVELTE] === nucleusSveltePin,
+      `longhorn-poodle-svelte peer ${adapterPeers?.[POODLE_SVELTE]} diverges from Nucleus pin ${nucleusSveltePin}`,
+    );
+    assert(
+      adapterPeers?.[POODLE_CORE] === nucleusCorePin,
+      `longhorn-poodle-svelte ${POODLE_CORE} peer ${adapterPeers?.[POODLE_CORE]} diverges from Nucleus pin ${nucleusCorePin}`,
     );
 
     const installedPoodle = [

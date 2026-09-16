@@ -1,7 +1,7 @@
 # Published Longhorn 0.1.0 Adoption
 
 Date: 2026-09-16
-Status: open
+Status: complete
 Task: `53737506-15f4-42bb-bce4-7be5ffeb59bc`
 Handoff: `../handoffs/20260916-125706-g06-003-adopt-published-longhorn.md`
 Planning commit: `028c82cc81f792805a36e201dbce13243a7f27c5`
@@ -31,10 +31,13 @@ was rewritten for the published shape. It no longer packs the private sibling
 checkout: it installs the three published renderer packages at `0.1.0` plus
 the pinned Poodle release into an isolated consumer, proves exactly the three
 Longhorn packages with one Svelte and one Poodle runtime, checks the installed
-adapter peer against the Nucleus pin, and asserts every `longhorn-*` Rust
-crate resolves version `0.1.0` from tag `v0.1.0`. All forbidden-import,
-forbidden-crate, adapter, and lifecycle-evidence assertions are retained.
-`scripts/README.md` was updated to describe the published-release proof.
+adapter's `peerDependencies` against both Nucleus Poodle pins, and asserts
+every `longhorn-*` Rust crate resolves version `0.1.0` from git tag
+`v0.1.0` of `ssh://git@github.com/inflatable-cookie/longhorn.git`, proven
+against the resolved source cargo tree prints on each crate line. All
+forbidden-import, forbidden-crate, adapter, and lifecycle-evidence assertions
+are retained. `scripts/README.md` was updated to describe the
+published-release proof.
 
 `AGENTS.md` dropped the mandatory sibling Longhorn checkout requirement: with
 both the Bun `file:` and Cargo path dependencies gone, the build no longer
