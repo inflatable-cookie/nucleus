@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { formatAgentId, parseAgentId } from '../../shared/agent-identity';
 import { hostKindOf } from '../../shared/host-kind';
@@ -190,6 +190,12 @@ export class ParticipantTickets {
   async forCaller(caller: string): Promise<string | undefined> {
     const qualified = parseAgentId(caller);
     if (!qualified) return undefined;
+    // A caller that already holds its participant ticket keeps exactly that
+    // ticket: the same path comes back on every call, and nothing is minted.
+    // A ticket whose file is gone is reissued here under the existing rules —
+    // the thread proved itself, so its credential must work again.
+    const existing = this.existingTicket(caller, qualified.hostId);
+    if (existing) return existing;
     for (const project of this.engine.store.projects()) {
       const planner = project.planner;
       if (!planner || this.engine.store.getMeta(plannerTicketKey(project.key))) continue;
@@ -220,6 +226,41 @@ export class ParticipantTickets {
       || !stillPlansATask(this.engine.store, { nativeAgentId: qualified.nativeAgentId, hostId: qualified.hostId })) return undefined;
     try { return (await this.issueTaskPlanner(caller, qualified.hostId, qualified.nativeAgentId, 'self'))?.path; }
     catch { return undefined; }
+  }
+
+  /**
+   * The ticket a caller already holds, when it still resolves: the same record
+   * the answer would authenticate. A record whose credential file is gone is
+   * revoked here so the caller's own next look reissues under the existing
+   * rules; a changed planner assignment or scope was already revoked by its own
+   * write and falls through to a fresh issuance.
+   */
+  private existingTicket(caller: string, hostId: string): string | undefined {
+    const path = plannerParticipantTicketPath(this.engine.store, caller, hostId);
+    if (!path) return undefined;
+    if (existsSync(path)) return path;
+    this.revokeLostTicket(path);
+    return undefined;
+  }
+
+  /** Drop every ticket record pointing at a credential file that is gone. */
+  private revokeLostTicket(path: string): void {
+    const store = this.engine.store;
+    const rows = store.db.prepare("SELECT key, value FROM meta WHERE key GLOB 'plannerParticipant:*' OR key GLOB 'taskPlannerParticipant:*' OR key GLOB 'projectAgentParticipant:*'").all() as Array<{ key: string; value: string }>;
+    for (const row of rows) {
+      let record: { path?: string; participantId?: string } | null = null;
+      try { record = JSON.parse(row.value) as { path?: string; participantId?: string }; } catch { record = null; }
+      if (record?.path !== path) continue;
+      store.transaction(() => {
+        store.deleteMeta(row.key);
+        if (record!.participantId) {
+          store.deleteMeta(`plannerParticipantId:${record!.participantId}`);
+          store.deleteMeta(`taskPlannerParticipantId:${record!.participantId}`);
+          store.deleteMeta(`projectAgentParticipantId:${record!.participantId}`);
+        }
+      });
+      store.event('queue', 'participant_ticket_reissued', `${row.key}: its credential file was lost; the caller's own next call reissues it`);
+    }
   }
 
   /**

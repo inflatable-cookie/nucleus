@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../core/store/store';
@@ -89,8 +89,8 @@ test('a live planner receives its ticket in the response to its own next call', 
     // The response carries the ticket path; nothing was sent into the thread.
     assert.deepEqual(f.messages, []);
     assert.equal(callerResolve.output.parse({ caller: formatAgentId(t3, 'planner'), hostId: t3, source: 'host', participantTicket: handed }).participantTicket, handed);
-    // A planner with a ticket is never handed a second one.
-    assert.equal(await f.tickets.forCaller(formatAgentId(t3, 'planner')), undefined);
+    // A planner with a ticket is never handed a second one: the same ticket's path comes back.
+    assert.equal(await f.tickets.forCaller(formatAgentId(t3, 'planner')), handed);
     // Another thread never takes this planner's ticket.
     assert.equal(await f.tickets.forCaller(formatAgentId(t3, 'other-thread')), undefined);
     assert.equal(await f.tickets.forCaller(formatAgentId(paseo, 'planner')), undefined);
@@ -126,7 +126,7 @@ test('caller.resolve hands a registered planner its ticket in the response and s
     const second = await QueueRuntime.prototype.resolveHostCaller.call(
       { hostRegistry: { onlineIds: () => [t3] }, plannerTickets: f.tickets } as never,
       { hostKind: 't3code', nativeAgentId: 'planner' });
-    assert.equal(second.participantTicket, undefined, 'the ticket is handed over once');
+    assert.equal(second.participantTicket, resolved.participantTicket, 'the same ticket path comes back on every resolution');
   } finally { f.store.close(); }
 });
 
@@ -199,6 +199,29 @@ test('reassigning, clearing, and returning to a planner revoke every previous ti
     f.assign(first); await f.tickets.forCaller(first);
     assert.notEqual(f.ticket().participantId, original.participantId);
     assert.throws(() => resolveTicketCaller(f.store, original, original.token), /revoked or invalid/);
+  } finally { f.store.close(); }
+});
+
+test('a lost credential file is reissued on the caller\'s own next call', async () => {
+  const f = fixture();
+  try {
+    const planner = formatAgentId(t3, 'planner');
+    f.assign(planner);
+    const handed = await f.tickets.forCaller(planner);
+    assert.ok(handed);
+    // The recorded credential file is gone; the caller's own call proves that,
+    // revokes the dead record and reissues under the existing rules at once.
+    rmSync(handed!);
+    const reissued = await f.tickets.forCaller(planner);
+    assert.ok(reissued && reissued !== handed, 'the next call reissued a fresh ticket under the same key');
+    const record = f.record();
+    assert.equal(record?.path, reissued);
+    assert.equal(record!.delivery, 'self');
+    const ticket = f.ticket();
+    assert.equal(resolveTicketCaller(f.store, { participantId: ticket.participantId }, ticket.token).caller, planner,
+      'the reissued ticket authenticates the same caller');
+    assert.equal(await f.tickets.forCaller(planner), reissued, 'the reissued ticket repeats its own path');
+    assert.deepEqual(f.messages, [], 'the self route never messages the thread');
   } finally { f.store.close(); }
 });
 

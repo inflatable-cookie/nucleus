@@ -34,6 +34,11 @@ export function nativeAgentId(id: string, hostId: string): string {
   return parsed.nativeAgentId;
 }
 
+/** The refusal for an identity whose own host cannot serve the call; it names the host that would. */
+export function foreignIdentityRefusal(hostId: string): string {
+  return `Caller identity belongs to host ${hostId} (${hostKindOf(hostId)}), which is unknown or offline`;
+}
+
 /** Caller fields accept old bare Paseo IDs without changing the stored record. */
 export function sameCallerIdentity(left: string | null | undefined, right: string | null | undefined,
   leftHostId?: string | null, rightHostId?: string | null): boolean {
@@ -50,6 +55,7 @@ export function sameCallerIdentity(left: string | null | undefined, right: strin
 export function callerNativeId(id: string, hostId: string | null | undefined): string {
   const parsed = parseAgentId(id);
   if (!parsed) return id;
-  if (!hostId || parsed.hostId !== hostId) throw new Error('Caller identity belongs to a different or unknown host');
+  if (!hostId || parsed.hostId !== hostId)
+    throw new Error(`Caller identity belongs to host ${parsed.hostId}, not ${hostId ?? 'an unknown host'}`);
   return parsed.nativeAgentId;
 }

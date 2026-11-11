@@ -212,8 +212,43 @@ test('qualified callers reach only their recorded host and host APIs receive nat
     { method: 'pendingQuestions', args: ['selected', 'planner'] },
     { method: 'archiveAgent', args: ['selected', 'planner'] },
   ]);
-  assert.throws(() => host.observe(formatAgentId('t3code:other', 'planner')), /different or unknown host/);
-  assert.throws(() => host.originAgent(formatAgentId('t3code:other', 'planner')), /different or unknown host/);
-  assert.throws(() => host.sendMessage(formatAgentId('t3code:other', 'planner'), { messageId: 'wrong-host', text: 'No send' }), /different or unknown host/);
+  assert.throws(() => host.observe(formatAgentId('t3code:other', 'planner')), /belongs to host t3code:other.*unknown or offline/);
+  assert.throws(() => host.originAgent(formatAgentId('t3code:other', 'planner')), /belongs to host t3code:other.*unknown or offline/);
+  assert.throws(() => host.sendMessage(formatAgentId('t3code:other', 'planner'), { messageId: 'wrong-host', text: 'No send' }), /belongs to host t3code:other.*unknown or offline/);
   assert.equal(calls.length, 5, 'a mismatched host receives no call');
+});
+
+test('a qualified identity for another registered host is routed to that host, never unwrapped against the bound one', async () => {
+  const calls: Calls[] = [];
+  const bound = fakeAdapter(calls, 'bound') as unknown as Record<string, unknown>;
+  bound.observe = async (id: string) => { calls.push({ method: 'observe', args: ['bound', id] }); return { id, workspaceId: 'bound-ws', status: 'idle', active: false, permissions: false, error: '' }; };
+  bound.notify = async (...args: unknown[]) => { calls.push({ method: 'notify', args: ['bound', ...args] }); return Promise.resolve(); };
+  const foreign = fakeAdapter(calls, 'foreign') as unknown as Record<string, unknown>;
+  foreign.observe = async (id: string) => { calls.push({ method: 'observe', args: ['foreign', id] }); return { id, workspaceId: 'foreign-ws', status: 'idle', active: false, permissions: false, error: '' }; };
+  foreign.notify = async (...args: unknown[]) => { calls.push({ method: 'notify', args: ['foreign', ...args] }); return Promise.resolve(); };
+  const adapters: Record<string, Adapter> = { 'paseo:one': bound as unknown as Adapter, 't3code:two': foreign as unknown as Adapter };
+  let boundHostId: string | undefined = 'paseo:one';
+  const host = new HostFacade({
+    get adapter() { return adapters[boundHostId!]!; },
+    get activeHostId() { return boundHostId; },
+    withHost: (id, fn) => { const previous = boundHostId; boundHostId = id; try { return fn(); } finally { boundHostId = previous; } },
+    hostOnline: id => id in adapters,
+  });
+
+  // A T3 identity read from inside Paseo context is served by the T3 adapter, unwrapped for it.
+  const observed = await host.observe(formatAgentId('t3code:two', 'planner'));
+  assert.equal(observed.workspaceId, 'foreign-ws');
+  assert.deepEqual(calls, [{ method: 'observe', args: ['foreign', 'planner'] }]);
+
+  // A routed send drops a source from yet another host instead of failing the send.
+  await host.sendMessage(formatAgentId('t3code:two', 'planner'), { messageId: 'm', text: 'Hello', sourceAgentId: formatAgentId('paseo:one', 'worker') });
+  assert.deepEqual(calls.at(-1), { method: 'notify', args: ['foreign', 'planner', 'm', 'Hello', undefined] });
+
+  // A source on the routed host is unwrapped for it.
+  await host.sendMessage(formatAgentId('t3code:two', 'planner'), { messageId: 'm2', text: 'Hello', sourceAgentId: formatAgentId('t3code:two', 'worker') });
+  assert.deepEqual(calls.at(-1), { method: 'notify', args: ['foreign', 'planner', 'm2', 'Hello', 'worker'] });
+
+  // An unregistered host refuses, named.
+  assert.throws(() => host.observe(formatAgentId('t3code:gone', 'planner')), /belongs to host t3code:gone.*unknown or offline/);
+  assert.equal(calls.filter(call => call.method === 'observe').length, 1, 'the unknown host received no call');
 });
