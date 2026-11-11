@@ -1180,7 +1180,7 @@ export class QueueRuntime {
       hosts: this.hostRegistry.known().length ? this.hostRegistry.known().map(host => ({
         id: host.id,
         state: this.hostRegistry.get(host.id) ? "online" : this.startError.includes("identity") && host.id === this.hostRegistry.known()[0]?.id ? "conflict" : "offline",
-        reason: this.hostRegistry.get(host.id) ? "" : host.id === t3?.id ? t3.error || 'T3Code is offline' : host.id === this.hostRegistry.known()[0]?.id ? this.startError || "Host is offline" : "Host is offline",
+        reason: this.hostRegistry.get(host.id) ? host.id === t3?.id && t3.threadShapePending ? 'thread shape pending first thread' : "" : host.id === t3?.id ? t3.error || 'T3Code is offline' : host.id === this.hostRegistry.known()[0]?.id ? this.startError || "Host is offline" : "Host is offline",
       })) : [{ id: "unknown", state: "unknown", reason: this.startError || "Host identity is unknown" }],
       bootstrap: { pending: Boolean(this.bootstrapRunning), startedAt: this.bootstrapStartedAt },
       hostRunEndpoint: this.serveHostRunEndpoint
