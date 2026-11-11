@@ -25,8 +25,13 @@ A project registers named, non-task threads: planners, leads and the
 coordinators of a cross-section. `agent.register` takes `{project, name,
 purpose}` and registers the calling thread from its Nucleus ticket, or, from the
 board, one chosen live thread in `agentId`. Nucleus records the thread, its
-host, who registered it and when, and issues the thread's participant ticket
-through that host.
+host, who registered it and when, and issues the thread's participant ticket.
+The ticket reaches its thread by the same handover model as every participant
+ticket: a self-registering thread takes it in the registration response, a board
+registration is handed over on the thread's own next authenticated call, and only
+a thread observed live on a host with no calling-thread identity of its own
+receives one message. Startup sends nothing, and an unknown delivery is never
+replayed.
 
 A name and a thread are one-to-one within a project: names are unique, and a
 thread holds one name. Registering the same thread under a new name renames it;
@@ -84,7 +89,9 @@ on a Paseo host, proves name uniqueness and ticket revocation on rename and
 reassignment, resolves a name, the fallback and an archived name (which fails
 with no send), and lists every live state. `test/project-planner.test.ts` proves
 `project.set-planner` still works, registers an unregistered thread under the
-default name, adopts a ticket delivered before the registry existed and rotates
-the name. `test/registration.test.ts` covers issuance, unknown delivery, offline
-hosts and host-scoped listing; `test/settings-project-editor.test.ts` renders
-the board list.
+default name, hands a self-naming planner its ticket in the assignment response,
+rotates the name, keeps a cleared fallback registered, gives a taken default name
+a free one, and returns the stored project. `test/registration.test.ts` covers
+the self handover, the board handover, unknown delivery and offline hosts.
+`test/planner-participant-tickets.test.ts` proves the ticket handover model the
+registry reuses. `test/settings-project-editor.test.ts` renders the board list.
