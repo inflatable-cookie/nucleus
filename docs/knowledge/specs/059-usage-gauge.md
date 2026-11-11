@@ -1,6 +1,6 @@
 # 059 — Subscription usage pressure gauge
 
-Status: implemented (steps 1 and 2, including the Usage page and the Paseo sidebar rail)
+Status: implemented (steps 1 and 2, including the Usage page and the Paseo sidebar row)
 Owner: Nucleus runtime maintainers
 Created: 2026-11-11
 Decision owner: operator (Tom, 2026-11-11, lane document `nucleus-usage-gauge`: track each
@@ -81,11 +81,19 @@ exhaustion from a refused run, after the fact.
   existing generic icon retained for unknown providers. See [third-party notices](../../../THIRD_PARTY_NOTICES.md)
   for mark sources and terms.
 
-- **The Paseo sidebar rail** is a compact plugin-only contribution: one small ring per
-  subscription, the provider mark inside, the ring's colour and fill showing the pressure state,
-  each ring opening the Usage screen. The screen and the custom sidebar item use the host's newer
-  registration APIs read through optional members (the pinned plugin SDK's types do not carry
-  them), so older hosts keep the board-navigation page and simply render no rail.
+- **The Paseo sidebar row** is a compact plugin-only contribution (nucleus#1123): one row
+  holds the board button on the left (icon and title, opening the board, the host's active
+  highlight while the board is the open screen, hover and keyboard focus as the host's native
+  items) and one small ring per subscription right-aligned on the same row — the provider mark
+  inside, the ring's colour and fill showing the pressure state. Each ring opens the board on
+  its Usage tab, not a separate screen, and there is no standalone Usage screen registration.
+  The board registers as a host screen and the row as a host sidebar item through the newer
+  registration APIs read as optional members (the pinned plugin SDK's types do not carry
+  them); on those hosts neither Paseo's native sidebar item nor the plugin's own
+  untitled legacy surface is registered, so nothing appears twice. Older hosts keep the
+  surface and the native item, and render no row. Provider marks are recoloured by
+  putting the fill on the root `<svg>` and overriding every painted child fill, because the
+  vendor assets carry their own fills and a root `fill="none"`.
 
 - **`usage.state`** (read-only) serves every subscription with its latest reading, the
   projection, and freshness (`asOf`, `nextReadAt`, `lastAttemptAt`, `lastError`). After a failed
@@ -93,7 +101,7 @@ exhaustion from a refused run, after the fact.
   and adds `stale` with the failure reason, time and reading age. Once all known windows have
   reset, it keeps the value as of its sample time, marks it expired, and returns an unknown dial.
   With no successful reading, it returns the failure as unknown. The CLI reads it with
-  `nucleus usage.state`. The Usage page and the Paseo sidebar rail read the same RPC.
+  `nucleus usage.state`. The Usage page and the Paseo sidebar row read the same RPC.
 
 - **Schema.** The store gains `usage_samples` and `usage_read_state` (per-subscription schedule,
   backoff and latest reading); store schema 58. Old stores migrate by re-running the fresh-store
@@ -110,8 +118,11 @@ insufficient data);
 `test/usage-service.test.ts` (subscription mapping, account separation, pacing, backoff to the
 cap, retention, thrown-reader recovery); `test/catalogue.test.ts` (the read-only
 classification); `test/usage-gauge-ui.test.ts` (the dial maps state and value — centre, left,
-right, pinned, unknown — the page renders subscriptions from a `usage.state` fixture, the rail
-renders and links to the page, and the plugin shell renders the page from the board navigation);
+right, pinned, unknown — the page renders subscriptions from a `usage.state` fixture, the
+sidebar row renders the board button and the rings, opens the board's Usage tab and takes the
+host's active state, a host without the newer APIs registers the native sidebar item, each
+provider mark paints in the requested colour, and the plugin shell renders the page from the
+board navigation);
 `test/web-shell.test.ts` (the web bundle renders the board that carries the page). The local
 check runs `usage.state` against a copy of the live store with the real provider homes and shows
 the operator's subscriptions with sane values; the store copy — never the live database —
