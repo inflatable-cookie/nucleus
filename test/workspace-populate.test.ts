@@ -160,7 +160,7 @@ test("freshly populated workspace registration skips the duplicate inventory and
   assert.equal(inventoryCalls, 2, "one list reconciles before populate and one checks exact-path aliases before registration");
   assert.equal(created, 1);
   assert.ok(steps.some(step => step.step === "workspace_identity_lookup" && step.status === "skipped"));
-  for (const step of ["worktree_inspection", "owned_path_proof", "path_registration_check", "repository_project_lookup", "paseo_workspace_create"]) {
+  for (const step of ["worktree_inspection", "owned_path_proof", "path_registration_check", "repository_project_lookup", "workspace_creation"]) {
     assert.ok(steps.some(item => item.step === step && item.status === "started"), `${step} has a start timing`);
     const finished = steps.find(item => item.step === step && item.status === "finished");
     assert.ok(finished && finished.elapsedMs! >= 0, `${step} has an elapsed timing`);

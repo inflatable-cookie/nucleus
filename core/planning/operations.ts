@@ -758,8 +758,9 @@ export class Operations {
         };
       } });
       const task=await bindReviewEntry(this.store,reviewAdapter,{...operation,hostSelection:selection},input,originHostId,async id => {
-        const host = await this.engine.identifyOriginHost(id, input.submission.originIdentity);
-        if (!host || host !== originHostId) throw new SubmissionUnavailableError("Review-entry origin host is unknown or ambiguous");
+        const identitySource = id === input.submission.originAgentId ? input.submission.originIdentity : undefined;
+        const host = await this.engine.identifyOriginHost(id, identitySource);
+        if (!host) throw new SubmissionUnavailableError("Review-entry origin host is unknown or ambiguous");
         return this.engine.withHost(host, () => this.engine.host.originAgent(id));
       });
       return {taskId:task.id,taskVersion:task.version,phase:task.phase,number:task.number,reference:task.reference};
@@ -815,9 +816,9 @@ export class Operations {
     const originHostId = await this.engine.identifyOriginHost(submission.originAgentId, originIdentity);
     if (needsRecipients && !originHostId) throw new SubmissionUnavailableError("Origin host is unknown or ambiguous");
     const resolved = needsRecipients ? await validateCompletionRecipients(submission, async id => {
-      // The evidence names one thread, so every recipient gets it and only the same thread uses it.
-      const host = await this.engine.identifyOriginHost(id, originIdentity);
-      if (!host || host !== originHostId) throw new SubmissionUnavailableError("Completion recipient host is unknown or differs from the recorded origin host");
+      const identitySource = id === submission.originAgentId ? originIdentity : undefined;
+      const host = await this.engine.identifyOriginHost(id, identitySource);
+      if (!host) throw new SubmissionUnavailableError("Completion recipient host is unknown or ambiguous");
       return this.engine.withHost(host, () => this.engine.host.originAgent(id));
     }) : null;
     // A parsed refusal is a ruling and stops the submission. An operational failure - the

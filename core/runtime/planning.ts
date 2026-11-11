@@ -22,6 +22,8 @@ export interface PlanningContext {
   store: Store;
   engine: Pick<Engine, "awaitOperation" | "startOperation" | "scheduleAcceptedOperation" | "submitPlanningSource" | "briefStageProfileRefusal" | "independentReviewRoutingRefusal" | "selectIngressHost" | "hostAvailable" | "startSubmission"> & {
     hooks: Pick<Engine["hooks"], "previewPreDispatch">;
+    identifyOriginHost(agentId: string, identitySource?: import("../../shared/host-kind").IdentitySource): Promise<string | undefined>;
+    withHost<T>(hostId: string, work: () => T): T;
   };
   leads: Leads;
   readonly started: Promise<void>;
@@ -469,7 +471,7 @@ ${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
       const honour = reportOnlyDeliveryRefusal(input.text, [...submission.lanes, ...(input.attachedLanes ?? [])]);
       if (honour) throw new Error(honour);
       if (submission.notifyOriginOnCloseout || submission.completionNotificationAgentIds.length)
-        await validateCompletionRecipients(submission,id=>this.context.host.originAgent(id));
+        await validateCompletionRecipients(submission,id=>this.lookupCompletionRecipient(id, submission));
       await this.context.engine.hooks.previewPreDispatch(submission,input.text,prepared.planningCommit);
       const warning = prepared.warning ?? proofOnlyPreferenceWarning(submission);
       const preferenceWarning = warning ? ` Warning: ${warning}` : "";
@@ -494,7 +496,7 @@ ${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
       const routingConflict = this.context.engine.independentReviewRoutingRefusal(prepared.submission);
       if (routingConflict) throw new Error(routingConflict);
       const needsRecipients = prepared.submission.notifyOriginOnCloseout || prepared.submission.completionNotificationAgentIds.length > 0;
-      if (needsRecipients) await validateCompletionRecipients(prepared.submission, id => this.context.host.originAgent(id));
+      if (needsRecipients) await validateCompletionRecipients(prepared.submission, id => this.lookupCompletionRecipient(id, prepared!.submission));
       if (!this.context.store.existing(prepared.submission)) this.context.store.validateDependencies(prepared.submission);
       if (prepared.submission.lanes.length || prepared.submission.laneDocuments?.length) {
         this.context.store.requireSubmissionLanes(prepared.submission, await repositoryOrigin(prepared.submission.repoPath));
@@ -507,5 +509,12 @@ ${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
     if ("backpressured" in acceptance) return acceptance;
     const operation = acceptance.operation;
     return { ...prepared, task: operation.state === "succeeded" && operation.result?.taskId ? this.context.store.task(operation.result.taskId) : null, operation };
+  }
+
+  private async lookupCompletionRecipient(id: string, submission: import("../../shared/contracts").Submission) {
+    const identitySource = id === submission.originAgentId ? submission.originIdentity : undefined;
+    const hostId = await this.context.engine.identifyOriginHost(id, identitySource);
+    if (!hostId) throw new Error(`Completion recipient host is unknown or ambiguous: ${id}`);
+    return this.context.engine.withHost(hostId, () => this.context.host.originAgent(id));
   }
 }

@@ -114,6 +114,16 @@ directory, project ID, task/run ownership and native thread ID. Do not recover
 ownership from titles or tags. Discovery uses complete host inventory plus this
 map. An unreadable map or partial inventory is unknown, never an empty result.
 
+When a repository root has no T3 project, `createWorkspace` creates one with the
+supported `project.create` command. Its title is the repository folder name and
+its root is the real repository path; the task worktree is never used as the
+project root. The deterministic project ID, command ID and root are recorded in
+the durable intent before send. Before retrying an unknown create, read the
+complete project inventory again and adopt a project that now exists for that
+root. A build that does not support project creation leaves the task waiting
+with a refusal naming the path and the manual setup steps. Nucleus does not
+rename or remove projects.
+
 Nucleus prepares and verifies the Git worktree before handing it to T3. Creation
 uses only `existing_worktree`; T3 must confirm it belongs to the selected project.
 The adapter never asks T3 to create, rename, remove or clean a worktree. Thread
@@ -125,6 +135,7 @@ pretend to be a Paseo workspace.
 
 | Host operation | T3 RPC or command | Required result |
 | --- | --- | --- |
+| Register project | `orchestration.dispatchCommand` / `project.create` | Deterministic IDs bind the real repository root; reconcile unknown delivery against the complete inventory before retry |
 | Create | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt and `existing_worktree` | Top-level thread with the exact project and directory |
 | Follow-up | `orchestration.dispatchCommand` / `message.dispatch` | Stable command and message IDs; receipt records acceptance |
 | Observe | `orchestration.subscribeShell` and `orchestration.subscribeThread` | Fresh complete state, including active run and pending request |
@@ -157,8 +168,10 @@ T3 receipts reject a command ID belonging to another thread, but do not compare
 payloads on the same thread. Nucleus must reject a changed payload under an
 existing intent ID locally. A transport reconnect does not resend a mutation.
 An uncertain result stays uncertain until native receipt/projection evidence
-settles that exact intent. Never resend an uncertain mutation to obtain its
-receipt, or replace the command or thread ID to escape doubt.
+settles that exact intent. Project creation is reconciled by re-reading the
+complete project inventory before retry; an existing project for the repository
+root is adopted, and any retry uses its recorded command and project IDs. Never
+replace an intent's IDs to escape doubt.
 
 Guarded sends retain core's `allowed`, `stillAllowed` and `beforeSend` ordering.
 The last synchronous fence precedes the socket write. A proven local refusal

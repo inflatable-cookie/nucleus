@@ -190,9 +190,9 @@ test("creation keeps its step order and its progress events across the moved bou
     "finished:path_registration_check",
     "started:repository_project_lookup",
     "finished:repository_project_lookup",
-    "started:paseo_workspace_create",
+    "started:workspace_creation",
     "createWorkspace:ns-workspace-lifecycle",
-    "finished:paseo_workspace_create",
+    "finished:workspace_creation",
   ], "identity, inspection, owned path, one-registration check, project lookup, then the native create");
 
   // A freshly populated checkout skips the identity lookup and keeps the create's request identity.
@@ -201,6 +201,12 @@ test("creation keeps its step order and its progress events across the moved bou
   assert.deepEqual(fresh, { id: "w-created", directory: owned });
   assert.equal(order.includes("findWorkspaces"), false, "a freshly populated checkout has no identity to look up");
   assert.deepEqual(order.slice(0, 2), ["skipped:workspace_identity_lookup", "started:worktree_inspection"]);
+
+  order.length = 0;
+  host.workspaceHost.createWorkspace = async () => { throw new Error("project is missing"); };
+  await assert.rejects(policy(host).createWorkspace(task({ repoPath: repo })), /project is missing/);
+  assert.ok(order.includes("started:workspace_creation"), "the refusing native call is labelled as workspace creation");
+  assert.ok(order.includes("finished:workspace_creation"), "the refused workspace creation is recorded as finished");
 });
 
 test("the moved entry points re-enter through the host, so a replaced surface governs the whole operation", async (t) => {
