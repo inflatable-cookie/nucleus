@@ -74,10 +74,13 @@ exhaustion from a refused run, after the fact.
   and absolute, time to exhaustion when exhaustion comes first, the sample age and source, and
   any stored read error. Unknown and not-available readings read plainly with their reason, never
   as 0 or green. The page refreshes on a slow minute interval — the readers pace themselves, so
-  the page adds no fast polling.
+  the page adds no fast polling. Provider headings omit a group that only repeats the provider;
+  the shared ProviderLogo uses bundled official marks for Codex, Claude and Grok, with the
+  existing generic icon retained for unknown providers. See [third-party notices](../../../THIRD_PARTY_NOTICES.md)
+  for mark sources and terms.
 
 - **The Paseo sidebar rail** is a compact plugin-only contribution: one small ring per
-  subscription, the provider icon inside, the ring's colour and fill showing the pressure state,
+  subscription, the provider mark inside, the ring's colour and fill showing the pressure state,
   each ring opening the Usage screen. The screen and the custom sidebar item use the host's newer
   registration APIs read through optional members (the pinned plugin SDK's types do not carry
   them), so older hosts keep the board-navigation page and simply render no rail.

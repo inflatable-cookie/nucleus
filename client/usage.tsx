@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { Image, ScrollView, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { Icon, useRpc, type BoardSurfaceProps } from "./shell";
 import {
@@ -26,6 +26,7 @@ import type {
   UsageSubscription,
   UsageWindow,
 } from "../shared/schema/usage";
+import { providerLogoSource } from "./provider-logo-assets";
 
 /*
  * The Usage page (Spec 059 step 2, nucleus#1113): one pressure dial per provider
@@ -150,6 +151,39 @@ export function providerIconName(provider: string): string {
     default:
       return "Bot";
   }
+}
+
+/** A bundled provider mark; unknown providers keep the existing generic icon. */
+export function ProviderLogo({
+  provider,
+  size,
+  color,
+}: {
+  provider: string;
+  size: number;
+  color: string;
+}) {
+  const source = providerLogoSource(provider, color);
+  if (!source) {
+    return <Icon name={providerIconName(provider)} size={size} color={color} />;
+  }
+  return (
+    <Image
+      accessibilityRole="image"
+      accessibilityLabel={`${providerLabel(provider)} logo`}
+      source={{ uri: source }}
+      resizeMode="contain"
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
+/** The card title omits a group name that only repeats its provider. */
+export function usageCardHeading(provider: string, group: string): string {
+  const label = providerLabel(provider);
+  return group.trim().toLowerCase() === provider.trim().toLowerCase()
+    ? label
+    : `${label} · ${group}`;
 }
 
 const dialThickness = 3;
@@ -421,7 +455,7 @@ export function UsageCard({
   const state = projection.state;
   const color = pressureColor(state, c);
   const caption = dialCaption(subscription);
-  const heading = `${providerLabel(subscription.provider)} · ${subscription.group}`;
+  const heading = usageCardHeading(subscription.provider, subscription.group);
   return (
     <View
       accessibilityLabel={`${heading} usage: ${usageStateWord(state)}${caption === usageStateWord(state) ? "" : `, ${caption}`}`}
@@ -431,8 +465,8 @@ export function UsageCard({
         ref={anchor}
         style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}
       >
-        <Icon
-          name={providerIconName(subscription.provider)}
+        <ProviderLogo
+          provider={subscription.provider}
           size={16}
           color={c.foreground}
         />

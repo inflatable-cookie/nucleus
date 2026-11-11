@@ -2,15 +2,14 @@ import React, { useEffect, useState } from "react";
 import { Pressable, View, type ViewStyle } from "react-native";
 import type { ComponentType } from "react";
 import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { Icon } from "../../../client/shell";
 import { touchSlop, type Colors } from "../../../client/design";
 import {
   PressureRing,
   USAGE_REFRESH_MS,
   bindingWindow,
   dialCaption,
-  providerIconName,
   providerLabel,
+  ProviderLogo,
   usageStateWord,
 } from "../../../client/usage";
 import { usageState } from "../../../shared/contracts";
@@ -24,7 +23,7 @@ import { UsagePage } from "../../../client/usage";
 /*
  * Spec 059 step 2 (nucleus#1113), the plugin's contributions: the Usage page as
  * its own screen and the compact ring rail in the sidebar, one small ring per
- * subscription (provider icon inside, colour and fill showing the pressure),
+ * subscription (provider mark inside, colour and fill showing the pressure),
  * clicking through to the page. The screen and the custom sidebar item need the
  * host's newer registration APIs (`addScreen`, `addSidebarHeaderItem`), which
  * the 0.9 SDK types this repo pins do not carry; like the agent inventory, the
@@ -94,7 +93,7 @@ function noOutline(): ViewStyle {
     : {};
 }
 
-/** One subscription's ring: state colour and fill (the binding window's used share), provider icon inside. */
+/** One subscription's ring: state colour and fill (the binding window's used share), provider mark inside. */
 export function UsageRailRing({
   c,
   subscription,
@@ -127,10 +126,10 @@ export function UsageRailRing({
         color={ringColor(c, subscription.projection.state)}
         trackColor={c.border}
       >
-        <Icon
-          name={providerIconName(subscription.provider)}
+        <ProviderLogo
+          provider={subscription.provider}
           size={11}
-          color={known ? c.foreground : c.foregroundMuted}
+          color={c.foreground}
         />
       </PressureRing>
     </Pressable>
