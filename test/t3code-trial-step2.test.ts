@@ -374,3 +374,59 @@ test('T3 adapter verifies reviews and continues retained threads without a fresh
   assert.equal(reviewer.sent, true);
   assert.ok(server.commands.some(command => command.type === 'message.dispatch' && command.commandId === 'ns-reviewer-1' && command.text === 'Review in place.'));
 });
+
+test('T3 adapter asks a retained reviewer and binds uncertain run creation', async (t: TestContext) => {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 't3-ask-bind-')));
+  const server = await t3Fake(t, directory);
+  const host = createHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', probeThreadId: 'synthetic-probe',
+    statePath: join(directory, 'hosts', 't3code.json'), timeoutMs: 2_000 });
+  t.after(() => host.close());
+  await host.connect();
+  const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace', directory, project: { projectId: 'synthetic-project' } });
+  const profile = { id: 'p', name: 'p', provider: 'synthetic-provider', model: 'synthetic-model', notes: '', available: true, problem: '', supportedThinking: [] } as Profile;
+  const worker = await host.createAgent({
+    workspaceId: workspace.id, title: 'Synthetic worker', mcpBindingPath: null, profile,
+    attempt: () => ({ requestId: 'create-worker', prompt: 'work', labels: { 'nucleus.task': 'task', 'nucleus.run': 'run-worker' }, environment: {} }),
+  });
+  const reviewer = await host.createAgent({
+    workspaceId: workspace.id, title: 'Synthetic reviewer', mcpBindingPath: null, profile,
+    attempt: () => ({ requestId: 'create-reviewer', prompt: 'review', labels: { 'nucleus.task': 'task', 'nucleus.run': 'run-review', 'nucleus.role': 'reviewer' }, environment: {} }),
+  });
+  const adapter = createAdapter(Policy, host, { socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'worker-report.mjs') });
+  const bound = { id: 'run-review', taskId: 'task', role: 'reviewer', workspaceId: workspace.id } as Run;
+  assert.deepEqual(await adapter.findRunAgents(bound), [{ id: reviewer.id, workspaceId: workspace.id }]);
+  assert.deepEqual(await adapter.findRunAgents({ ...bound, id: 'run-other' }), []);
+  assert.equal(await adapter.askReviewer!(reviewer.id, {
+    prompt: 'Consult the retained T3 reviewer.', signal: new AbortController().signal, timeoutMs: 1_000, messageId: 'ns-agent-ask-reviewer-1',
+  }), null);
+  assert.ok(server.commands.some(command => command.type === 'message.dispatch' && command.threadId === reviewer.id
+    && command.commandId === 'ns-agent-ask-reviewer-1' && command.text === 'Consult the retained T3 reviewer.'));
+
+  const store = new Store(join(directory, 'queue.sqlite'));
+  store.setMeta('paused', false);
+  const engine = new Engine(store, adapter, 0);
+  engine.resolution.agentAskWaitMs = 400;
+  engine.resolution.agentAskPollMs = 20;
+  engine.resolution.delegatedAnswerWaitMs = 200;
+  const task = store.insert(submissionSchema.parse({
+    submissionId: 't3-ask-reviewer', title: 'T3 ask reviewer', repoPath: directory, planningCommit: 'a'.repeat(40),
+    handoffPath: 'handoff.md', originAgentId: 'origin',
+  }), host.hostId, 'handoff', 'a'.repeat(40));
+  store.update(task.id, {
+    phase: 'working', runId: 'run-worker', agentId: worker.id, workspaceId: workspace.id, profile,
+    resolution: { ...store.task(task.id).resolution, reviewerAgentId: reviewer.id },
+  });
+  store.setCredential('run-worker', 'fixture-secret');
+  const socketPath = join(directory, 's'), helper = join(directory, 'worker-report.mjs'), ticket = join(directory, 'ticket.json');
+  writeFileSync(ticket, JSON.stringify({ socketPath, token: 'fixture-secret', taskId: task.id, runId: 'run-worker' }), { mode: 0o600 });
+  const stop = await startCallbacks(socketPath, helper, engine);
+  try {
+    const pending = spawnHelper(helper, ticket, { question: 'Should the T3 reviewer advise this ask?', kind: 'process' }, ['ask']);
+    await waitUntil(() => store.eventsAll(task.id).some(event => event.kind === 'agent_ask_delegated' && event.detail.includes(`reviewer ${reviewer.id}`)), 'ask delegated to reviewer');
+    assert.equal(store.eventsAll(task.id).some(event => event.kind === 'agent_ask_delegation_missed' && event.detail.includes('delivery adapter unavailable')), false);
+    const askId = store.eventsAll(task.id).find(event => event.kind === 'agent_ask')!.detail.split(':')[0]!;
+    assert.ok(server.commands.some(command => command.type === 'message.dispatch' && command.threadId === reviewer.id
+      && command.commandId === `ns-agent-ask-reviewer-${askId}`));
+    await pending;
+  } finally { await engine.stop(); await stop(); store.close(); }
+});

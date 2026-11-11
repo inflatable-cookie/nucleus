@@ -93,6 +93,11 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     }
     findWorkspaces = (task: Task) => this.native.findWorkspaces(task);
     findAgents(task: Task) { return this.native.findAgents({ 'nucleus.task': task.id }); }
+    findRunAgents(run: Run) { return this.native.findAgents({ 'nucleus.run': run.id, 'nucleus.task': run.taskId }); }
+    async askReviewer(reviewer: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string }) {
+      await this.native.sendMessage(reviewer, { messageId: input.messageId, text: input.prompt });
+      return null;
+    }
     observe(id: string) { return this.native.observe(id); }
     observationInventory(ids: readonly string[]) { return this.native.observationInventory(ids); }
     originAgent(id: string) { return this.native.originAgent(id); }
@@ -120,7 +125,11 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
   };
 }
 
-export function createAdapter(Policy: HostPolicyConstructor, host: T3CodeHost, reporting?: T3Reporting): Adapter & HostPolicyPort & { readonly hostId: string; capabilities(): HostCapabilities } {
+export function createAdapter(Policy: HostPolicyConstructor, host: T3CodeHost, reporting?: T3Reporting): Adapter & HostPolicyPort & {
+  readonly hostId: string;
+  capabilities(): HostCapabilities;
+  findRunAgents(run: Run): Promise<{ id: string; workspaceId: string | null }[]>;
+} {
   const T3Adapter = t3AdapterClass(Policy);
   return new T3Adapter(host, reporting);
 }

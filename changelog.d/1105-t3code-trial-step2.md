@@ -7,7 +7,8 @@ and retry a missed planner notice instead of prompting the T3 worker to call
 MCP. Helper asks wait longer than the server's bounded answer. The T3 workflow
 adapter composes through the public `core/host` policy port, so review
 verification and retained-thread continuation use the same Nucleus policy as
-Paseo. A repository setting selects the host (`paseo` default, `t3code`
+Paseo. Helper asks reach a retained T3 reviewer through `askReviewer`;
+uncertain reviewer or coordinator creation binds through `findRunAgents`. A repository setting selects the host (`paseo` default, `t3code`
 opt-in); live tasks keep the host they started on. Settings and
 `repository.set` switch the project for new tasks.
 
