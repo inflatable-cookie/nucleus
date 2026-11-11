@@ -100,6 +100,14 @@ fields qualify them; a legacy string prefix grants no host attribution. Equal
 native IDs on Paseo and T3 must resolve to different participants. A missing host
 or ambiguous inventory cannot authorize a callback or answer.
 
+A host call that names an agent goes to that agent's own host. The host facade
+and the transport-boundary adapter proxy route an identity qualified for another
+registered host to that host's own adapter, unwrapped only there; the call is
+never unwrapped against the wrong transport. Refused only when the identity's
+host is unknown or offline, and the refusal names that host (nucleus#1128). A
+routed send's optional source from yet another host rides out, the way the
+delegated ask route already dropped it.
+
 T3's project and existing Git worktree form its workspace handle. Persist their
 mapping through the service's durable intent boundary, including the canonical
 directory, project ID, task/run ownership and native thread ID. Do not recover
@@ -228,7 +236,11 @@ without a matching run clear an inherited `NUCLEUS_TICKET` so the host's identit
 answers. Equal native IDs on different hosts do not share a consult ticket. A
 shared ticket-first caller resolver fills identity for any host and skips a
 ticket path that is gone, so T3 does not rewrite the command to a separate
-endpoint. A T3-hosted planner has no calling-thread identity of its own, so its
+endpoint. A proven caller that already holds its participant ticket (project
+planner, named agent, task planner) receives that same ticket's path on every
+`caller.resolve`; a second ticket is never minted, and a credential file that
+is gone is revoked and reissued on that caller's own next call (nucleus#1128).
+A T3-hosted planner has no calling-thread identity of its own, so its
 participant ticket is delivered by one message, and only after the thread is
 observed live; assignment from the board or the thread's own call is the trigger,
 and an archived, gone or unreadable thread is left ticket pending instead. A task's

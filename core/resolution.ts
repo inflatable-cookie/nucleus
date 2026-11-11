@@ -432,6 +432,8 @@ export class Resolution {
   readonly adapter: Adapter & Partial<ResolutionAdapter>;
   hostAvailable: (task: Task, run?: Run) => boolean = () => true;
   withHost: <T>(id: string, fn: () => T) => T = (_id, fn) => fn();
+  /** Registered and connected, independent of the ambient host context; serves the facade's cross-host routing. */
+  hostOnline: (id: string) => boolean = () => true;
   inventoryHostMatches: (id: string) => boolean = () => true;
   originHostAvailable: (id: string) => boolean = () => true;
   /**

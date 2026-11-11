@@ -32,5 +32,6 @@ test('caller identities match legacy Paseo IDs without joining hosts', () => {
   assert.equal(sameCallerIdentity(paseo, t3), false);
   assert.equal(sameCallerIdentity(paseo, formatAgentId('other-server', 'planner')), false);
   assert.equal(callerNativeId(t3, 't3code:server'), 'planner');
-  assert.throws(() => callerNativeId(t3, 'paseo-server'), /different or unknown host/);
+  assert.throws(() => callerNativeId(t3, 'paseo-server'), /belongs to host t3code:server, not paseo-server/);
+  assert.throws(() => callerNativeId(t3, null), /belongs to host t3code:server, not an unknown host/);
 });

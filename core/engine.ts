@@ -39,7 +39,7 @@ import { DispatchAdmission } from "./dispatch/admission";
 import { Store, digest, now } from "./store/store";
 import type { Adapter, AgentObservation } from "./host/adapter";
 import { HostFacade } from "./host/host-facade";
-import { callerNativeId } from '../shared/agent-identity';
+import { callerNativeId, foreignIdentityRefusal, parseAgentId } from '../shared/agent-identity';
 
 import type { TaskControlInput, TaskControlRequest } from "../shared/contracts";
 import type { TaskControlTask } from "../shared/contracts";
@@ -150,6 +150,8 @@ export class Engine {
   canReuseUnqualifiedOriginWorkspace: () => boolean = () => true;
   identifyOriginHost: (agentId: string, identitySource?: IdentitySource) => Promise<string | undefined> = async () => this.activeHostId ?? this.selectIngressHost();
   withHost<T>(id: string, fn: () => T): T { return this.hostContext.run(id, fn); }
+  /** Registered and connected, independent of the ambient host context; the identity-routing read. */
+  hostOnline(id: string): boolean { return Boolean(this.resolveHostAdapter(id)); }
   /** Runtime supplies the authenticated live-host selection at acceptance. */
   selectIngressHost: (explicit?: string, _repoPath?: string, _origin?: string | null) => string | undefined = explicit => explicit ?? this.store.getMeta<string>("hostId") ?? undefined;
   hostAvailable: (id: string) => boolean = () => true;
@@ -329,7 +331,9 @@ export class Engine {
         // Some older call sites still use adapter methods directly instead of
         // HostFacade. Keep that compatibility safe at the transport boundary:
         // qualified IDs are unwrapped only for the selected host, for every
-        // host method whose arguments identify an agent.
+        // host method whose arguments identify an agent, and a call that names
+        // an agent on another registered host is routed there — the agent's own
+        // transport serves it, never an unwrap against the wrong host.
         const native = (agentId: unknown): unknown => typeof agentId === 'string'
           ? callerNativeId(agentId, id ?? (selected as Adapter & { hostId?: string }).hostId)
           : agentId;
@@ -342,7 +346,32 @@ export class Engine {
           askPlanner: [0], askReviewer: [0],
         };
         const positions = agentArgs[String(property)];
+        const bound = id ?? (selected as Adapter & { hostId?: string }).hostId;
         return (...args: unknown[]) => {
+          // The recipient (position 0 of an agent-naming method) decides the
+          // route: a call that names an agent on another registered host
+          // re-enters this proxy inside that host's context, so the agent's own
+          // transport serves it. A secondary identity on yet another host rides
+          // out, the way the delegated ask route drops it; an unknown or offline
+          // host refuses, named.
+          const primary = positions?.[0] === 0 && typeof args[0] === 'string' ? parseAgentId(args[0]) : null;
+          if (primary && primary.hostId !== bound) {
+            if (!this.hostOnline(primary.hostId)) throw new Error(foreignIdentityRefusal(primary.hostId));
+            const rideAlong = args.slice();
+            for (const position of (positions ?? []).slice(1)) {
+              const parsed = typeof rideAlong[position] === 'string' ? parseAgentId(rideAlong[position] as string) : null;
+              if (parsed && parsed.hostId !== primary.hostId) rideAlong[position] = undefined;
+            }
+            const sourceInput = rideAlong[1];
+            if ((property === 'askPlanner' || property === 'askReviewer') && sourceInput
+              && typeof sourceInput === 'object' && 'sourceAgentId' in sourceInput) {
+              const input = sourceInput as { sourceAgentId?: unknown };
+              const parsed = typeof input.sourceAgentId === 'string' ? parseAgentId(input.sourceAgentId) : null;
+              rideAlong[1] = { ...input, ...(parsed && parsed.hostId !== primary.hostId ? { sourceAgentId: undefined } : {}) };
+            }
+            return this.withHost(primary.hostId, () =>
+              (this.adapter as unknown as Record<string, (...callArgs: unknown[]) => unknown>)[String(property)](...rideAlong));
+          }
           const normalized = args.slice();
           for (const position of positions ?? []) if (normalized[position] !== undefined)
             normalized[position] = native(normalized[position]);
@@ -372,6 +401,7 @@ export class Engine {
     this.resolution = new Resolution(store, this.adapter, () => this.profiles, () => this.stopped, idleGraceMs, this.hooks, uncertainMergeRetryMs);
     this.resolution.hostAvailable = (task, run) => this.taskHostAvailable(task) && (!run || run.hostId === task.hostId);
     this.resolution.withHost = (id, fn) => this.withHost(id, fn);
+    this.resolution.hostOnline = id => this.hostOnline(id);
     this.resolution.inventoryHostMatches = id => this.inventoryHostMatches(id);
     this.resolution.originHostAvailable = id => this.hostAvailable(id);
     // A host-dependent call arriving just after a roll waits out the runtime's
