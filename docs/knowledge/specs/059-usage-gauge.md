@@ -51,13 +51,15 @@ exhaustion from a refused run, after the fact.
   `u`, elapsed fraction `e` from the window length and reset (a billing period's own start and
   end count as the window), uniform pace `p = u/e` blended half-and-half with the recent burn
   from samples within the last hour; dial `clamp(log2 p, -1, 1)`, damped toward centre while
-  `e < 0.05`, pinned right at `u >= 1`; `exhaustsInMs` counts only when exhaustion lands before
-  that window's own reset (pace above 1). The binding window is whichever hits 100% earliest
-  before its own reset — with none running out, the closest call (highest dial) names the dial.
-  The state is `will_run_out` when the binding window exhausts before its reset, `on_track` when
+  `e < 0.05`, pinned right at `u >= 1`; `exhaustsInMs` counts when exhaustion lands before that
+  window's own reset (pace above 1), except a fully used window — exhausted now, whatever its
+  reset says — which reports `exhaustsInMs` 0. The binding window is whichever hits 100%
+  earliest before its own reset; a fully used window binds regardless of its reset, and with
+  none running out the closest call (highest dial) names the dial. The state is `will_run_out`
+  when the binding window exhausts before its reset or is already fully used, `on_track` when
   its dial sits within ±0.05 of centre, `spare` left of that, and `unknown` when no window
-  carries enough data to project. Windows whose reset has passed project nothing (stale, not
-  zero).
+  carries enough data to project. Partial windows whose reset has passed project nothing
+  (stale, not zero); a fully used one still pins.
 
 - **`usage.state`** (read-only) serves every subscription with its latest reading, the
   projection, and freshness (`asOf`, `nextReadAt`, `lastAttemptAt`, `lastError`). The CLI reads
