@@ -34,18 +34,28 @@ behave as before, and no keychain read happens.
 
 ## Token handling
 
-Each org's token lives in the macOS login keychain and is read at call time:
+Formal reviews need macOS: each org's token lives in the macOS login keychain
+and is read at call time. Store it with:
 
 ```
-security find-generic-password -s paseo-queue.github-reviewer -a <org> -w
+security add-generic-password -a <org> -s nucleus.github-reviewer -w
+```
+
+```
+security find-generic-password -s nucleus.github-reviewer -a <org> -w
 ```
 
 - `<org>` is the owner of the repository's GitHub origin.
 - The token is passed as an authorization header only to Nucleus's formal-review
   HTTPS requests, including verification and merge prechecks. It is never stored, logged, put in an agent
   environment, written into the repository or named in an error message.
+- The read tries the `nucleus.github-reviewer` service first and then the legacy
+  `paseo-queue.github-reviewer` service, so a token stored before the rename
+  keeps working; move the item to the new service. The legacy name is recorded
+  in [retired.toml](../retired.toml) (`legacy-reviewer-keychain-service`).
 - A missing keychain item, an HTTP 401/403, or a missing write access refuses
-  with a task attention reason naming the org, the keychain service and what is
+  with a task attention reason naming the org, the keychain service (including
+  the legacy fallback) and what is
   missing, and keeps GitHub's actionable HTTP refusal text. A formal-repository failure never falls
   back to a comment.
 
@@ -181,7 +191,7 @@ unchanged when the repository has no opt-in.
 | 4 | Persisted intent recovery | One marked review from the configured login whose body equals the persisted findings is adopted with no duplicate POST; a duplicate exact marker settles on the earliest; zero matches or a changed finding set refuse |
 | 5 | Verification | Login, commit, state and marker all checked; each mismatch refuses |
 | 6 | Merge precheck | The configured login's `APPROVED` review at the current head is required; `CHANGES_REQUESTED`, `COMMENTED` and stale heads refuse |
-| 7 | Missing keychain item | Loud refusal naming the org and service; no comment fallback |
+| 7 | Missing keychain item | Loud refusal naming the org, the new service and the legacy fallback; no comment fallback |
 | 8 | HTTP 401/403 or missing write access | Loud refusal naming the org and the actionable GitHub reason; no comment fallback; no token in the message |
 | 9 | Repository without the opt-in | Comment publication, verification and merge evidence unchanged; no keychain read |
 | 10 | Reviewer prompt | A formal run's prompt forbids the reviewer posting its own verdict; legacy prompts are byte-identical |

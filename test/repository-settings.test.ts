@@ -368,9 +368,9 @@ test('repository.set patches named fields: absent keeps, null clears, a full pay
   const runtime = new QueueRuntime({dataDir: dir, timers: false});
   try {
     const qa = {argv: ['effigy', 'qa'], timeoutMs: 60000, maxOutputBytes: 4096};
-    await runtime.setRepository({repository: 'acme/patch', closeout: 'agent', reviewer: {login: 'inflatable-tester'}, note: 'n'});
+    await runtime.setRepository({repository: 'acme/patch', closeout: 'agent', reviewer: {login: 'review-bot'}, note: 'n'});
     const withQa = await runtime.setRepository({repository: 'acme/patch', qa});
-    assert.equal(withQa.reviewer?.login, 'inflatable-tester');
+    assert.equal(withQa.reviewer?.login, 'review-bot');
     assert.equal(withQa.closeout, 'agent');
     assert.equal(withQa.note, 'n');
     assert.deepEqual(withQa.qa?.argv, qa.argv);

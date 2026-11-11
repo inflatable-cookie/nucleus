@@ -8,7 +8,7 @@ import {Store, digest} from '../core/store/store';
 import {
   publishFormalReview, publishReview, publishReviewOnce, reconcileFormalReviewPublication, verifyFormalReview, requiredMergeReview, readReviewerToken,
   reviewEventForStatus, reviewStateForStatus, reviewMarker, reviewPublicationBody,
-  uniqueMarkedReview, validateFormalReview, REVIEWER_TOKEN_SERVICE,
+  uniqueMarkedReview, validateFormalReview, REVIEWER_TOKEN_SERVICE, LEGACY_REVIEWER_TOKEN_SERVICE,
   type FormalReviewRuntime, type ReviewerSetting,
 } from '../core/forge/index';
 import {retainReviewPublication} from '../core/review/review-publication';
@@ -204,6 +204,28 @@ test('the merge precheck requires the reviewer APPROVED review at the current he
   const skipped = {...mergeTask, skipPRReview: true, resolution: {review: null}} as unknown as Task;
   await assert.rejects(requiredMergeReview(skipped, reviewer, runtime(review())), /does not approve merging/);
   await assert.doesNotReject(requiredMergeReview(skipped, null, runtime(review())), 'a non-opted-in repository keeps the review-skipping lane');
+});
+
+test('keychain read prefers the new service, falls back to the legacy service, and refuses when both are missing', async t => {
+  const org = 'acme';
+  const calls: string[] = [];
+  const reader = (items: Record<string, string>) => async (service: string) => { calls.push(service); return items[service] ?? ''; };
+  calls.length = 0;
+  assert.equal(await readReviewerToken(org, reader({[REVIEWER_TOKEN_SERVICE]: 'new-token', [LEGACY_REVIEWER_TOKEN_SERVICE]: 'legacy-token'})), 'new-token', 'the new service wins when both hold a token');
+  assert.deepEqual(calls, [REVIEWER_TOKEN_SERVICE], 'the new service is read first and its hit returns before the legacy service is touched');
+  calls.length = 0;
+  assert.equal(await readReviewerToken(org, reader({[LEGACY_REVIEWER_TOKEN_SERVICE]: 'legacy-token'})), 'legacy-token', 'an existing token under the legacy service keeps working');
+  assert.deepEqual(calls, [REVIEWER_TOKEN_SERVICE, LEGACY_REVIEWER_TOKEN_SERVICE], 'the legacy service is read only after the new service misses');
+  calls.length = 0;
+  await assert.rejects(readReviewerToken(org, reader({})),
+    (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      assert.match(message, new RegExp(`org ${org}`));
+      assert.match(message, new RegExp(REVIEWER_TOKEN_SERVICE.replace(/\./g, '\\.')));
+      assert.match(message, new RegExp(LEGACY_REVIEWER_TOKEN_SERVICE.replace(/\./g, '\\.')), 'the refusal names the legacy fallback once');
+      return true;
+    });
+  assert.deepEqual(calls, [REVIEWER_TOKEN_SERVICE, LEGACY_REVIEWER_TOKEN_SERVICE], 'a missing token reads the new service first, then the legacy fallback');
 });
 
 test('a missing keychain item, 401/403 and missing write access refuse loudly, naming the org, with no comment fallback', async t => {

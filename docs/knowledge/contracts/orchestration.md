@@ -1652,10 +1652,12 @@ reports, grants or spends that history.
   is published as a GitHub review from that login pinned to the reviewed head
   (APPROVE, REQUEST_CHANGES or COMMENT), and merge requires that login's
   approval at the current head.
-- The reviewer token is read at call time from the macOS keychain (service
-  `paseo-queue.github-reviewer`, account `<org>`) and passed only to Nucleus's
-  own `gh` calls; it is never stored, logged or given to an agent. A missing or
-  refused token raises attention and never falls back to a comment.
+- The reviewer token is read at call time from the macOS login keychain (service
+  `nucleus.github-reviewer`, account `<org>`; store it with
+  `security add-generic-password -a <org> -s nucleus.github-reviewer -w`) and passed only to Nucleus's
+  own `gh` calls; it is never stored, logged or given to an agent. A token kept
+  under the legacy service `paseo-queue.github-reviewer` is still read as a
+  fallback. A missing or refused token raises attention and never falls back to a comment.
 
 ### Review entry
 

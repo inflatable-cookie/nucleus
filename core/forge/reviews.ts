@@ -179,11 +179,18 @@ export function validateReviewComment(comment:{issue_url?:string;user?:{login?:s
  * A repository opts in through `repository.set` with `reviewer: {login}`. Queue
  * then publishes each accepted independent verdict as a formal GitHub review
  * from that login, pinned to the reviewed head, and requires that login's
- * APPROVED review at the current head before merge. The token is read from the
- * macOS login keychain at call time and passed only to these HTTPS calls;
- * it is never stored, logged, put in an agent environment or named in an error.
+ * APPROVED review at the current head before merge. Formal reviews need macOS:
+ * the token is read from the macOS login keychain at call time and passed only
+ * to these HTTPS calls; it is never stored, logged, put in an agent environment
+ * or named in an error. Store it with
+ * `security add-generic-password -a <org> -s nucleus.github-reviewer -w`.
+ * A token stored under the legacy service `paseo-queue.github-reviewer` is
+ * still read as a fallback; move the item to the new service. The legacy name
+ * is recorded in docs/knowledge/retired.toml (`legacy-reviewer-keychain-service`).
  */
-export const REVIEWER_TOKEN_SERVICE = 'paseo-queue.github-reviewer';
+export const REVIEWER_TOKEN_SERVICE = 'nucleus.github-reviewer';
+/** Pre-public legacy keychain service, read only as a fallback for existing tokens. */
+export const LEGACY_REVIEWER_TOKEN_SERVICE = 'paseo-queue.github-reviewer';
 export type FormalReviewRuntime = {
   readToken?: (org: string) => Promise<string>;
   runGh?: (task: Task, endpoint: string, args: string[], token: string) => Promise<unknown>;
@@ -191,13 +198,21 @@ export type FormalReviewRuntime = {
 };
 type FormalReview = { id?: unknown; user?: { login?: string }; body?: unknown; commit_id?: unknown; state?: unknown; submitted_at?: unknown };
 
-/** The keychain token for one org, or a loud refusal naming the org and what is missing. */
-export async function readReviewerToken(org: string): Promise<string> {
-  let token = '';
-  try { token = (await command('security', ['find-generic-password', '-s', REVIEWER_TOKEN_SERVICE, '-a', org, '-w'], process.cwd())).trim(); }
-  catch { token = ''; }
-  if (!token) throw new Error(`No GitHub reviewer token for org ${org}: add the token to the login keychain with service ${REVIEWER_TOKEN_SERVICE} and account ${org}`);
-  return token;
+/** One login-keychain item, or '' when it is absent. Never throws for a missing item. */
+async function keychainToken(service: string, org: string): Promise<string> {
+  try { return (await command('security', ['find-generic-password', '-s', service, '-a', org, '-w'], process.cwd())).trim(); }
+  catch { return ''; }
+}
+/** The keychain token for one org, or a loud refusal naming the org and what is missing.
+ * The new service wins; a token stored under the legacy service keeps working as a
+ * fallback. The optional reader exists so tests can prove the order without keychain items. */
+export async function readReviewerToken(org: string, read?: (service: string, org: string) => Promise<string>): Promise<string> {
+  const readService = read ?? keychainToken;
+  const current = (await readService(REVIEWER_TOKEN_SERVICE, org)).trim();
+  if (current) return current;
+  const legacy = (await readService(LEGACY_REVIEWER_TOKEN_SERVICE, org)).trim();
+  if (legacy) return legacy;
+  throw new Error(`No GitHub reviewer token for org ${org}: add the token to the macOS login keychain with service ${REVIEWER_TOKEN_SERVICE} and account ${org} (security add-generic-password -a ${org} -s ${REVIEWER_TOKEN_SERVICE} -w); a token stored under the legacy service ${LEGACY_REVIEWER_TOKEN_SERVICE} is still read as a fallback`);
 }
 /** `ready_to_merge` approves, `changes_required` requests changes, anything else comments. */
 export function reviewEventForStatus(status: string) { return status === 'ready_to_merge' ? 'APPROVE' : status === 'changes_required' ? 'REQUEST_CHANGES' : 'COMMENT'; }
