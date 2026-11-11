@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 // `nucleus ask` and `nucleus tell`: the helper form of the agent verbs (shared/agent-verbs) for
 // hosts without an MCP binding. Same arguments, same result, same routes as the `ask` and `tell`
-// MCP tools. The caller is this run's ticket, proven through the service's caller resolver before
-// anything is sent; the payload names a recipient, never an agent or thread ID.
+// MCP tools. The caller is proven by its ticket or host identity before anything is sent; the
+// payload names a recipient, never an agent or thread ID.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { readPayload } from './payload.mjs';
 import { callbackRequest } from '../shared/service/callback-client.mjs';
-import { callerSource } from '../shared/caller.mjs';
-import { resolveCliCaller } from './caller.mjs';
+import { cliCallerSource, resolveCliCaller } from './caller.mjs';
 
 /** The in-turn budget `ask` waits (120s) plus the callback margin the MCP binding also uses. */
 const ASK_CALLBACK_TIMEOUT_MS = 150_000;
@@ -28,19 +27,20 @@ function ticketOf(path) {
 
 /**
  * Send one agent verb. The identity is proven first (`resolveCliCaller`); the request then
- * carries only the ticket's own identity, so a payload can never name another run or participant.
+ * carries only the resolved ticket identity, so a payload can never name another run or participant.
  */
 async function runAgentVerb(verb, payload, env = process.env) {
   const spec = VERBS[verb];
   if (!spec) throw new Error(`Choose a verb: nucleus ask or nucleus tell`);
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error(`nucleus ${verb} takes a JSON object`);
-  const source = callerSource(env);
-  if (source.source !== 'ticket') throw new Error(`nucleus ${verb} needs this run's Nucleus ticket (NUCLEUS_TICKET); use the ${verb} tool on a host with an MCP binding`);
-  const ticket = ticketOf(source.path);
+  const source = cliCallerSource(env);
+  const identity = await resolveCliCaller({ source });
+  const ticketPath = source.source === 'ticket' ? source.path : identity.participantTicket;
+  if (!ticketPath) throw new Error(`nucleus ${verb} needs a Nucleus ticket; this thread has no participant role, so nothing was sent`);
+  const ticket = ticketOf(ticketPath);
   // A planner or named agent answers questions with question.answer; it never asks. Refused before any service request.
   if (ticket.participantId && verb === 'ask')
     throw new Error('ask is a worker\'s and reviewer\'s verb; a planner answers a question with question.answer, and tells with nucleus tell');
-  const identity = await resolveCliCaller({ source });
   const { runId, ...request } = payload;
   // The resolver proves the identity; the request never names a different run than the ticket holds.
   if (runId !== undefined && ticket.runId !== undefined && runId !== ticket.runId)

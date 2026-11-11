@@ -18,6 +18,7 @@ import { base, profile } from "./support/responsible-lifecycle-fixture";
 import { submissionSchema, type Run, type Task } from "../shared/contracts";
 import type { Adapter } from "../core/host";
 import { normalizeAskTarget, normalizeTellTarget } from "../shared/agent-verbs.mjs";
+import { callerCliFixture } from "./support/caller-cli-fixture";
 
 /**
  * Task 1108: `ask` and `tell`, the two agent verbs, on both kinds of run. The MCP
@@ -315,6 +316,30 @@ test("a run ticket asks and tells through the CLI with no MCP binding", async ()
     assert.equal((JSON.parse(told.stdout) as Json).status, "delivered");
     const tellDelivery = f.notified.filter(item => item.messageId.startsWith("ns-agent-message-"));
     assert.deepEqual(tellDelivery.map(item => item.agentId), ["peer"]);
+  } finally { await f.close(); }
+});
+
+test("a Paseo planner's host identity resolves its participant ticket before nucleus tell", async () => {
+  const f = await callerCliFixture();
+  try {
+    f.setHostParticipantTicket();
+    const result = await f.invoke("host", "agent-verbs.mjs", ["tell", "-"], { to: { project: "Swallowtail" }, text: "The planner update is ready." });
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { ok: true });
+    assert.equal(f.hostResolutions.length, 1);
+    assert.deepEqual(f.callbacks.map(call => call.path), ["/message"]);
+    assert.equal(f.callbacks[0]!.input.participantId, "00000000-0000-4000-8000-000000000001");
+    assert.equal(f.callbacks[0]!.input.taskId, undefined);
+  } finally { await f.close(); }
+});
+
+test("an unregistered Paseo thread without a participant ticket cannot nucleus tell", async () => {
+  const f = await callerCliFixture();
+  try {
+    const result = await f.invoke("host", "agent-verbs.mjs", ["tell", "-"], { to: { project: "Swallowtail" }, text: "Must not send." });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /no participant role.*nothing was sent/);
+    assert.deepEqual(f.callbacks, []);
   } finally { await f.close(); }
 });
 

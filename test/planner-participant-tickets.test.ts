@@ -22,7 +22,7 @@ import { projectSettingsSchema } from '../shared/schema/project-settings';
 const t3 = 't3code:synthetic';
 const paseo = 'paseo:synthetic';
 
-function fixture() {
+function fixture(hostId = t3) {
   const directory = mkdtempSync(join(tmpdir(), 'planner-ticket-'));
   const store = new Store(':memory:');
   const messages: Array<{ id: string; text: string }> = [];
@@ -30,14 +30,14 @@ function fixture() {
   let observe: () => Promise<{ id: string; workspaceId: string | null; status: string; active: boolean; permissions: boolean; error: string }> = async () => ({ id: 'planner', workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' });
   let archived: boolean | null = false;
   const engine = new Engine(store, {
-    hostId: t3,
+    hostId,
     notify: async (id: string, _messageId: string, text: string) => {
       messages.push({ id, text }); if (sendFailure) throw Error('send outcome unknown');
     },
     originAgent: async (id: string) => archived === null ? null : ({ id, workspaceId: 'ws', title: 'Planner', archived }),
     observe: (id: string) => observe().then(observation => ({ ...observation, id })),
   } as unknown as Adapter, 0);
-  engine.identifyOriginHost = async () => t3;
+  engine.identifyOriginHost = async () => hostId;
   engine.hostAvailable = () => available;
   const paths = { socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'helper.mjs') };
   const tickets = new ParticipantTickets(engine, paths);
@@ -94,6 +94,20 @@ test('a live planner receives its ticket in the response to its own next call', 
     // Another thread never takes this planner's ticket.
     assert.equal(await f.tickets.forCaller(formatAgentId(t3, 'other-thread')), undefined);
     assert.equal(await f.tickets.forCaller(formatAgentId(paseo, 'planner')), undefined);
+  } finally { f.store.close(); }
+});
+
+test('a bare legacy planner binds to the Paseo host regardless of who set the assignment', async () => {
+  const f = fixture(paseo);
+  try {
+    f.assign('planner', 'legacy-setter');
+    await f.tickets.ensure();
+    assert.equal(await f.tickets.forCaller(formatAgentId(t3, 'planner')), undefined,
+      'the same native ID on a different host cannot claim a bare legacy planner');
+    const handed = await f.tickets.forCaller(formatAgentId(paseo, 'planner'));
+    assert.equal(handed, f.record()?.path);
+    assert.equal(f.record()?.delivery, 'self');
+    assert.deepEqual(f.messages, []);
   } finally { f.store.close(); }
 });
 
