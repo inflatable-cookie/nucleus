@@ -100,7 +100,7 @@ export function UsageRailRing({
       style={{ alignItems: "center", justifyContent: "center", ...noOutline() }}
     >
       <PressureRing
-        size={22}
+        size={26}
         thickness={2.5}
         fraction={known && binding ? binding.usedFraction : 0}
         color={ringColor(c, subscription.projection.state)}
@@ -108,7 +108,7 @@ export function UsageRailRing({
       >
         <ProviderLogo
           provider={subscription.provider}
-          size={11}
+          size={14}
           color={c.foreground}
         />
       </PressureRing>

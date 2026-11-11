@@ -70,11 +70,14 @@ exhaustion from a refused run, after the fact.
 
 - **The Usage page** (step 2) lives on the board's navigation in the shared client, so the web
   board and the plugin render the same screen; nothing lands in the board header (Tom,
-  2026-11-06). One card per subscription: a semicircle dial with a needle (centre on track, right
-  red runs out, left green spare), the projected use at reset and the binding window as its
-  caption ("+18% over · wk", "-30% spare · 5h"), each window's used percent, reset time relative
-  and absolute, time to exhaustion when exhaustion comes first, the sample age and source, and
-  any stored read error. Unknown and not-available readings read plainly with their reason, never
+  2026-11-06). One card per subscription (nucleus#1124, #1127): a large semicircle dial on the left,
+  vertically centred (centre on track, right red runs out, left green spare), and one column to
+  its right with the provider mark and name, a plain verdict sentence and a row per window (name,
+  reset day and time rounded to the nearest minute, a bar in the state colour with a neutral
+  on-pace marker at elapsed time, percent used). Below a card width of 460 px the dial stacks
+  above the column. The verdict says "Plenty of room" only when projected use at reset is 80% or
+  less; above that, short of running out, it says "On track" with the spare share. Sample age,
+  source and next read sit in the card's (?) popover. Unknown and not-available readings read plainly with their reason, never
   as 0 or green. The page refreshes on a slow minute interval — the readers pace themselves, so
   the page adds no fast polling. Provider headings omit a group that only repeats the provider;
   the shared ProviderLogo uses bundled official marks for Codex, Claude and Grok, with the
@@ -91,9 +94,10 @@ exhaustion from a refused run, after the fact.
   registration APIs read as optional members (the pinned plugin SDK's types do not carry
   them); on those hosts neither Paseo's native sidebar item nor the plugin's own
   untitled legacy surface is registered, so nothing appears twice. Older hosts keep the
-  surface and the native item, and render no row. Provider marks are recoloured by
-  putting the fill on the root `<svg>` and overriding every painted child fill, because the
-  vendor assets carry their own fills and a root `fill="none"`.
+  surface and the native item, and render no row. Provider marks are white PNGs
+  rasterised from the vendor SVGs, cropped to the mark, and tinted with the Image `tintColor`
+  to the theme text colour (nucleus#1127): SVG data URIs did not paint in the real shells. The
+  rings are 26 px with a 14 px mark.
 
 - **`usage.state`** (read-only) serves every subscription with its latest reading, the
   projection, and freshness (`asOf`, `nextReadAt`, `lastAttemptAt`, `lastError`). After a failed
@@ -121,7 +125,7 @@ classification); `test/usage-gauge-ui.test.ts` (the dial maps state and value �
 right, pinned, unknown — the page renders subscriptions from a `usage.state` fixture, the
 sidebar row renders the board button and the rings, opens the board's Usage tab and takes the
 host's active state, a host without the newer APIs registers the native sidebar item, each
-provider mark paints in the requested colour, and the plugin shell renders the page from the
+provider mark decodes to a PNG that paints visible pixels filling its box, cards put the dial left of the column and stack when narrow, the bar takes the state colour, the 80% verdict threshold and minute-rounded resets, and the plugin shell renders the page from the
 board navigation);
 `test/web-shell.test.ts` (the web bundle renders the board that carries the page). The local
 check runs `usage.state` against a copy of the live store with the real provider homes and shows
