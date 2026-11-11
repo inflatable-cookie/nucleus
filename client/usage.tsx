@@ -12,6 +12,7 @@ import {
   type Colors,
 } from "./controls";
 import { roles, space, type as typeScale } from "./design";
+import { PopoverHost } from "./popover";
 import {
   formatLocalDateTime,
   formatRelativeSpan,
@@ -243,7 +244,7 @@ export function PressureDial({
  * A small ring with an arc fill starting at 12 o'clock, drawn with two
  * half-plane clips over a track circle, so it needs no SVG and renders the
  * same in the plugin, on the web board and on Hermes. `fraction` is the filled
- * share of the circumference.
+ * share of the circumference; at 0 only the track shows.
  */
 export function PressureRing({
   size,
@@ -263,7 +264,9 @@ export function PressureRing({
   const half = size / 2;
   const p = Math.max(0, Math.min(1, fraction));
   // First half (right clip): sweeps from 12 o'clock; past half a turn it holds
-  // at the full right semicircle and the second half takes over.
+  // at the full right semicircle and the second half takes over. The second
+  // half mounts only past half a turn: below it its rotation would paint a
+  // spurious arc into the left clip (at 0, the whole left semicircle).
   const first = Math.min(360 * p - 135, 45);
   const second = 360 * p - 315;
   return (
@@ -312,33 +315,35 @@ export function PressureRing({
           }}
         />
       </View>
-      <View
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: half,
-          height: size,
-          overflow: "hidden",
-        }}
-      >
+      {p > 0.5 && (
         <View
           style={{
             position: "absolute",
             top: 0,
             left: 0,
-            width: size,
+            width: half,
             height: size,
-            borderRadius: half,
-            borderWidth: thickness,
-            borderTopColor: "transparent",
-            borderRightColor: "transparent",
-            borderBottomColor: color,
-            borderLeftColor: color,
-            transform: [{ rotate: `${second}deg` }],
+            overflow: "hidden",
           }}
-        />
-      </View>
+        >
+          <View
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: size,
+              height: size,
+              borderRadius: half,
+              borderWidth: thickness,
+              borderTopColor: "transparent",
+              borderRightColor: "transparent",
+              borderBottomColor: color,
+              borderLeftColor: color,
+              transform: [{ rotate: `${second}deg` }],
+            }}
+          />
+        </View>
+      )}
       {children}
     </View>
   );
@@ -559,7 +564,9 @@ export function UsageCard({
 
 /**
  * The Usage page: one card per tracked subscription. Reached from the board's
- * navigation in both shells; the web board serves `usage.state` like any other
+ * navigation in both shells and mounted as the plugin's own Usage screen; the
+ * page brings its own popover layer, so its (?) explanations draw above the
+ * cards wherever it mounts. The web board serves `usage.state` like any other
  * read. Refreshes on a slow interval — the readers pace themselves, so this
  * adds no fast polling.
  */
@@ -582,55 +589,57 @@ export function UsagePage({
   const state = usageQuery.data;
   const now = pinnedNow ?? Date.now();
   return (
-    <View
-      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-      style={{ flex: 1, minHeight: 0, backgroundColor: c.surface0 }}
-    >
-      <ScrollView
-        contentContainerStyle={{
-          paddingHorizontal: inset,
-          paddingTop: inset,
-          paddingBottom: inset,
-          gap: space.md,
-        }}
+    <PopoverHost>
+      <View
+        onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+        style={{ flex: 1, minHeight: 0, backgroundColor: c.surface0 }}
       >
-        <LabelHelp
-          c={c}
-          label="Usage"
-          text="Each provider subscription against its reset: the dial's centre means the subscription lands at 100% exactly at the reset, right means it runs out before it, left means it reaches the reset with usage to spare."
-        />
-        {usageQuery.error && (
-          <Text accessibilityRole="alert" style={{ color: c.statusDanger }}>
-            {errorText(usageQuery.error)}
-          </Text>
-        )}
-        {state && state.subscriptions.length === 0 && (
-          <Text style={muted(c)}>
-            No provider subscription is being tracked. Subscriptions appear once
-            a profile group names Codex, Claude or Grok.
-          </Text>
-        )}
-        {(state?.subscriptions ?? []).map((subscription) => (
-          <UsageCard
-            key={`${subscription.group}:${subscription.provider}`}
+        <ScrollView
+          contentContainerStyle={{
+            paddingHorizontal: inset,
+            paddingTop: inset,
+            paddingBottom: inset,
+            gap: space.md,
+          }}
+        >
+          <LabelHelp
             c={c}
-            compact={compact}
-            subscription={subscription}
-            now={now}
+            label="Usage"
+            text="Each provider subscription against its reset: the dial's centre means the subscription lands at 100% exactly at the reset, right means it runs out before it, left means it reaches the reset with usage to spare."
           />
-        ))}
-        {state && (
-          <Text
-            style={{
-              ...muted(c),
-              fontSize: typeScale.metadata.fontSize,
-              lineHeight: typeScale.metadata.lineHeight,
-            }}
-          >
-            Read {formatRelativeTime(state.generatedAt, now) ?? "just now"}
-          </Text>
-        )}
-      </ScrollView>
-    </View>
+          {usageQuery.error && (
+            <Text accessibilityRole="alert" style={{ color: c.statusDanger }}>
+              {errorText(usageQuery.error)}
+            </Text>
+          )}
+          {state && state.subscriptions.length === 0 && (
+            <Text style={muted(c)}>
+              No provider subscription is being tracked. Subscriptions appear
+              once a profile group names Codex, Claude or Grok.
+            </Text>
+          )}
+          {(state?.subscriptions ?? []).map((subscription) => (
+            <UsageCard
+              key={`${subscription.group}:${subscription.provider}`}
+              c={c}
+              compact={compact}
+              subscription={subscription}
+              now={now}
+            />
+          ))}
+          {state && (
+            <Text
+              style={{
+                ...muted(c),
+                fontSize: typeScale.metadata.fontSize,
+                lineHeight: typeScale.metadata.lineHeight,
+              }}
+            >
+              Read {formatRelativeTime(state.generatedAt, now) ?? "just now"}
+            </Text>
+          )}
+        </ScrollView>
+      </View>
+    </PopoverHost>
   );
 }

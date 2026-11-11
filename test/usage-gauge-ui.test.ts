@@ -332,6 +332,58 @@ test("the dial maps state and value: centre, left, right, pinned, unknown", asyn
   );
 });
 
+test("the rail ring paints only the used share: empty at fraction 0, full at 1", async () => {
+  await load();
+  // The two half-plane clips are the ring's only overflow-hidden Views; the
+  // left one mounts only past half a turn, so an empty ring (an unknown
+  // subscription's fill) never shows a painted arc (review 1113).
+  const clips = (tree: ReturnType<typeof mount>) =>
+    tree
+      .ofType("View")
+      .filter((node) => node.props.style?.overflow === "hidden")
+      .map((node) => (node.props.style.left === 0 ? "left" : "right"));
+  const empty = mount(
+    h(usage.PressureRing, {
+      size: 22,
+      thickness: 2.5,
+      fraction: 0,
+      color: dark.foregroundMuted,
+      trackColor: dark.border,
+    }),
+  );
+  assert.deepEqual(clips(empty), ["right"], "fraction 0 mounts no left half");
+  const quarter = mount(
+    h(usage.PressureRing, {
+      size: 22,
+      thickness: 2.5,
+      fraction: 0.25,
+      color: dark.statusDanger,
+      trackColor: dark.border,
+    }),
+  );
+  assert.deepEqual(clips(quarter), ["right"], "a quarter fill still mounts no left half");
+  const threeQuarters = mount(
+    h(usage.PressureRing, {
+      size: 22,
+      thickness: 2.5,
+      fraction: 0.75,
+      color: dark.statusDanger,
+      trackColor: dark.border,
+    }),
+  );
+  assert.deepEqual(clips(threeQuarters), ["right", "left"], "past half a turn both halves mount");
+  const full = mount(
+    h(usage.PressureRing, {
+      size: 22,
+      thickness: 2.5,
+      fraction: 1,
+      color: dark.statusDanger,
+      trackColor: dark.border,
+    }),
+  );
+  assert.deepEqual(clips(full), ["right", "left"], "a full ring mounts both halves");
+});
+
 test("labels and short window names read as the brief writes them", async () => {
   await load();
   const label = (projected: number | null) =>
