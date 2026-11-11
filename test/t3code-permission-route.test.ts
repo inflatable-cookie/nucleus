@@ -7,12 +7,12 @@ import { createHost, createAdapter } from '../hosts/t3code';
 import { HostFacade } from '../core/host/host-facade';
 import { HostRegistry, type KnownHost } from '../core/host/host-registry';
 import { Admission, admitAdapter } from '../core/host/admission';
-import type { Adapter } from '../core/host';
+import { ProvenPreSendRefusalError, type Adapter } from '../core/host';
 import { answerHostPermission } from '../service/host-permissions';
 import { QueueService } from '../service/transport/server';
 import { ServiceClient } from '../shared/service/client';
 import { readServiceInfo } from '../service/transport/identity';
-import { hostPermissionAnswer } from '../shared/rpc/questions';
+import { hostPermissionAnswer, type HostPermissionAnswerInput } from '../shared/rpc/questions';
 import { callCatalogueMethod } from '../service/transport/dispatch';
 import { t3Fake } from './support/t3code-fake';
 
@@ -33,6 +33,21 @@ async function nativeFixture(t: TestContext) {
   projection.runtimeRequests.push(permission('synthetic-permission'));
   const input = { hostId: host.hostId, agentId: agent.id, workspaceId: workspace.id, requestId: 'synthetic-permission', decision: 'accept' as const, intentId: 'permission-answer' };
   return { directory, config, host, server, workspace, agent, projection, permission, input };
+}
+
+function registered(host: ReturnType<typeof createHost>, endpoint: string) {
+  let known: readonly KnownHost[] = [];
+  const registry = new HostRegistry<{ adapter: Adapter; admission: Admission }>({ read: () => known, write: hosts => { known = hosts; }, transaction: work => work() });
+  const admission = new Admission({ startIntervalMs: 0 });
+  registry.connect(host.hostId, endpoint, { adapter: admitAdapter(createAdapter(host), admission), admission });
+  return (input: HostPermissionAnswerInput) => answerHostPermission(registry, input);
+}
+
+function isUnknown(error: unknown): boolean {
+  assert.ok(error instanceof Error);
+  assert.equal(error instanceof ProvenPreSendRefusalError, false, 'an uncertain original response never becomes a known pre-send refusal');
+  assert.match(error.message, /unknown.*not resent/);
+  return true;
 }
 
 test('the permission façade is late-bound and returns the registered adapter promise unchanged', async () => {
@@ -105,9 +120,107 @@ test('concurrent changed decisions under one intent reach the native payload fen
   assert.equal(replies.filter(reply => reply.status === 'fulfilled').length, 1);
   const refused = replies.find(reply => reply.status === 'rejected');
   assert.ok(refused && refused.status === 'rejected');
-  assert.match(String(refused.reason), /payload changed|no longer answerable/);
+  assert.match(String(refused.reason), /payload changed|no longer answerable|unknown.*not resent|changed answer/);
   assert.equal(admission.snapshot().control.coalesced, 0, 'changed decision is not an equivalent admitted call');
   assert.equal(server.commands.filter(command => command.type === 'runtime-request.respond').length, 1);
+});
+
+for (const observed of ['resolved', 'expired', 'pending'] as const) {
+  test(`a lost permission reply stays unknown across reload and changed intents when the native request is ${observed}`, async t => {
+    const { host, server, directory, config, input, projection } = await nativeFixture(t);
+    const send = registered(host, server.endpoint);
+    server.controls.disconnectAfterEffect = observed !== 'pending';
+    server.controls.disconnectMutation = observed === 'pending';
+    await assert.rejects(send(input), error => {
+      assert.equal(error instanceof ProvenPreSendRefusalError, false);
+      return true;
+    });
+    assert.equal(host.state.read().intents[input.intentId]?.status, 'unknown');
+    const disconnectedReads = server.requests.length;
+    await assert.rejects(send(input), isUnknown);
+    await assert.rejects(send({ ...input, intentId: 'disconnected-new-intent', decision: 'decline' }), isUnknown);
+    assert.equal(server.requests.length, disconnectedReads, 'socket loss does not move the durable unknown fence behind connection checks');
+    const request = projection.runtimeRequests.find((item: { id: string }) => item.id === input.requestId)!;
+    request.status = observed;
+    if (observed === 'expired') request.responseCapability = { type: 'not_resumable', reason: 'Synthetic server restart' };
+    server.controls.disconnectAfterEffect = false;
+    server.controls.disconnectMutation = false;
+    host.close();
+
+    const reloaded = createHost({ ...config, statePath: join(directory, 'hosts', 't3code.json'), timeoutMs: 2_000 });
+    t.after(() => reloaded.close());
+    await reloaded.connect();
+    const replay = registered(reloaded, server.endpoint);
+    const reads = server.requests.length;
+    for (const retry of [
+      input,
+      { ...input, intentId: 'new-permission-intent' },
+      { ...input, decision: 'decline' as const },
+      { ...input, intentId: 'new-changed-intent', decision: 'decline' as const },
+      { ...input, intentId: 'new-workspace-intent', workspaceId: `${input.workspaceId}-changed` },
+    ]) await assert.rejects(replay(retry), isUnknown);
+    assert.equal(server.requests.length, reads, 'the durable unknown fence runs before any native status read');
+    assert.equal(server.commands.filter(command => command.type === 'runtime-request.respond').length, 1, 'a new intent cannot mint another native response');
+    assert.equal(reloaded.state.read().intents[input.intentId]?.status, 'unknown');
+  });
+}
+
+test('a settled permission answer replays the original result under same and new intents without native reads', async t => {
+  const { host, server, directory, config, input, agent } = await nativeFixture(t);
+  const original = registered(host, server.endpoint);
+  assert.deepEqual(await original(input), { ok: true });
+  assert.equal(host.state.read().intents[input.intentId]?.status, 'settled');
+  host.close();
+  const disconnectedReads = server.requests.length;
+  assert.deepEqual(await original(input), { ok: true });
+  assert.deepEqual(await original({ ...input, intentId: 'settled-offline-new-intent' }), { ok: true });
+  assert.equal(server.requests.length, disconnectedReads, 'an already authenticated instance replays its settled result while disconnected');
+  server.threads.delete(agent.id);
+  const reloaded = createHost({ ...config, statePath: join(directory, 'hosts', 't3code.json'), timeoutMs: 2_000 });
+  t.after(() => reloaded.close());
+  await reloaded.connect();
+  const replay = registered(reloaded, server.endpoint);
+  const reads = server.requests.length;
+  assert.deepEqual(await replay(input), { ok: true });
+  assert.deepEqual(await replay({ ...input, intentId: 'settled-new-intent' }), { ok: true });
+  await assert.rejects(replay({ ...input, intentId: 'settled-changed-decision', decision: 'decline' }), error => {
+    assert.ok(error instanceof ProvenPreSendRefusalError);
+    assert.match(error.message, /original runtime response is settled|changed answer/);
+    return true;
+  });
+  assert.equal(server.requests.length, reads, 'settled replay and changed-call refusal do not inspect an absent native thread');
+  assert.equal(server.commands.filter(command => command.type === 'runtime-request.respond').length, 1);
+  assert.equal(reloaded.state.read().intents[input.intentId]?.status, 'settled');
+});
+
+test('a known local refusal can be corrected only by a new explicit permission intent', async t => {
+  const { host, server, input } = await nativeFixture(t);
+  const send = registered(host, server.endpoint);
+  const wrong = { ...input, workspaceId: `${input.workspaceId}-changed` };
+  await assert.rejects(send(wrong), ProvenPreSendRefusalError);
+  const reads = server.requests.length;
+  await assert.rejects(send(wrong), ProvenPreSendRefusalError);
+  await assert.rejects(send(input), ProvenPreSendRefusalError);
+  assert.equal(server.requests.length, reads, 'a known refused intent is not re-inspected or rewritten');
+  assert.equal(server.commands.filter(command => command.type === 'runtime-request.respond').length, 0);
+  assert.deepEqual(await send({ ...input, intentId: 'corrected-explicit-intent' }), { ok: true });
+  assert.equal(server.commands.filter(command => command.type === 'runtime-request.respond').length, 1);
+  assert.equal(host.state.read().intents[input.intentId]?.status, 'refused');
+  assert.equal(host.state.read().intents['corrected-explicit-intent']?.status, 'settled');
+});
+
+test('an older unbound refused permission intent remains unknown when a new intent is supplied', async t => {
+  const { host, server, input } = await nativeFixture(t);
+  host.state.update(state => {
+    state.intents['legacy-refused'] = { status: 'refused', payload: JSON.stringify({ method: 'orchestration.dispatchCommand', payload: {
+      type: 'runtime-request.respond', commandId: 'legacy-refused', threadId: input.agentId, requestId: input.requestId, decision: 'accept',
+    } }) };
+  });
+  const reads = server.requests.length;
+  await assert.rejects(registered(host, server.endpoint)(input), isUnknown);
+  assert.equal(server.requests.length, reads);
+  assert.equal(server.commands.filter(command => command.type === 'runtime-request.respond').length, 0);
+  assert.equal(host.state.read().intents['legacy-refused']?.status, 'refused', 'the historical record is not relabelled');
 });
 
 test('the owner-authenticated service socket answers a permission on its registered T3 host', async t => {

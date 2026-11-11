@@ -5,7 +5,7 @@ import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMe
 import type { Task, Profile } from '../../shared/contracts';
 import { ProvenPreSendRefusalError } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
-import { T3StateFile, canonical } from './state';
+import { T3StateFile, canonical, type T3State } from './state';
 import { decode, config, shellSnapshot, projection, threadSnapshot, shellThread, project, T3CompatibilityError } from './contracts';
 
 export interface T3CodeConfig { endpoint: string; bearer: string; statePath: string; timeoutMs?: number; probeThreadId?: string }
@@ -13,6 +13,19 @@ const identity = (purpose: string, value: string) => `nucleus-${purpose}-${creat
 const activeStatuses = new Set(['preparing', 'queued', 'starting', 'running', 'waiting']);
 const unsupported = (capability: string): never => { throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`); };
 type Projection = z.infer<typeof projection>;
+type ResponseBinding = NonNullable<T3State['intents'][string]['response']>;
+
+/** Includes pre-binding ledgers so upgrading cannot permit a second response. */
+function responseIntents(state: T3State, agentId: string, requestId: string) {
+  return Object.entries(state.intents).filter(([, intent]) => {
+    if (intent.response) return intent.response.agentId === agentId && intent.response.requestId === requestId;
+    try {
+      const wire = JSON.parse(intent.payload);
+      return wire.method === 'orchestration.dispatchCommand' && ['runtime-request.respond', 'thread.user-input.dismiss'].includes(wire.payload?.type)
+        && wire.payload.threadId === agentId && wire.payload.requestId === requestId;
+    } catch { throw Error('T3Code durable intent is unreadable; response delivery is unknown'); }
+  });
+}
 
 /** Native host boundary only. Workflow/reporting integration is deliberately unavailable. */
 export class T3CodeHost implements Host {
@@ -138,29 +151,55 @@ export class T3CodeHost implements Host {
       activeTurn: !!t.activeRunId || activeStatuses.has(t.status), pendingPermissionKinds: t.pendingRuntimeRequest ? [t.pendingRuntimeRequest.kind === 'user_input' ? 'question' : t.pendingRuntimeRequest.kind] : [] }));
   }
   async activeThreads() { return (await this.activeAndArchivedThreads()).filter(t => !t.archived && t.status !== 'gone'); }
-  private async effect(key: string, method: string, payload: unknown, beforeSend?: () => void): Promise<unknown> {
-    this.requireConnection(); const encoded = canonical({ method, payload });
-    const prior = this.state.update(state => {
-      const old = state.intents[key];
-      if (old && old.payload !== encoded) throw new ProvenPreSendRefusalError('T3Code intent payload changed');
-      if (!old) state.intents[key] = { payload: encoded, status: 'unknown' };
-      return old;
+  private async effect(key: string, method: string, payload: unknown, beforeSend?: () => void,
+    response?: { binding: ResponseBinding; prepare(): Promise<unknown> }): Promise<unknown> {
+    if (!response) this.requireConnection();
+    let encoded = canonical({ method, payload });
+    const reserved = this.state.update(state => {
+      const matches = response ? responseIntents(state, response.binding.agentId, response.binding.requestId) : [];
+      const possibleWrites = matches.filter(([, intent]) => intent.status !== 'refused' || !intent.response);
+      if (possibleWrites.length > 1) throw Error('T3Code response delivery is unknown; multiple prior intents exist and nothing was resent');
+      const [boundKey, old] = possibleWrites[0] ?? matches.find(([id]) => id === key) ?? [key, state.intents[key]];
+      // Inspect the original outcome before payload checks or native status reads.
+      if (old?.status === 'unknown' || old?.status === 'refused' && matches.length && !old.response) throw Error('T3Code delivery is unknown; command was not resent');
+      if (old && matches.length) {
+        const wire = JSON.parse(old.payload).payload;
+        const legacyInput = canonical({ type: wire.type, response: wire.type === 'runtime-request.respond'
+          ? { ...(wire.decision !== undefined ? { decision: wire.decision } : {}), ...(wire.answers !== undefined ? { answers: wire.answers } : {}) } : {} });
+        const original = old.response ?? { agentId: wire.threadId, requestId: wire.requestId,
+          workspaceId: state.agents[wire.threadId]?.workspaceId, input: legacyInput };
+        if (original.workspaceId !== response!.binding.workspaceId || original.input !== response!.binding.input)
+          throw new ProvenPreSendRefusalError(`T3Code original runtime response is ${old.status}; changed answer was not sent`);
+      } else if (old && old.payload !== encoded) throw new ProvenPreSendRefusalError('T3Code intent payload changed');
+      if (!old) {
+        this.requireConnection();
+        state.intents[boundKey] = { payload: encoded, status: 'unknown', ...(response ? { response: response.binding } : {}) };
+      } else if (response && (!this.hostId || state.hostId !== this.hostId)) {
+        throw Error('T3Code prior response requires its recorded host identity; no command was resent');
+      }
+      return { key: boundKey, prior: old };
     });
+    key = reserved.key; const prior = reserved.prior;
     if (prior?.status === 'settled') return prior.result;
     if (prior?.status === 'refused') throw new ProvenPreSendRefusalError('T3Code command was refused; no retry');
     if (prior) throw Error('T3Code delivery is unknown; command was not resent');
     let wrote = false;
     try {
+      if (response) {
+        payload = await response.prepare();
+        encoded = canonical({ method, payload });
+        this.state.update(state => { state.intents[key].payload = encoded; });
+      }
       beforeSend?.();
       wrote = true;
       const result = await this.rpc.call(method, payload);
-      this.state.update(state => { state.intents[key] = { payload: encoded, status: 'settled', result }; });
+      this.state.update(state => { state.intents[key] = { ...state.intents[key], payload: encoded, status: 'settled', result }; });
       return result;
     } catch (error) {
       const refusal = error instanceof ProvenPreSendRefusalError ? error
         : !wrote || error instanceof T3RpcError && error.delivery === 'not_sent'
           ? new ProvenPreSendRefusalError(error instanceof T3RpcError ? error.message : 'T3Code send fence refused before delivery') : null;
-      if (refusal) this.state.update(state => { state.intents[key] = { payload: encoded, status: 'refused' }; });
+      if (refusal) this.state.update(state => { state.intents[key] = { ...state.intents[key], payload: encoded, status: 'refused' }; });
       throw refusal ?? error;
     }
   }
@@ -240,12 +279,28 @@ export class T3CodeHost implements Host {
     return { request, projection: p };
   }
   async respondRuntimeRequest(agent: string, workspace: string, requestId: string, response: { decision?: 'accept' | 'acceptForSession' | 'acceptAlways' | 'decline' | 'cancel'; answers?: Record<string, unknown> }, intentId = identity('response', canonical([agent, requestId]))) {
-    const { request } = await this.request(agent, workspace, requestId);
-    if (request.kind !== 'user_input' && !['command', 'file-read', 'file-change', 'mcp-elicitation', 'permission'].includes(request.kind))
-      throw new ProvenPreSendRefusalError('T3Code runtime request kind is unsupported');
-    if (request.kind === 'user_input' ? !response.answers || !!response.decision : !response.decision || !!response.answers)
-      throw new ProvenPreSendRefusalError('T3Code response does not match request kind');
-    await this.effect(intentId, 'orchestration.dispatchCommand', { type: 'runtime-request.respond', commandId: intentId, threadId: agent, requestId, ...response });
+    await this.runtimeResponse(agent, workspace, requestId, 'runtime-request.respond', response, intentId);
+  }
+  private async runtimeResponse(agent: string, workspace: string, requestId: string, type: 'runtime-request.respond' | 'thread.user-input.dismiss',
+    response: { decision?: 'accept' | 'acceptForSession' | 'acceptAlways' | 'decline' | 'cancel'; answers?: Record<string, unknown> }, intentId: string,
+    mapAnswers?: (projection: Projection) => Record<string, unknown>) {
+    response = JSON.parse(canonical(response));
+    const payload = { type, commandId: intentId, threadId: agent, requestId, ...response };
+    await this.effect(intentId, 'orchestration.dispatchCommand', payload, undefined, {
+      binding: { agentId: agent, workspaceId: workspace, requestId, input: canonical({ type, response }) },
+      prepare: async () => {
+        const { request, projection: p } = await this.request(agent, workspace, requestId);
+        if (type === 'thread.user-input.dismiss') {
+          if (request.kind !== 'user_input') throw new ProvenPreSendRefusalError('T3Code request is not a question');
+          return payload;
+        }
+        if (request.kind !== 'user_input' && !['command', 'file-read', 'file-change', 'mcp-elicitation', 'permission'].includes(request.kind))
+          throw new ProvenPreSendRefusalError('T3Code runtime request kind is unsupported');
+        if (request.kind === 'user_input' ? !response.answers || !!response.decision : !response.decision || !!response.answers)
+          throw new ProvenPreSendRefusalError('T3Code response does not match request kind');
+        return mapAnswers ? { ...payload, answers: mapAnswers(p) } : payload;
+      },
+    });
   }
   async pendingQuestions(id: string) { const p = await this.readProjection(id); return p.runtimeRequests.filter(r => r.kind === 'user_input' && r.status === 'pending').map(r => {
     const item = p.turnItems.find(t => t.type === 'user_input_request' && t.requestId === r.id);
@@ -256,21 +311,23 @@ export class T3CodeHost implements Host {
     question: p.turnItems.find(t => t.requestId === r.id)?.questions?.map(q => q.question).join('\n') ?? '',
     answers: Object.fromEntries(Object.entries(r.answers!).map(([k,v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)])) })); }
   async answerNativeQuestion(agent: string, workspace: string, requestId: string, answers: Record<string, string>) {
-    const { request, projection: p } = await this.request(agent, workspace, requestId);
-    if (request.kind !== 'user_input') throw new ProvenPreSendRefusalError('T3Code request is not a question');
-    const questions = p.turnItems.find(t => t.type === 'user_input_request' && t.requestId === requestId)?.questions;
-    if (!questions) throw new T3CompatibilityError('runtimeRequest.questions');
-    const mapped: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(answers)) {
-      const matches = questions.filter(q => q.id === key || q.header === key);
-      if (matches.length !== 1 || mapped[matches[0].id] !== undefined) throw new ProvenPreSendRefusalError('T3Code answer question identity is ambiguous');
-      mapped[matches[0].id] = [value];
-    }
-    if (!Object.keys(mapped).length) throw new ProvenPreSendRefusalError('T3Code question answer is empty');
-    await this.respondRuntimeRequest(agent, workspace, requestId, { answers: mapped });
+    answers = { ...answers };
+    await this.runtimeResponse(agent, workspace, requestId, 'runtime-request.respond', { answers }, identity('response', canonical([agent, requestId])), p => {
+      const questions = p.turnItems.find(t => t.type === 'user_input_request' && t.requestId === requestId)?.questions;
+      if (!questions) throw new T3CompatibilityError('runtimeRequest.questions');
+      const mapped: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(answers)) {
+        const matches = questions.filter(q => q.id === key || q.header === key);
+        if (matches.length !== 1 || mapped[matches[0].id] !== undefined) throw new ProvenPreSendRefusalError('T3Code answer question identity is ambiguous');
+        mapped[matches[0].id] = [value];
+      }
+      if (!Object.keys(mapped).length) throw new ProvenPreSendRefusalError('T3Code question answer is empty');
+      return mapped;
+    });
   }
-  async dismissNativeQuestion(agent: string, workspace: string, requestId: string) { const { request } = await this.request(agent, workspace, requestId); if (request.kind !== 'user_input') throw new ProvenPreSendRefusalError('T3Code request is not a question');
-    const key = identity('dismiss', canonical([agent, requestId])); await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.user-input.dismiss', commandId: key, threadId: agent, requestId }); }
+  async dismissNativeQuestion(agent: string, workspace: string, requestId: string) {
+    await this.runtimeResponse(agent, workspace, requestId, 'thread.user-input.dismiss', {}, identity('dismiss', canonical([agent, requestId])));
+  }
   async raiseDecision(_agent: string, _workspace: string, _input: NativeDecisionInput): Promise<string> { return unsupported('in-thread Nucleus decisions'); }
   async answerDecision(_agent: string, _workspace: string, _input: NativeDecisionAnswer): Promise<void> { unsupported('in-thread Nucleus decisions'); }
   retainedAgentRef(id: string): HostRetainedAgentRef {

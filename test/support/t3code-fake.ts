@@ -24,7 +24,7 @@ export async function t3Fake(t: TestContext, directory: string) {
   const controls = { environmentId: 'synthetic-environment', version: 'nightly-synthetic-unseen', protocol: 2,
     synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
     snapshotSequence: 1, threadCoverage: {} as Record<string, unknown>, beforeArchiveRead: (() => {}) as () => void,
-    disconnectMutation: false, refuseMutation: false, postEffectDefect: false, mutationObserver: (() => {}) as () => void };
+    disconnectMutation: false, disconnectAfterEffect: false, refuseMutation: false, postEffectDefect: false, mutationObserver: (() => {}) as () => void };
   const sockets = new Set<Socket>();
   const server = createServer((request, response) => {
     assert.equal(request.url, '/api/auth/websocket-ticket/rpc');
@@ -119,6 +119,7 @@ export async function t3Fake(t: TestContext, directory: string) {
             }
             case 'thread.user-input.dismiss': p.runtimeRequests.find((r: Value) => r.id === payload.requestId)!.status = 'cancelled'; break;
           }
+          if (controls.disconnectAfterEffect) return socket.destroy();
           if (controls.postEffectDefect) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });
           return success({ sequence: 1 });
         }

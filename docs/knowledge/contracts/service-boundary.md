@@ -1161,7 +1161,8 @@ allowlist (Tom, 2026-11-11).
 T3 has no schema discovery or dry run. Pin nightly command shapes in contract
 fixtures. Its decoder runs before handlers, but its untagged remote defects
 cannot prove their phase; even schema-formatted failures remain unknown and
-are never resent. Only a proven local pre-write refusal is known non-delivery.
+are never resent (planner ruling, 2026-11-11). Sanitized reported command and field
+names are diagnostics only. Only a proven local pre-write refusal is known non-delivery.
 Never send a compatibility canary mutation to the operator's T3.
 
 `host.permission-answer` requires an explicit registered host, native agent,
@@ -1169,6 +1170,9 @@ workspace, runtime request, typed decision and stable intent. It uses only that
 host's permission-response capability and refuses unknown, offline or unsupported
 hosts without falling back. Native T3 rechecks request kind and workspace;
 this method grants no task lifecycle dispatch capability.
+The native response binds its request to the original intent before any status
+check. A lost reply stays unknown under the same or a new intent; a settled
+identical answer replays locally without a second write.
 Unsupported reporting, native decisions and UI capabilities remain
 explicit; transport registration alone grants no lifecycle dispatch capability.
 T3 lifecycle dispatch refuses before creation until CLI reporting and board

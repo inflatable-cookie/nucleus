@@ -165,9 +165,78 @@ test('all remote Die failures stay unknown even when their text matches the RPC 
   });
   const client = await clientFor(t, server);
   await assert.rejects(client.call('missing.method', {}), error => error instanceof T3RpcError && error.code === 'unsupported_method' && error.delivery === 'unknown');
-  await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'synthetic-command', threadId: 'synthetic-thread' }), error => error instanceof T3RpcError && error.delivery === 'unknown');
+  await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'synthetic-command', threadId: 'synthetic-thread' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.delivery, 'unknown');
+    assert.equal(error.command, 'thread.stop');
+    assert.equal(error.field, 'commandId');
+    assert.match(error.message, /command thread\.stop, field commandId/);
+    return true;
+  });
   assert.deepEqual(appliedEffects, ['missing.method', 'orchestration.dispatchCommand']);
   assert.equal(server.frames.filter(frame => frame._tag === 'Request').length, 2);
+});
+
+test('schema diagnostics retain bounded field locations without actual values or invalid paths', async t => {
+  let calls = 0;
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    const defect = ++calls === 1
+      ? 'Expected string, got "synthetic-bearer prompt secret"\n  at ["modelSelection"]["options"][0]["value"]'
+      : 'Missing key\n  at ["synthetic-bearer prompt secret"]';
+    send(failure(request, { _tag: 'Die', defect }));
+  });
+  const client = await clientFor(t, server);
+  for (let i = 0; i < 2; i++) await assert.rejects(client.call('orchestration.dispatchCommand', { type: i ? 'synthetic-bearer prompt secret' : 'message.dispatch' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.delivery, 'unknown');
+    assert.equal(error.field, i ? undefined : 'modelSelection.options[0].value');
+    assert.equal(error.command, i ? undefined : 'message.dispatch');
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|Expected string|got/);
+    return true;
+  });
+  assert.equal(calls, 2);
+});
+
+test('a schema location containing the configured bearer is discarded even when it is a valid identifier', async t => {
+  const bearer = 'synthetic_secret';
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Die', defect: `Missing key\n  at ["${bearer}"]` }));
+  });
+  const client = new T3RpcClient({ endpoint: server.endpoint, bearer });
+  t.after(() => client.close());
+  await client.connect();
+  await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'thread.stop' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.delivery, 'unknown');
+    assert.equal(error.command, 'thread.stop');
+    assert.equal(error.field, undefined);
+    assert.ok(!String(error).includes(bearer));
+    assert.ok(!JSON.stringify(error).includes(bearer));
+    return true;
+  });
+});
+
+test('typed remote command diagnostics accept known commands and reject arbitrary text', async t => {
+  let calls = 0;
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    send(failure(request, { _tag: 'Fail', error: {
+      _tag: 'OrchestrationV2DispatchCommandError',
+      commandType: ++calls === 1 ? 'thread.archive' : 'synthetic-bearer prompt secret',
+      detail: 'synthetic-bearer prompt secret',
+    } }));
+  });
+  const client = await clientFor(t, server);
+  for (let i = 0; i < 2; i++) await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'thread.stop' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.delivery, 'unknown');
+    assert.equal(error.command, i ? 'thread.stop' : 'thread.archive');
+    assert.equal(error.field, undefined);
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret/);
+    return true;
+  });
+  assert.equal(calls, 2);
 });
 
 test('only local pre-write failures prove that no request was sent', async t => {

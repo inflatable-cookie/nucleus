@@ -11,6 +11,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { T3RpcClient } from '../../hosts/t3code/rpc';
 import { HostRegistry, type KnownHost } from '../../core/host/host-registry';
 import type { Adapter } from '../../core/host';
+import { ProvenPreSendRefusalError } from '../../core/host';
 import { Admission, admitAdapter } from '../../core/host/admission';
 
 async function main() {
@@ -278,6 +279,15 @@ try {
     const { answerHostPermission } = await import('../../service/host-permissions');
     const hostOptions = { endpoint, bearer, statePath: join(root, 'adapter-state.json'), timeoutMs: 15000 };
     let adapter = createHost(hostOptions);
+    let nativeRuntimeResponses = 0;
+    const traceRuntimeResponses = (client: T3RpcClient) => {
+      const call = client.call.bind(client);
+      client.call = (method, payload) => {
+        if (method === 'orchestration.dispatchCommand' && payload !== null && typeof payload === 'object' && 'type' in payload && payload.type === 'runtime-request.respond') nativeRuntimeResponses++;
+        return call(method, payload);
+      };
+    };
+    traceRuntimeResponses(adapter.rpc);
     host = adapter;
     await adapter.connect(probeThreadId);
     let knownHosts: readonly KnownHost[] = [];
@@ -322,15 +332,24 @@ try {
     await adapter.answerNativeQuestion(agent.id, workspace.id, question.id, { continue: 'Yes' });
     await settled('proof-question');
     await until(idle, 'question answer');
-    steps.push({ step: 'answer-question', result: 'passed' });
+    const questionResponses = nativeRuntimeResponses;
+    await adapter.answerNativeQuestion(agent.id, workspace.id, question.id, { continue: 'Yes' });
+    assert.equal(nativeRuntimeResponses, questionResponses, 'Settled native question replays locally');
+    steps.push({ step: 'answer-question', result: 'passed', note: 'Settled answer replay sends no second native response' });
     await adapter.sendMessage(agent.id, { messageId: randomUUID(), text: 'proof-approval' });
     const approval = await until(async () => (await adapter.observe(agent.id)).pendingRequest, 'pending permission');
     const completedControls = admission.snapshot().control.completed;
-    await answerHostPermission(registry, { hostId: adapter.hostId, agentId: agent.id, workspaceId: workspace.id, requestId: approval.id, decision: 'accept', intentId: randomUUID() });
+    const permissionInput = { hostId: adapter.hostId, agentId: agent.id, workspaceId: workspace.id, requestId: approval.id, decision: 'accept' as const, intentId: randomUUID() };
+    await answerHostPermission(registry, permissionInput);
     assert.equal(admission.snapshot().control.completed, completedControls + 1, 'Registered permission answer uses host control admission');
     await settled('proof-approval');
     await until(idle, 'permission answer');
-    steps.push({ step: 'answer-permission', result: 'passed', note: 'Host-qualified registered service helper through admitted Adapter and HostFacade; lifecycle dispatch remains refused' });
+    const permissionResponses = nativeRuntimeResponses;
+    await answerHostPermission(registry, permissionInput);
+    await answerHostPermission(registry, { ...permissionInput, intentId: randomUUID() });
+    await assert.rejects(answerHostPermission(registry, { ...permissionInput, intentId: randomUUID(), decision: 'decline' }), ProvenPreSendRefusalError);
+    assert.equal(nativeRuntimeResponses, permissionResponses, 'Settled permission replays and conflicting answers send no second native response');
+    steps.push({ step: 'answer-permission', result: 'passed', note: 'Host-qualified admitted Adapter/HostFacade route; same-intent and new-intent replay are local, conflicting outcome refused, lifecycle dispatch still refused' });
     await adapter.sendMessage(agent.id, { messageId: randomUUID(), text: 'proof-hold' });
     await until(async () => (await adapter.observe(agent.id)).active, 'active run');
     await adapter.stopAgentTurn(agent.id);
@@ -343,6 +362,7 @@ try {
       await startServer();
       await connectRpc();
       adapter = createHost(hostOptions); host = adapter;
+      traceRuntimeResponses(adapter.rpc);
       await adapter.connect(probeThreadId);
       assert.equal(registry.resource(adapter.hostId, () => new Admission()), admission, 'Reconnect retains per-host admission');
       registryClaim = registry.connect(adapter.hostId, endpoint, { adapter: admitAdapter(createAdapter(adapter), admission), admission });
@@ -353,6 +373,9 @@ try {
     const retained = (await detail()).runtimeRequests.find(request => request.id === restartQuestion.id);
     assert.equal(retained?.status, 'pending');
     assert.equal(retained?.responseCapability.type, 'message');
+    const responsesAfterRestart = nativeRuntimeResponses;
+    await answerHostPermission(registry, permissionInput);
+    assert.equal(nativeRuntimeResponses, responsesAfterRestart, 'Settled permission replays locally after reconnect');
     const priorRunCount = (await detail()).runs.length;
     await adapter.answerNativeQuestion(agent.id, workspace.id, restartQuestion.id, { continue: 'Yes' });
     await until(async () => { const p = await detail(); return p.runtimeRequests.find(r => r.id === restartQuestion.id)?.status === 'resolved' && p.runs.length > priorRunCount && p.runs.at(-1)?.status === 'completed'; }, 'message-answer after restart');

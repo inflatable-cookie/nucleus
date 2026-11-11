@@ -215,8 +215,8 @@ test('questions and approvals answer exact runtime requests and refuse wrong kin
     { id: 'approval-request', kind: 'command', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } }];
   p.turnItems = [{ id: 'question-item', type: 'user_input_request', requestId: 'question-request', questions: [{ id: 'choice', header: 'Choice', question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] }] }];
   assert.deepEqual(await host.pendingQuestions(created.id), [{ requestId: 'question-request', questions: [{ header: 'Choice', question: 'Pick one', options: ['A', 'B'] }] }]);
-  await assert.rejects(host.respondRuntimeRequest(created.id, workspace.id, 'question-request', { decision: 'accept' }), /kind/);
-  await assert.rejects(host.respondRuntimeRequest(created.id, 'other-workspace', 'question-request', { answers: { choice: 'A' } }), /workspace/);
+  await assert.rejects(host.respondRuntimeRequest(created.id, workspace.id, 'question-request', { decision: 'accept' }, 'invalid-question-kind'), /kind/);
+  await assert.rejects(host.respondRuntimeRequest(created.id, 'other-workspace', 'question-request', { answers: { choice: 'A' } }, 'invalid-question-workspace'), /workspace/);
   await host.answerNativeQuestion(created.id, workspace.id, 'question-request', { choice: 'A' });
   await host.respondRuntimeRequest(created.id, workspace.id, 'approval-request', { decision: 'accept' });
   const responses = server.commands.filter(command => command.type === 'runtime-request.respond');
@@ -228,6 +228,26 @@ test('questions and approvals answer exact runtime requests and refuse wrong kin
   assert.equal((await host.answeredQuestions(created.id))[0]?.requestId, 'question-request');
   p.runtimeRequests.push({ id: 'unknown-request', kind: 'future-request-kind', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } });
   await assert.rejects(host.respondRuntimeRequest(created.id, workspace.id, 'unknown-request', { decision: 'accept' }), /unsupported/);
+});
+
+test('question answer and dismissal inspect an uncertain original response before native status or a new intent', async t => {
+  const { host, server, options, workspace, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  p.runtimeRequests = [{ id: 'lost-question', kind: 'user_input', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } }];
+  p.turnItems = [{ id: 'question-item', type: 'user_input_request', requestId: 'lost-question', questions: [{ id: 'choice', header: 'Choice', question: 'Pick one', options: [{ label: 'A' }] }] }];
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(host.answerNativeQuestion(created.id, workspace.id, 'lost-question', { Choice: 'A' }));
+  assert.equal(p.runtimeRequests[0].status, 'resolved');
+  server.controls.disconnectAfterEffect = false;
+  host.close(); const reloaded = new T3CodeHost(options); t.after(() => reloaded.close()); await reloaded.connect();
+  const reads = server.requests.length, writes = server.commands.length;
+  const unknown = (error: unknown) => { assert.ok(error instanceof Error); assert.equal(error instanceof ProvenPreSendRefusalError, false); assert.match(error.message, /unknown.*not resent/); return true; };
+  await assert.rejects(reloaded.answerNativeQuestion(created.id, workspace.id, 'lost-question', { Choice: 'A' }), unknown);
+  await assert.rejects(reloaded.dismissNativeQuestion(created.id, workspace.id, 'lost-question'), unknown);
+  await assert.rejects(reloaded.respondRuntimeRequest(created.id, workspace.id, 'lost-question', { answers: { choice: ['B'] } }, 'replacement-question-intent'), unknown);
+  assert.equal(server.requests.length, reads);
+  assert.equal(server.commands.length, writes);
 });
 
 test('restart preserves message-answerable questions and refuses expired approvals without an extra message', async t => {

@@ -73,7 +73,9 @@ schemas before invoking handlers, but serializes decoder errors and handler
 defects without a decode-phase tag. Identical schema-formatted text can come
 from a handler after an effect, so every remote failure remains unknown delivery
 and is never resent. Only a local refusal before the socket write proves
-non-delivery; error diagnostics omit remote bodies and credentials.
+non-delivery (planner ruling, 2026-11-11). Sanitized reported command and field
+names remain diagnostic text, never proof of a decoder phase; raw error bodies,
+actual values and credentials are omitted.
 
 ## Identity and workspaces
 
@@ -118,6 +120,14 @@ environment. Synchronous exclusive locking and atomic, synced replacement keep
 intent durable across a crash. A held or abandoned lock refuses writes; the
 adapter never guesses that a prior process finished. Settled commands return
 their recorded outcome; unresolved commands are never resent.
+
+Runtime responses also bind the native thread/request pair to their original
+intent and caller input before reading the request's current status. The binding
+is reserved atomically with the intent, so concurrent callers and new intent IDs
+cannot send another answer while delivery is unknown. A settled identical answer
+replays locally, even after the request resolves, expires or disappears; changed
+answers do not rewrite that outcome. Question answers and dismissals share this
+request scope. Earlier unbound intents are inspected rather than ignored.
 
 T3 receipts reject a command ID belonging to another thread, but do not compare
 payloads on the same thread. Nucleus must reject a changed payload under an

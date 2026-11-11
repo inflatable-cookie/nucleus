@@ -5,7 +5,8 @@ import { z } from 'zod';
 
 const workspace = z.object({ id: z.string(), directory: z.string(), projectId: z.string(), title: z.string() });
 const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.record(z.string(), z.string()) });
-const intent = z.object({ payload: z.string(), status: z.enum(['unknown', 'settled', 'refused']), result: z.unknown().optional() });
+const intent = z.object({ payload: z.string(), status: z.enum(['unknown', 'settled', 'refused']), result: z.unknown().optional(),
+  response: z.object({ agentId: z.string(), workspaceId: z.string(), requestId: z.string(), input: z.string() }).optional() });
 const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedVersion: z.string(),
   workspaces: z.record(z.string(), workspace), agents: z.record(z.string(), agent), intents: z.record(z.string(), intent) });
 export type T3State = z.infer<typeof schema>;
