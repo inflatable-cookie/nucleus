@@ -104,27 +104,17 @@ test("early damping pulls the needle toward centre in the first minutes", () => 
   assert.ok(projected.dial! > 0, "still slightly right of centre, not left");
 });
 
-test("recent burn faster than the uniform pace blends the pace upward", () => {
-  const windows = [window({ usedFraction: 0.5 })];
-  const burn = [
-    {
-      windowId: "weekly",
-      usedFraction: 0.4,
-      sampledAt: new Date(NOW - 30 * 60_000).toISOString(),
-    },
-    {
-      windowId: "weekly",
-      usedFraction: 0.45,
-      sampledAt: new Date(NOW - 15 * 60_000).toISOString(),
-    },
-  ];
-  const blended = projectUsage({ now: NOW, windows, burn });
-  const uniform = projectUsage({ now: NOW, windows });
-  assert.ok(
-    blended.dial! > uniform.dial!,
-    "recent acceleration must push the dial right",
-  );
-  assert.equal(blended.state, "will_run_out");
+test("used fraction ahead of elapsed fraction is red regardless of recent samples", () => {
+  const usage = window({
+    usedFraction: 0.57,
+    resetsAt: new Date(NOW + 0.58 * WEEK).toISOString(),
+  });
+  const first = projectUsage({ now: NOW, windows: [usage] });
+  const afterQuietHour = projectUsage({ now: NOW, windows: [usage] });
+  assert.ok(first.dial! > USAGE_ON_TRACK_EPSILON);
+  assert.equal(first.state, "will_run_out");
+  assert.ok(Math.abs(first.windows[0]!.pace! - 0.57 / 0.42) < 1e-9);
+  assert.deepEqual(afterQuietHour, first);
 });
 
 test("several windows bind to whichever hits 100% earliest before its own reset", () => {

@@ -171,7 +171,7 @@ test("one group naming two readable providers tracks each as its own subscriptio
   }
 });
 
-test("a read stores its sample rows and the state reads them back with a projection", async () => {
+test("a read stores its sample rows while state calculates the projection", async () => {
   const { store } = fixture();
   try {
     store.setProfiles([profile("p1", "codex")]);
