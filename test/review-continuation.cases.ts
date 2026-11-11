@@ -1925,3 +1925,42 @@ weighted(1)('a review dispatch a busy participant holds is named in the acceptin
     assert.equal(f.current().phase, 'reviewing');
   } finally { await f.close(); }
 });
+
+// nucleus#1106 shape 3: a checkpoint-continuation wait is derived from a current,
+// unreleased reviewer run. The observed incident named a reviewer run that was
+// already superseded and released, and the task sat in the wait for hours. A
+// released named run cannot be continued, so the wait does not stand: the task
+// proceeds to dispatch a reviewer, or its launch shows why not.
+weighted(1)('a released named reviewer run cannot hold the checkpoint wait; the task dispatches a fresh reviewer', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Proofs'] }, 'ckpt-released-1');
+    assert.equal(f.current().reason, REVIEW_AUTHORIZATION_REQUIRED);
+    // The incident's settlement: the named run was superseded and released with
+    // no verdict, and the task's binding kept pointing at it.
+    f.store.putRun({ ...f.run(), status: 'superseded', released: true, active: false });
+    assert.equal(reviewAuthorizationRequired(f.current(), f.store), false, 'a released named run cannot be continued');
+    await f.engine.wake();
+    const fresh = f.createdRuns.filter(run => run.role === 'reviewer' && run.id !== f.runId);
+    assert.ok(fresh.length > 0, 'the task dispatched a fresh reviewer instead of waiting');
+    const current = f.current();
+    assert.equal(current.resolution.currentRunId, fresh.at(-1)!.id);
+    assert.notEqual(current.reason, REVIEW_AUTHORIZATION_REQUIRED, 'the impossible continuation is no longer the visible reason');
+    assert.doesNotMatch(current.resolution.stop?.detail ?? '', new RegExp(REVIEW_AUTHORIZATION_REQUIRED.slice(0, 40)), 'no stop still names the released run continuation');
+    assert.equal(f.store.eventsAll(f.submitted.id).some(event => event.kind === 'released_run_binding_cleared'), true);
+  } finally { await f.close(); }
+});
+
+weighted(1)('a recorded continuation cause alone never holds the checkpoint wait', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Proofs'] }, 'ckpt-cause-1');
+    // The legacy cause with the checkpointed run still current keeps its wait.
+    f.store.update(f.submitted.id, { resolution: { ...f.current().resolution, pendingRevisionCause: 'continuation' } });
+    assert.equal(reviewAuthorizationRequired(f.current(), f.store), true);
+    // The same cause cannot hold the wait once the named run was released,
+    // and a task with no current reviewer run has no continuation to wait for.
+    f.store.putRun({ ...f.run(), status: 'superseded', released: true, active: false });
+    assert.equal(reviewAuthorizationRequired(f.current(), f.store), false);
+    assert.equal(reviewAuthorizationRequired(
+      { ...f.current(), resolution: { ...f.current().resolution, currentRunId: null } }, f.store), false);
+  } finally { await f.close(); }
+});

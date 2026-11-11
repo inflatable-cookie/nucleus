@@ -1,6 +1,6 @@
 import type { Resolution } from '../resolution';
 import type { Task } from "../../shared/contracts";
-import { isDispositionActive } from "../../shared/contracts";
+import { holdsOf, isDispositionActive } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import { isPiSettingsLockFailure } from "./exhaustion";
 import { worktreeLinksForBinding, worktreeLinksForClearedIntent } from "../workspaces/worktree-links";
@@ -8,10 +8,16 @@ import { retainNodeModules, workspaceCreationRefusal } from "../workspaces/works
 import { startsNoRuns } from "../closeout/queue-drain";
 import { ABSENT_WORKER_REASON, ABSENT_WORKER_REPLACEMENT_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON } from "./task-reasons";
 
-/** Facts needed before an unowned workspace creation may be replayed. */
-export function workspaceReplayAllowed(task: Task, kind: string, canRemoveOrphan: boolean, hasRuns: boolean, replayRecorded: boolean): boolean {
+/** Facts needed before an unowned workspace creation may be replayed. A parked
+ * refusal for this exact classified state stands where the dispatching phase
+ * would: the stop exists because the proven orphan was not yet removed, its
+ * detail names the replay as the exit, and nothing else holds the task — so the
+ * same recovery path clears it and replays once (nucleus#1106). */
+export function workspaceReplayAllowed(task: Task, kind: string, canRemoveOrphan: boolean, hasRuns: boolean, replayRecorded: boolean, parkedRefusal?: string | null): boolean {
+  const parked = task.phase === 'needs_attention' && !task.resolution.attention && !holdsOf(task).dispatch
+    && Boolean(parkedRefusal) && task.resolution.stop?.detail === parkedRefusal;
   return (kind === 'absent' || kind === 'partial' && canRemoveOrphan) &&
-    task.phase === 'dispatching' && !task.agentIntent && !task.agentId && !task.runId && !task.completion &&
+    (task.phase === 'dispatching' || parked) && !task.agentIntent && !task.agentId && !task.runId && !task.completion &&
     !task.prUrl && !task.prHead && !task.resolution.recoveryActive && !task.resolution.attention &&
     (!task.resolution.incident || task.resolution.incident.status === 'resolved') &&
     (!task.resolution.recovery || task.resolution.recovery.status === 'resolved') && !hasRuns && !replayRecorded;
@@ -65,7 +71,7 @@ export class CreationRecovery {
       }
       // A single replay is safe only after the complete classifier proves no
       // published or changed work and no worker or recovery owns the intent.
-      if (workspaceReplayAllowed(task, classified.kind, classified.kind === 'partial' ? Boolean(this.adapter.removeOrphanWorkspace) : false, false, false) &&
+      if (workspaceReplayAllowed(task, classified.kind, classified.kind === 'partial' ? Boolean(this.adapter.removeOrphanWorkspace) : false, false, false, workspaceCreationRefusal(classified)) &&
           !this.store.runs(task.id).length && !this.store.eventsAll(task.id).some(event => event.kind === "workspace_creation_auto_replay")) {
         const current = this.store.task(task.id);
         if (current.version !== task.version || startsNoRuns(this.store, this.engine.stopped)) return;

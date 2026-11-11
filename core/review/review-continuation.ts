@@ -151,13 +151,16 @@ export function reviewCheckpointRefusal(store: Store, task: Task, run: Run, reco
   return null;
 }
 
-/** Old publication continuations and unfinished reviewer checkpoints cannot auto-resume. */
+/** Old publication continuations and unfinished reviewer checkpoints cannot auto-resume.
+ * The wait is derived from a current, unreleased reviewer run (nucleus#1106): a
+ * superseded or released named run cannot be continued, so a recorded cause alone
+ * never holds the authorization and the task proceeds to its next step. */
 export function reviewAuthorizationRequired(task: Task, store: Pick<Store, 'run'>): boolean {
   const run = task.resolution.currentRunId ? store.run(task.resolution.currentRunId) : null;
   // A result ends checkpoint reading, including tasks carrying an older
   // publication-continuation cause. Ordinary intake owns release and application.
   if (run?.role === 'reviewer' && run.completion) return false;
-  if (task.resolution.pendingRevisionCause === 'continuation') return true;
+  if (task.resolution.pendingRevisionCause === 'continuation' && !reviewInProgress(run)) return false;
   return reviewInProgress(run) || Boolean(run && run.role === 'revision' && run.revisionCause === 'continuation' && !run.completion && !run.released);
 }
 
@@ -217,9 +220,15 @@ export function reviewContinuationWait(task: Task, store: Pick<Store, 'run' | 'e
   }
   if (state === 'reserved') return { reason: reviewDeliveryReason(delivery!.deliveryId, 'reserved'), stop: 'lifecycle' };
   if (state === 'uncertain') return { reason: reviewDeliveryReason(delivery!.deliveryId, 'uncertain'), stop: 'operator_needed' };
+  if (state === 'awaiting') return { reason: REVIEW_AUTHORIZATION_REQUIRED, stop: 'lifecycle' };
   if (state === 'exhausted') return { reason: REVIEW_BUDGET_EXHAUSTED, stop: 'operator_needed' };
   if (state === 'closed') return { reason: `${REVIEW_AGENT_CLOSED} (run ${run!.id}, agent ${run!.agentId}, checkpoint ${run!.reviewCheckpoints?.at(-1)?.ordinal ?? 'none'} at ${run!.head})`, stop: 'operator_needed' };
-  return { reason: REVIEW_AUTHORIZATION_REQUIRED, stop: 'lifecycle' };
+  // No checkpoint continuation stands on the named run (nucleus#1106): a
+  // superseded or released named run cannot be continued, so this states the
+  // facts instead of claiming a continuation that can never happen.
+  return { reason: run
+    ? `Reviewer run ${run.id} is ${run.released ? `released (${run.status})` : 'current'} with no checkpoint continuation to deliver; the task proceeds to its next step`
+    : 'No current reviewer run holds a checkpoint continuation; the task proceeds to its next step', stop: 'lifecycle' };
 }
 
 /** True when a task's current reviewer run holds a durable progress checkpoint. */

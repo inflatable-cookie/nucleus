@@ -33,6 +33,19 @@ test('workspace replay facts', () => {
     [{ resolution: { attention: true } }, 'absent', false, false, false, false], [{}, 'absent', false, true, false, false],
     [{}, 'absent', false, false, true, false],
   ] as const) assert.equal(workspaceReplayAllowed({ ...task, ...patch } as Task, kind, remove, runs, replay), expected);
+  // A parked refusal for this exact classified state stands where the dispatching
+  // phase would (nucleus#1106): attention, a foreign stop or a dispatch fence
+  // still keep the stop.
+  const parked = { phase: 'needs_attention', resolution: { stop: { reason: 'operator_needed', detail: 'orphan refusal', since: '', suggestedVerbs: [] } } } as unknown as Task;
+  for (const [patch, kind, remove, refusal, expected] of [
+    [{}, 'partial', true, 'orphan refusal', true], [{}, 'absent', false, 'orphan refusal', true],
+    [{ resolution: { attention: true } }, 'partial', true, 'orphan refusal', false],
+    [{ resolution: { stop: { reason: 'operator_needed', detail: 'another stop', since: '', suggestedVerbs: [] } } }, 'partial', true, 'orphan refusal', false],
+    [{ held: true, holds: { dispatch: { owner: 'operator', reason: 'Owner stop', at: '', generation: 1 } } }, 'partial', true, 'orphan refusal', false],
+    [{}, 'partial', true, undefined, false],
+    [{ phase: 'working' }, 'partial', true, 'orphan refusal', false],
+    [{}, 'conflicting', true, 'orphan refusal', false],
+  ] as const) assert.equal(workspaceReplayAllowed({ ...parked, ...patch } as Task, kind, remove, false, false, refusal), expected);
 });
 
 test('transient provider observation choices, including map bug 27', async () => {
