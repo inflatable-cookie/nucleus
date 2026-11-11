@@ -2302,7 +2302,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   deleted 2026-11-06; `route role=coordinator` assigns.
 - A checkpoint continuation is `restart role=reviewer`. On a blocked reviewed
   task, `restart role=reviewer` with an `instruction` returns it to fresh review
-  after PR-head checks. A parked task restarts from its parked result.
+  after PR-head checks. A parked task restarts from its parked result. A durable
+  restart schedules another task pass after its operation effect settles, so the
+  operation's own integration fence cannot consume the requested recheck.
 - An escalation is answered by the owner's next verb; when nothing else
   applies, an owner `restart` answers it with its `reason`. A coordinator's
   restart never does.

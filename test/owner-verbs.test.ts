@@ -897,6 +897,20 @@ test('a reviewer restart applies over a stale pending recovery episode and settl
   } finally { await f.close(); }
 });
 
+test('restart describes a recorded recovery episode without inventing a visible escalation', async () => {
+  const f = fixture(); try {
+    const current = f.task();
+    f.store.update(f.taskId, { phase: 'verifying', runId: 'initial', agentId: 'worker', workspaceId: 'workspace', profile: workerProfile, resolution: { ...current.resolution, attention: false,
+      recovery: { id: randomUUID(), key: 'k'.repeat(64), generation: 0, runId: null, agentId: null,
+        status: 'escalated', summary: 'Old episode', idleSince: null, incidentId: null } } });
+    const verb = f.view('restart');
+    assert.equal(verb.available, false);
+    assert.match(verb.refusal ?? '', /recorded recovery episode/);
+    assert.doesNotMatch(verb.refusal ?? '', /the escalation/i);
+    await assert.rejects(f.engine.performTaskControl({ taskId: f.taskId, version: f.task().version, action: 'restart', reason: 'Retry' }), /recorded recovery episode/);
+  } finally { await f.close(); }
+});
+
 test('restart is listed for a task parked in attention in any phase when no run is live', async () => {
   const f = fixture(); try {
     const current = f.task();

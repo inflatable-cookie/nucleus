@@ -88,8 +88,8 @@ export function parkedRestart(facts: OwnerVerbFacts): ParkedRestart {
   if (task.resolution.attention && !["done", "cancelled"].includes(task.phase) && !isDispositionComplete(task)
     && !live && !(current && !current.completion)) return { kind: "retry" };
   if (escalatedEpisode(task, runs)) {
-    if (live) return { refusal: `An unreleased ${live.role} run still owns this task; settle that run before answering the escalation` };
-    if (escalationBackedByLiveWork(task, runs)) return { refusal: "The escalation is still backed by the task's own fault; answer it after the task is finished or its fault is cleared" };
+    if (live) return { refusal: `An unreleased ${live.role} run still owns this task; settle that run before resolving the recorded recovery episode` };
+    if (escalationBackedByLiveWork(task, runs)) return { refusal: "The recorded recovery episode is still backed by the task's own work or fault; finish the task or clear its fault before resolving the episode" };
     return { kind: "answer" };
   }
   return { refusal: `Nothing is parked while the task is ${task.phase}` };

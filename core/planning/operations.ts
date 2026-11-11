@@ -421,6 +421,11 @@ export class Operations {
       // so callers need not dig into result.taskId.
       this.store.putOperation({ ...settled, taskId: settled.taskId ?? result.taskId ?? null, state: "succeeded", settledAt: now(), diagnostic: "", result,
         effect: effect ? { ...effect, status: "reconciled", result: result.taskId ?? "", resultAt: now() } : null });
+      // A restart's first wake can reach integration while this operation still
+      // owns its durable effect. Recheck after settlement, when that fence lifts.
+      if (running.kind === "task_control" && result.taskId &&
+        (payload as { control?: { action?: string } } | null)?.control?.action === "restart")
+        void this.engine.cleanContext(() => this.engine.wakeTask(result.taskId!));
     } catch (error) {
       // A handler may atomically commit its durable operation with its local
       // transition. A later reporting failure cannot undo that committed result.

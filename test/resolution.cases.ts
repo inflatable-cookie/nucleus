@@ -2606,6 +2606,25 @@ test('coordinator retry after an exhausted review budget returns the accepted PR
   assert.ok(f.store.events(f.task.id).some(event=>event.kind==='task_workspace_confirmed'));
  }finally{await f.close()}
 });
+test('a parked restart rechecks an accepted verifying task after its control effect settles',async()=>{
+ const f=fixture();try{
+  recordAcceptedReview(f,'verifying');
+  f.store.update(f.task.id,{reason:'A repaired check needs retry',resolution:{...f.current().resolution,attention:true}});
+  let gates=0;
+  f.adapter.mergeGate=async()=>{gates++;return {head,base,wait:'Waiting at the pre-merge gate'}};
+  const perform=f.engine.performTaskControl.bind(f.engine);
+  f.engine.performTaskControl=async(...args)=>{const result=await perform(...args);await f.engine.quiesce();assert.equal(gates,0,'the operation effect fences the first wake');return result};
+  const task=f.current();
+  const accepted=await f.engine.startOperation({key:randomUUID(),kind:'task_control',taskId:task.id,expectedVersion:task.version,
+   payload:{type:'task_control',control:{taskId:task.id,version:task.version,action:'restart',reason:'Retry the repaired check'}}});
+  if('backpressured' in accepted)throw Error('Unexpected backpressure');
+  const operation=await f.engine.awaitOperation(accepted.operation.id,10000);
+  assert.equal(operation.state,'succeeded',operation.diagnostic);
+  await f.engine.quiesce();
+  assert.ok(f.store.eventsAll(task.id).some(event=>event.kind==='resolution_retry'));
+  assert.ok(gates>0,'the settled retry reaches the merge gate without another wake');
+ }finally{await f.close()}
+});
 test('operator retry preserves an accepted exact-head review and resumes pre-merge gates',async()=>{
  const f=fixture();try{
   Object.assign(f.adapter,{workspaceAvailable:async(id:string)=>id==='workspace'});
