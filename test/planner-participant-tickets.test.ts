@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
-import { PlannerParticipantTickets, resolveTicketCaller, plannerTicketKey, plannerTicketPendingKey, taskPlannerTicketKey } from '../core/dispatch/participant-tickets';
+import { ParticipantTickets, resolveTicketCaller, plannerTicketKey, plannerTicketPendingKey, taskPlannerTicketKey } from '../core/dispatch/participant-tickets';
 import { formatAgentId } from '../shared/agent-identity';
 import { runSchema, submissionSchema } from '../shared/contracts';
 import { RuntimeRepositories, type RepositoriesContext } from '../core/runtime/repositories';
@@ -40,7 +40,7 @@ function fixture() {
   engine.identifyOriginHost = async () => t3;
   engine.hostAvailable = () => available;
   const paths = { socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'helper.mjs') };
-  const tickets = new PlannerParticipantTickets(engine, paths);
+  const tickets = new ParticipantTickets(engine, paths);
   store.upsertProject({ key: 'example', name: 'Example', repositories: [{ origin: 'synthetic/example', path: '/synthetic/example' }] });
   const assign = (agentId: string | null, setBy = 'operator') => store.setProjectPlanner({ key: 'example', agentId, setBy });
   const ticket = () => {

@@ -14,7 +14,7 @@ const READ_ONLY_METHODS = new Set(['caller.resolve', 'host.run.list', 'host.run.
   'queue.snapshot', 'backup.list', 'queue.ui-snapshot', 'queue.queued-page', 'lane.task-page', 'queue.detail',
   'queue.outcome', 'queue.outcome-search', 'papercut.list', 'papercut.get', 'lead.get', 'lead.version', 'lead.list', 'lead.board',
   'question.native-list', 'decision.get', 'decision.list', 'decision.agent-projects', 'lane.document.get', 'plan.get', 'plans', 'lanes', 'repository.get',
-  'repositories', 'repository.rekey-preview', 'repository.rekey-receipt', 'project.get', 'projects', 'project.removal-blockers', 'project.merge-check', 'project.owner-candidates', 'project.settings', 'project.qa.get', 'project.qa.list', 'queue.telemetry',
+  'repositories', 'repository.rekey-preview', 'repository.rekey-receipt', 'project.get', 'projects', 'project.removal-blockers', 'project.merge-check', 'project.owner-candidates', 'project.settings', 'project.agents', 'project.qa.get', 'project.qa.list', 'queue.telemetry',
   'queue.review-entry-preview', 'queue.bulk-disposition-detail', 'queue.capacity-state',
   'task.next',
   // Nucleus's own profile list is read through these; the host catalog is the host's report.

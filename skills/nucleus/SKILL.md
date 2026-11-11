@@ -22,8 +22,8 @@ ticket or route to bypass it. All other helpers connect directly to Nucleus;
 
 The CLI and submit, subscribe and reparent helpers identify the calling thread from its
 Nucleus-issued ticket first, then its host's identity. `NUCLEUS_TICKET` names the run
-or planner participant ticket; use the path delivered to this thread. An invalid or
-revoked ticket refuses. If neither source exists, the refusal names the sources tried.
+or participant ticket; use the path delivered to this thread. An invalid or revoked
+ticket refuses. If neither source exists, the refusal names the sources tried.
 Explicit operator and relayed-note paths keep their existing meaning.
 
 Assigning a planner issues an owner-only participant ticket and hands its path over
@@ -35,7 +35,9 @@ planner revokes it, and a planner with no ticket yet shows as pending on the boa
 A task's own planner receives the same ticket, keyed per thread and scoped to the
 tasks that name it, so it can answer on a host without per-thread identity;
 reparenting a task moves that scope and revokes the outgoing planner's ticket.
-Caller records use host-qualified identities; existing bare Paseo IDs still resolve.
+Every named project agent takes its ticket by the same routes (Spec 060); renaming,
+reassigning or unregistering the name revokes it. Caller records use host-qualified
+identities; existing bare Paseo IDs still resolve.
 
 ### Paseo host
 
@@ -360,11 +362,25 @@ Every PR has exactly one reviewer, the retained Nucleus reviewer. Never create e
 reviewer, review-lens or "independent native" reader agents, or workspaces for them; a
 needed native proof runs once through the task's `proof` route (Spec 058, Tom 2026-11-01).
 
-Set a project's planner with `project.set-planner` (`key`, `agentId` or null).
-The planner may set itself; the calling thread is recorded as `setBy`. This
-grants nothing except answering a project's delegated questions when a task's own
-planner cannot, and receiving the project-level notices. A task's own planner is
-recorded on the task: its owner, or the thread a brief named with `queue.planner`.
+Set a project's fallback planner with `project.set-planner` (`key`, `agentId` or
+null). The planner may set itself; the calling thread is recorded as `setBy`. A
+thread that is not registered yet is registered under the default name `planner`.
+This grants nothing except answering a project's delegated questions when a task's
+own planner cannot, and receiving the project-level notices. A task's own planner
+is recorded on the task: its owner, or the thread a brief named with `queue.planner`.
+
+A project's named agents are its non-task threads (Spec 060): `agent.register`
+(`project`, `name`, `purpose`; the CLI registers the calling thread, the board
+names one live thread), `agent.unregister` (`project`, `name`) and `project.agents`
+(`project`) for the list with each entry's host, live state, last seen and fallback
+marker. Names are unique per project, a thread holds one name, and renaming or
+reassigning a name revokes the old participant ticket. `project.set-planner`
+marks any registered agent as the fallback; clearing it leaves the thread
+registered, and the fallback cannot be unregistered while it holds that role.
+Its address belongs to the role: `agent.register` refuses to give the fallback's
+name to another thread (move the fallback with `project.set-planner` instead),
+and a fallback whose preferred default name is taken registers under a free name
+such as `planner-2`.
 
 ### Complexity and demand
 
@@ -526,10 +542,12 @@ read's `digest` as an optional extra stale-edit fence alongside the required
 `plan.get` returns a version but no digest, so `plan.set` uses its version fence.
 Projects are permanent
 records: `project.upsert`, `project.get`, `project.park`, `project.unpark`,
-`project.remove`, `projects`. Project ownership is retired (Spec 058 cutover 5):
-`project.set-planner` names the thread that answers delegated questions and
-receives the project-level notices; it grants no authority, and there is no
-project owner to claim or assign.
+`project.remove`, `projects`, `agent.register`, `agent.unregister`, `project.agents`.
+Project ownership is retired (Spec 058 cutover 5): `project.set-planner` marks
+the project's fallback planner — the registered agent that answers delegated
+questions and receives the project-level notices, and the thread `to: {project}`
+resolves to. It grants no authority, and there is no project owner to claim or
+assign.
 Repository settings (`repository.set`, `repository.get`, `repositories`) carry
 closeout authority, the prospective-merge validation command, formal-review
 login, the optional milestone `qa`
@@ -1064,13 +1082,15 @@ own completion nomination follow the new owner without further steps; third-part
 holds, settled notices and finished tasks stay as recorded. Repeating the request
 changes nothing.
 
-A project may name a planner with `project.set-planner` (`key`, `agentId` or
-null; the calling thread is recorded as `setBy`). It answers a project's delegated
-questions when the asking task's own planner cannot, and receives the
-project-level notices that once went to the retired owner; it grants no verb,
-hold or acceptance authority. A task's planner is recorded on the task itself —
-its submitting owner, or the thread its brief named — and `helper reparent` moves
-it.
+A project may name a fallback planner with `project.set-planner` (`key`, `agentId`
+or null; the calling thread is recorded as `setBy`, and an unregistered thread is
+registered under the default name `planner`). It answers a project's delegated
+questions when the asking task's own planner cannot, receives the project-level
+notices that once went to the retired owner, and is the thread `to: {project}`
+resolves to; it grants no verb, hold or acceptance authority. A task's planner is
+recorded on the task itself — its submitting owner, or the thread its brief named
+— and `helper reparent` moves it. `project.agents` lists the project's named,
+non-task threads, and `agent.register`/`agent.unregister` maintain them (Spec 060).
 
 ## Review entry for external PRs
 

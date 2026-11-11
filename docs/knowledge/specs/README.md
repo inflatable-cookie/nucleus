@@ -55,6 +55,7 @@ implemented; the contracts summarise the durable rules and link here.
 | [057 — Retained change review and source approval awaiting proof](057-retained-change-review.md) | approved, not implemented |
 | [058 — Responsible tasks](058-responsible-tasks.md) | slices 1–17 installed (usage shadow, opt-in lifecycle, task.register, operator questions, live conversion, delegated answers, ask-in-turn, non-delivery ownership, review-round cap, one worker thread, the blocker ladder); rollout step 3 remainder and step 4 pending |
 | [059 — Subscription usage pressure gauge](059-usage-gauge.md) | implemented: readers, samples, projection and `usage.state`, plus the Usage page and Paseo sidebar rail |
+| [060 — Named project agents](060-named-project-agents.md) | implemented |
 
 ## Host adapters
 

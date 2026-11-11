@@ -40,6 +40,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const fetchRepositories = useRpc(api.repositories);
   const fetchProjectSettings = useRpc(api.projectSettings), upsertProject = useRpc(api.projectUpsert);
   const fetchOwnerCandidates = useRpc(api.projectOwnerCandidates), setProjectPlanner = useRpc(api.projectSetPlanner), parkProject = useRpc(api.projectPark), unparkProject = useRpc(api.projectUnpark);
+  const registerProjectAgent = useRpc(api.agentRegister), unregisterProjectAgent = useRpc(api.agentUnregister);
   const setProfile = useRpc(api.configureProfile), setPool = useRpc(api.configurePool), setAvailability = useRpc(api.availabilityControl), setDemandOffsets = useRpc(api.configureDemandOffsets), setUsage = useRpc(api.configureUsage), setCapacity = useRpc(api.configureCapacity), setRepository = useRpc(api.repositorySet), setProjectLimit = useRpc(api.configureProjectDispatchLimit);
   const fetchBackups = useRpc(api.backupList), makeBackup = useRpc(api.backupNow);
   const repositoryBlockers = useRpc(api.projectRemovalBlockers), removeProjectRepository = useRpc(api.projectRemoveRepository), mergeProject = useRpc(api.projectMerge), mergeCheck = useRpc(api.projectMergeCheck);
@@ -115,6 +116,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
       })}
       edit={{
         saveProject: input => upsertProject(input), setPlanner: input => setProjectPlanner({ ...input, setBy: "operator" }),
+        registerAgent: input => registerProjectAgent(input), unregisterAgent: input => unregisterProjectAgent(input),
         setSlots: input => setProjectLimit(input), setRepository: input => setRepository(input),
         park: input => parkProject(input), unpark: input => unparkProject(input),
         repositoryBlockers: input => repositoryBlockers(input), removeRepository: input => removeProjectRepository(input),

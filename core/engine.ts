@@ -133,7 +133,7 @@ export class Engine {
 
   readonly engineStop = new EngineStop(schedulingContext(this, ['resolution', 'store']));
 
-  readonly projectLifecycle = new ProjectLifecycle(schedulingContext(this, ['adapter', 'host', 'store', 'plannerTicketPending']));
+  readonly projectLifecycle = new ProjectLifecycle(schedulingContext(this, ['adapter', 'activeHostId', 'host', 'store', 'plannerTicketPending']));
 
   readonly prerequisiteReleases = new PrerequisiteReleases(schedulingContext(this, ['cleanContext', 'pendingPrerequisiteReleases', 'prerequisiteReleaseWork', 'refreshCheckoutSiblings', 'scheduleLane', 'stopped', 'store', 'wakeRepository', 'wakeTask']));
 
@@ -834,6 +834,8 @@ export class Engine {
   plannerTicketPending: () => ReadonlySet<string> = () => new Set();
   /** Settings → Projects: one read of projects, repository rows, slots, planner liveness and QA. */
   projectSettings(): Promise<ReturnType<typeof buildProjectSettings>> { return this.projectLifecycle.projectSettings(); }
+  /** Task 1110: one project's named agents with their live state and fallback marker. */
+  projectAgents(projectKey: string): Promise<import('../shared/contracts').ProjectAgentView[]> { return this.projectLifecycle.projectAgents(projectKey); }
   /**
    * Spec 058 cutover 5, one-time migration: a project with an owner thread and no planner gets
    * that thread as its planner when the thread is live (observed, not archived); an archived or

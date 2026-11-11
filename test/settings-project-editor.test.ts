@@ -33,7 +33,7 @@ function row(key: string, name: string, repos: Repo[], extra: Partial<ProjectSet
   return {
     project: { key, name, version: 3, visibility: 'active', repositories: repos, primary: repos[0]!, drain: null, ...(planner ? { planner: { agentId: planner, setBy: 'operator', setAt: '2026-11-08T00:00:00.000Z' } } : {}) },
     repositories: repos.map((repository, index) => ({ repository, primary: index === 0, settings: settings?.[index] ?? null })),
-    slots: { value: 4, override: null }, plannerLive: planner ? true : null, latestQa: null, problems: [],
+    slots: { value: 4, override: null }, plannerLive: planner ? true : null, plannerTicket: planner ? 'issued' : null, latestQa: null, problems: [],
     ...rest,
   } as ProjectSettingsRow;
 }
@@ -60,6 +60,10 @@ function harness(initial: ProjectSettings, options: { refuse?: (method: string, 
   const edit = {
     saveProject: (input: any) => reply('project.upsert', input, { ...projectOf(input.key), ...input, version: projectOf(input.key).version + 1 }),
     setPlanner: (input: any) => reply('project.set-planner', input, { ...projectOf(input.key), version: projectOf(input.key).version + 1 }),
+    registerAgent: (input: any) => reply('agent.register', input, { ...projectOf(input.project), version: projectOf(input.project).version + 1,
+      agents: [...(projectOf(input.project).agents ?? []), { name: input.name, purpose: input.purpose, agentId: input.agentId, hostId: 'host', registeredBy: 'operator (board)', registeredAt: '2026-11-11T10:00:00.000Z' }] }),
+    unregisterAgent: (input: any) => reply('agent.unregister', input, { ...projectOf(input.project), version: projectOf(input.project).version + 1,
+      agents: (projectOf(input.project).agents ?? []).filter(agent => agent.name !== input.name) }),
     setSlots: (input: any) => reply('queue.project-dispatch-limit', input, { ok: true }),
     setRepository: (input: any) => reply('repository.set', input, {}),
     park: (input: any) => reply('project.park', input, { ...projectOf(input.key), visibility: 'parked', version: input.version + 1 }),
@@ -631,4 +635,44 @@ test('the full screen wires the writes: set-planner as the operator, then a re-r
       assert.deepEqual(writes[0], ['project.set-planner', { key: 'nucleus', agentId: 'agent-planner', setBy: 'operator' }]);
     } finally { done(ui); }
   }
+});
+
+test('the project shows its named agents with live state and the fallback marker, and registers or unregisters one from the board', async () => {
+  const base = row('nucleus', 'Nucleus', [repo('acme/nucleus')], { planner: 'agent-planner' });
+  const data = settingsOf([{
+    ...base,
+    agents: [
+      { name: 'planner', purpose: 'Answers delegated questions', agentId: 'agent-planner', hostId: 'host', state: 'idle', lastSeen: '2026-11-11T10:00:00.000Z', fallback: true },
+      { name: 'lead-ui', purpose: 'Coordinates the UI cross-section', agentId: 'agent-other-planner', hostId: 'host', state: 'archived', lastSeen: null, fallback: false },
+    ],
+  }]);
+  const app = harness(data);
+  const ui = await app.mount(false);
+  try {
+    ui.press('Nucleus, Active');
+    const section = ui.get('Agents for Nucleus');
+    assert.ok(section, 'the agents list is part of the project');
+    const text = ui.text();
+    assert.match(text, /planner · fallback planner/);
+    assert.match(text, /Answers delegated questions/);
+    assert.match(text, /lead-ui/);
+    assert.match(text, /Archived/);
+    assert.match(text, /last seen/);
+
+    ui.press('Register agent');
+    ui.type('Agent name', 'lead-api');
+    ui.type('Agent purpose', 'Owns the API cross-section');
+    await settle(() => Boolean(ui.query('Thread, Choose a live thread')), 'thread picker');
+    ui.press('Thread, Choose a live thread');
+    ui.press('Thread: Consumer planner');
+    ui.press('Save agent registration');
+    await settle(() => app.calls.some(([method]) => method === 'agent.register'), 'register');
+    const register = app.calls.find(([method]) => method === 'agent.register')!;
+    assert.deepEqual(register[1], { project: 'nucleus', name: 'lead-api', purpose: 'Owns the API cross-section', agentId: 'agent-other-planner' });
+
+    ui.press('Unregister lead-ui');
+    ui.press('Unregister agent lead-ui');
+    await settle(() => app.calls.some(([method]) => method === 'agent.unregister'), 'unregister');
+    assert.deepEqual(app.calls.find(([method]) => method === 'agent.unregister')![1], { project: 'nucleus', name: 'lead-ui' });
+  } finally { done(ui); }
 });

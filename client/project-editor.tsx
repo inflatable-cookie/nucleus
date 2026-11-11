@@ -6,10 +6,11 @@ import { ActionButton, Button, DropdownSelect, Field, FieldCaption, HelpPopover,
 import { radius, roles, space, touchTarget, type } from "./design";
 import { ProjectManagementView, type ProjectManagementApi } from "./project-management-view";
 import { projectCarriedText, projectRemovalBlockerText } from "../shared/project-removal";
+import { formatLocalDateTime } from "../shared/date-time";
 import { OWNER_NAME, identityOf, implicitRepositories, joinCommand, repositoryLabel, splitCommand, withoutHostPaths, type ProjectRepository } from "./project-helpers";
 import {
   PROJECT_QA_DEFAULT_MAX_OUTPUT_BYTES, PROJECT_QA_TIMEOUT_MAX_MS, VALIDATION_TIMEOUT_MAX_MS,
-  type Project, type ProjectOwnerCandidateKind, type ProjectMergeCheck, type ProjectMergeInput, type ProjectMergeResult, type ProjectRemovalBlocker, type ProjectRemoveRepositoryInput, type ProjectSettings, type ProjectSettingsRow, type ProjectUpsertInput, type RepositorySetInput, type RepositorySettings,
+  type Project, type ProjectAgentView, type ProjectOwnerCandidateKind, type ProjectMergeCheck, type ProjectMergeInput, type ProjectMergeResult, type ProjectRemovalBlocker, type ProjectRemoveRepositoryInput, type ProjectSettings, type ProjectSettingsRow, type ProjectUpsertInput, type RepositorySetInput, type RepositorySettings,
 } from "../shared/contracts";
 
 /*
@@ -28,6 +29,9 @@ export type OwnerCandidate = { id: string; title: string; workspaceId: string | 
 export type ProjectEditActions = {
   saveProject: (input: ProjectUpsertInput) => Promise<Project>;
   setPlanner: (input: { key: string; agentId: string | null }) => Promise<Project>;
+  /** Task 1110: register a chosen live thread, or remove one named agent. */
+  registerAgent: (input: { project: string; name: string; purpose: string; agentId: string }) => Promise<Project>;
+  unregisterAgent: (input: { project: string; name: string }) => Promise<Project>;
   /** Null clears the override: the project inherits Per project again. */
   setSlots: (input: { projectKey: string; limit: number | null }) => Promise<unknown>;
   setRepository: (input: RepositorySetInput) => Promise<unknown>;
@@ -137,6 +141,72 @@ function SaveWord({ c, status, name }: { c: Colors; status: string; name: string
     {open && <HelpPopover c={c} anchor={anchor} label="Not saved" text={reason} />}
   </View>;
 }
+
+/** Task 1110: the project's named, non-task threads, and the form that registers one from the board. */
+function AgentsSection({ c, project, agents, disabled, actions, r }: {
+  c: Colors; project: Project; agents: ProjectAgentView[]; disabled: boolean; actions: ProjectEditActions; r: ReturnType<typeof roles>;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [purpose, setPurpose] = useState("");
+  const [thread, setThread] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [failure, setFailure] = useState("");
+  const [busy, setBusy] = useState(false);
+  // Non-task threads only: a task worker or reviewer is addressed by its task.
+  const chosen = (actions.candidates.data ?? []).filter(candidate => candidate.kind === "planner" || candidate.kind === "other");
+  const refresh = () => actions.refresh().catch(error => setFailure(withoutHostPaths(errorText(error))));
+  const register = async () => {
+    if (!thread || !name.trim() || !purpose.trim()) { setFailure("A name, a purpose and a thread are required"); return; }
+    setBusy(true); setFailure("");
+    try {
+      await actions.registerAgent({ project: project.key, name: name.trim(), purpose: purpose.trim(), agentId: thread });
+      setAdding(false); setName(""); setPurpose(""); setThread(null);
+      await refresh();
+    } catch (error) { setFailure(withoutHostPaths(errorText(error))); }
+    finally { setBusy(false); }
+  };
+  const unregister = async (agent: string) => {
+    setRemoving(null); setBusy(true); setFailure("");
+    try { await actions.unregisterAgent({ project: project.key, name: agent }); await refresh(); }
+    catch (error) { setFailure(withoutHostPaths(errorText(error))); }
+    finally { setBusy(false); }
+  };
+  return <View accessibilityLabel={`Agents for ${project.name}`} style={{ gap: space.xs, paddingTop: space.sm, borderTopWidth: 1, borderTopColor: r.border }}>
+    <View style={{ ...row, flexWrap: "nowrap" }}>
+      <Text accessibilityRole="header" style={{ color: r.foreground, fontWeight: "600", fontSize: type.section.fontSize, lineHeight: type.section.lineHeight, flex: 1 }}>Agents</Text>
+      <ActionButton c={c} action="add" label="Register agent" disabled={disabled || busy || !chosen.length} onPress={() => setAdding(true)} />
+    </View>
+    <Text style={muted(c)}>Named, non-task threads other threads address by name: planners, leads and cross-section coordinators.</Text>
+    {adding && <View style={{ gap: space.xs }}>
+      <Field c={c} label="Agent name" a11yLabel="Agent name" value={name} onChange={setName} detail="Lowercase letters, digits and dashes" />
+      <Field c={c} label="Purpose" a11yLabel="Agent purpose" value={purpose} onChange={setPurpose} />
+      <DropdownSelect c={c} label="Thread" value={thread ?? NONE} options={[{ value: NONE, label: "Choose a live thread" }, ...chosen.map(candidate => ({ value: candidate.id, label: candidate.title.trim() || candidate.id }))]}
+        onChange={value => setThread(value === NONE ? null : value)} />
+      <View style={{ ...row, flexWrap: "nowrap" }}>
+        <Button small c={c} text="Register" label="Save agent registration" disabled={busy} onPress={() => void register()} />
+        <Button small c={c} text="Cancel" label="Cancel agent registration" disabled={busy} onPress={() => { setAdding(false); setFailure(""); }} />
+      </View>
+    </View>}
+    {agents.length === 0 && !adding && <Text style={muted(c)}>No named agents yet.</Text>}
+    {agents.map(agent => <View key={agent.name} style={{ ...row, flexWrap: "nowrap", paddingVertical: space.xxs }} accessibilityLabel={`Agent ${agent.name}, ${agent.state}`}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={{ color: r.foreground, fontSize: type.body.fontSize, lineHeight: type.body.lineHeight }}>{agent.name}{agent.fallback ? " · fallback planner" : ""}</Text>
+        <Text numberOfLines={2} style={{ color: r.muted, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>{agent.purpose}</Text>
+        <Text style={{ color: agent.state === "gone" || agent.state === "archived" ? r.warning : r.muted, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>
+          {stateWord(agent.state)}{agent.lastSeen ? ` · last seen ${formatLocalDateTime(agent.lastSeen)}` : ""}
+        </Text>
+      </View>
+      <ActionButton c={c} action="remove" label={`Unregister ${agent.name}`} disabled={disabled || busy} onPress={() => setRemoving(agent.name)} />
+    </View>)}
+    {removing && <InlineConfirm c={c} question={`Unregister ${removing}? Its participant ticket stops working.`} confirmLabel="Unregister" label={`agent ${removing}`}
+      busy={busy} onConfirm={() => void unregister(removing)} onCancel={() => setRemoving(null)} />}
+    {failure && <Text accessibilityRole="alert" style={{ color: r.danger, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>{failure}</Text>}
+  </View>;
+}
+
+const stateWord = (state: ProjectAgentView["state"]): string =>
+  state === "running" ? "Running" : state === "idle" ? "Idle" : state === "archived" ? "Archived" : state === "gone" ? "Gone" : "Unknown";
 
 /** The planner picker: live standing threads by title, plus None. A planner that is not live stays selected as "Gone". */
 export function plannerOptions(entry: ProjectSettingsRow, candidates: readonly OwnerCandidate[] | undefined, chosen: string | null) {
@@ -310,6 +380,7 @@ function OpenedProject({ c, compact, entry, data, error, refetch, actions, back,
           onChange={changeSlots} onClear={() => changeSlots(null)} onCommit={saves.flush} />
       </View>
     </View>
+    <AgentsSection c={c} project={project} agents={entry.agents ?? []} disabled={disabled} actions={actions} r={r} />
     <View style={{ gap: space.xs, paddingTop: space.sm, borderTopWidth: 1, borderTopColor: r.border }}>
       <View style={{ ...row, flexWrap: "nowrap" }}>
         <Text accessibilityRole="header" style={{ color: r.foreground, fontWeight: "600", fontSize: type.section.fontSize, lineHeight: type.section.lineHeight, flex: 1 }}>Repositories</Text>

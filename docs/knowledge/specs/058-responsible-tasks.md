@@ -496,7 +496,8 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
   can still run at that head.
 - **Delegated answers.** After the retained reviewer identifies a planning ruling (Slice 17),
   a delegable question goes to the project's **planner**
-  (`project.set-planner`, which grants only its existing delegated-answer authority).
+  (`project.set-planner`, which grants only its existing delegated-answer authority;
+  [Spec 060](060-named-project-agents.md) owns the named-agent registry and the fallback).
   The planner receives the question only while idle; its busy time counts toward the
   ten-minute answer window. With no answer in that window, a short-lived **decider**
   answers once in the task's workspace on automatic selection, then is archived.

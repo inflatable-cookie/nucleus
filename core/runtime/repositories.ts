@@ -8,7 +8,7 @@ import { repositoryOrigin } from "../planning/lanes";
 import { requiredCheckPolicyCapability, type CheckRequirementTransport } from "../forge/index";
 import { realpath } from "node:fs/promises";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import type { HostRunAccountingDisposeInput, RepositorySetInput, RepositorySettings, ProjectUpsertInput, Task, RepositoryRekeyInput, RepositoryRekeyOutput, RepositoryRekeyPreviewInput, RepositoryRekeyReceiptQuery } from "../../shared/contracts";
+import type { HostRunAccountingDisposeInput, RepositorySetInput, RepositorySettings, ProjectUpsertInput, Task, RepositoryRekeyInput, RepositoryRekeyOutput, RepositoryRekeyPreviewInput, RepositoryRekeyReceiptQuery, AgentRegisterInput, AgentUnregisterInput } from "../../shared/contracts";
 import type { ProjectQaRunner } from '../qa/project-qa';
 import type { HostRunScheduler } from '../host-runs/host-run-scheduler';
 import { publicHostRunRecord } from '../host-runs/host-run-identity';
@@ -16,7 +16,7 @@ import { publicHostRunRecord } from '../host-runs/host-run-identity';
 /** Narrow dependencies; construction and lifecycle remain runtime-owned. */
 export interface RepositoriesContext {
   store: Store;
-  engine: Pick<Engine, "startOperation" | "awaitOperation" | "projectOwnerCandidates" | "projectSettings"> & {
+  engine: Pick<Engine, "adapter" | "startOperation" | "awaitOperation" | "projectOwnerCandidates" | "projectSettings" | "projectAgents"> & {
     resolution: Pick<Engine["resolution"], "projectPlannerRegistered">;
   };
   requiredCheckTransport: CheckRequirementTransport | undefined;
@@ -26,6 +26,8 @@ export interface RepositoriesContext {
   markStoreAccess(): void;
   /** One assignment; a self-named planner receives its identity ticket in this response. */
   plannerChanged?(projectKey: string): Promise<string | undefined>;
+  /** One named-agent registration; a self-registering thread receives its ticket in this response. */
+  agentChanged?(projectKey: string, name: string, caller: string | null): Promise<string | undefined>;
 }
 
 export class RuntimeRepositories {
@@ -257,12 +259,57 @@ export class RuntimeRepositories {
     const setter = input.setBy ? parseAgentId(input.setBy) : null;
     // A thread naming itself keeps its proven host even when the host exposes no environment ID.
     const agentId = setter && input.agentId === setter.nativeAgentId ? input.setBy! : input.agentId;
-    const project = this.context.store.setProjectPlanner({ key: input.key, agentId, setBy: input.setBy ?? 'operator', note: input.note });
+    const hostId = agentId ? parseAgentId(agentId)?.hostId ?? (this.context.engine.adapter as { hostId?: string }).hostId ?? null : null;
+    const previousPlannerId = this.context.store.projectByKey(input.key)?.planner?.agentId ?? null;
+    let project = this.context.store.setProjectPlanner({ key: input.key, agentId, setBy: input.setBy ?? 'operator', note: input.note });
+    // Task 1110: the fallback planner is one of the project's registered agents;
+    // naming a thread that is not registered yet registers it under the default
+    // name, so `to: {project}` and `to: {project, agent}` address the same list.
+    if (agentId) project = this.context.store.ensureProjectFallbackAgent({ key: input.key, hostId, previousPlannerId });
     // The thread that named itself receives its participant ticket right here:
     // an assignment is answered in the call that made it, never by a message.
     const participantTicket = await this.context.plannerChanged?.(input.key);
     if (agentId) void this.context.engine.resolution.projectPlannerRegistered(input.key, agentId).catch(() => {});
     return participantTicket ? { ...project, participantTicket } : project;
+  }
+
+  /** Task 1110: one project's named, non-task threads with their live state. */
+  projectAgents(input: { project: string }) { return this.context.engine.projectAgents(input.project); }
+
+  /**
+   * Task 1110: register a named, non-task thread. The calling thread registers
+   * itself from its Nucleus ticket (`caller`), or the board names one live thread
+   * (`agentId`). The registration is one durable write; the ticket service then
+   * hands the agent its participant ticket the way every participant gets one:
+   * in its own call's response, or (where that route does not exist) one host
+   * message to a live thread, never a startup send.
+   */
+  async registerProjectAgent(input: AgentRegisterInput) {
+    this.context.markStoreAccess();
+    const project = this.context.store.projectByKey(input.project);
+    if (!project) throw new Error(`Unknown project ${input.project}`);
+    const caller = input.caller ? parseAgentId(input.caller) : null;
+    if (input.caller && !caller) throw new Error('agent.register needs the calling thread\'s qualified Nucleus identity, never a typed name');
+    const agentId = input.caller ?? input.agentId!;
+    const hostId = caller?.hostId ?? parseAgentId(agentId)?.hostId ?? (this.context.engine.adapter as { hostId?: string }).hostId ?? null;
+    if (!hostId) throw new Error('Cannot register an agent while no host is connected: the thread\'s host is unknown');
+    const registered = this.context.store.registerProjectAgent({
+      key: input.project, name: input.name, purpose: input.purpose, agentId, hostId,
+      registeredBy: input.caller ?? 'operator (board)', note: input.note,
+    });
+    const participantTicket = await this.context.agentChanged?.(input.project, input.name, input.caller ?? null);
+    const stored = this.context.store.projectByKey(input.project) ?? registered;
+    return participantTicket ? { ...stored, participantTicket } : stored;
+  }
+
+  /** Task 1110: remove one named agent; its participant ticket stops resolving. */
+  async unregisterProjectAgent(input: AgentUnregisterInput) {
+    this.context.markStoreAccess();
+    const project = this.context.store.unregisterProjectAgent({
+      key: input.project, name: input.name, unregisteredBy: input.caller ?? 'operator (board)', note: input.note,
+    });
+    await this.context.agentChanged?.(input.project, input.name, null);
+    return this.context.store.projectByKey(input.project) ?? project;
   }
 
   projectOwnerCandidates() { this.context.markStoreAccess(); return this.context.engine.projectOwnerCandidates(); }

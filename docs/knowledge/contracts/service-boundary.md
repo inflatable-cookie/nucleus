@@ -188,7 +188,7 @@ record (`host.run.accounting.dispose`'s `authority`, `qa-fence`,
 provenance and authenticate nothing; the CLI refuses some of them when they
 claim the operator's own identity.
 
-The CLI and helpers resolve the calling thread from a Nucleus-issued run or planner
+The CLI and helpers resolve the calling thread from a Nucleus-issued run or
 participant ticket first, then a host-supplied identity; caller records are
 host-qualified and existing bare Paseo IDs retain their legacy interpretation.
 Planner assignment issues an owner-only participant ticket that reaches the thread
@@ -202,6 +202,8 @@ The same ticket covers a task's own planner (task 1109): keyed per proven host a
 thread rather than per task, handed over by the same two routes, and valid only
 while a live task still names that thread as its planner. Reparenting moves the
 scope, which revokes the outgoing planner's ticket without a separate write.
+A named project agent takes its ticket by the same rules; renaming, reassigning or
+unregistering the name revokes it ([Spec 060](../specs/060-named-project-agents.md)).
 Tickets prevent same-user accidents; they do not add adversarial authentication or
 grant planning authority (Tom, 2026-11-11).
 

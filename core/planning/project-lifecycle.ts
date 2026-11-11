@@ -3,10 +3,11 @@ import { hostKindOf } from "../../shared/host-kind";
 import { observationTimeout } from '../recovery/observation-timeout';
 import { DEFAULT_PROJECT_LIMIT, ownerCandidateKind } from "../../shared/contracts";
 import { buildProjectSettings, projectSettingsQaKeys } from "./project-settings";
+import { observedHostIdOf, projectAgentViews } from "./project-agents";
 import { UNRESOLVED_SEED } from "../store/store";
 import type { Engine } from '../engine';
 
-export type ProjectLifecycleContext = Pick<Engine, 'adapter' | 'host' | 'store'> & Partial<Pick<Engine, 'plannerTicketPending'>>;
+export type ProjectLifecycleContext = Pick<Engine, 'adapter' | 'host' | 'store' | 'activeHostId'> & Partial<Pick<Engine, 'plannerTicketPending'>>;
 
 export class ProjectLifecycle {
   constructor(readonly context: ProjectLifecycleContext) {}
@@ -23,7 +24,9 @@ export class ProjectLifecycle {
     const liveKnown = Boolean(this.context.adapter.listLiveAgents);
     const live = liveKnown ? await this.context.host.listLiveAgents() : [];
     const projects = this.context.store.projects();
-    const hostId = (this.context.adapter as { hostId?: string }).hostId;
+    const hostId = this.context.activeHostId ?? observedHostIdOf(this.context.adapter);
+    const agents = Object.fromEntries(await Promise.all(projects.map(async project =>
+      [project.key, await projectAgentViews({ host: this.context.host, observedHostId: hostId }, project)] as const)));
     return buildProjectSettings({
       projects,
       repositories: this.context.store.repositories(),
@@ -32,10 +35,19 @@ export class ProjectLifecycle {
       liveAgentIds: new Set(live.flatMap(agent => hostId
         ? [formatAgentId(hostId, agent.id), ...(hostKindOf(hostId) === 'paseo' ? [agent.id] : [])]
         : [agent.id])),
-      liveKnown, observedHostId: hostId,
+      liveKnown, observedHostId: hostId ?? undefined,
       plannerTicketPending: this.context.plannerTicketPending?.() ?? new Set(),
+      agents,
       latestQaRuns: this.context.store.latestQaRunsFor(projectSettingsQaKeys(projects)),
     });
+  }
+
+  /** Task 1110: a project's named agents with their live state and fallback marker. */
+  async projectAgents(projectKey: string) {
+    const project = this.context.store.projectByKey(projectKey);
+    if (!project) throw new Error(`Unknown project ${projectKey}`);
+    return projectAgentViews({ host: this.context.host,
+      observedHostId: this.context.activeHostId ?? observedHostIdOf(this.context.adapter) }, project);
   }
 
   async migrateProjectOwnersToPlanners(): Promise<void> {
