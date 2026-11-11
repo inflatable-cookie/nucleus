@@ -9,6 +9,7 @@ import {
   providerUsageKind,
   codexHome,
   claudeConfigDir,
+  grokHome,
   USAGE_READ_INTERVAL_MS,
   USAGE_BACKOFF_BASE_MS,
   USAGE_BACKOFF_MAX_MS,
@@ -96,6 +97,8 @@ test("the default sources resolve from the environment, never a fixed path", () 
     "/srv/example/claude-config",
   );
   assert.equal(claudeConfigDir({}), claudeConfigDir());
+  assert.equal(grokHome({ GROK_HOME: "/srv/example/grok-home" }), "/srv/example/grok-home");
+  assert.equal(grokHome({}), null);
 });
 
 test("subscription groups map to readers per provider and never merge accounts or groups", () => {
@@ -106,20 +109,22 @@ test("subscription groups map to readers per provider and never merge accounts o
       profile("p2", "claude"),
       profile("p3", "codex"),
       profile("p4", "glm"),
+      profile("p5", "grok"),
     ]);
     store.setMeta("pool", [
       poolEntry("p1", "codex-pro"),
       poolEntry("p3", "codex-spare"),
       poolEntry("p2", "claude-max"),
       poolEntry("p4", "glm-group"),
+      poolEntry("p5", "grok-pro"),
     ]);
     const service = new UsageService(store, {
-      env: { CODEX_HOME: "/srv/example/codex" },
+      env: { CODEX_HOME: "/srv/example/codex", GROK_HOME: "/srv/example/grok" },
     });
     const targets = service.targets();
     assert.deepEqual(
       targets.map((target) => `${target.group}:${target.provider}`),
-      ["claude-max:claude", "codex-pro:codex", "codex-spare:codex"],
+      ["claude-max:claude", "codex-pro:codex", "codex-spare:codex", "grok-pro:grok"],
     );
     assert.deepEqual(
       targets.find((target) => target.group === "codex-pro")!.profileIds,
@@ -133,12 +138,16 @@ test("subscription groups map to readers per provider and never merge accounts o
       targets.find((target) => target.group === "claude-max")!.sourcePath,
       claudeConfigDir({}),
     );
+    assert.equal(
+      targets.find((target) => target.group === "grok-pro")!.sourcePath,
+      "/srv/example/grok",
+    );
     assert.ok(
       !targets.some((target) => target.group === "glm-group"),
       "a provider with no reader gains no subscription",
     );
     const state = service.state();
-    assert.equal(state.subscriptions.length, 3);
+    assert.equal(state.subscriptions.length, 4);
     for (const subscription of state.subscriptions) {
       assert.equal(subscription.reading.status, "unknown");
       assert.match(subscription.reading.reason!, /not sampled yet/);

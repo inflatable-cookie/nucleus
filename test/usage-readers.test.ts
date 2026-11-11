@@ -12,6 +12,42 @@ function scratch(prefix: string) {
   return dir;
 }
 
+function grokAgentFixture(
+  dir: string,
+  result: string | null,
+  behavior = "reply",
+  expectedHome: string | null = null,
+) {
+  const script = join(dir, "grok-agent-fixture.mjs");
+  writeFileSync(script, `
+    import { createInterface } from 'node:readline';
+    import { readFileSync } from 'node:fs';
+    const resultPath = ${JSON.stringify(result)};
+    const behavior = ${JSON.stringify(behavior)};
+    const expectedHome = ${JSON.stringify(expectedHome)};
+    createInterface({ input: process.stdin }).on('line', line => {
+      const request = JSON.parse(line);
+      if (behavior === 'silent') return;
+      const response = { jsonrpc: '2.0', id: request.id };
+      if (request.method === 'initialize') {
+        if (request.params?.protocolVersion !== '1' || !request.params?.clientCapabilities ||
+          (expectedHome !== null && process.env.GROK_HOME !== expectedHome)) {
+          response.error = { code: -32602, message: 'invalid initialize parameters or Grok home' };
+          process.stdout.write(JSON.stringify(response) + '\\n');
+          return;
+        }
+        response.result = {};
+      } else if (request.method === '_x.ai/billing' && behavior === 'unsupported') {
+        response.error = { code: -32601, message: 'Method not found' };
+      } else if (request.method === '_x.ai/billing') {
+        response.result = JSON.parse(readFileSync(resultPath, 'utf8'));
+      } else return;
+      process.stdout.write(JSON.stringify(response) + '\\n');
+    });
+  `);
+  return { command: process.execPath, args: [script] };
+}
+
 /** A stand-in `codex` binary: answers the JSON-RPC handshake with the result file argv names. */
 function codexAppServerFixture(
   dir: string,
@@ -351,22 +387,11 @@ test("the claude reader reports a cache with no usable window as unknown", async
   assert.match(reading.reason!, /no usable window/);
 });
 
-test("the grok reader reads the single credit gauge and billing period", async () => {
+test("the grok reader reads nested credits through agent stdio", async () => {
   const dir = scratch("usage-grok");
-  const script = join(dir, "grok-fixture.mjs");
-  writeFileSync(
-    script,
-    `
-    process.stdout.write(JSON.stringify({
-      creditUsagePercent: 12.5,
-      currentPeriod: { start: '2026-10-28T00:00:00Z', end: '2026-11-28T00:00:00Z' },
-      subscriptionTier: 'pro',
-    }));
-  `,
-  );
-  const reading = await readGrokUsage({
-    command: process.execPath,
-    args: [script],
+  const fixturePath = new URL("./fixtures/grok-billing-current.json", import.meta.url).pathname;
+  const reading = await readGrokUsage({ home: join(dir, "home") }, {
+    ...grokAgentFixture(dir, fixturePath, "reply", join(dir, "home")),
     env: {},
   });
   assert.equal(reading.status, "ok");
@@ -379,57 +404,79 @@ test("the grok reader reads the single credit gauge and billing period", async (
   assert.equal(reading.windows[0]!.windowStartsAt, "2026-10-28T00:00:00.000Z");
   assert.equal(reading.windows[0]!.resetsAt, "2026-11-28T00:00:00.000Z");
   assert.equal(reading.windows[0]!.windowSeconds, null);
+  assert.equal(reading.reason, null);
 });
 
-test("the grok reader turns failures into unknown readings with the reason", async () => {
-  const failing = scratch("usage-grok-fail");
-  const failScript = join(failing, "grok-fail.mjs");
-  writeFileSync(
-    failScript,
-    "console.error('Error: plan usage unavailable here'); process.exit(1);",
-  );
-  const failed = await readGrokUsage({
-    command: process.execPath,
-    args: [failScript],
+test("the grok reader supports legacy billing and keeps unsupported or unparseable usage unknown", async () => {
+  const dir = scratch("usage-grok-legacy");
+  const fixturePath = new URL("./fixtures/grok-billing-legacy.json", import.meta.url).pathname;
+  const legacy = await readGrokUsage({ home: "" }, { ...grokAgentFixture(dir, fixturePath), env: {} });
+  assert.equal(legacy.status, "ok");
+  assert.equal(legacy.windows[0]!.usedFraction, 0.125);
+  assert.equal(legacy.windows[0]!.windowStartsAt, "2026-10-01T00:00:00.000Z");
+  assert.equal(legacy.windows[0]!.resetsAt, "2026-11-01T00:00:00.000Z");
+
+  const unsupportedDir = scratch("usage-grok-unsupported");
+  const unsupported = await readGrokUsage({ home: "" }, {
+    ...grokAgentFixture(unsupportedDir, null, "unsupported"),
     env: {},
   });
-  assert.equal(failed.status, "unknown");
-  assert.match(failed.reason!, /exited 1/);
-  assert.match(failed.reason!, /plan usage unavailable/);
+  assert.equal(unsupported.status, "unknown");
+  assert.match(unsupported.reason!, /Method not found/);
 
-  const noisy = scratch("usage-grok-noisy");
-  const noisyScript = join(noisy, "grok-noisy.mjs");
-  writeFileSync(
-    noisyScript,
-    "process.stdout.write('Error: `grok usage` cannot show usage yet'); process.exit(0);",
-  );
-  const noJson = await readGrokUsage({
-    command: process.execPath,
-    args: [noisyScript],
-    env: {},
-  });
-  assert.equal(noJson.status, "unknown");
-  assert.match(noJson.reason!, /no JSON/);
-
-  const sparse = scratch("usage-grok-sparse");
-  const sparseScript = join(sparse, "grok-sparse.mjs");
-  writeFileSync(
-    sparseScript,
-    "process.stdout.write(JSON.stringify({ currentPeriod: {} }));",
-  );
-  const noGauge = await readGrokUsage({
-    command: process.execPath,
-    args: [sparseScript],
+  const sparseDir = scratch("usage-grok-sparse");
+  const sparsePath = join(sparseDir, "sparse.json");
+  writeFileSync(sparsePath, JSON.stringify({ config: { currentPeriod: {} } }));
+  const noGauge = await readGrokUsage({ home: "" }, {
+    ...grokAgentFixture(sparseDir, sparsePath),
     env: {},
   });
   assert.equal(noGauge.status, "unknown");
-  assert.match(noGauge.reason!, /creditUsagePercent/);
+  assert.match(noGauge.reason!, /no numeric credit usage percent/);
 
-  const missing = await readGrokUsage({
+  const timeoutDir = scratch("usage-grok-timeout");
+  const timeout = await readGrokUsage({ home: "" }, {
+    ...grokAgentFixture(timeoutDir, null, "silent"),
+    env: {},
+    initializeTimeoutMs: 50,
+  });
+  assert.equal(timeout.status, "unknown");
+  assert.match(timeout.reason!, /initialize timed out/);
+
+  const fallbackDir = scratch("usage-grok-fallback");
+  const fallbackScript = join(fallbackDir, "grok-fallback.mjs");
+  writeFileSync(fallbackScript, `
+    if (process.argv[2] === 'usage') {
+      process.stdout.write(JSON.stringify({
+        creditUsagePercent: 23,
+        currentPeriod: { start: '2026-10-01T00:00:00Z', end: '2026-11-01T00:00:00Z' }
+      }));
+    } else {
+      const { createInterface } = await import('node:readline');
+      createInterface({ input: process.stdin }).on('line', line => {
+        const request = JSON.parse(line);
+        if (request.method === 'initialize') process.stdout.write(JSON.stringify({
+          jsonrpc: '2.0', id: request.id,
+          error: { code: -32601, message: 'agent stdio unavailable' }
+        }) + '\\n');
+      });
+    }
+  `);
+  const fallback = await readGrokUsage({ home: "" }, {
+    command: process.execPath,
+    args: [fallbackScript, "agent", "stdio"],
+    fallbackArgs: [fallbackScript, "usage", "--json"],
+    env: {},
+    timeoutMs: 100,
+  });
+  assert.equal(fallback.status, "ok");
+  assert.equal(fallback.windows[0]!.usedFraction, 0.23);
+  assert.equal(fallback.windows[0]!.resetsAt, "2026-11-01T00:00:00.000Z");
+
+  const missing = await readGrokUsage({ home: "" }, {
     command: "definitely-not-a-real-usage-binary-xyz",
-    args: ["usage", "--json"],
     env: {},
   });
   assert.equal(missing.status, "unknown");
-  assert.match(missing.reason!, /failed/);
+  assert.match(missing.reason!, /fallback failed/);
 });

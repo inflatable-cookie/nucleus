@@ -1,0 +1,8 @@
+{
+  "monthlyLimit": { "val": 800 },
+  "usage": { "totalUsed": { "val": 100 } },
+  "billingCycle": {
+    "billingPeriodStart": "2026-10-01T00:00:00Z",
+    "billingPeriodEnd": "2026-11-01T00:00:00Z"
+  }
+}

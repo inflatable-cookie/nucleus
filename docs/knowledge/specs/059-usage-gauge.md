@@ -32,8 +32,11 @@ exhaustion from a refused run, after the fact.
   - **Claude** reads `cachedUsageUtilization` from the config dir's `.claude.json`
     (`CLAUDE_CONFIG_DIR` or the home), read only and never written, with `fetchedAtMs` as the
     sample time.
-  - **Grok** runs `grok usage --json` (the CLI holds the login): one credit gauge, `creditUsagePercent`,
-    with the billing period when the CLI reports it.
+  - **Grok** calls `_x.ai/billing` through `grok agent stdio` (the CLI holds the login): one credit
+    gauge, `creditUsagePercent`, with the current billing period. Initialization times out after
+    four seconds; unsupported billing and malformed results stay `unknown`. `grok usage --json`
+    is only a fallback when agent stdio cannot start or initialize. The configured `GROK_HOME` is
+    passed to the CLI for the subscription.
   Schemas are lenient: an unreadable or unexpected shape is an `unknown` reading with the reason,
   never 0; a subscription with no usable source reads `not_available`.
 
@@ -90,10 +93,11 @@ exhaustion from a refused run, after the fact.
 ## Acceptance oracle
 
 `test/usage-readers.test.ts` (each reader against recorded shapes, including unknown and renamed
-fields, and a real subprocess fixture for the Codex app-server and Grok CLI paths);
-`test/usage-projection.test.ts` (on track, spare, run-out, early damping, usage ahead of elapsed
-time without recent-sample influence, multiple
-windows, pinned at 100%, stale and insufficient data);
+fields, and subprocess fixtures for the Codex app-server and Grok agent stdio paths, including
+current credits, legacy billing, unsupported method and timeout);
+`test/usage-projection.test.ts` (on track, spare, run-out, early damping, recent burn, usage ahead
+of elapsed time without recent-sample influence, multiple windows, pinned at 100%, stale and
+insufficient data);
 `test/usage-service.test.ts` (subscription mapping, account separation, pacing, backoff to the
 cap, retention, thrown-reader recovery); `test/catalogue.test.ts` (the read-only
 classification); `test/usage-gauge-ui.test.ts` (the dial maps state and value — centre, left,

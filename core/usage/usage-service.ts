@@ -65,6 +65,12 @@ export function claudeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
   return configured || homedir();
 }
 
+/** Grok CLI home, when the subscription group has one configured. */
+export function grokHome(env: NodeJS.ProcessEnv = process.env): string | null {
+  const configured = env.GROK_HOME?.trim();
+  return configured || null;
+}
+
 /** One subscription the service tracks: a group whose profiles name one readable provider. */
 export interface UsageSubscriptionTarget {
   group: string;
@@ -121,7 +127,7 @@ export class UsageService {
     };
     const grok: ProviderUsageReader = {
       provider: "grok",
-      read: () => readGrokUsage({ env: options.env, now: this.now }),
+      read: (source) => readGrokUsage(source, { env: options.env, now: this.now }),
     };
     this.readers = {
       codex: options.readers?.codex ?? codex,
@@ -254,6 +260,7 @@ export class UsageService {
     const env = this.options.env ?? process.env;
     if (provider === "codex") return codexHome(env);
     if (provider === "claude") return claudeConfigDir(env);
+    if (provider === "grok") return grokHome(env);
     return null;
   }
 
