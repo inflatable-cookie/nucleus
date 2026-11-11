@@ -878,6 +878,8 @@ export const taskNextSchema = z.object({
   workerDemandStep: z.string().optional(),
   /** The checkout's links-only provisioning record, when it has one. */
   worktreeLinks: worktreeLinksSchema.optional(),
+  /** Pinned host for this task. Switching a repository hostKind never rehosts it. */
+  host: z.string().optional(),
 }).strict();
 
 export type TaskNext = z.infer<typeof taskNextSchema>;

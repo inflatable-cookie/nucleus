@@ -222,6 +222,11 @@ export interface CreationOwner {
   /** The host attaches MCP reporting, so a binding file is written before the create. */
   readonly reportingViaMcp: boolean;
   readonly admissionLaunchEnv: Record<string, string>;
+  /**
+   * When false the host cannot inject per-thread environment, so the launch
+   * attempt carries an empty environment and the prompt names the helper and ticket.
+   */
+  readonly perThreadEnvironment?: boolean;
   scratchPlacement(task: Task): RunScratchPlacement;
 }
 

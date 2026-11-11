@@ -10,8 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { T3RpcClient } from '../../hosts/t3code/rpc';
 import { HostRegistry, type KnownHost } from '../../core/host/host-registry';
-import type { Adapter } from '../../core/host';
+import type { Adapter, HostPolicyConstructor } from '../../core/host';
 import { ProvenPreSendRefusalError } from '../../core/host';
+import { HostPolicies } from '../../core/host/host-policies';
 import { Admission, admitAdapter } from '../../core/host/admission';
 
 async function main() {
@@ -293,10 +294,12 @@ try {
     let knownHosts: readonly KnownHost[] = [];
     const registry = new HostRegistry<{ adapter: Adapter; admission: Admission }>({ read: () => knownHosts, write: value => { knownHosts = value; }, transaction: fn => fn() });
     const admission = registry.resource(adapter.hostId, () => new Admission({ observationCacheMs: 0 }));
-    let registryClaim = registry.connect(adapter.hostId, endpoint, { adapter: admitAdapter(createAdapter(adapter), admission), admission });
+    let registryClaim = registry.connect(adapter.hostId, endpoint, { adapter: admitAdapter(createAdapter(HostPolicies as unknown as HostPolicyConstructor, adapter), admission), admission });
     const registered = registry.get(adapter.hostId);
     assert.ok(registered, 'Authenticated native host is registered');
-    await assert.rejects(registered.adapter.validate({} as never), /CLI reporting and board/);
+    assert.equal(adapter.capabilities().lifecycleDispatch, false);
+    assert.equal(registered.adapter.capabilities?.()?.lifecycleDispatch, true);
+    assert.throws(() => registered.adapter.createAgent({} as never, 'unused', 'unused'), /helper path/);
     steps.push({ step: 'compatibility-probe', result: 'passed' });
     const fault = await compatibilityFault(() => rpc!.call('server.getConfig', {}));
     const incompatible = createHost({ ...hostOptions, endpoint: fault.endpoint, statePath: join(root, 'fault-state.json') });
@@ -365,7 +368,7 @@ try {
       traceRuntimeResponses(adapter.rpc);
       await adapter.connect(probeThreadId);
       assert.equal(registry.resource(adapter.hostId, () => new Admission()), admission, 'Reconnect retains per-host admission');
-      registryClaim = registry.connect(adapter.hostId, endpoint, { adapter: admitAdapter(createAdapter(adapter), admission), admission });
+      registryClaim = registry.connect(adapter.hostId, endpoint, { adapter: admitAdapter(createAdapter(HostPolicies as unknown as HostPolicyConstructor, adapter), admission), admission });
     }
     await adapter.sendMessage(agent.id, { messageId: randomUUID(), text: 'proof-question' });
     const restartQuestion = await until(async () => (await adapter.observe(agent.id)).pendingRequest, 'restart question');

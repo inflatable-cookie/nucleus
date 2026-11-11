@@ -28,6 +28,7 @@ export * from "./schema/qa-fence";
 export * from "./schema/tasks";
 export * from "./schema/lanes";
 export * from "./schema/validation";
+export * from "./host-kind";
 export * from "./schema/projects";
 export * from "./schema/qa-config";
 export * from "./schema/backup";

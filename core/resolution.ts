@@ -491,11 +491,12 @@ export class Resolution {
   }
   /** Command receipts, never conversation output, settle every delegated route. */
   delegatedAnswerWaitMs = DELEGATED_ANSWER_TIMEOUT_MS;
-  delegatePrompt(task: Task, id: string, prompt: string): string { return this.delegation.delegatePrompt(task, id, prompt); }
+  delegatePrompt(task: Task, id: string, prompt: string, recipient?: string, hostId?: string): string { return this.delegation.delegatePrompt(task, id, prompt, recipient, hostId); }
   openDelegatedQuestion(task: Task, id: string, recipient: string, prompt: string, timeoutMs: number, role: string, hostId?: string): void { this.delegation.openDelegatedQuestion(task, id, recipient, prompt, timeoutMs, role, hostId); }
   delegatedDelivery(id: string): { taskId: string; recipient: string; role: string; deadline: number } | null { return this.delegation.delegatedDelivery(id); }
   recoverableDelegation(ids: string[], advance = true): boolean { return this.delegation.recoverableDelegation(ids, advance); }
   answerDelegatedQuestion(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) { return this.delegation.answerDelegatedQuestion(input, caller); }
+  answerDelegatedQuestionFromTicket(input: { taskId: string; runId: string; questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, token: string) { return this.delegation.answerDelegatedQuestionFromTicket(input, token); }
   delegatedQuestionForTask(identity: string, caller: string) { return this.delegation.questionForTask(identity, caller); }
   answerDelegatedQuestionFromHost(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) { return this.delegation.answerFromHost(input, caller); }
   waitDelegatedAnswer(id: string, signal: AbortSignal): Promise<string | null> { return this.delegation.waitDelegatedAnswer(id, signal); }
@@ -827,7 +828,7 @@ export class Resolution {
    * task's own threads settle raises nothing, and tasks that did not opt in
    * keep today's notices exactly.
    */
-  raiseOperatorQuestions(): Promise<void> { return this.questions.raiseOperatorQuestions(); }
+  raiseOperatorQuestions(scopedTaskId?: string): Promise<void> { return this.questions.raiseOperatorQuestions(scopedTaskId); }
   /**
    * Spec 058 (task 542): a responsible task never stalls after the operator
    * answers its worker's own native question. If the task is stopped because

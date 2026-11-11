@@ -26,7 +26,7 @@ const done = (ui: { update(next: React.ReactElement): void }) => ui.update(h('Vi
 type Repo = { origin: string | null; path: string };
 const repo = (origin: string): Repo => ({ origin, path: `/workspace/user/Dev/${origin.split('/')[1]}` });
 const settingsRow = (repository: Repo, extra: Partial<RepositorySettings> = {}): RepositorySettings => ({
-  repository, scratchNamespace: null, closeout: null, validation: null, reviewer: null, qa: null, checksPolicy: null, note: '', updatedAt: '2026-11-08T00:00:00.000Z', revision: 1, ...extra,
+  repository, scratchNamespace: null, closeout: null, validation: null, reviewer: null, qa: null, checksPolicy: null, hostKind: 'paseo', note: '', updatedAt: '2026-11-08T00:00:00.000Z', revision: 1, ...extra,
 });
 function row(key: string, name: string, repos: Repo[], extra: Partial<ProjectSettingsRow> & { settings?: Array<RepositorySettings | null>; planner?: string } = {}): ProjectSettingsRow {
   const { settings, planner, ...rest } = extra;
@@ -197,7 +197,7 @@ test('the empty name is held back with its reason and never sent; a repository c
   } finally { done(ui); }
 });
 
-test('one repository: settings inline; QA, Checks, Reviewer and Merge check each write their own patch', async () => {
+test('one repository: settings inline; Host, QA, Checks, Reviewer and Merge check each write their own patch', async () => {
   const nucleus = repo('acme/nucleus');
   const refuse = (method: string, input: any) => method === 'repository.set' && input.checksPolicy === 'required' ? 'checksPolicy "required" refused: acme/nucleus: required checks are not readable. Nothing was written' : null;
   const app = harness(settingsOf([row('nucleus', 'Nucleus', [nucleus], { settings: [settingsRow(nucleus, { qa: { argv: ['effigy', 'qa'], timeoutMs: 7_200_000, maxOutputBytes: 1000, terminationGraceMs: 5000, schedule: null } })] })]), { refuse });
@@ -207,7 +207,7 @@ test('one repository: settings inline; QA, Checks, Reviewer and Merge check each
     assert.ok(ui.get('acme/nucleus, primary'), 'the one repository shows inline, with its star');
     assert.equal(ui.query('Remove acme/nucleus'), undefined, 'one repository: nothing to remove');
     assert.doesNotMatch(ui.text(), /\/workspace\/user/, 'no checkout paths');
-    for (const help of ['Checks help', 'Reviewer help', 'Merge check help']) assert.ok(ui.get(help), help);
+    for (const help of ['Host help', 'Checks help', 'Reviewer help', 'Merge check help']) assert.ok(ui.get(help), help);
     assert.equal(ui.query('Validation default for acme/nucleus'), undefined, 'the retired validation policy renders no control');
 
     assert.equal(ui.get('QA command for acme/nucleus').props.value, 'effigy qa');
@@ -225,6 +225,12 @@ test('one repository: settings inline; QA, Checks, Reviewer and Merge check each
     ui.get('QA command for acme/nucleus').props.onBlur();
     await settle(() => app.calls.length === 2, 'qa cleared');
     assert.deepEqual(app.calls[1], ['repository.set', { repository: 'acme/nucleus', qa: null }], 'an empty command clears qa');
+
+    app.calls.length = 0;
+    ui.press('Host for acme/nucleus, Paseo');
+    ui.press('Host for acme/nucleus: T3Code');
+    await settle(() => app.calls.length === 1, 'host');
+    assert.deepEqual(app.calls[0], ['repository.set', { repository: 'acme/nucleus', hostKind: 't3code' }]);
 
     app.calls.length = 0;
     ui.press('Checks for acme/nucleus, All');

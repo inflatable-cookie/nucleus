@@ -1,6 +1,6 @@
 # T3Code host adapter
 
-Status: native adapter implemented; lifecycle reporting and board routing remain a separate step.
+Status: native adapter, CLI-helper reporting, board questions and per-project host opt-in are implemented.
 Owner: Nucleus runtime maintainers
 
 ## Boundary
@@ -14,7 +14,10 @@ the primary host (Tom, 2026-11-11).
 Worker, reviewer and recovery identities are separate top-level T3 threads.
 No role uses T3's delegated-task relationship. The adapter does not patch T3,
 attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute
-T3 UI. CLI reporting, board routing and project opt-in belong to the next step.
+T3 UI. A T3 thread reports through the packaged nucleus helper with the run
+ticket named in its prompt. Nucleus-raised questions go to the web board and
+the project planner's agent channel. A repository setting selects `paseo`
+(default) or `t3code` (opt-in) for new tasks; a live task never changes host.
 Registering a transport must not make an unsupported task workflow executable.
 
 ## Protocol and connection
@@ -197,11 +200,37 @@ request's kind and workspace before delivery.
 
 Expose explicit unsupported capabilities for per-thread MCP reporting,
 Nucleus-raised native decisions and UI contributions. Do not substitute empty
-success results. Until the next step supplies reporting and board routing,
-lifecycle dispatch that requires them refuses before thread creation; the private
-proof exercises the adapter's native operations directly. An unconfigured T3
-adapter changes no default route. A configured second host never causes implicit
-rerouting of a task, origin notice or pending question.
+success results. The Host keeps `lifecycleDispatch` false; the Adapter turns it
+on once the Nucleus helper path is wired, so T3 threads report through the
+helper and ticket named in the prompt. Service composition injects
+`HostPolicies` through the public `core/host` constructor, so review
+verification (live author/reviewer independence and exact-head checks) and
+retained-thread continuation, recovery and checkpoint delivery use the same
+core policy as Paseo. The Adapter supplies `askReviewer` (a T3 message that sends the core consult
+prompt unchanged) and `findRunAgents` (exact `nucleus.run` plus `nucleus.task`
+label lookup). Core names `question.answer` with the reissued recipient run
+ticket for any host that has a recipient run on that proven host; MCP hosts
+without a matching run clear an inherited `NUCLEUS_TICKET` so `PASEO_AGENT_ID`
+answers. Equal native IDs on different hosts do not share a consult ticket. A
+shared ticket-first caller resolver fills identity for any host and skips a
+ticket path that is gone, so T3 does not rewrite the command to a separate
+endpoint. Uncertain reviewer or
+coordinator creation can bind. T3-hosted planners are out of trial: missing
+`askPlanner` becomes an answerable board decision with the planner message,
+never a silently pending ask. Production planners stay Paseo threads. `host.permission-answer` still grants no
+task lifecycle dispatch. An unconfigured T3 adapter changes no default route. A
+configured second host never causes implicit rerouting of a live task, origin
+notice or pending question.
+
+## Trial
+
+Paseo stays the primary host. Opt a repository into T3Code for new tasks:
+
+1. Start T3Code.
+2. Issue a session bearer with `t3 auth session issue`.
+3. Write owner-only local settings (outside the repository, never logged): `t3code: { endpoint, bearer, probeThreadId? }`.
+4. In Settings, set the repository Host to T3Code, or `repository.set` with `hostKind: "t3code"`.
+5. Switch back to Paseo the same way. Live tasks keep the host they started on.
 
 ## Verification
 

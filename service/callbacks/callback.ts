@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { chmodSync, readFileSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { bulkDispositionRequestSchema, completionSchema, dependencyIdsSchema, taskControlRequestSchema } from "../../shared/contracts";
 import {Reports,reportSchema} from "../../core/intake/report";
-import {agentAskSchema} from "../../core/questions/agent-ask";
+import {agentAskSchema, AGENT_ASK_WAIT_MS} from "../../core/questions/agent-ask";
 import {agentMessageSchema} from "../../core/questions/agent-messages";
 import type { Engine } from "../../core/engine";
 import { z } from "zod";
@@ -21,11 +21,25 @@ const disposeTaskSchema = dependencyCallerSchema.extend({
   if (request.action === "withdraw_cancel" && (request.replacementTaskId || request.workDisposition))
     context.addIssue({ code: "custom", path: ["action"], message: "Cancellation withdrawal does not take a replacement or work disposition" });
 });
+export const CALLBACK_SOCKET_TIMEOUT_MS = 45_000;
+/** Helper ask waits longer than the server's bounded in-turn wait so a delayed answer is not a socket timeout. */
+export const CALLBACK_ASK_TIMEOUT_MS = AGENT_ASK_WAIT_MS + 30_000;
 const selfControlSchema = dependencyCallerSchema.extend({input: taskControlRequestSchema}).strict();
 const bulkDispositionSchema = dependencyCallerSchema.and(bulkDispositionRequestSchema);
 const bulkDispositionDetailSchema = dependencyCallerSchema.extend({ operationId: z.string().min(1).max(160) }).strict();
 // The recovery coordinator reads its own task's plan; the caller identity binds the task.
 const recoveryTaskNextSchema = dependencyCallerSchema.strict();
+const helperAnswerSchema = z.object({
+  eventId: z.string().regex(/^[a-f0-9]{64}$/),
+  taskId: z.string().min(1),
+  runId: z.string().min(1),
+  questionId: z.string().trim().min(1).max(300),
+  answer: z.string().trim().min(1).max(4000).optional(),
+  choice: z.string().trim().min(1).max(400).optional(),
+  reason: z.string().trim().min(1).max(500).regex(/^[^\r\n]*$/),
+  overtakes: z.array(z.string().trim().min(1).max(160)).max(100).optional(),
+  decision: z.literal("operator").optional(),
+}).strict().refine(value => Number(Boolean(value.answer)) + Number(Boolean(value.choice)) + Number(Boolean(value.decision)) === 1, { message: "Provide exactly one of answer, choice or decision" });
 
 // The compiled build rewrites the literal module-URL expression in source text, so the helper spells it
 // in two parts: rewritten, it never matches the helper's own path and the helper exits 0 without reporting.
@@ -44,13 +58,22 @@ const ticket=ticketPath?JSON.parse(readFileSync(ticketPath,'utf8')):null;
 const socketPath=ticket?ticket.socketPath:callbackEnvValue('SOCKET'),token=ticket?ticket.token:callbackEnvValue('RUN_TOKEN'),taskId=ticket?ticket.taskId:callbackEnvValue('TASK_ID'),runId=ticket?ticket.runId:callbackEnvValue('RUN_ID');
 if(!socketPath||!token||!taskId||!runId) throw new Error('Missing Nucleus callback environment');
 // The next argument reads the task-scoped plan the recovery coordinator launched with; it sends no report and takes no stdin.
-if(process.argv[3]==='next'){const plan=await callbackRequest({socketPath,token},'/task-next',{callerTaskId:taskId,callerRunId:runId},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry next'});console.log(JSON.stringify(plan));return;}
+const command=process.argv[3];
+if(command==='next'){const plan=await callbackRequest({socketPath,token},'/task-next',{callerTaskId:taskId,callerRunId:runId},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry next'});console.log(JSON.stringify(plan));return;}
+const route=command==='ask'?'/ask':command==='message'?'/message':command==='answer'?'/answer':'/complete';
 let text='',bytes=0;
 for await(const chunk of process.stdin){bytes+=chunk.length;if(bytes>5*1024*1024)throw new Error('Callback too large');text+=chunk;}
 const input=JSON.parse(text);
 // An explicit identity belongs to the report, not to the selected ticket.
 for(const [key,bound] of [['taskId',taskId],['runId',runId]])
   if(input[key]!==undefined&&input[key]!==bound)throw new Error('Report '+key+' does not match the callback ticket');
+if(route!=='/complete'){
+  const payload={...input,taskId,runId};
+  payload.eventId=input.eventId||createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  const result=await callbackRequest({socketPath,token},route,payload,{timeoutMs:route==='/ask'?` + CALLBACK_ASK_TIMEOUT_MS + `:` + CALLBACK_SOCKET_TIMEOUT_MS + String.raw`,timeoutMessage:'Callback timed out; retry the same JSON'});
+  console.log(JSON.stringify(result));
+  return;
+}
 // The ticket binds this run's coordinator generation, so a coordinative report that omits it still carries the authenticated run's generation. An explicit payload value always wins; a run that was genuinely superseded is still refused server-side.
 const fields={...input,coordinatorGeneration:input.coordinatorGeneration??ticket?.coordinatorGeneration};
 // Every result field is forwarded: the authenticated completion schema owns acceptance, so a field it
@@ -72,7 +95,7 @@ export async function startCallbacks(socketPath: string, helperPath: string, eng
   const reports=new Reports(engine);
   const server = createServer(async (req, res) => {
     res.setHeader("content-type", "application/json");
-    if (req.method !== "POST" || !["/complete","/report","/ask","/message","/task-dependencies","/set-dependencies","/project-queue","/promote-task","/task-disposition","/task-next","/dispose-task","/bulk-task-disposition","/bulk-task-disposition-detail","/bulk-task-disposition-retry","/task-control"].includes(req.url ?? "")) { res.writeHead(404).end('{"error":"Not found"}'); return; }
+    if (req.method !== "POST" || !["/complete","/report","/ask","/message","/answer","/task-dependencies","/set-dependencies","/project-queue","/promote-task","/task-disposition","/task-next","/dispose-task","/bulk-task-disposition","/bulk-task-disposition-detail","/bulk-task-disposition-retry","/task-control"].includes(req.url ?? "")) { res.writeHead(404).end('{"error":"Not found"}'); return; }
     const auth = req.headers.authorization;
     if (!auth?.startsWith("Bearer ")) { res.writeHead(401).end('{"error":"Unauthorized callback"}'); return; }
     const maxRequestBytes = req.url === "/complete" || req.url === "/report" ? 5 * 1024 * 1024 : 65536;
@@ -88,6 +111,7 @@ export async function startCallbacks(socketPath: string, helperPath: string, eng
       if(req.url==="/report")receipt=await reports.report(reportSchema.parse(input),auth.slice(7));
       else if(req.url==="/ask")receipt=await engine.resolution.agentAsk(agentAskSchema.parse(input),auth.slice(7));
       else if(req.url==="/message")receipt=await engine.resolution.agentMessage(agentMessageSchema.parse(input),auth.slice(7));
+      else if(req.url==="/answer")receipt=engine.resolution.answerDelegatedQuestionFromTicket(helperAnswerSchema.parse(input),auth.slice(7));
       else if(req.url==="/task-control"){
         const request=selfControlSchema.parse(input);
         receipt=await engine.taskControlFromAgent({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)},request.input);

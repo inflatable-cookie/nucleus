@@ -38,6 +38,8 @@ import { StoreCompactor, freeBytesOn } from "../core/store/store-compaction";
 import { backupCommand, backupDirForDataDir, backupHealth, listBackupSnapshots, newestScheduledSnapshotAt } from "../core/store/backups";
 import { HostPolicies } from "../core/host/host-policies";
 import type { HostPolicyConstructor } from "../core/host";
+import { resolveIngressHost } from "../core/host/ingress-host";
+import { DEFAULT_HOST_KIND } from "../shared/host-kind";
 import { createHost, hostConnected, hostConnectionRequired } from "../hosts/paseo";
 import type { RegistrationAdapter } from "../core/host/registration";
 import type { Adapter } from "../core/host/adapter";
@@ -495,13 +497,18 @@ export class QueueRuntime {
     // Retired contract 009 producer: the runtime no longer observes durable writes for a
     this.engine = new Engine(this.store, this.adapter, 60000, () => this.bootstrapCompleted && this.anyHostConnected(), undefined, this.settings.uncertainMergeRetryMs, this.hostRunStateDir);
     this.engine.currentServiceBuildId = currentServiceBuildId;
-    this.engine.selectIngressHost = explicit => {
-      if (explicit) {
-        if (!this.hostRegistry.known().some(host => host.id === explicit)) throw new Error("Selected host is not registered");
-        return explicit;
-      }
+    this.engine.selectIngressHost = (explicit, repoPath) => {
+      const registered = this.hostRegistry.known().map(host => host.id);
       const online = this.hostRegistry.onlineIds();
-      return online.length === 1 ? online[0] : undefined;
+      if (!repoPath) {
+        if (explicit) {
+          if (!registered.includes(explicit)) throw new Error("Selected host is not registered");
+          return explicit;
+        }
+        return online.length === 1 ? online[0] : undefined;
+      }
+      const hostKind = this.store.canonicalRepository(repoPath)?.hostKind ?? DEFAULT_HOST_KIND;
+      return resolveIngressHost({ explicit, hostKind, registered, online }).hostId;
     };
     this.engine.resolveHostAdapter = id => this.hostRegistry.get(id)?.adapter;
     this.engine.inventoryHostMatches = id => this.hostSession?.id === id;

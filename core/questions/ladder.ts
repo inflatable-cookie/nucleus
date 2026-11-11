@@ -412,7 +412,7 @@ export class Ladder {
       const deliveryId = `ns-reviewer-consult-${input.id}`;
       if (!this.resolution.originHostAvailable(t.hostId)) throw new DelegatedHostUnavailable('Reviewer host is offline');
       this.resolution.openDelegatedQuestion(t, deliveryId, reviewer!, consultPrompt, REVIEWER_CONSULT_TIMEOUT_MS, 'reviewer', t.hostId);
-      await this.adapter.askReviewer!(reviewer!, { prompt: this.resolution.delegatePrompt(t, deliveryId, consultPrompt), messageId: deliveryId, timeoutMs: REVIEWER_CONSULT_TIMEOUT_MS, signal: new AbortController().signal });
+      await this.adapter.askReviewer!(reviewer!, { prompt: this.resolution.delegatePrompt(t, deliveryId, consultPrompt, reviewer, t.hostId), messageId: deliveryId, timeoutMs: REVIEWER_CONSULT_TIMEOUT_MS, signal: new AbortController().signal });
       const command = await this.resolution.waitDelegatedAnswer(deliveryId, new AbortController().signal);
       const reply = parseNativeDelegatedReply(command);
       text = reply?.kind === 'answer' ? reply.answer : null;

@@ -1,5 +1,5 @@
 import { basename, resolve } from "node:path";
-import { taskHasUnreleasedRun, repositorySettingsSchema, DEFAULT_REPOSITORY_CHECKS_POLICY, type RepositoryChecksPolicy, projectSchema, projectTombstoneSchema, projectUpsertInputSchema, projectDispatchLimitOverridesSchema, projectPlanSchema, projectQaRunSchema, repositoryMatchSpecificity, DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT, isOperatorOrigin, QUEUE_REPOSITORY_ORIGIN, NUCLEUS_REPOSITORY_ORIGIN, type Lead, type Decision, type ProjectPlan, type PendingSubmission, type Run, type Outcome, type Task, type Lane, type Project, type ProjectRemovalBlocker, type ProjectManagementPreview, type ProjectManageInput, type ProjectRemoveRepositoryInput, type ProjectMergeInput, type ProjectMergeResult, type ProjectMergeCheck, type ProjectMergeCheckInput, type ProjectTombstone, type ProjectUpsertInput, type RepositorySettings, type ProjectCloseout, type ProjectValidation, type ProjectQa } from "../../shared/contracts";
+import { taskHasUnreleasedRun, repositorySettingsSchema, DEFAULT_REPOSITORY_CHECKS_POLICY, DEFAULT_HOST_KIND, type RepositoryChecksPolicy, type HostKind, projectSchema, projectTombstoneSchema, projectUpsertInputSchema, projectDispatchLimitOverridesSchema, projectPlanSchema, projectQaRunSchema, repositoryMatchSpecificity, DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT, isOperatorOrigin, QUEUE_REPOSITORY_ORIGIN, NUCLEUS_REPOSITORY_ORIGIN, type Lead, type Decision, type ProjectPlan, type PendingSubmission, type Run, type Outcome, type Task, type Lane, type Project, type ProjectRemovalBlocker, type ProjectManagementPreview, type ProjectManageInput, type ProjectRemoveRepositoryInput, type ProjectMergeInput, type ProjectMergeResult, type ProjectMergeCheck, type ProjectMergeCheckInput, type ProjectTombstone, type ProjectUpsertInput, type RepositorySettings, type ProjectCloseout, type ProjectValidation, type ProjectQa } from "../../shared/contracts";
 import { type QueueOperation } from "../../shared/operations";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { projectRemovalBlockerText, projectRemovalBlockers, projectRemovalRefusal, projectRepositoryMatches } from "../../shared/project-removal";
@@ -117,7 +117,7 @@ export class StoreProjects {
     this.core.setMeta("projectRevision", revision);
     return revision;
   }
-  putRepository(identity: RepositorySettings["repository"], closeout: ProjectCloseout | null, note: string, validation: ProjectValidation | null = null, reviewer: RepositorySettings["reviewer"] = null, qa: ProjectQa | null = null, checksPolicy: RepositorySettings["checksPolicy"] | undefined = undefined, scratchNamespace?: string | null): RepositorySettings {
+  putRepository(identity: RepositorySettings["repository"], closeout: ProjectCloseout | null, note: string, validation: ProjectValidation | null = null, reviewer: RepositorySettings["reviewer"] = null, qa: ProjectQa | null = null, checksPolicy: RepositorySettings["checksPolicy"] | undefined = undefined, scratchNamespace?: string | null, hostKind?: HostKind): RepositorySettings {
     if (!identity.origin && !identity.path) throw new Error("A project needs a repository origin or local path");
     const write = () => {
       // A path hint set from a real checkout survives a later origin-only set.
@@ -138,7 +138,7 @@ export class StoreProjects {
         if (row.repository.origin === null && merged.path && row.repository.path === merged.path)
           this.db.prepare("DELETE FROM repository_settings WHERE key=?").run(rowKey);
       }
-      const parsed = repositorySettingsSchema.parse({ repository: merged, scratchNamespace: scratchNamespace === undefined ? existing?.scratchNamespace ?? pathOnlyPredecessor?.scratchNamespace ?? null : scratchNamespace, closeout, validation, reviewer, qa, checksPolicy: checksPolicy === undefined ? existing?.checksPolicy ?? pathOnlyPredecessor?.checksPolicy ?? null : checksPolicy, note, updatedAt: now(), revision: this.nextRepositoryRevision() });
+      const parsed = repositorySettingsSchema.parse({ repository: merged, scratchNamespace: scratchNamespace === undefined ? existing?.scratchNamespace ?? pathOnlyPredecessor?.scratchNamespace ?? null : scratchNamespace, closeout, validation, reviewer, qa, checksPolicy: checksPolicy === undefined ? existing?.checksPolicy ?? pathOnlyPredecessor?.checksPolicy ?? null : checksPolicy, hostKind: hostKind ?? existing?.hostKind ?? pathOnlyPredecessor?.hostKind ?? DEFAULT_HOST_KIND, note, updatedAt: now(), revision: this.nextRepositoryRevision() });
       this.db.prepare("INSERT INTO repository_settings(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data").run(this.repositoryKey(merged), JSON.stringify(parsed));
       this.ensureProject(merged.path, merged.origin);
       this.core.advanceRevision();
@@ -147,7 +147,7 @@ export class StoreProjects {
     return this.db.isTransaction ? write() : this.core.transaction(write);
   }
   /** Patch semantics: only the named fields change; `null` clears one and an absent field keeps its stored value. Returns the full resulting row. */
-  patchRepository(identity: RepositorySettings["repository"], patch: { scratchNamespace?: string | null; closeout?: ProjectCloseout | null; validation?: ProjectValidation | null; reviewer?: RepositorySettings["reviewer"]; qa?: ProjectQa | null; checksPolicy?: RepositorySettings["checksPolicy"]; note?: string }): RepositorySettings {
+  patchRepository(identity: RepositorySettings["repository"], patch: { scratchNamespace?: string | null; closeout?: ProjectCloseout | null; validation?: ProjectValidation | null; reviewer?: RepositorySettings["reviewer"]; qa?: ProjectQa | null; checksPolicy?: RepositorySettings["checksPolicy"]; hostKind?: HostKind; note?: string }): RepositorySettings {
     const apply = () => {
       const existing = this.repositorySettingsFor(identity);
       const base = existing ?? { closeout: null, validation: null, reviewer: null, qa: null, checksPolicy: null, note: "" };
@@ -155,7 +155,7 @@ export class StoreProjects {
         patch.validation !== undefined ? patch.validation : base.validation, patch.reviewer !== undefined ? patch.reviewer : base.reviewer,
         patch.qa !== undefined ? patch.qa : base.qa,
         patch.checksPolicy !== undefined ? patch.checksPolicy : base.checksPolicy,
-        patch.scratchNamespace);
+        patch.scratchNamespace, patch.hostKind);
     };
     return this.db.isTransaction ? apply() : this.core.transaction(apply);
   }

@@ -13,10 +13,15 @@ import { runTemporaryEnvironment, type RunScratchPlacement } from "../workspaces
 
 type CallbackPaths = Pick<CreationOwner, "socketPath" | "helperPath">;
 
+/** Deterministic ticket path for a run; the prompt can name it before the write. */
+export function runTicketPath(paths: Pick<CallbackPaths, "helperPath">, runId: string): string {
+  return join(dirname(paths.helperPath), "tickets", `${runId}.json`);
+}
+
 /** The run ticket the authenticated fallback reads: its socket, identity, token and any coordinator generation. */
 export function writeRunTicket(paths: CallbackPaths, task: Task, run: { id: string; role: Run["role"] | "worker"; generation: number }, token: string): string {
   const directory = join(dirname(paths.helperPath), "tickets"); mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const path = join(directory, `${run.id}.json`);
+  const path = runTicketPath(paths, run.id);
   // A coordinative run's generation never changes after creation, so the ticket can bind it for the
   // authenticated fallback: the helper sends it when the payload omits it. Other roles need no binding.
   const generation = ['closeout', 'recovery', 'executor'].includes(run.role) ? { coordinatorGeneration: run.generation } : {};
@@ -66,7 +71,7 @@ export function workerAgentSpec(owner: () => CreationOwner, task: Task, token: s
         requestId: retry ? `ns-agent-${runId}-socket` : `ns-agent-${runId}`,
         prompt: retry ? legacyPrompt : prompt,
         labels: wireLabels({ task: task.id, run: runId, ...(mcp ? { mcpBinding: runId, mcpBindingPath: mcpBindingPath ?? undefined } : {}) }),
-        environment: launchEnvironment(current, task, runId, task.temporaryDirectory, ticket),
+        environment: current.perThreadEnvironment === false ? {} : launchEnvironment(current, task, runId, task.temporaryDirectory, ticket),
       };
     },
   };
@@ -89,7 +94,7 @@ export function runAgentSpec(owner: () => CreationOwner, task: Task, run: Run, t
         requestId: retry ? `ns-run-${run.id}-socket` : `ns-run-${run.id}`,
         prompt: runPrompt(task, run, current.helperPath, ticket, mcp, context, ownerContext),
         labels: wireLabels({ task: task.id, run: run.id, role: run.role, ...(mcp ? { mcpBinding: run.id, mcpBindingPath: mcpBindingPath ?? undefined } : {}) }),
-        environment: launchEnvironment(current, task, run.id, run.temporaryDirectory, ticket),
+        environment: current.perThreadEnvironment === false ? {} : launchEnvironment(current, task, run.id, run.temporaryDirectory, ticket),
       };
     },
   };

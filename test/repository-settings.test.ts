@@ -48,6 +48,13 @@ test('project rows round-trip through set, get and list with outcome-style repos
     assert.equal(cleared.note, '');
     assert.equal((await runtime.getRepository({repository: repo}))?.updatedAt, cleared.updatedAt);
 
+    const opted = await runtime.setRepository({repository: 'acme/app', hostKind: 't3code'});
+    assert.equal(opted.hostKind, 't3code');
+    const preserved = await runtime.setRepository({repository: 'acme/app', note: 'keeps hostKind'});
+    assert.equal(preserved.hostKind, 't3code', 'an absent hostKind patch preserves the opt-in');
+    const restored = await runtime.setRepository({repository: 'acme/app', hostKind: 'paseo'});
+    assert.equal(restored.hostKind, 'paseo');
+
     const scratch = await runtime.setRepository({repository: 'acme/app', scratchNamespace: 'effigy'});
     assert.equal(scratch.scratchNamespace, 'effigy');
     assert.equal(runtime.store.scratchNamespaceFor({repoPath: repo, repository: 'acme/app'}), 'effigy');
@@ -535,7 +542,7 @@ test('a supported required-check surface permits activation, is re-read on every
     ]);
     assert.equal(calls.some(call => /\/main/.test(call)), false, 'no branch is guessed');
     // The settings row carries the documented fields only: the capability is not proof.
-    assert.deepEqual(Object.keys(saved).sort(), ['checksPolicy', 'closeout', 'note', 'qa', 'repository', 'reviewer', 'revision', 'scratchNamespace', 'updatedAt', 'validation']);
+    assert.deepEqual(Object.keys(saved).sort(), ['checksPolicy', 'closeout', 'hostKind', 'note', 'qa', 'repository', 'reviewer', 'revision', 'scratchNamespace', 'updatedAt', 'validation']);
     // A second explicit activation observes again instead of relying on the first answer.
     calls.length = 0;
     await runtime.setRepository({repository: 'acme/rules', checksPolicy: 'all'});
