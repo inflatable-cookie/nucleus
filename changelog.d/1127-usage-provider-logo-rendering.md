@@ -1,0 +1,3 @@
+- Usage gauge: provider logos now render as bundled PNG marks cropped to the mark and tinted to the theme, in the Paseo sidebar rings (slightly larger: 26 px ring, 14 px mark) and on the Usage page in the plugin and the web board.
+- Usage page cards put a larger dial on the left with the header, verdict and window rows in one column to its right; narrow cards stack the dial above the column.
+- "Plenty of room" now means projected use at reset of 80% or less; above that the verdict reads "On track" with the spare share. The used bar takes the state colour (red when it will run out), and reset times round to the nearest minute.

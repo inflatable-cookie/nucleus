@@ -143,17 +143,27 @@ const weekdays = [
 
 /** The reset day used in sentences and the window row. */
 export function resetDay(iso: string | null): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? null : weekdays[date.getDay()]!;
+  const date = resetDate(iso);
+  return date ? weekdays[date.getDay()]! : null;
 }
 
-function resetTime(iso: string | null): string | null {
+/** A reset instant rounded to the nearest minute, so 08:59:59 reads as 09:00. */
+function resetDate(iso: string | null): Date | null {
   if (!iso) return null;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return null;
+  return new Date(Math.round(at / 60_000) * 60_000);
 }
+
+/** The window row's reset label: "Resets Saturday 09:00". */
+export function resetLabel(iso: string | null): string {
+  const date = resetDate(iso);
+  if (!date) return "Reset time unavailable";
+  return `Resets ${weekdays[date.getDay()]} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/** Projected use at reset at or below this reads "Plenty of room"; above it, "On track". */
+export const PLENTY_OF_ROOM_MAX = 0.8;
 
 /** Plain-language verdict for the subscription's projected pressure. */
 export function usageVerdict(
@@ -197,7 +207,7 @@ export function usageVerdict(
   }
   const projectedUse = projection.projectedUseAtReset;
   if (projectedUse === null) return "Usage unavailable right now.";
-  if (projection.state === "on_track") {
+  if (projection.state === "on_track" || projectedUse > PLENTY_OF_ROOM_MAX) {
     const spare = Math.max(0, Math.round((1 - projectedUse) * 100));
     return `On track. You should reach ${day}'s reset with about ${spare}% to spare.`;
   }
@@ -275,7 +285,7 @@ export function ProviderLogo({
   size: number;
   color: string;
 }) {
-  const source = providerLogoSource(provider, color);
+  const source = providerLogoSource(provider);
   if (!source) {
     return <Icon name={providerIconName(provider)} size={size} color={color} />;
   }
@@ -285,7 +295,7 @@ export function ProviderLogo({
       accessibilityLabel={`${providerLabel(provider)} logo`}
       source={{ uri: source }}
       resizeMode="contain"
-      style={{ width: size, height: size }}
+      style={{ width: size, height: size, tintColor: color }}
     />
   );
 }
@@ -322,14 +332,18 @@ export function PressureDial({
   const r = roles(c);
   const color = pressureColor(state, c);
   const rotation = dialNeedleRotation(dial);
-  const needle = size / 2 - 12;
+  // Strokes scale with the dial so the card's large dial keeps its weight.
+  const track = Math.max(dialThickness, Math.round(size / 32));
+  const stroke = Math.max(3, Math.round(size / 44));
+  const hub = Math.max(8, Math.round(size / 16));
+  const needle = size / 2 - 12 - track;
   return (
     <View
       accessibilityRole="image"
       accessibilityLabel={`Usage dial: ${label}`}
       style={{
         width: size,
-        height: size / 2 + space.xs + dialThickness,
+        height: size / 2 + space.xs + track,
         alignItems: "center",
       }}
     >
@@ -339,7 +353,7 @@ export function PressureDial({
           height: size / 2,
           borderTopLeftRadius: size / 2,
           borderTopRightRadius: size / 2,
-          borderWidth: dialThickness,
+          borderWidth: track,
           borderBottomWidth: 0,
           borderColor: r.border,
           borderBottomColor: "transparent",
@@ -361,22 +375,22 @@ export function PressureDial({
           <View
             style={{
               position: "absolute",
-              left: size / 2 - 1.5,
+              left: size / 2 - stroke / 2,
               top: size / 2 - needle,
-              width: 3,
+              width: stroke,
               height: needle,
-              borderRadius: 1.5,
+              borderRadius: stroke / 2,
               backgroundColor: color,
             }}
           />
           <View
             style={{
               position: "absolute",
-              left: size / 2 - 4,
-              top: size / 2 - 4,
-              width: 8,
-              height: 8,
-              borderRadius: 4,
+              left: size / 2 - hub / 2,
+              top: size / 2 - hub / 2,
+              width: hub,
+              height: hub,
+              borderRadius: hub / 2,
               backgroundColor: color,
             }}
           />
@@ -526,18 +540,19 @@ function UsageWindowRow({
   window,
   now,
   expired,
+  color,
 }: {
   c: Colors;
   window: UsageWindow;
   now: number;
   expired: boolean;
+  /** The subscription's state colour; the used portion takes it, the pace marker stays neutral. */
+  color: string;
 }) {
   const r = roles(c);
   const used = Math.round(window.usedFraction * 100);
   const elapsed = windowElapsedFraction(window, now);
-  const reset = window.resetsAt
-    ? `Resets ${resetDay(window.resetsAt)} ${resetTime(window.resetsAt)}`
-    : "Reset time unavailable";
+  const reset = resetLabel(window.resetsAt);
   return (
     <View
       style={{ gap: 4 }}
@@ -574,7 +589,10 @@ function UsageWindowRow({
             position: "relative",
           }}
         >
-          <View style={{ height: 6, width: `${used}%`, borderRadius: 3, backgroundColor: r.accent }} />
+          <View
+            testID="usage-used-bar"
+            style={{ height: 6, width: `${Math.max(0, Math.min(100, used))}%`, borderRadius: 3, backgroundColor: color }}
+          />
           {elapsed !== null && (
             <View
               testID="usage-pace-marker"
@@ -595,7 +613,17 @@ function UsageWindowRow({
   );
 }
 
-/** One subscription's card: dial and caption, window details, freshness and any read error. */
+/** Below this card width the dial stacks above the content column. */
+export const USAGE_CARD_STACK_WIDTH = 460;
+
+/** The card's dial width: about twice the earlier 88 px dial. */
+export const USAGE_CARD_DIAL_SIZE = 176;
+
+/**
+ * One subscription's card: a large dial on the left, vertically centred, and
+ * one column to its right with the header, verdict, window rows and any stale
+ * note. Narrow cards stack the dial above the column.
+ */
 export function UsageCard({
   c,
   compact,
@@ -608,116 +636,126 @@ export function UsageCard({
   now: number;
 }) {
   const [helpOpen, setHelpOpen] = useState(false);
+  const [width, setWidth] = useState(0);
   const anchor = React.useRef<View | null>(null);
   const r = roles(c);
   const reading = subscription.reading;
   const projection = subscription.projection;
   const state = subscription.stale?.expired ? "unknown" : projection.state;
+  const color = pressureColor(state, c);
   const heading = providerLabel(subscription.provider);
   const verdict = usageVerdict(subscription, now);
   const caption = state === "unknown" ? usageStateWord(state) : dialCaption(subscription);
+  const stacked = width > 0 && width < USAGE_CARD_STACK_WIDTH;
+  const dialSize = compact ? 152 : USAGE_CARD_DIAL_SIZE;
   return (
     <View
       accessibilityLabel={`${heading} usage: ${verdict}`}
-      style={{ ...sectionCard(c), gap: space.xs }}
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+      style={{
+        ...sectionCard(c),
+        flexDirection: stacked ? "column" : "row",
+        alignItems: stacked ? "flex-start" : "center",
+        gap: space.md,
+      }}
     >
+      <PressureDial
+        c={c}
+        state={state}
+        dial={state === "unknown" ? null : projection.dial}
+        label={caption}
+        size={dialSize}
+      />
       <View
-        ref={anchor}
-        style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}
-      >
-        <ProviderLogo
-          provider={subscription.provider}
-          size={16}
-          color={c.foreground}
-        />
-        <Text
-          accessibilityRole="header"
-          numberOfLines={1}
-          style={{
-            color: r.foreground,
-            fontWeight: "600",
-            fontSize: typeScale.section.fontSize,
-            lineHeight: typeScale.section.lineHeight,
-            flexShrink: 1,
-          }}
-        >
-          {heading}
-        </Text>
-        <HelpTip
-          c={c}
-          label={heading}
-          text={cardHelp(subscription, now)}
-          open={helpOpen}
-          onOpenChange={setHelpOpen}
-        />
-        {helpOpen && (
-          <HelpPopover
-            c={c}
-            anchor={anchor}
-            label={heading}
-            text={cardHelp(subscription, now)}
-          />
-        )}
-      </View>
-      <View
+        testID="usage-card-column"
         style={{
-          flexDirection: "row",
-          alignItems: "center",
-          gap: space.sm,
-          flexWrap: "wrap",
+          gap: space.xs,
+          flex: stacked ? undefined : 1,
+          alignSelf: stacked ? "stretch" : undefined,
+          minWidth: 0,
         }}
       >
-        <PressureDial
-          c={c}
-          state={state}
-          dial={state === "unknown" ? null : projection.dial}
-          label={caption}
-          size={compact ? 80 : 88}
-        />
-        <View style={{ gap: 2, flex: 1, paddingBottom: space.xs }}>
+        <View
+          ref={anchor}
+          style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}
+        >
+          <ProviderLogo
+            provider={subscription.provider}
+            size={16}
+            color={c.foreground}
+          />
           <Text
-            accessibilityRole="text"
+            accessibilityRole="header"
+            numberOfLines={1}
             style={{
               color: r.foreground,
               fontWeight: "600",
-              fontSize: typeScale.body.fontSize,
-              lineHeight: typeScale.body.lineHeight,
+              fontSize: typeScale.section.fontSize,
+              lineHeight: typeScale.section.lineHeight,
+              flexShrink: 1,
             }}
           >
-            {verdict}
+            {heading}
           </Text>
-        </View>
-      </View>
-      {reading.status === "ok" ? (
-        <View style={{ gap: space.xs }}>
-          {reading.windows.map((window) => (
-            <UsageWindowRow
-              key={window.windowId}
+          <HelpTip
+            c={c}
+            label={heading}
+            text={cardHelp(subscription, now)}
+            open={helpOpen}
+            onOpenChange={setHelpOpen}
+          />
+          {helpOpen && (
+            <HelpPopover
               c={c}
-              window={window}
-              now={now}
-              expired={Boolean(subscription.stale?.expired)}
+              anchor={anchor}
+              label={heading}
+              text={cardHelp(subscription, now)}
             />
-          ))}
+          )}
         </View>
-      ) : null}
-      {subscription.stale && (
         <Text
           accessibilityRole="text"
           style={{
-            ...muted(c),
-            fontSize: typeScale.metadata.fontSize,
-            lineHeight: typeScale.metadata.lineHeight,
+            color: r.foreground,
+            fontWeight: "600",
+            fontSize: typeScale.body.fontSize,
+            lineHeight: typeScale.body.lineHeight,
           }}
         >
-          Showing the reading from {formatRelativeSpan(subscription.stale.ageMs)} ago: couldn't refresh ({subscription.stale.reason})
+          {verdict}
         </Text>
-      )}
-      {!subscription.stale && now - Date.parse(reading.asOf) > 60 * 60_000 && (
-        <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
-          updated {formatRelativeTime(reading.asOf, now)}
-        </Text>
-      )}
+        {reading.status === "ok" ? (
+          <View style={{ gap: space.xs, marginTop: 2 }}>
+            {reading.windows.map((window) => (
+              <UsageWindowRow
+                key={window.windowId}
+                c={c}
+                window={window}
+                now={now}
+                expired={Boolean(subscription.stale?.expired)}
+                color={color}
+              />
+            ))}
+          </View>
+        ) : null}
+        {subscription.stale && (
+          <Text
+            accessibilityRole="text"
+            style={{
+              ...muted(c),
+              fontSize: typeScale.metadata.fontSize,
+              lineHeight: typeScale.metadata.lineHeight,
+            }}
+          >
+            Showing the reading from {formatRelativeSpan(subscription.stale.ageMs)} ago: couldn't refresh ({subscription.stale.reason})
+          </Text>
+        )}
+        {!subscription.stale && now - Date.parse(reading.asOf) > 60 * 60_000 && (
+          <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+            updated {formatRelativeTime(reading.asOf, now)}
+          </Text>
+        )}
+      </View>
     </View>
   );
 }

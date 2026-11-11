@@ -19,4 +19,6 @@ asserted for them.
   [SpaceXSI's brand guidelines](https://x.ai/legal/brand-guidelines); the mark
   is used only to identify the provider.
 
-The marks are bundled locally; the client makes no runtime requests for them.
+The marks are bundled locally as white PNGs rasterised from those SVGs and
+cropped to the mark; the client tints them to the theme text colour and makes
+no runtime requests for them.

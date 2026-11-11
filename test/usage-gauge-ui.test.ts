@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { inflateSync } from "node:zlib";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
@@ -15,7 +16,7 @@ import {
 // value correctly; the page renders subscriptions from a `usage.state` fixture; the
 // Paseo sidebar row carries the board button and the rings, opens the board on its
 // Usage tab and takes the host's active state; a host without the newer APIs keeps
-// the native sidebar item; every provider mark paints in the requested colour. The
+// the native sidebar item; provider marks tint in native and web shells. The
 // plugin shell renders the page from the board's navigation. Synthetic fixtures only.
 // The web shell is exercised by test/web-shell.test.ts against the built bundle.
 useNativeStubs();
@@ -564,16 +565,16 @@ test("the sidebar row carries the board button and the rings on one line", async
     labels.every((label) => label.endsWith("Opens the usage page")),
     "every ring says where it leads",
   );
-  const railSvgMarks = tree.ofType("Image").map((node) =>
-    decodeURIComponent(node.props.source.uri.split(",")[1]),
-  );
+  const railMarks = tree.ofType("Image");
   assert.ok(
-    railSvgMarks.every(
-      (svg) =>
-        /fill="#f0f6fc"/.test(svg) &&
-        [...svg.matchAll(/fill="([^"]*)"/g)].every(([, value]) => value === dark.foreground),
+    railMarks.every(
+      (image) =>
+        image.props.source.uri.startsWith("data:image/png;base64,") &&
+        image.props.style.width > 0 &&
+        image.props.style.height > 0 &&
+        image.props.style.tintColor === dark.foreground,
     ),
-    "row marks paint in the theme text colour regardless of reading state",
+    "row marks have painted pixel sources, visible dimensions, and the theme tint regardless of reading state",
   );
   tree.query(/^Codex usage: /)!.props.onPress();
   assert.deepEqual(
@@ -641,43 +642,106 @@ test("the row shows the board's active state and a ring moves an open board", as
   board.update(h(React.Fragment, {}));
 });
 
-test("every provider mark paints the whole mark in the requested colour", async () => {
+/** Decode an 8-bit RGBA PNG's alpha channel: its width, height and the alpha byte per pixel. */
+function pngAlpha(png: Buffer): { width: number; height: number; alpha: Uint8Array } {
+  assert.deepEqual(png.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), "a PNG signature");
+  let offset = 8, width = 0, height = 0;
+  const data: Buffer[] = [];
+  while (offset < png.length) {
+    const length = png.readUInt32BE(offset), type = png.toString("ascii", offset + 4, offset + 8);
+    const body = png.subarray(offset + 8, offset + 8 + length);
+    if (type === "IHDR") {
+      width = body.readUInt32BE(0);
+      height = body.readUInt32BE(4);
+      assert.equal(body[8], 8, "8-bit channels");
+      assert.equal(body[9], 6, "RGBA colour type");
+      assert.equal(body[12], 0, "not interlaced");
+    }
+    if (type === "IDAT") data.push(body);
+    offset += 12 + length;
+  }
+  const raw = inflateSync(Buffer.concat(data)), stride = width * 4;
+  const pixels = new Uint8Array(stride * height), alpha = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)]!, row = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let x = 0; x < stride; x++) {
+      const left = x >= 4 ? pixels[y * stride + x - 4]! : 0, up = y ? pixels[(y - 1) * stride + x]! : 0;
+      const upLeft = x >= 4 && y ? pixels[(y - 1) * stride + x - 4]! : 0;
+      const p = left + up - upLeft, pa = Math.abs(p - left), pb = Math.abs(p - up), pc = Math.abs(p - upLeft);
+      const predictor = [0, left, up, (left + up) >> 1, pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft][filter]!;
+      pixels[y * stride + x] = (row[x]! + predictor) & 0xff;
+    }
+  }
+  for (let i = 0; i < width * height; i++) alpha[i] = pixels[i * 4 + 3]!;
+  return { width, height, alpha };
+}
+
+test("provider marks are bundled PNGs that actually paint, cropped to the mark", async () => {
   await load();
   const assets = await import("../client/provider-logo-assets");
   for (const provider of ["claude", "codex", "grok"]) {
-    for (const color of [dark.foreground, dark.foregroundMuted]) {
-      const source = assets.providerLogoSource(provider, color);
-      assert.ok(
-        source?.startsWith("data:image/svg+xml;utf8,"),
-        `${provider} is an SVG data URI`,
-      );
-      const svg = decodeURIComponent(source!.split(",")[1]);
-      const root = /<svg\b[^>]*>/i.exec(svg)![0];
-      assert.ok(
-        root.includes(`fill="${color}"`),
-        `${provider}'s root svg carries the colour, so unpainted children inherit it`,
-      );
-      const fills = [...svg.matchAll(/fill="([^"]*)"/g)].map(([, value]) => value);
-      assert.ok(fills.length > 1, `${provider} keeps its painted paths`);
-      assert.deepEqual(
-        fills.filter((value) => value !== color),
-        [],
-        `${provider} paints every element in the requested colour`,
-      );
-      assert.ok(!svg.includes("currentColor"), `${provider} leaves no currentColor`);
-      assert.ok(!svg.includes("foreignObject"), `${provider} SVG is renderer-safe`);
-    }
+    const source = assets.providerLogoSource(provider);
+    assert.ok(source?.startsWith("data:image/png;base64,"), `${provider} uses a PNG data URI`);
+    const { width, height, alpha } = pngAlpha(Buffer.from(source!.slice("data:image/png;base64,".length), "base64"));
+    assert.ok(width >= 48 && height >= 32, `${provider} is rasterised at 3x or more of the 16 px card size`);
+    let painted = 0, minX = width, maxX = -1, minY = height, maxY = -1;
+    for (let y = 0; y < height; y++)
+      for (let x = 0; x < width; x++)
+        if (alpha[y * width + x]! > 128) {
+          painted++;
+          minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+          minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        }
+    // A blank or fully transparent source paints nothing; a mark lost in its
+    // viewBox padding (the Codex knot once filled half its box) paints small.
+    assert.ok(painted / (width * height) > 0.15, `${provider} paints visible pixels (${painted} of ${width * height})`);
+    assert.ok(maxX - minX + 1 >= width * 0.85 || maxY - minY + 1 >= height * 0.85, `${provider} fills its box`);
   }
-  // Recolouring is per colour, and a repeated read reuses the built source.
-  assert.notEqual(
-    assets.providerLogoSource("claude", dark.foreground),
-    assets.providerLogoSource("claude", dark.foregroundMuted),
-  );
-  assert.equal(
-    assets.providerLogoSource("claude", dark.foreground),
-    assets.providerLogoSource("claude", dark.foreground),
-  );
-  assert.equal(assets.providerLogoSource("unknown", dark.foreground), null);
+  assert.equal(assets.providerLogoSource("unknown"), null);
+});
+
+test("cards put a large dial left of one content column, stacking when narrow", async () => {
+  await load();
+  const tree = mountPage(fixture.state);
+  await settle(() => tree.text().includes("Codex"));
+  const card = tree.ofType("View").find((node) => /^Codex usage: /.test(node.props.accessibilityLabel ?? ""))!;
+  assert.equal(card.props.style.flexDirection, "row", "the dial sits left of the column");
+  assert.equal(card.props.style.alignItems, "center", "the dial is vertically centred");
+  const [dial, column] = card.children as HostNode[];
+  assert.match(dial!.props.accessibilityLabel, /^Usage dial: /);
+  assert.equal(dial!.props.style.width, usage.USAGE_CARD_DIAL_SIZE, "about twice the earlier 88 px dial");
+  assert.equal(column!.props.testID, "usage-card-column");
+  const columnText = JSON.stringify(column);
+  for (const part of ["Codex logo", "Codex", "At this pace", "This week", "62% used"])
+    assert.ok(columnText.includes(part), `${part} sits in the column right of the dial`);
+  card.props.onLayout({ nativeEvent: { layout: { width: usage.USAGE_CARD_STACK_WIDTH - 1 } } });
+  const narrow = tree.ofType("View").find((node) => /^Codex usage: /.test(node.props.accessibilityLabel ?? ""))!;
+  assert.equal(narrow.props.style.flexDirection, "column", "a narrow card stacks the dial above the column");
+  // The used bar takes the state colour; the on-pace marker stays neutral.
+  const bars = tree.ofType("View").filter((node) => node.props.testID === "usage-used-bar");
+  assert.equal(bars[0]!.props.style.backgroundColor, dark.statusDanger, "Codex runs out: red bar");
+  assert.equal(bars[1]!.props.style.backgroundColor, dark.statusSuccess, "Claude has spare: green bar");
+  const marker = tree.ofType("View").find((node) => node.props.testID === "usage-pace-marker");
+  assert.equal(marker!.props.style.backgroundColor, dark.foreground);
+});
+
+test("plenty of room only well under 100%, and resets round to the minute", async () => {
+  await load();
+  const verdictAt = (usedFraction: number) => {
+    const projection = projectUsage({ now: NOW, windows: [window({ usedFraction })] });
+    return usage.usageVerdict(
+      subscription({ reading: reading([window({ usedFraction })]), projection }) as never,
+      NOW,
+    );
+  };
+  // 4/7 of the week elapsed: 0.53 used projects 93% at reset, 0.4 projects 70%.
+  assert.equal(verdictAt(0.53), "On track. You should reach Saturday's reset with about 7% to spare.");
+  assert.match(verdictAt(0.4), /^Plenty of room\. On track to use about 70% by Saturday's reset\.$/);
+  const local = (h: number, m: number, sec: number) => new Date(2026, 10, 14, h, m, sec).toISOString();
+  assert.equal(usage.resetLabel(local(8, 59, 59)), "Resets Saturday 09:00");
+  assert.equal(usage.resetLabel(local(8, 59, 20)), "Resets Saturday 08:59");
+  assert.equal(usage.resetDay(local(23, 59, 45)), "Sunday", "the rounded minute names the day");
+  assert.equal(usage.resetLabel(null), "Reset time unavailable");
 });
 
 test("the entry registers the combined row only where the host carries it", async () => {
@@ -772,9 +836,9 @@ test("provider logos fall back for unknown providers and titles omit duplicate g
       h(usage.ProviderLogo, { provider, size: 12, color: dark.foreground }),
     ).ofType("Image")[0];
     assert.ok(logo, `${provider} renders an image mark`);
-    const svg = decodeURIComponent(logo!.props.source.uri.split(",")[1]);
-    assert.ok(svg.includes(`fill="${dark.foreground}"`), `${provider} uses the theme text colour`);
-    assert.ok(!svg.includes("foreignObject"), `${provider} SVG is renderer-safe`);
+    assert.ok(logo!.props.style.width > 0 && logo!.props.style.height > 0, `${provider} has a visible image size`);
+    assert.equal(logo!.props.style.tintColor, dark.foreground, `${provider} takes the theme text colour`);
+    assert.ok(logo!.props.source.uri.includes("data:image/png;base64,"), `${provider} has a painted image source`);
   }
 });
 
