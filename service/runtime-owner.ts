@@ -63,6 +63,7 @@ import { type OperationAcceptance, type OperationResult } from "../shared/operat
 import { capacitySchema, projectDispatchLimitSchema, DEFAULT_GLOBAL_LIMIT, DEFAULT_UNCERTAIN_MERGE_RETRY_MS, UNCERTAIN_MERGE_PROOF_TIMEOUT_MS, sourcePromotionInputSchema, submissionSchema, submitInstruction as submitInstructionRpc, reviewEntryReconcileInputSchema, BACKUP_INTERVAL_MS, BACKUP_DUE_CHECK_MS, BACKUP_FAILURE_RETRY_MS, BACKUP_HEALTH_REFRESH_MS, type BoundRun } from "../shared/contracts";
 import { createTelemetrySnapshotCache, taskControlTelemetry } from '../core/telemetry/telemetry';
 import { RunUsageTracker } from '../core/telemetry/run-usage-tracker';
+import { UsageService, USAGE_TICK_INTERVAL_MS } from '../core/usage/usage-service';
 import { createTaskDetailCache } from '../core/telemetry/task-detail';
 import { createUiSnapshotFactsCache } from '../core/telemetry/ui-snapshot';
 import { QA_BOARD_PASS_FADE_MS } from '../core/qa/qa-board';
@@ -313,6 +314,8 @@ export class QueueRuntime {
   private readonly spawnToken: string | undefined;
   readonly hostRuns: HostRunScheduler;
   readonly papercuts: Papercuts;
+  /** Spec 059: the subscription usage gauge's paced readers, samples and projection. */
+  readonly usage: UsageService;
   readonly leads: Leads;
   readonly decisions: Decisions;
   readonly adapter: Adapter;
@@ -446,6 +449,7 @@ export class QueueRuntime {
     this.hostRuns = HostRunScheduler.forStore(this.store);
     this.hostRuns.setLaunchPredicate(() => !this.closing && !this.idleShutdownLatched);
     this.papercuts = new Papercuts(this.store);
+    this.usage = new UsageService(this.store);
     this.leads = new Leads(this.store);
     this.decisions = new Decisions(this.store);
     options.instrumentStore?.(this.store);
@@ -623,6 +627,15 @@ export class QueueRuntime {
       // pre-emptible, so running it more often only tightens the net.
       this.timers.push(setInterval(() => tick(false), this.sweepIntervalMs));
       this.timers.push(setInterval(() => tick(true), PROFILE_REFRESH_INTERVAL_MS));
+      // Spec 059: paced subscription usage reads run independently of host connections;
+      // a read touches only the provider's own local CLI or config, never an endpoint.
+      const usageTimer = setInterval(() => {
+        if (this.closing) return;
+        void this.usage.tick().catch(() => { /* the next tick retries; a missed sample is not a fault */ });
+      }, USAGE_TICK_INTERVAL_MS);
+      usageTimer.unref?.();
+      this.timers.push(usageTimer);
+      void this.usage.tick().catch(() => { /* the first paced pass runs now, not a minute in */ });
       // Task 530: the live run set's tabs and labels reconcile on their own cadence,
       // faster than the lifecycle sweep and independent of it.
       this.liveRunPresence?.start(LIVE_RUN_PRESENCE_INTERVAL_MS);
@@ -1230,6 +1243,7 @@ export class QueueRuntime {
       await settled(this.admissionEndpoint?.stop(), 5_000);
     } finally {
       this.runUsage.close();
+      this.usage.stop();
       if (this.store.getMeta<{ owner: string }>("processOwner")?.owner === this.owner) this.store.deleteMeta("processOwner");
       this.store.close();
       this.phase = "stopped";
@@ -1250,6 +1264,8 @@ export class QueueRuntime {
   private drainProjection(): { drained: boolean; boundRuns: BoundRun[] } { return this.board.drainProjection(); }
 
   addPapercut(input: Parameters<Papercuts["add"]>[0]) { return this.papercuts.add(input); }
+  /** Spec 059: the subscriptions' usage readings, projections and freshness. Read-only. */
+  usageState() { return this.usage.state(); }
   listPapercuts(input: { repository?: string; state?: Papercut["state"] }) { return this.papercuts.list(input); }
   getPapercut(input: { id: string }) { return this.papercuts.get(input); }
   editPapercut(input: Parameters<Papercuts["edit"]>[0]) { return this.papercuts.edit(input); }

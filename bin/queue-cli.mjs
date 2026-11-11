@@ -173,7 +173,7 @@ Methods without a dot are tried as queue.<method> first, for example:
   papercut.close, papercut.set-lanes, lead.add, lead.edit, lead.get, lead.version,
   lead.list, lead.set-lanes, lead.set-tags, lead.drop, lead.reopen, lead.promote, lead.check, lead.approve, lead.promote-task, lead.submit, lead.import,
   decision.add, decision.get, decision.list, decision.answer, decision.withdraw, decision.link, decision.supersede, queue.routing-grant, lane.document.get,
-  lane.document.edit, plan.get, plans, plan.set, backup.now, backup.list
+  lane.document.edit, plan.get, plans, plan.set, backup.now, backup.list, usage.state
 snapshot accepts optional repository, project, limit (default 100, max 250) and
 cursor; page while hasMore is true. An oversized snapshot is refused with those
 filters named instead of a closed socket.

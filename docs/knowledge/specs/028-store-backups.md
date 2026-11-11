@@ -1,6 +1,6 @@
 # 028 — Store backups
 
-Current stores use schema 57. Schema 50 evolves atomically after a native
+Current stores use schema 58. Schema 50 evolves atomically after a native
 SQLite admission check and a pre-migration backup; schema 49 and older are
 refused with the schema 50 minimum named, and require an older build. Unsupported
 and unversioned stores refuse before application schema or data writes, chmod,

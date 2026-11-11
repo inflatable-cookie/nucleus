@@ -21,6 +21,8 @@ const READ_ONLY_METHODS = new Set(['caller.resolve', 'host.run.list', 'host.run.
   'profile.list', 'profile.providers', 'host.catalog',
   // Read-only on the catalogue since ed40faa8; its deliberate read-only entry landed late (2026-10-14).
   'project.management-preview', 'project.qa.request-status', 'project.qa.fence-status',
+  // Spec 059: the usage gauge reads stored readings and projections only; reads are paced by the service.
+  'usage.state',
 ]);
 
 /**
