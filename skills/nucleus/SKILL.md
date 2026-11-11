@@ -46,7 +46,8 @@ halts". Don't put a yes/no approval in front of Tom, and that includes extending
 (tag, publish, external resources), as a decision; and product or scope changes, as a proper
 discussion with the context, the options and your recommendation, never a bare approve/hold
 question. Frontier or above-ceiling profiles keep their board sign-off, or a
-planner grant the operator has already said yes to (below).
+planner grant the operator has already said yes to (below). A grant is permission to request
+them where needed, not an instruction to use them.
 
 ## Settle questions within the task
 
@@ -376,26 +377,54 @@ JSON
 
 ### Planner frontier grant
 
-When a string of dispatches needs frontier or above-ceiling profiles, the planner
-asks once and the operator says yes. While the grant stands, that planner's own
-`profileRequests` and `route` take effect without a per-task question. End it
-when the block of work is done. The grant does not move automatic selection or
-demand; a task still needs an explicit request.
+**A grant is permission, not an instruction.** Frontier and above-ceiling profiles cost the most,
+so naming one for a task normally needs the operator's sign-off on that task. A grant gives one
+planner standing permission to name them without a per-task question, for a block of work. It does not
+say which model to use, and it changes nothing about how other tasks route.
+
+What a grant does and doesn't do:
+
+- It **does** let your own `profileRequests` (and `route`) name a frontier or above-ceiling profile
+  and take effect immediately, for the tasks where you ask.
+- It **does not** pin anything. A task without a `profileRequests` entry routes automatically, exactly
+  as before: Nucleus picks among every eligible ordinary profile by `complexity`, role and usage
+  level, leaning cheaper. Ordinary profiles stay the default for everything.
+- It **does not** move automatic selection or demand. Frontier profiles don't join the automatic pool
+  because you hold a grant (they join only at usage level `maximum`).
+- It **is not** "the profile to use". Holding a grant for a frontier model and then requesting it on
+  every task, or routing trivial work to it, is the misuse to avoid.
+
+How to use one:
+
+1. Set `complexity` honestly on every task and let automatic selection do the work. That covers
+   nearly everything.
+2. Request a frontier profile for a specific task only when that task needs it: the work is at the
+   top of the scale and the ordinary pool can't serve it, or the operator asked for that model on
+   that work. Give the reason in the request.
+3. End the grant when that block of work is done.
+
+Right: a grant for a strong model while a hard migration runs. Its two hard tasks request that model;
+the docs fix and the test cleanup in the same week have no request and route to cheaper profiles.
+Wrong: requesting the granted model on every task "because we have a grant", or treating
+non-frontier profiles as unavailable while it stands.
+
+Ask for one:
 
 ```sh
-node bin/queue-cli.mjs queue.routing-grant - <<'JSON'
+nucleus queue.routing-grant - <<'JSON'
 {"action":"request","reason":"why this block of work needs frontier"}
 JSON
 ```
 
-The CLI fills `caller` from `PASEO_AGENT_ID`. Optional `profiles` (named set;
-omit for every frontier and above-ceiling profile) and `until`. A repeat while a
-request is open joins it. An active grant is reported as already standing. Only
-a board yes activates it; a relayed `decision.answer` does not. The operator
-revokes from Settings → Limits.
+The CLI fills `caller` from `PASEO_AGENT_ID`. Optional `profiles` (named set; omit for every frontier
+and above-ceiling profile) and `until`. A repeat while a request is open joins it. An active grant is
+reported as already standing. Only a board yes activates it; a relayed `decision.answer` does not. The
+operator revokes from Settings → Limits.
+
+End it:
 
 ```sh
-node bin/queue-cli.mjs queue.routing-grant - <<'JSON'
+nucleus queue.routing-grant - <<'JSON'
 {"action":"end","reason":"this block of work is done"}
 JSON
 ```
