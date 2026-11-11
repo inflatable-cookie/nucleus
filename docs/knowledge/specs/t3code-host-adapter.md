@@ -18,6 +18,9 @@ T3 UI. A T3 thread reports through the packaged nucleus helper with the run
 ticket named in its prompt. Nucleus-raised questions go to the web board and
 the project planner's agent channel. A repository setting selects `paseo`
 (default) or `t3code` (opt-in) for new tasks; a live task never changes host.
+Host selection resolves that setting by repository origin when known, with the
+checkout path as a fallback when origin is unavailable. An origin-only settings
+row is sufficient to select the host.
 Registering a transport must not make an unsupported task workflow executable.
 
 ## Protocol and connection

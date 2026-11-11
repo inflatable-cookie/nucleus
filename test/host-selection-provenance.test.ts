@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { QueueRuntime } from '../service/runtime-owner';
@@ -48,5 +49,27 @@ test('a repository hostKind selects the unique online host of that kind with dur
     const accepted = await runtime.engine.startOperation({ key: 'kind', kind: 'review_entry', payload: { type: 'review_entry', input: {} }, repoPath: '/repo', deferSchedule: true });
     if (!('accepted' in accepted)) throw Error('backpressured');
     assert.deepEqual(accepted.operation.hostSelection, { hostId: 't3code:env', basis: 'repository_host', reason: 'Repository hostKind t3code' });
+
+    runtime.store.putRepository({ origin: 'acme/origin-only', path: '' }, null, '', null, null, null, undefined, undefined, 't3code');
+    assert.equal(runtime.engine.selectIngressHost(undefined, '/different-checkout', 'acme/origin-only'), 't3code:env');
+    const checkout = join(dir, 'checkout');
+    mkdirSync(checkout);
+    execFileSync('git', ['init', '-q'], { cwd: checkout });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/origin-only.git'], { cwd: checkout });
+    const submission = submissionSchema.parse({ submissionId: 'origin-only-submission', title: 'Origin only', repoPath: checkout,
+      planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: 'origin' });
+    const submitted = await runtime.engine.startOperation({ key: 'origin-submission', kind: 'submit', repoPath: checkout, deferSchedule: true,
+      payload: { type: 'submit', submission } });
+    if (!('accepted' in submitted)) throw Error('backpressured');
+    assert.deepEqual(submitted.operation.hostSelection, { hostId: 't3code:env', basis: 'repository_host', reason: 'Repository hostKind t3code' });
+    const promoted = await runtime.engine.startOperation({ key: 'origin-promotion', kind: 'source_promote', repoPath: '/different-checkout', deferSchedule: true,
+      payload: { type: 'source_promote', source: { kind: 'lead', id: 'lead-1', repository: 'acme/origin-only', version: 1, digest: 'a'.repeat(64) },
+        request: { id: 'lead-1', repository: 'acme/origin-only', board: true, note: '' } } });
+    if (!('accepted' in promoted)) throw Error('backpressured');
+    assert.deepEqual(promoted.operation.hostSelection, { hostId: 't3code:env', basis: 'repository_host', reason: 'Repository hostKind t3code' });
+
+    const noSettings = await runtime.engine.startOperation({ key: 'no-settings', kind: 'review_entry', repoPath: '/unconfigured', payload: { type: 'review_entry', input: {} }, deferSchedule: true });
+    if (!('accepted' in noSettings)) throw Error('backpressured');
+    assert.deepEqual(noSettings.operation.hostSelection, { hostId: 'paseo-primary', basis: 'repository_host', reason: 'Repository hostKind paseo' });
   } finally { await runtime.drain(); }
 });

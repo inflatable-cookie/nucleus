@@ -187,13 +187,16 @@ export class Operations {
     const previous = this.store.operationForKey(input.key);
     if (input.hostId && previous && previous.hostId !== input.hostId) throw new Error("Operation host does not match its recorded selection");
     const repoPath = input.repoPath ?? submission?.repoPath ?? undefined;
+    const promotion = (input.payload as { source?: { repository?: string } } | null)?.source;
+    const repositoryOriginForSelection = promotion?.repository
+      ?? (repoPath ? await repositoryOrigin(repoPath).catch(() => null) : null);
     const hostId = previous ? previous.hostId : (input.taskId || control?.taskId || removal?.taskId
       ? this.store.task((input.taskId ?? control?.taskId ?? removal?.taskId)!).hostId || undefined
-      : this.engine.selectIngressHost(input.hostId, repoPath));
+      : this.engine.selectIngressHost(input.hostId, repoPath, repositoryOriginForSelection));
     const taskId = input.taskId ?? control?.taskId ?? removal?.taskId;
     const hostSelection = previous ? previous.hostSelection : taskId ? this.store.task(taskId).hostSelection
-      : hostId ? { hostId, basis: input.hostId ? 'explicit' as const : repoPath ? 'repository_host' as const : 'sole_online_host' as const,
-        ...(repoPath && !input.hostId ? { reason: `Repository hostKind ${this.store.canonicalRepository(repoPath)?.hostKind ?? 'paseo'}` } : {}) } : undefined;
+      : hostId ? { hostId, basis: input.hostId ? 'explicit' as const : repoPath || repositoryOriginForSelection ? 'repository_host' as const : 'sole_online_host' as const,
+        ...((repoPath || repositoryOriginForSelection) && !input.hostId ? { reason: `Repository hostKind ${this.store.canonicalRepository(repoPath ?? '', repositoryOriginForSelection)?.hostKind ?? 'paseo'}` } : {}) } : undefined;
     if (!previous && !hostId && ["submit", "review_entry", "source_promote"].includes(input.kind))
       throw new Error("Host identity is unknown or ambiguous; select a registered host");
     const acceptance = this.store.acceptOperation({
@@ -777,7 +780,8 @@ export class Operations {
     return this.engine.performSubmit(submission, false, { source, initial, ...(identitySource ? { identitySource } : {}) }, hostId);
   }
   async performSubmit(submission: Submission, requirePushedPlanning = false, promotion?: {source:{kind:"lead"|"papercut";id:string;repository:string;digest:string;expectedSource:string}; initial?: Partial<Task>; identitySource?: IdentitySource}, hostId?: string, hostSelection?: QueueOperation['hostSelection']): Promise<OperationResult> {
-    hostId ??= this.engine.selectIngressHost(submission.hostId, submission.repoPath);
+    const originForSelection = promotion?.source.repository ?? await repositoryOrigin(submission.repoPath).catch(() => null);
+    hostId ??= this.engine.selectIngressHost(submission.hostId, submission.repoPath, originForSelection);
     // A replay after a lost response resolves the durable submission identity
     // before any remote validation or insertion.
     const existing = promotion ? null : this.store.existing(submission);

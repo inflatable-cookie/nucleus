@@ -505,18 +505,24 @@ export class QueueRuntime {
     // Retired contract 009 producer: the runtime no longer observes durable writes for a
     this.engine = new Engine(this.store, this.adapter, 60000, () => this.bootstrapCompleted && this.anyHostConnected(), undefined, this.settings.uncertainMergeRetryMs, this.hostRunStateDir);
     this.engine.currentServiceBuildId = currentServiceBuildId;
-    this.engine.selectIngressHost = (explicit, repoPath) => {
+    this.engine.selectIngressHost = (explicit, repoPath, origin) => {
       const registered = this.hostRegistry.known().map(host => host.id);
       const online = this.hostRegistry.onlineIds();
-      if (!repoPath) {
+      if (!repoPath && !origin) {
         if (explicit) {
           if (!registered.includes(explicit)) throw new Error("Selected host is not registered");
           return explicit;
         }
         return online.length === 1 ? online[0] : undefined;
       }
-      const hostKind = this.store.canonicalRepository(repoPath)?.hostKind ?? DEFAULT_HOST_KIND;
-      return resolveIngressHost({ explicit, hostKind, registered, online }).hostId;
+      const settings = this.store.canonicalRepository(repoPath ?? "", origin);
+      const hostKind = settings?.hostKind ?? DEFAULT_HOST_KIND;
+      try {
+        return resolveIngressHost({ explicit, hostKind, registered, online }).hostId;
+      } catch (error) {
+        if (settings) throw new Error(`Cannot select host for repository ${settings.repository.origin ?? settings.repository.path}: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      }
     };
     this.engine.resolveHostAdapter = id => this.hostRegistry.get(id)?.adapter;
     this.engine.inventoryHostMatches = id => this.hostSession?.id === id;
