@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HostRegistry, resolveOriginHost, type KnownHost, type OriginLookup } from '../core/host/host-registry';
 
-type FixtureHost = { knows: string[]; answer?: OriginLookup; fail?: boolean };
+type FixtureHost = { knows?: string[]; answer?: OriginLookup; fail?: boolean };
 function fixture(hosts: Array<[string, FixtureHost]>) {
   let known: readonly KnownHost[] = [];
   const registry = new HostRegistry<FixtureHost>({ read: () => known, write: value => { known = value; }, transaction: fn => fn() });
@@ -14,7 +14,7 @@ function fixture(hosts: Array<[string, FixtureHost]>) {
   const lookup = async (host: FixtureHost, id: string) => {
     if (host.fail) throw new Error('transport closed');
     if (host.answer) return host.answer;
-    return host.knows.includes(id) ? 'mine' as const : 'not-mine' as const;
+    return host.knows?.includes(id) ? 'mine' as const : 'not-mine' as const;
   };
   return { registry, lookup, sessions };
 }
@@ -24,7 +24,7 @@ const paseoIdentity = { hostId: 'paseo:alpha', source: 'caller identity source p
 test('origin host requires a complete unique observation across known hosts', async () => {
   const { registry, lookup, sessions } = fixture([['a', { knows: ['origin'] }], ['b', { knows: [] }]]);
   assert.equal(await resolveOriginHost(registry, 'origin', lookup), 'a');
-  registry.get('b')!.knows.push('origin');
+  registry.get('b')!.knows!.push('origin');
   assert.equal(await resolveOriginHost(registry, 'origin', lookup), undefined);
   registry.disconnect('a', sessions.get('a')!);
   assert.equal(await resolveOriginHost(registry, 'origin', lookup), undefined);
@@ -34,7 +34,7 @@ test('a host that authoritatively has no such thread is not-mine, and one mine w
   const { registry, lookup } = fixture([['paseo:alpha', { knows: ['planner'] }], ['t3code:nightly', { knows: [] }]]);
   assert.equal(await resolveOriginHost(registry, 'planner', lookup), 'paseo:alpha');
   // A legacy truthy/falsey lookup keeps its meaning.
-  const legacy = async (host: FixtureHost, id: string) => host.knows.includes(id) ? { id } : null;
+  const legacy = async (host: FixtureHost, id: string) => host.knows?.includes(id) ? { id } : null;
   assert.equal(await resolveOriginHost(registry, 'planner', legacy), 'paseo:alpha');
 });
 

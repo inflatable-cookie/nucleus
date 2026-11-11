@@ -76,6 +76,8 @@ export function buildProjectSettings(input: {
   liveKnown: boolean;
   observedHostId?: string;
   latestQaRuns: ProjectQaRun[];
+  /** Projects whose planner has no usable participant ticket yet. */
+  plannerTicketPending?: ReadonlySet<string>;
 }): ProjectSettings {
   return projectSettingsSchema.parse({
     defaultSlots: input.defaultSlots,
@@ -102,6 +104,7 @@ export function buildProjectSettings(input: {
         })),
         slots: { value: override ?? input.defaultSlots, override },
         plannerLive,
+        plannerTicket: !plannerId ? null : input.plannerTicketPending?.has(project.key) ? 'pending' : 'issued',
         latestQa,
         problems: projectSettingsProblems({
           plannerId,

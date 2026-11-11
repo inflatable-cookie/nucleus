@@ -25,9 +25,10 @@ export interface HostRegistryStore {
 export type OriginLookup = 'mine' | 'not-mine' | 'unknown';
 
 /**
- * The caller's identity source named the host it belongs to (for example a
- * Paseo thread identity from `PASEO_AGENT_ID`). It is evidence about the
- * identity's own host, never about another thread's.
+ * The caller's identity source named the host it belongs to (the caller
+ * resolution in `shared/caller.mjs` proves it from a ticket or the host's own
+ * fallback). It is evidence about the identity's own host, never another
+ * thread's.
  */
 export interface OriginHostEvidence { hostId: string; source: string }
 

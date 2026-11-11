@@ -24,7 +24,8 @@ export interface RepositoriesContext {
   hostRuns: Pick<HostRunScheduler, "list" | "releaseCapacity" | "disposeAccounting" | "accountingStatus" | "accountingList" | "boardState">;
   projectQaRunner(): ProjectQaRunner;
   markStoreAccess(): void;
-  plannerChanged?(): Promise<void>;
+  /** One assignment; a self-named planner receives its identity ticket in this response. */
+  plannerChanged?(projectKey: string): Promise<string | undefined>;
 }
 
 export class RuntimeRepositories {
@@ -257,9 +258,11 @@ export class RuntimeRepositories {
     // A thread naming itself keeps its proven host even when the host exposes no environment ID.
     const agentId = setter && input.agentId === setter.nativeAgentId ? input.setBy! : input.agentId;
     const project = this.context.store.setProjectPlanner({ key: input.key, agentId, setBy: input.setBy ?? 'operator', note: input.note });
-    await this.context.plannerChanged?.();
+    // The thread that named itself receives its participant ticket right here:
+    // an assignment is answered in the call that made it, never by a message.
+    const participantTicket = await this.context.plannerChanged?.(input.key);
     if (agentId) void this.context.engine.resolution.projectPlannerRegistered(input.key, agentId).catch(() => {});
-    return project;
+    return participantTicket ? { ...project, participantTicket } : project;
   }
 
   projectOwnerCandidates() { this.context.markStoreAccess(); return this.context.engine.projectOwnerCandidates(); }

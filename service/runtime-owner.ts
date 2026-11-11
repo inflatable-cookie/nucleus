@@ -559,12 +559,13 @@ export class QueueRuntime {
       get adapter() { return runtime.adapter; },
     });
     this.plannerTickets = new PlannerParticipantTickets(this.engine, { socketPath: this.paseo.socketPath, helperPath: this.paseo.helperPath });
+    this.engine.plannerTicketPending = () => this.plannerTickets.pendingPlanners();
     this.repositories = new RuntimeRepositories({
       store: this.store, engine: this.engine, hostRuns: this.hostRuns,
       requiredCheckTransport: this.requiredCheckTransport,
       markStoreAccess: () => this.markStoreAccess(),
       projectQaRunner: () => this.projectQaRunner(),
-      plannerChanged: () => this.plannerTickets.ensure(),
+      plannerChanged: projectKey => this.plannerTickets.assigned(projectKey),
       get started() { return runtime.started; },
     });
     this.planning = new RuntimePlanning({
@@ -1702,11 +1703,15 @@ export class QueueRuntime {
    * service binds the task to that thread's own live worktree. The Paseo
    * bridge path carries no reliable caller identity and is refused.
    */
-  resolveHostCaller(input: { hostKind: HostKind; nativeAgentId: string }) {
+  async resolveHostCaller(input: { hostKind: HostKind; nativeAgentId: string }) {
     const hosts = this.hostRegistry.onlineIds().filter(id => hostKindOf(id) === input.hostKind);
     if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
     const hostId = hosts[0]!;
-    return { caller: formatAgentId(hostId, input.nativeAgentId), hostId, source: 'host' as const };
+    const caller = formatAgentId(hostId, input.nativeAgentId);
+    // This call is the planner thread's own proof of life, so its participant
+    // ticket travels in the response instead of a message into its thread.
+    const participantTicket = await this.plannerTickets.forCaller(caller);
+    return { caller, hostId, source: 'host' as const, ...(participantTicket ? { participantTicket } : {}) };
   }
 
   async registerTask(input: import('../shared/contracts').TaskRegistrationInput, _accepted: unknown, context?: { via?: string | null }) {

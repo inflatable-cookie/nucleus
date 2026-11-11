@@ -12,6 +12,7 @@ import { Engine } from '../core/engine';
 import { Store } from '../core/store/store';
 import { submissionSchema } from '../shared/contracts';
 import type { Adapter } from '../core/host/adapter';
+import { HostRegistry, resolveOriginHost } from '../core/host/host-registry';
 
 test('native question on one host reaches its planner on another and waits while either is offline', async () => {
   const store = new Store(':memory:');
@@ -479,4 +480,40 @@ test('delegate receipt surfaces share last-field parsing while keeping their all
   assert.equal(parseDelegatedAnswer('Answer: Continue\nReason: final', ['Continue']), null);
   assert.equal(parseNativeDelegatedReply('Choice: Continue\nReason: final'), null);
   assert.equal(parseNativeDelegatedReply(`Answer: Continue\nReason: ${'a'.repeat(700)}`)?.reason.length, 500);
+});
+
+test('a delegated answer resolves through the origin lookup, and an offline host does not block a caller-named host', async () => {
+  const store = new Store(':memory:');
+  const task = store.insert(submissionSchema.parse({ submissionId: 'offline-host-answer', title: 'Offline host', repoPath: '/fixture',
+    planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: 'planner' }), 'paseo:alpha', 'handoff', 'a'.repeat(40));
+  const engine = new Engine(store, {} as Adapter, 0);
+  // The live Paseo host answers with positive knowledge of the planner; the
+  // registered T3 host is offline and never asked. The whole resolution runs
+  // through the real resolver, so the offline host's effect on it is the real one.
+  let known: ReadonlyArray<{ id: string; endpoint: string }> = [];
+  const registry = new HostRegistry<{ knows: boolean }>({ read: () => known, write: value => { known = value; }, transaction: fn => fn() });
+  known = [{ id: 'paseo:alpha', endpoint: 'paseo-endpoint' }, { id: 't3code:nightly', endpoint: 't3-endpoint' }];
+  registry.connect('paseo:alpha', 'paseo-endpoint', { knows: true });
+  const t3 = registry.connect('t3code:nightly', 't3-endpoint', { knows: false });
+  registry.disconnect('t3code:nightly', t3);
+  engine.identifyOriginHost = (id, identitySource) => resolveOriginHost(registry, id,
+    async (host, agent) => host.knows && agent === 'planner' ? 'mine' : 'not-mine',
+    // The runtime only ever applies a source to the identity it names.
+    identitySource && identitySource.agent === id ? { hostId: identitySource.hostId, source: 'caller identity source' } : undefined);
+  engine.hostAvailable = () => true;
+  const input = { questionId: 'offline-window', answer: 'Continue', reason: 'Within scope' };
+  try {
+    engine.resolution.openDelegatedQuestion(task, input.questionId, 'planner', 'Question: Continue?', 10_000, 'planner', 'paseo:alpha');
+    await assert.rejects(engine.resolution.answerDelegatedQuestionFromHost(input, 'planner'), /unavailable or ambiguous/);
+    assert.equal(store.eventsAll('delegation:offline-window').some(event => event.kind === 'delegated_answer'), false);
+    // The answering thread's own identity source names its host, so the offline
+    // host that has no part in this answer cannot block it.
+    const receipt = await engine.resolution.answerDelegatedQuestionFromHost(input, 'planner',
+      { agent: 'planner', hostId: 'paseo:alpha' });
+    assert.equal(receipt.answer, 'Continue');
+    // Evidence about a different identity decides nothing.
+    engine.resolution.openDelegatedQuestion(task, 'other-window', 'planner', 'Question: Continue?', 10_000, 'planner', 'paseo:alpha');
+    await assert.rejects(engine.resolution.answerDelegatedQuestionFromHost({ ...input, questionId: 'other-window' }, 'planner',
+      { agent: 'someone-else', hostId: 'paseo:alpha' }), /unavailable or ambiguous/);
+  } finally { await engine.stop(); store.close(); }
 });

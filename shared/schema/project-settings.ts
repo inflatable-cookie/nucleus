@@ -39,6 +39,8 @@ export const projectSettingsRowSchema = z.object({
     override: z.number().int().min(0).max(64).nullable(),
   }).strict(),
   plannerLive: z.boolean().nullable(),
+  /** Whether the project's planner thread holds its participant identity ticket yet. */
+  plannerTicket: z.enum(["pending", "issued"]).nullable(),
   latestQa: projectSettingsQaSchema.nullable(),
   problems: z.array(projectSettingsProblemSchema),
 }).strict();
