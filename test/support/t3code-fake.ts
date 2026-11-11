@@ -23,7 +23,8 @@ export async function t3Fake(t: TestContext, directory: string) {
   const threads = new Map<string, Value>([['synthetic-probe', threadProjection('synthetic-probe', directory)]]);
   const controls = { environmentId: 'synthetic-environment', version: 'nightly-synthetic-unseen', protocol: 2,
     synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
-    disconnectMutation: false, refuseMutation: false, mutationObserver: (() => {}) as () => void };
+    snapshotSequence: 1, threadCoverage: {} as Record<string, unknown>, beforeArchiveRead: (() => {}) as () => void,
+    disconnectMutation: false, refuseMutation: false, postEffectDefect: false, mutationObserver: (() => {}) as () => void };
   const sockets = new Set<Socket>();
   const server = createServer((request, response) => {
     assert.equal(request.url, '/api/auth/websocket-ticket/rpc');
@@ -70,15 +71,16 @@ export async function t3Fake(t: TestContext, directory: string) {
             providers: [{ instanceId: 'synthetic-provider', displayName: 'Synthetic provider', enabled: true, status: 'ready', models: [{ slug: 'synthetic-model', name: 'Synthetic model' }] }], unrelatedAdditiveField: true });
         case 'orchestration.subscribeShell': {
           const active = [...threads.values()].filter(p => !p.thread.archivedAt && !p.thread.deletedAt).map(shell);
-          return stream([{ kind: 'snapshot', snapshot: { schemaVersion: 1, snapshotSequence: 1, projects: projects(), threads: active, archivedThreads: [] } },
+          return stream([{ kind: 'snapshot', snapshot: { schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: active, archivedThreads: [] } },
             ...(controls.enrichment ? [{ kind: 'snapshot', resolvedRepositoryIdentityRoots: [directory], snapshot: { threads: [], archivedThreads: [] } }] : []), ...marker()]);
         }
         case 'orchestration.getArchivedShellSnapshot':
-          return success({ schemaVersion: 1, snapshotSequence: 1, projects: projects(), threads: [...threads.values()].filter(p => p.thread.archivedAt).map(shell) });
+          controls.beforeArchiveRead();
+          return success({ schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: [...threads.values()].filter(p => p.thread.archivedAt).map(shell) });
         case 'orchestration.subscribeThread': {
           const p = threads.get(payload.threadId);
           if (!p) return failure({ _tag: 'Fail', error: { _tag: 'ThreadNotFoundError' } });
-          return stream([{ kind: 'snapshot', snapshotSequence: 1, projection: p, ...(controls.incompleteThread ? { hasMoreHistory: true } : {}) }, ...marker()]);
+          return stream([{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, projection: p, ...(controls.incompleteThread ? { hasMoreHistory: true } : {}), ...controls.threadCoverage }, ...marker()]);
         }
         case 'orchestration.launchThread': {
           for (const field of contract.launchThread.required) assert.ok(Object.hasOwn(payload, field), `launchThread.${field}`);
@@ -117,6 +119,7 @@ export async function t3Fake(t: TestContext, directory: string) {
             }
             case 'thread.user-input.dismiss': p.runtimeRequests.find((r: Value) => r.id === payload.requestId)!.status = 'cancelled'; break;
           }
+          if (controls.postEffectDefect) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });
           return success({ sequence: 1 });
         }
         default: return failure({ _tag: 'Die', defect: `Unknown request tag: ${request.tag}` });

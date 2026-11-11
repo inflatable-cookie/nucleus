@@ -68,15 +68,12 @@ check; the version itself does not decide compatibility.
 If no readable thread exists for the subscription probe, compatibility remains
 unestablished with a clear diagnostic; do not create a probe thread on a live host.
 
-Mutation shapes are checked on first use. In the target nightly's RPC server,
-the request schema is decoded before the handler runs: a decoder failure sends
-a request defect instead of invoking the handler. Only a positively identified
-boundary-decode rejection is a known pre-effect refusal. Put that task in
-attention with the command and field named, without retrying. Generic defects,
-handler errors, response-encoding failures and unrecognized errors remain unknown
-delivery. The wire uses a formatted schema issue inside an Effect defect rather
-than a dedicated decode-phase tag, so a generic `Die` is never sufficient proof.
-Diagnostics name the schema location without echoing submitted payloads.
+Mutation shapes are checked on first use. The target nightly decodes request
+schemas before invoking handlers, but serializes decoder errors and handler
+defects without a decode-phase tag. Identical schema-formatted text can come
+from a handler after an effect, so every remote failure remains unknown delivery
+and is never resent. Only a local refusal before the socket write proves
+non-delivery; error diagnostics omit remote bodies and credentials.
 
 ## Identity and workspaces
 
@@ -131,10 +128,9 @@ receipt, or replace the command or thread ID to escape doubt.
 
 Guarded sends retain core's `allowed`, `stillAllowed` and `beforeSend` ordering.
 The last synchronous fence precedes the socket write. A proven local refusal
-uses the existing pre-send error/result. After a possible write, only the
-positively identified boundary-decode rejection above proves non-delivery;
-everything else is unknown. A command receipt proves acceptance, not provider completion
-or a Nucleus report.
+uses the existing pre-send error/result. After a possible write, remote errors
+cannot establish non-delivery. A command receipt proves acceptance, not provider
+completion or a Nucleus report.
 
 ## Observation and restart
 
@@ -155,9 +151,12 @@ positive native facts. A thread is gone only after a complete authoritative read
 proves absence/deletion. Partial reads reject or return the contract's unknown
 result. A disconnected thread never becomes idle or gone by timeout. Timeline
 pages retain gap and coverage facts; a bounded tail is not full history.
-Active and archive snapshots have separate sequences: their union alone cannot
-prove absence across a racing archive. A direct retained-thread read must settle
-that identity before reporting it gone.
+Active and archive snapshots must report the same application-event sequence;
+otherwise their union is refused as incomplete. This includes an unarchive
+between the two reads, which could otherwise hide a live thread. A direct
+retained-thread read must settle an identity before reporting it gone. Coverage
+flags and cursors are strictly typed; retyped fields or a remaining history
+cursor cannot establish complete observation or timeline coverage.
 
 On T3 startup, active runs are cancelled and live approvals expire. Pending
 questions may remain pending with `responseCapability: {type: "message"}`.
@@ -175,6 +174,12 @@ single-connection assumptions only where needed to select the recorded host,
 enumerate sessions and account for shutdown. Preserve the existing Paseo identity,
 configuration, SDK behavior, callbacks and migration history.
 
+The authenticated `host.permission-answer` service method requires the exact
+host, native agent, workspace, runtime request, decision and stable intent.
+It selects only that registered host, with no fallback, and uses its permission
+response through the host facade. The native adapter rechecks the pending
+request's kind and workspace before delivery.
+
 Expose explicit unsupported capabilities for per-thread MCP reporting,
 Nucleus-raised native decisions and UI contributions. Do not substitute empty
 success results. Until the next step supplies reporting and board routing,
@@ -189,8 +194,8 @@ Fake-server tests cover each operation, the exact wire envelopes and scopes,
 authorization refusal, missing/incompatible protocol, a previously untested
 nightly passing structural probes, identity conflicts, malformed
 and incomplete snapshots, lost replies, immutable intent replay, subscription
-cleanup and restart during both kinds of request. Verify first-use boundary
-schema refusal separately from ambiguous handler/transport errors. Contract
+cleanup and restart during both kinds of request. Identical decoder-formatted
+and post-effect handler defects must both retain unknown delivery. Contract
 fixtures pin the nightly command shapes rather than a server-version allowlist.
 Cross-host cases deliberately reuse native IDs and keep task, run, message and
 question ownership separate.

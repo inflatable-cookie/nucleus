@@ -4,6 +4,10 @@
   "protocol": 2,
   "boundaryDecodeExample": "Missing key\n  at [\"commandId\"]",
   "source": "packages/contracts/src/orchestrationV2.ts",
+  "creationFields": {
+    "createdBy": ["user", "agent", "system"],
+    "creationSource": ["web", "mobile", "mcp", "provider", "server"]
+  },
   "commands": {
     "thread.stop": {
       "required": ["type", "commandId", "threadId"],
@@ -20,7 +24,7 @@
       "answers": "Record<string, unknown>"
     },
     "message.dispatch": {
-      "required": ["type", "commandId", "threadId", "messageId", "text", "attachments", "dispatchMode"],
+      "required": ["type", "createdBy", "creationSource", "commandId", "threadId", "messageId", "text", "attachments", "dispatchMode"],
       "dispatchModes": ["defer_start", "steer_active", "restart_active", "queue_after_active", "start_immediately"]
     }
   },
@@ -49,7 +53,7 @@
     },
     {
       "method": "orchestration.dispatchCommand",
-      "payload": { "type": "message.dispatch", "commandId": "fixture:followup", "threadId": "fixture-thread", "messageId": "fixture-message-2", "text": "Continue", "attachments": [], "dispatchMode": { "type": "start_immediately" } }
+      "payload": { "type": "message.dispatch", "createdBy": "user", "creationSource": "server", "commandId": "fixture:followup", "threadId": "fixture-thread", "messageId": "fixture-message-2", "text": "Continue", "attachments": [], "dispatchMode": { "type": "start_immediately" } }
     },
     {
       "method": "orchestration.dispatchCommand",

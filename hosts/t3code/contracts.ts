@@ -39,6 +39,13 @@ export const projection = z.object({
   runtimeRequests: z.array(runtimeRequest), turnItems: z.array(turnItem),
   messages: z.array(z.object({ id, role: id, text: z.string() })), updatedAt: date,
 });
+/** Coverage flags are consumed facts, not optional hints that can be truthiness-tested. */
+export const threadSnapshot = z.object({
+  kind: z.literal('snapshot'), snapshotSequence: z.number().int().nonnegative(), projection,
+  hasMoreHistory: z.boolean().optional(), historyCursor: id.nullable().optional(),
+  latestLocalTurnOrdinal: z.number().int().nonnegative().nullable().optional(),
+  turnItemsOmitLocalVisible: z.boolean().optional(), idTable: z.literal(true).optional(),
+});
 export const config = z.object({ environment: z.object({ environmentId: id, serverVersion: id, orchestrationProtocolVersion: z.literal(2) }),
   providers: z.array(z.object({ instanceId: id, displayName: z.string().optional(), enabled: z.boolean(),
     status: z.string(), models: z.array(z.object({ slug: id, name: z.string() })) })),

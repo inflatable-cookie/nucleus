@@ -1,7 +1,7 @@
 import type { Profile, Task } from '../../shared/contracts';
 import type {
   AgentId, AnsweredQuestion, Host, HostCapabilities, HostCatalog, HostCatalogOptions, HostLiveAgent, HostMessage,
-  HostObservation, HostTimelineEntry, HostTimelinePage, HostWorkspaceCatalog, NativeQuestion, OriginAgent, RequestId,
+  HostObservation, HostTimelineEntry, HostTimelinePage, HostWorkspaceCatalog, NativeQuestion, OriginAgent, RequestId, HostPermissionDecision,
   Workspace, WorkspaceId,
 } from '../../shared/host';
 import type { Adapter } from './adapter';
@@ -176,6 +176,13 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     return read.call(adapter, agent, workspace, request, answers);
   }
 
+  answerNativePermission(agent: AgentId, workspace: WorkspaceId, request: RequestId, decision: HostPermissionDecision, intentId: RequestId): Promise<void> {
+    const { adapter } = this.owner;
+    const read = adapter.answerNativePermission;
+    if (!read) return refused('This host cannot answer native permissions');
+    return read.call(adapter, agent, workspace, request, decision, intentId);
+  }
+
   dismissNativeQuestion(agent: AgentId, workspace: WorkspaceId, request: RequestId): Promise<void> {
     const { adapter } = this.owner;
     const read = adapter.dismissNativeQuestion;
@@ -191,7 +198,7 @@ export type HostFacadeMethod =
   | 'originAgent' | 'observe' | 'observationInventory' | 'listLiveAgents'
   | 'agentTimelinePage' | 'agentTimeline' | 'stopAgentTurn' | 'archiveAgent' | 'subscribeRunUsage'
   | 'sendMessage' | 'enqueueMessage' | 'interruptAndContinue'
-  | 'pendingQuestions' | 'answeredQuestions' | 'answerNativeQuestion' | 'dismissNativeQuestion';
+  | 'pendingQuestions' | 'answeredQuestions' | 'answerNativeQuestion' | 'answerNativePermission' | 'dismissNativeQuestion';
 
 function refused(reason: string): Promise<never> {
   return Promise.reject(new Error(reason));

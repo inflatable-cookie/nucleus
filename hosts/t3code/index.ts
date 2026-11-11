@@ -4,7 +4,7 @@ import { T3CodeHost, type T3CodeConfig } from './adapter';
 
 export { T3CodeHost, type T3CodeConfig } from './adapter';
 export { T3CompatibilityError } from './contracts';
-export { T3RpcError, T3BoundarySchemaError } from './rpc';
+export { T3RpcError } from './rpc';
 export function createHost(config: T3CodeConfig): T3CodeHost { return new T3CodeHost(config); }
 
 /** Register native operations without claiming the workflow capabilities of step 2. */
@@ -25,6 +25,7 @@ export function createAdapter(host: T3CodeHost): Adapter & { readonly hostId: st
     agentTimelinePage: (id, limit) => host.agentTimelinePage(id, limit), agentTimeline: (id, limit) => host.agentTimeline(id, limit),
     pendingQuestions: id => host.pendingQuestions(id), answeredQuestions: id => host.answeredQuestions(id),
     answerNativeQuestion: (agent, workspace, request, answers) => host.answerNativeQuestion(agent, workspace, request, answers),
+    answerNativePermission: (agent, workspace, request, decision, intentId) => host.respondRuntimeRequest(agent, workspace, request, { decision }, intentId),
     dismissNativeQuestion: (agent, workspace, request) => host.dismissNativeQuestion(agent, workspace, request),
   };
 }

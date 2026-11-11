@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
 import { readFileSync } from 'node:fs';
-import { T3BoundarySchemaError, T3RpcClient, T3RpcError } from '../hosts/t3code/rpc';
+import { T3RpcClient, T3RpcError } from '../hosts/t3code/rpc';
 
 type Frame = Record<string, unknown>;
 type Reply = (frame: unknown) => void;
@@ -107,6 +107,10 @@ test('the pinned nightly contract examples retain direct command payloads and st
     if (example.method === 'orchestration.dispatchCommand') {
       const definition = contract.commands[example.payload.type];
       for (const field of definition.required) assert.ok(Object.hasOwn(example.payload, field), field);
+      if (example.payload.type === 'message.dispatch') {
+        assert.ok(contract.creationFields.createdBy.includes(example.payload.createdBy));
+        assert.ok(contract.creationFields.creationSource.includes(example.payload.creationSource));
+      }
     }
   }
 });
@@ -149,16 +153,28 @@ test('closing during the ticket exchange cannot open a late connection', async t
   assert.equal(server.upgrades, 0);
 });
 
-test('unknown method and structural boundary schema rejections prove pre-effect refusal only', async t => {
+test('all remote Die failures stay unknown even when their text matches the RPC decoder', async t => {
+  const appliedEffects: string[] = [];
   const server = await fakeServer(t, (request, send) => {
     if (request._tag !== 'Request') return;
+    // The handler performs an effect before emitting exactly the same Die that
+    // the RPC boundary would emit. Its wire response has no phase evidence.
+    appliedEffects.push(String(request.tag));
     const defect = request.tag === 'missing.method' ? 'Unknown request tag: missing.method' : contract.boundaryDecodeExample;
     send(failure(request, { _tag: 'Die', defect }));
   });
   const client = await clientFor(t, server);
-  await assert.rejects(client.call('missing.method', {}), error => error instanceof T3RpcError && error.code === 'unsupported_method' && error.delivery === 'not_sent');
-  await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'thread.stop' }), error => error instanceof T3BoundarySchemaError && error.field === 'commandId');
+  await assert.rejects(client.call('missing.method', {}), error => error instanceof T3RpcError && error.code === 'unsupported_method' && error.delivery === 'unknown');
+  await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'synthetic-command', threadId: 'synthetic-thread' }), error => error instanceof T3RpcError && error.delivery === 'unknown');
+  assert.deepEqual(appliedEffects, ['missing.method', 'orchestration.dispatchCommand']);
   assert.equal(server.frames.filter(frame => frame._tag === 'Request').length, 2);
+});
+
+test('only local pre-write failures prove that no request was sent', async t => {
+  const server = await fakeServer(t, () => assert.fail('a disconnected client cannot send'));
+  const client = new T3RpcClient({ endpoint: server.endpoint, bearer: 'synthetic-bearer' });
+  await assert.rejects(client.call('orchestration.dispatchCommand', {}), error => error instanceof T3RpcError && error.delivery === 'not_sent');
+  assert.equal(server.frames.length, 0);
 });
 
 test('handler errors and encoding defects remain unknown and redact remote payloads', async t => {

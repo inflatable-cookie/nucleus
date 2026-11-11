@@ -45,6 +45,7 @@ import { HostFacade } from "../core/host/host-facade";
 import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/admission";
 import { HostRegistry, HOST_IDLE_GRACE_MS, resolveOriginHost, type KnownHost } from "../core/host/host-registry";
 import { T3HostConnection, type T3ConnectionConfig } from './t3code-host';
+import { answerHostPermission } from './host-permissions';
 import { lifecycleSignalSchema, type LifecycleSignal, type LifecycleSignalReceipt } from "../shared/lifecycle-signal";
 import { RequestLedger } from "../core/runtime/request-ledger";
 import { Engine, controlHasExternalEffect } from "../core/engine";
@@ -1258,6 +1259,7 @@ export class QueueRuntime {
   decisionAgentProjects(input: Parameters<Decisions["agentProjects"]>[0]) { return this.questions.decisionAgentProjects(input); }
   async listNativeQuestions(input: { taskId: string; agentId?: string; agentRef?: string }) { return this.questions.listNativeQuestions(input); }
   async answerNativeQuestion(input: { taskId: string; agentId?: string; agentRef?: string; requestId: string; answers: Record<string, string> }) { return this.questions.answerNativeQuestion(input); }
+  answerHostPermission(input: import('../shared/rpc/questions').HostPermissionAnswerInput) { return answerHostPermission(this.hostRegistry, input); }
   answerDelegatedQuestion(input: import("../shared/contracts").QuestionAnswerRequest) { return this.questions.answerDelegatedQuestion(input); }
   answerDecision(input: Parameters<Decisions["answer"]>[0]) { return this.questions.answerDecision(input); }
   withdrawDecision(input: Parameters<Decisions["withdraw"]>[0]) { return this.questions.withdrawDecision(input); }

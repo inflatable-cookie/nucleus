@@ -1,6 +1,6 @@
 import type { OrphanWorkspace, WorkspaceCreationState, HostProcessFact, BuildOutputCleanupHooks, WorkspaceDiscard, WorktreeValidationScan, RunUsageSource, TimelineEntry, TimelinePage, VerifiedPr } from './types';
 import type { Run, Profile, ReviewEntryInput, StashEntry, Task } from "../../shared/contracts";
-import type { HostCatalog, HostCatalogOptions, NativeDecisionInput } from "../../shared/host";
+import type { HostCatalog, HostCatalogOptions, NativeDecisionInput, HostPermissionDecision } from "../../shared/host";
 import type { NucleusProfile } from "../../shared/profiles";
 
 export interface OriginAgent {id:string;workspaceId:string|null;title:string;archived:boolean;}
@@ -192,6 +192,8 @@ export interface Adapter extends RunUsageSource {
   answeredQuestions?(agentId: string): Promise<Array<{ requestId: string; question: string; answers: Record<string, string> }>>;
   pendingQuestions?(agentId: string): Promise<Array<{ requestId: string; questions: Array<{ header: string; question: string; options: string[] }> }>>;
   answerNativeQuestion?(agentId: string, workspaceId: string, requestId: string, answers: Record<string, string>): Promise<void>;
+  /** One explicitly addressed native approval, retaining its stable durable send identity. */
+  answerNativePermission?(agentId: string, workspaceId: string, requestId: string, decision: HostPermissionDecision, intentId: string): Promise<void>;
   /** Dismiss one pending native question through the host; never used for tool or bash permissions. */
   dismissNativeQuestion?(agentId: string, workspaceId: string, requestId: string): Promise<void>;
   archiveAgent(agentId: string): Promise<void>;

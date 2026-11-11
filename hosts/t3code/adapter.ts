@@ -6,7 +6,7 @@ import type { Task, Profile } from '../../shared/contracts';
 import { ProvenPreSendRefusalError } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
 import { T3StateFile, canonical } from './state';
-import { decode, config, shellSnapshot, projection, shellThread, project, T3CompatibilityError } from './contracts';
+import { decode, config, shellSnapshot, projection, threadSnapshot, shellThread, project, T3CompatibilityError } from './contracts';
 
 export interface T3CodeConfig { endpoint: string; bearer: string; statePath: string; timeoutMs?: number; probeThreadId?: string }
 const identity = (purpose: string, value: string) => `nucleus-${purpose}-${createHash('sha256').update(value).digest('hex').slice(0, 40)}`;
@@ -67,10 +67,11 @@ export class T3CodeHost implements Host {
     await this.rpc.readStream('orchestration.subscribeThread', { threadId, requestCompletionMarker: true }, value => {
       const item = decode(z.object({ kind: z.string() }).passthrough(), value, 'subscribeThread');
       if (item.kind === 'snapshot') {
-        decode(z.number().int().nonnegative(), item.snapshotSequence, 'subscribeThread.snapshotSequence');
-        if (item.hasMoreHistory === true || item.turnItemsOmitLocalVisible === true || item.idTable !== undefined)
+        if (snapshot) throw new T3CompatibilityError('subscribeThread: duplicate authoritative snapshot');
+        const complete = decode(threadSnapshot, item, 'subscribeThread');
+        if (complete.hasMoreHistory || complete.historyCursor != null || complete.turnItemsOmitLocalVisible || complete.idTable !== undefined)
           throw new T3CompatibilityError('subscribeThread: incomplete projection');
-        snapshot = decode(projection, item.projection, 'subscribeThread.projection');
+        snapshot = complete.projection;
         if (snapshot.thread.id !== threadId) throw new T3CompatibilityError('subscribeThread.thread.id');
       } else if (item.kind === 'synchronized') {
         if (!snapshot) throw new T3CompatibilityError('subscribeThread.projection missing');
@@ -85,6 +86,9 @@ export class T3CodeHost implements Host {
     const shell = await this.readShell();
     const archived = decode(z.object({ schemaVersion: z.number().int().positive(), snapshotSequence: z.number().int().nonnegative(),
       projects: z.array(project), threads: z.array(shellThread) }), await this.rpc.call('orchestration.getArchivedShellSnapshot', {}), 'getArchivedShellSnapshot');
+    // Both loaders report the application event cursor. An archive/unarchive
+    // between them can otherwise disappear from their union. Refuse that read.
+    if (shell.snapshotSequence !== archived.snapshotSequence) throw new T3CompatibilityError('inventory.snapshotSequence changed between live and archived reads');
     return { projects: shell.projects, threads: [...shell.threads, ...shell.archivedThreads, ...archived.threads] };
   }
   private workspaceFor(thread: Projection['thread']) {

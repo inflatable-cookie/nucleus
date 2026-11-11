@@ -64,7 +64,11 @@ test('connect refuses incompatible protocol and missing probe coverage without a
   server.controls.protocol = 2; server.controls.shellMissingField = 'activeRunId';
   const missingField = new T3CodeHost(options); t.after(() => missingField.close());
   await assert.rejects(missingField.connect(), /activeRunId/);
-  server.controls.shellMissingField = ''; server.threads.clear();
+  server.controls.shellMissingField = ''; server.controls.threadCoverage = { hasMoreHistory: 'true' };
+  const incompleteProbe = new T3CodeHost(options); t.after(() => incompleteProbe.close());
+  await assert.rejects(incompleteProbe.connect(), /hasMoreHistory/);
+  assert.equal(incompleteProbe.connected, false);
+  server.controls.threadCoverage = {}; server.threads.clear();
   const empty = new T3CodeHost({ ...options, probeThreadId: undefined }); t.after(() => empty.close());
   await assert.rejects(empty.connect(), /no readable thread/);
   assert.equal(server.commands.length, 0);
@@ -105,14 +109,19 @@ test('follow-ups keep exact text and native target, with no resend after interru
   assert.equal(server.commands.length, 3);
 });
 
-test('first-use boundary rejection is retained as refused and never retried', async t => {
+test('decoder-formatted defects keep the durable intent unknown and are never retried', async t => {
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
-  server.controls.refuseMutation = true;
-  await assert.rejects(host.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), /commandId/);
+  server.controls.postEffectDefect = true;
+  await assert.rejects(host.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), error => {
+    assert.ok(!(error instanceof ProvenPreSendRefusalError));
+    return true;
+  });
+  assert.equal(host.state.read().intents['schema-refusal']?.status, 'unknown');
+  assert.ok(server.threads.get(created.id)!.messages.some((message: { text: string }) => message.text === 'Synthetic'), 'handler performed the effect before the identical defect');
   const sent = server.commands.length;
-  server.controls.refuseMutation = false;
-  await assert.rejects(host.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), /refused.*no retry/);
+  server.controls.postEffectDefect = false;
+  await assert.rejects(host.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), /unknown.*not resent/);
   assert.equal(server.commands.length, sent);
 });
 
@@ -158,6 +167,44 @@ test('empty enrichment snapshots preserve inventory while missing fields and inc
   server.controls.synchronized = false;
   await assert.rejects(host.observe(created.id), /timeout/);
   assert.equal(host.connected, false);
+});
+
+test('coverage fields are strictly decoded before observation or timeline completeness is claimed', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  for (const [field, value] of [
+    ['hasMoreHistory', 'true'], ['hasMoreHistory', 0], ['hasMoreHistory', null],
+    ['turnItemsOmitLocalVisible', 'false'], ['historyCursor', 7],
+    ['latestLocalTurnOrdinal', '1'], ['idTable', false],
+  ] as const) {
+    server.controls.threadCoverage = { [field]: value };
+    await assert.rejects(host.observe(created.id), new RegExp(field));
+    assert.equal(await host.agentTimelinePage(created.id), null);
+    assert.equal(await host.observationInventory([created.id]), null);
+  }
+  server.controls.threadCoverage = { hasMoreHistory: false, historyCursor: 'opaque-history-cursor' };
+  await assert.rejects(host.observe(created.id), /incomplete projection/);
+  server.controls.threadCoverage = { hasMoreHistory: false, historyCursor: null, turnItemsOmitLocalVisible: false };
+  assert.equal((await host.observe(created.id)).active, false);
+});
+
+test('an unarchive between live and archive reads refuses complete inventory instead of losing the live thread', async t => {
+  const { host, server, workspace, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  for (const read of [
+    () => host.listLiveAgents(), () => host.activeThreads(), () => host.workspaceThreads([workspace.id]),
+  ]) {
+    p.thread.archivedAt = STAMP;
+    server.controls.beforeArchiveRead = () => {
+      p.thread.archivedAt = null;
+      server.controls.snapshotSequence++;
+      server.controls.beforeArchiveRead = () => {};
+    };
+    await assert.rejects(read(), /inventory.snapshotSequence changed/);
+  }
+  assert.ok((await host.listLiveAgents()).some(agent => agent.id === created.id));
+  assert.ok((await host.activeThreads()).some(agent => agent.id === created.id));
 });
 
 test('questions and approvals answer exact runtime requests and refuse wrong kinds or workspaces', async t => {

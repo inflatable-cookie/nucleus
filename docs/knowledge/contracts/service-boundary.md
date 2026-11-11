@@ -1159,11 +1159,16 @@ refuses by name. Nightly version strings are recorded diagnostics, not an
 allowlist (Tom, 2026-11-11).
 
 T3 has no schema discovery or dry run. Pin nightly command shapes in contract
-fixtures, and verify first-use schema rejection against its source-proven
-pre-effect RPC decoder. Only a positively identified boundary rejection is
-known non-delivery, with task attention naming the command and field and no
-retry; every other send failure remains unknown (planner, 2026-11-11).
+fixtures. Its decoder runs before handlers, but its untagged remote defects
+cannot prove their phase; even schema-formatted failures remain unknown and
+are never resent. Only a proven local pre-write refusal is known non-delivery.
 Never send a compatibility canary mutation to the operator's T3.
+
+`host.permission-answer` requires an explicit registered host, native agent,
+workspace, runtime request, typed decision and stable intent. It uses only that
+host's permission-response capability and refuses unknown, offline or unsupported
+hosts without falling back. Native T3 rechecks request kind and workspace;
+this method grants no task lifecycle dispatch capability.
 Unsupported reporting, native decisions and UI capabilities remain
 explicit; transport registration alone grants no lifecycle dispatch capability.
 T3 lifecycle dispatch refuses before creation until CLI reporting and board

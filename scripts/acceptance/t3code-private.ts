@@ -9,6 +9,9 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { T3RpcClient } from '../../hosts/t3code/rpc';
+import { HostRegistry, type KnownHost } from '../../core/host/host-registry';
+import type { Adapter } from '../../core/host';
+import { Admission, admitAdapter } from '../../core/host/admission';
 
 async function main() {
 const expectedVersion = '0.1.6-nightly.20261030.3917';
@@ -161,7 +164,7 @@ async function until<T>(read: () => Promise<T>, description: string, millisecond
       if (result) return result as NonNullable<T>;
     } catch (error) {
       lastFailure = error instanceof Error ? error.message : String(error);
-      if (!lastFailure.includes('state changed during snapshot')) throw error;
+      if (!lastFailure.includes('state changed during snapshot') && !lastFailure.includes('inventory.snapshotSequence changed')) throw error;
     }
     await delay(100);
   }
@@ -214,6 +217,48 @@ async function compatibilityFault(readConfig: () => Promise<unknown>) {
   await new Promise<void>(ready => http.listen(0, '127.0.0.1', ready));
   return { endpoint: `http://127.0.0.1:${(http.address() as { port: number }).port}`, calls, close: async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>(closed => http.close(() => closed())); } };
 }
+async function publicSourceDrift(newestRevision: string) {
+  const sourcePath = 'packages/contracts/src/orchestrationV2.ts';
+  const read = async (revision: string) => {
+    const response = await fetch(`https://raw.githubusercontent.com/pingdotgg/t3code/${revision}/${sourcePath}`);
+    assert.ok(response.ok, 'Nightly contract source is readable');
+    const text = await response.text();
+    writeFileSync(join(root, `contract-${revision}.ts`), text, { mode: 0o600 });
+    return text;
+  };
+  const [target, newest] = await Promise.all([read(expectedRevision), read(newestRevision)]);
+  const declaration = (text: string, name: string) => {
+    const begin = text.indexOf(`const ${name} =`);
+    assert.ok(begin >= 0, `Source declaration ${name} exists`);
+    const end = text.indexOf('\nexport ', begin + name.length + 8);
+    assert.ok(end > begin, `Source declaration ${name} is bounded`);
+    return text.slice(begin, end).trim();
+  };
+  const command = (text: string, name: string) => {
+    const typeAt = text.indexOf(`type: Schema.Literal("${name}")`);
+    assert.ok(typeAt >= 0, `Source command ${name} exists`);
+    const begin = text.lastIndexOf('Schema.Struct({', typeAt);
+    const end = text.indexOf('\n  Schema.Struct({', typeAt);
+    assert.ok(begin >= 0 && end > typeAt, `Source command ${name} is bounded`);
+    return text.slice(begin, end).trim();
+  };
+  const shapes = [
+    ['launchThread', (text: string) => declaration(text, 'OrchestrationV2ThreadLaunchInput')],
+    ['existingWorktree', (text: string) => declaration(text, 'OrchestrationV2ThreadLaunchWorkspaceStrategy')],
+    ['subscribeThread', (text: string) => declaration(text, 'OrchestrationV2SubscribeThreadInput')],
+    ...['message.dispatch', 'runtime-request.respond', 'thread.stop', 'thread.archive'].map(name => [name, (text: string) => command(text, name)] as const),
+  ] as const;
+  const result = shapes.map(([name, extract]) => {
+    const before = extract(target), after = extract(newest);
+    const oldLines = new Set(before.split('\n').map(line => line.trim()).filter(Boolean));
+    const newLines = new Set(after.split('\n').map(line => line.trim()).filter(Boolean));
+    return { name, changed: before !== after,
+      targetSha256: createHash('sha256').update(before).digest('hex'),
+      newestSha256: createHash('sha256').update(after).digest('hex'),
+      added: [...newLines].filter(line => !oldLines.has(line)), removed: [...oldLines].filter(line => !newLines.has(line)) };
+  });
+  return { sourcePath, targetRevision: expectedRevision, newestRevision, shapes: result, note: 'Source comparison only; runtime qualification targets the installed nightly revision' };
+}
 try {
   await startServer();
   const client = await connectRpc();
@@ -229,11 +274,19 @@ try {
   if (args.includes('--bootstrap-only')) {
     steps.push({ step: 'bootstrap-only', result: 'passed', note: 'Adapter lifecycle proof not run' });
   } else {
-    const { createHost } = await import('../../hosts/t3code');
+    const { createHost, createAdapter } = await import('../../hosts/t3code');
+    const { answerHostPermission } = await import('../../service/host-permissions');
     const hostOptions = { endpoint, bearer, statePath: join(root, 'adapter-state.json'), timeoutMs: 15000 };
     let adapter = createHost(hostOptions);
     host = adapter;
     await adapter.connect(probeThreadId);
+    let knownHosts: readonly KnownHost[] = [];
+    const registry = new HostRegistry<{ adapter: Adapter; admission: Admission }>({ read: () => knownHosts, write: value => { knownHosts = value; }, transaction: fn => fn() });
+    const admission = registry.resource(adapter.hostId, () => new Admission({ observationCacheMs: 0 }));
+    let registryClaim = registry.connect(adapter.hostId, endpoint, { adapter: admitAdapter(createAdapter(adapter), admission), admission });
+    const registered = registry.get(adapter.hostId);
+    assert.ok(registered, 'Authenticated native host is registered');
+    await assert.rejects(registered.adapter.validate({} as never), /CLI reporting and board/);
     steps.push({ step: 'compatibility-probe', result: 'passed' });
     const fault = await compatibilityFault(() => rpc!.call('server.getConfig', {}));
     const incompatible = createHost({ ...hostOptions, endpoint: fault.endpoint, statePath: join(root, 'fault-state.json') });
@@ -272,22 +325,27 @@ try {
     steps.push({ step: 'answer-question', result: 'passed' });
     await adapter.sendMessage(agent.id, { messageId: randomUUID(), text: 'proof-approval' });
     const approval = await until(async () => (await adapter.observe(agent.id)).pendingRequest, 'pending permission');
-    await adapter.respondRuntimeRequest(agent.id, workspace.id, approval.id, { decision: 'accept' });
+    const completedControls = admission.snapshot().control.completed;
+    await answerHostPermission(registry, { hostId: adapter.hostId, agentId: agent.id, workspaceId: workspace.id, requestId: approval.id, decision: 'accept', intentId: randomUUID() });
+    assert.equal(admission.snapshot().control.completed, completedControls + 1, 'Registered permission answer uses host control admission');
     await settled('proof-approval');
     await until(idle, 'permission answer');
-    steps.push({ step: 'answer-permission', result: 'passed' });
+    steps.push({ step: 'answer-permission', result: 'passed', note: 'Host-qualified registered service helper through admitted Adapter and HostFacade; lifecycle dispatch remains refused' });
     await adapter.sendMessage(agent.id, { messageId: randomUUID(), text: 'proof-hold' });
     await until(async () => (await adapter.observe(agent.id)).active, 'active run');
     await adapter.stopAgentTurn(agent.id);
     await until(idle, 'stop idle');
     steps.push({ step: 'observe-active-and-stop', result: 'passed' });
     async function restart() {
+      registry.disconnect(adapter.hostId, registryClaim);
       adapter.close(); rpc?.close();
       await stopServer('SIGKILL');
       await startServer();
       await connectRpc();
       adapter = createHost(hostOptions); host = adapter;
       await adapter.connect(probeThreadId);
+      assert.equal(registry.resource(adapter.hostId, () => new Admission()), admission, 'Reconnect retains per-host admission');
+      registryClaim = registry.connect(adapter.hostId, endpoint, { adapter: admitAdapter(createAdapter(adapter), admission), admission });
     }
     await adapter.sendMessage(agent.id, { messageId: randomUUID(), text: 'proof-question' });
     const restartQuestion = await until(async () => (await adapter.observe(agent.id)).pendingRequest, 'restart question');
@@ -306,7 +364,7 @@ try {
     const expired = (await detail()).runtimeRequests.find(request => request.id === restartApproval.id);
     assert.equal(expired?.status, 'expired');
     assert.equal(expired?.responseCapability.type, 'not_resumable');
-    await assert.rejects(adapter.respondRuntimeRequest(agent.id, workspace.id, restartApproval.id, { decision: 'accept' }), /no longer answerable/);
+    await assert.rejects(answerHostPermission(registry, { hostId: adapter.hostId, agentId: agent.id, workspaceId: workspace.id, requestId: restartApproval.id, decision: 'accept', intentId: randomUUID() }), /no longer answerable/);
     await until(idle, 'restart approval idle');
     steps.push({ step: 'restart-pending-permission', result: 'passed' });
     await adapter.archiveAgent(agent.id);
@@ -318,6 +376,7 @@ try {
   const newest = (await releases.json() as Array<{ tag_name: string; target_commitish: string; published_at: string }>).find(release => release.tag_name.includes('-nightly.'));
   assert.ok(newest, 'Newest nightly is identified');
   evidence.newestNightly = newest;
+  evidence.sourceDrift = await publicSourceDrift(newest.target_commitish);
   evidence.result = args.includes('--bootstrap-only') ? 'bootstrap-only' : 'passed';
 } catch (error) {
   evidence.result = 'failed';

@@ -1,5 +1,3 @@
-import { ProvenPreSendRefusalError } from '../../core/host';
-
 export interface T3ConnectionConfig {
   endpoint: string;
   bearer: string;
@@ -19,16 +17,8 @@ export class T3RpcError extends Error {
   }
 }
 
-export class T3BoundarySchemaError extends ProvenPreSendRefusalError {
-  constructor(readonly method: string, readonly field: string, readonly command?: string) {
-    super(`T3Code rejected ${command ?? method} at RPC schema field ${field}; no command was delivered`);
-    this.name = 'T3BoundarySchemaError';
-  }
-}
-
 type Pending = {
   method: string;
-  command?: string;
   accept?: (value: unknown) => boolean;
   resolve(value: unknown): void;
   reject(error: unknown): void;
@@ -45,31 +35,12 @@ const REMOTE_TAGS = new Set([
 ]);
 const safeTag = (value: unknown): string | undefined => typeof value === 'string' && REMOTE_TAGS.has(value) ? value : undefined;
 
-/**
- * Effect 4.0.5's RPC boundary formats schema failures as message/path pairs in one Die.
- * Only this bounded structural form is recognized; a generic Die, typed handler
- * failure or "Failed to encode response" defect never proves non-delivery.
- * The pinned nightly runs schemas.decode before writeDecodedRequest/handlers.
- */
-function schemaField(defect: unknown): string | undefined {
-  if (typeof defect !== 'string' || defect.length > 32_768) return undefined;
-  const lines = defect.split('\n');
-  if (!lines.length || lines.length % 2 !== 0) return undefined;
-  for (let i = 0; i < lines.length; i += 2) {
-    if (!/^(?:Missing key|Expected [^\n]+)$/.test(lines[i]!)) return undefined;
-    if (!/^  at (?:\["[A-Za-z][A-Za-z0-9_]{0,80}"\]|\[\d{1,6}\])+$/.test(lines[i + 1]!)) return undefined;
-  }
-  const fields = [...lines[1]!.matchAll(/\["([A-Za-z][A-Za-z0-9_]{0,80})"\]/g)].map(match => match[1]!);
-  return fields.length ? fields.slice(0, 8).join('.') : undefined;
-}
-
-function remoteFailure(method: string, cause: unknown, command?: string): Error {
+/** The nightly has no authenticated decode-phase tag; remote failure text cannot prove non-delivery. */
+function remoteFailure(method: string, cause: unknown): Error {
   if (!Array.isArray(cause) || cause.length !== 1 || !object(cause[0])) return new T3RpcError('remote', method);
   const reason = cause[0];
   if (reason._tag === 'Die') {
-    if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method, undefined, 'not_sent');
-    const field = schemaField(reason.defect);
-    if (field && (method === 'orchestration.dispatchCommand' || method === 'orchestration.launchThread')) return new T3BoundarySchemaError(method, field, command);
+    if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method);
     return new T3RpcError('remote', method);
   }
   const tag = reason._tag === 'Fail' && object(reason.error) ? safeTag(reason.error._tag) : undefined;
@@ -213,8 +184,7 @@ export class T3RpcClient {
         reject(new T3RpcError('timeout', method));
         this.close();
       }, this.timeoutMs);
-      const command = object(payload) && typeof payload.type === 'string' && /^[a-z][a-z.-]{0,80}$/.test(payload.type) ? payload.type : undefined;
-      this.pending.set(id, { method, command, accept, resolve, reject, timer, values: 0 });
+      this.pending.set(id, { method, accept, resolve, reject, timer, values: 0 });
       try { this.socket!.send(data); }
       catch { this.settle(id, new T3RpcError('transport', method), true); }
     });
@@ -246,7 +216,7 @@ export class T3RpcClient {
       return;
     }
     if (frame._tag === 'Exit' && object(frame.exit)) {
-      if (frame.exit._tag === 'Failure') return this.settle(id, remoteFailure(pending.method, frame.exit.cause, pending.command), true);
+      if (frame.exit._tag === 'Failure') return this.settle(id, remoteFailure(pending.method, frame.exit.cause), true);
       if (frame.exit._tag === 'Success') return this.settle(id, pending.accept ? new T3RpcError('protocol', pending.method) : frame.exit.value, Boolean(pending.accept));
     }
     if (frame._tag === 'Interrupt') return this.settle(id, new T3RpcError('transport', pending.method), true);
