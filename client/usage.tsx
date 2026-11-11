@@ -26,7 +26,7 @@ import type {
   UsageSubscription,
   UsageWindow,
 } from "../shared/schema/usage";
-import { providerLogoSources } from "./provider-logo-assets";
+import { providerLogoSource } from "./provider-logo-assets";
 
 /*
  * The Usage page (Spec 059 step 2, nucleus#1113): one pressure dial per provider
@@ -163,7 +163,7 @@ export function ProviderLogo({
   size: number;
   color: string;
 }) {
-  const source = providerLogoSources[provider];
+  const source = providerLogoSource(provider, color);
   if (!source) {
     return <Icon name={providerIconName(provider)} size={size} color={color} />;
   }

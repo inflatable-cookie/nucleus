@@ -129,7 +129,7 @@ export function UsageRailRing({
         <ProviderLogo
           provider={subscription.provider}
           size={11}
-          color={known ? c.foreground : c.foregroundMuted}
+          color={c.foreground}
         />
       </PressureRing>
     </Pressable>

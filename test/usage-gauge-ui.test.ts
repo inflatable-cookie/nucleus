@@ -500,6 +500,13 @@ test("the sidebar rail renders rings per subscription and links to the page", as
   for (const provider of ["Claude", "Codex", "Grok"]) {
     assert.ok(railLogos.includes(`${provider} logo`), `${provider} logo renders in the rail`);
   }
+  const railSvgMarks = tree.ofType("Image").map((node) =>
+    decodeURIComponent(node.props.source.uri.split(",")[1]),
+  );
+  assert.ok(
+    railSvgMarks.every((svg) => svg.includes(`fill="${dark.foreground}"`)),
+    "rail marks use the theme text colour regardless of reading state",
+  );
   const labels = tree
     .all(/usage: /)
     .map((node) => node.props.accessibilityLabel as string);
@@ -536,6 +543,16 @@ test("provider logos fall back for unknown providers and titles omit duplicate g
   const icon = fallback.ofType("Icon")[0];
   assert.equal(icon?.props.name, "Bot");
   assert.equal(icon?.props.color, dark.foreground);
+
+  for (const provider of ["claude", "codex", "grok"]) {
+    const logo = mount(
+      h(usage.ProviderLogo, { provider, size: 12, color: dark.foreground }),
+    ).ofType("Image")[0];
+    assert.ok(logo, `${provider} renders an image mark`);
+    const svg = decodeURIComponent(logo!.props.source.uri.split(",")[1]);
+    assert.ok(svg.includes(`fill="${dark.foreground}"`), `${provider} uses the theme text colour`);
+    assert.ok(!svg.includes("foreignObject"), `${provider} SVG is renderer-safe`);
+  }
 });
 
 test("the plugin shell renders the page from the board navigation", async () => {
