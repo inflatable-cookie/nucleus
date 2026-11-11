@@ -799,8 +799,8 @@ export class Operations {
     // liveness timeout - in front of every accepted handoff, so a flapping transport failed
     // the submission and left no task at all.
     const needsRecipients = Boolean(submission.notifyOriginOnCloseout) || submission.completionNotificationAgentIds.length > 0;
-    // The origin identity's own source names its host kind; it is evidence about
-    // that identity only, so an offline host that has no part in it cannot turn a
+    // The origin identity's own source proved its host; it is evidence about that
+    // identity only, so an offline host that has no part in it cannot turn a
     // decidable origin into an ambiguous one.
     const originIdentity = promotion?.identitySource ?? submission.originIdentity;
     const originHostId = await this.engine.identifyOriginHost(submission.originAgentId, originIdentity);

@@ -830,9 +830,9 @@ export class Engine {
   }
   /** Live Paseo threads the planner picker offers, each with a kind so task threads can be left out. */
   projectOwnerCandidates(): Promise<{ id: string; title: string; workspaceId: string | null; kind: ReturnType<typeof ownerCandidateKind> }[]> { return this.projectLifecycle.projectOwnerCandidates(); }
-  /** Settings → Projects: one read of projects, repository rows, slots, planner liveness and QA. */
   /** Planner participant tickets still pending; the board's project entry says so. */
   plannerTicketPending: () => ReadonlySet<string> = () => new Set();
+  /** Settings → Projects: one read of projects, repository rows, slots, planner liveness and QA. */
   projectSettings(): Promise<ReturnType<typeof buildProjectSettings>> { return this.projectLifecycle.projectSettings(); }
   /**
    * Spec 058 cutover 5, one-time migration: a project with an owner thread and no planner gets

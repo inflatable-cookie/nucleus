@@ -291,11 +291,11 @@ export const submissionSchema = z.object({
   instruction: instructionArtifactSchema.nullable().default(null),
   originAgentId: z.string().min(1).max(240), coordinatorAgentId: z.string().max(240).default(""),
   /**
-   * The origin identity's own source, filled by the submitting CLI from its own
-   * environment (never a typed name). It names the host kind that identity
-   * belongs to, so an offline host cannot block an origin resolution it has no
-   * part in. It is evidence about this identity only; it grants no host and no
-   * execution authority.
+   * The origin identity's own source, filled by the submitting CLI from the
+   * caller resolution it already proved (never a typed name). It names the host
+   * that identity belongs to, so an offline host cannot block an origin
+   * resolution it has no part in. It is evidence about this identity only; it
+   * grants no host and no execution authority.
    */
   originIdentity: identitySourceSchema.optional(),
   scope: scopeSchema.default("general"),
