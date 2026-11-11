@@ -23,19 +23,25 @@ export class Delegation {
   get delegatedAnswerWaitMs() { return this.resolution.delegatedAnswerWaitMs; }
 
   /**
-   * Re-issue the latest recipient run ticket so a released reviewer can still
-   * answer through `question.answer`. Complete and ask keep refusing that run.
+   * Name a replacement `question.answer` identity for the recipient. Helper-reporting
+   * hosts re-issue the latest run ticket. MCP hosts with a recipient run do the same
+   * so ticket-first CLI does not inherit a purged launch ticket; MCP hosts without a
+   * run on this task clear `NUCLEUS_TICKET` so `PASEO_AGENT_ID` answers. Complete and
+   * ask keep refusing the released run.
    */
-  private consultTicketRoute(task: Task, recipient: string): { helperPath: string; ticketPath: string } | undefined {
-    if (this.adapter.reportingViaMcp !== false || !this.adapter.helperPath || !this.adapter.socketPath) return;
+  private consultTicketRoute(task: Task, recipient: string): { kind: 'ticket'; helperPath: string; ticketPath: string } | { kind: 'clear' } | undefined {
+    if (!this.adapter.helperPath || !this.adapter.socketPath) return;
     const runs = this.store.runs(task.id).filter(run => run.agentId === recipient);
     const run = runs.find(candidate => !candidate.released && !candidate.completion) ?? runs.at(-1);
-    if (!run) throw Error('Consult requires the recipient run ticket');
+    if (!run) {
+      if (this.adapter.reportingViaMcp === false) throw Error('Consult requires the recipient run ticket');
+      return { kind: 'clear' };
+    }
     const token = randomBytes(32).toString('hex');
     this.store.setCredential(run.id, token);
     const paths = { helperPath: this.adapter.helperPath, socketPath: this.adapter.socketPath };
     writeRunTicket(paths, task, run, token);
-    return { helperPath: paths.helperPath, ticketPath: runTicketPath(paths, run.id) };
+    return { kind: 'ticket', helperPath: paths.helperPath, ticketPath: runTicketPath(paths, run.id) };
   }
   private quote(value: string) { return `'${value.replaceAll("'", "'\\''")}'`; }
   async requireHost(task: Task, recipient: string, role: 'planner' | 'reviewer'): Promise<string> {
@@ -69,10 +75,12 @@ export class Delegation {
   delegatePrompt(task: Task, id: string, prompt: string, recipient?: string): string {
     const json = JSON.stringify({ questionId: id, answer: '<answer or exact choice>', reason: '<one line>' });
     const route = recipient ? this.consultTicketRoute(task, recipient) : undefined;
-    const command = route
+    const command = route?.kind === 'ticket'
       ? `NUCLEUS_TICKET=${this.quote(route.ticketPath)} nucleus question.answer -`
-      : 'nucleus question.answer -';
-    const helper = route
+      : route?.kind === 'clear'
+        ? 'NUCLEUS_TICKET= nucleus question.answer -'
+        : 'nucleus question.answer -';
+    const helper = route?.kind === 'ticket' && this.adapter.reportingViaMcp === false
       ? `\nOn a host without per-thread MCP, the packaged nucleus helper with this run's ticket is the same command:\nnode ${this.quote(route.helperPath)} ${this.quote(route.ticketPath)} answer <<'JSON'\n${json}\nJSON`
       : '';
     return `Task: ${task.reference ?? task.id} — ${task.title}\nQuestion id: ${id}\n${prompt}\nAnswer with this command; write nothing else in this thread. For operator-only matters set "decision":"operator" instead of answer.\n${command} <<'JSON'\n${json}\nJSON${helper}`;

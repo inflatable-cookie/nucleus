@@ -123,12 +123,48 @@ test("CLI question.answer refuses a typed caller when no calling-thread environm
   );
 });
 
-test("question.answer caller resolver prefers the run ticket over PASEO_AGENT_ID", () => {
-  assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: "/tickets/run.json", PASEO_AGENT_ID: "paseo-thread" }),
-    { source: "ticket", path: "/tickets/run.json" });
-  assert.deepEqual(resolveQuestionAnswerCaller({ PASEO_AGENT_ID: "paseo-thread" }),
-    { source: "agent", caller: "paseo-thread" });
-  assert.throws(() => resolveQuestionAnswerCaller({}), /a run ticket or PASEO_AGENT_ID is required/);
+test("question.answer caller resolver prefers an existing run ticket over PASEO_AGENT_ID", () => {
+  const dir = mkdtempSync(join(tmpdir(), "question-caller-"));
+  const ticket = join(dir, "run.json");
+  writeFileSync(ticket, "{}");
+  try {
+    assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: ticket, PASEO_AGENT_ID: "paseo-thread" }),
+      { source: "ticket", path: ticket });
+    assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: join(dir, "gone.json"), PASEO_AGENT_ID: "paseo-thread" }),
+      { source: "agent", caller: "paseo-thread" });
+    assert.deepEqual(resolveQuestionAnswerCaller({ PASEO_AGENT_ID: "paseo-thread" }),
+      { source: "agent", caller: "paseo-thread" });
+    assert.throws(() => resolveQuestionAnswerCaller({ NUCLEUS_TICKET: join(dir, "gone.json") }),
+      /a run ticket or PASEO_AGENT_ID is required/);
+    assert.throws(() => resolveQuestionAnswerCaller({}), /a run ticket or PASEO_AGENT_ID is required/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CLI question.answer with a missing run ticket does not fail as ENOENT", () => {
+  const env = { ...process.env };
+  env.NUCLEUS_TICKET = join(tmpdir(), "missing-nucleus-ticket.json");
+  delete env.PASEO_AGENT_ID;
+  const result = spawnSync(
+    process.execPath,
+    [
+      new URL("../bin/queue-cli.mjs", import.meta.url).pathname,
+      "question.answer",
+      "-",
+    ],
+    {
+      env,
+      input: JSON.stringify(answer),
+      encoding: "utf8",
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /question.answer records the calling thread; a run ticket or PASEO_AGENT_ID is required/,
+  );
+  assert.doesNotMatch(result.stderr, /ENOENT|no such file/i);
 });
 
 test("CLI question.answer with a run ticket posts to the ticket-bound answer route", async () => {

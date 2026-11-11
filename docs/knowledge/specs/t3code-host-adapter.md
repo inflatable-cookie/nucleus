@@ -209,8 +209,10 @@ retained-thread continuation, recovery and checkpoint delivery use the same
 core policy as Paseo. The Adapter supplies `askReviewer` (a T3 message that sends the core consult
 prompt unchanged) and `findRunAgents` (exact `nucleus.run` plus `nucleus.task`
 label lookup). Core names `question.answer` with the reissued recipient run
-ticket; a shared ticket-first caller resolver fills identity for any host, so
-T3 does not rewrite the command to a separate endpoint. Uncertain reviewer or
+ticket for any host that has a recipient run; MCP hosts without a run on the
+task clear an inherited `NUCLEUS_TICKET` so `PASEO_AGENT_ID` answers. A shared
+ticket-first caller resolver fills identity for any host and skips a ticket
+path that is gone, so T3 does not rewrite the command to a separate endpoint. Uncertain reviewer or
 coordinator creation can bind. T3-hosted planners are out of trial: missing
 `askPlanner` becomes an answerable board decision with the planner message,
 never a silently pending ask. Production planners stay Paseo threads. `host.permission-answer` still grants no

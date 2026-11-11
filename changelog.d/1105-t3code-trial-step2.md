@@ -10,7 +10,10 @@ verification and retained-thread continuation use the same Nucleus policy as
 Paseo. Helper asks reach a retained T3 reviewer through `askReviewer`. The consult
 prompt is `question.answer` with the reissued recipient run ticket; a shared
 ticket-first caller resolver fills identity for any host (PASEO_AGENT_ID is the
-fallback). Ticket answers keep host-qualified recipient authentication, so a
+fallback, including when the named ticket file is gone). MCP-host consults
+reissue that ticket when the recipient has a run, and clear an inherited
+`NUCLEUS_TICKET` when they do not, so a released Paseo launch ticket cannot
+answer. Ticket answers keep host-qualified recipient authentication, so a
 host-A ticket cannot answer a question delegated to the same native id on host
 B. A released reviewer run is re-issued a consult ticket so the latest retained
 run authenticates; complete and ask keep refusing that run. T3-hosted planners

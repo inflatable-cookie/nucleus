@@ -16,6 +16,7 @@ import type { HostPolicyConstructor } from '../core/host';
 import { workerPrompt, runPrompt } from '../core/dispatch/prompts';
 import { workerAgentSpec, runTicketPath } from '../core/dispatch/agent-creation';
 import { workerHelper, startCallbacks, CALLBACK_ASK_TIMEOUT_MS, CALLBACK_SOCKET_TIMEOUT_MS } from '../service/callbacks/callback';
+import { resolveQuestionAnswerCaller } from '../shared/question-caller.mjs';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { QueueRuntime } from '../service/runtime-owner';
@@ -68,6 +69,19 @@ function spawnHelper(helper: string, ticket: string, payload: unknown, extraArgs
     let out = '', err = '';
     child.stdout.on('data', chunk => { out += chunk; });
     child.stderr.on('data', chunk => { err += chunk; });
+    child.on('error', reject);
+    child.on('close', code => resolve({ code, out, err }));
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+function spawnCli(env: NodeJS.ProcessEnv, payload: unknown) {
+  return new Promise<{ code: number | null; out: string; err: string }>((resolve, reject) => {
+    const child = spawn(process.execPath, [new URL('../bin/queue-cli.mjs', import.meta.url).pathname, 'question.answer', '-'], {
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: tmpdir(), TMP: tmpdir(), TEMP: tmpdir(), ...env },
+    });
+    let out = '', err = '';
+    child.stdout.setEncoding('utf8').on('data', chunk => { out += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { err += chunk; });
     child.on('error', reject);
     child.on('close', code => resolve({ code, out, err }));
     child.stdin.end(JSON.stringify(payload));
@@ -596,5 +610,64 @@ test('a host-A ticket cannot answer a question delegated to the same native id o
     assert.notEqual(refused.code, 0, refused.out);
     assert.match(refused.err, /Delegated answer host is not proven/);
     assert.equal(store.eventsAll('delegation:q-b').some(event => event.kind === 'delegated_answer'), false);
+  } finally { await engine.stop(); await stop(); store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a released Paseo reviewer consult replaces the launch ticket; deleted tickets fall back to PASEO_AGENT_ID', async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'paseo-retained-answer-')));
+  const store = new Store(join(dir, 'queue.sqlite'));
+  store.setMeta('paused', false);
+  store.setMeta('hostRegistry', [{ id: 'host' }]);
+  const socketPath = join(dir, 's'), helperPath = join(dir, 'worker-report.mjs');
+  const adapter = {
+    observe: observeIdle('ws', 'worker'),
+    reportingViaMcp: true,
+    helperPath,
+    socketPath,
+    askReviewer: async () => null,
+  } as unknown as HostAdapter;
+  const engine = new Engine(store, adapter, 0);
+  engine.identifyOriginHost = async () => 'host';
+  const task = store.insert(submissionSchema.parse({
+    submissionId: 'paseo-retained-answer', title: 'Paseo retained answer', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
+    handoffPath: 'handoff.md', originAgentId: 'origin',
+  }), 'host', 'handoff', 'a'.repeat(40));
+  const profile = { id: 'p', name: 'p', provider: 'synthetic', model: 'm', notes: '', available: true, problem: '', supportedThinking: [] } as Profile;
+  const launchTicket = join(dir, 'tickets', 'run-review.json');
+  mkdirSync(dirname(launchTicket), { recursive: true, mode: 0o700 });
+  writeFileSync(launchTicket, JSON.stringify({ socketPath, token: 'stale-secret', taskId: task.id, runId: 'run-review' }), { mode: 0o600 });
+  store.setCredential('run-review', 'stale-secret');
+  putReleasedReviewer(store, store.task(task.id), 'paseo-reviewer', profile);
+  assert.equal(existsSync(launchTicket), false);
+  assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: launchTicket, PASEO_AGENT_ID: 'paseo-reviewer' }),
+    { source: 'agent', caller: 'paseo-reviewer' });
+  engine.resolution.openDelegatedQuestion(store.task(task.id), 'q-host', 'paseo-reviewer', 'Continue?', 60_000, 'reviewer', 'host');
+  const hostReceipt = await engine.resolution.answerDelegatedQuestionFromHost(
+    { questionId: 'q-host', answer: 'Keep it.', reason: 'Host auth.' }, 'paseo-reviewer');
+  assert.equal(hostReceipt.answer, 'Keep it.');
+  const plannerConsult = engine.resolution.delegatePrompt(store.task(task.id), 'q-planner', 'Continue?', 'project-planner');
+  assert.match(plannerConsult, /NUCLEUS_TICKET= nucleus question.answer -/);
+  assert.equal(plannerConsult.includes(`NUCLEUS_TICKET='`), false);
+  const stop = await startCallbacks(socketPath, helperPath, engine);
+  try {
+    writeFileSync(launchTicket, JSON.stringify({ socketPath, token: 'stale-secret', taskId: task.id, runId: 'run-review' }), { mode: 0o600 });
+    engine.resolution.openDelegatedQuestion(store.task(task.id), 'q-revoked', 'paseo-reviewer', 'Continue?', 60_000, 'reviewer', 'host');
+    const revoked = await spawnCli({ NUCLEUS_TICKET: launchTicket }, {
+      questionId: 'q-revoked', answer: 'Keep it.', reason: 'Stale ticket.',
+    });
+    assert.notEqual(revoked.code, 0, revoked.out);
+    assert.match(revoked.err, /Unauthorized callback/);
+    assert.equal(store.eventsAll('delegation:q-revoked').some(event => event.kind === 'delegated_answer'), false);
+    engine.resolution.openDelegatedQuestion(store.task(task.id), 'q-cli', 'paseo-reviewer', 'Continue?', 60_000, 'reviewer', 'host');
+    const consult = engine.resolution.delegatePrompt(store.task(task.id), 'q-cli', 'Continue?', 'paseo-reviewer');
+    assert.ok(consult.includes(`NUCLEUS_TICKET=${quote(launchTicket)} nucleus question.answer -`));
+    assert.equal(consult.includes('On a host without per-thread MCP'), false);
+    assert.ok(existsSync(launchTicket));
+    const accepted = await spawnCli({ NUCLEUS_TICKET: launchTicket }, {
+      questionId: 'q-cli', answer: 'Keep the Paseo approach.', reason: 'Within the brief.',
+    });
+    assert.equal(accepted.code, 0, accepted.err);
+    const receipt = JSON.parse(accepted.out) as { answer?: string };
+    assert.equal(receipt.answer, 'Keep the Paseo approach.');
   } finally { await engine.stop(); await stop(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
