@@ -1,3 +1,6 @@
+import { parseAgentId, sameCallerIdentity } from '../../shared/agent-identity';
+import type { IdentitySource } from '../../shared/host-kind';
+
 /** Ten minutes after the last host closes (Tom, 2026-11-08, `vision.md` "Split
  * details"). Active host runs keep the daemon alive; a reconnect or a new
  * presence within the grace cancels the shutdown. */
@@ -31,6 +34,25 @@ export type OriginLookup = 'mine' | 'not-mine' | 'unknown';
  * thread's.
  */
 export interface OriginHostEvidence { hostId: string; source: string }
+
+/**
+ * The caller's identity source as evidence for one origin identity. It applies
+ * only when it names the same thread: the same native ID, compared as a thread
+ * and not as a string, so a bare recorded author (Paseo's, per the historical
+ * caller-field rule) matches the host-qualified caller that the same thread
+ * resolved to. The source's own host must agree with any qualification it
+ * carries, and that host must be registered. Anything else is no evidence.
+ */
+export function identitySourceHostEvidence(agentId: string, identitySource: IdentitySource | undefined,
+  knownHostIds: readonly string[]): OriginHostEvidence | undefined {
+  if (!identitySource) return undefined;
+  try {
+    const qualified = parseAgentId(identitySource.agent);
+    if (qualified && qualified.hostId !== identitySource.hostId) return undefined;
+    if (!sameCallerIdentity(identitySource.agent, agentId, identitySource.hostId)) return undefined;
+  } catch { return undefined; }
+  return knownHostIds.includes(identitySource.hostId) ? { hostId: identitySource.hostId, source: 'caller identity source' } : undefined;
+}
 
 const answered = (value: unknown): OriginLookup => value === 'unknown' ? 'unknown'
   : value === 'mine' ? 'mine'

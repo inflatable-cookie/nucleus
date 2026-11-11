@@ -209,7 +209,9 @@ be asked must rule itself out. A registered host that is offline cannot rule its
 out, so it leaves the origin unknown — unless the identity's own source already
 proved which host it belongs to (the caller resolution above, or a qualified
 identity); that evidence belongs to that one thread, contradicts a claim from
-anywhere else, and decides nothing about another identity. Two claimants always
+anywhere else, and decides nothing about another identity. The thread is compared
+as a thread, not a string: a bare recorded author is Paseo's, so it matches the
+host-qualified caller of the same native thread on a Paseo host. Two claimants always
 refuse. A host lookup is a read, never a grant of execution authority, and an origin
 refusal settles a promotion as refused before commit rather than as an uncertain
 effect.

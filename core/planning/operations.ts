@@ -735,7 +735,7 @@ export class Operations {
       if(!this.adapter.inspectReviewEntry||!this.adapter.originAgent)throw Error('Review entry is unavailable on this adapter');
       const routingConflict=this.engine.independentReviewRoutingRefusal({...input.submission,declaredAuthorModels:input.authorDeclaration.models});
       if(routingConflict)throw new Error(routingConflict);
-      const originHostId = await this.engine.identifyOriginHost(input.submission.originAgentId);
+      const originHostId = await this.engine.identifyOriginHost(input.submission.originAgentId, input.submission.originIdentity);
       if (!originHostId) throw new SubmissionUnavailableError("Review-entry origin host is unknown or ambiguous");
       const target = this.adapter as Adapter & ReviewEntryAdapter;
       const reviewAdapter = originHostId === operation.hostId ? target : new Proxy(target, { get: (adapter, property, receiver) => {
@@ -750,7 +750,7 @@ export class Operations {
         };
       } });
       const task=await bindReviewEntry(this.store,reviewAdapter,{...operation,hostSelection:selection},input,originHostId,async id => {
-        const host = await this.engine.identifyOriginHost(id);
+        const host = await this.engine.identifyOriginHost(id, input.submission.originIdentity);
         if (!host || host !== originHostId) throw new SubmissionUnavailableError("Review-entry origin host is unknown or ambiguous");
         return this.engine.withHost(host, () => this.engine.host.originAgent(id));
       });
@@ -806,7 +806,8 @@ export class Operations {
     const originHostId = await this.engine.identifyOriginHost(submission.originAgentId, originIdentity);
     if (needsRecipients && !originHostId) throw new SubmissionUnavailableError("Origin host is unknown or ambiguous");
     const resolved = needsRecipients ? await validateCompletionRecipients(submission, async id => {
-      const host = await this.engine.identifyOriginHost(id, id === submission.originAgentId ? originIdentity : undefined);
+      // The evidence names one thread, so every recipient gets it and only the same thread uses it.
+      const host = await this.engine.identifyOriginHost(id, originIdentity);
       if (!host || host !== originHostId) throw new SubmissionUnavailableError("Completion recipient host is unknown or differs from the recorded origin host");
       return this.engine.withHost(host, () => this.engine.host.originAgent(id));
     }) : null;
