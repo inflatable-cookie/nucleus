@@ -32,6 +32,13 @@ test('publication CLI accepts a clean tracked tree with no local denylist', () =
   assert.match(result.stdout, /Publication check passed/);
 });
 
+test('publication CLI rejects a planted host environment literal in core', () => {
+  const root = fixture({ 'core/planted.ts': "export const hostVariable = 'PASEO_PLANTED';" });
+  const result = cli(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /core\/planted\.ts: host environment PASEO_PLANTED belongs in its host integration/);
+});
+
 test('publication CLI rejects planted private names without printing the private match', () => {
   const secret = 'private' + '-consumer-sample';
   const root = fixture({ 'README.md': `Example: ${secret.toUpperCase()}.` });

@@ -1,3 +1,4 @@
+import { formatAgentId } from '../shared/agent-identity';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HostFacade, type HostFacadeMethod } from "../core/host/host-facade";
@@ -188,4 +189,19 @@ test("the usage stream is present exactly when the adapter has one, and reads th
 test("the class carries exactly the façade's declared method set", () => {
   const carried = Object.getOwnPropertyNames(HostFacade.prototype).filter(name => name !== "constructor").sort();
   assert.deepEqual(carried, [...FACADE_METHODS].sort());
+});
+
+
+test('qualified callers reach only their recorded host and host APIs receive native IDs', async () => {
+  const calls: Calls[] = [];
+  const owner = { adapter: fakeAdapter(calls, 'selected', { withNotify: true }), activeHostId: 't3code:one' };
+  const host = new HostFacade(owner);
+  await host.observe(formatAgentId('t3code:one', 'planner'));
+  await host.sendMessage(formatAgentId('t3code:one', 'planner'), { messageId: 'message', text: 'Hello' });
+  assert.deepEqual(calls, [
+    { method: 'observe', args: ['selected', 'planner'] },
+    { method: 'notify', args: ['selected', 'planner', 'message', 'Hello', undefined] },
+  ]);
+  assert.throws(() => host.observe(formatAgentId('t3code:other', 'planner')), /different or unknown host/);
+  assert.equal(calls.length, 2, 'a mismatched host receives no call');
 });

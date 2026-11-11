@@ -1,3 +1,4 @@
+import { formatAgentId } from '../shared/agent-identity';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
@@ -134,8 +135,8 @@ test('the new owner must be a live planning thread, and only open tasks move', a
  const f=fixture();try{
   const task=f.add('t');
   const working=f.store.update(f.add('w').id,{agentId:'worker',phase:'working'});
-  await assert.rejects(f.reparent({taskIds:[task.id],toAgentId:'old'}),/must be a live, unarchived Paseo thread/);
-  await assert.rejects(f.reparent({taskIds:[task.id],toAgentId:'missing'}),/must be a live, unarchived Paseo thread/);
+  await assert.rejects(f.reparent({taskIds:[task.id],toAgentId:'old'}),/must be a live, unarchived host thread/);
+  await assert.rejects(f.reparent({taskIds:[task.id],toAgentId:'missing'}),/must be a live, unarchived host thread/);
   await assert.rejects(f.reparent({taskIds:[task.id],toAgentId:'operator'}),/operator is not a thread/);
   await assert.rejects(f.reparent({taskIds:[task.id],toAgentId:'worker'}),new RegExp(`worker is a worker, reviewer or coordinator of task ${working.id}`));
   const done=f.store.update(f.add('done').id,{phase:'done'});
@@ -202,8 +203,30 @@ test('schema 50 upgrade preserves task owners, hold markers and pending prompts'
 
 test('the CLI takes the caller from its own thread and calls the one reparent method', () => {
  const source=readFileSync(new URL('../bin/nucleus-reparent.mjs',import.meta.url),'utf8');
- assert.match(source,/process\.env\.PASEO_AGENT_ID/);
+ assert.match(source,/await resolveCliCaller/);
  assert.match(source,/client\.request\('queue\.reparent'/);
  assert.doesNotMatch(source,/--caller/);
  assert.match(readFileSync(new URL('../shared/rpc-catalogue.ts',import.meta.url),'utf8'),/name: "queue\.reparent", contract: contracts\.reparent, method: "reparent"/);
+});
+
+
+test('qualified callers retain legacy owner authority and owner hold semantics', async () => {
+ const f=fixture();try{
+  const task=f.add('qualified-owner','live-old',{originHostId:'host'});
+  const caller=formatAgentId('host','live-old');
+  const held=await f.engine.performTaskControl(taskControlInputSchema.parse({action:'hold',taskId:task.id,version:task.version,kind:'dispatch',reason:'Waiting',agentId:caller,caller}));
+  assert.equal(holdsOf(held).dispatch?.owner,TASK_OWNER_HOLD);
+  await assert.rejects(f.reparent({taskIds:[task.id],caller:formatAgentId('other-host','live-old')}),/is neither/);
+  await f.reparent({taskIds:[task.id],caller});
+  assert.equal(taskOwner(f.store.task(task.id)),'new');
+  assert.equal(f.store.task(task.id).originAgentId,'live-old','historical creator is untouched');
+ }finally{await f.close()}
+});
+
+test('qualified subscription choices merge with legacy completion recipients', () => {
+ const policy={originAgentId:'origin',notificationAgentId:'origin',originWorkspaceId:'planning',notifyOriginOnCloseout:true,
+  creatorCompletionRecipients:[{agentId:'alpha',workspaceId:'a'}],
+  completionSubscriptionOverrides:[{agentId:formatAgentId('host','alpha'),workspaceId:'a',subscribed:false},
+    {agentId:formatAgentId('host','origin'),workspaceId:'planning',subscribed:false}]};
+ assert.deepEqual(completionMembership(policy),[]);
 });

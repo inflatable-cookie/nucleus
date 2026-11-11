@@ -21,3 +21,5 @@ export function hostConnectionRequired(adapter: Adapter): boolean {
 
 // Public host entry, including the compatibility surface used by fixtures.
 export * from "./adapter/paseo";
+
+export { paseoHome, paseoHomeOverride, paseoHomeEnvironment } from './environment.mjs';

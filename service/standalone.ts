@@ -5,8 +5,7 @@ import { dataHome } from "../shared/data-home.mjs";
  * never run twice against the same store: construction proves the prior owner
  * is gone and fails closed otherwise.
  */
-import { join } from "node:path";
-import { homedir } from "node:os";
+import { paseoHome as hostHome, paseoHomeOverride } from "../hosts/paseo";
 import { QueueService } from "./transport/server";
 import { pidAlive } from "./transport/identity";
 import { standbyForPid, clearStandbyReady } from "./install/standby";
@@ -18,10 +17,10 @@ export async function runStandaloneService(argv: string[] = process.argv.slice(2
   ignoreDetachedOutputEpipe(process.stdout);
   ignoreDetachedOutputEpipe(process.stderr);
   const dataDirOverride = argv.find(value => value.startsWith("--data-dir="))?.slice("--data-dir=".length);
-  const paseoHome = process.env.PASEO_HOME || joinHome();
+  const paseoHome = hostHome();
   const ownerOptions = {
     dataDir: dataDirOverride ?? dataHome(env),
-    ...(env.PASEO_HOME || argv.some(value => value.startsWith("--data-dir=")) ? { paseoHome } : {}),
+    ...(paseoHomeOverride(env) || argv.some(value => value.startsWith("--data-dir=")) ? { paseoHome } : {}),
     // Contract 010's client-protocol v1 endpoint is a live-service surface; the
     // fixture and in-process test runtimes never enable it.
     hostRunEndpoint: true,
@@ -64,8 +63,6 @@ export async function runStandaloneService(argv: string[] = process.argv.slice(2
   console.log(`Nucleus service ready on ${service["socketPath"]} pid ${process.pid} build ${service.buildId}`);
   await service.drainedPromise();
 }
-
-function joinHome(): string { return join(homedir(), ".paseo"); }
 
 function ignoreDetachedOutputEpipe(stream: NodeJS.WriteStream) {
   stream.on("error", error => {

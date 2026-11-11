@@ -1,0 +1,1 @@
+CLI commands and helpers now identify the calling thread from a Nucleus ticket before using its host identity. Registered planners receive revocable participant tickets, so hosts without thread environment IDs can use the same commands. Existing Paseo planner commands keep working, and a new gate prevents host environment names from leaking into shared runtime code.

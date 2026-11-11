@@ -24,6 +24,7 @@ export interface RpcCatalogueEntry {
 }
 
 export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
+  { name: "caller.resolve", contract: contracts.callerResolve, method: "resolveHostCaller", mutating: false },
   { name: "queue.snapshot", contract: contracts.snapshot, method: "snapshot", mutating: false },
   { name: "backup.now", contract: contracts.backupNow, method: "backupNow", mutating: true },
   { name: "backup.list", contract: contracts.backupList, method: "backupList", mutating: false },

@@ -1,3 +1,4 @@
+import { formatAgentId } from '../shared/agent-identity';
 import { fakeAdapter } from './support/fakes';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -353,4 +354,17 @@ test('a second registration of the same workspace, agent or branch resumes the e
     await assert.rejects(f.register(), new RegExp(`already belongs to queue task ${first.task.id}`));
     assert.equal(f.store.tasks().length, 1);
   } finally { await f.close(); }
+});
+
+
+test('qualified registration callers keep the worker native and the origin qualified', async () => {
+ const f=await fixture();try {
+  const hostId=f.adapter.hostId;
+  const caller=formatAgentId(hostId,f.caller);
+  const result=await f.register({caller});
+  assert.equal(result.task.originAgentId,caller);
+  assert.equal(result.task.notificationAgentId,caller);
+  assert.equal(result.task.agentId,f.caller);
+  assert.equal(result.workerAgentId,f.caller);
+ } finally {await f.close();}
 });

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, readlink, readdir, realpath, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
+import { formatAgentId } from "../shared/agent-identity";
 import { pathToFileURL } from "node:url";
 import { exec, installerFixture } from "./support/nucleus-install-fixture";
 
@@ -96,6 +98,16 @@ await service.start();
 console.log('READY');
 process.on('SIGTERM', () => { void service.stop().then(() => process.exit(0)); });
 `);
+  // Synthetic caller ticket: identity resolution needs no native host resources.
+  const identitySocket = join(root, "identity.sock"), identityTicket = join(root, "caller.json");
+  const identityServer = createServer((request, response) => {
+    assert.equal(request.url, '/caller');
+    assert.equal(request.headers.authorization, 'Bearer fixture-caller-token');
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ caller: formatAgentId('fixture-host', 'fixture-helper-caller'), hostId: 'fixture-host', source: 'run-ticket' }));
+  });
+  await new Promise<void>(resolve => identityServer.listen(identitySocket, resolve));
+  await writeFile(identityTicket, JSON.stringify({ socketPath: identitySocket, taskId: 'fixture-task', runId: 'fixture-run', token: 'fixture-caller-token' }), { mode: 0o600 });
   const service = spawn(join(first, "runtime/node"), [proof], { env, cwd: root, stdio: ["ignore", "pipe", "pipe"] });
   let diagnostics = "";
   service.stderr.on("data", chunk => { diagnostics += chunk; });
@@ -131,7 +143,7 @@ process.on('SIGTERM', () => { void service.stop().then(() => process.exit(0)); }
     // Exercise submit and reparent against the private service. These deliberately
     // missing inputs must return the same refusal and exit code as the helpers,
     // rather than creating tasks or changing ownership.
-    const helperEnv = { ...env, PASEO_AGENT_ID: "fixture-helper-caller" };
+    const helperEnv = { ...env, NUCLEUS_TICKET: identityTicket };
     for (const [helper, args] of [
       ["submit", ["--dry-run", join(root, "repo/docs/handoffs/missing.md")]],
       ["reparent", ["fixture-owner", "--task", "missing-task", "--reason", "scratch proof"]],
@@ -157,7 +169,9 @@ process.on('SIGTERM', () => { void service.stop().then(() => process.exit(0)); }
     assert.deepEqual(JSON.parse(output), answer);
   } finally {
     service.kill("SIGTERM");
-    assert.equal(await exited, 0, diagnostics);
+    const exitCode = await exited;
+    await new Promise<void>(resolve => identityServer.close(() => resolve()));
+    assert.equal(exitCode, 0, diagnostics);
   }
 
 

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkHostEnvironment } from './check-host-environment.mjs';
 
 // Exact synthetic fixture files may retain deliberate artifact samples. This
 // never exempts their content or names from the private-name and path rules.
@@ -105,7 +106,7 @@ export function checkPublication(root, { env = process.env } = {}) {
     const htmlDiff = /\.html?$/i.test(file) && (/(?:diff|colour-moved|color-moved)/i.test(file) || /(?:class=["'][^"']*\bdiff\b|diff --git |<title>[^<]*\bdiff\b)/i.test(text));
     if (log || htmlDiff || (image ? !assetFolder.test(file) : binary)) findings.push(`${label}: evidence artifact`);
   }
-  return findings;
+  return [...findings, ...checkHostEnvironment(root)];
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

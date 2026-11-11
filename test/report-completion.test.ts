@@ -1,3 +1,4 @@
+import { formatAgentId } from '../shared/agent-identity';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -114,6 +115,8 @@ function fixture(options: { brief?: string; openPr?: boolean; draftPr?: boolean;
 test("report_ready releases an opted-in worker into planner acceptance without blocker recovery", async () => {
   const f = fixture({ brief: reportOnlyBrief });
   try {
+    const project = f.store.projectFor(f.repo, "acme/report")!;
+    f.store.setProjectPlanner({ key: project.key, agentId: formatAgentId('fixture-host', owner), setBy: 'test' });
     const task = f.store.update(f.task.id, { phase: "working", completion: null, runId: "report-ready-run", reason: "Worker is writing the report" });
     f.store.setCredential("report-ready-run", "report-ready-token");
     const result: Completion = { eventId: "report-ready-event", taskId: task.id, runId: "report-ready-run", status: "report_ready",

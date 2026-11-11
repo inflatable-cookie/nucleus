@@ -122,8 +122,9 @@ test('CLI forwards --wait in either position and submits an authorized brief in 
   const server = createSocketServer(socket => {
     const reader = createFrameReader((frame: any) => {
       let result: unknown = {};
+      if (frame.method === 'caller.resolve') result = {caller: 'nucleus-agent:v1:["paseo-fixture","fixture-planner"]',hostId:'paseo-fixture',source:'host'};
       if (frame.method === 'service.health') result = { protocolVersion: PROTOCOL_VERSION, rpcContracts: rpcContractDigests() };
-      else if (frame.method !== 'service.auth') {
+      else if (!['service.auth','caller.resolve'].includes(frame.method)) {
         calls.push({ method: frame.method, input: frame.input });
         result = frame.method === 'lead.submit' ? { taskId: 'submitted', reference: 'repo#1' } : run;
       }
@@ -136,7 +137,7 @@ test('CLI forwards --wait in either position and submits an authorized brief in 
     credential: 'a'.repeat(64), pid: process.pid, startedAt: new Date().toISOString() }));
   const invoke = async (args: string[], input: unknown) => new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
     const child = spawn(process.execPath, [new URL('../bin/queue-cli.mjs', import.meta.url).pathname, ...args], {
-      env: { ...process.env, NUCLEUS_DATA_HOME: dir, PASEO_AGENT_ID: 'fixture-planner' },
+      env: { ...process.env, NUCLEUS_DATA_HOME: dir, NUCLEUS_TICKET: '', PASEO_AGENT_ID: 'fixture-planner' },
     });
     let stdout = '', stderr = '';
     child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
@@ -152,7 +153,7 @@ test('CLI forwards --wait in either position and submits an authorized brief in 
       assert.match(result.stderr, /QA request ID: .*reconcile with project\.qa\.request-status/);
       const call = calls.at(-1)!;
       assert.equal(call.input.wait, true);
-      assert.equal(call.input.submitterAgentId, 'fixture-planner');
+      assert.equal(call.input.submitterAgentId, 'nucleus-agent:v1:["paseo-fixture","fixture-planner"]');
       assert.ok(call.input.requestId);
     }
     const result = await invoke(['lead.submit', '-'], { repository: 'owner/repo', title: 'Build it', body: '---\ntitle: Build it\n---\n',

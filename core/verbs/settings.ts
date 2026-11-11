@@ -1,3 +1,4 @@
+import { parseAgentId, sameCallerIdentity } from '../../shared/agent-identity';
 import { REMOVED_TASK_REFUSAL } from './control-refusals';
 import type { ReparentInput, Task, TaskControlInput } from "../../shared/contracts";
 import { OPERATOR_BOARD_CALLER, defaultHoldKind, holdOwnerOf, holdsOf, parseHoldUntil } from "../../shared/contracts";
@@ -189,7 +190,12 @@ export class SettingsControls {
       if(task.removedAt||["done","cancelled"].includes(task.phase))throw Error("Completion subscriptions are closed for terminal tasks");
       if(!this.adapter.originAgent)throw Error("Live agent identity validation is unavailable");
       let agent;
-      try{agent=await this.engine.host.originAgent(input.agentId)}
+      try{
+        const hostId = parseAgentId(input.agentId)?.hostId ?? await this.engine.identifyOriginHost(input.agentId);
+        agent = hostId
+          ? await this.engine.withHost(hostId, () => this.engine.host.originAgent(input.agentId))
+          : await this.engine.host.originAgent(input.agentId);
+      }
       catch(error){throw Error(`Completion recipient ${input.agentId} identity is unreadable (${error instanceof Error?error.message:String(error)}); refusing unknown evidence`)}
       // The awaited identity read may be accompanied by a lifecycle observation of
       // this task. Revalidate the admission, then derive every terminal, recipient
@@ -205,13 +211,13 @@ export class SettingsControls {
       // nomination or its own subscription) leaves a task's future cohort, so it
       // runs on the durable workspace binding that record holds (Spec 040).
       if(!live&&input.action!=="unsubscribe")throw Error("Completion subscription requires a live Paseo agent with a workspace");
-      const recorded=current.completionSubscriptionOverrides.find(entry=>entry.agentId===input.agentId)
-        ??current.creatorCompletionRecipients.find(recipient=>recipient.agentId===input.agentId);
+      const recorded=current.completionSubscriptionOverrides.find(entry=>sameCallerIdentity(entry.agentId,input.agentId))
+        ??current.creatorCompletionRecipients.find(recipient=>sameCallerIdentity(recipient.agentId,input.agentId));
       if(!live&&!recorded)throw Error(`Completion unsubscribe for ${input.agentId} needs a recorded recipient or subscription; no durable workspace evidence exists`);
       if(!live&&agent?.workspaceId&&recorded&&agent.workspaceId!==recorded.workspaceId)
         throw Error(`Completion recipient ${input.agentId} is observed in workspace ${agent.workspaceId}, not its recorded ${recorded.workspaceId}; refusing mismatched evidence`);
       const workspaceId=live?agent!.workspaceId!:recorded!.workspaceId;
-      const overrides=current.completionSubscriptionOverrides.filter(entry=>entry.agentId!==input.agentId);
+      const overrides=current.completionSubscriptionOverrides.filter(entry=>!sameCallerIdentity(entry.agentId,input.agentId));
       overrides.push({agentId:input.agentId,workspaceId,subscribed:input.action==="subscribe"});
       return this.store.update(current.id,{completionSubscriptionOverrides:overrides.sort((a,b)=>a.agentId.localeCompare(b.agentId))},
         input.action==="subscribe"?"completion_subscribed":"completion_unsubscribed",`${input.agentId} in workspace ${workspaceId}`,current.version);

@@ -1,3 +1,4 @@
+import { callerNativeId, parseAgentId } from '../../shared/agent-identity';
 import type { Profile, Task } from '../../shared/contracts';
 import type {
   AgentId, AnsweredQuestion, Host, HostCapabilities, HostCatalog, HostCatalogOptions, HostLiveAgent, HostMessage,
@@ -24,7 +25,11 @@ import type { Adapter } from './adapter';
  * archive with a different input, decisions) or is optional on `Host` itself.
  */
 export class HostFacade implements Pick<Host, HostFacadeMethod> {
-  constructor(private readonly owner: { readonly adapter: Adapter }) {}
+  constructor(private readonly owner: { readonly adapter: Adapter; readonly activeHostId?: string }) {}
+
+  #native(id: AgentId): AgentId {
+    return callerNativeId(id, this.owner.activeHostId ?? (this.owner.adapter as Adapter & { hostId?: string }).hostId);
+  }
 
   catalog(options?: HostCatalogOptions): Promise<HostCatalog> {
     const { adapter } = this.owner;
@@ -75,18 +80,22 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     const { adapter } = this.owner;
     const read = adapter.originAgent;
     if (!read) return refused('This host cannot read an origin agent');
-    return read.call(adapter, id);
+    return read.call(adapter, this.#native(id));
   }
 
   observe(id: AgentId): Promise<HostObservation> {
-    return this.owner.adapter.observe(id);
+    return this.owner.adapter.observe(this.#native(id));
   }
 
   observationInventory(ids: readonly AgentId[]): Promise<ReadonlyMap<AgentId, HostObservation> | null> {
     const { adapter } = this.owner;
     const read = adapter.observationInventory;
     if (!read) return refused('This host cannot read an observation inventory');
-    return read.call(adapter, ids);
+    if (!ids.some(id => parseAgentId(id))) return read.call(adapter, ids);
+    const nativeIds = ids.map(id => this.#native(id));
+    return read.call(adapter, nativeIds).then(result => result
+      ? new Map(ids.flatMap((id, i) => { const observation = result.get(nativeIds[i]!); return observation ? [[id, observation] as const] : []; }))
+      : null);
   }
 
   listLiveAgents(): Promise<HostLiveAgent[]> {
@@ -100,25 +109,25 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     const { adapter } = this.owner;
     const read = adapter.agentTimelinePage;
     if (!read) return refused('This host cannot read agent timelines');
-    return read.call(adapter, id, limit);
+    return read.call(adapter, this.#native(id), limit);
   }
 
   agentTimeline(id: AgentId, limit?: number): Promise<HostTimelineEntry[] | null> {
     const { adapter } = this.owner;
     const read = adapter.agentTimeline;
     if (!read) return refused('This host cannot read agent timelines');
-    return read.call(adapter, id, limit);
+    return read.call(adapter, this.#native(id), limit);
   }
 
   stopAgentTurn(id: AgentId): Promise<void> {
     const { adapter } = this.owner;
     const read = adapter.stopAgentTurn;
     if (!read) return refused('This host cannot stop an agent turn');
-    return read.call(adapter, id);
+    return read.call(adapter, this.#native(id));
   }
 
   archiveAgent(id: AgentId): Promise<void> {
-    return this.owner.adapter.archiveAgent(id);
+    return this.owner.adapter.archiveAgent(this.#native(id));
   }
 
   /**
@@ -131,63 +140,63 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     const { adapter } = this.owner;
     const read = adapter.subscribeRunUsage;
     if (!read) return undefined;
-    return (id, handler) => read.call(adapter, id, handler);
+    return (id, handler) => read.call(adapter, this.#native(id), handler);
   }
 
   sendMessage(id: AgentId, input: HostMessage): Promise<void> {
     const { adapter } = this.owner;
     const read = adapter.notify;
     if (!read) return refused('This host cannot send messages');
-    return read.call(adapter, id, input.messageId, input.text, input.sourceAgentId);
+    return read.call(adapter, this.#native(id), input.messageId, input.text, input.sourceAgentId ? this.#native(input.sourceAgentId) : undefined);
   }
 
   enqueueMessage(id: AgentId, input: HostMessage): Promise<void> {
     const { adapter } = this.owner;
     const read = adapter.enqueueMessage;
     if (!read) return refused('This host cannot queue a message behind the current step');
-    return read.call(adapter, id, input.messageId, input.text, input.sourceAgentId);
+    return read.call(adapter, this.#native(id), input.messageId, input.text, input.sourceAgentId ? this.#native(input.sourceAgentId) : undefined);
   }
 
   interruptAndContinue(id: AgentId, messageId: RequestId, text: string): Promise<void> {
     const { adapter } = this.owner;
     const read = adapter.interruptAndContinue;
     if (!read) return refused('This host cannot interrupt and continue an agent');
-    return read.call(adapter, id, messageId, text);
+    return read.call(adapter, this.#native(id), messageId, text);
   }
 
   pendingQuestions(id: AgentId): Promise<NativeQuestion[]> {
     const { adapter } = this.owner;
     const read = adapter.pendingQuestions;
     if (!read) return refused('This host cannot read native questions');
-    return read.call(adapter, id);
+    return read.call(adapter, this.#native(id));
   }
 
   answeredQuestions(id: AgentId): Promise<AnsweredQuestion[]> {
     const { adapter } = this.owner;
     const read = adapter.answeredQuestions;
     if (!read) return refused('This host cannot read answered questions');
-    return read.call(adapter, id);
+    return read.call(adapter, this.#native(id));
   }
 
   answerNativeQuestion(agent: AgentId, workspace: WorkspaceId, request: RequestId, answers: Record<string, string>): Promise<void> {
     const { adapter } = this.owner;
     const read = adapter.answerNativeQuestion;
     if (!read) return refused('This host cannot answer native questions');
-    return read.call(adapter, agent, workspace, request, answers);
+    return read.call(adapter, this.#native(agent), workspace, request, answers);
   }
 
   answerNativePermission(agent: AgentId, workspace: WorkspaceId, request: RequestId, decision: HostPermissionDecision, intentId: RequestId): Promise<void> {
     const { adapter } = this.owner;
     const read = adapter.answerNativePermission;
     if (!read) return refused('This host cannot answer native permissions');
-    return read.call(adapter, agent, workspace, request, decision, intentId);
+    return read.call(adapter, this.#native(agent), workspace, request, decision, intentId);
   }
 
   dismissNativeQuestion(agent: AgentId, workspace: WorkspaceId, request: RequestId): Promise<void> {
     const { adapter } = this.owner;
     const read = adapter.dismissNativeQuestion;
     if (!read) return refused('This host cannot dismiss native questions');
-    return read.call(adapter, agent, workspace, request);
+    return read.call(adapter, this.#native(agent), workspace, request);
   }
 }
 

@@ -1,3 +1,4 @@
+import { callerNativeId } from '../../shared/agent-identity';
 import type { RegistrationAdapter } from './types';
 export type { RegistrationAdapter } from './types';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -70,15 +71,16 @@ export async function registerTask(
 ): Promise<TaskRegistrationResult> {
   // The Paseo plugin tool path carries no reliable calling-thread identity in
   // its envelope, so a typed caller there would be exactly what the brief
-  // forbids. Only the thread's own shell (whose CLI overwrote caller from
-  // PASEO_AGENT_ID) may register.
+  // forbids. Only the thread's own shell (whose CLI resolved and overwrote
+  // caller from its Nucleus ticket or host identity) may register.
   if (surface.via === 'paseo') throw Error('task.register refuses the Paseo bridge; call it from the registering thread\'s own shell with node bin/queue-cli.mjs task.register so the worker is the authenticated calling thread, not a typed name');
   const refusal = complexityRefusal(input);
   if (refusal) throw new Error(refusal);
   if (!adapter.inspectRegistration) throw Error('Paseo cannot identify the calling thread to the plugin reliably; registration is refused with nothing written');
+  const caller = callerNativeId(input.caller, adapter.hostId);
   let inspected: { workspaceId: string; directory: string; repoPath: string; observation: AgentObservation };
   try {
-    inspected = await adapter.inspectRegistration(input.caller);
+    inspected = await adapter.inspectRegistration(caller);
   } catch (error) {
     throw Error(`Registration caller ${input.caller} is not a live Paseo thread: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -86,7 +88,7 @@ export async function registerTask(
   // The repository is the worktree's main checkout from Git, not Paseo's project root: a worktree
   // opened in Paseo as its own project reports itself as the root (effigy #512 slice C).
   const repoPath = await mainCheckoutOf(directory) ?? inspected.repoPath;
-  if (observation.id !== input.caller) throw Error(`Registration caller ${input.caller} is not a live Paseo thread: the observed thread is ${observation.id || 'unknown'}`);
+  if (observation.id !== caller) throw Error(`Registration caller ${input.caller} is not a live Paseo thread: the observed thread is ${observation.id || 'unknown'}`);
   const origin = await repositoryOrigin(repoPath);
   const registered = store.repositories().find(row => (row.repository.path && row.repository.path === repoPath)
     || (origin && row.repository.origin === origin));
@@ -95,7 +97,7 @@ export async function registerTask(
   const branch = await verifyRegistrationGit(directory, repoPath, baseBranch);
   // Fast fail before the expensive remote reads; the claim below rechecks
   // authoritatively inside the write transaction.
-  const claimed = { workspaceId, agentId: input.caller, branch, repoPath, hostId: adapter.hostId };
+  const claimed = { workspaceId, agentId: caller, branch, repoPath, hostId: adapter.hostId };
   assertRegistrationUnowned(store, claimed);
   let planningCommit: string;
   try {
@@ -125,7 +127,7 @@ export async function registerTask(
       hostSelection: { hostId: adapter.hostId, basis: input.hostId ? 'explicit' : 'sole_online_host' },
       originHostId: adapter.hostId,
       phase: 'working', reason: `Registered by ${input.caller} on ${branch}; awaiting work and the worker's authenticated report`,
-      workspaceId, directory, branch, agentId: input.caller, runId,
+      workspaceId, directory, branch, agentId: caller, runId,
       workspaceIntent: true, agentIntent: true,
       profile, profileGroup: profile ? store.pool().find(p => p.profileId === profile.id)?.group ?? null : null,
       originWorkspaceId: workspaceId,
@@ -136,7 +138,7 @@ export async function registerTask(
   store.event(task.id, 'registered', `Worker ${input.caller} registered from its own worktree on ${branch}; responsible lifecycle, no planner or coordinator`);
   const current = store.task(task.id);
   return {
-    task: current, workspaceId, directory, branch, workerAgentId: input.caller, runId,
+    task: current, workspaceId, directory, branch, workerAgentId: caller, runId,
     status: observation.status, model: observation.model ?? '',
   };
 }

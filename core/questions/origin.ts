@@ -1,3 +1,4 @@
+import { sameCallerIdentity } from '../../shared/agent-identity';
 import type {Notice,ReparentInput,ReparentResult,Task} from '../../shared/contracts';
 import {isDispositionActive,isOperatorOrigin,OPERATOR_BOARD_CALLER,taskOwner} from '../../shared/contracts';
 import {normalizeRepositoryOrigin} from '../../shared/lanes';
@@ -11,10 +12,10 @@ const openTask=(task:Task)=>!task.removedAt&&task.phase!=='done'&&task.phase!=='
 
 /** The outgoing owner's own completion subscription choice moves to the incoming owner; the incoming owner's own entry wins. */
 function movedOverrides(overrides:Task['completionSubscriptionOverrides'],from:string,to:string,workspaceId:string){
- const moved=overrides.filter(entry=>entry.agentId===from);
- if(!moved.length||from===to)return overrides;
- const kept=overrides.filter(entry=>entry.agentId!==from);
- if(kept.some(entry=>entry.agentId===to))return kept.toSorted((a,b)=>a.agentId.localeCompare(b.agentId));
+ const moved=overrides.filter(entry=>sameCallerIdentity(entry.agentId,from));
+ if(!moved.length||sameCallerIdentity(from,to))return overrides;
+ const kept=overrides.filter(entry=>!sameCallerIdentity(entry.agentId,from));
+ if(kept.some(entry=>sameCallerIdentity(entry.agentId,to)))return kept.toSorted((a,b)=>a.agentId.localeCompare(b.agentId));
  return [...kept,{agentId:to,workspaceId,subscribed:moved.some(entry=>entry.subscribed)}].toSorted((a,b)=>a.agentId.localeCompare(b.agentId));
 }
 export class OriginRouting {
@@ -25,7 +26,7 @@ export class OriginRouting {
   for(const task of this.unfinished()){
    const assigned=new Set([task.agentId,task.coordinatorAgentId,task.resolution.reviewerAgentId,
     ...this.store.runs(task.id).map(run=>run.agentId)].filter(Boolean));
-   if(assigned.has(id))throw Error(`${id} is a worker, reviewer or coordinator of task ${task.id}; an owner must be a planning thread`);
+   if([...assigned].some(agent => sameCallerIdentity(agent,id,task.hostId)))throw Error(`${id} is a worker, reviewer or coordinator of task ${task.id}; an owner must be a planning thread`);
   }
  }
  /** The tasks one reparent request names: listed open tasks, or a project's open tasks owned by one thread. */
@@ -40,14 +41,14 @@ export class OriginRouting {
   }
   const project=this.store.projectByKey(input.project);
   if(!project)throw Error(`Unknown project ${input.project}`);
-  return this.unfinished().filter(task=>taskOwner(task)===input.fromAgentId
+  return this.unfinished().filter(task=>sameCallerIdentity(taskOwner(task),input.fromAgentId,task.originHostId)
    &&this.store.projectFor(task.repoPath,normalizeRepositoryOrigin(task.repository??''))?.key===project.key);
  }
  /** The operator, current owner, or registered planner may hand a missing origin to its successor. */
  private assertReparentAuthority(task:Task,caller:string){
   const project=this.store.projectFor(task.repoPath,normalizeRepositoryOrigin(task.repository??''));
   const planners=new Set([project?.planner?.agentId,this.store.queueProject()?.planner?.agentId].filter((id):id is string=>Boolean(id&&!isOperatorOrigin(id))));
-  if(caller===OPERATOR_BOARD_CALLER||caller===taskOwner(task)||planners.has(caller))return;
+  if(caller===OPERATOR_BOARD_CALLER||sameCallerIdentity(taskOwner(task),caller,task.originHostId)||[...planners].some(id=>sameCallerIdentity(id,caller)))return;
   throw Error(`Changing the owner of task ${task.id} needs the operator at the board or its current owner ${taskOwner(task)} or its project/Queue planner; ${caller} is neither`);
  }
  /**
@@ -66,7 +67,7 @@ export class OriginRouting {
   const hostId=await this.resolution.identifyOriginHost(to);
   if(!hostId)throw Error('New owner host is unknown or ambiguous');
   const agent=await this.resolution.withHost(hostId,()=>this.resolution.host.originAgent(to));
-  if(!agent||agent.archived||!agent.workspaceId)throw Error(`New owner ${to} must be a live, unarchived Paseo thread with a workspace`);
+  if(!agent||agent.archived||!agent.workspaceId)throw Error(`New owner ${to} must be a live, unarchived host thread with a workspace`);
   this.rejectTaskRole(to);
   const workspaceId=agent.workspaceId;
   return this.store.transaction(()=>{
@@ -86,7 +87,7 @@ export class OriginRouting {
  /** The one owner write: owner field, its workspace, cleared routing errors and the outgoing owner's subscription choice. Null when already the owner. */
  private writeOwner(task:Task,to:string,workspaceId:string,caller:string,reason:string,hostId:string):Task|null{
   const from=taskOwner(task);
-  if(from===to&&task.notificationAgentId===to&&task.originHostId===hostId&&task.originWorkspaceId===workspaceId&&!task.originError&&!task.originLookupError)return null;
+  if(sameCallerIdentity(from,to)&&sameCallerIdentity(task.notificationAgentId,to,task.originHostId,hostId)&&task.originHostId===hostId&&task.originWorkspaceId===workspaceId&&!task.originError&&!task.originLookupError)return null;
   const overrides=movedOverrides(task.completionSubscriptionOverrides,from,to,workspaceId);
   return this.store.update(task.id,{notificationAgentId:to,originHostId:hostId,originWorkspaceId:workspaceId,originError:'',originLookupError:'',
    ...(overrides!==task.completionSubscriptionOverrides?{completionSubscriptionOverrides:overrides}:{})},

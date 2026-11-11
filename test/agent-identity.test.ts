@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { formatAgentId, nativeAgentId, parseAgentId, qualifyLegacyAgentId } from '../shared/agent-identity';
+import { callerNativeId, formatAgentId, nativeAgentId, parseAgentId, qualifyLegacyAgentId, sameCallerIdentity } from '../shared/agent-identity';
 
 test('qualified identities preserve opaque host and native values without collisions', () => {
   const a = formatAgentId('host:a', 'agent"\\');
@@ -19,4 +19,18 @@ test('reserved malformed identities cannot be interpreted as legacy', () => {
   for (const id of ['nucleus-agent:v1:', 'nucleus-agent:v1:[]', 'nucleus-agent:v1:["a", "b"]'])
     assert.throws(() => parseAgentId(id), /Malformed/);
   assert.throws(() => formatAgentId('', 'agent'), /required/);
+});
+
+
+test('caller identities match legacy Paseo IDs without joining hosts', () => {
+  const paseo = formatAgentId('paseo-server', 'planner');
+  const t3 = formatAgentId('t3code:server', 'planner');
+  assert.equal(sameCallerIdentity('planner', paseo), true);
+  assert.equal(sameCallerIdentity(paseo, 'planner'), true);
+  assert.equal(sameCallerIdentity('planner', t3), false);
+  assert.equal(sameCallerIdentity('planner', t3, 't3code:server'), true);
+  assert.equal(sameCallerIdentity(paseo, t3), false);
+  assert.equal(sameCallerIdentity(paseo, formatAgentId('other-server', 'planner')), false);
+  assert.equal(callerNativeId(t3, 't3code:server'), 'planner');
+  assert.throws(() => callerNativeId(t3, 'paseo-server'), /different or unknown host/);
 });

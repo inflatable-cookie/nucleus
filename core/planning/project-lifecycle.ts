@@ -1,3 +1,5 @@
+import { formatAgentId } from "../../shared/agent-identity";
+import { hostKindOf } from "../../shared/host-kind";
 import { observationTimeout } from '../recovery/observation-timeout';
 import { DEFAULT_PROJECT_LIMIT, ownerCandidateKind } from "../../shared/contracts";
 import { buildProjectSettings, projectSettingsQaKeys } from "./project-settings";
@@ -21,13 +23,16 @@ export class ProjectLifecycle {
     const liveKnown = Boolean(this.context.adapter.listLiveAgents);
     const live = liveKnown ? await this.context.host.listLiveAgents() : [];
     const projects = this.context.store.projects();
+    const hostId = (this.context.adapter as { hostId?: string }).hostId;
     return buildProjectSettings({
       projects,
       repositories: this.context.store.repositories(),
       overrides: this.context.store.projectDispatchLimitOverrides(),
       defaultSlots: this.context.store.getMeta<number>("projectLimit") ?? DEFAULT_PROJECT_LIMIT,
-      liveAgentIds: new Set(live.map(agent => agent.id)),
-      liveKnown,
+      liveAgentIds: new Set(live.flatMap(agent => hostId
+        ? [formatAgentId(hostId, agent.id), ...(hostKindOf(hostId) === 'paseo' ? [agent.id] : [])]
+        : [agent.id])),
+      liveKnown, observedHostId: hostId,
       latestQaRuns: this.context.store.latestQaRunsFor(projectSettingsQaKeys(projects)),
     });
   }

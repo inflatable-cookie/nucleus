@@ -10,7 +10,7 @@ import { QueueRuntime } from '../service/runtime-owner';
  * read-only expectation: a new method must be added here or marked mutating, and
  * a method may not silently change classification.
  */
-const READ_ONLY_METHODS = new Set(['host.run.list', 'host.run.accounting.status', 'host.run.accounting.list', 'host.run.board',
+const READ_ONLY_METHODS = new Set(['caller.resolve', 'host.run.list', 'host.run.accounting.status', 'host.run.accounting.list', 'host.run.board',
   'queue.snapshot', 'backup.list', 'queue.ui-snapshot', 'queue.queued-page', 'lane.task-page', 'queue.detail',
   'queue.outcome', 'queue.outcome-search', 'papercut.list', 'papercut.get', 'lead.get', 'lead.version', 'lead.list', 'lead.board',
   'question.native-list', 'decision.get', 'decision.list', 'decision.agent-projects', 'lane.document.get', 'plan.get', 'plans', 'lanes', 'repository.get',

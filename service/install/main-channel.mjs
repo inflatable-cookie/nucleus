@@ -6,6 +6,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { install, installBase, verifyVersion } from './install.mjs';
 import { scratchDirectory } from '../../shared/scratch-root.mjs';
 import { dataHome } from '../../shared/data-home.mjs';
+import { paseoHomeEnvironment } from '../../hosts/paseo/index.mjs';
 
 const exec = promisify(execFile);
 const configPath = () => join(installBase(), 'channel.json');
@@ -148,7 +149,7 @@ export class MainChannel {
     // A short separate store avoids Unix socket path limits and never opens
     // the running service's database or connects to the operator's Paseo.
     await this.startService(node, ['bin/queue-service.mjs', `--data-dir=${data}`], staged.root, {
-      HOME: join(proof, 'h'), PASEO_HOME: join(proof, 'p'),
+      HOME: join(proof, 'h'), ...paseoHomeEnvironment(join(proof, 'p')),
       TMPDIR: scratch, TMP: scratch, TEMP: scratch,
     });
   }

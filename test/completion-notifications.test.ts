@@ -1,3 +1,4 @@
+import { formatAgentId } from '../shared/agent-identity';
 import { fakeAdapter } from './support/fakes';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -162,9 +163,9 @@ test('uncertain completion sends are never retried and subscriber membership rec
   }finally{await f.close()}
 });
 
-test('agent helper derives identity only from PASEO_AGENT_ID and root registration includes the RPC',()=>{
+test('agent helper derives identity from the shared caller resolver and root registration includes the RPC',()=>{
   const helper=readFileSync(new URL('../bin/nucleus-subscribe.mjs',import.meta.url),'utf8');
-  assert.match(helper,/process\.env\.PASEO_AGENT_ID/);assert.ok(!helper.includes('--agent'));
+  assert.match(helper,/await resolveCliCaller/);assert.ok(!helper.includes('--agent'));
   assert.match(readFileSync(new URL('../shared/rpc-catalogue.ts',import.meta.url),'utf8'),/name: "queue\.completion-subscription", contract: contracts\.completionSubscription, method: "completionSubscription"/);
 });
 
@@ -234,4 +235,16 @@ test('consumer #687 (review #602): an interrupted origin intent retains its reco
   const n=f.store.notices(f.task.id).find(n=>n.originEntry)!;
   assert.deepEqual({status:n.status,agentId:n.agentId},{status:'uncertain',agentId:'alpha'});
  }finally{await f.close()}
+});
+
+
+test('qualified self-subscriptions route to their host and replace legacy subscription entries', async () => {
+ const f=fixture({completionNotificationAgentIds:['alpha']});try {
+  f.engine.identifyOriginHost=async()=> 'host';
+  const caller=formatAgentId('host','alpha');
+  const first=await f.engine.completionSubscription({taskId:f.task.id,version:f.task.version,agentId:'alpha',action:'subscribe'});
+  const second=await f.engine.completionSubscription({taskId:f.task.id,version:first.version,agentId:caller,action:'unsubscribe'});
+  assert.deepEqual(second.completionSubscriptionOverrides,[{agentId:caller,workspaceId:'project-a',subscribed:false}]);
+  assert.deepEqual(second.creatorCompletionRecipients,[{agentId:'alpha',workspaceId:'project-a'}]);
+ } finally {await f.close();}
 });

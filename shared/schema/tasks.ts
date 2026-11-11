@@ -139,8 +139,8 @@ export const taskReferenceSchema = taskSchema.pick({id:true,submissionId:true,ti
 
 /**
  * Spec 058 slice 4: any thread registers itself as a responsible task.
- * The caller is the authenticated calling thread, filled by the CLI from
- * PASEO_AGENT_ID and overwritten there, never a typed name: the schema takes
+ * The caller is the authenticated calling thread, filled and overwritten by the CLI from
+ * its Nucleus ticket or host-supplied identity, never a typed name: the schema takes
  * no agent, workspace or branch field, so the worktree binding cannot be
  * steered from input. Complexity sizes the budget; the task is always
  * responsible and creates no planner, owner or coordinator role.

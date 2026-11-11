@@ -16,6 +16,7 @@ import type { HostPolicyConstructor } from '../core/host';
 import { workerPrompt, runPrompt } from '../core/dispatch/prompts';
 import { workerAgentSpec, runTicketPath } from '../core/dispatch/agent-creation';
 import { workerHelper, startCallbacks, CALLBACK_ASK_TIMEOUT_MS, CALLBACK_SOCKET_TIMEOUT_MS } from '../service/callbacks/callback';
+import { hostCallerIdentity } from '../hosts/paseo/cli/index.mjs';
 import { resolveQuestionAnswerCaller } from '../shared/question-caller.mjs';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
@@ -639,8 +640,8 @@ test('a released Paseo reviewer consult replaces the launch ticket; deleted tick
   store.setCredential('run-review', 'stale-secret');
   putReleasedReviewer(store, store.task(task.id), 'paseo-reviewer', profile);
   assert.equal(existsSync(launchTicket), false);
-  assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: launchTicket, PASEO_AGENT_ID: 'paseo-reviewer' }),
-    { source: 'agent', caller: 'paseo-reviewer' });
+  assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: launchTicket, PASEO_AGENT_ID: 'paseo-reviewer' }, hostCallerIdentity),
+    { source: 'host', hostKind: 'paseo', nativeAgentId: 'paseo-reviewer' });
   engine.resolution.openDelegatedQuestion(store.task(task.id), 'q-host', 'paseo-reviewer', 'Continue?', 60_000, 'reviewer', 'host');
   const hostReceipt = await engine.resolution.answerDelegatedQuestionFromHost(
     { questionId: 'q-host', answer: 'Keep it.', reason: 'Host auth.' }, 'paseo-reviewer');

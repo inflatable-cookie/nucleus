@@ -1,3 +1,5 @@
+import { parseAgentId } from "../../shared/agent-identity";
+import { hostKindOf } from "../../shared/host-kind";
 import {
   projectSettingsSchema,
   repositoryMatchSpecificity,
@@ -72,6 +74,7 @@ export function buildProjectSettings(input: {
   defaultSlots: number;
   liveAgentIds: ReadonlySet<string>;
   liveKnown: boolean;
+  observedHostId?: string;
   latestQaRuns: ProjectQaRun[];
 }): ProjectSettings {
   return projectSettingsSchema.parse({
@@ -80,7 +83,11 @@ export function buildProjectSettings(input: {
       const override = Object.prototype.hasOwnProperty.call(input.overrides, project.key)
         ? input.overrides[project.key]! : null;
       const plannerId = project.planner?.agentId;
-      const plannerLive = !plannerId ? null : input.liveKnown ? input.liveAgentIds.has(plannerId) : null;
+      const plannerHost = plannerId ? parseAgentId(plannerId)?.hostId : undefined;
+      const plannerObserved = plannerHost ? input.observedHostId === plannerHost
+        : !input.observedHostId || hostKindOf(input.observedHostId) === 'paseo';
+      const plannerLive = !plannerId ? null : input.liveAgentIds.has(plannerId) ? true
+        : input.liveKnown && plannerObserved ? false : null;
       const latestQa = latestQaFor(project, input.latestQaRuns);
       return {
         project,

@@ -24,7 +24,7 @@ if it predates the intake. The route requires this explicit classification:
 
 ```sh
 node bin/nucleus-review-entry.mjs --lead LEAD_ID --pr PR_NUMBER \
-  --workspace PASEO_WORKSPACE_ID --workspace-ownership intake \
+  --workspace HOST_WORKSPACE_ID --workspace-ownership intake \
   --authority 'operator-authorized scope' \
   --models provider/model --github-author AUTHOR_LOGIN \
   --authoring-system SYSTEM --attested-by OPERATOR \
@@ -135,7 +135,7 @@ Copy its returned `submission` into a review-entry JSON file. Add:
 - `authorDeclaration`: `models` (concrete provider/model ID array),
   `githubAuthor`, `authoringSystem`, `attestedBy`, and `provenance`.
 
-Use the real origin thread from `PASEO_AGENT_ID`; preserve the derived instruction
+Use the real origin thread resolved from its Nucleus ticket or host identity; preserve the derived instruction
 digest and planning commit. Never put placeholders into a live request.
 For brief mode, `submission` carries the Nucleus-held text plus its checked
 `planningSource` and exact `leadProvenance` from that Nucleus

@@ -138,7 +138,7 @@ export class Engine {
 
   readonly taskQuantumOwner = new TaskQuantum(schedulingEngineContext(this, ['adapter', 'cleanContext', 'enqueueTitle', 'hooks', 'launchAgent', 'launchProofOnly', 'note', 'noteStepFailure', 'prerequisiteWaitYieldsToLiveWork', 'profileCatalogKnown', 'profiles', 'quantumFinish', 'quantumSteps', 'reconcile', 'reconcileClosedRetainedReviewer', 'recover', 'settleFinishedRuns', 'settleHistoricalProofExecutions', 'settleRunBuildOutputs', 'settleSupersededIdleRuns', 'signoffDecisions', 'stopped', 'store', 'wakeRepository'], ['advance', 'beginValidationScanPass', 'holdProofOnlyGoWait', 'ownedToolHold', 'owns', 'reconcileHoldUntil', 'recordStop', 'recoverExternalMerge', 'recovery', 'resumeClearedAttention']));
 
-  readonly plannerGrantCleanup = new PlannerGrantCleanup(recoveryContext(this, ['adapter', 'host', 'signoffDecisions', 'store']));
+  readonly plannerGrantCleanup = new PlannerGrantCleanup(recoveryContext(this, ['adapter', 'host', 'signoffDecisions', 'store', 'withHost', 'hostAvailable']));
 
   private readonly hostContext = new AsyncLocalStorage<string>();
   get activeHostId(): string | undefined { return this.hostContext.getStore(); }
@@ -385,7 +385,7 @@ export class Engine {
     this.moveControls = new MoveControls(this);
     this.restartControls = new RestartControls(this);
     this.retryEffectControls = new RetryEffectControls(this);
-    this.workerReconcile = new WorkerReconcile(recoveryEngineContext(this, ['acceptWorkerResult', 'adapter', 'admission', 'branchPrLookupDue', 'compareSiblings', 'continuationOwnsReturn', 'hooks', 'host', 'idleGraceMs', 'note', 'reconcileBlockedReturn', 'reconcileBranchPr', 'reconcileObservation', 'reconcileReportingBinding', 'recordObservation', 'reportingBindingRecheckDue', 'stopped', 'store', 'updateAfterOperatorRemap'], ['adoptReplacementPr', 'attention', 'extendCallbackReminder', 'heavyRunAlive', 'reconcileStalledTurnStop', 'recovery', 'remindStoppedWorker', 'resolveIncident', 'responsiblePrReportRefused', 'settleAutomaticReplayHold', 'stalls', 'suppressAutomaticRetry', 'update', 'waiting']));
+    this.workerReconcile = new WorkerReconcile(recoveryEngineContext(this, ['acceptWorkerResult', 'adapter', 'admission', 'branchPrLookupDue', 'compareSiblings', 'continuationOwnsReturn', 'hooks', 'host', 'idleGraceMs', 'note', 'reconcileBlockedReturn', 'reconcileBranchPr', 'reconcileObservation', 'reconcileReportingBinding', 'recordObservation', 'reportingBindingRecheckDue', 'stopped', 'store', 'updateAfterOperatorRemap'], ['adoptReplacementPr', 'attention', 'extendCallbackReminder', 'heavyRunAlive', 'identifyOriginHost', 'withHost', 'reconcileStalledTurnStop', 'recovery', 'remindStoppedWorker', 'resolveIncident', 'responsiblePrReportRefused', 'settleAutomaticReplayHold', 'stalls', 'suppressAutomaticRetry', 'update', 'waiting']));
     const engine = this;
     this.callbackIntake = new CallbackIntake({
       get adapter() { return engine.adapter; },

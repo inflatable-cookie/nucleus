@@ -18,6 +18,24 @@ own binding. If that is refused too, state the refusal plainly; never try anothe
 ticket or route to bypass it. All other helpers connect directly to Nucleus;
 `--via-paseo` selects the compatibility bridge.
 
+## Calling thread identity
+
+The CLI and submit, subscribe and reparent helpers identify the calling thread from its
+Nucleus-issued ticket first, then its host's identity. `NUCLEUS_TICKET` names the run
+or planner participant ticket; use the path delivered to this thread. An invalid or
+revoked ticket refuses. If neither source exists, the refusal names the sources tried.
+Explicit operator and relayed-note paths keep their existing meaning.
+
+Assigning a planner issues an owner-only participant ticket and delivers its path
+through that planner's host. Reassigning or clearing the planner revokes it. Existing
+planners receive one at startup; their host identity keeps working until delivery.
+Caller records use host-qualified identities; existing bare Paseo IDs still resolve.
+
+### Paseo host
+
+Paseo supplies `PASEO_AGENT_ID` as the fallback identity. Existing documented commands
+keep working for Paseo planners unchanged; they do not need to pass a caller field.
+
 ## Pull request changelog
 
 For a repository change, add a Markdown changelog fragment under
@@ -416,7 +434,7 @@ nucleus queue.routing-grant - <<'JSON'
 JSON
 ```
 
-The CLI fills `caller` from `PASEO_AGENT_ID`. Optional `profiles` (named set; omit for every frontier
+The CLI fills `caller` from the calling thread (its Nucleus ticket or host identity). Optional `profiles` (named set; omit for every frontier
 and above-ceiling profile) and `until`. A repeat while a request is open joins it. An active grant is
 reported as already standing. Only a board yes activates it; a relayed `decision.answer` does not. The
 operator revokes from Settings → Limits.
@@ -620,7 +638,7 @@ wait with its reason, owner and evidence, the hold fences, and every owner verb
 with `available`, prefilled `args` and the plain `refusal` for each that does not
 apply. To steer: copy an available verb's `args`, add the free-text fields its
 `fill` list names (a reason or instruction), and call `task` with them. The CLI
-fills `caller` from `PASEO_AGENT_ID`; each applied control writes one
+fills `caller` from the calling thread (its Nucleus ticket or host identity); each applied control writes one
 `owner_control` event naming the verb, caller, owner-thread match, reason and
 phase before and after. If nothing is available, the refusals say why.
 
@@ -1016,7 +1034,7 @@ node bin/nucleus-reparent.mjs NEW_OWNER_AGENT_ID --task TASK_ID [--task TASK_ID 
 node bin/nucleus-reparent.mjs NEW_OWNER_AGENT_ID --project PROJECT --from OLD_OWNER_AGENT_ID --reason TEXT
 ```
 
-You (`PASEO_AGENT_ID`) must be the tasks' current owner, the project's registered
+The calling thread (its Nucleus ticket or host identity) must be the tasks' current owner, the project's registered
 planner, or the Nucleus planner; the operator can do the same from the board. A
 planner uses this for a task whose origin is missing or was never a thread (for
 example an external submitter's label such as `sweep`), usually naming itself as

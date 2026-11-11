@@ -1,3 +1,4 @@
+import { formatAgentId } from '../shared/agent-identity';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
@@ -277,4 +278,27 @@ test('bug 25: a reviewer consult carries the task context, retained or newly cre
       assertTaskContext(prompts[0]);
     } finally { await f.close(); }
   }
+});
+
+
+test('qualified planners receive missing-planner, board-question and escalation notices through native host IDs', async () => {
+ const f=fixture({responsible:true,delegates:{planner:null,decider:null}});
+ const controller=new AbortController();
+ let boardAnswer:Promise<string>|undefined;
+ try {
+  threadsGone(f,['planner-1']);
+  projectPlanner(f);
+  const caller=formatAgentId('host','queue-planner');
+  queuePlanner(f,caller);
+  assert.equal((await f.engine.resolution.projectPlannerFor(f.current())).planner,caller);
+  const missing=f.prompts.find(message=>message.messageId.startsWith('ns-project-planner-missing-'));
+  assert.equal(missing?.agentId,'queue-planner');
+  boardAnswer=f.engine.resolution.questions.raiseBoardDecision(f.current(),
+   {id:'qualified-board-question',kind:'process',question:'Continue?',options:['Continue']},controller.signal).catch(()=> 'aborted');
+  await until(()=>f.prompts.some(message=>message.messageId==='ns-queue-question-qualified-board-question'));
+  assert.equal(f.prompts.find(message=>message.messageId==='ns-queue-question-qualified-board-question')?.agentId,'queue-planner');
+  f.engine.resolution.attentionUnknownEscalation(f.current(),{id:'qualified-escalation',question:'Continue?'});
+  await until(()=>f.prompts.some(message=>message.messageId==='ns-escalation-attention-qualified-escalation'));
+  assert.equal(f.prompts.find(message=>message.messageId==='ns-escalation-attention-qualified-escalation')?.agentId,'queue-planner');
+ }finally{controller.abort();await boardAnswer;await f.close();}
 });

@@ -1,0 +1,14 @@
+[
+  {
+    "path": "core/hooks/hooks.ts",
+    "name": "PASEO_QUEUE_EVENT_ID",
+    "count": 1,
+    "reason": "Published repository hook protocol; retain compatibility until its own protocol migration. Never add caller identity exceptions."
+  },
+  {
+    "path": "core/hooks/hooks.ts",
+    "name": "PASEO_QUEUE_EVENT_SCHEMA",
+    "count": 1,
+    "reason": "Published repository hook protocol; retain compatibility until its own protocol migration. Never add caller identity exceptions."
+  }
+]

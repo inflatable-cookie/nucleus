@@ -1,3 +1,4 @@
+import { formatAgentId } from '../shared/agent-identity';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -445,4 +446,23 @@ test('queue.routing-grant and the board snapshot keep grants across a runtime re
   const ended = restarted.routingGrant({ action: 'end', caller: 'planner', reason: 'done' });
   assert.equal(ended.grant.status, 'ended');
   assert.equal(activeRoutingGrants(restarted.store).length, 0);
+});
+
+
+test('qualified planner grants retain legacy ownership and never cover another host', () => {
+ const f=fixture();try {
+  const caller=formatAgentId('host','planner');
+  const grant=f.activate(caller);
+  const legacy=f.submit();
+  assert.equal(coveringGrant(f.store,legacy,'sol')?.id,grant.id);
+  assert.equal(f.request('planner').grant.id,grant.id,'the legacy caller finds its existing grant');
+  const other=f.submit({originAgentId:formatAgentId('other-host','planner')});
+  assert.equal(coveringGrant(f.store,other,'sol'),null);
+  archiveRoutingGrants(f.store,f.decisions,new Set(), 'other-host');
+  assert.equal(readRoutingGrants(f.store).find(item=>item.id===grant.id)?.status,'active');
+  archiveRoutingGrants(f.store,f.decisions,new Set(['planner']), 'host');
+  assert.equal(readRoutingGrants(f.store).find(item=>item.id===grant.id)?.status,'active');
+  const ended=applyRoutingGrant(f.store,f.decisions,{action:'end',caller:'planner',grantId:grant.id});
+  assert.equal(ended.grant.status,'ended');
+ }finally{f.close();}
 });
