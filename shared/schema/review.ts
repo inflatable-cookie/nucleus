@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { identitySourceSchema } from "../host-kind";
 import { briefDigestSchema, briefInputSchema, draftProvenanceSchema, laneDocumentRefSchema, leadProvenanceSchema, planningSourceSchema, type LaneDocumentRef } from "./briefs";
 import { instructionArtifactSchema, repoRelativePathSchema } from "../hooks";
 import { dedupeReviewedInputs, reviewedInputListRefusals } from "../service/reviewed-inputs.mjs";
@@ -289,6 +290,14 @@ export const submissionSchema = z.object({
   planningSource: planningSourceSchema.nullable().default(null),
   instruction: instructionArtifactSchema.nullable().default(null),
   originAgentId: z.string().min(1).max(240), coordinatorAgentId: z.string().max(240).default(""),
+  /**
+   * The origin identity's own source, filled by the submitting CLI from its own
+   * environment (never a typed name). It names the host kind that identity
+   * belongs to, so an offline host cannot block an origin resolution it has no
+   * part in. It is evidence about this identity only; it grants no host and no
+   * execution authority.
+   */
+  originIdentity: identitySourceSchema.optional(),
   scope: scopeSchema.default("general"),
   // Optional task complexity for capability-weighted selection; unset reproduces the previous order exactly.
   complexity: capabilityLevelSchema.nullable().optional(),

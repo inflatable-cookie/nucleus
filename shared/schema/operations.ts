@@ -5,6 +5,7 @@ import { parseHoldUntil } from "./task-holds";
 import { repositoryRekeyInputSchema } from "../repository-rekey";
 import { reviewEntryInputSchema, submissionSchema } from "./review";
 import { taskControlInputSchema } from "./task-control";
+import { identitySourceSchema } from "../host-kind";
 
 /**
  * Strict generic durable operation surface. Start accepts a caller key and a
@@ -19,6 +20,8 @@ export const sourcePromotionInputSchema = z.object({
   hold: z.object({ reason: z.string().trim().min(1).max(4000), until: z.string().trim().min(1).max(200).optional() }).strict().optional(),
   /** Spec 053: a papercut's generated brief takes its complexity from here; a lead names it in its own brief. */
   complexity: capabilityLevelSchema.optional(),
+  /** The promoting caller's own identity source; see `submissionSchema.originIdentity`. */
+  identitySource: identitySourceSchema.optional(),
 }).strict().superRefine((input, ctx) => {
   if (input.hold?.until !== undefined && !parseHoldUntil(input.hold.until))
     ctx.addIssue({ code: "custom", path: ["hold", "until"], message: "A promotion hold's until must be a task ID or an offset timestamp" });

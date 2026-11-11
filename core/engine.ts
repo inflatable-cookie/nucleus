@@ -16,6 +16,7 @@ import { CreationRecovery } from "./recovery/creation-recovery";
 import type { GitTransientEpisode } from './git/git-transient-backoff';
 
 import { type WorkspaceDiscard } from './workspaces/orphan-worktree';
+import type { IdentitySource } from '../shared/host-kind';
 import { RecoverySettlement } from "./recovery/recovery";
 import { Decisions } from "./planning/decisions";
 import type { RepositoryRekeyInput } from "../shared/repository-rekey";
@@ -146,7 +147,7 @@ export class Engine {
   inventoryHostMatches: (id: string) => boolean = () => true;
   retiredObservationKey: (id: string) => string = () => 'retiredObservations';
   canReuseUnqualifiedOriginWorkspace: () => boolean = () => true;
-  identifyOriginHost: (agentId: string) => Promise<string | undefined> = async () => this.activeHostId ?? this.selectIngressHost();
+  identifyOriginHost: (agentId: string, identitySource?: IdentitySource) => Promise<string | undefined> = async () => this.activeHostId ?? this.selectIngressHost();
   withHost<T>(id: string, fn: () => T): T { return this.hostContext.run(id, fn); }
   /** Runtime supplies the authenticated live-host selection at acceptance. */
   selectIngressHost: (explicit?: string, _repoPath?: string) => string | undefined = explicit => explicit ?? this.store.getMeta<string>("hostId") ?? undefined;
@@ -355,7 +356,7 @@ export class Engine {
       return true;
     };
     this.resolution.canReuseUnqualifiedOriginWorkspace = () => this.canReuseUnqualifiedOriginWorkspace();
-    this.resolution.identifyOriginHost = id => this.identifyOriginHost(id);
+    this.resolution.identifyOriginHost = (id, identitySource) => this.identifyOriginHost(id, identitySource);
     this.resolution.gitTransientFailure = (task, error) => this.deferGitTransient(task.id, error);
     this.resolution.gitTransientRecovered = (task, source) => {
       const key = this.transientKey(task.id);
@@ -526,8 +527,8 @@ export class Engine {
   rerecordPlanningBase(input: { taskId: string; version: number }): Promise<Task> { return this.operations.rerecordPlanningBase(input); }
   retryValidation(input: { taskId: string; version: number; rebindWorkspaceId?: string; removeOrphanWorkspace?: boolean; settleFences?: { detail: string; runIds: string[]; displacedRunIds?: string[] } }): Promise<Task> { return this.operations.retryValidation(input); }
   performOperation(operation: QueueOperation, payload: unknown): Promise<OperationResult> { return this.operations.performOperation(operation, payload); }
-  submitPlanningSource(submission: Submission, source: { kind:"lead"|"papercut"; id:string; repository:string; digest:string; expectedSource:string }, initial?: Partial<Task>, hostId?: string): Promise<OperationResult> { return this.operations.submitPlanningSource(submission, source, initial, hostId); }
-  performSubmit(submission: Submission, requirePushedPlanning?: boolean, promotion?: {source:{kind:"lead"|"papercut";id:string;repository:string;digest:string;expectedSource:string}; initial?: Partial<Task>}, hostId?: string, selection?: import('../shared/operations').QueueOperation['hostSelection']): Promise<OperationResult> { return this.operations.performSubmit(submission, requirePushedPlanning, promotion, hostId, selection); }
+  submitPlanningSource(submission: Submission, source: { kind:"lead"|"papercut"; id:string; repository:string; digest:string; expectedSource:string }, initial?: Partial<Task>, hostId?: string, identitySource?: IdentitySource): Promise<OperationResult> { return this.operations.submitPlanningSource(submission, source, initial, hostId, identitySource); }
+  performSubmit(submission: Submission, requirePushedPlanning?: boolean, promotion?: {source:{kind:"lead"|"papercut";id:string;repository:string;digest:string;expectedSource:string}; initial?: Partial<Task>; identitySource?: IdentitySource}, hostId?: string, selection?: import('../shared/operations').QueueOperation['hostSelection']): Promise<OperationResult> { return this.operations.performSubmit(submission, requirePushedPlanning, promotion, hostId, selection); }
 
   applyCoordinatorAction(task: Task, run: Run, binding: RecoveryActionBinding): Promise<void> { return this.recoverySettlement.applyCoordinatorAction(task, run, binding); }
   settleResponsibleFault(task: Task): Promise<boolean> { return this.recoverySettlement.settleResponsibleFault(task); }

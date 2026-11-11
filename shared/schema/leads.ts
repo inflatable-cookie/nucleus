@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hostSelectionSchema } from "../host-selection";
 import { papercutSchema } from "./papercuts";
 import { laneKeyListSchema, laneKeySchema } from "../schema/task-primitives";
 import { REPOSITORY_IDENTITY_SHAPE, papercutRepositorySchema, repositoryIdentityInputSchema } from "./repository-identity";
@@ -93,7 +94,13 @@ export const leadPageSchema = z.object({
 
 export type LeadPage = z.infer<typeof leadPageSchema>;
 
-export const sourcePromotionResultSchema = z.object({ taskId: z.string(), reference: z.string() }).strict();
+/**
+ * A promotion's settled result names the task it created and the host selection
+ * that task took at promotion time (the repository's `hostKind` unless the
+ * caller named a host), so the reply says which host the task runs on.
+ */
+export const sourcePromotionResultSchema = z.object({ taskId: z.string(), reference: z.string(),
+  hostId: z.string().optional(), hostSelection: hostSelectionSchema.optional() }).strict();
 
 export const sourcePromotionOutputSchema = z.union([sourcePromotionResultSchema, operationAcceptanceSchema]);
 

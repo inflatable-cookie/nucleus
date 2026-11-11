@@ -47,7 +47,8 @@ import type { RegistrationAdapter } from "../core/host/registration";
 import type { Adapter } from "../core/host/adapter";
 import { HostFacade } from "../core/host/host-facade";
 import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/admission";
-import { HostRegistry, HOST_IDLE_GRACE_MS, resolveOriginHost, type KnownHost } from "../core/host/host-registry";
+import { HostRegistry, HOST_IDLE_GRACE_MS, resolveOriginHost, type KnownHost, type OriginHostEvidence } from "../core/host/host-registry";
+import type { IdentitySource } from "../shared/host-kind";
 import { T3HostConnection, type T3ConnectionConfig } from './t3code-host';
 import { answerHostPermission } from './host-permissions';
 import { lifecycleSignalSchema, type LifecycleSignal, type LifecycleSignalReceipt } from "../shared/lifecycle-signal";
@@ -517,13 +518,15 @@ export class QueueRuntime {
     this.engine.inventoryHostMatches = id => this.hostSession?.id === id;
     this.engine.retiredObservationKey = id => id === this.hostRegistry.known()[0]?.id ? 'retiredObservations' : `retiredObservations:${JSON.stringify(id)}`;
     this.engine.canReuseUnqualifiedOriginWorkspace = () => this.hostRegistry.known().length === 1;
-    this.engine.identifyOriginHost = agentId => {
+    this.engine.identifyOriginHost = (agentId, identitySource) => {
       const qualified = parseAgentId(agentId);
       if (qualified) return Promise.resolve(this.hostRegistry.get(qualified.hostId) ? qualified.hostId : undefined);
-      return resolveOriginHost(this.hostRegistry, agentId, (host, id) => {
-      if (!host.adapter.originAgent) throw new Error("Host cannot observe an origin agent");
-      return new HostFacade({ adapter: host.adapter }).originAgent(id);
-      });
+      return resolveOriginHost(this.hostRegistry, agentId, async (host, id) => {
+        if (!host.adapter.originAgent) return 'unknown';
+        // A thrown read is an unread inventory, never authoritative absence.
+        try { return await new HostFacade({ adapter: host.adapter }).originAgent(id) ? 'mine' : 'not-mine'; }
+        catch { return 'unknown'; }
+      }, this.originHostEvidence(agentId, identitySource));
     };
     this.engine.hostAvailable = id => {
       const selected = this.hostRegistry.get(id);
@@ -730,6 +733,19 @@ export class QueueRuntime {
     this.connected(); // Retire a disconnected primary claim before counting.
     this.t3Host?.retireDisconnected();
     return this.hostRegistry.onlineIds().length > 0;
+  }
+
+  /**
+   * The caller's identity source proved which host its own native identity
+   * belongs to. That is evidence about that one thread only: it applies only when
+   * the source names the identity being resolved and that host is registered. It
+   * never grants a host to another identity and never selects a host to run
+   * anything on.
+   */
+  private originHostEvidence(agentId: string, identitySource: IdentitySource | undefined): OriginHostEvidence | undefined {
+    if (!identitySource || identitySource.agent !== agentId) return undefined;
+    const known = this.hostRegistry.known().some(entry => entry.id === identitySource.hostId);
+    return known ? { hostId: identitySource.hostId, source: 'caller identity source' } : undefined;
   }
 
   /** A lost host connection is not evidence that any host run ended. */
@@ -1651,7 +1667,10 @@ export class QueueRuntime {
     }
     await this.refresh(); void this.wakeAndSettlePostBootstrapTimeout(); return { ok: true as const };
   }
-  async submitHandoff(input: import("../core/planning/handoff").HandoffInput) { return this.planning.submitHandoff(input); }
+  async submitHandoff(input: import("../core/planning/handoff").HandoffInput & { identitySource?: import("../shared/host-kind").IdentitySource }) {
+    const { identitySource, ...handoff } = input;
+    return this.planning.submitHandoff({ ...handoff, ...(identitySource ? { originIdentity: identitySource } : {}) });
+  }
 
   /**
    * Legacy synchronous removal. The Effigy runtime-scope capture and workspace
