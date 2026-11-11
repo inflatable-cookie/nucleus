@@ -38,6 +38,7 @@ export async function callerCliFixture() {
   const callbacks: Array<{path: string | undefined; input: any}> = [];
   const hostResolutions: unknown[] = [];
   let revoked = false;
+  let hostParticipantTicket: string | undefined;
   const callback = httpServer((req, res) => {
     let body = '';
     req.on('data', chunk => { body += chunk; });
@@ -54,7 +55,7 @@ export async function callerCliFixture() {
     const reader = createFrameReader((frame: any) => {
       let result: unknown = {};
       if (frame.method === 'service.health') result = {protocolVersion:PROTOCOL_VERSION,rpcContracts};
-      else if (frame.method === 'caller.resolve') {hostResolutions.push(frame.input);result = {caller:formatAgentId('paseo-fixture',frame.input.nativeAgentId),hostId:'paseo-fixture',source:'host'};}
+      else if (frame.method === 'caller.resolve') {hostResolutions.push(frame.input);result = {caller:formatAgentId('paseo-fixture',frame.input.nativeAgentId),hostId:'paseo-fixture',source:'host',...(hostParticipantTicket?{participantTicket:hostParticipantTicket}:{})};}
       else if (frame.method !== 'service.auth') {
         calls.push({method:frame.method,input:frame.input});
         if(frame.method === 'queue.detail') result = detail;
@@ -67,10 +68,16 @@ export async function callerCliFixture() {
   const socketPath = join(dir,'s');
   await new Promise<void>(resolve => server.listen(socketPath, resolve));
   writeFileSync(join(dir,'queue-service.json'),JSON.stringify({protocolVersion:PROTOCOL_VERSION,buildId:'fixture-build',socketPath,credential:'a'.repeat(64),pid:process.pid,startedAt:new Date().toISOString()}));
+  const setHostParticipantTicket = (participantId = '00000000-0000-4000-8000-000000000001') => {
+    const path = join(dir, 'host-participant.json');
+    writeFileSync(path, JSON.stringify({socketPath:callbackPath, participantId, token:'synthetic-secret'}));
+    hostParticipantTicket = path;
+    return path;
+  };
   for (const [source,payload] of Object.entries({run:{taskId:'task',runId:'run'},participant:{participantId:'00000000-0000-4000-8000-000000000001'}}))
     writeFileSync(join(dir,source+'.json'),JSON.stringify({socketPath:callbackPath,token:'synthetic-secret',...payload}));
   return {
-    calls, callbacks, hostResolutions, dir, revoke: () => {revoked=true;},
+    calls, callbacks, hostResolutions, dir, revoke: () => {revoked=true;}, setHostParticipantTicket,
     caller: (source: string) => formatAgentId(source === 'host' ? 'paseo-fixture' : 't3code:fixture','thread'),
     invoke: (source: string, script: string, args: string[], input?: unknown, overrides: NodeJS.ProcessEnv = {}) => new Promise<{code:number|null;stdout:string;stderr:string}>(resolve => {
       const child=spawn(process.execPath,[new URL('../../bin/'+script,import.meta.url).pathname,...args],{env:{...process.env,NUCLEUS_DATA_HOME:dir,NUCLEUS_TICKET:['run','participant'].includes(source)?join(dir,source+'.json'):'',PASEO_AGENT_ID:source==='host'?'thread':'',...overrides}});

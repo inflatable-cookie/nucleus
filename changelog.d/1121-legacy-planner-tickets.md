@@ -1,0 +1,1 @@
+Legacy Paseo planners recorded before qualified thread IDs can receive their participant tickets on their next authenticated call. The `nucleus ask` and `nucleus tell` CLI commands now resolve host identity and use a returned participant ticket; unregistered host callers are refused before sending.

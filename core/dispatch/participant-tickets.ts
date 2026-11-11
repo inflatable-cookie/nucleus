@@ -193,9 +193,10 @@ export class ParticipantTickets {
     for (const project of this.engine.store.projects()) {
       const planner = project.planner;
       if (!planner || this.engine.store.getMeta(plannerTicketKey(project.key))) continue;
-      // Only the identity the record names may take its ticket: a bare legacy id
-      // is bound to this caller only when this caller set it.
-      if (planner.agentId !== caller && !(planner.agentId === qualified.nativeAgentId && planner.setBy === caller)) continue;
+      // A bare planner is a pre-qualified Paseo identity. Its setter may be an
+      // older thread or operator, so bind by native ID only on Paseo; other
+      // host kinds must use an explicitly qualified planner identity.
+      if (planner.agentId !== caller && !(planner.agentId === qualified.nativeAgentId && hostKindOf(qualified.hostId) === 'paseo')) continue;
       try { return (await this.issue(project, 'self'))?.path; }
       catch (error) {
         this.markPending(project, error instanceof Error ? error.message : String(error));
