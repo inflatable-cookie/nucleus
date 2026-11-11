@@ -323,12 +323,14 @@ level; tasks hold the detail.
 - Markdown text with version history: each save is a new version with author and
   time. A save against a version that is no longer the latest is refused with a
   prompt to reload, as for drafts.
-- The lane's short `aim` stays what prompts carry. The document reaches a worker
-  only when a brief links it (`queue.laneDocuments: [key]` in brief frontmatter),
-  in which case the prompt carries the document's version at dispatch. Each run
-  records the lane key, version and digest it was given, and the outcome row
-  keeps them, as it keeps brief versions: what a task was given stays pinned
-  even after the document changes (asked by the Nucleus Chatterbox, 2026-09-26).
+- The lane's short `aim` stays what prompts carry. A document reaches a role when
+  a brief links it (`queue.laneDocuments: [key]` in brief frontmatter) or names
+  its key in prose or a `## Read` list. Nucleus pins the current version at task
+  dispatch, records its lane key, version and digest on the task, and gives each role a
+  read-only copy in that run's scratch directory with the path in its prompt. A
+  reference that does not resolve is named in the prompt. When work continues,
+  Nucleus refreshes cited documents whose current version changed. The outcome
+  row keeps what each worker run received, alongside brief versions.
 - Operations: `lane.document.get` (latest, or a version) and `lane.document.edit`.
 
 `lane.document.edit` also accepts the `digest` returned by `lane.document.get`
@@ -364,9 +366,9 @@ document. It replaces the repository's `docs/plan.md`.
   repository, then appends other open listing lanes in lane creation order. Done
   and abandoned lanes drop out of the plan as read; a requested version reads as
   saved.
-- A lane document is bounded at 128 KB because prompts carry it. Linked documents
-  are pinned at first dispatch; a replacement worker, revision or reviewer gets the
-  same pinned versions.
+- A lane document is bounded at 128 KB because prompts carry it. Linked or cited
+  documents are pinned at task dispatch; each role receives a read-only scratch
+  copy. A continuation refreshes cited documents when their version changed.
 
 ## Promotion without ceremony
 
@@ -673,7 +675,7 @@ control. Editing uses the existing dark-theme styling.
 | 2 | Lead or papercut joins two lanes; an unknown, closed or non-listing lane | Joined, in order; refused whole |
 | 3 | Import a `docs/triage/` directory, then again | One lead per file, titled by the first heading; the rerun reports duplicates |
 | 4 | Lane document edits by agent and operator; a stale save | Versions with author and time; stale save refused, nothing written |
-| 5 | Brief linking a lane document; the document edited after dispatch | Prompt carries the version current at dispatch; the run and outcome row record its key, version and digest, unchanged by the later edit; without a link, the prompt and records are unchanged |
+| 5 | Brief links or cites a lane document in prose or `## Read`; it is edited after dispatch; a later continuation sees an unresolved key | Each role prompt names its read-only scratch copy; task/outcome and worker-run records retain the version and digest; a continuation refreshes a changed cited document; unresolved references are named in the prompt; unrelated unreferenced documents stay absent |
 | 6 | Project plan set, stale set, a lane that lists none of the project's repositories, a new lane | Order saved and versioned; stale and non-listing refused; a new lane joins the end |
 | 7 | Promote an approved brief-bearing lead, and a papercut, to a task | One task each; papercut brief has a `queue_approval` naming its promoter; lead or papercut promoted with the task as target; outcome `planningSource` names it; the papercut brief can be amended |
 | 7a | Promote a papercut with no lanes in a saved plan, then one with assigned lanes | The first task joins the first eligible `now` lane; the second keeps its assigned lane |

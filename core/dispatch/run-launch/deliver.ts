@@ -13,6 +13,8 @@ import { BlockingRecoveryEffectsError, blockingRecoveryEffects, blockingRecovery
 import { assertReviewEntryWriterYielded, reviewEntryInputForTask, type ReviewEntryAdapter } from '../../review/review-entry';
 import { ABSENT_RESOLUTION_REASON, ProvenPreSendRefusalError, coordinative, message, proofExecutor } from '../../recovery/task-reasons';
 import { isDispositionActive, type Profile, type Run, type Task } from '../../../shared/contracts';
+import { currentBrief } from '../../planning/brief';
+import { briefLaneDocumentReferences } from '../../planning/brief-lane-documents';
 
 /**
  * Deliver the run a launch reserved: the ordinary review custody and checkout
@@ -39,7 +41,25 @@ export class RunLaunchDeliver {
         await git(t.directory!, 'checkout', '--detach', run.head);
         await proveReviewRunSource(t, run.head, true);
       }
-      if (agentId) { const fresh = this.store.task(t.id), savedRun = this.store.run(run.id)!;
+      if (agentId) {
+        let fresh = this.store.task(t.id);
+        const brief = currentBrief(fresh);
+        if (brief) {
+          const references = briefLaneDocumentReferences(brief.text, this.store.lanes());
+          const missing = references.keys.filter(key => !this.store.laneDocument(key));
+          const pins = new Map((fresh.laneDocumentPins ?? []).map(pin => [pin.key, pin]));
+          for (const key of references.keys) {
+            const document = this.store.laneDocument(key);
+            if (document) pins.set(key, { key, version: document.version, digest: document.digest, text: document.text });
+          }
+          const refreshedPins = [...pins.values()];
+          const issues = [...references.unresolved, ...missing];
+          if (JSON.stringify(refreshedPins) !== JSON.stringify(fresh.laneDocumentPins ?? []) || JSON.stringify(issues) !== JSON.stringify(fresh.laneDocumentIssues ?? [])) {
+            this.store.update(fresh.id, { laneDocumentPins: refreshedPins, laneDocumentIssues: issues }, 'lane_document_pins_refreshed', 'Cited lane documents were refreshed for the continued run');
+            fresh = this.store.task(t.id);
+          }
+        }
+        const savedRun = this.store.run(run.id)!;
         const version = fresh.version, snapshot = this.resolution.ordinaryReviewRuns(t.id);
         const stillAllowed = () => {
           const latest = this.store.task(t.id);

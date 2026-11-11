@@ -112,6 +112,7 @@ export const taskSchema = submissionSchema.extend({
   briefRuns: z.array(z.object({ runId: z.string(), version: z.number().int().positive() }).strict()).default([]),
   // Spec 026: linked lane documents as pinned at first dispatch, and what each worker run was given.
   laneDocumentPins: z.array(laneDocumentPinSchema).optional(),
+  laneDocumentIssues: z.array(z.string().min(1).max(240)).optional(),
   laneDocumentRuns: z.array(z.object({ runId: z.string(), documents: z.array(laneDocumentRefSchema) }).strict()).optional(),
   /** Explicit project-owner acceptance; separate from authenticated worker callbacks and reviews. */
   reportAcceptance: reportAcceptanceSchema.optional(),

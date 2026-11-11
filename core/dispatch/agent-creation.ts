@@ -10,6 +10,7 @@ import { sharedCargoEnvironment } from "../machine/cargo-cache";
 import { mergeAdmissionLaunchEnv } from "../qa/effigy-admission";
 import { runPrompt } from "./prompts";
 import { runTemporaryEnvironment, type RunScratchPlacement } from "../workspaces/run-scratch";
+import { materializeLaneDocuments } from "../planning/brief-lane-documents";
 
 type CallbackPaths = Pick<CreationOwner, "socketPath" | "helperPath">;
 
@@ -67,11 +68,14 @@ export function workerAgentSpec(owner: () => CreationOwner, task: Task, token: s
     workspaceId: task.workspaceId!, profile: task.profile!, title: task.title, mcpBindingPath,
     attempt: (mcp, retry): HostAgentAttempt => {
       const current = owner();
+      const launchEnv = launchEnvironment(current, task, runId, task.temporaryDirectory, ticket);
+      const environment = current.perThreadEnvironment === false ? {} : launchEnv;
+      materializeLaneDocuments(task.temporaryDirectory, task.laneDocumentPins);
       return {
         requestId: retry ? `ns-agent-${runId}-socket` : `ns-agent-${runId}`,
         prompt: retry ? legacyPrompt : prompt,
         labels: wireLabels({ task: task.id, run: runId, ...(mcp ? { mcpBinding: runId, mcpBindingPath: mcpBindingPath ?? undefined } : {}) }),
-        environment: current.perThreadEnvironment === false ? {} : launchEnvironment(current, task, runId, task.temporaryDirectory, ticket),
+        environment,
       };
     },
   };
@@ -90,11 +94,15 @@ export function runAgentSpec(owner: () => CreationOwner, task: Task, run: Run, t
     workspaceId: run.workspaceId, profile, title: `${run.role}: ${task.title}`, mcpBindingPath, guard,
     attempt: (mcp, retry): HostAgentAttempt => {
       const current = owner();
+      const launchEnv = launchEnvironment(current, task, run.id, run.temporaryDirectory, ticket);
+      const environment = current.perThreadEnvironment === false ? {} : launchEnv;
+      const effectiveRun = { ...run, temporaryDirectory: launchEnv.TMPDIR };
+      materializeLaneDocuments(effectiveRun.temporaryDirectory, task.laneDocumentPins);
       return {
         requestId: retry ? `ns-run-${run.id}-socket` : `ns-run-${run.id}`,
-        prompt: runPrompt(task, run, current.helperPath, ticket, mcp, context, ownerContext),
+        prompt: runPrompt(task, effectiveRun, current.helperPath, ticket, mcp, context, ownerContext),
         labels: wireLabels({ task: task.id, run: run.id, role: run.role, ...(mcp ? { mcpBinding: run.id, mcpBindingPath: mcpBindingPath ?? undefined } : {}) }),
-        environment: current.perThreadEnvironment === false ? {} : launchEnvironment(current, task, run.id, run.temporaryDirectory, ticket),
+        environment,
       };
     },
   };

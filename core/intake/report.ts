@@ -77,7 +77,7 @@ export class Reports {
       // Findings are retained with the authenticated blocked run, never published
       // as a verdict or used to satisfy an approval/pass gate.
       completion={...completion,reviewText};
-    }else if(reviewText)throw Error('reviewText is only accepted for reviewer verdicts or blocked reviewer evidence');
+    }else if(reviewText)throw Error('Field reviewText is only accepted for reviewer verdicts or blocked reviewer evidence; expected shape: omit it from ready_for_review reports');
     store.setReportIntent(input.eventId,input.taskId,input.runId,hash);
     const response=await this.engine.complete(completion,token);
     store.setReportResponse(input.eventId,hash,response);return response;

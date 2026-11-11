@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { workerProfileIsExcluded } from "../../shared/contracts";
 import type { Task } from "../../shared/contracts";
 import { currentBrief } from "../planning/brief";
+import { briefLaneDocumentReferences } from "../planning/brief-lane-documents";
 import { CheckoutUnavailableError } from "../workspaces/checkout-volume";
 import { dispatchBlocked, DISPATCH_HELD_REASON } from "./capacity";
 import type { Engine } from "../engine";
@@ -95,10 +96,20 @@ export class WorkerLauncher {
       // Spec 020: the worker run records the Queue-held brief version it is given.
       const brief = currentBrief(current);
       // Spec 026: linked lane documents are pinned at first dispatch; every worker run records what it was given.
-      const pins = this.store.laneDocumentPinsFor(current) ?? current.laneDocumentPins;
+      const references = brief ? briefLaneDocumentReferences(brief.text, this.store.lanes()) : { keys: [], unresolved: [] };
+      const missingDocuments = references.keys.filter(key => !this.store.laneDocument(key));
+      const referencedKeys = references.keys.filter(key => !missingDocuments.includes(key));
+      const pinned = this.store.laneDocumentPinsFor(current) ?? current.laneDocumentPins ?? [];
+      const pinsByKey = new Map(pinned.map(pin => [pin.key, pin]));
+      for (const key of referencedKeys) {
+        const document = this.store.laneDocument(key);
+        if (document) pinsByKey.set(key, { key, version: document.version, digest: document.digest, text: document.text });
+      }
+      const pins = [...pinsByKey.values()];
       this.store.update(task.id, { branch, runId, ...(this.adapter.runTemporaryDirectory ? { temporaryDirectory: this.adapter.runTemporaryDirectory(runId, current) } : {}), restartRunId: null, transientProviderRetry: undefined, agentIntent: true, reason: "Creating worker", stashBaseline: stash ? { runId, entries: stash } : null,
         ...(brief ? { briefRuns: [...current.briefRuns, { runId, version: brief.version }] } : {}),
-        ...(pins?.length ? { laneDocumentPins: pins, laneDocumentRuns: [...current.laneDocumentRuns ?? [], { runId, documents: pins.map(({ key, version, digest }) => ({ key, version, digest })) }] } : {}) }, "agent_intent", runId);
+        ...(pins.length ? { laneDocumentPins: pins, laneDocumentRuns: [...current.laneDocumentRuns ?? [], { runId, documents: pins.map(({ key, version, digest }) => ({ key, version, digest })) }] } : {}),
+        laneDocumentIssues: [...references.unresolved, ...missingDocuments] }, "agent_intent", runId);
       return true;
     });
     if (!owns) return;
