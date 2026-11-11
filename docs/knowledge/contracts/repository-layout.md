@@ -112,9 +112,9 @@ describing a path is not treated as a recorded machine path.
 The machine scratch value belongs in the ignored `.agents.local.env`; the committed
 `.agents.local.env.example` holds only variable names. Managed runs retain their
 recorded scratch roots. `NUCLEUS_TEST_PINNED_EFFIGY` and
-`NUCLEUS_TEST_QUALIFIED_EFFIGY` identify local executables for compatibility proofs. The qualified candidate is
-required by `test/effigy-run-control.test.ts`; the legacy pinned proof remains
-opt-in. Both verify the expected artifact hashes.
+`NUCLEUS_TEST_QUALIFIED_EFFIGY` identify local executables for compatibility proofs.
+Unset, they skip with a stated reason. A present path is hashed against the
+expected artifact.
 
 Task evidence and scratch artifacts live outside the checkout. The former
 `evidence/` tree is retained only in Git history. Use `git log --all -- <path>`

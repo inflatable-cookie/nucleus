@@ -418,9 +418,11 @@ const QUALIFIED_EFFIGY = process.env.NUCLEUS_TEST_QUALIFIED_EFFIGY ?? "";
 const QUALIFIED_SHA256 = "dc6a6e9e3829b553d61358db0875ee2fc5d107cd15194a257a6c4560edde8eae";
 
 let qualifiedHashChecked = false;
-function requireQualifiedCandidate(): string {
-  if (!existsSync(QUALIFIED_EFFIGY))
-    throw new Error(`qualified Effigy candidate missing at ${QUALIFIED_EFFIGY}`);
+function requireQualifiedCandidate(t: { skip: (reason?: string) => void }): string {
+  if (!existsSync(QUALIFIED_EFFIGY)) {
+    t.skip("qualified Effigy candidate is not on this host");
+    return "";
+  }
   if (!qualifiedHashChecked) {
     const hash = createHash("sha256").update(readFileSync(QUALIFIED_EFFIGY)).digest("hex");
     assert.equal(hash, QUALIFIED_SHA256, "qualified candidate bytes must match owner packet 8c63bcb9");
@@ -556,12 +558,13 @@ function spawnTracked(
   return { child, stdout: () => stdout, stderr: () => stderr, done };
 }
 
-async function isolatedQualifiedEndpoint(t: { after: (fn: () => void | Promise<void>) => void }, home: string, project: string) {
+async function isolatedQualifiedEndpoint(t: { after: (fn: () => void | Promise<void>) => void; skip: (reason?: string) => void }, home: string, project: string) {
   const store = new Store(":memory:");
   const scheduler = new HostRunScheduler(store, {
     capacity: () => ({ cpuCapacity: 4, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [0, 0, 0] }),
   });
-  const runtimePath = requireQualifiedCandidate();
+  const runtimePath = requireQualifiedCandidate(t);
+  if (!runtimePath) throw new Error("qualified Effigy candidate is not on this host");
   // The production route: the endpoint runs the declared artifact for both the
   // admitted workload's image and the observation, with no injected observer.
   // The observation reads the run journal from the workload's private host
@@ -582,11 +585,7 @@ async function isolatedQualifiedEndpoint(t: { after: (fn: () => void | Promise<v
 }
 
 test("the qualified candidate's own not-recorded answer is absence, not expiry", async t => {
-  if (!existsSync(QUALIFIED_EFFIGY)) {
-    t.skip("qualified Effigy candidate is not on this host");
-    return;
-  }
-  requireQualifiedCandidate();
+  if (!requireQualifiedCandidate(t)) return;
   const home = mkdtempSync(join(tmpdir(), "eqnr-h-"));
   const project = mkdtempSync(join(tmpdir(), "eqnr-p-"));
   t.after(() => { rmSync(home, { recursive: true, force: true }); rmSync(project, { recursive: true, force: true }); });
@@ -609,7 +608,8 @@ test("the qualified candidate's own not-recorded answer is absence, not expiry",
 });
 
 test("qualified candidate denies unreachable Queue and does not run the workload", async t => {
-  const binary = requireQualifiedCandidate();
+  const binary = requireQualifiedCandidate(t);
+  if (!binary) return;
   const home = mkdtempSync(join(tmpdir(), "eqd-h-"));
   const project = mkdtempSync(join(tmpdir(), "eqd-p-"));
   const countFile = join(home, "hook-count");
@@ -634,7 +634,8 @@ run = "sh -c 'echo RAN > MARKER'"
 });
 
 test("qualified candidate admits, holds the slot until the producer closes, and nested heavy takes one reservation", async t => {
-  const binary = requireQualifiedCandidate();
+  const binary = requireQualifiedCandidate(t);
+  if (!binary) return;
   const home = mkdtempSync(join(tmpdir(), "eqa-h-"));
   const project = mkdtempSync(join(tmpdir(), "eqa-p-"));
   const countFile = join(home, "hook-count");
@@ -707,7 +708,8 @@ run = [{ task = "child" }]
 });
 
 test("qualified candidate cancel and crash retire the accounting with the real Effigy verdict", async t => {
-  const binary = requireQualifiedCandidate();
+  const binary = requireQualifiedCandidate(t);
+  if (!binary) return;
   const home = mkdtempSync(join(tmpdir(), "eqs-h-"));
   const project = mkdtempSync(join(tmpdir(), "eqs-p-"));
   writeFileSync(join(project, "effigy.toml"), `[tasks.long]
@@ -765,7 +767,8 @@ run = "sh -c 'exit 17'"
 });
 
 test("qualified candidate lost follow reattaches at delivered offsets and keeps the real exit", async t => {
-  const binary = requireQualifiedCandidate();
+  const binary = requireQualifiedCandidate(t);
+  if (!binary) return;
   const home = mkdtempSync(join(tmpdir(), "eqf-h-"));
   const project = mkdtempSync(join(tmpdir(), "eqf-p-"));
   writeFileSync(join(project, "effigy.toml"), `[tasks.follow]

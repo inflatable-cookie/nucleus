@@ -60,13 +60,19 @@ test("compiled package runs relocated without sources, dependencies or a loader"
   assert.ok(
     files.every((p) => (!p.endsWith(".ts") || p === join(relocated, "index.server.ts")) && !p.includes("node_modules")),
   );
-  const env = {
+  const home = join(root, "h");
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     NODE_OPTIONS: "",
     NODE_PATH: "",
     PASEO_HOME: join(root, "p"),
-    HOME: join(root, "h"),
+    HOME: home,
   };
+  // The unit runner isolates NUCLEUS_DATA_HOME; this relocated package must
+  // resolve ~/.nucleus from HOME the way a published install does.
+  delete env.NUCLEUS_DATA_HOME;
+  delete env.NUCLEUS_WORK_ROOT;
+  delete env.NUCLEUS_WORK_VOLUME_ID;
   const runtime = join(relocated, "runtime", "node");
   const run = (file: string, args: string[] = []) =>
     exec(runtime, [join(relocated, file), ...args], {
@@ -133,7 +139,7 @@ process.on('SIGTERM', () => { void front.stop().then(() => service.stop()).then(
     // as a script after the build, or every report it carries is silently lost.
     const reportHelper = await exec(
       runtime,
-      [join(env.HOME, ".nucleus", "worker-helper.mjs")],
+      [join(home, ".nucleus", "worker-helper.mjs")],
       {
         cwd: relocated,
         env: {
