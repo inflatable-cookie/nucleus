@@ -1,7 +1,7 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -669,5 +669,67 @@ test('a released Paseo reviewer consult replaces the launch ticket; deleted tick
     assert.equal(accepted.code, 0, accepted.err);
     const receipt = JSON.parse(accepted.out) as { answer?: string };
     assert.equal(receipt.answer, 'Keep the Paseo approach.');
+  } finally { await engine.stop(); await stop(); store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('consult tickets select the recipient by proven host and native identity', async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'consult-ticket-host-')));
+  const store = new Store(join(dir, 'queue.sqlite'));
+  store.setMeta('paused', false);
+  store.setMeta('hostRegistry', [{ id: 'host-t3' }, { id: 'host-paseo' }]);
+  const socketPath = join(dir, 's'), helperPath = join(dir, 'worker-report.mjs');
+  const adapter = {
+    observe: observeIdle('ws', 'worker'),
+    reportingViaMcp: true,
+    helperPath,
+    socketPath,
+    askReviewer: async () => null,
+  } as unknown as HostAdapter;
+  const engine = new Engine(store, adapter, 0);
+  engine.identifyOriginHost = async () => 'host-paseo';
+  const task = store.insert(submissionSchema.parse({
+    submissionId: 'consult-ticket-host', title: 'Consult ticket host', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
+    handoffPath: 'handoff.md', originAgentId: 'origin',
+  }), 'host-t3', 'handoff', 'a'.repeat(40));
+  const profile = { id: 'p', name: 'p', provider: 'synthetic', model: 'm', notes: '', available: true, problem: '', supportedThinking: [] } as Profile;
+  store.putRun({
+    id: 'run-worker', taskId: task.id, role: 'revision', generation: 1, head: 'a'.repeat(40), base: 'a'.repeat(40),
+    agentId: 'shared-native', workspaceId: 'ws', profile, status: 'running',
+    createdAt: new Date().toISOString(), lastObservedAt: null, active: true, idleSince: null,
+    completion: null, released: false,
+  } as Run);
+  store.setCredential('run-worker', 'worker-secret');
+  const workerTicket = join(dir, 'tickets', 'run-worker.json');
+  mkdirSync(dirname(workerTicket), { recursive: true, mode: 0o700 });
+  writeFileSync(workerTicket, JSON.stringify({ socketPath, token: 'worker-secret', taskId: task.id, runId: 'run-worker' }), { mode: 0o600 });
+  engine.resolution.openDelegatedQuestion(store.task(task.id), 'q-planner', 'shared-native', 'Continue?', 60_000, 'planner', 'host-paseo');
+  const plannerConsult = engine.resolution.delegatePrompt(store.task(task.id), 'q-planner', 'Continue?', 'shared-native', 'host-paseo');
+  assert.match(plannerConsult, /NUCLEUS_TICKET= nucleus question.answer -/);
+  assert.equal(plannerConsult.includes(`NUCLEUS_TICKET='`), false);
+  assert.equal(plannerConsult.includes(workerTicket), false);
+  assert.doesNotThrow(() => store.authenticate('run-worker', 'worker-secret'));
+  assert.equal(JSON.parse(readFileSync(workerTicket, 'utf8')).token, 'worker-secret');
+  const hostReceipt = await engine.resolution.answerDelegatedQuestionFromHost(
+    { questionId: 'q-planner', answer: 'Keep the planner ruling.', reason: 'Host auth.' }, 'shared-native');
+  assert.equal(hostReceipt.answer, 'Keep the planner ruling.');
+  engine.resolution.openDelegatedQuestion(store.task(task.id), 'q-worker-ticket', 'shared-native', 'Continue?', 60_000, 'planner', 'host-paseo');
+  const stop = await startCallbacks(socketPath, helperPath, engine);
+  try {
+    const refused = await spawnCli({ NUCLEUS_TICKET: workerTicket }, {
+      questionId: 'q-worker-ticket', answer: 'Keep it.', reason: 'Wrong host ticket.',
+    });
+    assert.notEqual(refused.code, 0, refused.out);
+    assert.match(refused.err, /Delegated answer host is not proven/);
+    assert.equal(store.eventsAll('delegation:q-worker-ticket').some(event => event.kind === 'delegated_answer'), false);
+    engine.resolution.openDelegatedQuestion(store.task(task.id), 'q-same-host', 'shared-native', 'Continue?', 60_000, 'reviewer', 'host-t3');
+    const sameHost = engine.resolution.delegatePrompt(store.task(task.id), 'q-same-host', 'Continue?', 'shared-native', 'host-t3');
+    assert.ok(sameHost.includes(`NUCLEUS_TICKET=${quote(workerTicket)} nucleus question.answer -`));
+    assert.throws(() => store.authenticate('run-worker', 'worker-secret'), /Unauthorized callback/);
+    const accepted = await spawnCli({ NUCLEUS_TICKET: workerTicket }, {
+      questionId: 'q-same-host', answer: 'Keep the T3 worker approach.', reason: 'Same host consult.',
+    });
+    assert.equal(accepted.code, 0, accepted.err);
+    const receipt = JSON.parse(accepted.out) as { answer?: string };
+    assert.equal(receipt.answer, 'Keep the T3 worker approach.');
   } finally { await engine.stop(); await stop(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

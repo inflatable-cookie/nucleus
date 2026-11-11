@@ -26,12 +26,15 @@ export class Delegation {
    * Name a replacement `question.answer` identity for the recipient. Helper-reporting
    * hosts re-issue the latest run ticket. MCP hosts with a recipient run do the same
    * so ticket-first CLI does not inherit a purged launch ticket; MCP hosts without a
-   * run on this task clear `NUCLEUS_TICKET` so `PASEO_AGENT_ID` answers. Complete and
-   * ask keep refusing the released run.
+   * run on this task clear `NUCLEUS_TICKET` so `PASEO_AGENT_ID` answers. Runs match
+   * proven host and native identity, so a Paseo planner cannot inherit a T3 worker
+   * ticket that shares the native id. Complete and ask keep refusing the released run.
    */
-  private consultTicketRoute(task: Task, recipient: string): { kind: 'ticket'; helperPath: string; ticketPath: string } | { kind: 'clear' } | undefined {
+  private consultTicketRoute(task: Task, recipient: string, provenHost?: string): { kind: 'ticket'; helperPath: string; ticketPath: string } | { kind: 'clear' } | undefined {
     if (!this.adapter.helperPath || !this.adapter.socketPath) return;
-    const runs = this.store.runs(task.id).filter(run => run.agentId === recipient);
+    const runs = provenHost
+      ? this.store.runs(task.id).filter(run => run.agentId === recipient && run.hostId === provenHost)
+      : [];
     const run = runs.find(candidate => !candidate.released && !candidate.completion) ?? runs.at(-1);
     if (!run) {
       if (this.adapter.reportingViaMcp === false) throw Error('Consult requires the recipient run ticket');
@@ -72,9 +75,10 @@ export class Delegation {
     return reidentify ? await reidentify() : host;
   }
 
-  delegatePrompt(task: Task, id: string, prompt: string, recipient?: string): string {
+  delegatePrompt(task: Task, id: string, prompt: string, recipient?: string, hostId?: string): string {
     const json = JSON.stringify({ questionId: id, answer: '<answer or exact choice>', reason: '<one line>' });
-    const route = recipient ? this.consultTicketRoute(task, recipient) : undefined;
+    const provenHost = hostId ?? this.delegatedDelivery(id)?.hostId;
+    const route = recipient ? this.consultTicketRoute(task, recipient, provenHost) : undefined;
     const command = route?.kind === 'ticket'
       ? `NUCLEUS_TICKET=${this.quote(route.ticketPath)} nucleus question.answer -`
       : route?.kind === 'clear'
@@ -225,7 +229,7 @@ export class Delegation {
           if (!ref) throw Error('Delegated recipient identity was not recorded');
           const recipient = nativeAgentId(ref, hostId!);
           const { onIntent: _onIntent, ...sendInput } = input;
-          return send.call(this.adapter, recipient, { ...sendInput, sourceAgentId: task.hostId === hostId ? input.sourceAgentId ?? task.agentId ?? undefined : undefined, prompt: this.resolution.delegatePrompt(task, input.messageId, input.prompt, recipient) });
+          return send.call(this.adapter, recipient, { ...sendInput, sourceAgentId: task.hostId === hostId ? input.sourceAgentId ?? task.agentId ?? undefined : undefined, prompt: this.resolution.delegatePrompt(task, input.messageId, input.prompt, recipient, hostId) });
         });
         if (this.stopped()) throw Error('Delegated observation stopped; retain the delivery and answer window');
         this.store.event(`delegation:${input.messageId}`, 'delegated_sent', 'Host send completed');
@@ -259,7 +263,7 @@ export class Delegation {
     const created = await this.resolution.withHost(task.hostId, () => this.adapter.runDecider!(task, { profile: input.profile!, signal: input.signal, timeoutMs: input.timeoutMs, decisionId: input.decisionId }));
     this.resolution.openDelegatedQuestion(task, id, created.agentId, input.prompt, input.timeoutMs, 'decider', task.hostId);
     try {
-      await this.resolution.withHost(task.hostId, () => this.adapter.askPlanner!(created.agentId, { ...input, sourceAgentId: input.sourceAgentId ?? task.agentId ?? undefined, messageId: id, prompt: this.resolution.delegatePrompt(task, id, input.prompt, created.agentId) }));
+      await this.resolution.withHost(task.hostId, () => this.adapter.askPlanner!(created.agentId, { ...input, sourceAgentId: input.sourceAgentId ?? task.agentId ?? undefined, messageId: id, prompt: this.resolution.delegatePrompt(task, id, input.prompt, created.agentId, task.hostId) }));
       return { agentId: created.agentId, text: await this.resolution.waitDelegatedAnswer(id, input.signal) };
     } catch (error) {
       if (this.stopped()) throw error;

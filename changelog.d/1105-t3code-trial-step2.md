@@ -11,11 +11,12 @@ Paseo. Helper asks reach a retained T3 reviewer through `askReviewer`. The consu
 prompt is `question.answer` with the reissued recipient run ticket; a shared
 ticket-first caller resolver fills identity for any host (PASEO_AGENT_ID is the
 fallback, including when the named ticket file is gone). MCP-host consults
-reissue that ticket when the recipient has a run, and clear an inherited
-`NUCLEUS_TICKET` when they do not, so a released Paseo launch ticket cannot
-answer. Ticket answers keep host-qualified recipient authentication, so a
-host-A ticket cannot answer a question delegated to the same native id on host
-B. A released reviewer run is re-issued a consult ticket so the latest retained
+reissue that ticket when the recipient has a run on the proven host, and clear
+an inherited `NUCLEUS_TICKET` when they do not, so a released Paseo launch
+ticket cannot answer and a Paseo planner cannot inherit a T3 worker ticket that
+shares the native id. Ticket answers keep host-qualified recipient
+authentication, so a host-A ticket cannot answer a question delegated to the
+same native id on host B. A released reviewer run is re-issued a consult ticket so the latest retained
 run authenticates; complete and ask keep refusing that run. T3-hosted planners
 are out of trial: when the selected planner cannot be asked on its host, the
 ask becomes an answerable board decision with the planner message, never a
