@@ -1,0 +1,266 @@
+import type { Profile, Task } from '../../shared/contracts';
+import { awaitingProofTexts } from '../../shared/contracts';
+import { normalizeRepositoryOrigin } from '../../shared/lanes';
+import { groupIsUnavailable } from '../../shared/pool';
+import { currentBrief } from '../planning/brief';
+import { parseNativeDelegatedReply } from './question-delegation';
+import type { Resolution } from '../resolution';
+import { chooseProfile } from '../dispatch/routing';
+import { nativeAgentId, qualifyLegacyAgentId } from '../../shared/agent-identity';
+
+/** The selection failed before an intent or host call was made. */
+export class DelegatedHostUnavailable extends Error {}
+
+/** One question to one delegate, under an answer window, on the `delegation:<id>` stream. */
+export class Delegation {
+  constructor(readonly resolution: Resolution) {}
+  get store() { return this.resolution.store; }
+  get adapter() { return this.resolution.adapter; }
+  get profiles() { return this.resolution.profiles; }
+  get stopped() { return this.resolution.stopped; }
+  get delegatedAnswerWaitMs() { return this.resolution.delegatedAnswerWaitMs; }
+
+  async requireHost(task: Task, recipient: string, role: 'planner' | 'reviewer'): Promise<string> {
+    const recorded = role === 'reviewer' ? task.hostId
+      : recipient === task.originAgentId || recipient === task.notificationAgentId ? task.originHostId
+      : undefined;
+    const host = recorded ?? await this.resolution.identifyOriginHost(recipient);
+    const settled = await this.hostThroughBridge(host, recorded ? undefined : () => this.resolution.identifyOriginHost(recipient));
+    if (!settled || !this.resolution.withHost(settled, () => this.resolution.originHostAvailable(settled)))
+      throw new DelegatedHostUnavailable('Delegated recipient host is unavailable or unknown');
+    return settled;
+  }
+
+  /**
+   * A host-dependent call arriving just after a service roll waits, bounded,
+   * for the plugin bridge to answer again instead of refusing as unavailable
+   * (roll-recovery contract): only a bridge still unavailable after the bound
+   * refuses, and the re-check reads live availability, never the wait's own
+   * answer. A recorded host is re-checked as is; an identified one is
+   * identified again, because the roll window is exactly when inventories
+   * answer ambiguously.
+   */
+  private async hostThroughBridge(host: string | undefined, reidentify?: () => Promise<string | undefined>): Promise<string | undefined> {
+    const available = () => Boolean(host && this.resolution.withHost(host, () => this.resolution.originHostAvailable(host)));
+    if (available()) return host;
+    if (!this.resolution.awaitHostBridge) return host;
+    await this.resolution.awaitHostBridge(this.resolution.hostBridgeWaitMs);
+    return reidentify ? await reidentify() : host;
+  }
+
+  delegatePrompt(task: Task, id: string, prompt: string): string {
+    return `Task: ${task.reference ?? task.id} — ${task.title}\nQuestion id: ${id}\n${prompt}\nAnswer with this command; write nothing else in this thread. For operator-only matters set "decision":"operator" instead of answer.\nnucleus question.answer - <<'JSON'\n${JSON.stringify({ questionId: id, answer: '<answer or exact choice>', reason: '<one line>' })}\nJSON`;
+  }
+  openDelegatedQuestion(task: Task, id: string, recipient: string, prompt: string, timeoutMs: number, role: string, hostId?: string): void {
+    this.store.event(`delegation:${id}`, 'delegated_delivery', JSON.stringify({ taskId: task.id, recipient, role, prompt,
+      ...(hostId ? { hostId, recipientRef: qualifyLegacyAgentId(recipient, hostId) } : {}),
+      deadline: Date.now() + Math.min(timeoutMs, this.delegatedAnswerWaitMs) }));
+  }
+  /** A restart may resume observation, never delivery. Unknown sends remain fenced. */
+  delegatedDelivery(id: string): { taskId: string; recipient: string; role: string; deadline: number; hostId?: string; recipientRef?: string } | null {
+    const event = this.store.eventsAll(`delegation:${id}`).findLast(event => event.kind === 'delegated_delivery');
+    return event ? JSON.parse(event.detail) : null;
+  }
+  /** A task target is safe only when it selects one live question for this recipient. */
+  questionForTask(identity: string, caller: string): string {
+    const taskId=this.store.resolveTaskId(identity);
+    this.store.task(taskId);
+    const rows=this.store.db.prepare("SELECT DISTINCT taskId FROM events WHERE kind='delegated_delivery' AND json_extract(detail,'$.taskId')=? AND json_extract(detail,'$.recipient')=?").all(taskId,caller);
+    const ids=rows.map(row=>String(row.taskId).replace(/^delegation:/,''))
+      .filter(id=>{
+        const delivery=this.delegatedDelivery(id);
+        const events=this.store.eventsAll(`delegation:${id}`);
+        return delivery?.recipient===caller&&delivery.deadline>=Date.now()
+          &&!events.some(event=>['delegated_answer','delegated_closed'].includes(event.kind));
+      });
+    if(ids.length!==1)throw Error(ids.length?'More than one open question for this task and caller; pass questionId':'No open question for this task and caller; pass questionId to inspect an existing answer');
+    return ids[0]!;
+  }
+  /** A raw caller name cannot identify a host when inventories are ambiguous. */
+  async answerFromHost(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) {
+    const delivery = this.delegatedDelivery(input.questionId);
+    if (!delivery || delivery.recipient !== caller) throw Error('Only the delegated recipient thread may answer this question');
+    const observedHost = await this.hostThroughBridge(await this.resolution.identifyOriginHost(caller), () => this.resolution.identifyOriginHost(caller));
+    if (!observedHost || !this.resolution.withHost(observedHost, () => this.resolution.originHostAvailable(observedHost)))
+      throw new DelegatedHostUnavailable('Delegated answer host is unavailable or ambiguous');
+    const known = this.store.getMeta<Array<{ id: string }>>('hostRegistry') ?? [];
+    const recordedHost = delivery.hostId ?? (known.length === 1 ? known[0]?.id : undefined);
+    if (!recordedHost || recordedHost !== observedHost) throw new DelegatedHostUnavailable('Delegated answer host is not proven');
+    if (delivery.recipientRef && nativeAgentId(delivery.recipientRef, recordedHost) !== caller)
+      throw Error('Delegated recipient identity conflicts with its recorded host');
+    if (JSON.stringify(this.delegatedDelivery(input.questionId)) !== JSON.stringify(delivery))
+      throw Error('Delegated recipient changed during host verification');
+    return this.answerDelegatedQuestion(input, caller);
+  }
+  /** Ordered windows: an observed miss advances to an unstarted next delegate; unknown sends never do. */
+  recoverableDelegation(ids: string[], advance = true): boolean {
+    const windows = ids.map(id => {
+      const events = this.store.eventsAll(`delegation:${id}`);
+      return { delivered: events.some(event => event.kind === 'delegated_delivery'),
+        answered: events.some(event => event.kind === 'delegated_answer'),
+        closed: events.findLast(event => event.kind === 'delegated_closed') };
+    });
+    return windows.some((window, index) => window.answered || (window.delivered && !window.closed)
+      || (advance && window.delivered && window.closed?.detail === 'No command answer in the window'
+        && index < windows.length - 1 && windows.slice(index + 1).every(next => !next.delivered)));
+  }
+  answerDelegatedQuestion(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) {
+    const key = `delegation:${input.questionId}`;
+    const events = this.store.eventsAll(key);
+    const delivery = events.findLast(event => event.kind === 'delegated_delivery');
+    if (!delivery) throw Error('No delegated question with this id');
+    const authority = JSON.parse(delivery.detail) as { taskId: string; recipient: string; role: string; prompt: string; deadline: number };
+    if (!caller || authority.recipient !== caller) throw Error('Only the delegated recipient thread may answer this question');
+    const recorded = events.find(event => event.kind === 'delegated_answer');
+    if (recorded) return JSON.parse(recorded.detail);
+    if (events.some(event => event.kind === 'delegated_closed') || Date.now() > authority.deadline) throw Error('This delegated answer window has closed');
+    const answer = (input.answer ?? input.choice)?.trim();
+    const reason = input.reason?.trim();
+    if (!reason || /[\r\n]/.test(reason) || reason.length > 500) throw Error('A one-line reason is required (up to 500 characters)');
+    if (input.decision !== 'operator' && (!answer || answer.length > 4000 || /[\r\n]/.test(answer))) throw Error('An answer or choice is required (one line, up to 4000 characters)');
+    const choices = authority.prompt.split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2));
+    if (input.decision !== 'operator' && choices.length && (input.choice || input.questionId.startsWith('queue-delegate-')) && !choices.includes(answer!)) throw Error('Choice must match an offered choice');
+    const receipt = { questionId: input.questionId, caller, answer, reason, ...(input.decision ? { decision: input.decision } : {}),
+      ...(authority.role === 'planner' && input.overtakes?.length ? { overtakes: [...new Set(input.overtakes)].slice(0, 100) } : {}) };
+    this.store.event(key, 'delegated_answer', JSON.stringify(receipt));
+    this.store.event(authority.taskId, 'delegated_command_answered', `${input.questionId}: ${caller}`);
+    return receipt;
+  }
+  async waitDelegatedAnswer(id: string, signal: AbortSignal): Promise<string | null> {
+    const key = `delegation:${id}`;
+    while (true) {
+      const events = this.store.eventsAll(key);
+      const receipt = events.find(event => event.kind === 'delegated_answer');
+      if (receipt) {
+        const value = JSON.parse(receipt.detail) as { answer?: string; reason: string; decision?: string; overtakes?: string[] };
+        // Existing route parsers consume this serialization of structured command input only.
+        return [value.decision === 'operator' ? 'Decision: operator' : `Answer: ${value.answer}\nChoice: ${value.answer}`,
+          `Reason: ${value.reason}`, ...(value.overtakes ? [`Overtakes: ${value.overtakes.join(',')}`] : [])].join('\n');
+      }
+      const delivery = events.findLast(event => event.kind === 'delegated_delivery');
+      if (this.stopped()) throw Error('Delegated observation stopped; retain the delivery and answer window');
+      if (events.some(event => event.kind === 'delegated_closed')) return null;
+      if (signal.aborted || !delivery || Date.now() >= JSON.parse(delivery.detail).deadline) break;
+      await new Promise(resolve => setTimeout(resolve, Math.min(100, this.delegatedAnswerWaitMs)));
+    }
+    this.store.event(key, 'delegated_closed', 'No command answer in the window');
+    return null;
+  }
+  async askBound(task: Task, recipient: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string; onIntent?: () => void }, role: 'planner' | 'reviewer'): Promise<string | null> {
+    const existing = this.resolution.delegatedDelivery(input.messageId);
+    const hostId = existing ? undefined : await this.requireHost(task, recipient, role);
+    if (!existing && !this.resolution.withHost(hostId!, () => role === 'planner' ? this.adapter.askPlanner : this.adapter.askReviewer)) return null;
+    if (!existing) {
+      this.openDelegatedQuestion(task, input.messageId, recipient, input.prompt, input.timeoutMs, role, hostId);
+      input.onIntent?.();
+    }
+    try {
+      if (!existing) {
+        await this.resolution.withHost(hostId!, () => {
+          const send = role === 'planner' ? this.adapter.askPlanner : this.adapter.askReviewer;
+          if (!send) throw Error('Host cannot send delegated questions');
+          const recorded = this.store.eventsAll(`delegation:${input.messageId}`).findLast(event => event.kind === 'delegated_delivery');
+          const ref = recorded && (JSON.parse(recorded.detail) as { recipientRef?: string }).recipientRef;
+          if (!ref) throw Error('Delegated recipient identity was not recorded');
+          const { onIntent: _onIntent, ...sendInput } = input;
+          return send.call(this.adapter, nativeAgentId(ref, hostId!), { ...sendInput, sourceAgentId: task.hostId === hostId ? input.sourceAgentId ?? task.agentId ?? undefined : undefined, prompt: this.resolution.delegatePrompt(task, input.messageId, input.prompt) });
+        });
+        if (this.stopped()) throw Error('Delegated observation stopped; retain the delivery and answer window');
+        this.store.event(`delegation:${input.messageId}`, 'delegated_sent', 'Host send completed');
+      }
+      const text = await this.resolution.waitDelegatedAnswer(input.messageId, input.signal);
+      // An intent surviving a restart proves neither delivery nor a known miss.
+      // An authenticated receipt is sufficient; otherwise only an observed send
+      // can turn the expired answer window into permission to advance.
+      if (!text && existing && !this.store.eventsAll(`delegation:${input.messageId}`).some(event => event.kind === 'delegated_sent'))
+        throw Error('Previous delegate delivery was not observed; never resend');
+      if (role === 'reviewer' && text) return parseNativeDelegatedReply(text)?.kind === 'answer' ? (parseNativeDelegatedReply(text) as { answer: string }).answer : null;
+      return text;
+    } catch (error) {
+      if (this.stopped()) throw error;
+      if (this.store.eventsAll(`delegation:${input.messageId}`).some(event => event.kind === 'delegated_answer')) {
+        const text = await this.resolution.waitDelegatedAnswer(input.messageId, input.signal);
+        const reply = role === 'reviewer' ? parseNativeDelegatedReply(text) : null;
+        return role === 'reviewer' ? (reply?.kind === 'answer' ? reply.answer : null) : text;
+      }
+      this.store.event(`delegation:${input.messageId}`, 'delegated_closed', 'Delivery outcome unknown; never resend');
+      throw error;
+    }
+  }
+  async deciderBound(task: Task, input: { prompt: string; profile: Profile | null; signal: AbortSignal; timeoutMs: number; decisionId: string; sourceAgentId?: string }): Promise<{ agentId: string; text: string | null }> {
+    const id = `ns-decider-${input.decisionId}`;
+    const existing = this.resolution.delegatedDelivery(id);
+    if (existing) return { agentId: existing.recipient, text: await this.resolution.waitDelegatedAnswer(id, input.signal) };
+    if (!input.profile) throw Error('No eligible decider profile');
+    if (!task.hostId || !this.resolution.withHost(task.hostId, () => this.resolution.originHostAvailable(task.hostId)))
+      throw new DelegatedHostUnavailable('Decider host is unavailable or unknown');
+    const created = await this.resolution.withHost(task.hostId, () => this.adapter.runDecider!(task, { profile: input.profile!, signal: input.signal, timeoutMs: input.timeoutMs, decisionId: input.decisionId }));
+    this.resolution.openDelegatedQuestion(task, id, created.agentId, input.prompt, input.timeoutMs, 'decider', task.hostId);
+    try {
+      await this.resolution.withHost(task.hostId, () => this.adapter.askPlanner!(created.agentId, { ...input, sourceAgentId: input.sourceAgentId ?? task.agentId ?? undefined, messageId: id, prompt: this.resolution.delegatePrompt(task, id, input.prompt) }));
+      return { agentId: created.agentId, text: await this.resolution.waitDelegatedAnswer(id, input.signal) };
+    } catch (error) {
+      if (this.stopped()) throw error;
+      if (this.store.eventsAll(`delegation:${id}`).some(event => event.kind === 'delegated_answer'))
+        return { agentId: created.agentId, text: await this.resolution.waitDelegatedAnswer(id, input.signal) };
+      this.store.event(`delegation:${id}`, 'delegated_closed', 'Delivery outcome unknown; never resend');
+      await this.resolution.withHost(task.hostId, () => this.resolution.host.archiveAgent(created.agentId)).catch(() => {});
+      throw error;
+    }
+  }
+  /**
+   * The one lookup every delegated route uses for the planner rung (Tom, 2026-11-06). A missing or archived
+   * registered planner becomes a visible project gap and routes to Queue's planner; with no live planner at
+   * all the result is null, so the route goes straight to its next rung instead of waiting on nobody. A closed
+   * thread stays registered and still receives the question.
+   */
+  async projectPlannerFor(task: Task): Promise<{ planner: string | null; failed: boolean }> {
+    const project = this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''));
+    const missing = project?.planner?.agentId ?? null;
+    if (project && missing) {
+      if (!await this.resolution.plannerThreadGone(missing)) return { planner: missing, failed: false };
+      this.store.setProjectPlanner({ key: project.key, agentId: null, setBy: 'Queue',
+        note: `Planner ${missing} is missing or archived; delegated questions fall back to the Nucleus planner` });
+    }
+    const queuePlanner = this.store.queueProject()?.planner?.agentId ?? null;
+    const planner = queuePlanner && !await this.resolution.plannerThreadGone(queuePlanner) ? queuePlanner : null;
+    if (!project || !missing) return { planner, failed: false };
+    const notices = this.store.eventsAll(`project:${project.key}`);
+    if (planner && !notices.some(event => event.kind === 'project_planner_missing_notified' && event.detail.startsWith(`${missing}:`))) {
+      const host = await this.resolution.identifyOriginHost(planner);
+      if (host && this.resolution.withHost(host, () => this.resolution.originHostAvailable(host))) {
+        this.store.event(`project:${project.key}`, 'project_planner_missing_notified', `${missing}: notifying Nucleus planner ${planner} on host ${host}`);
+        await this.resolution.withHost(host, async () => {
+          if (this.adapter.notify) try {
+            await this.adapter.notify(planner, `ns-project-planner-missing-${project.key}`,
+              `Project ${project.name} has no live planner (${missing} is missing or archived). Nucleus is routing its delegated questions here until a live project planner is registered.`);
+          } catch { /* the durable notice record prevents repeated notifications */ }
+        });
+      }
+    }
+    return { planner, failed: true };
+  }
+  /** The profile a decider runs on: automatic selection, the cheapest eligible coordinator-class route. */
+  deciderProfile(task: Task): Profile | null {
+    const unavailable = new Set(this.store.db.prepare('SELECT data FROM availability').all().flatMap(row => {
+      const state = JSON.parse(String(row.data));
+      return groupIsUnavailable(state) ? [state.group as string] : [];
+    }));
+    const profiles = this.profiles().filter(profile => profile.model !== 'default');
+    return chooseProfile({ ...task, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '' }, profiles, this.store.pool(),
+      this.store.counts(), unavailable, 'coordinator', this.store.recentCounts(), this.store.usageLevel(), this.store.demandRoleOffsets())?.profile ?? null;
+  }
+  /** The task facts a delegate reads: its title, stop, head, brief and latest review. Bounded. */
+  decisionContext(task: Task): string[] {
+    const clip = (text: string | null | undefined, max: number) => (text ?? '').trim().replace(/\s+/g, ' ').slice(0, max) || 'none';
+    const review = task.resolution.review;
+    return [
+      `Task: ${task.title} (${task.id})`,
+      `Stop: ${task.resolution.stop?.reason ?? 'none'} — ${clip(task.resolution.stop?.detail, 600)}`,
+      `PR head: ${task.prHead ?? 'none'}`,
+      `Brief: ${clip(currentBrief(task)?.text, 3000)}`,
+      `Latest review at ${review?.head ?? 'none'}: source ${review?.sourceApproved ? 'approved' : 'not approved'}; awaiting proofs: ${awaitingProofTexts(review?.awaitingProofs ?? []).join('; ') || 'none'}`,
+      `Review: ${clip(review?.reviewText ?? review?.summary, 2000)}`,
+    ];
+  }
+}

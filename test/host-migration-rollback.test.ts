@@ -1,0 +1,31 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store, operationInputHash } from '../core/store/store';
+import { QueueRuntime } from '../service/runtime-owner';
+import type { Adapter } from '../core/host/adapter';
+
+test('bootstrap never assigns a host to legacy hostless operations', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'host-migration-rollback-')), path = join(dir, 'queue.sqlite');
+  const store = new Store(path); store.setMeta('hostId', 'a');
+  const payload = { type: 'review_entry', input: {} };
+  const first = store.acceptOperation({ key: 'first', kind: 'review_entry', inputHash: operationInputHash(payload), payload });
+  const second = store.acceptOperation({ key: 'second', kind: 'review_entry', inputHash: operationInputHash(payload), payload });
+  if (!('accepted' in first) || !('accepted' in second)) throw Error('backpressured');
+  store.db.exec(`CREATE TRIGGER reject_host_migration BEFORE UPDATE ON operations WHEN NEW.id='${second.operation.id}' BEGIN SELECT RAISE(ABORT,'injected migration failure'); END`);
+  store.close();
+  const client = { isConnected: false };
+  const adapter = { client, hostId: 'a', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
+  const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => adapter, timers: false });
+  await runtime.started; await runtime.bootstrap;
+  assert.equal(runtime.startError, '');
+  assert.equal(runtime.store.operation(first.operation.id)?.hostId, undefined);
+  assert.equal(runtime.store.operation(second.operation.id)?.hostId, undefined);
+  assert.equal(runtime.store.getMeta('operationHostMigrationV1'), undefined);
+  assert.equal(runtime.store.getMeta('originHostMigrationV1'), undefined);
+  assert.equal(runtime.store.getMeta('legacyHostOperationIds'), undefined);
+  assert.equal(runtime.store.getMeta('legacyOriginHostTaskIds'), undefined);
+  await runtime.drain();
+});

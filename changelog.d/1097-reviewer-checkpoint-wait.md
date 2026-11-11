@@ -1,0 +1,1 @@
+Reviewer checkpoint waits recover on observation: Nucleus applies an existing result or settles a run blocking continuation. A fresh-review move can replace the stale round after proving the reader's binding, and waits past the stall threshold show available owner exits.

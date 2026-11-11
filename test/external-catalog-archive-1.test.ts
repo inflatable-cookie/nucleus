@@ -1,0 +1,5 @@
+// Shard 1 of 2 of external-catalog-archive.cases.ts (see test/support/sharded-test.ts).
+// require, not import: the shard must be set before the cases register their tests.
+import { useShard } from './support/sharded-test';
+useShard(0, 2);
+require('./external-catalog-archive.cases');

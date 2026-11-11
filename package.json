@@ -1,0 +1,38 @@
+{
+  "name": "nucleus",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "publication:check": "node scripts/check-publication.mjs",
+    "test": "tsx scripts/run-tests.ts",
+    "test:timing": "node scripts/test-timing.mjs",
+    "release:prepare": "node scripts/prepare-release.mjs"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "0.9.1",
+    "@tanstack/react-query": "^5.90.11",
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^22.20.1",
+    "@types/react": "~19.2.0",
+    "@types/react-dom": "~19.2.0",
+    "esbuild": "0.28.2",
+    "jsdom": "^31.0.0",
+    "lucide-react": "^1.70.0",
+    "prettier": "3.5.3",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-web": "^0.21.4",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3"
+  },
+  "dependencies": {
+    "@getpaseo/client": "0.9.1",
+    "@getpaseo/protocol": "0.9.1",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "paseo-provenance-client": "npm:@getpaseo/client@0.15.2",
+    "yaml": "2.9.0"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "format": "synthetic-stage-git-shape-v1",
+  "taskId": "a4f1dec0-0987-bebe-dead-154c09011705",
+  "path": "docs/example/source.md",
+  "candidate": "84637e70a72eccda2f7b998e0e3a3797a8054c99",
+  "parents": [
+    "ee8906dbd81e8336b23f24455b24051ab0fe1711",
+    "5bece4c765dad9a2a0502fc978d9f6bec8510832"
+  ],
+  "common": "ea2602000feca526924bf54643884dca9e944bb7",
+  "objects": {
+    "common": {
+      "head": "ea2602000feca526924bf54643884dca9e944bb7",
+      "blob": "f034e399904273c0ab72a70e0766c250b7955d25",
+      "bytes": 70000,
+      "sha256": "4cd653a365d2b616c32a133cd5035a7dbcce2f4899cf176c567feb55f7a9d7c3",
+      "terminalLF": true
+    },
+    "publication": {
+      "head": "ee8906dbd81e8336b23f24455b24051ab0fe1711",
+      "blob": "e1cb1f7af73581c3f6a5a73b52bffed8867edf5f",
+      "bytes": 72001,
+      "sha256": "4e870ba2280806c95b6ca9a83691a2217728ca7ba336eac340e7b4f832e94ed0",
+      "terminalLF": true
+    },
+    "incoming": {
+      "head": "5bece4c765dad9a2a0502fc978d9f6bec8510832",
+      "blob": "a09a28751300e57ac3c27e45225a3a9fb1216fa5",
+      "bytes": 74000,
+      "sha256": "c5b50f67628846a1e98d0392ec765f993d7eda712f8c7fdf3fabb360d1d3cc85",
+      "terminalLF": false
+    },
+    "candidate": {
+      "head": "84637e70a72eccda2f7b998e0e3a3797a8054c99",
+      "blob": "8db76d527adb7d2a747efcc0b2375e2e19058995",
+      "bytes": 76002,
+      "sha256": "8f1e0bc18e67b924f1dff4f8e12fea803a1fa2a9cb1f9d4520c1062ed2d8327d",
+      "terminalLF": true
+    }
+  },
+  "owningDocumentProofExpectation": {
+    "unionBytes": 76001,
+    "candidateBytes": 76002,
+    "allowedNormalization": "exactly one terminal LF",
+    "source": "synthetic append scenario"
+  },
+  "deltaEntryCount": 12,
+  "deltaPathEndpoints": 14
+}

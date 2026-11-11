@@ -1,0 +1,1135 @@
+# Concepts that no longer exist. The retired-concepts check fails on any listed
+# term, path or config key found outside `allow`
+# (`effigy skill run northstar-lean/retired-concepts`).
+#
+# frozen: immutable artefacts, exempt from every retirement and skipped by
+# check-links.
+frozen = ["test/fixtures/**"]
+
+[[retired]]
+id = "northstar-queue-skill-alias"
+retired = "2026-11-10"
+replacement = "The `nucleus` skill is the only skill the package ships (nucleus#1049). `skills/northstar-queue/` and its compatibility pointer are deleted; the installer links only `nucleus`, and on install or roll it removes a `northstar-queue` link that points inside the Nucleus install while leaving an unrelated entry of that name alone. The name survives only in submitted handoffs, which may still carry `queue_dispatch: northstar-queue`."
+owner = "docs/knowledge/contracts/release.md"
+terms = ["northstar-queue skill", "name: northstar-queue", "northstar-queue/SKILL.md"]
+paths = ["skills/northstar-queue/"]
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/specs/", "changelog.d/", "CHANGELOG.md", "test/"]
+
+[[retired]]
+id = "audit-sized-plan-fixture"
+retired = "2026-11-10"
+replacement = "Plan correctness uses a small fixture; wall-clock comparisons run in the timing lane. See the orchestration contract."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["27 projects keep 34 versions and 10 keep 33"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "engine-monolith-dispatch"
+retired = "2026-11-07"
+replacement = "Engine is a shell: it constructs owners, stops them, holds the profile catalogue, records engine-side stops, and conducts a thin taskQuantum. Dispatch, observation, slots, replacement, lanes and the move verb live on their owners. See the daemon owners section of the orchestration contract."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["dispatches and observes workers, accounts for slots"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "resolution-monolith-serialize"
+retired = "2026-11-07"
+replacement = "Resolution is a shell: it wraps the adapter Proxy, classifies which tasks it advances, conducts a thin advance, and still holds the launch funnel. Review, merge, closeout, the integration turn and pre-merge live on their owners. See the daemon owners section of the orchestration contract."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["serializes review, revision, verification, merge, sync"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "stored-review-view-live-reads"
+retired = "2026-11-06"
+replacement = "A reviewer run always uses the task workspace. Stored `reviewSourceView` rows still parse, and on a done task an unarchived view stays a terminal archive target and holds retention until it settles. `core/workspaces/archive-intent.ts` owns the archive intent derivations that outlived mid-review view cleanup."
+owner = "docs/knowledge/specs/017-external-pr-review-entry.md"
+terms = ["prepareReviewSourceView", "reviewViewWorkspaces", "retargetRefusedReviewView", "reservePinnedReviewerCreation", "proveRecoveredHandover", "reviewSourceContext", "obsoleteReviewView", "settleObsoleteReviewViews", "proveMissingObsoleteView", "reviewViewCleanupHeld"]
+paths = ["server/obsolete-review-view.ts", "test/review-view-recycling*", "test/support/review-view-recycling-fixture.ts"]
+config_keys = []
+allow = ["CHANGELOG.md", "docs/knowledge/specs/retired/039-operator-rereview.md"]
+
+[[retired]]
+id = "legacy-merge-deadline"
+retired = "2026-11-06"
+replacement = "Every merge intent is written with `mergeRequestedAt`, and no stored row lacks one, so reconciliation no longer starts a deadline for it. A row without the time reads as past the proof window and escalates."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["uncertain_merge_deadline_started"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "exhausted-pre-merge-park"
+retired = "2026-11-06"
+replacement = "A pre-merge refusal at the revision cap stopped parking in task 576, and no stored row holds the old reason, so the operator retry no longer matches it. A hook-held revision still retries the same way."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["repository pre-merge refusal requires"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "verification-run-role"
+retired = "2026-11-06"
+replacement = "Post-review verification is Nucleus-owned mechanical gates over durable evidence; the verifying phase stays. See the orchestration contract. The role, the verified status and resolution.verification stay in the schemas so old rows parse, and launch, the result step and runPrompt still refuse the role."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["coordinator verification"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md", "docs/knowledge/contracts/orchestration.md", "docs/knowledge/specs/retired/", "evidence/", "server/hook-recovery.ts"]
+
+[[retired]]
+id = "legacy-review-continuation-effect"
+retired = "2026-11-06"
+replacement = "Nothing has written `run.reviewContinuation` since Spec 044's loops retired, and no stored row has one, so its recovery effect, reconcile path and prompt are gone. The field still parses, and an unsettled record still refuses a new reviewer delivery as a fail-closed check."
+owner = "docs/knowledge/specs/retired/044-reviewer-checkpoint-continuation.md"
+terms = ["reconcileReviewContinuationEffect", "review_continuation_reconciled", "ReviewContinuationIntent"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "delegated-question-unmatched"
+retired = "2026-11-06"
+replacement = "Delegates answer through a thread-bound command, so nothing records an unmatched reply and no stored event has this kind. Unanswered delegations stay under the ordinary missed and unknown events."
+owner = "docs/knowledge/specs/058-responsible-tasks.md"
+terms = ["delegated_question_unmatched"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "owner-change-notice"
+retired = "2026-11-06"
+replacement = "Nothing writes this notice since project owners were retired. Delivery no longer handles it; `owner_change` stays in the notice kind enum so 28 delivered rows parse."
+owner = "docs/knowledge/README.md"
+terms = ["owner-change"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "lost-native-operator-question"
+retired = "2026-11-06"
+replacement = "Nucleus raises no operator-only question on a native surface: proof-only release GO goes directly to the board and a stranded stop is a delegated process question. See Spec 058 Slice 12."
+owner = "docs/knowledge/specs/058-responsible-tasks.md"
+terms = ["operatorQuestionSurfacePending", "the original native question is no longer pending"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml"]
+
+[[retired]]
+id = "mcp-fallback-ready-park"
+retired = "2026-11-06"
+replacement = "PaseoAdapter retries creation without session MCP itself, so no task parks waiting for a socket-callback retry."
+owner = "docs/knowledge/README.md"
+terms = ["MCP_FALLBACK_READY_REASON", "mcp_fallback_ready", "clearUnsupportedMcpIntent"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml"]
+
+[[retired]]
+id = "paseo-worktree-helper"
+retired = "2026-11-06"
+replacement = "nucleus worktree prepare declares sibling links. Retained task branches using the retired helper receive an unsupported-argument finding; their declared links are not placed."
+owner = "docs/knowledge/README.md"
+terms = ["paseo:worktree"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "core/workspaces/worktree-links.ts", "test/worktree-links.test.ts"]
+
+[[retired]]
+id = "northstar-process-records"
+retired = "2026-09-26"
+replacement = "Knowledge in docs/knowledge/; the plan, leads, tasks, briefs, status and outcomes live in Queue."
+owner = "docs/knowledge/README.md"
+terms = ["roadmap card", "generation index", "northstar:lifecycle", "chatterbox handoff"]
+paths = [".northstar/lifecycle/", "docs/roadmaps/", "docs/handoffs/", "docs/logs/"]
+config_keys = ["northstar/queue:hook", "paseo.queue.control.v4"]
+# Queue implements the legacy protocol for consumer repositories, so its code,
+# tests, product docs and specs use these paths as product.
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/README.md",
+  "server/",
+  "shared/",
+  "client/",
+  "test/",
+  "bin/",
+  "skills/",
+  "scripts/",
+  "evidence/",
+  "README.md",
+  "docs/knowledge/specs/",
+  "docs/knowledge/contracts/orchestration.md",
+  "docs/knowledge/contracts/repository-hooks.md",
+  "docs/knowledge/contracts/service-boundary.md",
+]
+
+[[retired]]
+id = "repository-planning-files"
+retired = "2026-09-27"
+replacement = "The plan is Queue lanes, lane documents and plan order; leads are Queue records (lead.add)."
+owner = "docs/knowledge/README.md"
+paths = ["docs/plan.md", "docs/triage/"]
+# Queue imports these paths from consumer repositories, so its code, tests, specs,
+# skill and operator guide name them as product.
+allow = ["docs/knowledge/retired.toml", "server/", "shared/", "client/", "test/", "bin/", "skills/", "scripts/", "README.md", "docs/knowledge/specs/"]
+
+[[retired]]
+id = "status-board-view"
+retired = "2026-09-27"
+replacement = "The Pipeline view with the Lanes switch off covers the Status view column for column, plus planning records."
+owner = "docs/knowledge/specs/026-planning-records.md"
+terms = ["Status view", "statusColumns"]
+# The pre-retirement specs and the orchestration contract describe the old
+# board as history; everything else must name the Pipeline view.
+allow = [
+  "docs/knowledge/specs/019-lanes.md",
+  "docs/knowledge/contracts/orchestration.md",
+]
+
+[[retired]]
+id = "brief-drafts"
+retired = "2026-09-27"
+replacement = "A brief-bearing lead holds checked versions and approval, then promotes directly to a task. Schema 51 drops the retired brief_drafts table and Store APIs."
+owner = "docs/knowledge/specs/026-planning-records.md"
+terms = ["brief draft", "brief_drafts", "Store.draft", "Store.drafts", "putDraft", "readDraftRecord", "Shape first", "draft.promote", "draft_promote"]
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/retired/023-brief-drafts.md",
+  "docs/knowledge/specs/026-planning-records.md",
+  "docs/knowledge/specs/024-papercuts.md",
+  "docs/knowledge/specs/README.md",
+  "docs/knowledge/specs/retired/029-portable-records.md",
+  "docs/knowledge/specs/028-store-backups.md",
+  "core/store/store.ts",
+  "server/runtime-owner.ts",
+  "shared/operations.ts",
+  "test/brief-drafts.test.ts",
+  "test/lanes.test.ts",
+  "test/operations.test.ts",
+  "test/store-backups.test.ts",
+  "test/repository-rekey-sequence.test.ts",
+  "test/fixtures/**",
+]
+
+[[retired]]
+id = "effigy-legacy-admission-joins"
+retired = "2026-10-02"
+replacement = "Queue's contract 010 host scheduler owns run liveness, capacity waits and validation telemetry (Spec 035)."
+owner = "docs/knowledge/specs/035-host-run-scheduler.md"
+terms = ["EFFIGY_CALLER", "Effigy caller identity", "admissionCallerIdentity", "newestRunForCaller", "directoryHasLiveHeavyRun", "effigy admission status/run/runs", "legacy admission joins", "CAPACITY_TIMEOUT_MARKER"]
+paths = ["server/effigy-admission.ts", "test/heavy-validation-budget.test.ts"]
+config_keys = ["EFFIGY_CALLER"]
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/README.md",
+  "docs/knowledge/specs/retired/031-heavy-validation-budget.md",
+  "docs/knowledge/specs/035-host-run-scheduler.md",
+  "shared/contracts.ts",
+  "test/project-validation-host-runs.test.ts",
+  "test/project-validation-host-runs.cases.ts",
+]
+
+[[retired]]
+id = "declared-step-execution"
+retired = "2026-10-06"
+replacement = "Worker, one independent exact-head completion review, merge and archive; immutable step records remain history."
+owner = "docs/knowledge/specs/retired/043-declared-review-stages.md"
+config_keys = ["queue.stages"]
+terms = ["rerun_stage", "reopen_stage", "restore_stages", "reconcile_declared_publication", "reconcile_merge_only_revision", "stageState"]
+# Historical declarations remain parseable and exportable; the execution,
+# repair and five stage-control actions were deleted on 2026-10-13 (Spec 050
+# step 1). No unfinished staged task remains; the runtime parking guard went on 2026-10-16.
+# `resolution.stageState`, the run `stageId` and the stage resolution fields went
+# on 2026-11-06 with no stored row left; the settled outcomes' retired stage-run
+# history was stripped by schema 54 (task 989) and archived at
+# <archive-root>/nucleus-inert-history-2026-11-09/outcomes-stageRuns.json
+# (manifest nucleus-inert-history-2026-11-09.sha256 beside the directory).
+allow = ["server/", "shared/", "test/", "skills/", "docs/knowledge/specs/", "docs/knowledge/contracts/", "docs/knowledge/retired.toml"]
+
+[[retired]]
+id = "spend-question-kind"
+retired = "2026-11-06"
+replacement = "The `budget` question kind. Both were delegated, so no question changes who answers it."
+owner = "docs/knowledge/specs/058-responsible-tasks.md"
+terms = ["kind spend"]
+allow = ["docs/knowledge/retired.toml"]
+
+[[retired]]
+id = "automatic-review-loops"
+retired = "2026-10-07"
+replacement = "Automatic review/publication loops remain retired. A reviewer that saved a checkpoint is continued on the same run by Queue's ordinary retained `restart role=reviewer` within the checkpoint budget (Tom, 2026-10-31); that is a checkpoint continuation, not a review loop. Returning that review to its author is an ordinary Spec 050 `move to=work` or `restart`. Uncertain sends never replay, and a continuation adds no gate credit. Author defects use the ordinary bounded revision budget."
+owner = "docs/knowledge/specs/retired/044-reviewer-checkpoint-continuation.md"
+config_keys = ["queue.reviewContinuationIds"]
+allow = ["server/", "shared/", "test/", "docs/knowledge/"]
+
+[[retired]]
+id = "reconcile-and-continue"
+retired = "2026-10-14"
+replacement = "The one reconciler records each task's current stop; a coordinator returns one typed coordinatorAction and Queue applies it through the shared owner-verb registry (Spec 050). The Spec 049 classifier and its assess/apply controls are deleted; old records stay readable."
+owner = "docs/knowledge/specs/retired/049-reconcile-and-continue.md"
+terms = ["reconcile-and-continue", "reconcileContinue", "classifyReconcileContinue", "assess_recovery", "apply_recovery", "reconcileContinueRecordSchema", "reconcileEvidenceSchema"]
+paths = ["server/reconcile-continue.ts", "shared/reconcile-continue.ts"]
+config_keys = []
+# Queue implements the legacy protocol and keeps historical records readable, so
+# its code, tests, specs, skill and changelog name these as retired history.
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/README.md",
+  "docs/knowledge/architecture.md",
+  "docs/knowledge/contracts/orchestration.md",
+  "docs/knowledge/specs/",
+  "server/",
+  "shared/",
+  "client/",
+  "test/",
+  "bin/",
+  "skills/",
+  "scripts/",
+  "README.md",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "mechanical-review-carry"
+retired = "2026-10-14"
+replacement = "A moved head gets one fresh independent exact-head review (move to=review); no proof carries a prior approval to a new head. The retired carry records are stripped from task rows by schema 54 (task 989); the live rows held only the empty default, so there was nothing of theirs to archive. A run's own proof record still parses."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["preserve_mechanical_review", "proveMechanicalReviewCarry", "mechanicalReviewCarrySchema", "preserveMechanicalReview", "mechanical_review_carry", "mechanical carry", "mechanical review carry"]
+paths = ["server/mechanical-review-carry.ts", "test/mechanical-review-carry.test.ts"]
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/contracts/orchestration.md",
+  "docs/knowledge/specs/",
+  "server/",
+  "shared/",
+  "client/",
+  "test/",
+  "bin/",
+  "skills/",
+  "scripts/",
+  "README.md",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "lean-store-retired-row-fields"
+retired = "2026-11-09"
+replacement = "Lean store 4 (task 989; Tom, 2026-11-09: archive externally before deletion): the retired row fields and the unread workspace creation-step events are gone. Schema 54 strips them from stored rows on every open and the writers stop adding them. `outcomes.stageRuns` is archived at <archive-root>/nucleus-inert-history-2026-11-09/outcomes-stageRuns.json (manifest nucleus-inert-history-2026-11-09.sha256 beside the directory); the grant, carry and escalation fields held only their empty defaults; the write-only run reviewer login, the QA capacity deadline and `reviewScopeDigest` are not in that archive — their pre-strip bytes remain in the migration's verified pre-migration snapshot and the store's own backups, and the planner completes the external archive of the removed values before roll. Outcome routing reads only `scope`. The reader shims went with the step."
+owner = "docs/knowledge/specs/028-store-backups.md"
+terms = ["stageRuns", "reviewScopeDigest", "formalReviewerLogin", "queueCapacityDeadlineAt", "mechanicalReviewCarry", "workspace_creation_step", "outcomeRecordFromLegacy"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/028-store-backups.md",
+  "docs/knowledge/specs/retired/",
+  "docs/knowledge/operations/store-compaction.md",
+  "CHANGELOG.md",
+  "changelog.d/",
+  "core/store/store.ts",
+  "core/engine.ts",
+  "test/lean-store-retired-fields.test.ts",
+  "test/task-row-storage.test.ts",
+  "test/workspace-populate.test.ts",
+  "evidence/",
+]
+
+[[retired]]
+id = "answered-carry-escalation"
+retired = "2026-10-14"
+replacement = "An answered escalation over a carried head is settled by the owner verbs (move to=review supersedes the episode with history kept); the exact answeredCarryEscalation rereview tuple is deleted."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["answeredCarryEscalation", "answeredCarryEscalationEpisode", "settleAnsweredCarryEpisode", "answered carry", "Answered carry escalation"]
+paths = ["test/answered-carry-escalation.test.ts", "test/answered-carry-operation.test.ts"]
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/contracts/orchestration.md",
+  "docs/knowledge/specs/",
+  "server/",
+  "shared/",
+  "client/",
+  "test/",
+  "bin/",
+  "skills/",
+  "scripts/",
+  "README.md",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "superseded-reviewer-incident-closure"
+retired = "2026-10-14"
+replacement = "Owner verbs settle stale incidents and recovery episodes in their own transaction with history kept; the separate close_superseded_reviewer_incident control is deleted."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["close_superseded_reviewer_incident", "supersededReviewerIncident", "closeSupersededReviewerIncident", "superseded_reviewer_incident_closed"]
+paths = ["test/superseded-reviewer-closure.test.ts"]
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/contracts/orchestration.md",
+  "docs/knowledge/specs/",
+  "server/",
+  "shared/",
+  "client/",
+  "test/",
+  "bin/",
+  "skills/",
+  "scripts/",
+  "README.md",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "legacy-checkpoint-continuation-proof"
+retired = "2026-10-14"
+replacement = "A checkpoint continues only with its own authenticated receipt metadata and owner-only file; the pre-PR407 whole-legacy-shape proof derivation is deleted and nothing is backfilled."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["resolveLegacyReviewCheckpointProof", "legacyReviewCheckpointEvent", "isLegacyReviewCheckpointRecord", "hasReviewCheckpointReceiptMetadata", "ReviewContinuations", "pre-PR407"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/contracts/orchestration.md",
+  "docs/knowledge/specs/",
+  "server/",
+  "shared/",
+  "client/",
+  "test/",
+  "bin/",
+  "skills/",
+  "scripts/",
+  "README.md",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "folded-focused-verbs"
+retired = "2026-10-15"
+replacement = "resume_worker and retry_validation fold into restart, revise into move to=work and rereview into move to=review; every fresh review binds a fresh independent reviewer. Historical reviewer reuse, the stopped-reviewer revise shape and inert-scaffold reconciliation are deleted. Stored records stay readable."
+owner = "docs/knowledge/specs/050-owner-task-controls.md"
+terms = ["reconcileInertRecovery", "stoppedReviewerRunId", "retainedReviewerSource", "heldOwnerRevisionUncommitted", "inertRecoveryReconciliationSchema"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "test/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "folded-round4-actions"
+retired = "2026-10-19"
+replacement = "Round 4 (Tom, 2026-10-19): the four remaining narrow task controls fold into core verbs with no aliases. A checkpoint continuation is restart role=reviewer; re-running a parked step is restart (a reviewer instruction is restart role=reviewer instruction=..., a replacement worker profile is route role=worker); an escalation is answered by the owner's next verb, or by an owner restart with its reason when nothing else applies; a handoff instruction re-pin is amend_brief with no brief text. Historical operations and events keep their recorded action names."
+owner = "docs/knowledge/specs/050-owner-task-controls.md"
+terms = ["continue_review", "retry_resolution", "resolve_escalation", "repin_instruction"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "skills/",
+  "test/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "role-scope-switches-and-capability-fit"
+retired = "2026-10-21"
+replacement = "Spec 053 (Tom, 2026-10-21; 2026-11-04): automatic selection takes every profile whose capability meets task demand (task complexity moved by role and usage level), rotating by weight times a cost lean that never excludes a profile. The pool's role and scope switches no longer gate anything, and the bounded capability-fit multiplier and the usage level's soft leans and tier orders are deleted. Stored roles and scopes stay readable."
+owner = "docs/knowledge/specs/053-demand-based-selection.md"
+terms = ["capabilityFitMultiplier", "usageCostMultiplier", "usageTierOrder", "CAPABILITY_FIT_BONUS", "CAPABILITY_FIT_PENALTY", "routeGates"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "test/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "origin-notification-transfer"
+retired = "2026-10-26"
+replacement = "queue.reparent (board: Change owner; bin/northstar-reparent.mjs) changes the one owner field in one write. Schema 51 also deletes the archived originNotificationTransfer meta family alongside the retired transfer and recovery RPCs."
+owner = "docs/knowledge/specs/040-merge-hold-release-prompts.md"
+terms = ["queue.origin-notification-transfer", "queue.origin-notification-transfer-preflight", "originNotificationTransfer", "originNotificationTransferPreflight", "northstar-transfer-origin"]
+paths = ["bin/northstar-transfer-origin.mjs", "test/origin-transfer.test.ts"]
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "docs/knowledge/contracts/orchestration.md",
+  "core/store/store.ts",
+  "test/store-backups.test.ts",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "portable-records"
+retired = "2026-10-31"
+replacement = "R3 (Tom, 2026-10-31): the Nucleus records pilot ended. Queue no longer exports or imports `nucleus.records`: `records.export`, `records.import`, their CLI routes, the daily backup export and the contract-008 mapping are removed. Backups and the SQLite store are the durable copy; export directories already written stay inert history. Nucleus contract 008 itself remains the current format for the Nucleus records store; only the Queue producer is retired."
+owner = "docs/knowledge/specs/retired/029-portable-records.md"
+terms = ["nucleus.records", "records.export", "records.import", "RECORDS_FORMAT", "recordsExportCommand", "portable-records", "portable record"]
+paths = ["server/records.ts", "server/records-cli.ts", "test/portable-records.test.ts", "test/records-shadow-boundary.test.ts", "test/fixtures/contract-008-fields.json"]
+config_keys = []
+# Written exports, the retired spec and the historical evidence stay readable.
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "docs/knowledge/contracts/",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/operations/",
+  "README.md",
+  "skills/",
+  "server/",
+  "shared/",
+  "test/",
+  "bin/",
+  "scripts/",
+  "evidence/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "shadow-run-stream"
+retired = "2026-10-31"
+replacement = "R3 (Tom, 2026-10-31): the contract 009 shadow-run stream producer and its settings are removed. Schema 51 drops its archived table and indexes and the corresponding meta family; stream files, seed directories and the external archive remain outside the live store."
+owner = "docs/knowledge/specs/retired/034-shadow-run-stream.md"
+terms = ["shadowStream", "shadowStreamHost", "shadow.configure", "shadow.status", "shadow-stream", "shadow_stream", "shadow-seeds", "ShadowStream", "parseShadowStream", "shadowAssignedIdentities"]
+paths = ["server/shadow-stream.ts", "shared/shadow.ts", "test/shadow-stream.test.ts", "test/store-observer-projection.test.ts", "test/fixtures/contract-009-stream.json"]
+config_keys = ["shadowStream"]
+# The retained journal, files, seed provenance and the retired spec stay readable.
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "docs/knowledge/contracts/",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/architecture.md",
+  "README.md",
+  "skills/",
+  "server/",
+  "shared/",
+  "test/",
+  "evidence/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "papercut-file-import"
+retired = "2026-11-01"
+replacement = "Papercuts are filed directly as tagged leads; imported records keep their source provenance. Schema 51 removes the archived legacyPapercutSourceEvidence meta family."
+owner = "docs/knowledge/specs/024-papercuts.md"
+terms = ["papercut.import", "importPapercuts", "papercutImport", "legacyPapercutSourceEvidence"]
+paths = ["server/papercuts.ts"]
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/vision.md", "docs/knowledge/specs/retired/", "core/store/store.ts", "test/store-backups.test.ts", "CHANGELOG.md"]
+
+[[retired]]
+id = "pool-by-request-flag"
+retired = "2026-11-09"
+replacement = "Automatic eligibility is capability tier × usage level (frontier only at Maximum), cost × usage level and On/Off. A frontier profile, or one above the level's cost ceiling, needs a signed-off request or a planner grant. The store drops stored flags on open."
+owner = "docs/knowledge/specs/052-usage-level.md"
+terms = ["byRequestOnly", "BY_REQUEST_HELP", "request_flag"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "pre-schema50-store-migrations"
+retired = "2026-11-09"
+replacement = "Stores older than schema 50 must be upgraded with an older build; the store no longer runs the retired papercut and brief-draft migrations."
+owner = "docs/knowledge/specs/028-store-backups.md"
+terms = ["migrationTask", "migratePapercutsToLeadsInTransaction", "migrateDraftsToLeadsInTransaction", "migratePlanningHistoryInTransaction", "archiveLegacyPapercuts"]
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/vision.md", "docs/knowledge/specs/retired/", "CHANGELOG.md"]
+
+[[retired]]
+id = "retired-store-meta-families"
+retired = "2026-11-09"
+replacement = "Schema 51 removes the archived probe, authority-fact, redaction and host-selection migration keys from live meta. They are not written again."
+owner = "docs/knowledge/specs/028-store-backups.md"
+terms = ["threadArchiveProbe", "capacityAuthorityFacts", "hostRunEnvFileRedaction", "host_run_env_redaction", "legacyHostSelectionOperations", "legacyHostSelectionTasks"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/specs/028-store-backups.md", "core/store/store.ts", "test/store-backups.test.ts", "test/host-selection-migration.test.ts"]
+
+[[retired]]
+id = "responsible-lifecycle-opt-out-and-conversion"
+retired = "2026-11-02"
+replacement = "Spec 058 cutover 1: every new task runs the responsible lifecycle. Explicit responsible: false is refused at submission and amend_brief; old rows still parse and frozen submission identities remain readable. The set_responsible control, native conversion question and markers, and queue.responsible-convert batch RPC are removed. A broken lifecycle is repaired through a direct PR with operator source acceptance."
+owner = "docs/knowledge/specs/058-responsible-tasks.md"
+terms = ["set_responsible", "responsible-convert", "responsible_conversion_question", "responsible_conversion_answered", "responsible_conversion_unknown", "responsible_conversion_refused", "responsible_conversion_applied"]
+paths = []
+config_keys = ["responsible"]
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "shared/contracts.ts",
+  "core/store/store.ts",
+  "test/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "extra-worker-replacement-grants"
+retired = "2026-11-02"
+replacement = "The eight-retirement worker ceiling remains a loop breaker. Only a direct operator instruction or operator-relayed `restart role=worker fresh` passes it; schema 54 (task 989) strips the retired grant list from stored rows, which held only the empty default — nothing of theirs was archived."
+owner = "docs/knowledge/specs/050-owner-task-controls.md"
+terms = ["extraReplacement", "extraReplacements", "grantExtraReplacement", "pendingExtraReplacement", "One authorized replacement past the ceiling"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/050-owner-task-controls.md",
+  "docs/knowledge/specs/028-store-backups.md",
+  "docs/knowledge/contracts/orchestration.md",
+  "docs/knowledge/operations/store-compaction.md",
+  "skills/northstar-queue/SKILL.md",
+  "shared/contracts.ts",
+  "core/store/store.ts",
+  "test/worker-extra-replacement.test.ts",
+  "test/lean-store-retired-fields.test.ts",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "external-owner-review-revision"
+retired = "2026-11-02"
+replacement = "Review-entry PR changes go through `move to=work` and a revision worker in the task workspace. Historical owner-revision rows, events and pinned review views remain parseable; they do not authorize a new head."
+owner = "docs/knowledge/specs/017-external-pr-review-entry.md"
+terms = ["externalOwnerRevisions", "externalOwnerRevisionReceiptSchema", "external_owner_revision", "source_only_revision", "Record a direct-owner revised head"]
+paths = ["server/external-owner-review.ts", "test/external-owner-*", "test/review-entry-owner-*", "test/review-entry-source-only-*", "test/review-view-recycling-requalification.test.ts"]
+config_keys = []
+allow = [
+  "test/proof-execution.cases.ts",
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/017-external-pr-review-entry.md",
+  "docs/knowledge/specs/050-owner-task-controls.md",
+  "docs/knowledge/specs/058-responsible-tasks.md",
+  "docs/knowledge/specs/057-retained-change-review.md",
+  "docs/knowledge/specs/016-live-evidence-before-recovery.md",
+  "docs/knowledge/specs/012-durable-asynchronous-operations.md",
+  "docs/knowledge/specs/README.md",
+  "docs/knowledge/specs/retired/039-operator-rereview.md",
+  "docs/knowledge/contracts/orchestration.md",
+  "skills/northstar-queue/references/review-entry.md",
+  "CHANGELOG.md",
+  "shared/contracts.ts",
+  "shared/authors.ts",
+  "core/review/review-source.ts",
+  "core/resolution.ts",
+  "core/store/store.ts",
+  "server/paseo.ts",
+  "server/prompts.ts",
+  "test/review-entry.test.ts",
+  "test/review-entry-source-view.test.ts",
+  "test/retained-review-lifecycle.cases.ts",
+  "test/review-independence.test.ts",
+  "test/support/legacy-review-view-fixture.ts",
+  "test/support/review-entry-fixture.ts",
+  "test/support/review-source-terminal-archive-fixture.ts",
+  "test/support/review-source-terminal-archive-refusals.ts",
+  "test/review-source-terminal-archive.test.ts",
+]
+
+[[retired]]
+id = "brief-review-verdict-gates-and-manual-verification"
+retired = "2026-11-02"
+replacement = "Spec 058 cutover 2: a brief states its outcome and acceptance in prose and a needed hold uses queue.mergeHold with a reason. Brief frontmatter queue.reviewVerdicts, queue.reviewPassGate and queue.manualVerification are refused at submission and amend_brief with the replacement named; stored rows and frozen submission identities keep parsing, and the optional persisted fields stay readable. The manual verification coordinator (its launch, result handler, prompt and verification-role dispatch) is deleted; recorded reviewer verdicts remain ordinary evidence with their immutable records."
+owner = "docs/knowledge/specs/retired/037-structured-review-verdicts.md"
+terms = ["reviewVerdicts", "reviewPassGate", "manualVerification", "reviewerVerdictsRule", "assertReviewPassGate", "assertReviewVerdicts", "refuseStaleReviewPassGate", "advanceVerificationResult", "review_pass_gate_refused", "brief_review_verdicts_changed", "brief_review_pass_gate_changed", "brief_manual_verification_changed", "Manual verification oracle", "pass gate"]
+paths = []
+config_keys = ["queue.reviewVerdicts", "queue.reviewPassGate", "queue.manualVerification"]
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "docs/knowledge/contracts/orchestration.md",
+  "skills/northstar-queue/SKILL.md",
+  "CHANGELOG.md",
+  "README.md",
+  "shared/contracts.ts",
+  "server/",
+  "test/",
+]
+
+[[retired]]
+id = "project-ownership"
+retired = "2026-11-02"
+replacement = "Spec 058 cutover 5: project ownership is not a standing role. Authority is the operator at the board, a relayed operator note, or a delegated ladder answer; notices that fell back to the owner follow the project's planner (`project.set-planner`), then the Queue planner. The `owner` field, owner acceptances and `project_owner` records stay readable; the assignment, claim and liveness machinery is deleted."
+owner = "docs/knowledge/specs/retired/042-project-owners.md"
+terms = ["project.assign-owner", "project.claim", "checkProjectOwners", "assignProjectOwner", "claimProject", "moveOwner", "isProjectOwnerThread"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/058-responsible-tasks.md",
+  "docs/knowledge/specs/retired/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "chatterbox-routing-role"
+retired = "2026-11-02"
+replacement = "Spec 058 cutover 5: the Chatterbox routing role retires with project ownership. The workspace Chatterbox inventory, its validation and the bounded recovery discovery are deleted; a missing origin is recorded and waits for a reparent by the operator or the task's owner, and project-level notices follow the project's planner."
+owner = "docs/knowledge/specs/retired/042-project-owners.md"
+terms = ["workspaceChatterboxes", "unique Chatterbox", "Chatterbox routing"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/058-responsible-tasks.md",
+  "docs/knowledge/specs/retired/",
+  "docs/knowledge/contracts/orchestration.md",
+  "test/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "automatic-author-upgrade"
+retired = "2026-11-02"
+replacement = "Spec 058 cutover 3: review history never upgrades the worker automatically. Non-converging reviews use the #584 planner ladder; a planner who wants a stronger model uses route role=worker. Schema 54 (task 989) strips the retired escalation history from task rows, which held only empty defaults — nothing of theirs was archived; the events remain readable and do not affect routing, demand, source proof or replacement."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["Default author escalation after substantive review loops", "AUTHOR_ESCALATION_REASON", "AUTHOR_ESCALATION_OWNER_REASON", "author_escalation_reserved", "author_escalation_unavailable"]
+paths = ["server/author-escalation.ts"]
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/specs/", "docs/knowledge/contracts/orchestration.md", "server/", "shared/", "test/", "skills/"]
+
+[[retired]]
+id = "per-task-coordinator-lifecycle"
+retired = "2026-11-02"
+replacement = "Spec 058 rollout step 4: no coordinator stands between a worker and its retained reviewer, and no coordinator carries planning rulings — the worker owns its blockers, the retained reviewer is the second opinion, and the planner ladder escalates. The closeout coordinator (repository manifests) and the one retained recovery thread remain; recovery episode records stay readable."
+owner = "docs/knowledge/specs/058-responsible-tasks.md"
+terms = ["per-task coordinator", "per-task coordinators"]
+paths = []
+config_keys = []
+# Knowledge names the retired shape as history; the spec holds the oracle.
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/vision.md",
+  "docs/knowledge/contracts/orchestration.md",
+  "docs/knowledge/specs/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "supervisor-routing-role"
+retired = "2026-11-02"
+replacement = "Spec 058 rollout step 4: the Supervisor routing role is gone with project ownership. Queues route by profile selection; notices follow the project's planner. 'Supervisor' in host-run and process code means the process supervisor and is unrelated."
+owner = "docs/knowledge/specs/058-responsible-tasks.md"
+terms = ["Supervisor routing", "Supervisor thread"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/vision.md",
+  "docs/knowledge/specs/",
+  "docs/knowledge/contracts/orchestration.md",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "legacy-task-detail-panels"
+retired = "2026-11-02"
+replacement = "Spec 058 rollout step 4: the task detail's old-lifecycle panels are deleted with their client state — the owner picker, coordinator remap, incident rows, the coordinator-recovery line and the top-level Spec 053 demand table. The demand derivation stays in shared/demand.ts for routing; old task rows keep parsing."
+owner = "docs/knowledge/specs/058-responsible-tasks.md"
+terms = ["legacyPanels", "detailSectionVisibility", "IncidentRow", "TaskOwnerControl", "DemandPreview"]
+paths = ["client/task-owner.tsx", "test/task-owner-ui.test.ts"]
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/058-responsible-tasks.md",
+  "docs/knowledge/specs/retired/",
+  "shared/",
+  "test/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "named-coordinator-task-action"
+retired = "2026-11-06"
+replacement = "Tom, 2026-11-06, map D30: the queue.task action coordinator and Resolution.remap are deleted. route role=coordinator assigns a coordinator profile. Historical operations, coordinator_reassigned events and task.coordinatorAgentId rows stay readable."
+owner = "docs/knowledge/specs/050-owner-task-controls.md"
+terms = ["coordinator_reassigned"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "docs/knowledge/contracts/orchestration.md",
+  "skills/",
+  "test/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "stale-proof-only-relay"
+retired = "2026-11-06"
+replacement = "Tom, 2026-11-06, map D31, against the 2026-10-14 rule that no Nucleus task may fix a single stuck state: settleStaleProofOnlyRelay and its proof GO call are deleted. Historical proof_go_relay_* events and proofOnlyGoRelay meta stay readable."
+owner = "docs/knowledge/specs/050-owner-task-controls.md"
+terms = ["settleStaleProofOnlyRelay", "proof_go_relay_intent", "proof_go_relay_sent", "proof_go_relay_settled", "proof_go_relay_uncertain", "proofOnlyGoRelay"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "test/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "worker-adoption"
+retired = "2026-11-06"
+replacement = "Tom, 2026-11-06: \"I don't use it, let's remove it\". queue.adopt, the CLI adopt command, task adoption state, adoption_handover and its retry route, the existing-worker reporting handover, and adoption-only workspace branches are deleted. A finished external PR enters through review entry; move to review with a different prNumber remains the separate replacement PR route. Legacy task rows strip the removed adoption field while parsing, and historical event and operation records remain readable."
+owner = "docs/knowledge/specs/017-external-pr-review-entry.md"
+terms = ["queue.adopt", "adoption_handover", "adoptExisting", "prepareAdoption", "sendAdoption", "task.adoption", "worker adoption"]
+paths = ["server/adoption.ts", "skills/northstar-queue/references/adoption.md"]
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "docs/knowledge/contracts/orchestration.md",
+  "skills/",
+  "server/",
+  "shared/",
+  "test/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "checkpointed-review-author-return"
+retired = "2026-11-06"
+replacement = "A checkpointed review returns to its author through move to=work. The unreached author-return method and retirement proof are gone; stored checkpointed_review_returned_to_author events stay readable."
+owner = "docs/knowledge/specs/050-owner-task-controls.md"
+terms = ["returnCheckpointedReviewToAuthor", "latestStoppedCheckpointProof"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml"]
+
+[[retired]]
+id = "lanes-destination"
+retired = "2026-11-07"
+replacement = "Tom, 2026-11-07 (lane nucleus-ui, nucleus#866): the separate Lanes destination is folded into Planning. The Lanes tab, its table projection (laneTableRows, laneTableTarget), row navigation into the Pipeline swimlane and the lane-detail modal are deleted with shared/lane-table.ts. Lane discovery is Planning's 'Find lanes' with a project chooser and a labelled all-projects scope; the lane record, its document, the Pipeline swimlanes and the board's Lanes switch are unchanged."
+owner = "docs/knowledge/specs/019-lanes.md"
+terms = ["laneTableRows", "laneTableTarget", "Lanes table", "Lane table header"]
+paths = ["shared/lane-table.ts"]
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "shared/",
+  "client/",
+  "test/",
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "board-swim-lanes"
+retired = "2026-11-08"
+replacement = "Tom, 2026-11-08: 'We can lose the swim-lane rendering concept on the board, I never use it (the switch next to the project selector)'. The board always renders one set of columns, each card once, with real totals. The Lanes switch, its persisted preference, the swimlanes option of the board projection, per-lane rows with their expand and collapse, the five-card cell, and the card chip naming a shared task's other lanes are deleted. Lane records, documents, Planning, a card's lane membership in the task view, lane drain and every lane RPC and CLI route stay."
+owner = "docs/knowledge/specs/026-planning-records.md"
+terms = ["LanesSwitch", "useLanesSwitch", "readLanesSwitch", "otherLaneKeys", "pipelineRows", "pipelineCellView", "swimlanes", "northstar-queue:pipeline-lanes", "useBoardMode"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "CHANGELOG.md",
+  "evidence/",
+  "test/pipeline-board.test.ts",
+  "test/layout.test.ts",
+  "test/queue-navigation.test.ts",
+  "test/planning-records-2.test.ts",
+]
+
+[[retired]]
+id = "trusted-host-runner-approval"
+retired = "2026-11-08"
+replacement = "Tom, 2026-11-08: hooks may name host tools directly on the Nucleus service PATH; the approval registry, revisions and machine binding are retired. Historical pins remain readable."
+owner = "docs/knowledge/contracts/repository-hooks.md"
+terms = ["TrustedRunnerRegistry", "runnerControl", "runnerSnapshot", "machineBinding"]
+paths = ["server/runners.ts", "shared/runners.ts", "server/machine-identity.ts"]
+config_keys = ["queue.runner-control", "queue.runners"]
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/specs/", "CHANGELOG.md", "evidence/", "test/"]
+
+[[retired]]
+id = "builds-drive"
+retired = "2026-11-09"
+replacement = "Tom, 2026-11-05: the Builds drive is permanently disconnected and never reconnected. The configured work root owns checkout, scratch, QA and backup placement (workRoot/workVolumeId, 2026-11-10). Recorded paths on the retired drive are history: they count as absent, are never probed, admitted, drained or retried, and are never rewritten."
+owner = "docs/knowledge/contracts/service-boundary.md"
+terms = ["Builds drive", "Volumes/Builds", "builds-volume", "BUILDS_MOUNT", "retainedBackupDirs", "unavailableRetained", "CHECKOUT_VOLUMES", "NEW_WORK_VOLUME"]
+paths = ["server/builds-volume.ts", "server/retired-worktree.ts"]
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/",
+  "CHANGELOG.md",
+  "evidence/",
+  "test/",
+]
+
+[[retired]]
+id = "per-repository-validation-policy"
+retired = "2026-11-09"
+replacement = "Tom, 2026-11-09: 'We should assess the validation instructions that have been added to projects in nucleus — that whole feature was dreamt up and created by an agent, not me.. it's obviously serving a purpose but is a great way to perpetuate stale information and workflows.' Ruling: retire it; AGENTS.md only. The repository's AGENTS.md Validate section is the only validation source: the stored `repository.set` `validationPolicy` field, the Nucleus-wide `defaultValidationPolicy`, the `queue.default-validation-policy` RPC and the Settings UI are gone, stored copies are dropped on open (values archived 2026-11-09 at <archive-root>/nucleus-validation-policies-2026-11-09/policies.json), and worker, revision and reviewer prompts carry one fixed line naming the section and milestone QA on main via `project.qa.run`."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["validationPolicy", "effectiveValidationPolicy", "defaultValidationPolicy", "VALIDATION_POLICY_MAX", "normalizeValidationPolicy", "queue.default-validation-policy"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "CHANGELOG.md",
+  "changelog.d/",
+  "evidence/",
+  "docs/knowledge/specs/",
+  "server/",
+  "shared/",
+  "test/",
+  "README.md",
+]
+
+[[retired]]
+id = "legacy-thread-archive-and-report-meta"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/orchestration.md"
+replacement = "Schema 53 moves live archive evidence to host-qualified keys and report intent and response data into receipts; the unqualified archive, fence, report metadata and plain hostId keys are removed."
+terms = ["mcpReportIntent", "qualifiedFence"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "core/store/store.ts", "test/lean-store.test.ts", "test/support/main-private-records-frozen.ts"]
+
+[[retired]]
+id = "full-capacity-task-index"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/orchestration.md"
+replacement = "Admission reads active capacity facts and bounded ready queue heads; the unused full-capacity task index is retired."
+terms = ["capacityTasks", "capacityIds"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "test/"]
+
+[[retired]]
+id = "data-home-move-machinery"
+retired = "2026-11-09"
+replacement = "Tom, 2026-11-09: retire the move machinery (the move completed 08:05 UTC that day). The data home is ~/.nucleus, or NUCLEUS_DATA_HOME when set. The resolver reads no journal, knows no legacy leaf, and ignores PASEO_HOME for store selection. Leftover ~/.nucleus-stage-journal.json and a sealed ~/.paseo/northstar-queue are ignored; the planner archives them afterwards. The temporary build receipt marker remains solely for old bridge handover; see the release contract."
+owner = "docs/knowledge/contracts/service-boundary.md"
+terms = ["nucleus data-migration", "assertDataHomeCompatible", "dataHomeVersion", "data-home-compat", "LEGACY_DATA_HOME_LEAF", "LEGACY_DATA_HOME_ENV", "data-home:both-stores", "data-home:current-only", "dataHomeRoots", "minimumDataHomeVersion"]
+paths = [
+  "server/data-migration-descriptors.mjs",
+  "server/data-migration-inventory.mjs",
+  "server/data-migration-lock.mjs",
+  "server/data-migration-seal.mjs",
+  "server/data-migration-stage.mjs",
+  "server/service/data-home-guard.mjs",
+  "shared/data-home-compat.json",
+]
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/contracts/release.md",
+  "scripts/build-runtime.mjs",
+  "CHANGELOG.md",
+  "changelog.d/",
+  "evidence/",
+]
+
+[[retired]]
+id = "capacity-authority-tool"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/service-boundary.md"
+replacement = "Tom, 2026-11-09: retire the capacity authority tool and installer. Settings owns dispatch limits; its shared transport provenance and refusal helpers remain."
+terms = ["install-capacity-authority.sh", "shared/capacity-authority.mjs", "scripts/capacity-authority.mjs"]
+paths = ["scripts/install-capacity-authority.sh", "shared/capacity-authority.mjs", "shared/capacity-authority.d.mts", "scripts/capacity-authority.mjs", "scripts/capacity-authority.d.mts", "test/capacity-authority.test.ts"]
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md", "changelog.d/", "docs/knowledge/specs/"]
+
+[[retired]]
+id = "completed-host-attribution-migrations"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/service-boundary.md"
+replacement = "Completed one-time host attribution migrations no longer run at startup or daemon bind. Hostless records stay unknown; startup never synthesizes attribution."
+terms = ["operationHostMigrationV1", "originHostMigrationV1", "legacyHostOperationIds", "legacyOriginHostTaskIds"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "test/", "CHANGELOG.md", "changelog.d/"]
+
+[[retired]]
+id = "linked-checkout-development-roll"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/release.md"
+replacement = "Tom, 2026-11-09: retire linked-checkout development rolls; automatic updates use the installed main channel. Release installs remain pinned."
+terms = ["nucleus link", "checkSourceActive", "typecheckCommand"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "test/", "CHANGELOG.md", "changelog.d/", "evidence/"]
+
+[[retired]]
+id = "legacy-host-run-startup-rewrites"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/service-boundary.md"
+replacement = "Host-run startup and bind use current journal and durable output records. Legacy env redaction, output-failure meta import, public token verification, in-thread bind mode and unread supervisor plan paths are removed."
+terms = ["redactLegacyRunFiles", "redactHostRunEnvRows", "importLegacyHostRunOutputFailures"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md", "changelog.d/", "evidence/", "test/"]
+
+[[retired]]
+id = "paseo-split-reexport-shims"
+retired = "2026-11-09"
+owner = "docs/knowledge/architecture.md"
+replacement = "Paseo ask, message, question and workspace implementations live under host/paseo. Core review-source checks delegate workspace ID validation to the host."
+terms = []
+paths = ["server/host-asks.ts", "server/host-messages.ts", "server/host-questions.ts", "server/host-workspaces.ts"]
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md", "changelog.d/", "evidence/"]
+
+[[retired]]
+id = "legacy-hook-payload-recovery-and-checkouts"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/repository-hooks.md"
+replacement = "Hooks retain their original persisted payload. Repository-local queue-hooks isolation is retired; new clones live in the data home. A one-time ownership-proved sweep disposes legacy warm clones without replaying events."
+terms = ["recoverEventPayload", "HOOK_EVENT_RECOVERED_KIND", "LEGACY_ISOLATION_DIR"]
+paths = ["server/hook-recovery.ts"]
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "test/", "CHANGELOG.md", "changelog.d/", "evidence/"]
+
+[[retired]]
+id = "project-qa-prestreaming-and-inline-gate"
+retired = "2026-11-09"
+owner = "docs/knowledge/specs/022-queue-projects-without-manifests.md"
+replacement = "Product QA uses detached supervisors and streamed failure indexes. Inline executors are test fixtures only; the pre-Spec-022 sources layout and retained-output TAP reparse are removed. Unmaintained acceptance scripts and the legacy daemon-proof entrypoint are removed."
+terms = []
+paths = ["scripts/acceptance/"]
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md", "changelog.d/", "evidence/"]
+
+[[retired]]
+id = "detached-task-texts"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/service-boundary.md"
+replacement = "Schema 55 removes task_texts; shared text resolves from brief versions and independent bytes remain on the task."
+terms = ["task_texts"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "core/store/store.ts", "test/", "CHANGELOG.md"]
+
+[[retired]]
+id = "client-subscriptions-settings-alias"
+retired = "2026-11-09"
+owner = "docs/knowledge/architecture.md"
+replacement = "Settings navigation targets live sections; subscriptions remain within Profiles."
+terms = ["SettingsAnchor", "settingsSectionFor"]
+paths = ["client/lead-pages.ts", "shared/papercuts.ts"]
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/specs/", "test/", "evidence/", "CHANGELOG.md", "changelog.d/"]
+
+[[retired]]
+id = "repeated-store-read-derivation"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/service-boundary.md"
+replacement = "Store admission checks integrity once under the lock; hot reads reuse statements and pending submissions probe indexed identities."
+terms = []
+paths = []
+config_keys = []
+allow = []
+
+[[retired]]
+id = "publication-revision-meta"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/service-boundary.md"
+replacement = "Schema 57 stores board and telemetry counters together in the publication projection_clock row."
+terms = []
+paths = []
+config_keys = []
+allow = []
+
+[[retired]]
+id = "unchanged-supervision-rederivation"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/service-boundary.md"
+replacement = "Supervision watches share unchanged file facts and bounded positive process identities; death and settlement remain fresh."
+terms = []
+paths = []
+config_keys = []
+allow = []
+
+[[retired]]
+id = "board-full-list-interval-polling"
+retired = "2026-11-09"
+replacement = "Planning lists follow their own domain revision (leads, decisions, plans) from the board projection; decision pills share the decision read, and native questions follow one agent inventory subscription. Web snapshot polling is a disconnected-channel fallback."
+owner = "docs/knowledge/specs/026-planning-records.md"
+terms = []
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "split-planner-delegation-and-note-budget-authority"
+retired = "2026-11-09"
+owner = "docs/knowledge/specs/058-responsible-tasks.md"
+replacement = "Planner-then-decider questions share durable routing and reply parsing. Unknown planner delivery stays uncertain after its bounded window; no decider is asked. AgentAsks and Ladder own resume logic. Delegated budget authority is structured, never inferred from a note."
+terms = []
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "test/", "CHANGELOG.md", "changelog.d/"]
+
+[[retired]]
+id = "forge-shared-pending-timers"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/orchestration.md"
+replacement = "Pending check timers bind the repository, PR head and check name; terminal status contexts clear them."
+terms = []
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md", "changelog.d/"]
+
+[[retired]]
+id = "duplicate-task-decisions"
+retired = "2026-11-09"
+owner = "docs/knowledge/contracts/orchestration.md"
+replacement = "Task views and mutations share decision and refusal helpers. Store owns retention, capacity membership and credential, receipt and availability writes. Client and server share the blocking-hold derivation."
+terms = []
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "repository-changed-qa-selector"
+retired = "2026-11-09"
+owner = "docs/knowledge/architecture.md"
+replacement = "Workers run the focused unit files and documentation checks; milestone QA runs on main."
+terms = []
+paths = ["scripts/qa-changed.mjs", "scripts/qa-select.mjs", "test/qa-select.test.ts"]
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md", "changelog.d/"]
+
+[[retired]]
+id = "fixture-argv-shape-classifier"
+retired = "2026-11-09"
+replacement = "Fixture teardown uses recorded spawn identity and process-group ownership. Old argv-shape classifier assertions are removed; current ownership regressions stay. Schema-floor refusal is owned by test/store-schema-floor.test.ts rather than duplicated in feature tests."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = ["queueServicePidVerdict"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "evidence/fixture-teardown-ownership-20261031.json"]
+
+[[retired]]
+id = "duplicated-service-primitives"
+retired = "2026-11-10"
+replacement = "Git execution, owner-only atomic publication and PID liveness each have one shared owner. Hook renewal shares its publication and supersession path. See shared service primitives in the orchestration contract."
+owner = "docs/knowledge/contracts/orchestration.md"
+terms = []
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]

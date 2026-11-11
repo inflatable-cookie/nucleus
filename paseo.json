@@ -1,0 +1,25 @@
+{
+  "worktree": {
+    "setup": "if command -v nucleus >/dev/null 2>&1; then nucleus worktree prepare; else echo \"Nucleus unavailable; skipping worktree prepare\"; fi && effigy setup && if command -v nucleus >/dev/null 2>&1; then nucleus worktree link; else echo \"Nucleus unavailable; skipping worktree link\"; fi",
+    "teardown": "if command -v nucleus >/dev/null 2>&1; then nucleus worktree unlink; else echo \"Nucleus unavailable; skipping worktree unlink\"; fi"
+  },
+  "scripts": {
+    "qa": {
+      "command": "effigy qa"
+    },
+    "docs": {
+      "command": "effigy qa:docs"
+    }
+  },
+  "metadataGeneration": {
+    "branchName": {
+      "instructions": "Use a short kebab-case name for the bounded change."
+    },
+    "commitMessage": {
+      "instructions": "Use a short imperative subject; add scope when it helps review."
+    },
+    "pullRequest": {
+      "instructions": "Lead with the outcome, link governing docs, and include validation evidence and unresolved items."
+    }
+  }
+}

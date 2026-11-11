@@ -1,0 +1,30 @@
+import { test } from 'node:test';
+import { strict as assert } from 'node:assert';
+import { HostRegistry, type KnownHost } from '../core/host/host-registry';
+
+test('admission on one registered host does not hold another host', async () => {
+  const { Admission } = await import('../core/host/admission');
+  let known: readonly KnownHost[] = [];
+  const store = { read: () => known, write: (value: readonly KnownHost[]) => { known = value; }, transaction: <T>(fn: () => T) => fn() };
+  const registry = new HostRegistry<{ admission: InstanceType<typeof Admission> }>(store);
+  let now = 0;
+  const create = () => new Admission({ totalLimit: 1, startIntervalMs: 0, now: () => now, degradedLatencyMs: 10 });
+  const a = registry.resource('a', create);
+  const b = registry.resource('b', create);
+  assert.throws(() => registry.resource('c', () => a), /another identity/);
+  for (let i = 0; i < 3; i++) await a.run('observation', async () => { now += 11; });
+  assert.equal(a.degradedNow, true);
+  assert.notEqual(a.workspaceAdmissionReason(0), '');
+  assert.equal(b.degradedNow, false);
+  assert.equal(b.workspaceAdmissionReason(0), '');
+  registry.connect('a', 'endpoint-a', { admission: a });
+  registry.connect('b', 'endpoint-b', { admission: b });
+  let release!: () => void;
+  let started!: () => void;
+  const start = new Promise<void>(resolve => { started = resolve; });
+  const held = registry.get('a')!.admission.run('control', () => new Promise<void>(resolve => { release = resolve; started(); }));
+  await start;
+  assert.equal(await registry.get('b')!.admission.run('control', async () => 'available'), 'available');
+  release();
+  await held;
+});

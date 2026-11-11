@@ -1,0 +1,4 @@
+# Local-only literal names, one per line (case-insensitive).
+# Copy to .publication-denylist; an absent file means an empty denylist.
+# Replace the synthetic sample with your private vocabulary.
+private-project-example

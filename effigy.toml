@@ -1,0 +1,49 @@
+[catalog]
+alias = "nucleus"
+
+[tasks]
+"qa:docs:links" = "effigy docs check links"
+"qa:docs:agent-defaults" = "effigy docs check forbidden AGENTS.md README.md docs/README.md --forbid '--repo .'"
+"qa:docs" = [
+  { task = "qa:docs:links" },
+  { task = "qa:docs:agent-defaults" },
+]
+# The lean Northstar spine: orientation, knowledge index, plan and release.
+"qa:northstar:spine" = "effigy docs check paths README.md AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/retired.toml docs/knowledge/questions.md docs/knowledge/contracts/release.md"
+"qa:northstar:agent-contract" = "effigy docs check contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/knowledge/README.md'"
+"qa:northstar:readme" = "effigy docs check contains README.md --require 'docs/README.md'"
+"qa:northstar:docs-front-door" = "effigy docs check contains docs/README.md --require 'knowledge/'"
+"qa:northstar" = [
+  { task = "qa:northstar:spine" },
+  { task = "qa:northstar:agent-contract" },
+  { task = "qa:northstar:readme" },
+  { task = "qa:northstar:docs-front-door" },
+]
+# Cheap orientation for `effigy doctor`. Full board is `effigy qa`.
+# Never alias health to qa (or any aggregate that expands into the full suite).
+health = [{ task = "qa:docs:agent-defaults" }]
+setup = "npm ci"
+"build:runtime" = "node scripts/build-runtime.mjs {args}"
+"release:prepare" = "npm run release:prepare -- {args}"
+"proof:installed-daemon" = "node scripts/proof-installed-daemon.mjs {args}"
+check = [{ task = "check:types" }, { task = "check:publication" }]
+"check:types" = "npm run typecheck"
+"check:publication" = "npm run publication:check"
+# Proves a move PR changed no moved code; see scripts/check-moves.ts.
+"check:moves" = "node --import tsx scripts/check-moves.ts {args}"
+fmt = "node scripts/format-changed-typescript.mjs"
+# Wall-clock oracles run alone after the parallel suite; see scripts/test-timing.mjs.
+"test:timing" = "npm run test:timing -- {args}"
+# Fast checks first: a type or docs failure surfaces in seconds, not after the unit stage.
+qa = [{ task = "check" }, { task = "qa:docs" }, { task = "qa:northstar" }, { task = "test" }, { task = "test:timing" }]
+# `--` preserves Effigy's passthrough; the runner places options before files.
+[test.suites.unit]
+run = "npm test --"
+
+# Opt-in snapshot comparison: inert archived sources, no live provider or task execution.
+[tasks."bench:service-hot-paths"]
+run = "node scripts/bench-service-hot-paths.mjs"
+
+# Private active git and supervisor probes; no live execution or store writes.
+[tasks."bench:git-file-facts"]
+run = "node scripts/bench-git-file-facts.mjs"

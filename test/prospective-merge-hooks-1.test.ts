@@ -1,0 +1,5 @@
+// Shard 1 of 12 of prospective-merge-hooks.cases.ts (see test/support/sharded-test.ts).
+// require, not import: the shard must be set before the cases register their tests.
+import { useShard } from './support/sharded-test';
+useShard(0, 12);
+require('./prospective-merge-hooks.cases');

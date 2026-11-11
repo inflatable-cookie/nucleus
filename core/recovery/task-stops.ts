@@ -1,0 +1,283 @@
+import { randomUUID } from 'node:crypto';
+import type { Incident, Run, Task } from '../../shared/contracts';
+import type { IncidentCause } from '../../shared/incident';
+import { isTransientExternalFailure, taskStopClassification, taskStopRecord, taskStopVerbsFor, type TaskStopReason, type TaskStopVerb } from '../../shared/task-stop';
+import { incidentKey } from './incident';
+import { isRepositoryContention, repositoryContentionNeedsAttention } from '../scheduling/repository-contention';
+import type { Resolution } from '../resolution';
+import { digest, now } from '../store/store';
+import { EXTERNAL_MERGE_CHECK_REASON_PREFIX, noActionEscalationAtAcceptedHead, visibleTaskReason, workingLanes } from './task-reasons';
+
+/** Task fields that must never ride in a resolution-changes object. Building that
+ * object in a variable bypasses TypeScript's excess-property check, which is how
+ * project-a #1984 left `prHead` unmoved after a work stage pushed a new head. */
+type TaskOnlyKey = Exclude<keyof Task, keyof Task['resolution'] | 'resolution'>;
+type ResolutionChanges = Partial<Task['resolution']> & { [K in TaskOnlyKey]?: never };
+export type { ResolutionChanges };
+
+/**
+ * Writes a task's stops, incidents and attention. Same-name `Resolution` methods
+ * delegate here and cross-method calls go through the public ones, so instance
+ * overrides still fire. `store` reads the resolution per call.
+ */
+export type TaskStopsContext = Pick<Resolution, 'ensureIncident' | 'recordIncidentEvent' | 'saveIncident' | 'settleAttentionEpisode' | 'stopped' | 'store' | 'update' | 'waiting'>;
+
+export class TaskStops {
+  constructor(readonly resolution: TaskStopsContext) {}
+  get store() { return this.resolution.store; }
+
+  update(t: Task, changes: ResolutionChanges, patch: Partial<Task> = {}, event = 'resolution', detail?: string) {
+    const current = this.store.task(t.id);
+    const reasonOrPhaseChanged = patch.reason !== undefined && patch.reason !== current.reason
+      || patch.phase !== undefined && patch.phase !== current.phase;
+    const stop = changes.stop !== undefined ? changes.stop : reasonOrPhaseChanged ? null : current.resolution.stop;
+    return this.store.update(t.id, { ...patch, resolution: { ...current.resolution, ...changes, stop } }, event, detail ?? patch.reason ?? patch.phase ?? event);
+  }
+  /** Record one stop or wait on the task; matching observations retain their first timestamp. */
+  recordStop(task: Task, reason: TaskStopReason, detail: string, suggestedVerbs?: TaskStopVerb[], phase?: Task['phase']): Task {
+    const current = this.store.task(task.id);
+    // A queued task's capacity wait names the in-flight list, which changes with every
+    // transition. Rewriting ~100 queued rows and events each time pinned the service at
+    // 100% CPU (2026-11-04). A task already waiting on capacity keeps its record; the
+    // board computes the live wait, and dispatch re-reads admission for itself.
+    if (reason === 'capacity' && current.phase === 'queued' && (!phase || phase === current.phase)
+      && current.resolution.stop?.reason === 'capacity') return current;
+    const stop = taskStopRecord(reason, detail, current.resolution.stop, now(), suggestedVerbs);
+    const visible = visibleTaskReason(detail, stop);
+    if (JSON.stringify(stop) === JSON.stringify(current.resolution.stop) && current.reason === visible && (!phase || phase === current.phase)) return current;
+    return this.resolution.update(current, { stop }, { reason: visible, ...(phase ? { phase } : {}) }, 'task_stopped', JSON.stringify(stop));
+  }
+  /** Upsert the deduplicated incident for a fault; repeated observations update the same row. */
+  ensureIncident(task: Task, run: Run | null, reason: string, action: Incident['action'] = '', cause?: IncidentCause): Incident {
+    const current = this.store.task(task.id);
+    const key = incidentKey(current, run, reason, this.store.runs(current.id), cause);
+    const prior = current.resolution.incident;
+    const priorFingerprint = prior?.fingerprint || prior?.id;
+    if (prior && priorFingerprint === key.id && prior.status !== 'resolved') {
+      if (prior.status !== 'escalated' && prior.detail !== reason) this.resolution.saveIncident(current, { detail: reason.slice(0, 2000) });
+      return this.store.task(current.id).resolution.incident!;
+    }
+    // Attempt counts stay informational here; replacement budgets are decided from durable replacement events.
+    const attempt = prior && prior.role === key.role && prior.cause === key.cause ? prior.attempt : 0;
+    const incident: Incident = { id: priorFingerprint === key.id ? digest(`${key.id}:${randomUUID()}`) : key.id, fingerprint: key.id, role: key.role, runId: key.runId, turnId: null, attempt, cause: key.cause, detail: reason.slice(0, 2000), action, status: 'reconciling', createdAt: now(), updatedAt: now() };
+    this.resolution.update(current, { incident }, {}, 'incident_recorded');
+    this.resolution.recordIncidentEvent(current.id, incident);
+    return incident;
+  }
+  recordIncidentEvent(taskId: string, incident: Incident) {
+    this.store.event(taskId, 'incident', JSON.stringify({ id: incident.id, role: incident.role, runId: incident.runId, attempt: incident.attempt, cause: incident.cause, action: incident.action, status: incident.status }));
+  }
+  saveIncident(task: Task, patch: Partial<Incident>) {
+    const current = this.store.task(task.id);
+    const incident = current.resolution.incident;
+    if (!incident) return;
+    const next = { ...incident, ...patch, updatedAt: now() };
+    this.resolution.update(current, { incident: next });
+    if (next.status !== incident.status || next.action !== incident.action || next.attempt !== incident.attempt) this.resolution.recordIncidentEvent(current.id, next);
+  }
+  /** Mark the incident for a run resolved; escalated incidents stay with their coordinator. */
+  resolveIncident(task: Task, runId: string | null, detail: string) {
+    const current = this.store.task(task.id);
+    const incident = current.resolution.incident;
+    if (!incident || incident.runId !== runId || incident.status === 'escalated') return;
+    if (incident.status === 'resolved' && incident.detail === detail) return;
+    this.resolution.saveIncident(current, { status: 'resolved', detail: detail.slice(0, 2000) });
+  }
+  /**
+   * Supersede the pending attention notices of an episode that is closed and
+   * record the closure once. Shared by every operator-return path and by the
+   * answered-escalation resolution, so settling always uses one behaviour.
+   */
+  settleAttentionEpisode(taskId: string, detail: string) {
+    for (const notice of this.store.notices(taskId)) {
+      if (notice.kind === 'attention' && notice.status === 'pending') this.store.putNotice({ ...notice, status: 'superseded', error: detail });
+    }
+    this.store.event(taskId, 'attention_episode_resolved', detail);
+    const current = this.store.task(taskId);
+    if (current.resolution.externalMergePreAttention) this.resolution.update(current, { externalMergePreAttention: null }, {}, 'external_merge_pre_attention_cleared');
+  }
+  /** Close an operator-resolved attention episode before returning the task to work. */
+  operatorReturn(t: Task, changes: ResolutionChanges, patch: Partial<Task>, event: string, detail: string, eventDetail?: string) {
+    const current = this.store.task(t.id), prior = current.resolution.incident;
+    if (current.resolution.recovery) this.store.event(t.id, 'recovery_episode_superseded', JSON.stringify(current.resolution.recovery));
+    const incident = prior ? { ...prior, fingerprint: prior.fingerprint || prior.id, status: 'resolved' as const, detail, updatedAt: now() } : null;
+    const next = this.resolution.update(current, { ...changes, incident, recovery: null, recoveryActive: false, recoveryAttempts: 0 }, patch, event, eventDetail);
+    if (prior && prior.status !== 'resolved') this.resolution.recordIncidentEvent(current.id, incident!);
+    this.resolution.settleAttentionEpisode(current.id, detail);
+    return next;
+  }
+  /** Called only after the operator retry has proved settled initial dispatch state. */
+  returnToDispatch(t: Task, retainedWorkspace: boolean, reason: string, event = 'retry_validation'): Task {
+    return this.operatorReturn(t, { attention: false },
+      { phase: 'queued', workspaceIntent: retainedWorkspace, reason }, event, reason);
+  }
+  /**
+   * True while an escalated episode is still backed by work Queue will advance.
+   * An in-flight recovery or an unlanded merge owns the lane. A recovery's
+   * no-action finding at an accepted reviewed head has no resolution action to
+   * retry; answering it lets the existing verification gate run (Spec 016 rule 6).
+   */
+  escalationLiveWork(t: Task): string | null {
+    if (t.resolution.recoveryActive) return 'a recovery action is active';
+    if (t.resolution.mergeIntent && !t.resolution.mergedCommit) return 'an unlanded merge intent is pending';
+    if (noActionEscalationAtAcceptedHead(t)) return null;
+    const liveLaneWork: Partial<Record<Task['phase'], string>> = {
+      dispatching: 'worker dispatch is in progress', working: 'worker work is in progress',
+      awaiting_review: 'review is pending', reviewing: 'reviewer work is in progress',
+      changes_requested: 'revision work is pending', verifying: 'pre-merge verification is pending',
+      merging: 'merge work is in progress', syncing: 'main synchronization is in progress', closing: 'closeout work is in progress',
+    };
+    if (workingLanes.has(t.phase)) return `${liveLaneWork[t.phase] ?? 'task work is in progress'} (phase ${t.phase})`;
+    if (t.phase === 'done' || t.phase === 'cancelled') return null;
+    // A different incident identity is the record of the escalated incident
+    // having been superseded by the task's later fault. The escalation's own
+    // status is not evidence that the task still has a fault to work.
+    const recovery = t.resolution.recovery;
+    const currentFault = t.resolution.attention || ['blocked', 'error', 'needs_attention'].includes(t.phase);
+    return currentFault && (!recovery?.incidentId || recovery.incidentId === t.resolution.incident?.id)
+      ? `the ${t.phase} task still has an unresolved attention fault`
+      : null;
+  }
+  /**
+   * Operator-only closure of an escalation whose question has been answered
+   * (Spec 016 rule 6). The authority is the caller: only the versioned operator
+   * control passes `operator`, so no coordinator recovery, notice route or
+   * automatic pass can reach this mutation. The escalated recovery and incident
+   * move to `resolved` with the operator's reason, the `recovery_escalated`
+   * event and its summary stay intact as history, pending attention notices
+   * settle and attention clears through the ordinary episode closure. It never
+   * changes the task's phase: answering the escalation does not decide the task.
+   */
+  resolveEscalation(t: Task, reason: string, operator = false): Task {
+    if (!operator) throw new Error('Resolving an escalation is operator-only; no automatic or coordinator path holds this authority');
+    const answer = reason.trim();
+    if (!answer) throw new Error('Resolving an escalation requires the operator reason that answered it');
+    const apply = () => {
+      const current = this.store.task(t.id);
+      if (current.removedAt) throw new Error('Task was removed from the queue');
+      const priorRecovery = current.resolution.recovery, priorIncident = current.resolution.incident;
+      const escalatedRecovery = priorRecovery?.status === 'escalated' ? priorRecovery : null;
+      const escalatedIncident = priorIncident?.status === 'escalated' ? priorIncident : null;
+      if (!escalatedRecovery && !escalatedIncident) throw new Error('No escalated recovery or incident is awaiting an answer');
+      const unreleasedRun = this.store.runs(t.id).find(run => !run.released);
+      if (unreleasedRun) throw new Error(`An unreleased ${unreleasedRun.role} run still owns this task; settle that run before resolving the escalation`);
+      const liveWork = this.escalationLiveWork(current);
+      if (liveWork) throw new Error(`The escalation is still backed by live work: ${liveWork}; stop or finish it before resolving the escalation`);
+      const detail = `Escalation answered by the operator: ${answer}`.slice(0, 2000);
+      const incident = escalatedIncident ? { ...escalatedIncident, status: 'resolved' as const, detail, updatedAt: now() } : priorIncident;
+      const recovery = escalatedRecovery ? { ...escalatedRecovery, status: 'resolved' as const } : priorRecovery;
+      const next = this.resolution.update(current, { attention: false, incident, recovery, recoveryActive: false }, {}, 'escalation_resolved');
+      if (escalatedIncident) this.resolution.recordIncidentEvent(current.id, incident!);
+      this.resolution.settleAttentionEpisode(current.id, detail);
+      return next;
+    };
+    return this.store.db.isTransaction ? apply() : this.store.transaction(apply);
+  }
+  /** Raise attention for a fault. `cause` names the incident cause; without it the reason text is classified. */
+  attention(t: Task, reason: string, cause?: IncidentCause) {
+    const current = this.store.task(t.id);
+    if (isRepositoryContention(reason) && !repositoryContentionNeedsAttention(this.store, current, reason)) {
+      this.resolution.waiting(current, reason, 'lifecycle');
+      return;
+    }
+    // A read-only GitHub or git probe that hit a forge 5xx or a truncated
+    // response clears on its own; the next task quantum probes again. It is a
+    // wait, never an incident, a park or a coordinator run (lean audit
+    // 2026-10-15: 17 needs_attention episodes in two days were GitHub 5xx).
+    if (isTransientExternalFailure(reason)) {
+      this.resolution.waiting(current, reason, 'external_unavailable');
+      return;
+    }
+    const run = current.resolution.currentRunId ? this.store.run(current.resolution.currentRunId) : null;
+    if (current.resolution.attention && current.resolution.recovery?.status==='escalated' &&
+        current.reason !== reason && current.resolution.incident?.runId === (run?.id ?? current.runId)) {
+      // Keep the first unresolved fault as the task reason. Record a second
+      // fault once for inspection without replacing the incident every pass.
+      if (!this.store.events(t.id).some(e => e.kind === 'concurrent_fault' && e.detail === reason))
+        this.store.event(t.id, 'concurrent_fault', reason);
+      return;
+    }
+    this.resolution.ensureIncident(current, run, reason, '', cause);
+    // A fault that leaves the task with no live run owner has no supported
+    // recovery control on a working phase, so it lands in `needs_attention`.
+    // This is the same window the `stoppedBeforeCallback` recovery gate already
+    // describes: no completion, no PR identity and no current run. Attention
+    // that still holds a live run (a reviewer callback reminder, a repository
+    // pre-merge gate) keeps its phase and carries attention
+    // only.
+    const ownerless = !current.completion && !current.resolution.currentRunId &&
+      !current.prUrl && !current.prHead && !current.resumePrNumber;
+    if (current.resolution.attention && current.reason === reason && !(ownerless && current.phase !== 'needs_attention')) return;
+    // A transient external-merge probe can park a task that was already in
+    // needs_attention (the accepted-PR reconciliation) with no run to advance it.
+    // Remember the phase and reason it held so the recovery tick can resume it
+    // rather than clearing the flag onto a stranded phase (project-a #1837).
+    const preAttention = reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) && !current.resolution.attention
+      ? { externalMergePreAttention: { phase: current.phase, reason: current.reason } }
+      : {};
+    const classification = taskStopClassification(reason);
+    const stop = taskStopRecord(classification.reason, reason, current.resolution.stop, now(), classification.suggestedVerbs);
+    this.resolution.update(current, { attention: true, stop, ...preAttention }, { reason, ...(ownerless ? { phase: 'needs_attention' as const } : {}) }, 'needs_attention');
+  }
+  /**
+   * Record a wait. Every Queue caller names its stop reason: classifying its own
+   * free text was fragile (a reworded message changed what the task was waiting
+   * for). `classify` is only for restoring a reason Queue did not just author.
+   */
+  waiting(t: Task, reason: string, stop: TaskStopReason | 'classify', suggestedVerbs?: TaskStopVerb[]) {
+    const current = this.store.task(t.id);
+    // A newly launched run is ordinary forward progress, not a task stop.
+    // Keep its visible lifecycle reason while clearing any prior stop record.
+    if (/\bthread running$/.test(reason) || reason === 'Worker running') {
+      if (current.reason !== reason || current.resolution.stop !== null)
+        this.resolution.update(current, { stop: null }, { reason }, 'task_waiting', reason);
+      return;
+    }
+    const classification = stop === 'classify' ? taskStopClassification(reason) : { reason: stop, suggestedVerbs: taskStopVerbsFor(stop) };
+    const retainedSuggestions = classification.reason === 'escalated' && current.resolution.stop?.reason === 'escalated'
+      ? current.resolution.stop.suggestedVerbs : classification.suggestedVerbs;
+    const record = taskStopRecord(classification.reason, reason, current.resolution.stop, now(), suggestedVerbs ?? retainedSuggestions);
+    const visible = visibleTaskReason(reason, record);
+    // Compare against what this writes. The stop detail is capped at 4000
+    // characters; the task reason keeps the full text, in the one form every stop
+    // writer uses, so neither a repeat (consumer #658) nor a different writer
+    // recording the same long text (consumer #660, recordStop) rewrites the task.
+    if (current.reason === visible && JSON.stringify(current.resolution.stop) === JSON.stringify(record)) return;
+    this.resolution.update(current, { stop: record }, { reason: visible }, 'task_waiting', JSON.stringify(record));
+  }
+  recordDeferredDuringPrerequisiteWait(task: Task, kind: 'transport_deferred' | 'environment_deferred', detail: string): boolean {
+    const current = this.store.task(task.id);
+    if (!(current.prerequisiteWait && !current.prerequisiteWait.releasedAt) && !this.store.dependencyWait(current)) return false;
+    if (!this.store.events(current.id).some(event => event.kind === kind && event.detail === detail)) this.store.event(current.id, kind, detail);
+    return true;
+  }
+  /** A host outage must not replace a retained task decision with a retry instruction. */
+  transportDeferred(t: Task, error: unknown) {
+    // A stopping owner closes its own Paseo client before its in-flight work quiesces
+    // (drain), so a failure now is the owner leaving, not the daemon. The store stays
+    // open until drain ends, so a write here outlives the owner as a stale wait that the
+    // successor shows until its first pass. The successor observes the daemon itself.
+    if (this.resolution.stopped()) return;
+    const current = this.store.task(t.id);
+    const detail = `Daemon transport unavailable; retrying on the next pass: ${String(error instanceof Error ? error.message : error).slice(0, 160)}`;
+    if (this.recordDeferredDuringPrerequisiteWait(current, 'transport_deferred', detail)) return;
+    if (['needs_attention', 'blocked', 'error'].includes(current.phase) || current.resolution.attention || current.resolution.recovery?.status === 'escalated') {
+      if (this.store.events(t.id).find(event => event.kind === 'transport_deferred')?.detail !== detail)
+        this.store.event(t.id, 'transport_deferred', detail);
+      return;
+    }
+    this.resolution.waiting(current, detail, 'external_unavailable');
+  }
+  /** A dead login session is a host fault: drain/replace the service, never park the task. */
+  environmentDeferred(t: Task, error: unknown) {
+    const current = this.store.task(t.id);
+    const detail = `Host login session is gone; replacing the Nucleus service rather than charging this task: ${String(error instanceof Error ? error.message : error).slice(0, 160)}`;
+    if (this.recordDeferredDuringPrerequisiteWait(current, 'environment_deferred', detail)) return;
+    if (['needs_attention', 'blocked', 'error'].includes(current.phase) || current.resolution.attention || current.resolution.recovery?.status === 'escalated') {
+      if (this.store.events(t.id).find(event => event.kind === 'environment_deferred')?.detail !== detail)
+        this.store.event(t.id, 'environment_deferred', detail);
+      return;
+    }
+    this.resolution.waiting(current, detail, 'external_unavailable');
+  }
+}

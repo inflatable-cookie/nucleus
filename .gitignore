@@ -1,0 +1,12 @@
+node_modules
+evidence/acceptance-repo/
+*.sqlite*
+
+.agents.local.env
+.effigy/local/
+.effigy/cache/
+.DS_Store
+.effigy
+
+# Private publication vocabulary stays on this machine.
+.publication-denylist
