@@ -10,6 +10,7 @@ import {
   REVIEWER_NO_FINDING_FOR_UNRUN_TESTS,
   REVIEWER_READING_RULE,
   REVIEWER_REFUSED_REPORT_RULE,
+  WORKER_REFUSED_REPORT_RULE,
   COORDINATOR_NO_ESCALATE_FOR_UNRUN_TESTS,
   REQUIRED_PROOF_AUTHOR_NOTE,
   REQUIRED_PROOF_REVIEWER_NOTE,
@@ -25,6 +26,7 @@ import type {
 } from "../shared/contracts";
 import { workerPrompt } from "../core/dispatch/prompts";
 import { briefDigest } from "../core/planning/brief";
+import { laneDocumentScratchPath } from "../core/planning/brief-lane-documents";
 import { parseNorthstarDocument } from "../core/planning/handoff";
 import { handoffTask, runs, intent } from "./fixtures/handoff-prompt-cases";
 
@@ -986,6 +988,22 @@ test('the reviewer prompt requires correcting a refused report instead of report
     assert.match(reviewer,/the tool result names the exact entry, field and expected shape/);
     assert.match(reviewer,/Correct that field and resend the same verdict in the same turn/);
     assert.match(reviewer,/Never report blocked or error because your own report was malformed/);
+  }
+});
+
+test('worker, reviewer and coordinator prompts name run-scratch lane document copies and unresolved citations', () => {
+  const directory = '/scratch/run-a';
+  const pin = { key: 'nucleus-t3code', version: 2, digest: 'sha256:' + 'a'.repeat(64), text: 'Lane guidance' };
+  const task = { ...messageRuleTask, temporaryDirectory: directory, laneDocumentPins: [pin], laneDocumentIssues: ['missing-lane'] } as unknown as Task;
+  const path = laneDocumentScratchPath(directory, pin.key);
+  const worker = workerPrompt(task, true);
+  assert.ok(worker.includes(path));
+  assert.match(worker, /not found in the current plan.*missing-lane/);
+  assert.ok(worker.includes(WORKER_REFUSED_REPORT_RULE));
+  for (const role of ['reviewer', 'recovery'] as const) {
+    const prompt = runPrompt(task, { id: 'run', role, generation: 1, head: 'a'.repeat(40), temporaryDirectory: directory } as Run, '/helper', '/ticket', true);
+    assert.ok(prompt.includes(path));
+    assert.match(prompt, /missing-lane/);
   }
 });
 

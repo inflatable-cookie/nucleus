@@ -3,6 +3,7 @@ import type { Run, Task } from '../../../shared/contracts';
 import type { HostRetainedAgentRef } from '../../../shared/host';
 import { runPrompt } from '../prompts';
 import { runTemporaryEnvironment, type RunScratchPlacement } from '../../workspaces/run-scratch';
+import { materializeLaneDocuments } from '../../planning/brief-lane-documents';
 import { ProvenPreSendRefusalError } from '../../recovery/task-reasons';
 import type { RecoveryDispatchSnapshot } from '../../recovery/recovery-context';
 import type { OwnerReviewContext } from '../../review/owner-review-context';
@@ -19,11 +20,13 @@ export interface RunSendOwner {
 export async function sendRunVia(owner: RunSendOwner, task: Task, run: Run, token: string, context: RecoveryDispatchSnapshot | null = null, ownerContext: OwnerReviewContext | null = null, guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }) {
     // Retained runs do not pass through createRun again. Re-prove and exclusively
     // create their recorded leaf here, before any prompt is sent.
-    runTemporaryEnvironment(run.id, owner.scratchPlacement(task), run.temporaryDirectory);
+    const temporary = runTemporaryEnvironment(run.id, owner.scratchPlacement(task), run.temporaryDirectory);
+    materializeLaneDocuments(temporary.TMPDIR, task.laneDocumentPins);
     const agent=owner.retainedAgentRef(run.agentId!);await agent.refresh();
     const key=wireLabel(agent.current()?.labels, "mcpBinding");
     if(key && !run.ordinaryDetached)owner.binding(key,task,run.id,token);
-    const prompt = runPrompt(task, run, owner.helperPath, owner.ticket(task, run, token),Boolean(key), context, ownerContext);
+    const effectiveRun = { ...run, temporaryDirectory: temporary.TMPDIR };
+    const prompt = runPrompt(task, effectiveRun, owner.helperPath, owner.ticket(task, run, token),Boolean(key), context, ownerContext);
     if (run.ordinaryDetached) {
       if (!guard) throw Error('Ordinary retained round requires a live Nucleus custody guard');
       const sent = await owner.continueReviewer(task, run, `ns-run-${run.id}`, prompt, guard.allowed, guard.stillAllowed, () => { if(key)owner.binding(key,task,run.id,token); });

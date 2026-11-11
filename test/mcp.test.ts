@@ -69,6 +69,12 @@ for(const scope of ['legacy','report'])test(`real MCP ${scope} launch exposes on
   const dedupedReviewedInputs=[{directory:'plans'}, {digest:'b'.repeat(64),count:1000}];
   const args={runId:'run-1',status:'blocked',headline:'Blocked on the fixture',summary:'Acceptance result',...{reviewedInputs}};
   {
+   // Papercut 2019d65b: a worker report with the reviewer-only reviewText field
+   // is refused in-turn with the field and expected shape, so the worker corrects it.
+   const malformedWorker=await client.callTool({name:'nucleus_report',arguments:{runId:'run-1',status:'ready_for_review',headline:'Ready',summary:'Ready',prNumber:7,reviewText:'Reviewer findings'}});
+   assert.equal(malformedWorker.isError,true);
+   assert.match(String((malformedWorker.content as {text:string}[])[0].text),/Field reviewText.*expected shape: omit it from ready_for_review reports/);
+   assert.equal(store.task(t.id).completion,null,'a refused worker report does not complete or block the task');
    const tooMany=await client.callTool({name:'nucleus_report',arguments:{...args,reviewedInputs:Array.from({length:1000},(_,i)=>({path:`plans/${i}.md`,sha256:'b'.repeat(64)}))}});
    assert.equal(tooMany.isError,true); assert.match(JSON.stringify(tooMany),/Summarise reviewedInputs as directories or a digest/);
    const invalid=await client.callTool({name:'nucleus_report',arguments:{...args,reviewedInputs:[{path:'../outside.ts',sha256:'b'.repeat(64)}]}});

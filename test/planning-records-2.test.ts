@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -10,6 +10,7 @@ import { Leads } from "../core/planning/leads";
 import { Papercuts } from "../core/planning/papercut-operations";
 import { runPrompt } from "../core/dispatch/prompts";
 import { briefDigest } from "../core/planning/brief";
+import { briefLaneDocumentReferences, materializeLaneDocuments, laneDocumentScratchPath } from "../core/planning/brief-lane-documents";
 import { submissionSchema, boardLeadSchema, leadAdd, leadEdit, leadReopen, leadList, leadImport, papercutAdd, planSet, laneDocumentEdit, type LeadDetail, type Profile, type Run, type Submission } from "../shared/contracts";
 import { parseContractValue } from "../shared/schema-refusal";
 import type { Adapter } from "../core/host";
@@ -93,6 +94,21 @@ test("lane edit accepts the read digest and refuses a mismatched digest without 
     assert.throws(() => f.store.editLaneDocument({ ...edit, digest: second.digest }), /changed to version 2/);
     assert.equal(laneDocumentEdit.input.safeParse({ ...edit, digest: "invalid" }).success, false);
     assert.equal(f.store.editLaneDocument({ key: first.key, version: second.version, text: "Legacy save", author: "planner" }).version, 3);
+  } finally { f.close(); }
+});
+
+test("a brief citation pins and materializes named lane documents and reports unresolved Read entries", () => {
+  const f = setup(); try {
+    f.lane("nucleus-t3code");
+    const document = f.store.editLaneDocument({ key: "nucleus-t3code", version: 0, text: "Current lane guidance\n", author: "planner" });
+    const references = briefLaneDocumentReferences("Read the nucleus-t3code lane document first.\n\n## Read\n- nucleus-t3code\n- missing-lane\n", f.store.lanes());
+    assert.deepEqual(references, { keys: ["nucleus-t3code"], unresolved: ["missing-lane"] });
+    const directory = join(f.dir, "run"); mkdirSync(directory);
+    const pin = { key: document.key, version: document.version, digest: document.digest, text: document.text };
+    const paths = materializeLaneDocuments(directory, [pin]);
+    assert.deepEqual(paths, [laneDocumentScratchPath(directory, document.key)]);
+    assert.equal(readFileSync(paths[0], "utf8"), document.text);
+    assert.equal(statSync(paths[0]).mode & 0o777, 0o444, "the run receives a read-only copy");
   } finally { f.close(); }
 });
 
