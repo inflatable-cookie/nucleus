@@ -273,6 +273,13 @@ environment than Paseo) but it has different thread semantics that we will need 
 integrate first. I'm thinking queue driven threads become subagents of the worker thread in T3, but
 we can look more in depth at that when we get there."
 
+T3Code rulings (Tom, 2026-11-11, after the design note in the `nucleus-t3code` lane): worker,
+reviewer, recovery and coordinator stay separate top-level T3 threads ("isn't my favourite but I
+guess it's the only way to make it work in t3"); reporting goes through the CLI helper for now; no
+patches to T3 ("we need to work around the gaps - no patches"); the Nucleus web board is the operator
+UI alongside T3; and T3 is a trial before any commitment ("the gaps may affect the workflow too
+much"). Paseo stays the primary host until Tom decides.
+
 Profiles (Tom, 2026-11-06): Nucleus takes its agent profiles from Paseo's profile system today, and other apps have none. "We'll need to switch nucleus to a more traditional model picker system - have the host app provide a list of all the providers and models, then allow the operator to create profiles based on their selections". Profiles become Nucleus's own, and the host only lists what's available.
 On provider options (Tom, 2026-11-06): the picker shows whatever the host reports for a model. "We need to be able to control permission settings and agent-specific modes".
 
