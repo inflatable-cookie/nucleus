@@ -109,6 +109,15 @@ export const usageProjectionSchema = z
   .strict();
 export type UsageProjection = z.infer<typeof usageProjectionSchema>;
 
+/** A failed refresh while a previous successful reading remains available. */
+export const usageStaleSchema = z.object({
+  reason: z.string().min(1).max(500),
+  failedAt: z.string(),
+  ageMs: z.number().int().nonnegative(),
+  expired: z.boolean(),
+}).strict();
+export type UsageStale = z.infer<typeof usageStaleSchema>;
+
 /** One subscription's gauge: its latest reading, the projection and the read freshness. */
 export const usageSubscriptionSchema = z
   .object({
@@ -118,6 +127,7 @@ export const usageSubscriptionSchema = z
     sourcePath: z.string().max(1000).nullable(),
     reading: usageReadingSchema,
     projection: usageProjectionSchema,
+    stale: usageStaleSchema.nullable().optional(),
     nextReadAt: z.string().nullable(),
     lastAttemptAt: z.string().nullable(),
     lastError: z.string().max(500).nullable(),

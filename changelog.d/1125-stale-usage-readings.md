@@ -1,0 +1,1 @@
+Usage gauges keep the last successful reading after a failed refresh and mark it stale with the failure reason, time and age. Expired windows keep their last value with an unknown dial. Grok's billing reader now allows 15 seconds to initialize and 10 seconds for billing.

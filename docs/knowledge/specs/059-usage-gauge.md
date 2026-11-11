@@ -34,7 +34,9 @@ exhaustion from a refused run, after the fact.
     sample time.
   - **Grok** calls `_x.ai/billing` through `grok agent stdio` (the CLI holds the login): one credit
     gauge, `creditUsagePercent`, with the current billing period. Initialization times out after
-    four seconds; unsupported billing and malformed results stay `unknown`. `grok usage --json`
+    15 seconds and billing after 10 seconds to allow a cold CLI start; a local fresh-process
+    read measured 263 ms for initialization and 561 ms for billing. Unsupported billing and
+    malformed results stay `unknown`. `grok usage --json`
     is only a fallback when agent stdio cannot start or initialize. The configured `GROK_HOME` is
     passed to the CLI for the subscription.
   Schemas are lenient: an unreadable or unexpected shape is an `unknown` reading with the reason,
@@ -86,8 +88,12 @@ exhaustion from a refused run, after the fact.
   them), so older hosts keep the board-navigation page and simply render no rail.
 
 - **`usage.state`** (read-only) serves every subscription with its latest reading, the
-  projection, and freshness (`asOf`, `nextReadAt`, `lastAttemptAt`, `lastError`). The CLI reads
-  it with `nucleus usage.state`. The Usage page and the Paseo sidebar rail read the same RPC.
+  projection, and freshness (`asOf`, `nextReadAt`, `lastAttemptAt`, `lastError`). After a failed
+  refresh it keeps the last successful reading and projection while its windows remain current,
+  and adds `stale` with the failure reason, time and reading age. Once all known windows have
+  reset, it keeps the value as of its sample time, marks it expired, and returns an unknown dial.
+  With no successful reading, it returns the failure as unknown. The CLI reads it with
+  `nucleus usage.state`. The Usage page and the Paseo sidebar rail read the same RPC.
 
 - **Schema.** The store gains `usage_samples` and `usage_read_state` (per-subscription schedule,
   backoff and latest reading); store schema 58. Old stores migrate by re-running the fresh-store
