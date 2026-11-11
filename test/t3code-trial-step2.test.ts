@@ -1,9 +1,9 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { observeIdle } from './support/fakes';
 import { createHost, createAdapter } from '../hosts/t3code';
@@ -22,6 +22,7 @@ import { QueueRuntime } from '../service/runtime-owner';
 import { assembleOwnerTaskNext } from '../core/verbs/task-next';
 import { submissionSchema, summarizeTask, taskNextSchema, type Completion, type Profile, type Run, type Task } from '../shared/contracts';
 import type { Adapter as HostAdapter } from '../core/host/adapter';
+import { Decisions } from '../core/planning/decisions';
 
 const Policy = HostPolicies as unknown as HostPolicyConstructor;
 
@@ -35,11 +36,22 @@ const waitUntil = async (ready: () => boolean, label: string, timeoutMs = 5_000)
   while (!ready() && Date.now() - start < timeoutMs) await new Promise(resolve => setTimeout(resolve, 20));
   assert.ok(ready(), label);
 };
-const boundAnswerCommand = (commands: Array<{ type?: string; threadId?: string; commandId?: string; text?: string }>, threadId: string, commandId?: string) =>
-  commands.find(command => command.type === 'message.dispatch' && command.threadId === threadId
+const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+const boundAnswerCommand = (commands: Array<{ type?: string; threadId?: string; commandId?: string; text?: string }>, threadId: string, helperPath: string, runId: string, commandId?: string) => {
+  const invocation = `node ${quote(helperPath)} ${quote(join(dirname(helperPath), 'tickets', `${runId}.json`))} answer`;
+  return commands.find(command => command.type === 'message.dispatch' && command.threadId === threadId
     && (commandId === undefined || command.commandId === commandId)
     && typeof command.text === 'string'
-    && command.text.includes(`PASEO_AGENT_ID=${JSON.stringify(threadId)} nucleus question.answer -`));
+    && command.text.includes(invocation));
+};
+const putReleasedReviewer = (store: Store, task: Task, reviewerId: string, profile: Profile) => {
+  store.putRun({
+    id: 'run-review', taskId: task.id, role: 'reviewer', generation: 1, head: 'a'.repeat(40), base: 'a'.repeat(40),
+    agentId: reviewerId, workspaceId: task.workspaceId ?? 'ws', profile, status: 'finished',
+    createdAt: new Date().toISOString(), lastObservedAt: null, active: false, idleSince: null,
+    completion: null, released: true,
+  } as Run);
+};
 
 const helperTask = {
   id: 'task', runId: 'run-t3', title: 'T3 trial', originAgentId: 'origin', coordinatorAgentId: null,
@@ -265,7 +277,7 @@ test('resolveIngressHost fails closed when the opted-in kind is not online', () 
   assert.deepEqual(explicit.selection, { hostId: 't3code:env', basis: 'explicit' });
 });
 
-test('the helper ask and message subcommands post to the ticket-bound routes', async () => {
+test('the helper ask, message and answer subcommands post to the ticket-bound routes', async () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 't3-helper-ask-')));
   const requests: { path: string | undefined; body: { taskId: string; runId: string } }[] = [];
   const server = createServer(async (req, res) => {
@@ -289,10 +301,18 @@ test('the helper ask and message subcommands post to the ticket-bound routes', a
     assert.equal(message.code, 0, message.err);
     assert.equal(requests[1]!.path, '/message');
     assert.equal(requests[1]!.body.taskId, 't');
+    const answer = await spawnHelper(helper, ticket, { questionId: 'q', answer: 'Keep it.', reason: 'Fits the brief.' }, ['answer']);
+    assert.equal(answer.code, 0, answer.err);
+    assert.equal(requests[2]!.path, '/answer');
+    assert.equal(requests[2]!.body.taskId, 't');
+    assert.equal(requests[2]!.body.runId, 'r');
     const foreign = await spawnHelper(helper, ticket, { taskId: 'other', question: 'nope' }, ['ask']);
     assert.notEqual(foreign.code, 0);
     assert.match(foreign.err, /Report taskId does not match the callback ticket/);
-    assert.equal(requests.length, 2);
+    const foreignAnswer = await spawnHelper(helper, ticket, { taskId: 'other', questionId: 'q', answer: 'nope', reason: 'no' }, ['answer']);
+    assert.notEqual(foreignAnswer.code, 0);
+    assert.match(foreignAnswer.err, /Report taskId does not match the callback ticket/);
+    assert.equal(requests.length, 3);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -397,16 +417,20 @@ test('T3 adapter asks a retained reviewer and binds uncertain run creation', asy
     workspaceId: workspace.id, title: 'Synthetic reviewer', mcpBindingPath: null, profile,
     attempt: () => ({ requestId: 'create-reviewer', prompt: 'review', labels: { 'nucleus.task': 'task', 'nucleus.run': 'run-review', 'nucleus.role': 'reviewer' }, environment: {} }),
   });
-  const adapter = createAdapter(Policy, host, { socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'worker-report.mjs') });
+  const helperPath = join(directory, 'worker-report.mjs');
+  const socketPath = join(directory, 'callback.sock');
+  const adapter = createAdapter(Policy, host, { socketPath, helperPath });
   const bound = { id: 'run-review', taskId: 'task', role: 'reviewer', workspaceId: workspace.id } as Run;
   assert.deepEqual(await adapter.findRunAgents(bound), [{ id: reviewer.id, workspaceId: workspace.id }]);
   assert.deepEqual(await adapter.findRunAgents({ ...bound, id: 'run-other' }), []);
   assert.equal(await adapter.askReviewer!(reviewer.id, {
     prompt: 'Consult the retained T3 reviewer.', signal: new AbortController().signal, timeoutMs: 1_000, messageId: 'ns-agent-ask-reviewer-1',
   }), null);
-  const boundConsult = boundAnswerCommand(server.commands, reviewer.id, 'ns-agent-ask-reviewer-1');
+  const boundConsult = boundAnswerCommand(server.commands, reviewer.id, helperPath, 'run-review', 'ns-agent-ask-reviewer-1');
   assert.ok(boundConsult);
   assert.match(boundConsult.text!, /Consult the retained T3 reviewer/);
+  assert.equal(boundConsult.text!.includes('PASEO_AGENT_ID='), false);
+  assert.equal(boundConsult.text!.includes('nucleus question.answer -'), false);
 
   const store = new Store(join(directory, 'queue.sqlite'));
   store.setMeta('paused', false);
@@ -423,21 +447,25 @@ test('T3 adapter asks a retained reviewer and binds uncertain run creation', asy
     phase: 'working', runId: 'run-worker', agentId: worker.id, workspaceId: workspace.id, profile,
     resolution: { ...store.task(task.id).resolution, reviewerAgentId: reviewer.id },
   });
+  putReleasedReviewer(store, store.task(task.id), reviewer.id, profile);
   store.setCredential('run-worker', 'fixture-secret');
-  const socketPath = join(directory, 's'), helper = join(directory, 'worker-report.mjs'), ticket = join(directory, 'ticket.json');
+  const ticket = join(directory, 'ticket.json');
   writeFileSync(ticket, JSON.stringify({ socketPath, token: 'fixture-secret', taskId: task.id, runId: 'run-worker' }), { mode: 0o600 });
-  const stop = await startCallbacks(socketPath, helper, engine);
+  const stop = await startCallbacks(socketPath, helperPath, engine);
   try {
-    const pending = spawnHelper(helper, ticket, { question: 'Should the T3 reviewer advise this ask?', kind: 'process' }, ['ask']);
+    const pending = spawnHelper(helperPath, ticket, { question: 'Should the T3 reviewer advise this ask?', kind: 'process' }, ['ask']);
     await waitUntil(() => {
       const ask = store.eventsAll(task.id).find(event => event.kind === 'agent_ask');
-      return Boolean(ask && boundAnswerCommand(server.commands, reviewer.id, `ns-agent-ask-reviewer-${ask.detail.split(':')[0]!}`));
+      return Boolean(ask && boundAnswerCommand(server.commands, reviewer.id, helperPath, 'run-review', `ns-agent-ask-reviewer-${ask.detail.split(':')[0]!}`));
     }, 'reviewer consult dispatched with bound answer route');
     assert.equal(store.eventsAll(task.id).some(event => event.kind === 'agent_ask_delegation_missed' && event.detail.includes('delivery adapter unavailable')), false);
     const askId = store.eventsAll(task.id).find(event => event.kind === 'agent_ask')!.detail.split(':')[0]!;
-    engine.resolution.answerDelegatedQuestion({
+    const reviewerTicket = join(directory, 'tickets', 'run-review.json');
+    await waitUntil(() => existsSync(reviewerTicket), 'reissued reviewer ticket');
+    const helperAnswer = await spawnHelper(helperPath, reviewerTicket, {
       questionId: `ns-agent-ask-reviewer-${askId}`, answer: 'Keep the current T3 approach.', reason: 'Within the approved outcome.',
-    }, reviewer.id);
+    }, ['answer']);
+    assert.equal(helperAnswer.code, 0, helperAnswer.err);
     const answered = await pending;
     assert.equal(answered.code, 0, answered.err);
     const receipt = JSON.parse(answered.out) as { status: string; answer?: string };
@@ -446,7 +474,7 @@ test('T3 adapter asks a retained reviewer and binds uncertain run creation', asy
   } finally { await engine.stop(); await stop(); store.close(); }
 });
 
-test('T3 adapter asks a project planner, including a reviewer planning ruling', async (t: TestContext) => {
+test('a T3 planner ask becomes a board decision; the worker helper receives the board answer', async (t: TestContext) => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 't3-ask-planner-')));
   const server = await t3Fake(t, directory);
   const host = createHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', probeThreadId: 'synthetic-probe',
@@ -467,13 +495,10 @@ test('T3 adapter asks a project planner, including a reviewer planning ruling', 
     workspaceId: workspace.id, title: 'Synthetic planner', mcpBindingPath: null, profile,
     attempt: () => ({ requestId: 'create-planner', prompt: 'plan', labels: { 'nucleus.role': 'planner' }, environment: {} }),
   });
-  const adapter = createAdapter(Policy, host, { socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'worker-report.mjs') });
-  assert.equal(await adapter.askPlanner!(planner.id, {
-    prompt: 'Ask the T3 project planner.', signal: new AbortController().signal, timeoutMs: 1_000, messageId: 'ns-agent-ask-planner-1',
-  }), null);
-  const boundPlanner = boundAnswerCommand(server.commands, planner.id, 'ns-agent-ask-planner-1');
-  assert.ok(boundPlanner);
-  assert.match(boundPlanner.text!, /Ask the T3 project planner/);
+  const helperPath = join(directory, 'worker-report.mjs');
+  const socketPath = join(directory, 'callback.sock');
+  const adapter = createAdapter(Policy, host, { socketPath, helperPath });
+  assert.equal(adapter.askPlanner, undefined);
 
   const store = new Store(join(directory, 'queue.sqlite'));
   store.setMeta('paused', false);
@@ -492,33 +517,43 @@ test('T3 adapter asks a project planner, including a reviewer planning ruling', 
     phase: 'working', runId: 'run-worker', agentId: worker.id, workspaceId: workspace.id, profile,
     resolution: { ...store.task(task.id).resolution, reviewerAgentId: reviewer.id },
   });
+  putReleasedReviewer(store, store.task(task.id), reviewer.id, profile);
   store.setCredential('run-worker', 'fixture-secret');
-  const socketPath = join(directory, 's'), helper = join(directory, 'worker-report.mjs'), ticket = join(directory, 'ticket.json');
+  const ticket = join(directory, 'ticket.json');
   writeFileSync(ticket, JSON.stringify({ socketPath, token: 'fixture-secret', taskId: task.id, runId: 'run-worker' }), { mode: 0o600 });
-  const stop = await startCallbacks(socketPath, helper, engine);
+  const stop = await startCallbacks(socketPath, helperPath, engine);
   try {
-    const pending = spawnHelper(helper, ticket, { question: 'Does this T3 ask need a planning ruling?', kind: 'process' }, ['ask']);
+    const pending = spawnHelper(helperPath, ticket, { question: 'Does this T3 ask need a planning ruling?', kind: 'process' }, ['ask']);
     await waitUntil(() => {
       const ask = store.eventsAll(task.id).find(event => event.kind === 'agent_ask');
-      return Boolean(ask && boundAnswerCommand(server.commands, reviewer.id, `ns-agent-ask-reviewer-${ask.detail.split(':')[0]!}`));
+      return Boolean(ask && boundAnswerCommand(server.commands, reviewer.id, helperPath, 'run-review', `ns-agent-ask-reviewer-${ask.detail.split(':')[0]!}`));
     }, 'reviewer consult dispatched with bound answer route');
     const askId = store.eventsAll(task.id).find(event => event.kind === 'agent_ask')!.detail.split(':')[0]!;
-    engine.resolution.answerDelegatedQuestion({
+    const reviewerTicket = join(directory, 'tickets', 'run-review.json');
+    await waitUntil(() => existsSync(reviewerTicket), 'reissued reviewer ticket');
+    const helperAnswer = await spawnHelper(helperPath, reviewerTicket, {
       questionId: `ns-agent-ask-reviewer-${askId}`,
       answer: 'Decision: planner — This changes the approved product outcome.',
       reason: 'A planning ruling is needed.',
-    }, reviewer.id);
-    await waitUntil(() => Boolean(boundAnswerCommand(server.commands, planner.id, `ns-agent-ask-${askId}`)),
-      'planner consult dispatched with bound answer route');
+    }, ['answer']);
+    assert.equal(helperAnswer.code, 0, helperAnswer.err);
+    const decisions = new Decisions(store);
+    await waitUntil(() => decisions.list({ status: 'open', task: task.id }).length === 1, 'planner fallback is on the board');
     assert.ok(store.eventsAll(task.id).some(event => event.kind === 'agent_ask_planning_ruling' && event.detail.includes(`reviewer ${reviewer.id}`)));
+    assert.ok(store.eventsAll(task.id).some(event => event.kind === 'agent_ask_decision' && event.detail.startsWith(`${askId}:`)));
     assert.equal(store.eventsAll(task.id).some(event => event.kind === 'agent_ask_delegation_missed'), false);
-    engine.resolution.answerDelegatedQuestion({
-      questionId: `ns-agent-ask-${askId}`, answer: 'Keep the T3 planner outcome.', reason: 'Within the approved brief.',
-    }, planner.id);
+    assert.equal(server.commands.some(command => command.type === 'message.dispatch' && command.threadId === planner.id), false);
+    const open = decisions.list({ status: 'open', task: task.id })[0]!;
+    assert.match(`${open.details ?? ''}\n${open.context ?? ''}`, /cannot be asked on its host/);
+    const view = decisions.answer({
+      id: open.id, version: open.version, answer: 'Keep the T3 planner outcome.',
+      answeredBy: 'operator (board)', relayed: false, note: '',
+    });
+    engine.resolution.operatorDecisionAnswered(view);
     const answered = await pending;
     assert.equal(answered.code, 0, answered.err);
     const receipt = JSON.parse(answered.out) as { status: string; answer?: string };
     assert.equal(receipt.status, 'answered');
-    assert.equal(receipt.answer, 'Keep the T3 planner outcome. — Within the approved brief.');
+    assert.equal(receipt.answer, 'Keep the T3 planner outcome.');
   } finally { await engine.stop(); await stop(); store.close(); }
 });

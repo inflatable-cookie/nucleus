@@ -29,6 +29,17 @@ const bulkDispositionSchema = dependencyCallerSchema.and(bulkDispositionRequestS
 const bulkDispositionDetailSchema = dependencyCallerSchema.extend({ operationId: z.string().min(1).max(160) }).strict();
 // The recovery coordinator reads its own task's plan; the caller identity binds the task.
 const recoveryTaskNextSchema = dependencyCallerSchema.strict();
+const helperAnswerSchema = z.object({
+  eventId: z.string().regex(/^[a-f0-9]{64}$/),
+  taskId: z.string().min(1),
+  runId: z.string().min(1),
+  questionId: z.string().trim().min(1).max(300),
+  answer: z.string().trim().min(1).max(4000).optional(),
+  choice: z.string().trim().min(1).max(400).optional(),
+  reason: z.string().trim().min(1).max(500).regex(/^[^\r\n]*$/),
+  overtakes: z.array(z.string().trim().min(1).max(160)).max(100).optional(),
+  decision: z.literal("operator").optional(),
+}).strict().refine(value => Number(Boolean(value.answer)) + Number(Boolean(value.choice)) + Number(Boolean(value.decision)) === 1, { message: "Provide exactly one of answer, choice or decision" });
 
 // The compiled build rewrites the literal module-URL expression in source text, so the helper spells it
 // in two parts: rewritten, it never matches the helper's own path and the helper exits 0 without reporting.
@@ -49,7 +60,7 @@ if(!socketPath||!token||!taskId||!runId) throw new Error('Missing Nucleus callba
 // The next argument reads the task-scoped plan the recovery coordinator launched with; it sends no report and takes no stdin.
 const command=process.argv[3];
 if(command==='next'){const plan=await callbackRequest({socketPath,token},'/task-next',{callerTaskId:taskId,callerRunId:runId},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry next'});console.log(JSON.stringify(plan));return;}
-const route=command==='ask'?'/ask':command==='message'?'/message':'/complete';
+const route=command==='ask'?'/ask':command==='message'?'/message':command==='answer'?'/answer':'/complete';
 let text='',bytes=0;
 for await(const chunk of process.stdin){bytes+=chunk.length;if(bytes>5*1024*1024)throw new Error('Callback too large');text+=chunk;}
 const input=JSON.parse(text);
@@ -84,7 +95,7 @@ export async function startCallbacks(socketPath: string, helperPath: string, eng
   const reports=new Reports(engine);
   const server = createServer(async (req, res) => {
     res.setHeader("content-type", "application/json");
-    if (req.method !== "POST" || !["/complete","/report","/ask","/message","/task-dependencies","/set-dependencies","/project-queue","/promote-task","/task-disposition","/task-next","/dispose-task","/bulk-task-disposition","/bulk-task-disposition-detail","/bulk-task-disposition-retry","/task-control"].includes(req.url ?? "")) { res.writeHead(404).end('{"error":"Not found"}'); return; }
+    if (req.method !== "POST" || !["/complete","/report","/ask","/message","/answer","/task-dependencies","/set-dependencies","/project-queue","/promote-task","/task-disposition","/task-next","/dispose-task","/bulk-task-disposition","/bulk-task-disposition-detail","/bulk-task-disposition-retry","/task-control"].includes(req.url ?? "")) { res.writeHead(404).end('{"error":"Not found"}'); return; }
     const auth = req.headers.authorization;
     if (!auth?.startsWith("Bearer ")) { res.writeHead(401).end('{"error":"Unauthorized callback"}'); return; }
     const maxRequestBytes = req.url === "/complete" || req.url === "/report" ? 5 * 1024 * 1024 : 65536;
@@ -100,6 +111,7 @@ export async function startCallbacks(socketPath: string, helperPath: string, eng
       if(req.url==="/report")receipt=await reports.report(reportSchema.parse(input),auth.slice(7));
       else if(req.url==="/ask")receipt=await engine.resolution.agentAsk(agentAskSchema.parse(input),auth.slice(7));
       else if(req.url==="/message")receipt=await engine.resolution.agentMessage(agentMessageSchema.parse(input),auth.slice(7));
+      else if(req.url==="/answer")receipt=engine.resolution.answerDelegatedQuestionFromTicket(helperAnswerSchema.parse(input),auth.slice(7));
       else if(req.url==="/task-control"){
         const request=selfControlSchema.parse(input);
         receipt=await engine.taskControlFromAgent({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)},request.input);

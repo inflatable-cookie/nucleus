@@ -496,6 +496,7 @@ export class Resolution {
   delegatedDelivery(id: string): { taskId: string; recipient: string; role: string; deadline: number } | null { return this.delegation.delegatedDelivery(id); }
   recoverableDelegation(ids: string[], advance = true): boolean { return this.delegation.recoverableDelegation(ids, advance); }
   answerDelegatedQuestion(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) { return this.delegation.answerDelegatedQuestion(input, caller); }
+  answerDelegatedQuestionFromTicket(input: { taskId: string; runId: string; questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, token: string) { return this.delegation.answerDelegatedQuestionFromTicket(input, token); }
   delegatedQuestionForTask(identity: string, caller: string) { return this.delegation.questionForTask(identity, caller); }
   answerDelegatedQuestionFromHost(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) { return this.delegation.answerFromHost(input, caller); }
   waitDelegatedAnswer(id: string, signal: AbortSignal): Promise<string | null> { return this.delegation.waitDelegatedAnswer(id, signal); }

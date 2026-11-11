@@ -158,6 +158,7 @@ export class AgentAsks {
       this.resolution.recordAgentAskAnswer(task.id, ask.id, who, approved?.choice ?? reply.answer, approved ? approved.reason : reply.reason, overtakes);
     };
     let unknown = false;
+    let unavailable = false;
     let result;
     try {
       result = await delegateQuestion(this.resolution, task, {
@@ -171,6 +172,10 @@ export class AgentAsks {
           unknown = true;
           this.store.event(task.id, 'agent_ask_delegation_unknown', `${ask.id}: ${role}${agentId ? ` ${agentId}` : ''}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
         },
+        onUnavailable: planner => {
+          unavailable = true;
+          this.resolution.askOperatorDecision(task, ask, `Selected planner ${planner} cannot be asked on its host; the planner message is on the board.`);
+        },
       });
     } catch (error) {
       if (!(error instanceof DelegatedHostUnavailable)) throw error;
@@ -180,7 +185,7 @@ export class AgentAsks {
     }
     if (result?.reply.kind === 'answer') return recordAnswer(`${result.role} ${result.agentId}`, result.reply, result.role === 'planner' ? result.reply.overtakes : undefined);
     if (result?.reply.kind === 'operator') this.resolution.askOperatorDecision(task, ask, `${result.role === 'planner' ? 'Planner' : 'Decider'}'s one-line reason: ${result.reply.reason}`);
-    else if (!unknown && !this.stopped()) this.store.event(task.id, 'agent_ask_delegation_missed', `${ask.id}: no planner or decider classification was produced; awaiting an explicit classification`);
+    else if (!unknown && !unavailable && !this.stopped()) this.store.event(task.id, 'agent_ask_delegation_missed', `${ask.id}: no planner or decider classification was produced; awaiting an explicit classification`);
   }
 
   /**

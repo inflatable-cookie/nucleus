@@ -719,6 +719,9 @@ export class Questions {
           unknown = true;
           this.store.event(taskId, 'operator_question_delegation_unknown', `${decision.id}: ${role}${agentId ? ` ${agentId}` : ''}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
         },
+        onUnavailable: planner => {
+          this.resolution.ensureQueueRaiseDecision(task, decision, `Selected planner ${planner} cannot be asked on its host; the planner message is on the board.`);
+        },
       });
     } catch (error) {
       if (error instanceof DelegatedHostUnavailable) return false;

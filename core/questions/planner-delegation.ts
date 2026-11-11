@@ -19,6 +19,8 @@ export async function delegateQuestion<T>(resolution: Resolution, task: Task, in
   onIntent: (role: DelegateRole, agentId?: string) => void;
   onMiss: (detail: string) => void;
   onUnknown: (role: DelegateRole, agentId: string | undefined, error: unknown) => void;
+  /** Selected planner exists but its host cannot send `askPlanner`. Skip the decider; the caller raises a board decision. */
+  onUnavailable?: (planner: string) => void;
   retainDecider?: boolean;
 }): Promise<{ role: DelegateRole; agentId: string; reply: T } | null> {
   const current = () => !resolution.stopped() && !input.signal.aborted && (input.current?.() ?? true);
@@ -59,6 +61,10 @@ export async function delegateQuestion<T>(resolution: Resolution, task: Task, in
     if (resolution.stopped() || input.current?.() === false) return null;
     const reply = input.parse(text);
     if (reply) return { role: 'planner', agentId: planner, reply };
+    if (!text && !plannerDelivery && !resolution.delegatedDelivery(input.plannerMessageId) && input.onUnavailable) {
+      input.onUnavailable(planner);
+      return null;
+    }
     input.onMiss(`planner ${planner} gave no usable answer (${text ? 'unparseable' : 'no answer in time'})`);
   }
   if (!current() || input.canAdvance?.() === false || !resolution.adapter.runDecider) return null;

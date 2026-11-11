@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { Profile, Task } from '../../shared/contracts';
 import { awaitingProofTexts } from '../../shared/contracts';
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
@@ -6,6 +7,7 @@ import { currentBrief } from '../planning/brief';
 import { parseNativeDelegatedReply } from './question-delegation';
 import type { Resolution } from '../resolution';
 import { chooseProfile } from '../dispatch/routing';
+import { writeRunTicket } from '../dispatch/agent-creation';
 import { nativeAgentId, qualifyLegacyAgentId } from '../../shared/agent-identity';
 
 /** The selection failed before an intent or host call was made. */
@@ -20,6 +22,19 @@ export class Delegation {
   get stopped() { return this.resolution.stopped; }
   get delegatedAnswerWaitMs() { return this.resolution.delegatedAnswerWaitMs; }
 
+  /**
+   * A T3 consult re-issues the recipient run ticket so a released reviewer's
+   * helper can still post `/answer`. Complete and ask keep refusing that run.
+   */
+  private rebindHelperTicket(task: Task, recipient: string): void {
+    if (this.adapter.reportingViaMcp !== false || !this.adapter.helperPath || !this.adapter.socketPath) return;
+    const runs = this.store.runs(task.id).filter(run => run.agentId === recipient);
+    const run = runs.find(candidate => !candidate.released && !candidate.completion) ?? runs.at(-1);
+    if (!run) return;
+    const token = randomBytes(32).toString('hex');
+    this.store.setCredential(run.id, token);
+    writeRunTicket({ helperPath: this.adapter.helperPath, socketPath: this.adapter.socketPath }, task, run, token);
+  }
   async requireHost(task: Task, recipient: string, role: 'planner' | 'reviewer'): Promise<string> {
     const recorded = role === 'reviewer' ? task.hostId
       : recipient === task.originAgentId || recipient === task.notificationAgentId ? task.originHostId
@@ -104,6 +119,23 @@ export class Delegation {
       || (advance && window.delivered && window.closed?.detail === 'No command answer in the window'
         && index < windows.length - 1 && windows.slice(index + 1).every(next => !next.delivered)));
   }
+  /**
+   * Ticket-bound helper answer: authenticate the recipient run, then record the
+   * delegated receipt as that run's agent. Released reviewer runs may still
+   * answer; `askBinding`'s current-run gate does not apply.
+   */
+  answerDelegatedQuestionFromTicket(input: { taskId: string; runId: string; questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, token: string) {
+    this.store.authenticate(input.runId, token);
+    const run = this.store.run(input.runId);
+    const task = this.store.task(input.taskId);
+    if (run ? run.taskId !== task.id : task.runId !== input.runId) throw Error('Stale report: task and run identity do not match');
+    const caller = run?.agentId ?? task.agentId;
+    if (!caller) throw Error('No agent bound to this reporting run');
+    return this.answerDelegatedQuestion({
+      questionId: input.questionId, answer: input.answer, choice: input.choice, reason: input.reason,
+      decision: input.decision, overtakes: input.overtakes,
+    }, caller);
+  }
   answerDelegatedQuestion(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) {
     const key = `delegation:${input.questionId}`;
     const events = this.store.eventsAll(key);
@@ -162,8 +194,10 @@ export class Delegation {
           const recorded = this.store.eventsAll(`delegation:${input.messageId}`).findLast(event => event.kind === 'delegated_delivery');
           const ref = recorded && (JSON.parse(recorded.detail) as { recipientRef?: string }).recipientRef;
           if (!ref) throw Error('Delegated recipient identity was not recorded');
+          const recipient = nativeAgentId(ref, hostId!);
+          this.rebindHelperTicket(task, recipient);
           const { onIntent: _onIntent, ...sendInput } = input;
-          return send.call(this.adapter, nativeAgentId(ref, hostId!), { ...sendInput, sourceAgentId: task.hostId === hostId ? input.sourceAgentId ?? task.agentId ?? undefined : undefined, prompt: this.resolution.delegatePrompt(task, input.messageId, input.prompt) });
+          return send.call(this.adapter, recipient, { ...sendInput, sourceAgentId: task.hostId === hostId ? input.sourceAgentId ?? task.agentId ?? undefined : undefined, prompt: this.resolution.delegatePrompt(task, input.messageId, input.prompt) });
         });
         if (this.stopped()) throw Error('Delegated observation stopped; retain the delivery and answer window');
         this.store.event(`delegation:${input.messageId}`, 'delegated_sent', 'Host send completed');
