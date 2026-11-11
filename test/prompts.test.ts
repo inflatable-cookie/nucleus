@@ -9,6 +9,7 @@ import {
   WORKSPACE_RULE,
   REVIEWER_NO_FINDING_FOR_UNRUN_TESTS,
   REVIEWER_READING_RULE,
+  REVIEWER_REFUSED_REPORT_RULE,
   COORDINATOR_NO_ESCALATE_FOR_UNRUN_TESTS,
   REQUIRED_PROOF_AUTHOR_NOTE,
   REQUIRED_PROOF_REVIEWER_NOTE,
@@ -967,6 +968,25 @@ test('the reviewer prompt states mandatory reading before any verdict, and the c
   assert.match(reviewer,/A ready_to_merge report omits reviewResponsibility/);
   assert.match(reviewer,/report review_in_progress with reviewResponsibility=reviewer, a covered\/remaining\/notes checkpoint and no verdicts/);
   assert.match(reviewer,/reviewResponsibility=author only for changes_required/);
+});
+
+/**
+ * Papercut 8647384e: a reviewer whose own report was refused for a malformed
+ * `reviewedInputs` entry reported blocked, so the planner had to restart the step
+ * to get the same verdict resent. The reviewer prompt (and its operator
+ * continuation) now agrees with intake: correct the named field and resend; your
+ * own malformed report is never a blocked outcome.
+ */
+test('the reviewer prompt requires correcting a refused report instead of reporting blocked',()=>{
+  const task={id:'task',runId:'initial',title:'Build',originAgentId:'origin',coordinatorAgentId:null,dependsOn:[],branch:'ns-task',baseBranch:'main',repoPath:'/repo',workspaceId:'workspace',directory:'/worktree',handoffPath:'handoff.md',planningCommit:'a'.repeat(40),retiredWorkers:[],skipPRReview:false,prUrl:null,reason:'Review',completion:{status:'ready_for_review',prNumber:1},resolution:{revisionPrRepair:false}} as unknown as Task;
+  const run={id:'run',role:'reviewer',generation:1,head:'a'.repeat(40)} as Run;
+  for(const mcp of [false,true]){
+    const reviewer=runPrompt(task,run,'/helper','/ticket',mcp);
+    assert.ok(reviewer.includes(REVIEWER_REFUSED_REPORT_RULE),`mcp ${mcp}: carries the refused-report rule`);
+    assert.match(reviewer,/the tool result names the exact entry, field and expected shape/);
+    assert.match(reviewer,/Correct that field and resend the same verdict in the same turn/);
+    assert.match(reviewer,/Never report blocked or error because your own report was malformed/);
+  }
 });
 
 

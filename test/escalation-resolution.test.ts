@@ -6,9 +6,10 @@ import { boardSource } from './support/board-source';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { Store } from '../core/store/store';
+import { Store, digest } from '../core/store/store';
 import { Engine } from '../core/engine';
-import { completionSchema, dispositionSchema, submissionSchema, taskControlInputSchema, type Task } from '../shared/contracts';
+import { completionSchema, dispositionSchema, submissionSchema, taskControlInputSchema, taskStopKind, type Task } from '../shared/contracts';
+import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import type { Adapter } from '../core/host';
 
 /**
@@ -233,4 +234,59 @@ test('the control is discoverable from the native surface and the skill help wit
   const section = client.slice(start, client.indexOf('</DetailSection>', start));
   assert.ok(section.length > 200, 'the answered-escalation section must be present');
   assert.doesNotMatch(section, /#[0-9a-fA-F]{3,8}\b/, 'the control must use theme colors rather than a literal color');
+});
+
+/**
+ * Papercut 2ef86450 (effigy#862): an escalation whose delivery was unknown sat
+ * unreported for 98+ minutes with owner "queue" until a planner noticed by hand.
+ * Unknown delivery is still never resent; after the stall threshold the task
+ * surfaces as visible attention naming the owner, the question and the exits, and
+ * the project planner receives exactly one agent-channel message.
+ */
+test('an unknown-delivery escalation past the stall threshold surfaces as attention and messages the planner once', async () => {
+  const f = fixture();
+  try {
+    f.store.setMeta('stallThresholdMinutes', 0);
+    const id = digest(['planner-escalation', f.taskId, 'cause', '0'].join(':'));
+    const question = 'The worker is blocked on a flaky native build; decide how it proceeds.';
+    const escalated = f.store.update(f.taskId, { phase: 'blocked', reason: 'Waiting with the planner: blocker escalation is open; the task gets no worker turn until the planner acts' });
+    f.store.event(escalated.id, 'planner_escalation', `${id}: cause ${'c'.repeat(64)}; run worker; question ${question.length} chars; options none`);
+    f.store.event(escalated.id, 'planner_escalation_payload', `${id}: ${JSON.stringify({ cause: 'cause', runId: null, question })}`);
+    f.store.event(escalated.id, 'planner_escalation_unknown', `${id}: planner origin: delegated delivery outcome unknown`);
+    const sent: Array<{ agentId: string; messageId: string; text: string }> = [];
+    (f.adapter as unknown as { notify: (agentId: string, messageId: string, text: string) => Promise<void> }).notify =
+      async (agentId, messageId, text) => { sent.push({ agentId, messageId, text }); };
+
+    await f.engine.resolution.blockerLadderStep(f.store.task(f.taskId));
+    for (let i = 0; i < 20 && sent.length === 0; i++) await new Promise(resolve => setImmediate(resolve));
+
+    // Never resent: nothing tries the escalation again, and no new escalation opens.
+    assert.equal(f.store.eventsAll(f.taskId).filter(event => event.kind === 'planner_escalation').length, 1);
+    assert.equal(f.store.eventsAll(f.taskId).filter(event => event.kind === 'planner_escalation_sent').length, 0);
+    const current = f.store.task(f.taskId);
+    assert.equal(current.resolution.stop?.reason, 'operator_needed');
+    assert.match(current.resolution.stop!.detail, /never resends it/);
+    assert.match(current.resolution.stop!.detail, /question\.answer/);
+    assert.match(current.resolution.stop!.detail, /fresh question ID/);
+    assert.match(current.resolution.stop!.detail, new RegExp(question.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    // The board category and `next` both name the owner, the question and the exits.
+    assert.equal(taskStopKind(current), 'attention');
+    const next = ownerTaskNext(collectOwnerVerbFacts(f.store, current));
+    assert.equal(next.stop?.kind, 'attention');
+    assert.equal(next.stop?.owner, 'origin');
+    assert.match(next.stop?.detail ?? '', /never resends it/);
+    assert.ok((next.stop?.suggestedVerbs ?? []).includes('move'), JSON.stringify(next.stop));
+
+    assert.equal(sent.length, 1, 'exactly one agent-channel message reaches the project planner');
+    assert.equal(sent[0]!.agentId, 'origin');
+    assert.equal(sent[0]!.messageId, `ns-escalation-attention-${id}`);
+    assert.match(sent[0]!.text, /never resends it/);
+    assert.ok(f.store.eventsAll(f.taskId).some(event => event.kind === 'planner_escalation_attention_delivered' && event.detail.startsWith(`${id}:`)));
+
+    // A later pass re-asserts the stop but never repeats the message.
+    await f.engine.resolution.blockerLadderStep(f.store.task(f.taskId));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(sent.length, 1);
+    assert.equal(f.store.eventsAll(f.taskId).filter(event => event.kind === 'planner_escalation_attention_delivered').length, 1);
+  } finally { await f.close(); }
 });

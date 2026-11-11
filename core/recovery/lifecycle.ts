@@ -4,14 +4,15 @@ import { stages } from './task-reasons';
 import { now } from '../store/store';
 import { coordinatorReportMatches } from './recovery';
 import { latestAuthorResult } from '../verbs/owner-verbs';
-import { blockerLadderStep as decideBlockerLadderStep, plannerEscalations, reviewerConsults, blockerCauseId, type LadderEvent } from '../questions/blocker-ladder';
+import { blockerLadderStep as decideBlockerLadderStep, plannerEscalations, reviewerConsults, blockerCauseId, stalledUnknownEscalation, type LadderEvent } from '../questions/blocker-ladder';
+import { DEFAULT_STALL_THRESHOLD_MINUTES } from '../../shared/schema/settings';
 import { advanceFailureDisposition } from './resolution-decisions';
 import { isTransportFailure } from '../../shared/transport';
 import { classifyGitTransientFailure, classifyGitCommandFailure, ForgeOutageError } from '../forge/forge-health';
 import { GitReadTimeoutError } from '../git/index';
 import { LoginSessionFaultError, isLoginSessionFault } from '../../shared/session-fault';
 
-export type RecoveryLifecycleContext = Pick<Resolution, 'attention' | 'environmentDeferred' | 'gitTransientFailure' | 'responsibleBlockerLadder' | 'store' | 'update' | 'waiting'> & {
+export type RecoveryLifecycleContext = Pick<Resolution, 'attention' | 'attentionUnknownEscalation' | 'environmentDeferred' | 'gitTransientFailure' | 'responsibleBlockerLadder' | 'store' | 'update' | 'waiting'> & {
   replayHeldAttention(t: Task): Promise<Task | null>;
 };
 
@@ -41,15 +42,24 @@ export class RecoveryLifecycle {
     const completion = latestAuthorResult(t, this.context.store.runs(t.id));
     const events = this.context.store.eventsAll(t.id);
     const classified = Boolean(completion && events.some(event => event.kind === 'blocker_ladder_classified' && event.detail.startsWith(`${completion.eventId}:`)));
+    // Papercut 2ef86450: an escalation nobody observed delivering is never resent,
+    // but past the stall threshold it must surface instead of waiting invisibly.
+    const thresholdMs = (this.context.store.getMeta<number>('stallThresholdMinutes') ?? DEFAULT_STALL_THRESHOLD_MINUTES) * 60_000;
+    const escalations = plannerEscalations(events as LadderEvent[]);
+    const unknownStall = stalledUnknownEscalation({ escalations, now: Date.now(), thresholdMs });
     const first = decideBlockerLadderStep({
       classified,
       completion,
-      escalations: plannerEscalations(events as LadderEvent[]),
+      escalations,
       consults: reviewerConsults(events as LadderEvent[]),
+      unknownStall,
     });
     if (first.kind === 'classify' && completion) {
       this.context.store.event(t.id, 'blocker_ladder_classified', `${completion.eventId}: ${blockerCauseId(t.id, completion)}`);
       if (await this.context.responsibleBlockerLadder(this.context.store.task(t.id), { source: 'worker', runId: completion.runId, completion })) return null;
+    } else if (first.kind === 'attention') {
+      this.context.attentionUnknownEscalation(t, first.escalation);
+      return null;
     } else if (first.kind === 'wait') {
       this.context.waiting(t, first.detail, 'escalated');
       return null;
@@ -65,7 +75,9 @@ export class RecoveryLifecycle {
       completion,
       escalations: plannerEscalations(ladderEvents as LadderEvent[]),
       consults: reviewerConsults(ladderEvents as LadderEvent[]),
+      unknownStall: stalledUnknownEscalation({ escalations: plannerEscalations(ladderEvents as LadderEvent[]), now: Date.now(), thresholdMs }),
     });
+    if (after.kind === 'attention') { this.context.attentionUnknownEscalation(t, after.escalation); return null; }
     if (after.kind === 'wait') { this.context.waiting(t, after.detail, 'escalated'); return null; }
     return t;
   }

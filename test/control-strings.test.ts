@@ -719,7 +719,7 @@ native_question_delegated:2:1 native_question_operator:1:1 native_question_respo
 native_question_unknown:1:1 needs_attention:4:168 non_delivery:3:12 non_delivery_pushback:2:2 non_delivery_reset:1:2 operator_control:4:2
 operator_question:8:9 operator_question_answered:10:8 operator_question_applied:3:1 operator_question_decided:1:1 operator_question_decision:4:7
 operator_question_delegation_missed:1:3 operator_question_delegation_unknown:1:3 operator_question_reasked:1:1 operator_question_refused:2:2
-operator_question_stale_answered:3:3 operator_question_superseded:3:5 operator_question_unknown:1:4 owned_tool_hold:5:4 owned_tool_settled:3:1
+operator_question_stale_answered:3:3 operator_question_superseded:3:5 operator_question_unknown:1:3 owned_tool_hold:5:4 owned_tool_settled:3:1
 owner_control:3:9 owner_restart_instruction_sent:3:2 owner_stop_sent:5:4 owner_stop_uncertain:2:2 owner_stopped:4:1 owner_verb_deferred:1:1
 paused_resume_uncertain:1:2 planner_escalation_answered:1:5 planner_escalation_attached:1:1 planner_escalation_decision:1:1
 planner_escalation_decision_linked:1:3 planner_escalation_missed:2:3 planner_escalation_offered:1:1 planner_escalation_payload:2:2

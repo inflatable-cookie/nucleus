@@ -78,7 +78,7 @@ test('generated CLI helper carries reviewedInputs through authenticated completi
   const invalidTask=addTask('fallback-invalid-inputs','run-invalid-inputs');
   const invalid=await run({status:'blocked',summary:'Invalid receipt',reviewedInputs:[{path:'../outside.ts',sha256:'c'.repeat(64)}]});
   assert.notEqual(invalid.code,0,'the authenticated Queue completion schema rejects the malformed receipt');
-  assert.match(invalid.stderr,/Repository path must be normalized and repository-relative/);
+  assert.match(invalid.stderr,/reviewedInputs\[0\] path must be a normalized repository-relative path/,'the refusal names the exact entry and field');
   assert.equal(store.task(invalidTask.id).completion,null,'invalid input closure is not stored as an accepted callback');
  }finally{await engine.stop();await stop?.();store.close();rmSync(dir,{recursive:true,force:true});}
 });

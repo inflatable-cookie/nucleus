@@ -195,19 +195,29 @@ export class Questions {
     const legacyBudgetSince = events.find(event => event.kind === 'responsible_converted')?.at;
     if (!taskBudget(current, this.store.runs(taskId), Date.now(), legacyBudgetSince).exhausted) return null;
     const marked = (kind: string, id: string) => events.some(event => event.kind === kind && event.detail.startsWith(`${id}:`));
-    const openQuestion = events.findLast(event => event.kind === 'operator_question'
-      && event.detail.includes('kind budget')
-      && !['operator_question_answered', 'operator_question_unknown', 'operator_question_superseded']
-        .some(kind => marked(kind, event.detail.split(':', 1)[0]!)));
-    const questionId = openQuestion?.detail.split(':', 1)[0];
+    // Papercut 7cb34906 (2026-11-10): a budget extended through a verb left
+    // Nucleus's own budget questions pending on the worker thread; launches then
+    // declined ("retained worker still owns its turn: pending question") until a
+    // person answered them by hand. Every recorded budget question belongs to the
+    // budget stop this extension clears — including one already answered at the
+    // board whose native prompt is still pending on the thread — so all of them
+    // are superseded and dismissed through the host, the same supersession #975
+    // applies to asks.
+    const budgetQuestionIds = [...new Set(events
+      .filter(event => event.kind === 'operator_question' && event.detail.includes('kind budget'))
+      .map(event => event.detail.split(':', 1)[0]!)
+      .filter(Boolean))];
     const wasBudgetPause = current.resolution.stop?.reason === 'budget';
     const supersededReason = 'The exhausted budget was extended.';
     const updated = this.store.transaction(() => {
       const next = this.resolution.update(current, { ...(wasBudgetPause ? { stop: null } : {}), budgetExtensions: current.resolution.budgetExtensions + 1 },
         wasBudgetPause ? { reason: `${by} extended the budget by one default increment; the next run may start` }
           : {}, 'budget_extended', detail);
-      if (questionId) {
-        this.store.event(taskId, 'operator_question_superseded', `${questionId}: ${supersededReason}`);
+      for (const questionId of budgetQuestionIds) {
+        if (!marked('operator_question_superseded', questionId))
+          this.store.event(taskId, 'operator_question_superseded', `${questionId}: ${supersededReason}`);
+        if (!marked('native_question_dismiss_intent', questionId))
+          this.store.event(taskId, 'native_question_dismiss_intent', `${questionId}: ${supersededReason}`);
         const decisionLink = events.find(event => event.kind === 'operator_question_decision'
           && event.detail.startsWith(`${questionId}: decision `));
         const decisionId = decisionLink?.detail.match(/decision ([^;\s]+)/)?.[1];
@@ -219,7 +229,8 @@ export class Questions {
       }
       return next;
     });
-    if (questionId) this.resolution.responsibleQuestions.get(questionId)?.abort();
+    for (const questionId of budgetQuestionIds) this.resolution.responsibleQuestions.get(questionId)?.abort();
+    this.dismissSupersededNativeQuestions(taskId, budgetQuestionIds);
     return updated;
   }
   supersedeOpenOwnerQuestions(taskId: string, reason: string): void {

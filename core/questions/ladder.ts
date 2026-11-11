@@ -4,14 +4,14 @@ import { blockingRecoveryEffects } from '../recovery/recovery-effects';
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { proofOnlyReceiptAwaitingReview, proofWaitApplies } from '../qa/proof-execution';
 import { openProofOnlyGo } from '../qa/proof-only-go';
-import { taskControlInputSchema, type Completion, type DecisionView, type Task, type TaskControlInput, isDispositionActive } from '../../shared/contracts';
+import { taskControlInputSchema, taskOwner, type Completion, type DecisionView, type Task, type TaskControlInput, isDispositionActive } from '../../shared/contracts';
 import { digest } from '../store/store';
-import type { TaskStopVerb } from '../../shared/task-stop';
+import { taskStopVerbsFor, type TaskStopVerb } from '../../shared/task-stop';
 import { Decisions } from '../planning/decisions';
 import { DELEGATED_ANSWER_TIMEOUT_MS, nativeDelegationPrompt, parseNativeDelegatedReply, taskContextLines } from './question-delegation';
 import { collectOwnerVerbFacts, latestAuthorResult, ownerVerbViews } from '../verbs/owner-verbs';
 import { automaticRetryForbidden, reportsExternalCause } from '../recovery/non-delivery';
-import { REVIEWER_CONSULT_TIMEOUT_MS, consultRecovery, escalationRecovery, blockerCauseId, consultContinuationInstruction, escalationAnswerControl, escalationContinuationInstruction, escalationWaitDetail, escalationVerbChoices, type EscalationVerbChoice, isProviderFailure, findOpenPlannerEscalation, parseEscalationReply, plannerEscalationChoicesFor, plannerEscalationQuestion, plannerEscalations, reviewerConsultQuestion, reviewerConsults, reviewContinuationCauseId, reviewContinuationEscalationQuestion, type LadderEvent } from './blocker-ladder';
+import { REVIEWER_CONSULT_TIMEOUT_MS, consultRecovery, escalationRecovery, blockerCauseId, consultContinuationInstruction, escalationAnswerControl, escalationContinuationInstruction, escalationWaitDetail, escalationVerbChoices, unknownEscalationAttentionDetail, type EscalationVerbChoice, type PlannerEscalation, isProviderFailure, findOpenPlannerEscalation, parseEscalationReply, plannerEscalationChoicesFor, plannerEscalationQuestion, plannerEscalations, reviewerConsultQuestion, reviewerConsults, reviewContinuationCauseId, reviewContinuationEscalationQuestion, type LadderEvent } from './blocker-ladder';
 import type { Resolution } from '../resolution';
 import { DelegatedHostUnavailable } from './delegation';
 
@@ -38,6 +38,57 @@ export class Ladder {
   /** Spec 058 slice 17: the ladder sends this process is driving, so a rerun never double-sends. */
   readonly routingEscalations = new Set<string>();
   readonly routingConsults = new Set<string>();
+  /** Escalations whose unknown-delivery attention is being delivered now, so a pass cannot double-send. */
+  readonly attentioningEscalations = new Set<string>();
+  /**
+   * Papercut 2ef86450: an escalation whose delivery is unknown is never resent, but
+   * once it outlives the stall threshold the task surfaces as visible attention
+   * (owner, question, exits) and the project planner hears about it once on the
+   * agent channel. The stop is re-asserted each ladder pass; the message is not.
+   */
+  attentionUnknownEscalation(t: Task, escalation: Pick<PlannerEscalation, 'id' | 'question'>): void {
+    const current = this.store.task(t.id);
+    const owner = taskOwner(current);
+    this.resolution.recordStop(current, 'operator_needed', unknownEscalationAttentionDetail(escalation, owner), taskStopVerbsFor('operator_needed'));
+    const events = this.store.eventsAll(t.id);
+    if (events.some(event => event.kind === 'planner_escalation_attention' && event.detail.startsWith(`${escalation.id}:`))) return;
+    this.store.event(t.id, 'planner_escalation_attention', `${escalation.id}: unknown delivery outlived the stall threshold; surfaced as visible attention with owner ${owner}`.slice(0, 4000));
+    void this.notifyUnknownEscalation(this.store.task(t.id), escalation, owner);
+  }
+  /** One agent-channel message to the project's planner; the recorded intent prevents a resend. */
+  private async notifyUnknownEscalation(t: Task, escalation: Pick<PlannerEscalation, 'id' | 'question'>, owner: string): Promise<void> {
+    if (this.attentioningEscalations.has(escalation.id)) return;
+    if (this.store.eventsAll(t.id).some(event => event.kind === 'planner_escalation_attention_sent' && event.detail.startsWith(`${escalation.id}:`))) return;
+    this.attentioningEscalations.add(escalation.id);
+    try {
+      if (!this.adapter.notify) {
+        this.store.event(t.id, 'planner_escalation_attention_missed', `${escalation.id}: no agent-message channel is available`);
+        return;
+      }
+      const recipient = await this.resolution.escalationRecipient(this.store.task(t.id)).catch(() => null);
+      if (!recipient) {
+        this.store.event(t.id, 'planner_escalation_attention_missed', `${escalation.id}: no project planner or task owner to message`);
+        return;
+      }
+      const fresh = this.store.task(t.id);
+      const host = recipient === fresh.originAgentId || recipient === fresh.notificationAgentId
+        ? fresh.originHostId ?? fresh.hostId : await this.resolution.identifyOriginHost(recipient);
+      if (!host || !this.resolution.withHost(host, () => this.resolution.originHostAvailable(host))) {
+        this.store.event(t.id, 'planner_escalation_attention_missed', `${escalation.id}: ${recipient} is not reachable on a live host`);
+        return;
+      }
+      // The durable intent is recorded before the send, so a delivery nobody
+      // observed stays unknown and is never repeated.
+      this.store.event(t.id, 'planner_escalation_attention_sent', `${escalation.id}: ${recipient} on host ${host}`);
+      await this.resolution.withHost(host, () => this.adapter.notify!(recipient,
+        `ns-escalation-attention-${escalation.id}`, unknownEscalationAttentionDetail(escalation, owner)));
+      this.store.event(t.id, 'planner_escalation_attention_delivered', `${escalation.id}: ${recipient}`);
+    } catch (error) {
+      this.store.event(t.id, 'planner_escalation_attention_unknown', `${escalation.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
+    } finally {
+      this.attentioningEscalations.delete(escalation.id);
+    }
+  }
   resumeDelegations(task: Task): void {
     const events = this.store.eventsAll(task.id);
     // Spec 058 slice 17: durable consult and escalation intents survive a restart.
