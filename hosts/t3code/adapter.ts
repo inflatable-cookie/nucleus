@@ -34,12 +34,18 @@ export class T3CodeHost implements Host {
   hostId = '';
   version = '';
   private ready = false;
+  private pendingThreadShape = false;
+  private compatibilityError = '';
   private readonly probeThreadId?: string;
   constructor(options: T3CodeConfig) { this.probeThreadId = options.probeThreadId; this.rpc = new T3RpcClient(options); this.state = new T3StateFile(options.statePath); }
   get connected() { return this.ready && this.rpc.connected; }
+  get threadShapePending() { return this.pendingThreadShape; }
+  get compatibilityFailure() { return this.compatibilityError; }
   capabilities() { return { reportingViaMcp: false, supportsCoordinatorRecovery: false, nativeDecisions: false, uiContributions: false, lifecycleDispatch: false, perThreadEnvironment: false }; }
   async connect(probeThreadId = this.probeThreadId): Promise<void> {
     this.ready = false;
+    this.pendingThreadShape = false;
+    this.compatibilityError = '';
     try {
       await this.rpc.connect();
       const observed = decode(config, await this.rpc.call('server.getConfig', {}), 'server.getConfig');
@@ -48,8 +54,8 @@ export class T3CodeHost implements Host {
       if (previous.hostId && previous.hostId !== hostId) throw new T3CompatibilityError('environment.environmentId changed');
       const shell = await this.readShell();
       const probe = probeThreadId ?? [...shell.threads, ...shell.archivedThreads][0]?.id;
-      if (!probe) throw new T3CompatibilityError('subscribeThread: no readable thread for probe');
-      await this.readProjection(probe);
+      this.pendingThreadShape = !probe;
+      if (probe) await this.readProjection(probe);
       this.state.update(state => { state.hostId = hostId; state.lastPassedVersion = observed.environment.serverVersion; });
       this.hostId = hostId; this.version = observed.environment.serverVersion; this.ready = true;
     } catch (error) { this.close(); throw error; }
@@ -77,22 +83,31 @@ export class T3CodeHost implements Host {
   }
   private async readProjection(threadId: string): Promise<Projection> {
     let snapshot: Projection | undefined;
-    await this.rpc.readStream('orchestration.subscribeThread', { threadId, requestCompletionMarker: true }, value => {
-      const item = decode(z.object({ kind: z.string() }).passthrough(), value, 'subscribeThread');
-      if (item.kind === 'snapshot') {
-        if (snapshot) throw new T3CompatibilityError('subscribeThread: duplicate authoritative snapshot');
-        const complete = decode(threadSnapshot, item, 'subscribeThread');
-        if (complete.hasMoreHistory || complete.historyCursor != null || complete.turnItemsOmitLocalVisible || complete.idTable !== undefined)
-          throw new T3CompatibilityError('subscribeThread: incomplete projection');
-        snapshot = complete.projection;
-        if (snapshot.thread.id !== threadId) throw new T3CompatibilityError('subscribeThread.thread.id');
-      } else if (item.kind === 'synchronized') {
-        if (!snapshot) throw new T3CompatibilityError('subscribeThread.projection missing');
-        return true;
-      } else throw new T3CompatibilityError('subscribeThread: state changed during snapshot');
-      return false;
-    });
-    return snapshot!;
+    try {
+      await this.rpc.readStream('orchestration.subscribeThread', { threadId, requestCompletionMarker: true }, value => {
+        const item = decode(z.object({ kind: z.string() }).passthrough(), value, 'subscribeThread');
+        if (item.kind === 'snapshot') {
+          if (snapshot) throw new T3CompatibilityError('subscribeThread: duplicate authoritative snapshot');
+          const complete = decode(threadSnapshot, item, 'subscribeThread');
+          if (complete.hasMoreHistory || complete.historyCursor != null || complete.turnItemsOmitLocalVisible || complete.idTable !== undefined)
+            throw new T3CompatibilityError('subscribeThread: incomplete projection');
+          snapshot = complete.projection;
+          if (snapshot.thread.id !== threadId) throw new T3CompatibilityError('subscribeThread.thread.id');
+        } else if (item.kind === 'synchronized') {
+          if (!snapshot) throw new T3CompatibilityError('subscribeThread.projection missing');
+          return true;
+        } else throw new T3CompatibilityError('subscribeThread: state changed during snapshot');
+        return false;
+      });
+      this.pendingThreadShape = false;
+      return snapshot!;
+    } catch (error) {
+      if (this.pendingThreadShape && error instanceof T3CompatibilityError) {
+        this.compatibilityError = error.message;
+        this.close();
+      }
+      throw error;
+    }
   }
   private async inventory() {
     this.requireConnection();
@@ -102,7 +117,9 @@ export class T3CodeHost implements Host {
     // Both loaders report the application event cursor. An archive/unarchive
     // between them can otherwise disappear from their union. Refuse that read.
     if (shell.snapshotSequence !== archived.snapshotSequence) throw new T3CompatibilityError('inventory.snapshotSequence changed between live and archived reads');
-    return { projects: shell.projects, threads: [...shell.threads, ...shell.archivedThreads, ...archived.threads] };
+    const threads = [...shell.threads, ...shell.archivedThreads, ...archived.threads];
+    if (this.pendingThreadShape && threads[0]) await this.readProjection(threads[0].id);
+    return { projects: shell.projects, threads };
   }
   private workspaceFor(thread: Projection['thread']) {
     return Object.values(this.state.read().workspaces).find(w => w.projectId === thread.projectId && w.directory === thread.worktreePath)?.id ?? null;
@@ -232,6 +249,7 @@ export class T3CodeHost implements Host {
       if (spec.guard && !spec.guard.stillAllowed()) throw new ProvenPreSendRefusalError('T3Code launch guard changed');
     });
     if (decode(z.object({ threadId: z.literal(id) }), result, 'launchThread').threadId !== id) throw new T3CompatibilityError('launchThread.threadId');
+    if (this.pendingThreadShape) await this.readProjection(id);
     return { id, workspaceId: spec.workspaceId };
   }
   async findAgents(labels: Record<string, string>) { this.requireConnection();

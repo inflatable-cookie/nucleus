@@ -46,10 +46,14 @@ Connection order:
    `orchestration:read` and `orchestration:operate`; missing scopes fail closed.
 3. Read `server.getConfig` through the authenticated socket. Validate
    `environment.environmentId`, `serverVersion` and
-   `orchestrationProtocolVersion`. Then strictly decode a full shell snapshot
-   and one thread subscription, including every field Nucleus consumes.
-   A missing method, missing field or changed field type refuses connection
-   with its exact name. A missing protocol version is also a refusal.
+   `orchestrationProtocolVersion`, then strictly decode a full shell snapshot.
+   If `probeThreadId` is configured, strictly decode that thread. Otherwise,
+   strictly decode the first listed thread when one exists. A missing method,
+   missing field or changed field type refuses connection with its exact name.
+   If no thread is readable, register online with thread shape pending first
+   thread; the first thread Nucleus creates or observes is strictly decoded
+   before use. A mismatch refuses by its exact name and takes the host offline.
+   A missing protocol version is also a refusal.
    The public environment descriptor is only a preflight hint.
 4. Only after those probes, claim `t3code:<environmentId>` in the existing host
    registry. Reconnecting must prove the same environment at the same endpoint. Give this host its own
@@ -68,8 +72,9 @@ T3 provides no RPC schema discovery or dry run. Never send a canary mutation to
 establish compatibility. Pin the target nightly's command shapes as synthetic
 contract fixtures and compare them with newer nightly source during the drift
 check; the version itself does not decide compatibility.
-If no readable thread exists for the subscription probe, compatibility remains
-unestablished with a clear diagnostic; do not create a probe thread on a live host.
+An empty shell does not make the authenticated configuration, protocol and shell
+incompatible. Keep the host online with a pending thread-shape diagnostic until a
+real thread can be checked; do not create a probe thread on a live host.
 
 Mutation shapes are checked on first use. The target nightly decodes request
 schemas before invoking handlers, but serializes decoder errors and handler

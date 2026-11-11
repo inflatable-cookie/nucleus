@@ -8,7 +8,7 @@ import { T3CodeHost } from '../hosts/t3code/adapter';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError } from '../core/host';
 import type { HostAgentSpec } from '../shared/host';
 import type { Profile } from '../shared/contracts';
-import { t3Fake, STAMP } from './support/t3code-fake';
+import { t3Fake, STAMP, threadProjection } from './support/t3code-fake';
 
 const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
   available: true, problem: '', notes: '', supportedThinking: [] };
@@ -70,8 +70,45 @@ test('connect refuses incompatible protocol and missing probe coverage without a
   assert.equal(incompleteProbe.connected, false);
   server.controls.threadCoverage = {}; server.threads.clear();
   const empty = new T3CodeHost({ ...options, probeThreadId: undefined }); t.after(() => empty.close());
-  await assert.rejects(empty.connect(), /no readable thread/);
+  await empty.connect();
+  assert.equal(empty.connected, true);
+  assert.equal(empty.threadShapePending, true);
   assert.equal(server.commands.length, 0);
+});
+
+test('the first created thread is decoded and a mismatch refuses it and takes T3 offline', async t => {
+  const { host, server, options, spec } = await fixture(t);
+  host.close(); server.threads.clear();
+  const empty = new T3CodeHost({ ...options, probeThreadId: undefined }); t.after(() => empty.close());
+  await empty.connect();
+  assert.equal(empty.threadShapePending, true);
+  server.controls.threadCoverage = { hasMoreHistory: 'true' };
+  await assert.rejects(empty.createAgent(spec()), /subscribeThread\.hasMoreHistory/);
+  assert.equal(empty.connected, false);
+  assert.match(empty.compatibilityFailure, /subscribeThread\.hasMoreHistory/);
+});
+
+test('the first created thread clears pending verification after a strict decode', async t => {
+  const { host, server, options, spec } = await fixture(t);
+  host.close(); server.threads.clear();
+  const empty = new T3CodeHost({ ...options, probeThreadId: undefined }); t.after(() => empty.close());
+  await empty.connect();
+  assert.equal(empty.threadShapePending, true);
+  await empty.createAgent(spec());
+  assert.equal(empty.connected, true);
+  assert.equal(empty.threadShapePending, false);
+});
+
+test('the first thread found in inventory is decoded before it is returned', async t => {
+  const { host, server, options, directory } = await fixture(t);
+  host.close(); server.threads.clear();
+  const empty = new T3CodeHost({ ...options, probeThreadId: undefined }); t.after(() => empty.close());
+  await empty.connect();
+  server.threads.set('synthetic-observed', threadProjection('synthetic-observed', directory));
+  server.controls.threadCoverage = { hasMoreHistory: 'true' };
+  await assert.rejects(empty.listLiveAgents(), /subscribeThread\.hasMoreHistory/);
+  assert.equal(empty.connected, false);
+  assert.match(empty.compatibilityFailure, /subscribeThread\.hasMoreHistory/);
 });
 
 test('durable create replay survives reload and refuses changed payload or labels under the same intent', async t => {

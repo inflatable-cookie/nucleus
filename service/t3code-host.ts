@@ -16,6 +16,8 @@ interface NativeConnection {
   readonly connected: boolean;
   readonly hostId: string;
   readonly version: string;
+  readonly threadShapePending?: boolean;
+  readonly compatibilityFailure?: string;
   connect(probeThreadId?: string): Promise<void>;
   close(): void;
 }
@@ -59,14 +61,16 @@ export class T3HostConnection {
   }
 
   /** Only connection facts are returned; no endpoint, credential or native object. */
-  status(): { id: string | null; connected: boolean; error: string; version: string } {
+  status(): { id: string | null; connected: boolean; error: string; version: string; threadShapePending: boolean } {
     this.retireDisconnected();
-    return { id: this.lastIdentity, connected: this.session !== null, error: this.errorValue, version: this.versionValue };
+    return { id: this.lastIdentity, connected: this.session !== null, error: this.errorValue, version: this.versionValue,
+      threadShapePending: this.session !== null && this.host?.threadShapePending === true };
   }
 
   /** A disconnected socket invalidates this claim, never another host's claim. */
   retireDisconnected(): void {
     if (this.session && (!this.host?.connected || this.host.hostId !== this.session.id)) {
+      if (this.host?.compatibilityFailure) this.errorValue = `T3Code: ${this.host.compatibilityFailure}`;
       this.registry.disconnect(this.session.id, this.session.token);
       this.session = null;
     }
