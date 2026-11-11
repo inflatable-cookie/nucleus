@@ -20,6 +20,8 @@ class NativeHost {
   connected = false;
   hostId = 't3code:synthetic-environment';
   version = 'nightly-synthetic';
+  threadShapePending = false;
+  compatibilityFailure = '';
   connects = 0;
   closes = 0;
   probe: string | undefined;
@@ -61,7 +63,7 @@ test('second host registers separately, retains its admission on reconnect, and 
     const admission = hosts.get(first.hostId)!.admission;
     assert.notEqual(admission, primary.admission);
     assert.equal(first.probe, 'synthetic-probe');
-    assert.deepEqual(manager.status(), { id: first.hostId, connected: true, error: '', version: first.version });
+    assert.deepEqual(manager.status(), { id: first.hostId, connected: true, error: '', version: first.version, threadShapePending: false });
 
     first.connected = false;
     manager.retireDisconnected();
@@ -76,6 +78,17 @@ test('second host registers separately, retains its admission on reconnect, and 
     manager.close();
     hosts.disconnect('paseo-environment', primaryToken);
   }
+});
+
+test('an empty T3 host registers online while its thread shape is pending', async () => {
+  const { hosts } = registry();
+  const empty = new NativeHost(); empty.threadShapePending = true;
+  const { manager } = connection(hosts, [empty]);
+  try {
+    await manager.ensureConnected();
+    assert.deepEqual(hosts.onlineIds(), ['paseo-environment', empty.hostId]);
+    assert.deepEqual(manager.status(), { id: empty.hostId, connected: true, error: '', version: empty.version, threadShapePending: true });
+  } finally { manager.close(); }
 });
 
 test('connection is single-flight and a close while probing cannot publish a stale claim', async () => {

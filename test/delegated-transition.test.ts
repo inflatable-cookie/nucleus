@@ -40,6 +40,8 @@ function transitionFixture(
             ? `ns-agent-ask-reviewer-${id}`
             : `ns-agent-ask-${id}`;
   const deciderId = `ns-decider-${id}${route === "native" ? "-0" : ""}`;
+  // Task 1109: the task planner is the first rung; the project planner is the second.
+  const projectDeliveryId = `${deliveryId}-project`;
   f.store.upsertProject({
     key: "app",
     name: "App",
@@ -132,6 +134,8 @@ function transitionFixture(
     route === "reviewer" ? "reviewer-1" : "planner-1",
     route === "reviewer" ? "reviewer" : "planner",
   );
+  if (route !== "reviewer" && mode !== "unknown" && mode !== "unobserved" && mode !== "next-unknown")
+    journal(projectDeliveryId, "planner-2", "planner");
   if (mode === "complete") journal(deciderId, "decider-old", "decider");
   if (mode === "next-unknown") {
     const kind =
@@ -151,6 +155,7 @@ function transitionFixture(
   const originalJournal = f.store.eventsAll(`delegation:${deliveryId}`);
   const counters = {
     plannerSends: 0,
+    taskPlannerSends: 0,
     reviewerSends: 0,
     deciderCreates: 0,
     deciderSends: 0,
@@ -169,10 +174,16 @@ function transitionFixture(
       throw Error("Never resend to reviewer");
     },
     askPlanner: async (recipient: string, input: { prompt: string }) => {
-      if (recipient === "planner-1") counters.plannerSends++;
+      if (recipient === "planner-1" || recipient === "planner-2") counters.plannerSends++;
+      else if (recipient === "origin") counters.taskPlannerSends++;
       else counters.deciderSends++;
-      if (recipient === "planner-1" && route !== "reviewer")
+      if ((recipient === "planner-1" || recipient === "planner-2") && route !== "reviewer")
         throw Error("Never resend to planner");
+      if (route === "reviewer" && recipient === "origin") {
+        // The task planner answers the escalated reviewer miss.
+        current.resolution.answerDelegatedQuestion({ questionId: input.prompt.match(/^Question id: (.+)$/m)![1], answer: "Continue", reason: "Within the brief" }, recipient);
+        return null;
+      }
       current.resolution.answerDelegatedQuestion(
         {
           questionId: input.prompt.match(/^Question id: (.+)$/m)![1],
@@ -242,7 +253,8 @@ for (const route of [
       await t.drive(first);
       await waitFor(t.answered, ANSWERING_WINDOW_MS, "the delegated answer");
       assert.equal(t.counters.reviewerSends, 0);
-      assert.equal(t.counters.plannerSends, 0);
+      assert.equal(t.counters.plannerSends, 0, 'neither recorded planner window is sent again');
+      assert.equal(t.counters.taskPlannerSends, 0);
       assert.equal(t.counters.deciderCreates, 1);
       assert.equal(t.counters.deciderSends, 1);
       assert.deepEqual(
@@ -284,7 +296,8 @@ test("reviewer: a known miss advances across restart without renewing its window
     await first.stop();
     for (let i = 0; i < 3; i++) { await t.drive(second); await pause(); }
     assert.equal(t.counters.reviewerSends, 0);
-    assert.equal(t.counters.plannerSends, 1);
+    assert.equal(t.counters.plannerSends, 0, 'the recorded reviewer window is never resent');
+    assert.equal(t.counters.taskPlannerSends, 1, 'the task planner answers the escalated consult miss');
     assert.throws(() => second.resolution.answerDelegatedQuestion(
       { questionId: t.deliveryId, answer: "Late advice", reason: "Late" }, "reviewer-1"),
       /answer window has closed/);
@@ -325,6 +338,7 @@ for (const route of ["ask", "native", "escalation", "decision"] as const) {
         );
         assert.deepEqual(t.counters, {
           plannerSends: 0,
+          taskPlannerSends: 0,
           reviewerSends: 0,
           deciderCreates: 0,
           deciderSends: 0,

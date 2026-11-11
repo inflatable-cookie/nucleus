@@ -1,8 +1,7 @@
-import { isOperatorOrigin, taskOwner } from "../../shared/contracts";
 import { type Task } from '../../shared/contracts';
 import type { Resolution } from '../resolution';
 
-export type PlannerPresenceContext = Pick<Resolution, 'adapter' | 'host' | 'identifyOriginHost' | 'originHostAvailable' | 'plannerThreadGone' | 'projectPlannerFor' | 'store' | 'withHost'>;
+export type PlannerPresenceContext = Pick<Resolution, 'adapter' | 'host' | 'identifyOriginHost' | 'originHostAvailable' | 'plannerThreadGone' | 'projectPlannerFor' | 'taskPlannerFor' | 'store' | 'withHost'>;
 
 export class PlannerPresence {
   constructor(readonly context: PlannerPresenceContext) {}
@@ -16,10 +15,12 @@ export class PlannerPresence {
   }
 
   async escalationRecipient(task: Task): Promise<string | null> {
+    // Task 1109: the task's own planner hears first; the project planner is the
+    // fallback rung, and with neither there is no thread to wait on.
+    const own = await this.context.taskPlannerFor(task);
+    if (own) return own.agentId;
     const { planner } = await this.context.projectPlannerFor(task);
-    if (planner) return planner;
-    const owner = taskOwner(task);
-    return !isOperatorOrigin(owner) && !await this.context.plannerThreadGone(owner) ? owner : null;
+    return planner;
   }
 
   notifyStaleQuestionAnswer(taskId: string, questionId: string, who: string): void {

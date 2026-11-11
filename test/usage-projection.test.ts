@@ -77,6 +77,9 @@ test("run-out: faster burn than the window turns red and names the exhaustion ti
   });
   assert.equal(subscription.state, "will_run_out");
   assert.equal(subscription.bindingWindowId, "weekly");
+  // The projection keeps its over-shot for the dial's "+X% over" label:
+  // 0.8 used at pace 1.6 lands at 160%, not clamped to 100.
+  assert.ok(Math.abs(subscription.projectedUseAtReset! - 1.6) < 1e-9);
 });
 
 test("early damping pulls the needle toward centre in the first minutes", () => {

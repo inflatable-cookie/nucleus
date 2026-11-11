@@ -160,7 +160,8 @@ test("completed unanswered escalation windows stay terminal across maintenance a
     );
     assert.deepEqual(
       { asks, creates, archives },
-      { asks: 2, creates: 1, archives: 1 },
+      // Task 1109: the task planner, the project planner, then the decider's own ask.
+      { asks: 3, creates: 1, archives: 1 },
     );
     const events = f.store.eventsAll(task.id);
     assert.ok(
@@ -180,7 +181,7 @@ test("completed unanswered escalation windows stay terminal across maintenance a
     }
     assert.deepEqual(
       { asks, creates, archives },
-      { asks: 2, creates: 1, archives: 1 },
+      { asks: 3, creates: 1, archives: 1 },
     );
     assert.deepEqual(f.store.eventsAll(task.id), events);
     assert.deepEqual(
@@ -247,7 +248,7 @@ for (const outcome of ['unobserved', 'sent', 'answered'] as const) {
         questionId: messageId, answer: 'Continue', reason: 'The original question arrived',
       }, 'planner-1');
       const input = {
-        planner: 'planner-1', plannerMessageId: messageId, decisionId: id,
+        planners: [{ agentId: 'planner-1', messageId, rung: 'project' as const }], decisionId: id,
         context: { question: 'Proceed?', choices: [], context: [] },
         signal: new AbortController().signal, parse: parseNativeDelegatedReply,
         onIntent: () => {}, onMiss: () => {}, onUnknown: () => { unknowns++; },

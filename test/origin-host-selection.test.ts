@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HostRegistry, resolveOriginHost, type KnownHost, type OriginLookup } from '../core/host/host-registry';
+import { formatAgentId } from '../shared/agent-identity';
+import { HostRegistry, identitySourceHostEvidence, resolveOriginHost, type KnownHost, type OriginLookup } from '../core/host/host-registry';
 
 type FixtureHost = { knows?: string[]; answer?: OriginLookup; fail?: boolean };
 function fixture(hosts: Array<[string, FixtureHost]>) {
@@ -71,4 +72,38 @@ test('caller evidence never lets a second claimant or a wrong host through', asy
   assert.equal(await resolveOriginHost(both.registry, 'planner', both.lookup, paseoIdentity), undefined);
   const undecided = fixture([['paseo:alpha', { knows: ['other'] }], ['t3code:nightly', { knows: ['planner'] }]]);
   assert.equal(await resolveOriginHost(undecided.registry, 'planner', undecided.lookup, paseoIdentity), undefined);
+});
+
+test('evidence matches the same thread in bare and qualified form, never a different host or thread', async () => {
+  const known = ['paseo:alpha', 't3code:nightly'];
+  const qualified = formatAgentId('paseo:alpha', 'planner');
+  // A bare recorded author is Paseo's; the qualified caller of the same native thread matches it.
+  assert.deepEqual(identitySourceHostEvidence('planner', { agent: qualified, hostId: 'paseo:alpha' }, known),
+    { hostId: 'paseo:alpha', source: 'caller identity source' });
+  assert.deepEqual(identitySourceHostEvidence(qualified, { agent: 'planner', hostId: 'paseo:alpha' }, known),
+    { hostId: 'paseo:alpha', source: 'caller identity source' });
+  assert.deepEqual(identitySourceHostEvidence(qualified, { agent: qualified, hostId: 'paseo:alpha' }, known),
+    { hostId: 'paseo:alpha', source: 'caller identity source' });
+  // A different native thread on the same host is not the author.
+  assert.equal(identitySourceHostEvidence('planner-two', { agent: qualified, hostId: 'paseo:alpha' }, known), undefined);
+  // A bare ID is Paseo's: a T3-qualified caller with the same native ID is a different thread.
+  assert.equal(identitySourceHostEvidence('planner', { agent: formatAgentId('t3code:nightly', 'planner'), hostId: 't3code:nightly' }, known), undefined);
+  // The same native thread on another host is a different identity.
+  assert.equal(identitySourceHostEvidence(qualified, { agent: formatAgentId('t3code:nightly', 'planner'), hostId: 't3code:nightly' }, known), undefined);
+  // A qualification that disagrees with the source's own host proves nothing.
+  assert.equal(identitySourceHostEvidence('planner', { agent: qualified, hostId: 't3code:nightly' }, known), undefined);
+  // Evidence for a host this registry never knew decides nothing, and no source is no evidence.
+  assert.equal(identitySourceHostEvidence('planner', { agent: formatAgentId('paseo:gone', 'planner'), hostId: 'paseo:gone' }, known), undefined);
+  assert.equal(identitySourceHostEvidence('planner', undefined, known), undefined);
+  // A malformed qualified identity is no evidence rather than a thrown refusal.
+  assert.equal(identitySourceHostEvidence('planner', { agent: 'nucleus-agent:v1:[', hostId: 'paseo:alpha' }, known), undefined);
+});
+
+test('a bare recorded origin resolves through the qualified caller while an offline T3 host is registered', async () => {
+  const { registry, lookup, sessions } = fixture([['paseo:alpha', { knows: ['planner'] }], ['t3code:nightly', { knows: [] }]]);
+  registry.disconnect('t3code:nightly', sessions.get('t3code:nightly')!);
+  const qualified = formatAgentId('paseo:alpha', 'planner');
+  const evidence = identitySourceHostEvidence('planner', { agent: qualified, hostId: 'paseo:alpha' }, registry.known().map(entry => entry.id));
+  assert.equal(await resolveOriginHost(registry, 'planner', lookup, evidence), 'paseo:alpha');
+  assert.equal(await resolveOriginHost(registry, 'planner', lookup), undefined);
 });

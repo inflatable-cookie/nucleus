@@ -8,9 +8,15 @@ const ui = boardSource();
 const entry = readFileSync(new URL('../hosts/paseo/client/index.tsx', import.meta.url), 'utf8');
 const settingsScreen = readFileSync(new URL('../client/settings-screen.tsx', import.meta.url), 'utf8');
 
-test('navigation exposes Tasks, Planning and QA runs; the Lanes destination is folded into Planning', () => {
-  assert.deepEqual(navigationViews.map(view => view.label), ['Tasks', 'Planning', 'QA runs']);
-  assert.deepEqual(workspaceNavigationViews.map(view => view.label), ['Tasks', 'Planning', 'QA runs']);
+test("navigation exposes Tasks, Planning, QA runs and Usage; the Lanes destination is folded into Planning", () => {
+  assert.deepEqual(
+    navigationViews.map((view) => view.label),
+    ["Tasks", "Planning", "QA runs", "Usage"],
+  );
+  assert.deepEqual(
+    workspaceNavigationViews.map((view) => view.label),
+    ["Tasks", "Planning", "QA runs", "Usage"],
+  );
   // PR #518's TypeScript formatting reformatted the surface; the static reads tolerate the shipped layout.
   assert.match(ui, /\(workspacePanel \? workspaceNavigationViews : navigationViews\)\.map\(\s*\(view\) =>/);
 });

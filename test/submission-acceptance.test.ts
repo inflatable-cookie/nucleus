@@ -7,6 +7,7 @@ import { QueueRuntime } from '../service/runtime-owner';
 import { captureHandoff, prepareHandoff } from '../core/planning/handoff';
 import { git } from '../core/git/index';
 import { operationInputHash } from '../core/store/store';
+import { formatAgentId } from '../shared/agent-identity';
 import { isUnchangedBoard, submitHandoff } from '../shared/contracts';
 import type { Adapter } from '../core/host';
 
@@ -290,4 +291,39 @@ Promote once after the refusal.
   assert.deepEqual(again, { taskId: promoted.taskId, reference: promoted.reference, ...(('hostId' in promoted && promoted.hostId) ? { hostId: promoted.hostId } : {}), ...(('hostSelection' in promoted && promoted.hostSelection) ? { hostSelection: promoted.hostSelection } : {}) });
   assert.equal(f.runtime.store.tasks().length, 1);
   assert.deepEqual(f.runtime.store.lead(lead.id).targets.map(target => target.reference), [promoted.taskId]);
+});
+
+test('a Paseo planner promotes its bare-recorded lead while T3 is offline: the qualified caller names the same thread', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  // The Paseo host is online and the T3 host is registered but offline: the
+  // origin lookup can ask only Paseo, so only the caller's own evidence decides.
+  assert.deepEqual(f.runtime.hostRegistry.onlineIds(), ['fixture-host']);
+  const t3 = f.runtime.hostRegistry.connect('t3code:nightly', 't3code-endpoint', { adapter: f.runtime.adapter, admission: f.runtime.admission });
+  f.runtime.hostRegistry.disconnect('t3code:nightly', t3);
+  const body = `---
+title: Bare origin promotion
+queue:
+  complexity: medium
+  notifyOriginOnCloseout: true
+---
+
+## Outcome
+
+Promote from the Paseo planner's own lead.
+`;
+  // The lead was authored before caller identities were host-qualified: its recorded author is bare.
+  const lead = await f.runtime.addLead({ repositories: [{ origin: f.repo, path: f.repo }], title: 'Bare origin promotion', body, lanes: [], author: 'planner' });
+  assert.equal(lead.check?.ok, true, lead.check?.message);
+  f.runtime.approveLead({ id: lead.id, version: lead.version, digest: lead.digest!, approver: 'planner', note: 'Operator authorized', relayed: true });
+  // The promoting thread is resolved qualified, and its proven host travels with it, as the CLI sends it.
+  const caller = formatAgentId('fixture-host', 'planner');
+  const promoted = await f.runtime.promoteLeadToTask({ id: lead.id, note: 'Operator authorized', agent: caller,
+    identitySource: { agent: caller, hostId: 'fixture-host' }, board: false });
+  assert.ok('taskId' in promoted, JSON.stringify(promoted));
+  assert.equal(f.runtime.store.task(promoted.taskId).originHostId, 'fixture-host');
+  // A different thread with the same native ID on that host proves nothing about this lead's author.
+  const other = await f.runtime.addLead({ repositories: [{ origin: f.repo, path: f.repo }], title: 'Other origin promotion', body: body.replace('Bare origin promotion', 'Other origin promotion'), lanes: [], author: 'planner-two' });
+  f.runtime.approveLead({ id: other.id, version: other.version, digest: other.digest!, approver: 'planner-two', note: 'Operator authorized', relayed: true });
+  await assert.rejects(f.runtime.promoteLeadToTask({ id: other.id, note: 'Operator authorized', agent: caller,
+    identitySource: { agent: caller, hostId: 'fixture-host' }, board: false }), /Origin host is unknown or ambiguous/);
 });

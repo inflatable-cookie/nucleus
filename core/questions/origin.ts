@@ -1,6 +1,6 @@
 import { sameCallerIdentity } from '../../shared/agent-identity';
 import type {Notice,ReparentInput,ReparentResult,Task} from '../../shared/contracts';
-import {isDispositionActive,isOperatorOrigin,OPERATOR_BOARD_CALLER,taskOwner} from '../../shared/contracts';
+import {isDispositionActive,isOperatorOrigin,OPERATOR_BOARD_CALLER,taskOwner,taskPlanner} from '../../shared/contracts';
 import {normalizeRepositoryOrigin} from '../../shared/lanes';
 import type {Resolution} from '../resolution';
 import {digest,type Store} from '../store/store';
@@ -44,12 +44,14 @@ export class OriginRouting {
   return this.unfinished().filter(task=>sameCallerIdentity(taskOwner(task),input.fromAgentId,task.originHostId)
    &&this.store.projectFor(task.repoPath,normalizeRepositoryOrigin(task.repository??''))?.key===project.key);
  }
- /** The operator, current owner, or registered planner may hand a missing origin to its successor. */
+ /** The operator, current owner, the task's planner, or a registered planner may hand a missing origin to its successor. */
  private assertReparentAuthority(task:Task,caller:string){
   const project=this.store.projectFor(task.repoPath,normalizeRepositoryOrigin(task.repository??''));
-  const planners=new Set([project?.planner?.agentId,this.store.queueProject()?.planner?.agentId].filter((id):id is string=>Boolean(id&&!isOperatorOrigin(id))));
-  if(caller===OPERATOR_BOARD_CALLER||sameCallerIdentity(taskOwner(task),caller,task.originHostId)||[...planners].some(id=>sameCallerIdentity(id,caller)))return;
-  throw Error(`Changing the owner of task ${task.id} needs the operator at the board or its current owner ${taskOwner(task)} or its project/Queue planner; ${caller} is neither`);
+  const planners=new Set([project?.planner?.agentId,this.store.queueProject()?.planner?.agentId,taskPlanner(task)].filter((id):id is string=>Boolean(id&&!isOperatorOrigin(id))));
+  // The task's own planner shares the owner's proven host; other recorded planners prove none here.
+  const plannerHost=(id:string)=>sameCallerIdentity(id,taskOwner(task))?task.originHostId:undefined;
+  if(caller===OPERATOR_BOARD_CALLER||sameCallerIdentity(taskOwner(task),caller,task.originHostId)||[...planners].some(id=>sameCallerIdentity(id,caller,plannerHost(id))))return;
+  throw Error(`Changing the owner of task ${task.id} needs the operator at the board or its current owner ${taskOwner(task)} or its planner; ${caller} is neither`);
  }
  /**
   * Spec 040 (Tom, 2026-10-26): one owner field, so a reparent is one write per
@@ -84,14 +86,18 @@ export class OriginRouting {
    return {toAgentId:to,workspaceId,changed,unchanged};
   });
  }
- /** The one owner write: owner field, its workspace, cleared routing errors and the outgoing owner's subscription choice. Null when already the owner. */
+ /** The one owner write: owner field, its workspace, cleared routing errors, the planner and the outgoing owner's subscription choice. Null when already the owner. */
  private writeOwner(task:Task,to:string,workspaceId:string,caller:string,reason:string,hostId:string):Task|null{
   const from=taskOwner(task);
-  if(sameCallerIdentity(from,to)&&sameCallerIdentity(task.notificationAgentId,to,task.originHostId,hostId)&&task.originHostId===hostId&&task.originWorkspaceId===workspaceId&&!task.originError&&!task.originLookupError)return null;
+  // Task 1109: the task planner is by default its owner, so reparenting moves it as
+  // it always moved ownership. A planner a brief named explicitly moves to the new
+  // owner too: the reparent is the deliberate act that says who promotes the task.
+  const movedPlanner=task.plannerAgentId?{plannerAgentId:null}:{};
+  if(sameCallerIdentity(from,to)&&sameCallerIdentity(task.notificationAgentId,to,task.originHostId,hostId)&&task.originHostId===hostId&&task.originWorkspaceId===workspaceId&&!task.originError&&!task.originLookupError&&!task.plannerAgentId)return null;
   const overrides=movedOverrides(task.completionSubscriptionOverrides,from,to,workspaceId);
   return this.store.update(task.id,{notificationAgentId:to,originHostId:hostId,originWorkspaceId:workspaceId,originError:'',originLookupError:'',
-   ...(overrides!==task.completionSubscriptionOverrides?{completionSubscriptionOverrides:overrides}:{})},
-   'owner_changed',`${from} → ${to} by ${caller}: ${reason}`.slice(0,2000));
+   ...(overrides!==task.completionSubscriptionOverrides?{completionSubscriptionOverrides:overrides}:{}),...movedPlanner},
+   'owner_changed',`${from} → ${to} by ${caller}${task.plannerAgentId?` (planner ${task.plannerAgentId} → ${to})`:''}: ${reason}`.slice(0,2000));
  }
  async pass(){
   if(this.resolution.paused())return;

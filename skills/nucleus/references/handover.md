@@ -36,7 +36,8 @@ same planning. Nothing about the handover is written into the repository.
    For tasks outside those projects, use the `--task` form in
    [Change a task's owner](../SKILL.md#change-a-tasks-owner). Check the result
    and the task set. The project form moves open tasks owned by the old thread;
-   it does not change the project's planner.
+   it moves each task's own planner with that owner and does not change the
+   project's planner.
 4. **Route project notices** to the successor with `project.set-planner`. Project
    ownership and `project.claim` are retired; see the project commands in
    [SKILL.md](../SKILL.md).

@@ -128,7 +128,7 @@ export class AgentAsks {
     if (this.routingAgentAsks.has(ask.id)) return;
     const events = this.store.eventsAll(task.id);
     if (events.some(event => event.kind === 'agent_ask_delegation_missed' && event.detail.startsWith(`${ask.id}: no planner or decider classification was produced;`))) return;
-    const windows = [`ns-agent-ask-reviewer-${ask.id}`, `ns-agent-ask-${ask.id}`, `ns-decider-${ask.id}`];
+    const windows = [`ns-agent-ask-reviewer-${ask.id}`, `ns-agent-ask-${ask.id}`, `ns-agent-ask-${ask.id}-project`, `ns-decider-${ask.id}`];
     const recoverable = this.resolution.recoverableDelegation(windows);
     const observing = this.resolution.recoverableDelegation(windows, false);
     if (events.some(event => (['agent_ask_answered', 'agent_ask_decision', 'agent_ask_joined', 'agent_ask_superseded'].includes(event.kind) || (!observing && event.kind === 'agent_ask_delegation_unknown')) && event.detail.startsWith(`${ask.id}:`))) return;
@@ -161,12 +161,15 @@ export class AgentAsks {
     let unavailable = false;
     let result;
     try {
+      // Task 1109: the task's own planner first, then the project planner, then the decider.
+      const { rungs } = await this.resolution.plannerRungsFor(task);
       result = await delegateQuestion(this.resolution, task, {
-        planner: (await this.resolution.projectPlannerFor(task)).planner,
-        plannerMessageId: `ns-agent-ask-${ask.id}`, decisionId: ask.id, context,
+        planners: rungs.map(item => ({ ...item, messageId: `ns-agent-ask-${ask.id}${item.rung === 'project' ? '-project' : ''}` })),
+        decisionId: ask.id, context,
         signal: new AbortController().signal, sourceAgentId: ask.sourceAgentId,
         parse: parseNativeDelegatedReply,
-        onIntent: (role, agentId) => this.store.event(task.id, 'agent_ask_delegated', `${ask.id}: ${role === 'planner' ? `planner ${agentId}; asked` : 'decider requested'}`),
+        onIntent: (role, agentId, rung) => this.store.event(task.id, 'agent_ask_delegated', `${ask.id}: ${role === 'planner' ? `${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked` : 'decider requested'}`),
+        onSkip: (rung, agentId, detail) => this.store.event(task.id, 'agent_ask_delegation_skipped', `${ask.id}: ${rung} planner ${agentId} skipped: ${detail}`.slice(0, 4000)),
         onMiss: detail => this.store.event(task.id, 'agent_ask_delegation_missed', `${ask.id}: ${detail}`),
         onUnknown: (role, agentId, error) => {
           unknown = true;
@@ -392,13 +395,17 @@ export class AgentAsks {
     const decision = linked(askId, 'agent_ask_decision').match(/decision (\S+)/)?.[1]
       ?? (joined ? linked(joined, 'operator_question_decision').match(/decision (\S+)/)?.[1] : undefined);
     const deciderStarted = events.some(event => event.kind === 'agent_ask_delegated' && event.detail.startsWith(`${askId}: decider`));
-    const planner = events.find(event => event.kind === 'agent_ask_delegated' && event.detail.startsWith(`${askId}: planner `))?.detail.match(/planner (\S+);/)?.[1];
+    // Task 1109: the rung is named in the event; `planner ` keeps stored events readable.
+    const plannerPrefix = [`${askId}: task planner `, `${askId}: project planner `, `${askId}: planner `]
+      .find(prefix => events.some(event => event.kind === 'agent_ask_delegated' && event.detail.startsWith(prefix)));
+    const planner = plannerPrefix ? events.find(event => event.kind === 'agent_ask_delegated' && event.detail.startsWith(plannerPrefix))?.detail.match(/planner (\S+);/)?.[1] : undefined;
+    const plannerLabel = plannerPrefix === `${askId}: task planner ` ? 'task planner' : plannerPrefix === `${askId}: project planner ` ? 'project planner' : 'planner';
     const reviewer = events.find(event => event.kind === 'agent_ask_delegated' && event.detail.startsWith(`${askId}: reviewer `))?.detail.match(/reviewer (\S+);/)?.[1];
     if (!planner && !reviewer && events.some(event => event.kind === 'agent_ask_host_wait' && event.detail.startsWith(`${askId}:`)))
       return `Recorded as question ${askId}; waiting for the planner's proven host to be available. You may continue other work or call again to collect the answer.`;
     if (planner && !deciderStarted && events.some(event => event.kind === 'agent_ask_delegation_unknown' && event.detail.startsWith(`${askId}:`)))
       return `Recorded as question ${askId}; delivery to planner ${planner} is uncertain. Nucleus will not re-ask or start a decider. The question remains with the planner.`;
-    const holder = decision ? `Tom as Nucleus operator decision ${decision}` : deciderStarted ? 'a decider' : planner ? `planner ${planner}` : reviewer ? `reviewer ${reviewer}` : 'the project planner or a decider';
+    const holder = decision ? `Tom as Nucleus operator decision ${decision}` : deciderStarted ? 'a decider' : planner ? `${plannerLabel} ${planner}` : reviewer ? `reviewer ${reviewer}` : 'a planner or a decider';
     return `Recorded as question ${askId}; pending with ${holder}. You'll be resumed with the answer. You may continue other work or end your turn, and call your session's question tool again with the same question to collect the answer.`;
   }
 }

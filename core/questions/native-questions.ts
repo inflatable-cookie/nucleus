@@ -79,7 +79,7 @@ export class NativeQuestions {
           if (this.resolution.responsibleQuestions.has(id) || events.some(event => ['native_question_answered', 'native_question_operator', 'native_question_unknown', 'native_question_unanswered', 'native_question_response_intent'].includes(event.kind) && event.detail.startsWith(`${id}:`))) continue;
           if (events.some(event => event.kind === 'native_question_delegated' && event.detail.startsWith(`${id}:`))
               && this.resolution.delegatedDelivery(`queue-native-${id}-0`)
-              && !this.resolution.recoverableDelegation([`queue-native-${id}-0`, `ns-decider-${id}-0`])) continue;
+              && !this.resolution.recoverableDelegation([`queue-native-${id}-0`, `queue-native-${id}-0-project`, `ns-decider-${id}-0`])) continue;
           if (!events.some(event => event.kind === 'native_question_delegated' && event.detail.startsWith(`${id}:`))) this.store.event(task.id, 'native_question_delegated', `${id}: ${watch.agentId}; permission ${request.requestId}`);
           const controller = new AbortController();
           this.resolution.responsibleQuestions.set(id, controller);
@@ -100,7 +100,8 @@ export class NativeQuestions {
   private async answerNativeQuestionsOnHost(taskId: string, agentId: string, workspaceId: string, id: string,
     request: { requestId: string; questions: Array<{ header: string; question: string; options: string[] }> }, signal: AbortSignal): Promise<void> {
     const task = this.store.task(taskId);
-    const { planner } = await this.resolution.projectPlannerFor(task);
+    // Task 1109: the task's own planner is asked first; the project planner is the fallback rung.
+    const { rungs } = await this.resolution.plannerRungsFor(task);
     const answers: Record<string, string> = {};
     const records: string[] = [];
     const plannerOvertakes: Array<{ ids: string[]; label: string }> = [];
@@ -108,9 +109,11 @@ export class NativeQuestions {
       const input = { question: question.question, choices: question.options, context: this.resolution.decisionContext(task) };
       let unknown = false;
       const result = await delegateQuestion(this.resolution, task, {
-        planner, plannerMessageId: `queue-native-${id}-${index}`, decisionId: `${id}-${index}`,
+        planners: rungs.map(item => ({ ...item, messageId: `queue-native-${id}-${index}${item.rung === 'project' ? '-project' : ''}` })),
+        decisionId: `${id}-${index}`,
         context: input, signal, parse: parseNativeDelegatedReply,
-        onIntent: (role, recipient) => this.store.event(taskId, 'native_question_delegate_intent', `${id}: ${role} ${recipient ?? 'requested'}; question ${index}`),
+        onIntent: (role, recipient, rung) => this.store.event(taskId, 'native_question_delegate_intent', `${id}: ${role}${role === 'planner' ? ` (${rung ?? 'project'} rung)` : ''} ${recipient ?? 'requested'}; question ${index}`),
+        onSkip: (rung, recipient, detail) => this.store.event(taskId, 'native_question_delegate_skipped', `${id}: ${rung} planner ${recipient} skipped: ${detail}`.slice(0, 4000)),
         onMiss: () => {},
         onUnknown: (role, recipient, error) => {
           unknown = true;

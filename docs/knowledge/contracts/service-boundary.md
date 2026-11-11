@@ -198,6 +198,10 @@ only to a thread observed live on a host that supplies no calling-thread identit
 its own, and never into an archived, gone or unreadable thread. A planner without a
 ticket is recorded ticket pending and the board's project entry says so. Startup
 reconciles that state and sends nothing. Reassignment or clearing revokes the ticket.
+The same ticket covers a task's own planner (task 1109): keyed per proven host and
+thread rather than per task, handed over by the same two routes, and valid only
+while a live task still names that thread as its planner. Reparenting moves the
+scope, which revokes the outgoing planner's ticket without a separate write.
 A named project agent takes its ticket by the same rules; renaming, reassigning or
 unregistering the name revokes it ([Spec 060](../specs/060-named-project-agents.md)).
 Tickets prevent same-user accidents; they do not add adversarial authentication or
@@ -211,7 +215,9 @@ be asked must rule itself out. A registered host that is offline cannot rule its
 out, so it leaves the origin unknown — unless the identity's own source already
 proved which host it belongs to (the caller resolution above, or a qualified
 identity); that evidence belongs to that one thread, contradicts a claim from
-anywhere else, and decides nothing about another identity. Two claimants always
+anywhere else, and decides nothing about another identity. The thread is compared
+as a thread, not a string: a bare recorded author is Paseo's, so it matches the
+host-qualified caller of the same native thread on a Paseo host. Two claimants always
 refuse. A host lookup is a read, never a grant of execution authority, and an origin
 refusal settles a promotion as refused before commit rather than as an uncertain
 effect.

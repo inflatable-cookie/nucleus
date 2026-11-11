@@ -300,7 +300,8 @@ test("a pi-shaped worker asks through nucleus_ask and gets the planner answer in
       receipt.answer,
       "Keep the public API — The brief fixes the public shape",
     );
-    assert.equal(receipt.answeredBy, "planner planner-1");
+    // Task 1109: the task's own planner is the submitting thread, asked before the project's.
+    assert.equal(receipt.answeredBy, "planner origin");
     assert.deepEqual(f.delegated.sources, ["worker"]);
     assert.equal(f.events("agent_ask").length, 1, "one durable ask intent");
     assert.match(
@@ -311,12 +312,12 @@ test("a pi-shaped worker asks through nucleus_ask and gets the planner answer in
     );
     assert.deepEqual(
       f.events("agent_ask_delegated").map((event) => event.detail),
-      [`${receipt.askId}: planner planner-1; asked`],
-      "the planner is asked first",
+      [`${receipt.askId}: task planner origin; asked`],
+      "the task planner is asked first",
     );
     assert.match(
       f.events("agent_ask_answered")[0]!.detail,
-      /answered by planner planner-1: Keep the public API/,
+      /answered by planner origin: Keep the public API/,
     );
     assert.equal(
       f.delegated.deciders.length,
@@ -403,12 +404,13 @@ test("a reviewer process ask takes planner classification instead of an operator
       choices: [],
     }, "reviewer-token");
     assert.equal(receipt.status, "answered");
-    assert.equal(receipt.answeredBy, "planner planner-1");
+    // Task 1109: the task's own planner answers before the project rung.
+    assert.equal(receipt.answeredBy, "planner origin");
     const askId = receipt.askId;
     assert.match(f.events("agent_ask")[0]!.detail, new RegExp(`^${askId}: kind process; run reviewer-run \\(reviewer\\)`));
     assert.deepEqual(
       f.events("agent_ask_delegated").map((event) => event.detail),
-      [`${askId}: planner planner-1; asked`],
+      [`${askId}: task planner origin; asked`],
     );
     assert.equal(f.events("agent_ask_decision").length, 0, "a reviewer process ask does not open an operator decision");
   } finally {
@@ -458,7 +460,8 @@ test("a planner answer overtakes only the exact decisions it cites", async () =>
 for (const [who, options] of [["planner", { planner: "Answer: Hold\nReason: Wait for the gate." }], ["decider", { decider: "Answer: Hold\nReason: Wait for the gate." }]] as const) {
   test(`bug 23: a ${who} hold on a binary ask stands as a hold`, async () => {
     const f = await askFixture({ waitMs: 5_000, ...options });
-    f.engine.resolution.delegatedAnswerWaitMs = 5_000;
+    // Task 1109: the decider follows the planner rungs, so a silent rung uses a short window.
+    f.engine.resolution.delegatedAnswerWaitMs = who === "decider" ? 300 : 5_000;
     try {
       eligibleDecider(f);
       if (who === "planner") registerPlanner(f, options.planner!);
@@ -488,6 +491,8 @@ test("bug 8: an ask skips an archived project planner; bug 25: planner, decider 
   try {
     eligibleDecider(f);
     registerPlanner(f, "Answer: Never\nReason: Archived.");
+    // Task 1109: the task names the same thread, so its gone thread is skipped on both rungs.
+    f.store.update(f.task.id, { plannerAgentId: "planner-1" });
     Object.assign(f.engine.adapter as object, { originAgent: async (id: string) => ({ id, workspaceId: "ws", title: id, archived: id === "planner-1" }) });
     const receipt = await f.receipt({ question: "Which fixture?" });
     assert.equal(receipt.answer, "Use the fixture — Isolated.");
@@ -557,7 +562,7 @@ test("a decider timeout after a scope hint leaves it pending without an operator
     const receipt = await f.receipt({ question: "Should the task change what it delivers?", kind: "scope" });
     assert.equal(receipt.status, "pending");
     await until(() => f.events("agent_ask_delegation_unknown").some(event => event.detail.includes("decider timed out")));
-    assert.equal(f.delegated.planner.length, 1);
+    assert.equal(f.delegated.planner.length, 2, 'the task planner and then the project planner were asked before the decider');
     assert.equal(f.delegated.deciders.length, 1, "the decider was reached before timing out");
     assert.equal(f.events("agent_ask_decision").length, 0);
   } finally { await f.close(); }
@@ -773,7 +778,7 @@ test("the joint review question on a provider without native questions goes thro
     await until(() => f.events("responsible_question_answered").length > 0);
     assert.match(
       f.events("responsible_question_answered")[0]!.detail,
-      /Continue the current approach — answered by delegated planner planner-1/,
+      /Continue the current approach — answered by delegated planner origin/,
     );
     const marked = new Decisions(f.store).get({ id: settled.id }).overtakenBy?.[0];
     assert.equal(marked?.kind, "planner_answer");
@@ -815,7 +820,7 @@ test("the joint review question on a provider without native questions goes thro
     );
     assert.equal(receipt.status, "answered");
     assert.equal(receipt.answer, "Continue the current approach");
-    assert.equal(receipt.answeredBy, "delegated planner planner-1");
+    assert.equal(receipt.answeredBy, "delegated planner origin");
     assert.equal(
       f.events("agent_ask_joined").length,
       1,
@@ -992,7 +997,7 @@ test("an initial worker run on the task row asks through nucleus_ask and gets th
       receipt.answer,
       "Keep the public API — The brief fixes the public shape",
     );
-    assert.equal(receipt.answeredBy, "planner planner-1");
+    assert.equal(receipt.answeredBy, "planner origin");
     assert.equal(f.events("agent_ask").length, 1, "one durable ask intent");
     assert.match(
       f.events("agent_ask")[0]!.detail,
@@ -1148,6 +1153,8 @@ test("a planner ask waits with a plain reason when the planner host is offline",
   const f = await askFixture({ waitMs: 100, planner: "Answer: Continue\nReason: Within scope" });
   try {
     registerPlanner(f, f.options.planner ?? null);
+    // Task 1109: the task's own planner is the thread on the offline host.
+    f.store.update(f.task.id, { plannerAgentId: 'planner-1' });
     f.engine.identifyOriginHost = async id => id === 'planner-1' ? 'planner-host' : undefined;
     f.engine.hostAvailable = id => id === 'host';
     const pending = await f.receipt({ question: 'Where should this go?', kind: 'scope' });
@@ -1412,10 +1419,10 @@ test('chat output without a command leaves the ask pending without re-presentati
     adapter.askPlanner = async () => { calls++; return 'Ask: another-task\nAnswer: Stop\nReason: Wrong question.'; };
     const result = await f.receipt({ question: 'How should this task proceed?' });
     assert.equal(result.status, 'pending');
-    assert.equal(calls, 1);
+    assert.equal(calls, 2, 'the task planner and the project planner were both asked');
     assert.equal(f.events('agent_ask_answered').length, 0);
     await f.engine.resolution.resumeAskQuestions();
-    assert.equal(calls, 1);
+    assert.equal(calls, 2, 'a completed rung is a known miss, never re-asked');
   } finally { await f.close(); }
 });
 

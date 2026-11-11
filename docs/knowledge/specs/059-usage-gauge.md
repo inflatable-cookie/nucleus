@@ -1,6 +1,6 @@
 # 059 — Subscription usage pressure gauge
 
-Status: step 1 (data) implemented; the Usage page and sidebar rail (step 2, U2) pending
+Status: implemented (steps 1 and 2, including the Usage page and the Paseo sidebar rail)
 Owner: Nucleus runtime maintainers
 Created: 2026-11-11
 Decision owner: operator (Tom, 2026-11-11, lane document `nucleus-usage-gauge`: track each
@@ -59,12 +59,29 @@ exhaustion from a refused run, after the fact.
   when the binding window exhausts before its reset or is already fully used, `on_track` when
   its dial sits within ±0.05 of centre, `spare` left of that, and `unknown` when no window
   carries enough data to project. Partial windows whose reset has passed project nothing
-  (stale, not zero); a fully used one still pins.
+  (stale, not zero); a fully used one still pins. The projected use at reset keeps its
+  over-projection past 100% (schema-capped at twice the window, where the dial is pinned anyway)
+  so the dial's label can say "+18% over"; a fully used window reads exactly 100%.
+
+- **The Usage page** (step 2) lives on the board's navigation in the shared client, so the web
+  board and the plugin render the same screen; nothing lands in the board header (Tom,
+  2026-11-06). One card per subscription: a semicircle dial with a needle (centre on track, right
+  red runs out, left green spare), the projected use at reset and the binding window as its
+  caption ("+18% over · wk", "-30% spare · 5h"), each window's used percent, reset time relative
+  and absolute, time to exhaustion when exhaustion comes first, the sample age and source, and
+  any stored read error. Unknown and not-available readings read plainly with their reason, never
+  as 0 or green. The page refreshes on a slow minute interval — the readers pace themselves, so
+  the page adds no fast polling.
+
+- **The Paseo sidebar rail** is a compact plugin-only contribution: one small ring per
+  subscription, the provider icon inside, the ring's colour and fill showing the pressure state,
+  each ring opening the Usage screen. The screen and the custom sidebar item use the host's newer
+  registration APIs read through optional members (the pinned plugin SDK's types do not carry
+  them), so older hosts keep the board-navigation page and simply render no rail.
 
 - **`usage.state`** (read-only) serves every subscription with its latest reading, the
   projection, and freshness (`asOf`, `nextReadAt`, `lastAttemptAt`, `lastError`). The CLI reads
-  it with `nucleus usage.state`. The Usage page (step 2) and the Paseo sidebar rail read the same
-  RPC; nothing lands in the board header (Tom, 2026-11-06).
+  it with `nucleus usage.state`. The Usage page and the Paseo sidebar rail read the same RPC.
 
 - **Schema.** The store gains `usage_samples` and `usage_read_state` (per-subscription schedule,
   backoff and latest reading); store schema 58. Old stores migrate by re-running the fresh-store
@@ -78,13 +95,16 @@ fields, and a real subprocess fixture for the Codex app-server and Grok CLI path
 windows, pinned at 100%, stale and insufficient data);
 `test/usage-service.test.ts` (subscription mapping, account separation, pacing, backoff to the
 cap, retention, thrown-reader recovery); `test/catalogue.test.ts` (the read-only
-classification). The local check runs `usage.state` against a copy of the live store with the
-real provider homes and shows the operator's subscriptions with sane values; the store copy —
-never the live database — migrates and receives the samples.
+classification); `test/usage-gauge-ui.test.ts` (the dial maps state and value — centre, left,
+right, pinned, unknown — the page renders subscriptions from a `usage.state` fixture, the rail
+renders and links to the page, and the plugin shell renders the page from the board navigation);
+`test/web-shell.test.ts` (the web bundle renders the board that carries the page). The local
+check runs `usage.state` against a copy of the live store with the real provider homes and shows
+the operator's subscriptions with sane values; the store copy — never the live database —
+migrates and receives the samples. The installed UI is checked in dark theme after the roll by
+the planner; a worker never tests on the operator's display.
 
 ## Later
 
-- Step 2 (U2): the Usage page in the web board and the Paseo plugin, one pressure dial per
-  subscription with window details, plus a compact ring rail in Paseo's sidebar.
 - Usage-aware routing (lean away from a subscription projected to run out) stays out until the
   gauge is stable (Tom, 2026-11-11).

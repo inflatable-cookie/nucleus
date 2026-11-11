@@ -43,6 +43,11 @@ export interface UsageProjectionInput {
 export const USAGE_ON_TRACK_EPSILON = 0.05;
 /** A window earlier in its life than this fraction has its dial damped toward centre. */
 export const USAGE_DAMPING_ELAPSED = 0.05;
+/**
+ * The projected use at reset caps at twice the window: the dial pins at pace 2
+ * (`log2 2 = 1`), so a projection past 200% carries no extra meaning.
+ */
+export const USAGE_PROJECTED_USE_CAP = 2;
 const DEFAULT_BURN_HORIZON_MS = 60 * 60 * 1000;
 
 const clamp = (value: number, low: number, high: number) =>
@@ -222,16 +227,23 @@ export function projectUsage(input: UsageProjectionInput): UsageProjection {
   const bindingWindow = input.windows.find(
     (window) => window.windowId === binding.windowId,
   );
+  // The projected share at reset keeps its over-projection (a pace above 1 lands
+  // past 100%, the "+18% over" the dial label shows, schema-capped at 2); a fully
+  // used window is already at 100% and cannot exceed it.
   const projectedUse =
-    bindingWindow && (binding.pace !== null || bindingWindow.usedFraction >= 1)
-      ? clamp(
-          bindingWindow.usedFraction +
-            (binding.pace ?? 0) *
-              (1 - (usageWindowElapsed(bindingWindow, input.now) ?? 0)),
-          0,
-          1,
-        )
-      : null;
+    !bindingWindow || binding.pace === null
+      ? bindingWindow && bindingWindow.usedFraction >= 1
+        ? 1
+        : null
+      : bindingWindow.usedFraction >= 1
+        ? 1
+        : clamp(
+            bindingWindow.usedFraction +
+              binding.pace *
+                (1 - (usageWindowElapsed(bindingWindow, input.now) ?? 0)),
+            0,
+            USAGE_PROJECTED_USE_CAP,
+          );
   return {
     state,
     bindingWindowId: binding.windowId,

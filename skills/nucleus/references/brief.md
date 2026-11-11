@@ -105,3 +105,8 @@ A papercut promotes directly: `papercut.promote-task` with `id`, `agent`,
 task closes; `completionNotificationAgentIds` notifies other threads. To change
 a brief after promotion and before merge, use Queue's `amend_brief` control;
 don't create a second lead.
+
+`queue.planner: AGENT_ID` names the thread that answers this task's planning
+questions first and hears its task-level notices. Unset means the submitting
+thread; reparenting the task moves it. The project planner answers only when the
+task planner cannot, and a short-lived decider follows (task 1109).

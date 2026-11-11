@@ -643,8 +643,11 @@ questions. Enforces the same delegated-answer rules. Pure:
 `answeredQuestionOutcome`. Delegates remain on Resolution.
 
 **Delegation** (`core/questions/delegation.ts`). Puts one question to one delegate under
-an answer window, on the `delegation:<id>` stream, and finds the planner, the
-decider profile and the task facts a delegate reads. Enforces
+an answer window, on the `delegation:<id>` stream, and finds the task and project
+planner rungs, the decider profile and the task facts a delegate reads. `delegateQuestion`
+in `planner-delegation.ts` walks those rungs in order and then the decider: a rung
+observed gone is skipped, a live rung's silence opens the next, and an unknown send
+stops the route. Enforces
 [Delegated answers](#delegated-answers-preserve-the-planners-conversation).
 Pures in `question-delegation.ts`: `binaryApprovalChoice`,
 `delegateApprovedChoice`, `applyBinaryApproval`, `parseDelegatedAnswer`,
@@ -899,6 +902,9 @@ request identities and submitted handoffs are not rewritten.
   planner, else the Nucleus planner (the project that holds origin
   `inflatable-cookie/paseo-northstar-queue`), else stay pending
   and visible.
+- A task's own planning questions — delegated agent asks, blockers, proof waits
+  and board-question notices — reach its task planner first: the thread a brief
+  named, else its owner. The project planner is the fallback rung (task 1109).
 - Project-level notices that once followed the Spec 042 owner — origin
   fallbacks, proof-wait attention, scheduled-milestone-QA reminders and the
   drain prompts — follow the project's planner (`project.set-planner`) and then
@@ -1526,9 +1532,9 @@ review or merge credit; live participants and unsettled effects remain fences.
   phase and completion alone; the block stands until an owner verb or the
   worker's own ready result. The lifecycle classifies every parked blocked or
   error worker report through the blocker ladder, including an empty lookup or
-  identity-only discovery. With no project planner, the ladder asks the task
-  owner before the decider. A classification wait is a lifecycle stop, not an
-  operator question. A live recovery episode keeps the stop it was asked about;
+  identity-only discovery. The ladder asks the task's own planner first and the
+  project planner second, then the decider (task 1109). A classification wait is
+  a lifecycle stop, not an operator question. A live recovery episode keeps the stop it was asked about;
   classification follows when that episode ends.
 - A released, authenticated blocked revision can leave newer published work on
   the same retained branch. Before the next revision,
@@ -1562,6 +1568,18 @@ review or merge credit; live participants and unsettled effects remain fences.
   PR and arms one readiness confirmation.
 
 ### Delegated answers preserve the planner's conversation
+
+Delegated agent asks, blocker escalations, reviewer consults and operator-question
+delegations climb one ladder (task 1109; Tom, 2026-11-11): the **task planner**
+first, then the **project planner** when it is a different thread, then a
+short-lived decider, then the board for operator-only kinds. A task planner is
+the thread a brief named with `queue.planner`, else the task's owner — the thread
+that submitted or promoted it — so reparenting moves it. A rung whose thread is
+observed archived or gone is skipped at once; a live but silent rung still times
+out, and an unknown send never advances. A project with no planner falls from the
+task planner to the decider. The project planner keeps project-level matters:
+lane drains, the plan and project notices. `task.next`, the board and the durable
+question records name the rung that asked and the thread that answered.
 
 Delegated agent asks, blocker escalations, reviewer consults and operator-question
 delegations all use `nucleus question.answer`, authenticated to the calling thread
