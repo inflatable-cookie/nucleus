@@ -7,6 +7,7 @@ import {
   isDelegableQuestionKind,
   type OperatorQuestionKind,
 } from "./operator-question";
+import { normalizeAskTarget, verbTargetSchema } from "../../shared/agent-verbs.mjs";
 
 /**
  * Spec 058 (task 550; task 562 pending+resume): `nucleus_ask`, the Queue
@@ -90,9 +91,13 @@ export const agentAskSchema = z
      * retained reviewer the ordinary planner route answers the question.
      */
     target: z.enum(['planner', 'reviewer']).optional(),
+    /** The `ask` recipient (shared/agent-verbs): a keyword, a project or another task's planner. */
+    to: verbTargetSchema.optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
+    try { normalizeAskTarget(value.to, value.target); }
+    catch (error) { ctx.addIssue({ code: "custom", path: ["to"], message: error instanceof Error ? error.message : String(error) }); }
     const rawChoices = value.choices ?? [];
     const structured = rawChoices.filter((choice): choice is z.infer<typeof agentAskChoiceSchema> => typeof choice !== "string");
     if (structured.length && (structured.length !== rawChoices.length || rawChoices.length < 2 || rawChoices.length > 3))
@@ -122,7 +127,16 @@ export interface AgentAskShape {
   details?: string | null;
   /** Spec 058 slice 17: "reviewer" routes this ask to the task's retained reviewer. */
   target?: 'planner' | 'reviewer';
+  /**
+   * Where the planner rung of this ask goes when it is not the asking task's own
+   * ladder: another task's planner ladder, or a project's fallback planner or one
+   * of its named agents. Absent means this task's own ladder (the original route).
+   */
+  route?: AskRoute;
 }
+
+/** A planner rung addressed beyond the asking task (shared/agent-verbs `ask` recipients). */
+export type AskRoute = { kind: 'project'; project: string; agent: string | null } | { kind: 'task'; taskId: string };
 
 export type AgentAskReceipt =
   | { status: "answered"; askId: string; answer: string; answeredBy: string }
@@ -134,9 +148,10 @@ export const agentAskId = (
   kind: AgentAskKind,
   question: string,
   choices: readonly string[],
-  compact?: Pick<AgentAskShape, "headline" | "choiceDetails" | "recommended" | "details" | "target">,
+  compact?: Pick<AgentAskShape, "headline" | "choiceDetails" | "recommended" | "details" | "target" | "route">,
 ): string => {
   const includesCompact = compact && [compact.headline, compact.choiceDetails, compact.recommended, compact.details].some(value => value !== undefined && value !== null);
+  if (compact?.route) return digest(JSON.stringify(["agent-ask-route", taskId, kind, question, choices, compact.headline ?? null, compact.choiceDetails ?? null, compact.recommended ?? null, compact.details ?? null, compact.route]));
   if (compact?.target === "reviewer") return digest(JSON.stringify(["agent-ask-reviewer", taskId, kind, question, choices, compact.headline ?? null, compact.choiceDetails ?? null, compact.recommended ?? null, compact.details ?? null]));
   return includesCompact
     ? digest(JSON.stringify(["agent-ask-v2", taskId, kind, question, choices, compact.headline ?? null,

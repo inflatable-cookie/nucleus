@@ -307,7 +307,7 @@ test("a worker message reaches a live recipient's thread labelled with the sende
     );
     assert.match(f.notified[0]!.text, /The API for retry_effect landed/);
     assert.match(f.notified[0]!.text, /carry information only/);
-    assert.match(f.notified[0]!.text, /worker-message tool named in your session's launch instructions/);
+    assert.match(f.notified[0]!.text, /tell route your session names/);
     assert.doesNotMatch(f.notified[0]!.text, /nucleus_message/);
     assert.match(f.notified[0]!.messageId, /^ns-agent-message-[0-9a-f]{64}$/);
     // Recorded on both tasks: one row, visible from either side.

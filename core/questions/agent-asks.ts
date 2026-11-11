@@ -1,12 +1,14 @@
 import { delegateQuestion } from './planner-delegation';
 import type { Run, Task } from '../../shared/contracts';
-import { askBinding, askStale, askQuestionRefusal, AGENT_ASK_POLL_MS, AGENT_ASK_WAIT_MS, DEFAULT_AGENT_ASK_KIND, isOperatorOnlyAsk, agentAskId, parseAgentAskAnswer, queueAnswerText, queueAnswerWho, queueAskDeliveryId, type AgentAskReceipt, type AgentAskRequest, type AgentAskShape } from './agent-ask';
+import { askBinding, askStale, askQuestionRefusal, AGENT_ASK_POLL_MS, AGENT_ASK_WAIT_MS, DEFAULT_AGENT_ASK_KIND, isOperatorOnlyAsk, agentAskId, parseAgentAskAnswer, queueAnswerText, queueAnswerWho, queueAskDeliveryId, type AgentAskReceipt, type AgentAskRequest, type AgentAskShape, type AskRoute } from './agent-ask';
 import { REVIEWER_CONSULT_TIMEOUT_MS, reviewerAskPrompt } from './blocker-ladder';
 import { Decisions } from '../planning/decisions';
 import { applyBinaryApproval, parseNativeDelegatedReply } from './question-delegation';
 import type { Resolution } from '../resolution';
-import { DelegatedHostUnavailable } from './delegation';
+import { DelegatedHostUnavailable, type PlannerRung } from './delegation';
 import { digest, type Store } from '../store/store';
+import { taskByReference, projectOfTarget } from './agent-targets';
+import { normalizeAskTarget, type AskTarget } from '../../shared/agent-verbs.mjs';
 
 /**
  * `nucleus_ask`: record one in-turn ask, route it to the retained reviewer, the
@@ -44,17 +46,16 @@ export class AgentAsks {
     if (run.role !== 'revision' && run.role !== 'reviewer') throw Error(`A ${run.role} run cannot ask; nucleus_ask is the worker's and reviewer's question tool`);
     const refusal = askQuestionRefusal(input.question);
     if (refusal) throw Error(refusal);
-    // Worker process asks reach the retained reviewer first. Reviewer asks skip
-    // self-consult, then take the same planner/decider classification as worker
-    // asks. Operator-only kinds skip the reviewer rung for both.
-    const target = run.role === 'revision' && !isOperatorOnlyAsk(input.kind ?? DEFAULT_AGENT_ASK_KIND) ? 'reviewer' : 'planner';
+    const kind = input.kind ?? DEFAULT_AGENT_ASK_KIND;
+    const { target, hint, route } = await this.resolveAskRoute(task, run, normalizeAskTarget(input.to, input.target), isOperatorOnlyAsk(kind));
     const ask: AgentAskShape = {
       sourceAgentId: run.agentId ?? undefined,
-      id: agentAskId(task.id, input.kind ?? DEFAULT_AGENT_ASK_KIND, input.question, input.choices ?? [], {
-        headline: input.headline, choiceDetails: input.choiceDetails, recommended: input.recommended, details: input.details, target: input.target,
+      id: agentAskId(task.id, kind, input.question, input.choices ?? [], {
+        headline: input.headline, choiceDetails: input.choiceDetails, recommended: input.recommended, details: input.details, target: hint, route,
       }),
-      kind: input.kind ?? DEFAULT_AGENT_ASK_KIND, question: input.question, choices: input.choices ?? [],
+      kind, question: input.question, choices: input.choices ?? [],
       headline: input.headline, choiceDetails: input.choiceDetails, recommended: input.recommended, details: input.details, target,
+      ...(route ? { route } : {}),
     };
     const answered = this.resolution.recordedAnswer(task.id, ask.id);
     if (answered) return answered;
@@ -66,6 +67,43 @@ export class AgentAsks {
   }
   askBinding(task: Task, runId: string): Pick<Run, 'id' | 'role' | 'agentId'> { return askBinding(this.store, task, runId); }
   askStale(task: Task, suppliedRunId: string): Error { return askStale(this.store, task, suppliedRunId); }
+  /**
+   * The route one `ask` takes. `default` and `reviewer` keep the original rungs: a
+   * worker's ask reaches its retained reviewer first, and only a planning
+   * classification or no reviewer opens the planner ladder; operator-only kinds
+   * skip the reviewer. `planner` starts on this task's own ladder. `task` and
+   * `project` address another task's planner ladder or a project's fallback planner
+   * or named agent. A named agent observed archived, gone or unknown is refused here
+   * with that state, so nothing is recorded for a thread that cannot answer.
+   */
+  async resolveAskRoute(task: Task, run: Pick<Run, 'role'>, named: AskTarget, operatorOnly: boolean): Promise<{ target: 'reviewer' | 'planner'; hint?: 'reviewer' | 'planner'; route?: AskRoute }> {
+    if (named.kind === 'default') return { target: run.role === 'revision' && !operatorOnly ? 'reviewer' : 'planner' };
+    // A reviewer's own ask skips self-consult, as it always did, and takes the planner ladder.
+    if (named.kind === 'reviewer') return { target: run.role === 'revision' && !operatorOnly ? 'reviewer' : 'planner', hint: 'reviewer' };
+    if (named.kind === 'planner') return { target: 'planner', hint: 'planner' };
+    if (named.kind === 'task') return { target: 'planner', route: { kind: 'task', taskId: taskByReference(this.store, task, named.task).id } };
+    const project = projectOfTarget(this.store, named.project);
+    if (named.agent !== null) await this.resolution.resolveProjectAgentTarget(project.key, named.agent);
+    return { target: 'planner', route: { kind: 'project', project: project.key, agent: named.agent } };
+  }
+  /**
+   * The planner rungs a routed ask asks, in order. A route to another task's ladder
+   * uses that task's own rungs. A project route asks its fallback planner, or one
+   * named agent, and only while that thread is observed live. Anything else moves
+   * the ask on to the decider and the board, with the reason recorded.
+   */
+  async askRungs(task: Task, ask: Pick<AgentAskShape, 'id' | 'route'>): Promise<PlannerRung[]> {
+    if (!ask.route) return (await this.resolution.plannerRungsFor(task)).rungs;
+    if (ask.route.kind === 'task') return (await this.resolution.plannerRungsFor(this.store.task(ask.route.taskId))).rungs;
+    try {
+      const target = await this.resolution.resolveProjectAgentTarget(ask.route.project, ask.route.agent);
+      if (ask.route.agent === null && await this.resolution.plannerThreadGone(target.agentId)) throw Error(`the fallback planner ${target.agentId} is archived or gone`);
+      return [{ agentId: target.agentId, rung: 'project' }];
+    } catch (error) {
+      this.store.event(task.id, 'agent_ask_delegation_skipped', `${ask.id}: project ${ask.route.project}${ask.route.agent ? ` agent ${ask.route.agent}` : ' planner'} skipped: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
+      return [];
+    }
+  }
   recordedAnswer(taskId: string, askId: string): AgentAskReceipt | null {
     const event = this.store.eventsAll(taskId).find(event => event.kind === 'agent_ask_answered' && event.detail.startsWith(`${askId}:`));
     const parsed = event ? parseAgentAskAnswer(event.detail) : null;
@@ -162,7 +200,7 @@ export class AgentAsks {
     let result;
     try {
       // Task 1109: the task's own planner first, then the project planner, then the decider.
-      const { rungs } = await this.resolution.plannerRungsFor(task);
+      const rungs = await this.askRungs(task, ask);
       result = await delegateQuestion(this.resolution, task, {
         planners: rungs.map(item => ({ ...item, messageId: `ns-agent-ask-${ask.id}${item.rung === 'project' ? '-project' : ''}` })),
         decisionId: ask.id, context,

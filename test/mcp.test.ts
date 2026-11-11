@@ -46,9 +46,10 @@ for(const scope of ['legacy','report'])test(`real MCP ${scope} launch exposes on
    // Spec 058 (task 550): the ask tool rides the same per-run binding as the report tool.
    // Spec 058 rollout step 3 (task 621): so does nucleus_message. The retired
    // `northstar_*` names are neither advertised nor accepted by a live session.
-   assert.deepEqual(catalog.tools.map(tool=>tool.name),['nucleus_report','nucleus_ask','nucleus_message']);
+   assert.deepEqual(catalog.tools.map(tool=>tool.name),['nucleus_report','ask','nucleus_ask','tell','nucleus_message']);
    for(const retired of ['northstar_report','northstar_ask','northstar_message']) assert.equal((await client.callTool({name:retired,arguments:{}})).isError,true,`${retired} is not an exposed tool`);
-   const askProperties=catalog.tools.find(tool=>tool.name==='nucleus_ask')!.inputSchema.properties as Record<string,{enum?:string[]}>;
+   const askProperties=catalog.tools.find(tool=>tool.name==='ask')!.inputSchema.properties as Record<string,{enum?:string[]}>;
+   assert.ok('to' in askProperties&&'target' in askProperties,'ask names its recipient with to and keeps the target alias');
    assert.deepEqual(askProperties.kind.enum,['proof_acceptance','budget','review','scope','release','process']);
    const foreignRunAsk=await client.callTool({name:'nucleus_ask',arguments:{runId:'run-1-typo',question:'Which approach?'}});assert.equal(foreignRunAsk.isError,true);
    assert.match(String((foreignRunAsk.content as {text:string}[])[0].text),/bound to run run-1; the ask named run run-1-typo/);

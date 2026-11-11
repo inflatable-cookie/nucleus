@@ -234,8 +234,8 @@ run and callback identity; a host-wide setting has no such gate.
 The Settings screen (through the plugin bridge or the local web board with a
 token, [below](#local-web-board)), the CLI (`bin/queue-cli.mjs`, which reads the
 credential itself) and any task session's shell all reach the service as the
-same owner. Task launches expose only `nucleus_report`, `nucleus_ask` and
-`nucleus_message` over MCP, but that is a discovery reduction, not a gate. The
+same owner. Task launches expose only `nucleus_report`, `ask` and `tell` over MCP
+(with the `nucleus_ask` and `nucleus_message` aliases), but that is a discovery reduction, not a gate. The
 effective boundary for a host-wide write is therefore the OS same-user boundary:
 skill and guide text that reserves these settings for the operator is policy. Nucleus's protection is
 accident prevention on the transport plus a durable record of every applied
@@ -734,7 +734,7 @@ the latest refusal is kept in owner-only `oversize-response.json`.
 ## Agent interfaces
 
 New worker, reviewer, coordinator and proof-executor MCP configurations expose
-only `nucleus_report`, `nucleus_ask` and `nucleus_message`; older configurations
+only `nucleus_report`, `ask` and `tell` (with the `nucleus_ask` and `nucleus_message` aliases); older configurations
 without an explicit scope keep their administrative catalog. This is discovery,
 not authorization: callback authentication and server gates stay mandatory, and
 retained sessions need no recreation.

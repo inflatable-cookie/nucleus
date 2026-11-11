@@ -31,7 +31,7 @@ test('worker and reviewer prompts carry the ask-in-turn rule on the one lifecycl
   assert.match(worker, /Record each material decision and why in the PR body as a short Decisions list so the reviewer can check it/);
   assert.match(worker, /When the brief is ambiguous, pick the reading that best serves its stated outcome, say so in the PR, and carry on/);
   assert.match(worker, /stop that specific risky action and choose a safe alternative within scope; it does not mean end your turn and ask/);
-  assert.match(worker, /Ask through nucleus_ask only when a product or scope change or a release or outward action would change what the task delivers; budget extensions, including past 2x, are delegated under approve by default, Tom 2026-11-03/);
+  assert.match(worker, /Ask through the ask tool only when a product or scope change or a release or outward action would change what the task delivers; budget extensions, including past 2x, are delegated under approve by default, Tom 2026-11-03/);
   assert.match(worker, /Do not seek approval for binary choices; approve by default, proceed and record the decision/);
   assert.match(worker, /A product or scope change is a discussion: raise it once with decision.add, including context, options and a recommendation/);
   assert.match(worker, /Do not report blocked for a decision you could make: report blocked only for something outside your control/);
@@ -45,7 +45,7 @@ test('worker and reviewer prompts carry the ask-in-turn rule on the one lifecycl
   assert.match(worker, /back off from 5 seconds up to 60 seconds for about 15 minutes/);
   assert.match(worker, /Observe the remote branch or existing PR before every retry/);
   assert.doesNotMatch(worker, /Before you report blocked.*ask the retained reviewer/);
-  assert.match(worker, /call the nucleus_ask MCP tool once inside the current turn/);
+  assert.match(worker, /call the ask MCP tool once inside the current turn/);
   assert.doesNotMatch(RESPONSIBLE_ASK_IN_TURN_RULE, /retained reviewer first|Decision: operator|planner or decider/);
   assert.match(worker, /Use kind: scope only when changing what the task delivers/);
   assert.match(worker, /Report blocked or error only if the task genuinely cannot proceed after the answer/);

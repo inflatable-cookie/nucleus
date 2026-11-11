@@ -944,7 +944,7 @@ export class Resolution {
   agentAskPendingDetail(taskId: string, askId: string): string { return this.agentAsks.agentAskPendingDetail(taskId, askId); }
   agentMessage(input: AgentMessageRequest, token: string): Promise<AgentMessageReceipt> { return this.agentMessages.agentMessage(input, token); }
   messageRecipientTask(from: Task, to: string): Task { return this.agentMessages.messageRecipientTask(from, to); }
-  private messageRecipientIdentity(task: Task, role: AgentMessageRole): { agentId: string | null; present: boolean; live: boolean; wait: string } { return this.agentMessages.messageRecipientIdentity(task, role); }
+  private messageRecipientIdentity(task: Task, role: 'worker' | 'reviewer'): { agentId: string | null; present: boolean; live: boolean; wait: string } { return this.agentMessages.messageRecipientIdentity(task, role); }
   private deliverAgentMessage(recipient: Task, record: AgentMessageRecord): Promise<AgentMessageReceipt> { return this.agentMessages.deliverAgentMessage(recipient, record); }
   private messageReceipt(recipient: Task, role: AgentMessageRole, record: AgentMessageRecord): AgentMessageReceipt { return this.agentMessages.messageReceipt(recipient, role, record); }
   private taskLabel(task: Task): string { return this.agentMessages.taskLabel(task); }

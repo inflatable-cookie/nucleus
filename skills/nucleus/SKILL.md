@@ -5,8 +5,9 @@ description: Shape a project's long-horizon direction with the operator (Atlas).
 
 The data home is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set.
 
-New Nucleus worker, reviewer and coordinator sessions expose `nucleus_report`
-and `nucleus_ask` through MCP. Report with the exact run ID in the current instructions. A reviewer
+New Nucleus worker, reviewer and coordinator sessions expose `nucleus_report`,
+`ask` and `tell` through MCP (`nucleus ask` and `nucleus tell` on a host without an MCP binding,
+with the run's ticket on stdin). Report with the exact run ID in the current instructions. A reviewer
 report may also carry an optional bounded `verdicts` array (`id`, `subject`,
 `verdict` one of `pass`, `fail`, `insufficient` or `not_applicable`, `evidence`,
 optional `note`). Briefs do not require verdict entries or pass gates. A `ready_to_merge` report omits
@@ -51,12 +52,20 @@ For a repository change, add a Markdown changelog fragment under
 `CHANGELOG.md`'s `[Unreleased]` section; release preparation folds fragments
 there.
 
-Worker-to-worker messages (Spec 058): a worker or reviewer shares information directly with the
-current worker or reviewer of another task with `nucleus_message` (`to` a task reference like
-`effigy#590` or a task id, `role` worker or reviewer, `text`); Nucleus delivers it labelled with the
-sender task and role, queues it for the recipient's next turn, or reports an uncertain delivery that
-must not be resent. Messages carry information only —
-decisions still go through `nucleus_ask` and the planner ladder.
+The two agent verbs (task 1108). Name recipients by role, task or project; never an agent or
+thread ID. `ask` is a question that waits for an answer and escalates; `tell` is information only.
+- `ask` `to`: `"reviewer"` (your task's retained reviewer; falls through to the planner ladder),
+  `"planner"` (your task's planner ladder: planner, project planner, decider, then the board for
+  operator-only kinds), `{"project": "<key or name>"}` (that project's fallback planner),
+  `{"project": "...", "agent": "<name>"}` (one named project agent; refused with its state if
+  archived or gone), or `{"task": "<reference>", "role": "planner"}` (another task's planner ladder).
+- `tell` `to`: `"reviewer"` or `"worker"` (your task's counterpart), `"planner"`, a task reference such
+  as `effigy#590` with `role` (worker, reviewer or planner), `{"project": ...}` or
+  `{"project": ..., "agent": ...}`.
+Nucleus delivers a `tell` labelled with your role and project, queues it for the recipient's next
+turn or the project inbox, or reports an uncertain delivery that must not be resent. Messages carry
+information only. Decisions still go through `ask` and the planner ladder. `nucleus_ask` and
+`nucleus_message` remain as aliases for retained sessions.
 
 **Payloads:** pass JSON on stdin with `-`, for example
 `node bin/queue-cli.mjs METHOD - <<'JSON'`, then the JSON, then a closing `JSON`
@@ -79,7 +88,7 @@ them where needed, not an instruction to use them.
 
 A recommendation within the approved outcome is yours to carry out, including a bounded diagnostic.
 Record material decisions and reasons in the PR. Wait and retry transient forge failures such as 5xx.
-For a remaining worker question, `nucleus_ask` defaults to the retained reviewer for a second opinion;
+For a remaining worker question, `ask` defaults to the retained reviewer for a second opinion;
 this adds neither a reviewer nor a review round. The reviewer answers through `question.answer`.
 When a planning ruling is needed, put `Decision: planner — <reason>` in its one-line `answer`:
 
