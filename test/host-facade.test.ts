@@ -252,3 +252,43 @@ test('a qualified identity for another registered host is routed to that host, n
   assert.throws(() => host.observe(formatAgentId('t3code:gone', 'planner')), /belongs to host t3code:gone.*unknown or offline/);
   assert.equal(calls.filter(call => call.method === 'observe').length, 1, 'the unknown host received no call');
 });
+
+test('a mixed observation inventory reads each host share on its own adapter', async () => {
+  const calls: Calls[] = [];
+  const observation = (label: string, workspaceId: string) => (id: string) => {
+    calls.push({ method: 'observationInventory', args: [label, id] });
+    return { id, workspaceId, status: 'idle', active: false, permissions: false, error: '' };
+  };
+  const bound = fakeAdapter(calls, 'bound') as unknown as Record<string, unknown>;
+  bound.observationInventory = async (ids: string[]) => new Map(ids.map(id => [id, observation('bound', 'bound-ws')(id)]));
+  const foreign = fakeAdapter(calls, 'foreign') as unknown as Record<string, unknown>;
+  foreign.observationInventory = async (ids: string[]) => new Map(ids.map(id => [id, observation('foreign', 'foreign-ws')(id)]));
+  const adapters: Record<string, Adapter> = { 'paseo:one': bound as unknown as Adapter, 't3code:two': foreign as unknown as Adapter };
+  let boundHostId: string | undefined = 'paseo:one';
+  const host = new HostFacade({
+    get adapter() { return adapters[boundHostId!]!; },
+    get activeHostId() { return boundHostId; },
+    withHost: (id, fn) => { const previous = boundHostId; boundHostId = id; try { return fn(); } finally { boundHostId = previous; } },
+    hostOnline: id => id in adapters,
+  });
+
+  const bare = 'bare-agent';
+  const boundQualified = formatAgentId('paseo:one', 'one-a');
+  const foreignQualified = formatAgentId('t3code:two', 'two-a');
+  const mixed = await host.observationInventory([bare, boundQualified, foreignQualified]);
+  // The foreign group is served by the foreign adapter, not by a captured
+  // reference to the ambient one.
+  assert.deepEqual(calls, [
+    { method: 'observationInventory', args: ['bound', bare] },
+    { method: 'observationInventory', args: ['bound', 'one-a'] },
+    { method: 'observationInventory', args: ['foreign', 'two-a'] },
+  ]);
+  assert.deepEqual([...mixed!.keys()].sort(), [bare, boundQualified, foreignQualified].sort());
+  assert.equal(mixed!.get(bare)!.workspaceId, 'bound-ws');
+  assert.equal(mixed!.get(boundQualified)!.workspaceId, 'bound-ws');
+  assert.equal(mixed!.get(foreignQualified)!.workspaceId, 'foreign-ws');
+
+  // A qualified identity whose host is unknown refuses before any read.
+  assert.throws(() => host.observationInventory([formatAgentId('t3code:gone', 'gone-a')]),
+    /belongs to host t3code:gone.*unknown or offline/);
+});

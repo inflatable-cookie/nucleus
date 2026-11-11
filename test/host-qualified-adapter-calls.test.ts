@@ -59,6 +59,26 @@ test('direct host adapter calls unwrap qualified recipient and source IDs only f
     (routedAdapter as unknown as { notify: unknown }).notify = async (id: string, _messageId: string, _text: string, source?: string) => { routedMessages.push({ id, source }); };
     await engine.withHost('t3code:one', () => engine.adapter.notify!(formatAgentId('t3code:two', 'native-agent'), 'message', 'text', formatAgentId('t3code:one', 'planner')));
     assert.deepEqual(routedMessages, [{ id: 'native-agent', source: undefined }]);
+
+    // A mixed observation inventory reads each host's share on its own adapter
+    // through the production composition (facade over the transport proxy) and
+    // rebuilds the caller's qualified keys. The method lookup happens inside
+    // each group read: a method captured before withHost would bind every group
+    // to the ambient transport at proxy-get time.
+    const inventories: Array<[string, string[]]> = [];
+    const observation = (workspaceId: string) => (id: string) => ({ id, workspaceId, status: 'idle', active: false, permissions: false, error: '' } as AgentObservation);
+    (adapter as unknown as { observationInventory: unknown }).observationInventory =
+      async (ids: string[]) => { inventories.push(['bound', ids]); return new Map(ids.map(id => [id, observation('bound-ws')(id)])); };
+    (routedAdapter as unknown as { observationInventory: unknown }).observationInventory =
+      async (ids: string[]) => { inventories.push(['foreign', ids]); return new Map(ids.map(id => [id, observation('routed-ws')(id)])); };
+    const bare = 'bare-agent';
+    const boundQualified = formatAgentId('t3code:one', 'one-a');
+    const foreignQualified = formatAgentId('t3code:two', 'two-a');
+    const mixed = await engine.withHost('t3code:one', () => engine.host.observationInventory([bare, boundQualified, foreignQualified]));
+    assert.deepEqual(inventories, [['bound', [bare, 'one-a']], ['foreign', ['two-a']]]);
+    assert.deepEqual([...mixed!.keys()].sort(), [bare, boundQualified, foreignQualified].sort());
+    assert.equal(mixed!.get(boundQualified)!.workspaceId, 'bound-ws');
+    assert.equal(mixed!.get(foreignQualified)!.workspaceId, 'routed-ws');
   } finally {
     await engine.stop();
     store.close();

@@ -144,10 +144,19 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
       throw new Error(foreignIdentityRefusal(parsed.hostId));
     }
     const reads = [...groups.entries()].map(([host, group]) => {
-      const call = () => read.call(this.owner.adapter, group.native)
-        .then(result => result ? new Map(group.qualified.flatMap((id, i) => {
-          const observation = result.get(group.native[i]!); return observation ? [[id, observation] as const] : []; })) as ReadonlyMap<AgentId, HostObservation>
-        : null);
+      // The method is looked up inside each group read, never captured: on an
+      // Engine the adapter is a transport proxy bound at property-access time,
+      // so a captured reference would serve every group from the ambient
+      // transport — exactly the unwrap-against-the-wrong-host this class fix
+      // removes.
+      const call = () => {
+        const groupRead = this.owner.adapter.observationInventory;
+        if (!groupRead) return refused('This host cannot read an observation inventory');
+        return groupRead.call(this.owner.adapter, group.native)
+          .then(result => result ? new Map(group.qualified.flatMap((id, i) => {
+            const observation = result.get(group.native[i]!); return observation ? [[id, observation] as const] : []; })) as ReadonlyMap<AgentId, HostObservation>
+          : null);
+      };
       return !host || host === bound ? call() : this.owner.withHost!(host, call);
     });
     if (reads.length === 1) return reads[0]!;
