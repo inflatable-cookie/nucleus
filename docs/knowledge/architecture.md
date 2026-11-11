@@ -431,10 +431,12 @@ owner to the rules it enforces.
   implementation. `core/host/admission.ts` admits,
   coalesces and measures every call by class. `shared/host.ts` is the host
   interface (its `catalog` method is the first). Core reaches it through
-  `core/host/host-facade.ts`, which reads the owner's adapter at each call; agent
-  origin, observation, timeline, stop, archive and the usage stream go through
-  that façade. It also exposes interrupt-and-continue; disposition currently
-  calls the adapter directly. `shared/profiles.ts` owns
+  `core/host/host-facade.ts`, which reads the owner's adapter at each call. The
+  engine adapter proxy also normalizes agent-ID arguments at the transport
+  boundary, including legacy direct adapter calls: qualified IDs are unwrapped
+  only when their host matches the selected host, and otherwise refused. The
+  façade provides the typed delegates for origin, observation, timeline, stop,
+  archive, usage, messaging and native questions. `shared/profiles.ts` owns
   Nucleus's own profile records and their per-host availability, and
   `core/planning/profile-import.ts` makes the one-time copy of a host's profile list
   ([Spec 052](specs/052-usage-level.md)).
