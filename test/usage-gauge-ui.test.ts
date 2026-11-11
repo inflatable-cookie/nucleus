@@ -431,6 +431,10 @@ test("the page renders subscriptions from a fixture usage.state", async () => {
   // Each card names its provider and group, the state, and the dial caption
   // with the projected use at reset and the binding window ("wk").
   assert.ok(text.includes("Codex · codex-main"), "the codex card renders");
+  const pageLogos = tree.ofType("Image").map((node) => node.props.accessibilityLabel);
+  for (const provider of ["Claude", "Codex", "Grok"]) {
+    assert.ok(pageLogos.includes(`${provider} logo`), `${provider} logo renders on the page`);
+  }
   assert.ok(text.includes("Will run out"));
   assert.ok(
     new RegExp(`\\+${over}% over · wk`).test(text),
@@ -492,6 +496,10 @@ test("the sidebar rail renders rings per subscription and links to the page", as
   await settle(
     () => tree.all(/usage: /).length === fixture.subscriptions.length,
   );
+  const railLogos = tree.ofType("Image").map((node) => node.props.accessibilityLabel);
+  for (const provider of ["Claude", "Codex", "Grok"]) {
+    assert.ok(railLogos.includes(`${provider} logo`), `${provider} logo renders in the rail`);
+  }
   const labels = tree
     .all(/usage: /)
     .map((node) => node.props.accessibilityLabel as string);
@@ -514,6 +522,20 @@ test("the sidebar rail renders rings per subscription and links to the page", as
     [{ screenId: hostUsage.USAGE_SCREEN_ID }],
     "pressing a ring opens the Usage screen",
   );
+});
+
+test("provider logos fall back for unknown providers and titles omit duplicate groups", async () => {
+  await load();
+  assert.equal(usage.usageCardHeading("claude", "claude"), "Claude");
+  assert.equal(usage.usageCardHeading("claude", "Claude"), "Claude");
+  assert.equal(usage.usageCardHeading("claude", "work"), "Claude · work");
+
+  const fallback = mount(
+    h(usage.ProviderLogo, { provider: "unknown", size: 12, color: dark.foreground }),
+  );
+  const icon = fallback.ofType("Icon")[0];
+  assert.equal(icon?.props.name, "Bot");
+  assert.equal(icon?.props.color, dark.foreground);
 });
 
 test("the plugin shell renders the page from the board navigation", async () => {
