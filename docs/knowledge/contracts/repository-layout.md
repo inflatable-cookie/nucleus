@@ -65,6 +65,7 @@ surface. The old `server/` and `host/` source roots disappear after migration.
 | `hosts/paseo/adapter/` | SDK adapter, asks, messages, questions, workspace and workspace-id mapping. | Paseo, service process |
 | `hosts/paseo/plugin/` | Public plugin-backend index, registration, bridge and manifest source. | Paseo plugin process |
 | `hosts/paseo/client/` | Public client index, contribution registration and shell implementation. | Paseo browser/native UI |
+| `hosts/t3code/` | Public service index, native thread adapter, minimal RPC client and durable intent state. | T3Code, service process |
 | `client/` | Host-neutral board UI, controls, settings and planning surfaces. | Neutral, browser/native UI |
 | `client/board/` | Board cards, pipeline, header and data subscriptions. | Neutral |
 | `client/task/` | Task detail and activity. | Neutral |
@@ -77,12 +78,13 @@ The web shell stays in `client/web/`: a browser transport does not implement an
 agent-host adapter. A future agent app gets its own `hosts/<app>/` subtree;
 adding it must not make core or board code depend on its SDK.
 
-The proposed T3Code adapter belongs behind `hosts/t3code/index.ts`, with its
+The T3Code adapter lives behind `hosts/t3code/index.ts`, with its
 minimal private-protocol client and adapter modules inside that host subtree.
 It has no plugin-backend or client contribution entry. Service composition
 reaches only the public index; no T3 protocol type enters core or shared.
-The [adapter design](../specs/t3code-host-adapter.md) is a checkpoint, not an
-implemented second host.
+The [adapter contract](../specs/t3code-host-adapter.md) owns its nightly protocol
+mapping and private-server proof surface. `service/t3code-host.ts` registers its
+independent connection and admission state alongside Paseo.
 
 ## Supporting layout
 

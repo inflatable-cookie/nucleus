@@ -42,6 +42,7 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
 
   capabilities(): HostCapabilities {
     const { adapter } = this.owner;
+    if (adapter.capabilities) return adapter.capabilities();
     return { reportingViaMcp: adapter.reportingViaMcp === true, supportsCoordinatorRecovery: adapter.supportsCoordinatorRecovery === true };
   }
 

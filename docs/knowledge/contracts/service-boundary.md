@@ -1145,11 +1145,14 @@ keeps that host's admission state. The local service credential remains a
 same-user accident-prevention boundary, not adversarial per-host authentication.
 
 The runtime retains one admission and breaker state for each observed host ID.
-The current Paseo route selects one host; connecting and routing a second live
-host is a later step.
+Paseo remains the default connection. Optional owner-only `settings.json`
+configuration `t3code: {endpoint, bearer, probeThreadId?}` registers a second
+native host with separate admission state. The bearer is issued locally with
+`t3 auth session issue`, never returned by health or public settings. Initial
+Paseo identity is recorded first; subsequent T3 reconnects are independent.
 
-The [T3Code adapter design](../specs/t3code-host-adapter.md) defines the second
-host's proposed connection and operation boundary. Before registration or
+The [T3Code adapter contract](../specs/t3code-host-adapter.md) defines the second
+host's connection and operation boundary. Before registration or
 mutation, authenticate the environment, check the protocol and strictly decode
 a full shell snapshot and one thread subscription; a missing method or field
 refuses by name. Nightly version strings are recorded diagnostics, not an
@@ -1163,7 +1166,9 @@ retry; every other send failure remains unknown (planner, 2026-11-11).
 Never send a compatibility canary mutation to the operator's T3.
 Unsupported reporting, native decisions and UI capabilities remain
 explicit; transport registration alone grants no lifecycle dispatch capability.
-This is a design checkpoint; the installed runtime still uses the Paseo route.
+T3 lifecycle dispatch refuses before creation until CLI reporting and board
+decision routing are available. Native capabilities are exposed through the
+host facade; an unsupported capability never becomes an empty successful reply.
 
 **Idle shutdown** (Tom, 2026-11-08, `vision.md` "Split details"). The daemon
 closes ten minutes after the last host closes. "Last host closes" means no live

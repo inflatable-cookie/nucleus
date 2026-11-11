@@ -1,0 +1,71 @@
+{
+  "sourceRevision": "97e35bcf23e4dcf34c2dcffadd37c08db0e01e52",
+  "nightlyVersion": "0.1.6-nightly.20261030.3917",
+  "protocol": 2,
+  "boundaryDecodeExample": "Missing key\n  at [\"commandId\"]",
+  "source": "packages/contracts/src/orchestrationV2.ts",
+  "commands": {
+    "thread.stop": {
+      "required": ["type", "commandId", "threadId"],
+      "optional": ["reason", "stopDelegatedTasks"]
+    },
+    "thread.archive": {
+      "required": ["type", "commandId", "threadId"],
+      "optional": []
+    },
+    "runtime-request.respond": {
+      "required": ["type", "commandId", "threadId", "requestId"],
+      "optional": ["decision", "feedback", "answers", "attachmentsByQuestionId"],
+      "decisions": ["accept", "acceptForSession", "acceptAlways", "decline", "cancel"],
+      "answers": "Record<string, unknown>"
+    },
+    "message.dispatch": {
+      "required": ["type", "commandId", "threadId", "messageId", "text", "attachments", "dispatchMode"],
+      "dispatchModes": ["defer_start", "steer_active", "restart_active", "queue_after_active", "start_immediately"]
+    }
+  },
+  "launchThread": {
+    "required": ["commandId", "projectId", "title", "modelSelection", "runtimeMode", "interactionMode", "workspaceStrategy"],
+    "existingWorktreeRequired": ["type", "worktreePath"],
+    "initialMessageRequired": ["text", "attachments"],
+    "modelSelectionRequired": ["instanceId", "model"],
+    "runtimeModes": ["approval-required", "auto-accept-edits", "auto", "full-access"],
+    "interactionModes": ["default", "plan"]
+  },
+  "examples": [
+    {
+      "method": "orchestration.launchThread",
+      "payload": {
+        "commandId": "fixture:create",
+        "threadId": "fixture-thread",
+        "projectId": "fixture-project",
+        "title": "Synthetic task",
+        "modelSelection": { "provider": "codex", "model": "synthetic", "instanceId": "synthetic-instance" },
+        "runtimeMode": "approval-required",
+        "interactionMode": "default",
+        "workspaceStrategy": { "type": "existing_worktree", "worktreePath": "/fixture/worktree", "branch": "fixture-branch" },
+        "initialMessage": { "messageId": "fixture-message", "text": "Synthetic prompt", "attachments": [] }
+      }
+    },
+    {
+      "method": "orchestration.dispatchCommand",
+      "payload": { "type": "message.dispatch", "commandId": "fixture:followup", "threadId": "fixture-thread", "messageId": "fixture-message-2", "text": "Continue", "attachments": [], "dispatchMode": { "type": "start_immediately" } }
+    },
+    {
+      "method": "orchestration.dispatchCommand",
+      "payload": { "type": "runtime-request.respond", "commandId": "fixture:answer", "threadId": "fixture-thread", "requestId": "fixture-request", "answers": { "fixture-question": ["Synthetic answer"] } }
+    },
+    {
+      "method": "orchestration.dispatchCommand",
+      "payload": { "type": "runtime-request.respond", "commandId": "fixture:permission", "threadId": "fixture-thread", "requestId": "fixture-permission", "decision": "accept" }
+    },
+    {
+      "method": "orchestration.dispatchCommand",
+      "payload": { "type": "thread.stop", "commandId": "fixture:stop", "threadId": "fixture-thread" }
+    },
+    {
+      "method": "orchestration.dispatchCommand",
+      "payload": { "type": "thread.archive", "commandId": "fixture:archive", "threadId": "fixture-thread" }
+    }
+  ]
+}

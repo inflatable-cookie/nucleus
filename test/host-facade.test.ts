@@ -139,6 +139,9 @@ test("capabilities reads the adapter's flags synchronously, and an unreported fl
   assert.deepEqual(host.capabilities(), { reportingViaMcp: true, supportsCoordinatorRecovery: true });
   owner.adapter = silent;
   assert.deepEqual(host.capabilities(), { reportingViaMcp: false, supportsCoordinatorRecovery: false });
+  const explicit = { reportingViaMcp: false, supportsCoordinatorRecovery: false, nativeDecisions: false, uiContributions: false, lifecycleDispatch: false };
+  owner.adapter = { capabilities: () => explicit } as Adapter;
+  assert.equal(host.capabilities(), explicit);
 });
 
 test("an optional adapter method that is absent refuses by rejection with the named capability, and never invents a value", async () => {

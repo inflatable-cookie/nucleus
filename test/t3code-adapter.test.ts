@@ -1,0 +1,247 @@
+import { test, type TestContext } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { T3CodeHost } from '../hosts/t3code/adapter';
+import { ProvenPreSendRefusalError } from '../core/host';
+import type { HostAgentSpec } from '../shared/host';
+import type { Profile } from '../shared/contracts';
+import { t3Fake, STAMP } from './support/t3code-fake';
+
+const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
+  available: true, problem: '', notes: '', supportedThinking: [] };
+async function fixture(t: TestContext) {
+  const root = mkdtempSync(join(tmpdir(), 't3code-adapter-'));
+  const directory = await realpath(root);
+  const server = await t3Fake(t, directory);
+  const options = { endpoint: server.endpoint, bearer: 'synthetic-bearer', statePath: join(root, 'state.json'), timeoutMs: 1_000, probeThreadId: 'synthetic-probe' };
+  const host = new T3CodeHost(options);
+  t.after(() => host.close());
+  await host.connect();
+  const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace-intent', directory, project: { projectId: 'synthetic-project' } });
+  const spec = (requestId = 'launch-intent', prompt = 'Synthetic prompt'): HostAgentSpec => ({ workspaceId: workspace.id, profile, title: 'Synthetic role', mcpBindingPath: null,
+    attempt: () => ({ requestId, prompt, labels: { task: 'synthetic-task', role: 'worker' }, environment: {} }) });
+  return { root, directory, server, options, host, workspace, spec };
+}
+
+test('connect accepts an unseen nightly on structural probes, records its version and preserves capabilities', async t => {
+  const { host, server } = await fixture(t);
+  assert.equal(host.hostId, 't3code:synthetic-environment');
+  assert.equal(host.version, server.controls.version);
+  assert.equal(host.state.read().lastPassedVersion, server.controls.version);
+  assert.equal(host.connected, true);
+  assert.deepEqual(host.capabilities(), { reportingViaMcp: false, supportsCoordinatorRecovery: false, nativeDecisions: false, uiContributions: false, lifecycleDispatch: false, perThreadEnvironment: false });
+  assert.equal(server.commands.length, 0, 'compatibility probe is read-only');
+  const providers = (await host.catalog()).providers;
+  assert.equal(providers[0]?.key, 'synthetic-provider');
+});
+
+test('create uses an existing canonical worktree and explicit top-level provider/model/prompt identities', async t => {
+  const { host, server, workspace, directory, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const command = server.commands[0]!;
+  assert.equal(command.method, 'orchestration.launchThread');
+  assert.equal(command.threadId, created.id);
+  assert.equal(command.projectId, 'synthetic-project');
+  assert.deepEqual(command.modelSelection, { instanceId: 'synthetic-provider', model: 'synthetic-model' });
+  assert.deepEqual(command.workspaceStrategy, { type: 'existing_worktree', worktreePath: directory });
+  assert.equal(command.initialMessage.text, 'Synthetic prompt');
+  assert.equal(command.initialMessage.attachments.length, 0);
+  assert.equal(created.workspaceId, workspace.id);
+  for (const field of ['parentThreadId', 'parentRunId', 'delegatedFrom', 'environment', 'mcpServers']) assert.equal(Object.hasOwn(command, field), false, field);
+  assert.equal((await host.observe(created.id)).workspaceId, workspace.id);
+  assert.deepEqual(await host.findAgents({ task: 'synthetic-task' }), [created]);
+});
+
+test('connect refuses incompatible protocol and missing probe coverage without a canary mutation', async t => {
+  const { host, server, options } = await fixture(t);
+  host.close(); server.controls.protocol = 3;
+  const incompatible = new T3CodeHost(options); t.after(() => incompatible.close());
+  await assert.rejects(incompatible.connect(), /orchestrationProtocolVersion/);
+  assert.equal(incompatible.connected, false);
+  server.controls.protocol = 2; server.controls.shellMissingField = 'activeRunId';
+  const missingField = new T3CodeHost(options); t.after(() => missingField.close());
+  await assert.rejects(missingField.connect(), /activeRunId/);
+  server.controls.shellMissingField = ''; server.threads.clear();
+  const empty = new T3CodeHost({ ...options, probeThreadId: undefined }); t.after(() => empty.close());
+  await assert.rejects(empty.connect(), /no readable thread/);
+  assert.equal(server.commands.length, 0);
+});
+
+test('durable create replay survives reload and refuses changed payload or labels under the same intent', async t => {
+  const { host, server, options, spec } = await fixture(t);
+  const first = await host.createAgent(spec());
+  assert.deepEqual(await host.createAgent(spec()), first);
+  assert.equal(server.commands.length, 1);
+  host.close();
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close());
+  await reloaded.connect();
+  assert.deepEqual(await reloaded.createAgent(spec()), first);
+  assert.equal(server.commands.length, 1);
+  await assert.rejects(reloaded.createAgent(spec('launch-intent', 'Changed prompt')), /payload changed/);
+  const changed = spec(); changed.attempt = () => ({ requestId: 'launch-intent', prompt: 'Synthetic prompt', labels: { task: 'other-task' }, environment: {} });
+  await assert.rejects(reloaded.createAgent(changed), /retained identity changed/);
+  assert.equal(server.commands.length, 1);
+});
+
+test('follow-ups keep exact text and native target, with no resend after interrupted delivery', async t => {
+  const { host, server, options, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  await host.sendMessage(created.id, { messageId: 'follow-up', text: 'Exact follow-up\nsecond line' });
+  await host.sendMessage(created.id, { messageId: 'follow-up', text: 'Exact follow-up\nsecond line' });
+  assert.equal(server.commands.length, 2);
+  assert.equal(server.commands[1]!.threadId, created.id);
+  assert.equal(server.commands[1]!.text, 'Exact follow-up\nsecond line');
+  await assert.rejects(host.sendMessage(created.id, { messageId: 'follow-up', text: 'Changed' }), /payload changed/);
+  server.controls.disconnectMutation = true;
+  await assert.rejects(host.sendMessage(created.id, { messageId: 'lost-follow-up', text: 'Uncertain' }));
+  assert.equal(server.commands.length, 3);
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close());
+  server.controls.disconnectMutation = false;
+  await reloaded.connect();
+  await assert.rejects(reloaded.sendMessage(created.id, { messageId: 'lost-follow-up', text: 'Uncertain' }), /unknown.*not resent/);
+  assert.equal(server.commands.length, 3);
+});
+
+test('first-use boundary rejection is retained as refused and never retried', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  server.controls.refuseMutation = true;
+  await assert.rejects(host.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), /commandId/);
+  const sent = server.commands.length;
+  server.controls.refuseMutation = false;
+  await assert.rejects(host.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), /refused.*no retry/);
+  assert.equal(server.commands.length, sent);
+});
+
+test('observations distinguish idle, active run, permissions, archived and explicit deletion', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  assert.equal((await host.observe(created.id)).active, false);
+  p.runs = [{ id: 'synthetic-run', status: 'running', startedAt: STAMP }];
+  assert.equal((await host.observe(created.id)).activeTurnId, 'synthetic-run');
+  assert.equal((await host.observe(created.id)).active, true);
+  p.runtimeRequests = [{ id: 'approval', kind: 'command', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } }];
+  const pending = await host.observe(created.id);
+  assert.equal(pending.permissions, true); assert.equal(pending.pendingRequest?.id, 'approval');
+  await host.stopAgentTurn(created.id);
+  assert.equal((await host.observe(created.id)).active, false);
+  await host.archiveAgent(created.id);
+  const archivedCommands = server.commands.length;
+  await host.archiveAgent(created.id);
+  assert.equal(server.commands.length, archivedCommands);
+  assert.equal((await host.observe(created.id)).status, 'archived');
+  assert.ok(server.requests.some(r => r.tag === 'orchestration.getArchivedShellSnapshot'));
+  assert.equal((await host.listLiveAgents()).some(r => r.id === created.id), false);
+  p.thread.deletedAt = STAMP;
+  assert.equal((await host.observe(created.id)).status, 'gone');
+  await assert.rejects(host.observe('absent-thread'));
+  assert.equal(await host.observationInventory(['absent-thread']), null);
+});
+
+test('empty enrichment snapshots preserve inventory while missing fields and incomplete reads stay unknown', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  server.controls.enrichment = true;
+  assert.ok((await host.listLiveAgents()).some(r => r.id === created.id));
+  server.controls.shellMissingField = 'activeRunId';
+  await assert.rejects(host.observe(created.id), /activeRunId/);
+  assert.equal(await host.observationInventory([created.id]), null);
+  server.controls.shellMissingField = '';
+  server.controls.incompleteThread = true;
+  await assert.rejects(host.observe(created.id), /incomplete projection/);
+  assert.equal(await host.agentTimelinePage(created.id), null);
+  server.controls.incompleteThread = false;
+  server.controls.synchronized = false;
+  await assert.rejects(host.observe(created.id), /timeout/);
+  assert.equal(host.connected, false);
+});
+
+test('questions and approvals answer exact runtime requests and refuse wrong kinds or workspaces', async t => {
+  const { host, server, workspace, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  p.runtimeRequests = [{ id: 'question-request', kind: 'user_input', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } },
+    { id: 'approval-request', kind: 'command', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } }];
+  p.turnItems = [{ id: 'question-item', type: 'user_input_request', requestId: 'question-request', questions: [{ id: 'choice', header: 'Choice', question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] }] }];
+  assert.deepEqual(await host.pendingQuestions(created.id), [{ requestId: 'question-request', questions: [{ header: 'Choice', question: 'Pick one', options: ['A', 'B'] }] }]);
+  await assert.rejects(host.respondRuntimeRequest(created.id, workspace.id, 'question-request', { decision: 'accept' }), /kind/);
+  await assert.rejects(host.respondRuntimeRequest(created.id, 'other-workspace', 'question-request', { answers: { choice: 'A' } }), /workspace/);
+  await host.answerNativeQuestion(created.id, workspace.id, 'question-request', { choice: 'A' });
+  await host.respondRuntimeRequest(created.id, workspace.id, 'approval-request', { decision: 'accept' });
+  const responses = server.commands.filter(command => command.type === 'runtime-request.respond');
+  assert.equal(responses.length, 2);
+  assert.equal(responses[0]!.requestId, 'question-request');
+  assert.deepEqual(responses[0]!.answers, { choice: ['A'] });
+  assert.equal(responses[1]!.requestId, 'approval-request');
+  assert.equal(responses[1]!.decision, 'accept');
+  assert.equal((await host.answeredQuestions(created.id))[0]?.requestId, 'question-request');
+  p.runtimeRequests.push({ id: 'unknown-request', kind: 'future-request-kind', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } });
+  await assert.rejects(host.respondRuntimeRequest(created.id, workspace.id, 'unknown-request', { decision: 'accept' }), /unsupported/);
+});
+
+test('restart preserves message-answerable questions and refuses expired approvals without an extra message', async t => {
+  const { host, server, options, workspace, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  p.runtimeRequests = [{ id: 'restart-question', kind: 'user_input', status: 'pending', responseCapability: { type: 'message' } },
+    { id: 'expired-approval', kind: 'command', status: 'expired', responseCapability: { type: 'not_resumable', reason: 'Server restarted' } }];
+  p.turnItems = [{ id: 'question-item', type: 'user_input_request', requestId: 'restart-question', questions: [{ id: 'choice', header: 'Choice', question: 'Pick one', options: [{ label: 'A' }] }] }];
+  host.close(); const reloaded = new T3CodeHost(options); t.after(() => reloaded.close()); await reloaded.connect();
+  await reloaded.answerNativeQuestion(created.id, workspace.id, 'restart-question', { choice: 'A' });
+  await assert.rejects(reloaded.respondRuntimeRequest(created.id, workspace.id, 'expired-approval', { decision: 'accept' }), /no longer answerable/);
+  assert.equal(server.commands.filter(command => command.type === 'runtime-request.respond').length, 1);
+  assert.equal(server.commands.filter(command => command.type === 'message.dispatch').length, 0);
+});
+
+test('creation evaluates its launch guard before building the attempt', async t => {
+  const { host, server, spec } = await fixture(t);
+  const guarded = spec();
+  guarded.guard = { async allowed() { return false; }, stillAllowed() { assert.fail('guard already refused'); } };
+  guarded.attempt = () => assert.fail('a refused guard must not build an attempt');
+  await assert.rejects(host.createAgent(guarded), /launch guard refused/);
+  assert.equal(server.commands.length, 0);
+});
+
+test('guarded sends preserve final synchronous fences and block changed guards before any write', async t => {
+  const { host, server, workspace, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const order: string[] = [];
+  server.controls.mutationObserver = () => { order.push('native'); };
+  const input = { messageId: 'guarded', text: 'Guarded message', expectedWorkspaceId: workspace.id };
+  assert.deepEqual(await host.sendGuarded(created.id, input, {
+    async allowed() { await Promise.resolve(); order.push('allowed'); return true; },
+    stillAllowed() { order.push('stillAllowed'); return true; }, beforeSend() { order.push('beforeSend'); },
+  }), { sent: true });
+  assert.deepEqual(order, ['allowed', 'stillAllowed', 'beforeSend', 'native']);
+  const count = server.commands.length;
+  await assert.rejects(host.sendGuarded(created.id, { ...input, messageId: 'changed-guard' }, {
+    async allowed() { return true; }, stillAllowed() { return false; },
+  }), ProvenPreSendRefusalError);
+  assert.equal(server.commands.length, count);
+  assert.equal((await host.sendGuarded(created.id, { ...input, messageId: 'wrong-workspace', expectedWorkspaceId: 'foreign' }, {
+    async allowed() { assert.fail('wrong workspace must refuse before allowed'); }, stillAllowed() { return true; },
+  })).sent, false);
+});
+
+test('host identity conflicts and unsupported per-thread bindings refuse before mutation', async t => {
+  const { host, server, options, workspace, spec, root } = await fixture(t);
+  const mcp = spec(); mcp.mcpBindingPath = 'synthetic-binding';
+  await assert.rejects(host.createAgent(mcp), /MCP reporting/);
+  const environment = spec(); environment.attempt = () => ({ requestId: 'environment', prompt: 'Synthetic', labels: {}, environment: { SYNTHETIC: 'value' } });
+  await assert.rejects(host.createAgent(environment), /launch environment/);
+  const guarded = spec(); guarded.guard = { async allowed() { return true; }, stillAllowed() { return false; } };
+  await assert.rejects(host.createAgent(guarded), /guard changed/);
+  await assert.rejects(host.raiseDecision('synthetic-probe', workspace.id, { id: 'decision', question: 'Synthetic', options: [], signal: new AbortController().signal }), /decisions/);
+  assert.equal(server.commands.length, 0);
+  const absent = join(root, 'missing'); mkdirSync(absent);
+  await assert.rejects(host.createWorkspace({ title: 'Unknown project', requestId: 'unknown', directory: absent, project: { projectId: 'absent-project' } }), /project is not registered/);
+  host.close(); server.controls.environmentId = 'different-environment';
+  const changed = new T3CodeHost(options); t.after(() => changed.close());
+  await assert.rejects(changed.connect(), /environmentId changed/);
+  assert.equal(changed.connected, false);
+  assert.equal(server.commands.length, 0);
+});

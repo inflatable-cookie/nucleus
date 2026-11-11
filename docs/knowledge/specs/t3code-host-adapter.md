@@ -1,6 +1,6 @@
 # T3Code host adapter
 
-Status: design checkpoint; adapter and private-server proof are not implemented.
+Status: native adapter implemented; lifecycle reporting and board routing remain a separate step.
 Owner: Nucleus runtime maintainers
 
 ## Boundary
@@ -29,8 +29,8 @@ The proof target is nightly `0.1.6-nightly.20261030.3917`, source
 identified by the installed app's build metadata and matching release. The newer
 planner research checkout is navigation evidence, not the proof target. Version
 strings are diagnostic facts, never an allowlist. A newer nightly may connect
-when the required protocol and decoded structures match. Record the last nightly
-version that passed, without claiming that the private proof has happened yet.
+when the required protocol and decoded structures match. The owner-only state
+file records the last nightly version that passed the read-only connect probe.
 The target nightly uses orchestration protocol `2`.
 
 Connection order:
@@ -116,6 +116,12 @@ existing durable intent before send. Launch also binds its explicit thread and
 initial-message IDs. Persist the mapping before remote creation so a lost reply
 cannot produce an unowned thread.
 
+The adapter's owner-only state file binds those records to the authenticated
+environment. Synchronous exclusive locking and atomic, synced replacement keep
+intent durable across a crash. A held or abandoned lock refuses writes; the
+adapter never guesses that a prior process finished. Settled commands return
+their recorded outcome; unresolved commands are never resent.
+
 T3 receipts reject a command ID belonging to another thread, but do not compare
 payloads on the same thread. Nucleus must reject a changed payload under an
 existing intent ID locally. A transport reconnect does not resend a mutation.
@@ -137,8 +143,9 @@ Start with an unfiltered shell subscription and explicitly read
 does not include archived records even though its schema has an archive array.
 Do not enable omission of older settled threads or idle children. Require the
 initial snapshot and synchronization/completion evidence before answering an inventory
-read. Track its sequence and apply updates in order. A reconnect, gap, invalid
-update or unfinished snapshot invalidates cached inactivity. Read the thread
+read. Each read takes a fresh synchronized snapshot; an intervening event,
+reconnect, invalid update or unfinished snapshot refuses that read. There is no
+cached inactivity to carry across connections. Read the thread
 projection when shell summaries lack request details or timeline coverage.
 Project-enrichment snapshots marked with `resolvedRepositoryIdentityRoots` can
 carry empty thread arrays; they never replace the authoritative inventory.
@@ -176,7 +183,7 @@ proof exercises the adapter's native operations directly. An unconfigured T3
 adapter changes no default route. A configured second host never causes implicit
 rerouting of a task, origin notice or pending question.
 
-## Verification before implementation acceptance
+## Verification
 
 Fake-server tests cover each operation, the exact wire envelopes and scopes,
 authorization refusal, missing/incompatible protocol, a previously untested
@@ -209,4 +216,7 @@ an Effigy selector, and keep every process and temporary root owned by the run.
 Implementation acceptance requires `effigy check`, each new adapter test file
 alone, `test/host-composition.test.ts`, `test/host-identity-boundary.test.ts` and
 `test/folder-imports.test.ts` alone, `effigy qa:docs`, and the private proof.
-This checkpoint claims none of the missing implementation or native proof.
+The private proof selector is `effigy proof:t3code -- --asar <nightly archive>`.
+It copies the target app's bundled server into fresh scratch and uses a scripted
+local provider. Its evidence distinguishes source drift, injected incompatible
+read responses and actual lifecycle operations on the private nightly.

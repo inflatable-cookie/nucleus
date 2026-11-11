@@ -124,6 +124,10 @@ export type RequestId = string;
 export interface HostCapabilities {
   reportingViaMcp: boolean;
   supportsCoordinatorRecovery: boolean;
+  nativeDecisions?: boolean;
+  uiContributions?: boolean;
+  lifecycleDispatch?: boolean;
+  perThreadEnvironment?: boolean;
 }
 
 /** A workspace the host holds: its identity and the folder it lives in. */

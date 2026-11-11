@@ -30,7 +30,7 @@ import { type ProviderMap } from "../shared/profiles";
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Store } from "../core/store/store";
@@ -44,6 +44,7 @@ import type { Adapter } from "../core/host/adapter";
 import { HostFacade } from "../core/host/host-facade";
 import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/admission";
 import { HostRegistry, HOST_IDLE_GRACE_MS, resolveOriginHost, type KnownHost } from "../core/host/host-registry";
+import { T3HostConnection, type T3ConnectionConfig } from './t3code-host';
 import { lifecycleSignalSchema, type LifecycleSignal, type LifecycleSignalReceipt } from "../shared/lifecycle-signal";
 import { RequestLedger } from "../core/runtime/request-ledger";
 import { Engine, controlHasExternalEffect } from "../core/engine";
@@ -128,6 +129,8 @@ export interface HostSettings {
   uncertainMergeRetryMs?: number;
   /** Spec 035 "Runtime identity": the immutable Effigy artifact Queue may observe with. */
   effigyRuntime?: EffigyRuntimeSettings;
+  /** Optional private T3 session configuration; never returned by service health/settings. */
+  t3code?: T3ConnectionConfig;
 }
 
 export interface RuntimeOwnerOptions {
@@ -217,6 +220,7 @@ export interface RuntimeHealth {
   hostId: string;
   connected: boolean;
   hosts?: Array<{ id: string; state: "online" | "offline" | "conflict" | "unknown"; reason: string }>;
+  t3code?: ReturnType<T3HostConnection['status']>;
   schema: number | null;
   lastStoreAccessAt: string | null;
   taskIdentities: number;
@@ -312,6 +316,7 @@ export class QueueRuntime {
   readonly admission: Admission;
   readonly hostRegistry: HostRegistry<{ adapter: Adapter; admission: Admission }>;
   private hostSession: { id: string; token: object } | null = null;
+  private readonly t3Host: T3HostConnection | null;
   readonly engine: Engine;
   readonly settings: HostSettings;
   readonly dataDir: string;
@@ -444,7 +449,10 @@ export class QueueRuntime {
       workRoot: z.string().optional(), workVolumeId: z.string().optional(),
       /** Effigy runtime settings: an optional `minVersion` floor. The retired exact-bytes pin parses and is ignored. */
       effigyRuntime: effigyRuntimeSettingsSchema.optional(),
+      t3code: z.object({ endpoint: z.string().url(), bearer: z.string().min(1), probeThreadId: z.string().min(1).optional() }).optional(),
       uncertainMergeRetryMs: z.number().int().min(1).max(UNCERTAIN_MERGE_PROOF_TIMEOUT_MS).default(DEFAULT_UNCERTAIN_MERGE_RETRY_MS) }).parse(JSON.parse(readFileSync(settingsPath, "utf8")));
+    if (!options.settings && this.settings.t3code && (statSync(settingsPath).mode & 0o077))
+      throw new Error('T3Code session settings must be owner-only (mode 600)');
     // Exactly one writable owner: a live previous owner fails closed here, so
     // an ambiguous database can never gain a second writer.
     this.store.transaction(() => {
@@ -462,6 +470,7 @@ export class QueueRuntime {
       writeDisconnectedAt: at => this.store.setMeta("hostDisconnectedAt", at),
     }, Date.now, options.hostIdleGraceMs ?? HOST_IDLE_GRACE_MS);
     const createAdmission = () => new Admission({ ...options.admission, totalLimit: () => this.store.configuredPaseoCallLimit(), workspaceBudget: () => this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT });
+    this.t3Host = this.settings.t3code ? new T3HostConnection(this.settings.t3code, this.dataDir, this.hostRegistry, createAdmission) : null;
     const recordedHost = this.hostRegistry.known()[0]?.id;
     this.admission = recordedHost ? this.hostRegistry.resource(recordedHost, createAdmission) : createAdmission();
     if (options.adapterFactory) {
@@ -702,11 +711,13 @@ export class QueueRuntime {
   }
   private anyHostConnected(): boolean {
     this.connected(); // Retire a disconnected primary claim before counting.
+    this.t3Host?.retireDisconnected();
     return this.hostRegistry.onlineIds().length > 0;
   }
 
   /** A lost host connection is not evidence that any host run ended. */
   hostShutdownDue(): boolean {
+    this.t3Host?.retireDisconnected();
     if (this.closing || this.idleShutdownLatched || this.connected() || hostConnected(this.adapter) || this.bootstrapRunning || (this.serveHostRunEndpoint && !this.hostRunEndpoint?.serving())) return false;
     if (!this.hostRegistry.shouldShutdown(this.hostRuns.liveRuns().length)) return false;
     this.idleShutdownLatched = true;
@@ -925,6 +936,9 @@ export class QueueRuntime {
    */
   async ensureBootstrap(): Promise<boolean> {
     if (this.closing || this.idleShutdownLatched) return false;
+    // The legacy primary identity is recorded first; a secondary reconnect
+    // remains independent of primary availability after that first bootstrap.
+    if (this.hostRegistry.known().length) void this.t3Host?.ensureConnected();
     if (this.bootstrapped && this.connected()) return true;
     if (this.bootstrapRunning) return this.bootstrapRunning.then(() => this.bootstrapped, () => this.bootstrapped);
     const attemptId = ++this.bootstrapAttemptId;
@@ -949,6 +963,7 @@ export class QueueRuntime {
         } else if (this.hostSession.id !== observed) {
           throw new Error("Configured daemon identity changed; existing tasks belong to another host");
         }
+        void this.t3Host?.ensureConnected();
         await this.boundedBootstrapStep("Daemon catalog refresh", this.refresh());
         if (this.closing) return;
         this.engine.resumeBulkDispositions();
@@ -1095,6 +1110,7 @@ export class QueueRuntime {
   }
 
   health(): RuntimeHealth {
+    const t3 = this.t3Host?.status();
     return {
       phase: this.phase, ready: this.phase === "ready" && !this.closing,
       startError: this.startError,
@@ -1106,10 +1122,11 @@ export class QueueRuntime {
       ...this.drainProjection(),
       hostId: this.hostSession?.id || this.hostRegistry.known()[0]?.id || "unknown",
       connected: this.anyHostConnected(),
+      ...(t3 ? { t3code: t3 } : {}),
       hosts: this.hostRegistry.known().length ? this.hostRegistry.known().map(host => ({
         id: host.id,
         state: this.hostRegistry.get(host.id) ? "online" : this.startError.includes("identity") && host.id === this.hostRegistry.known()[0]?.id ? "conflict" : "offline",
-        reason: this.hostRegistry.get(host.id) ? "" : host.id === this.hostRegistry.known()[0]?.id ? this.startError || "Host is offline" : "Host is offline",
+        reason: this.hostRegistry.get(host.id) ? "" : host.id === t3?.id ? t3.error || 'T3Code is offline' : host.id === this.hostRegistry.known()[0]?.id ? this.startError || "Host is offline" : "Host is offline",
       })) : [{ id: "unknown", state: "unknown", reason: this.startError || "Host identity is unknown" }],
       bootstrap: { pending: Boolean(this.bootstrapRunning), startedAt: this.bootstrapStartedAt },
       hostRunEndpoint: this.serveHostRunEndpoint
@@ -1173,6 +1190,7 @@ export class QueueRuntime {
         new Promise<undefined>(resolve => { const timer = setTimeout(() => resolve(undefined), ms); if (typeof timer.unref === "function") timer.unref(); }),
       ]);
     try {
+      this.t3Host?.close();
       await settled((this.adapter as unknown as { close?(): Promise<void> }).close?.(), 5_000);
       await settled(this.started, 10_000);
       await settled(this.backupRunning, 5_000);

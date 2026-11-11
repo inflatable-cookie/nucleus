@@ -86,6 +86,8 @@ export interface AgentObservation { id: string; workspaceId: string | null; stat
   /** When the agent last received a user message, if Paseo reports it. */
   lastUserMessageAt?: string | null; }
 export interface Adapter extends RunUsageSource {
+  /** Explicit host capabilities when the native adapter has more than the legacy flags. */
+  capabilities?(): import('../../shared/host').HostCapabilities;
   /** Host-specific workspace registration identity validation. */
   workspaceIdAccepted?(id: unknown): boolean;
   originAgent?(id:string):Promise<OriginAgent|null>;

@@ -55,10 +55,10 @@ implemented; the contracts summarise the durable rules and link here.
 | [057 — Retained change review and source approval awaiting proof](057-retained-change-review.md) | approved, not implemented |
 | [058 — Responsible tasks](058-responsible-tasks.md) | slices 1–17 installed (usage shadow, opt-in lifecycle, task.register, operator questions, live conversion, delegated answers, ask-in-turn, non-delivery ownership, review-round cap, one worker thread, the blocker ladder); rollout step 3 remainder and step 4 pending |
 
-## Designs under review
+## Host adapters
 
-The [T3Code host adapter](t3code-host-adapter.md) is at a design checkpoint;
-implementation and private-server verification remain required.
+The [T3Code host adapter](t3code-host-adapter.md) provides native thread operations
+for the nightly trial. CLI reporting and board routing remain a separate step.
 
 ## Retired specs
 

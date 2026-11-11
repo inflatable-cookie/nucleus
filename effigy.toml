@@ -26,6 +26,7 @@ setup = "npm ci"
 "build:runtime" = "node scripts/build-runtime.mjs {args}"
 "release:prepare" = "npm run release:prepare -- {args}"
 "proof:installed-daemon" = "node scripts/proof-installed-daemon.mjs {args}"
+"proof:t3code" = "node --import tsx scripts/acceptance/t3code-private.ts {args}"
 check = [{ task = "check:types" }, { task = "check:publication" }]
 "check:types" = "npm run typecheck"
 "check:publication" = "npm run publication:check"
