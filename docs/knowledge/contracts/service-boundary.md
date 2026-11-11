@@ -1178,9 +1178,11 @@ check. A lost reply stays unknown under the same or a new intent; a settled
 identical answer replays locally without a second write.
 Unsupported reporting, native decisions and UI capabilities remain
 explicit; transport registration alone grants no lifecycle dispatch capability.
-T3 lifecycle dispatch refuses before creation until CLI reporting and board
-decision routing are available. Native capabilities are exposed through the
-host facade; an unsupported capability never becomes an empty successful reply.
+The T3 Host keeps `lifecycleDispatch` false. The Adapter enables it when the
+Nucleus helper path is wired, so T3 threads report through the helper and
+ticket named in the prompt, and Nucleus-raised questions land on the board.
+Native capabilities are exposed through the host facade; an unsupported
+capability never becomes an empty successful reply.
 
 **Idle shutdown** (Tom, 2026-11-08, `vision.md` "Split details"). The daemon
 closes ten minutes after the last host closes. "Last host closes" means no live

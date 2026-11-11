@@ -827,7 +827,7 @@ export class Resolution {
    * task's own threads settle raises nothing, and tasks that did not opt in
    * keep today's notices exactly.
    */
-  raiseOperatorQuestions(): Promise<void> { return this.questions.raiseOperatorQuestions(); }
+  raiseOperatorQuestions(scopedTaskId?: string): Promise<void> { return this.questions.raiseOperatorQuestions(scopedTaskId); }
   /**
    * Spec 058 (task 542): a responsible task never stalls after the operator
    * answers its worker's own native question. If the task is stopped because

@@ -296,7 +296,9 @@ try {
     let registryClaim = registry.connect(adapter.hostId, endpoint, { adapter: admitAdapter(createAdapter(adapter), admission), admission });
     const registered = registry.get(adapter.hostId);
     assert.ok(registered, 'Authenticated native host is registered');
-    await assert.rejects(registered.adapter.validate({} as never), /CLI reporting and board/);
+    assert.equal(adapter.capabilities().lifecycleDispatch, false);
+    assert.equal(registered.adapter.capabilities?.()?.lifecycleDispatch, true);
+    assert.throws(() => registered.adapter.createAgent({} as never, 'unused', 'unused'), /helper path/);
     steps.push({ step: 'compatibility-probe', result: 'passed' });
     const fault = await compatibilityFault(() => rpc!.call('server.getConfig', {}));
     const incompatible = createHost({ ...hostOptions, endpoint: fault.endpoint, statePath: join(root, 'fault-state.json') });

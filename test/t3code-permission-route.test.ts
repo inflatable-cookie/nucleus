@@ -85,7 +85,7 @@ test('the permission façade is late-bound and returns the registered adapter pr
   assert.deepEqual(calls, [['agent', 'workspace', 'request', 'decline', 'stable-intent']]);
 });
 
-test('a host-qualified catalogue call reaches only the registered T3 adapter and keeps workflow dispatch refused', async t => {
+test('a host-qualified catalogue call reaches only the registered T3 adapter; Adapter lifecycleDispatch is on, Host stays off', async t => {
   const { host, server, workspace, input, projection, permission } = await nativeFixture(t);
   let known: readonly KnownHost[] = [];
   const registry = new HostRegistry<{ adapter: Adapter; admission: Admission }>({ read: () => known, write: hosts => { known = hosts; }, transaction: work => work() });
@@ -105,8 +105,9 @@ test('a host-qualified catalogue call reaches only the registered T3 adapter and
   assert.equal(responses[0]!.commandId, input.intentId);
   assert.equal(responses[0]!.decision, 'accept');
   assert.equal(otherCalls, 0, 'equal native IDs on another host never redirect the response');
-  await assert.rejects(native.validate({} as never), /trial step 2/);
-  await assert.rejects(native.createAgent({} as never, 'unused', 'unused'), /trial step 2/);
+  assert.equal(host.capabilities().lifecycleDispatch, false);
+  assert.equal(native.capabilities().lifecycleDispatch, true);
+  assert.throws(() => native.createAgent({} as never, 'unused', 'unused'), /helper path/);
 
   projection.runtimeRequests.push(permission('another-request'));
   await assert.rejects(callCatalogueMethod(owner, 'host.permission-answer', { ...input, requestId: 'another-request', workspaceId: `${workspace.id}-other`, intentId: 'wrong-workspace' }), /workspace changed/);

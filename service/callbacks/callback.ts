@@ -44,13 +44,22 @@ const ticket=ticketPath?JSON.parse(readFileSync(ticketPath,'utf8')):null;
 const socketPath=ticket?ticket.socketPath:callbackEnvValue('SOCKET'),token=ticket?ticket.token:callbackEnvValue('RUN_TOKEN'),taskId=ticket?ticket.taskId:callbackEnvValue('TASK_ID'),runId=ticket?ticket.runId:callbackEnvValue('RUN_ID');
 if(!socketPath||!token||!taskId||!runId) throw new Error('Missing Nucleus callback environment');
 // The next argument reads the task-scoped plan the recovery coordinator launched with; it sends no report and takes no stdin.
-if(process.argv[3]==='next'){const plan=await callbackRequest({socketPath,token},'/task-next',{callerTaskId:taskId,callerRunId:runId},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry next'});console.log(JSON.stringify(plan));return;}
+const command=process.argv[3];
+if(command==='next'){const plan=await callbackRequest({socketPath,token},'/task-next',{callerTaskId:taskId,callerRunId:runId},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry next'});console.log(JSON.stringify(plan));return;}
+const route=command==='ask'?'/ask':command==='message'?'/message':'/complete';
 let text='',bytes=0;
 for await(const chunk of process.stdin){bytes+=chunk.length;if(bytes>5*1024*1024)throw new Error('Callback too large');text+=chunk;}
 const input=JSON.parse(text);
 // An explicit identity belongs to the report, not to the selected ticket.
 for(const [key,bound] of [['taskId',taskId],['runId',runId]])
   if(input[key]!==undefined&&input[key]!==bound)throw new Error('Report '+key+' does not match the callback ticket');
+if(route!=='/complete'){
+  const payload={...input,taskId,runId};
+  payload.eventId=input.eventId||createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  const result=await callbackRequest({socketPath,token},route,payload,{timeoutMs:45000,timeoutMessage:'Callback timed out; retry the same JSON'});
+  console.log(JSON.stringify(result));
+  return;
+}
 // The ticket binds this run's coordinator generation, so a coordinative report that omits it still carries the authenticated run's generation. An explicit payload value always wins; a run that was genuinely superseded is still refused server-side.
 const fields={...input,coordinatorGeneration:input.coordinatorGeneration??ticket?.coordinatorGeneration};
 // Every result field is forwarded: the authenticated completion schema owns acceptance, so a field it

@@ -472,7 +472,7 @@ ${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
     const prepared = await captureHandoff(input);
     if (input.hostId) prepared.submission = { ...prepared.submission, hostId: input.hostId };
     if (input.dryRun) {
-      const hostId = this.context.engine.selectIngressHost(input.hostId);
+      const hostId = this.context.engine.selectIngressHost(input.hostId, prepared.submission.repoPath);
       if (!hostId || !this.context.engine.hostAvailable(hostId)) throw new Error('Selected submission host is unavailable');
       const { verifyPublishedPlanning } = await import("../git/index");
       await verifyPublishedPlanning(prepared.submission);

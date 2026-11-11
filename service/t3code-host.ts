@@ -43,7 +43,10 @@ export class T3HostConnection {
     private readonly makeAdmission: () => Admission,
     private readonly dependencies: ConnectionDependencies = {
       create: config => createHost(config),
-      adapter: host => createAdapter(host as ReturnType<typeof createHost>),
+      adapter: host => createAdapter(host as ReturnType<typeof createHost>, {
+        socketPath: join(dataDir, 'callback.sock'),
+        helperPath: join(dataDir, 'worker-report.mjs'),
+      }),
     },
   ) {
     const endpoint = new URL(config.endpoint);

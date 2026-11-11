@@ -186,6 +186,22 @@ test('the card lays out the same content at a narrow and a wide board', async ()
   } finally { mounted?.update(h('View', null)); store.close(); }
 });
 
+test('a T3Code task card names the host on the eyebrow and in its accessible label', async () => {
+  await load();
+  const store = new Store(':memory:');
+  try {
+    const { queued } = fixtures(store);
+    const task = { ...queued, hostId: 't3code:synthetic-environment' };
+    const ui = mount(h(queue.TaskCard as never, { task, selected: false, onPress: () => {}, c, board: true }));
+    try {
+      assert.match(ui.text(), /T3Code/);
+      const label = ui.all(/.*/).find(node => String(node.props.accessibilityLabel ?? '').includes('Action: open task details'))?.props.accessibilityLabel as string;
+      assert.match(label, /T3Code/);
+      assert.doesNotMatch(label, /t3code:synthetic-environment/, 'long host IDs stay in the task view');
+    } finally { ui.update(h('View', null)); }
+  } finally { store.close(); }
+});
+
 test('a queued hold previews its first sentence and keeps the complete reason accessible', async () => {
   await load();
   const store = new Store(':memory:');

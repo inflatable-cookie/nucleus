@@ -58,7 +58,8 @@ implemented; the contracts summarise the durable rules and link here.
 ## Host adapters
 
 The [T3Code host adapter](t3code-host-adapter.md) provides native thread operations
-for the nightly trial. CLI reporting and board routing remain a separate step.
+for the nightly trial, with CLI-helper reporting, board questions and per-project
+host opt-in.
 
 ## Retired specs
 

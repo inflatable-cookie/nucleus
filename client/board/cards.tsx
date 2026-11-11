@@ -6,7 +6,7 @@ import { Pressable, Text, View } from "react-native";
 import { Icon } from "../shell";
 import { Button, Field, muted, row, type Colors } from "../controls";
 import { Popover } from "../popover";
-import { taskNumberLabel, type BoardQaRun, type DecisionView, type LaneView, type TaskSummary } from "../../shared/contracts";
+import { hostKindOf, taskNumberLabel, type BoardQaRun, type DecisionView, type LaneView, type TaskSummary } from "../../shared/contracts";
 import { phaseBadgeTone, recordBadgeTone } from "../../shared/badge-tones";
 import { waitStateLabels } from "../../shared/wait-state";
 import { isWaitingTaskStop, taskStopClassification } from "../../shared/task-stop";
@@ -79,6 +79,7 @@ export const TaskCard = React.memo(function TaskCard({task,selected,onPress,prSt
   const [statusTip,setStatusTip]=useState(false);
   const statusAnchor=useRef<View|null>(null);
   const hostId = task.hostId ?? defaultHostId;
+  const hostChip = hostKindOf(hostId) === "t3code" ? " · T3Code" : "";
   const questions = useTaskQuestions(task.questionAgentIds ?? [], hostId ? task.questionAgentIds?.map(id => formatAgentId(hostId, id)) : []);
   const archiveRetry=task.resolution.archiveRetry;
   const holdKinds = presentHoldKinds(task).filter(kind => !(task.waitState?.state === "merge_hold" && kind === "merge"));
@@ -146,8 +147,8 @@ export const TaskCard = React.memo(function TaskCard({task,selected,onPress,prSt
     : task.reason ? `, ${task.reason}` : "";
   const accessibleHold = plainWait || prerequisite ? holdKinds.map(holdKindLabel).map(label => `, ${label}`).join("") : holdLabel;
   const fullHoldReasonA11y = dispatchWait ? `, Full hold reason: ${dispatchWait.reason}` : "";
-  return <BoardCard label={`${projectName(task)}, ${task.title}, ${phaseLabel(task)}${interactiveLabel ? `, ${interactiveLabel}` : ""}${accessibleHold}${holdOwnerA11y}${accessibleWait}${fullHoldReasonA11y}${stopLabel && !stopWait && !stopHeld ? `, ${stopLabel}` : ""}${!accessibleWait && stopA11y ? `, ${stopA11y}` : ""}, Action: open task details`} onPress={onPress} selected={selected} c={c} board={board}
-    eyebrow={<><Icon name="Folder" size={12} color={c.foregroundMuted}/><Text numberOfLines={1} ellipsizeMode="tail" style={{...muted(c),fontSize:11,flexShrink:1}}>{projectName(task)}</Text></>}
+  return <BoardCard label={`${projectName(task)}${hostChip}, ${task.title}, ${phaseLabel(task)}${interactiveLabel ? `, ${interactiveLabel}` : ""}${accessibleHold}${holdOwnerA11y}${accessibleWait}${fullHoldReasonA11y}${stopLabel && !stopWait && !stopHeld ? `, ${stopLabel}` : ""}${!accessibleWait && stopA11y ? `, ${stopA11y}` : ""}, Action: open task details`} onPress={onPress} selected={selected} c={c} board={board}
+    eyebrow={<><Icon name="Folder" size={12} color={c.foregroundMuted}/><Text numberOfLines={1} ellipsizeMode="tail" style={{...muted(c),fontSize:11,flexShrink:1}}>{projectName(task)}{hostChip}</Text></>}
     accessory={<Pressable ref={statusAnchor} accessibilityRole="button" accessibilityLabel={`Open task details, status ${taskStateLabel(task)}`} onHoverIn={()=>setStatusTip(true)} onHoverOut={()=>setStatusTip(false)} onFocus={()=>setStatusTip(true)} onBlur={()=>setStatusTip(false)} onPress={event=>{event.stopPropagation();onPress();}}
       style={{width:24,height:24,marginTop:-3,marginRight:-5,borderRadius:12,alignItems:'center',justifyContent:'center',backgroundColor:c.surface2,flexShrink:0,position:'relative'}}>
       <Icon name={phaseIcon(task)} size={12} color={cardAttention?c.statusWarning:c.foregroundMuted}/>

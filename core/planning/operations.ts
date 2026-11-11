@@ -183,12 +183,14 @@ export class Operations {
     if (input.submissionId !== undefined && submission?.submissionId !== undefined && input.submissionId !== submission.submissionId) throw new Error("Operation submissionId does not match its payload");
     const previous = this.store.operationForKey(input.key);
     if (input.hostId && previous && previous.hostId !== input.hostId) throw new Error("Operation host does not match its recorded selection");
+    const repoPath = input.repoPath ?? submission?.repoPath ?? undefined;
     const hostId = previous ? previous.hostId : (input.taskId || control?.taskId || removal?.taskId
       ? this.store.task((input.taskId ?? control?.taskId ?? removal?.taskId)!).hostId || undefined
-      : this.engine.selectIngressHost(input.hostId));
+      : this.engine.selectIngressHost(input.hostId, repoPath));
     const taskId = input.taskId ?? control?.taskId ?? removal?.taskId;
     const hostSelection = previous ? previous.hostSelection : taskId ? this.store.task(taskId).hostSelection
-      : hostId ? { hostId, basis: input.hostId ? 'explicit' as const : 'sole_online_host' as const } : undefined;
+      : hostId ? { hostId, basis: input.hostId ? 'explicit' as const : repoPath ? 'repository_host' as const : 'sole_online_host' as const,
+        ...(repoPath && !input.hostId ? { reason: `Repository hostKind ${this.store.canonicalRepository(repoPath)?.hostKind ?? 'paseo'}` } : {}) } : undefined;
     if (!previous && !hostId && ["submit", "review_entry", "source_promote"].includes(input.kind))
       throw new Error("Host identity is unknown or ambiguous; select a registered host");
     const acceptance = this.store.acceptOperation({
@@ -749,7 +751,7 @@ export class Operations {
     return this.engine.performSubmit(submission, false, { source, initial }, hostId);
   }
   async performSubmit(submission: Submission, requirePushedPlanning = false, promotion?: {source:{kind:"lead"|"papercut";id:string;repository:string;digest:string;expectedSource:string}; initial?: Partial<Task>}, hostId?: string, hostSelection?: QueueOperation['hostSelection']): Promise<OperationResult> {
-    hostId ??= this.engine.selectIngressHost(submission.hostId);
+    hostId ??= this.engine.selectIngressHost(submission.hostId, submission.repoPath);
     // A replay after a lost response resolves the durable submission identity
     // before any remote validation or insertion.
     const existing = promotion ? null : this.store.existing(submission);

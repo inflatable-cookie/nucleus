@@ -50,6 +50,7 @@ export type ProjectEditActions = {
 
 const CHECKS_HELP = "Required gates only the checks GitHub requires for the base branch; the rest are recorded as advisory. Needs GitHub's required-check settings to be readable for this repository.";
 const REVIEWER_HELP = "Account that posts formal reviews. Its token stays in the login keychain.";
+const HOST_HELP = "Paseo is the default host. T3Code is trial opt-in: new tasks on this repository dispatch there. Live tasks keep the host they started on.";
 const MERGE_HELP = "Runs on every task's prospective merge.";
 const STAGED_HELP = "A staged QA is edited with `nucleus repository.set`.";
 const SLOTS_HELP = "Empty uses the Per project limit. A project may have twice its slots in flight.";
@@ -581,6 +582,7 @@ function RepositoryFields({ c, repo, label, settings, disabled, saves, setReposi
   const [scheduled, setScheduled] = useState(Boolean(qa?.schedule));
   const [afterMerges, setAfterMerges] = useState(qa?.schedule?.afterMerges ?? AFTER_MERGES_DEFAULT);
   const [checks, setChecks] = useState(settings?.checksPolicy ?? "all");
+  const [hostKind, setHostKind] = useState(settings?.hostKind ?? "paseo");
   const [reviewer, setReviewer] = useState(settings?.reviewer?.login ?? "");
   const [mergeCommand, setMergeCommand] = useState(validation ? joinCommand(validation.argv) : "");
   const [mergeTimeout, setMergeTimeout] = useState(minutes(validation?.timeoutMs, MERGE_TIMEOUT_DEFAULT_MIN, MERGE_TIMEOUT_MAX_MIN));
@@ -592,6 +594,7 @@ function RepositoryFields({ c, repo, label, settings, disabled, saves, setReposi
     setQaTimeout(minutes(qa?.timeoutMs, QA_TIMEOUT_DEFAULT_MIN, QA_TIMEOUT_MAX_MIN));
     setScheduled(Boolean(qa?.schedule)); setAfterMerges(qa?.schedule?.afterMerges ?? AFTER_MERGES_DEFAULT);
     setChecks(settings?.checksPolicy ?? "all");
+    setHostKind(settings?.hostKind ?? "paseo");
     setReviewer(settings?.reviewer?.login ?? "");
     setMergeCommand(validation ? joinCommand(validation.argv) : "");
     setMergeTimeout(minutes(validation?.timeoutMs, MERGE_TIMEOUT_DEFAULT_MIN, MERGE_TIMEOUT_MAX_MIN));
@@ -629,6 +632,11 @@ function RepositoryFields({ c, repo, label, settings, disabled, saves, setReposi
     // A refusal (GitHub's required checks unreadable) puts the dropdown back.
     patch("checksPolicy", { checksPolicy: policyValue }, { revert: () => setChecks(server.current?.checksPolicy ?? "all") });
   };
+  const changeHost = (value: string) => {
+    const next = value === "t3code" ? "t3code" : "paseo";
+    setHostKind(next);
+    patch("hostKind", { hostKind: next }, { revert: () => setHostKind(server.current?.hostKind ?? "paseo") });
+  };
   const hasCommand = Boolean(command.trim());
   const hasMerge = Boolean(mergeCommand.trim());
 
@@ -663,9 +671,15 @@ function RepositoryFields({ c, repo, label, settings, disabled, saves, setReposi
         </>}
     <Pair>
       <View style={{ gap: space.xxs }}>
+        <FieldCaption c={c} text="Host" help={HOST_HELP} />
+        <DropdownSelect c={c} hideLabel label={`Host for ${label}`} value={hostKind} disabled={disabled} options={[{ value: "paseo", label: "Paseo" }, { value: "t3code", label: "T3Code" }]} onChange={changeHost} />
+      </View>
+      <View style={{ gap: space.xxs }}>
         <FieldCaption c={c} text="Checks" help={CHECKS_HELP} />
         <DropdownSelect c={c} hideLabel label={`Checks for ${label}`} value={checks} disabled={disabled} options={[{ value: "all", label: "All" }, { value: "required", label: "Required" }]} onChange={changeChecks} />
       </View>
+    </Pair>
+    <Pair>
       <View style={{ gap: space.xxs }}>
         <FieldCaption c={c} text="Reviewer" help={REVIEWER_HELP} />
         <Field c={c} label="" hideLabel a11yLabel={`Reviewer for ${label}`} placeholder="GitHub login" value={reviewer} disabled={disabled} onChange={changeReviewer} onBlur={saves.flush} />

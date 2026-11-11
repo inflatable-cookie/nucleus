@@ -7,6 +7,7 @@ import { dispatchBlocked, DISPATCH_HELD_REASON } from "./capacity";
 import type { Engine } from "../engine";
 import { isPiSettingsLockFailure, isRateLimitError, rateLimitCooldownData, transientProviderRetryAt } from "../recovery/exhaustion";
 import { workerPrompt } from "./prompts";
+import { runTicketPath } from "./agent-creation";
 import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, PROFILE_CATALOG_PENDING_REASON } from "../recovery/task-reasons";
 import { startsNoRuns } from "../closeout/queue-drain";
 
@@ -103,7 +104,9 @@ export class WorkerLauncher {
     if (!owns) return;
     const prepared = this.store.task(task.id);
     try {
-      const agent = await this.adapter.createAgent(prepared, token, workerPrompt(prepared, Boolean(this.adapter.reportingViaMcp), this.store.runs(prepared.id), worktreeLinkRecordFailure),workerPrompt(prepared,false, this.store.runs(prepared.id), worktreeLinkRecordFailure));
+      const helper = this.adapter.helperPath;
+      const ticket = helper && prepared.runId ? runTicketPath({ helperPath: helper }, prepared.runId) : undefined;
+      const agent = await this.adapter.createAgent(prepared, token, workerPrompt(prepared, Boolean(this.adapter.reportingViaMcp), this.store.runs(prepared.id), worktreeLinkRecordFailure, helper, ticket),workerPrompt(prepared,false, this.store.runs(prepared.id), worktreeLinkRecordFailure, helper, ticket));
       this.store.update(task.id, { agentId: agent.id }, "agent_created", agent.id);
       if (agent.workspaceId !== task.workspaceId) throw new Error("Worker returned in the wrong workspace; inspect before proceeding");
     } catch (error) {

@@ -1,6 +1,6 @@
 # T3Code host adapter
 
-Status: native adapter implemented; lifecycle reporting and board routing remain a separate step.
+Status: native adapter, CLI-helper reporting, board questions and per-project host opt-in are implemented.
 Owner: Nucleus runtime maintainers
 
 ## Boundary
@@ -14,7 +14,10 @@ the primary host (Tom, 2026-11-11).
 Worker, reviewer and recovery identities are separate top-level T3 threads.
 No role uses T3's delegated-task relationship. The adapter does not patch T3,
 attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute
-T3 UI. CLI reporting, board routing and project opt-in belong to the next step.
+T3 UI. A T3 thread reports through the packaged nucleus helper with the run
+ticket named in its prompt. Nucleus-raised questions go to the web board and
+the project planner's agent channel. A repository setting selects `paseo`
+(default) or `t3code` (opt-in) for new tasks; a live task never changes host.
 Registering a transport must not make an unsupported task workflow executable.
 
 ## Protocol and connection
@@ -197,11 +200,22 @@ request's kind and workspace before delivery.
 
 Expose explicit unsupported capabilities for per-thread MCP reporting,
 Nucleus-raised native decisions and UI contributions. Do not substitute empty
-success results. Until the next step supplies reporting and board routing,
-lifecycle dispatch that requires them refuses before thread creation; the private
-proof exercises the adapter's native operations directly. An unconfigured T3
-adapter changes no default route. A configured second host never causes implicit
-rerouting of a task, origin notice or pending question.
+success results. The Host keeps `lifecycleDispatch` false; the Adapter turns it
+on once the Nucleus helper path is wired, so T3 threads report through the
+helper and ticket named in the prompt. `host.permission-answer` still grants no
+task lifecycle dispatch. An unconfigured T3 adapter changes no default route. A
+configured second host never causes implicit rerouting of a live task, origin
+notice or pending question.
+
+## Trial
+
+Paseo stays the primary host. Opt a repository into T3Code for new tasks:
+
+1. Start T3Code.
+2. Issue a session bearer with `t3 auth session issue`.
+3. Write owner-only local settings (outside the repository, never logged): `t3code: { endpoint, bearer, probeThreadId? }`.
+4. In Settings, set the repository Host to T3Code, or `repository.set` with `hostKind: "t3code"`.
+5. Switch back to Paseo the same way. Live tasks keep the host they started on.
 
 ## Verification
 

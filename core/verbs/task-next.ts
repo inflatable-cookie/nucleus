@@ -277,6 +277,7 @@ export function assembleOwnerTaskNext(facts: OwnerVerbFacts, ownerVerbViews: (fa
     // Spec 050: the real retirement count and ceiling, from the same store
     // reads the recovery pass and applying controls use. Observation only.
     ...(task.retiredWorkers.length ? { replacement: taskNextReplacementView(task) } : {}),
+    ...(task.hostId ? { host: task.hostId } : {}),
     ...(task.worktreeLinks ? { worktreeLinks: task.worktreeLinks } : {}),
   };
 }

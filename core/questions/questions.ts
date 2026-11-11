@@ -10,6 +10,7 @@ type LadderEvent
 } from './blocker-ladder';
 import { Decisions,decisionHeadline } from '../planning/decisions';
 import { supportsNativeQuestions } from './native-decision';
+import { questionRoute } from './question-route';
 import { isDelegableQuestionKind,operatorQuestionFor,operatorQuestionStep,type OperatorQuestion,type OperatorQuestionChoice,type OperatorQuestionKind } from './operator-question';
 import { boundInlineReport } from '../review/ordinary-review';
 import { DELEGATED_ANSWER_TIMEOUT_MS,applyBinaryApproval,delegatedAuthorityNote,delegatedDecisionText,nativeDelegationPrompt,parseDelegatedAnswer,parseNativeDelegatedReply,type DelegatedAnswer } from './question-delegation';
@@ -56,7 +57,8 @@ export class Questions {
     // An owner control moved past the question, so it no longer holds the task.
     if (marked('responsible_question_superseded')) return false;
     if (marked('responsible_question')) { this.resolution.waiting(this.store.task(t.id), RESPONSIBLE_QUESTION_WAIT, 'responsible_question'); return true; }
-    if (!this.adapter.raiseTaskDecision || !t.agentId) return false;
+    if (!t.agentId) return false;
+    if (!this.adapter.raiseTaskDecision && questionRoute(this.adapter) !== 'board') return false;
     const reviewer = latest.completion;
     const worker = this.store.runs(t.id).findLast(run => run.role === 'revision' && run.completion)?.completion;
     // The reviewer's authenticated full finding is reviewText; a summary or an
@@ -107,7 +109,8 @@ export class Questions {
           await this.resolution.withHost(task.hostId, () => this.raiseOperatorQuestions(task.id));
       return;
     }
-    if (!this.adapter.raiseTaskDecision || this.resolution.paused()) return;
+    if (this.resolution.paused()) return;
+    if (!this.adapter.raiseTaskDecision && questionRoute(this.adapter) !== 'board') return;
     for (const candidate of [this.store.task(scopedTaskId)]) {
       if (this.resolution.paused()) return;
       const task = this.store.task(candidate.id);
@@ -393,12 +396,47 @@ export class Questions {
   }
   raiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, signal: AbortSignal): Promise<string> {
     if (!this.resolution.queueBudgetQuestionCurrent(task.id, decision)) return Promise.reject(Error('Budget question no longer matches the current stop'));
+    const route = questionRoute(this.adapter, task.profile?.provider);
+    if (route === 'board') return this.raiseBoardDecision(task, decision, signal);
     // Spec 058 (task 550): a provider without a native question surface receives the
     // question through `nucleus_ask` instead of a prompt it cannot follow.
-    if (!supportsNativeQuestions(task.profile?.provider)) return this.resolution.raiseAskDecision(task, decision, signal);
+    if (route === 'mcp_ask' || !supportsNativeQuestions(task.profile?.provider)) return this.resolution.raiseAskDecision(task, decision, signal);
     return this.adapter.raiseTaskDecision!(task, { id: decision.id, question: decision.question, options: decision.options, signal,
       onRequested: request => { void this.resolution.delegateDecision(task.id, decision, request, signal,
         (fresh, answer) => this.adapter.answerTaskDecision!(fresh, { requestId: request.requestId, header: request.header, answer })); } });
+  }
+  raiseBoardDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, signal: AbortSignal): Promise<string> {
+    let resolve!: (answer: string) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<string>((res, rej) => { resolve = res; reject = rej; });
+    this.resolution.queueAskRaises.set(decision.id, { resolve, reject });
+    signal.addEventListener('abort', () => {
+      const raise = this.resolution.queueAskRaises.get(decision.id);
+      if (raise) { this.resolution.queueAskRaises.delete(decision.id); this.resolution.queueAskRaiseAnsweredBy.delete(decision.id); raise.reject(Error('Nucleus board question observation cancelled; delivery or answer may be unknown')); }
+    }, { once: true });
+    this.resolution.ensureQueueRaiseDecision(task, decision, 'the task host cannot take a native question');
+    void this.notifyPlannerOfBoardQuestion(task, decision);
+    return promise;
+  }
+  private notifyPlannerOfBoardQuestion(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }): void {
+    void (async () => {
+      const { planner } = await this.resolution.projectPlannerFor(task);
+      if (!planner) return;
+      const host = await this.resolution.identifyOriginHost(planner);
+      if (!host) return;
+      const events = this.store.eventsAll(task.id);
+      if (events.some(event => event.kind === 'operator_question_planner_notice' && event.detail.startsWith(`${decision.id}:`))) return;
+      await this.resolution.withHost(host, async () => {
+        if (!this.resolution.originHostAvailable(host) || !this.adapter.notify) return;
+        const choices = decision.options.length ? ` Choices: ${decision.options.join(' | ')}.` : '';
+        const reference = this.store.task(task.id).reference ?? task.title;
+        await this.adapter.notify(planner, `ns-queue-question-${decision.id}`,
+          `Nucleus raised a question on ${reference} (kind ${decision.kind}) because the task host cannot take a native question. Answer it on the board (question.answer) or through nucleus_ask. Question: ${decision.question}${choices}`);
+        this.store.event(task.id, 'operator_question_planner_notice', `${decision.id}: planner ${planner}`);
+      });
+    })().catch(error => {
+      this.store.event(task.id, 'operator_question_planner_missed', `${decision.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
+    });
   }
   raiseAskDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, signal: AbortSignal): Promise<string> {
     let resolve!: (answer: string) => void;
