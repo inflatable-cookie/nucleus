@@ -1145,8 +1145,42 @@ keeps that host's admission state. The local service credential remains a
 same-user accident-prevention boundary, not adversarial per-host authentication.
 
 The runtime retains one admission and breaker state for each observed host ID.
-The current Paseo route selects one host; connecting and routing a second live
-host is a later step.
+Paseo remains the default connection. Optional owner-only `settings.json`
+configuration `t3code: {endpoint, bearer, probeThreadId?}` registers a second
+native host with separate admission state. The bearer is issued locally with
+`t3 auth session issue`, never returned by health or public settings. Initial
+Paseo identity is recorded first; subsequent T3 reconnects are independent.
+
+The [T3Code adapter contract](../specs/t3code-host-adapter.md) defines the second
+host's connection and operation boundary. Before registration or
+mutation, authenticate the environment, check the protocol and strictly decode
+a full shell snapshot and one thread subscription; a missing method or field
+refuses by name. Nightly version strings are recorded diagnostics, not an
+allowlist (Tom, 2026-11-11).
+
+T3 has no schema discovery or dry run. Pin nightly command shapes in contract
+fixtures. Its decoder runs before handlers, but its untagged remote defects
+cannot prove their phase; even schema-formatted failures remain unknown and
+are never resent (planner ruling, 2026-11-11). Sanitized reported command and field
+names are diagnostics only. Only a proven local pre-write refusal is known non-delivery.
+Reported names persist on the unknown native intent. The registered permission
+route also carries them into the exact owning task's durable attention; a reload
+or blocked repeat does not erase them or authorize another write.
+Never send a compatibility canary mutation to the operator's T3.
+
+`host.permission-answer` requires an explicit registered host, native agent,
+workspace, runtime request, typed decision and stable intent. It uses only that
+host's permission-response capability and refuses unknown, offline or unsupported
+hosts without falling back. Native T3 rechecks request kind and workspace;
+this method grants no task lifecycle dispatch capability.
+The native response binds its request to the original intent before any status
+check. A lost reply stays unknown under the same or a new intent; a settled
+identical answer replays locally without a second write.
+Unsupported reporting, native decisions and UI capabilities remain
+explicit; transport registration alone grants no lifecycle dispatch capability.
+T3 lifecycle dispatch refuses before creation until CLI reporting and board
+decision routing are available. Native capabilities are exposed through the
+host facade; an unsupported capability never becomes an empty successful reply.
 
 **Idle shutdown** (Tom, 2026-11-08, `vision.md` "Split details"). The daemon
 closes ten minutes after the last host closes. "Last host closes" means no live

@@ -491,6 +491,9 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   // bounded host inventory read as `profiles`.
   set("catalog", call("inventory", "catalog", () => "catalog"));
   set("hostProfiles", call("inventory", "hostProfiles", () => "hostProfiles"));
+  set('answerNativePermission', call('control', 'answerNativePermission', args =>
+    typeof args[4] === 'string' ? `answerNativePermission:${JSON.stringify(args)}` : undefined,
+  args => { if (typeof args[0] === 'string') admission.invalidate(args[0]); }));
   set("originAgent", call("inventory", "originAgent", idKey("originAgent"), (_args, result) => {
     const agent = result as { workspaceId?: string | null } | null;
     if (agent?.workspaceId) admission.invalidateWorkspace(agent.workspaceId);

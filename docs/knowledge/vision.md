@@ -280,6 +280,10 @@ patches to T3 ("we need to work around the gaps - no patches"); the Nucleus web 
 UI alongside T3; and T3 is a trial before any commitment ("the gaps may affect the workflow too
 much"). Paseo stays the primary host until Tom decides.
 
+T3Code compatibility follows the auto-updating nightly, with read-only structural
+probes rather than a server-version pin (Tom, 2026-11-11). The connection and
+first-use command checks are owned by the [host boundary](contracts/service-boundary.md#host-identity-registry).
+
 Profiles (Tom, 2026-11-06): Nucleus takes its agent profiles from Paseo's profile system today, and other apps have none. "We'll need to switch nucleus to a more traditional model picker system - have the host app provide a list of all the providers and models, then allow the operator to create profiles based on their selections". Profiles become Nucleus's own, and the host only lists what's available.
 On provider options (Tom, 2026-11-06): the picker shows whatever the host reports for a model. "We need to be able to control permission settings and agent-specific modes".
 

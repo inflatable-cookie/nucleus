@@ -33,7 +33,7 @@ const FACADE_METHODS: HostFacadeMethod[] = [
   "originAgent", "observe", "observationInventory", "listLiveAgents",
   "agentTimelinePage", "agentTimeline", "stopAgentTurn", "archiveAgent", "subscribeRunUsage",
   "sendMessage", "enqueueMessage", "interruptAndContinue",
-  "pendingQuestions", "answeredQuestions", "answerNativeQuestion", "dismissNativeQuestion",
+  "pendingQuestions", "answeredQuestions", "answerNativeQuestion", "answerNativePermission", "dismissNativeQuestion",
 ];
 
 test("the façade reads the owner's adapter at each call, so a later swap or override is the one called", async () => {
@@ -139,6 +139,9 @@ test("capabilities reads the adapter's flags synchronously, and an unreported fl
   assert.deepEqual(host.capabilities(), { reportingViaMcp: true, supportsCoordinatorRecovery: true });
   owner.adapter = silent;
   assert.deepEqual(host.capabilities(), { reportingViaMcp: false, supportsCoordinatorRecovery: false });
+  const explicit = { reportingViaMcp: false, supportsCoordinatorRecovery: false, nativeDecisions: false, uiContributions: false, lifecycleDispatch: false };
+  owner.adapter = { capabilities: () => explicit } as Adapter;
+  assert.equal(host.capabilities(), explicit);
 });
 
 test("an optional adapter method that is absent refuses by rejection with the named capability, and never invents a value", async () => {
@@ -148,6 +151,7 @@ test("an optional adapter method that is absent refuses by rejection with the na
   assert.ok(pending instanceof Promise, "absence returns a rejected promise rather than throwing");
   await assert.rejects(pending, { message: "This host cannot read native questions" });
   await assert.rejects(host.answerNativeQuestion("a1", "w1", "r1", {}), { message: "This host cannot answer native questions" });
+  await assert.rejects(host.answerNativePermission('a1', 'w1', 'r1', 'accept', 'intent'), { message: 'This host cannot answer native permissions' });
   await assert.rejects(host.dismissNativeQuestion("a1", "w1", "r1"), { message: "This host cannot dismiss native questions" });
   await assert.rejects(host.sendMessage("a1", { messageId: "m", text: "t" }), { message: "This host cannot send messages" });
   await assert.rejects(host.enqueueMessage("a1", { messageId: "m", text: "t" }), { message: "This host cannot queue a message behind the current step" });

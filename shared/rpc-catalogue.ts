@@ -63,6 +63,7 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
   { name: "decision.agent-projects", contract: contracts.decisionAgentProjects, method: "decisionAgentProjects", mutating: false },
   { name: "question.native-list", contract: contracts.nativeQuestionList, method: "listNativeQuestions", mutating: false },
   { name: "question.native-answer", contract: contracts.nativeQuestionAnswer, method: "answerNativeQuestion", mutating: true },
+  { name: 'host.permission-answer', contract: contracts.hostPermissionAnswer, method: 'answerHostPermission', mutating: true },
   { name: "question.answer", contract: contracts.questionAnswer, method: "answerDelegatedQuestion", mutating: true },
   { name: "decision.answer", contract: contracts.decisionAnswer, method: "answerDecision", mutating: true },
   { name: "decision.withdraw", contract: contracts.decisionWithdraw, method: "withdrawDecision", mutating: true },

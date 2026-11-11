@@ -103,6 +103,8 @@ export interface Host {
   pendingQuestions(id: AgentId): Promise<NativeQuestion[]>;
   answeredQuestions(id: AgentId): Promise<AnsweredQuestion[]>;
   answerNativeQuestion(agent: AgentId, workspace: WorkspaceId, request: RequestId, answers: Record<string, string>): Promise<void>;
+  /** Optional native permission response; an absent method grants no permission capability. */
+  answerNativePermission?(agent: AgentId, workspace: WorkspaceId, request: RequestId, decision: HostPermissionDecision, intentId: RequestId): Promise<void>;
   /** Dismiss one pending native question; never used for tool or bash permissions. */
   dismissNativeQuestion(agent: AgentId, workspace: WorkspaceId, request: RequestId): Promise<void>;
   /** Raises a native question and returns its request ID; the caller owns the durable send intent. */
@@ -120,10 +122,18 @@ export type AgentId = string;
 export type WorkspaceId = string;
 export type RequestId = string;
 
+/** Native approval choices, carried without inferring a host or a permission policy. */
+export const hostPermissionDecisionSchema = z.enum(['accept', 'acceptForSession', 'acceptAlways', 'decline', 'cancel']);
+export type HostPermissionDecision = z.infer<typeof hostPermissionDecisionSchema>;
+
 /** What a host reports it can do; `false` means not reported, which keeps the current fallback. */
 export interface HostCapabilities {
   reportingViaMcp: boolean;
   supportsCoordinatorRecovery: boolean;
+  nativeDecisions?: boolean;
+  uiContributions?: boolean;
+  lifecycleDispatch?: boolean;
+  perThreadEnvironment?: boolean;
 }
 
 /** A workspace the host holds: its identity and the folder it lives in. */
