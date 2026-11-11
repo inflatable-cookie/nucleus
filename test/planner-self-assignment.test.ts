@@ -26,7 +26,7 @@ function fixture() {
   engine.resolution.projectPlannerRegistered = async (_key, agentId) => { registrations.push(agentId); };
   const dir = mkdtempSync(join(tmpdir(), 'planner-self-'));
   const tickets = new PlannerParticipantTickets(engine, { socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs') });
-  const repositories = new RuntimeRepositories({ store, engine, markStoreAccess() {}, plannerChanged: key => tickets.assigned(key) } as unknown as RepositoriesContext);
+  const repositories = new RuntimeRepositories({ store, engine, markStoreAccess() {}, plannerChanged: (key: string) => tickets.assigned(key) } as unknown as RepositoriesContext);
   return { store, engine, registrations, deliveries, repositories };
 }
 

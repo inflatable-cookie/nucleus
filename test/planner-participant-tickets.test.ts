@@ -15,6 +15,8 @@ import { callbackRequest } from '../shared/service/callback-client.mjs';
 import { callerResolve } from '../shared/rpc/service';
 import { projectSetPlanner } from '../shared/rpc/projects';
 import { projectSchema } from '../shared/schema/projects';
+import { buildProjectSettings } from '../core/planning/project-settings';
+import { projectSettingsSchema } from '../shared/schema/project-settings';
 
 const t3 = 't3code:synthetic';
 const paseo = 'paseo:synthetic';
@@ -46,7 +48,7 @@ function fixture() {
   };
   return { directory, store, engine, messages, paths, tickets, assign, ticket,
     record: () => store.getMeta<{ path: string; delivery: string }>(plannerTicketKey('example')),
-    pending: () => store.getMeta(plannerTicketPendingKey('example')),
+    pending: () => store.getMeta<{ agentId: string; setAt: string; reason: string } | null>(plannerTicketPendingKey('example')),
     offline() { available = false; }, online() { available = true; }, failSend() { sendFailure = true; },
     setArchived(value: boolean | null) { archived = value; },
     unknownObservation() { observe = async () => { throw Error('inventory is unreadable'); }; },
@@ -61,8 +63,14 @@ test('startup with an archived recorded planner sends nothing and records the ti
     await f.tickets.ensure();
     assert.deepEqual(f.messages, []);
     assert.equal(f.record(), undefined);
-    assert.equal(f.pending()?.agentId, formatAgentId(t3, 'planner'));
+    assert.equal(f.pending()!.agentId, formatAgentId(t3, 'planner'));
     assert.ok(f.tickets.pendingPlanners().has('example'));
+    // The board's project entry says so, not just the store.
+    const settings = projectSettingsSchema.parse(buildProjectSettings({ projects: f.store.projects(), repositories: [],
+      overrides: {}, defaultSlots: 4, liveAgentIds: new Set(), liveKnown: false, latestQaRuns: [],
+      plannerTicketPending: f.tickets.pendingPlanners() }));
+    assert.equal(settings.projects[0]?.plannerTicket, 'pending');
+    assert.ok(settings.projects[0]?.problems.includes('Planner ticket pending'));
   } finally { f.store.close(); }
 });
 
@@ -134,7 +142,7 @@ test('a self-naming planner takes its ticket from the assignment response instea
   try {
     const setter = formatAgentId(t3, 'planner');
     const repositories = new RuntimeRepositories({ store: f.store, engine: f.engine,
-      markStoreAccess() {}, plannerChanged: key => f.tickets.assigned(key) } as unknown as RepositoriesContext);
+      markStoreAccess() {}, plannerChanged: (key: string) => f.tickets.assigned(key) } as unknown as RepositoriesContext);
     const project = await repositories.setProjectPlanner({ key: 'example', agentId: 'planner', setBy: setter });
     assert.equal(project.planner?.agentId, setter);
     const handed = (project as { participantTicket?: string }).participantTicket;

@@ -44,7 +44,7 @@ export class RuntimePlanning {
       return { created: this.context.leads.add({ repositories: [repository], title: request.title, body: request.body,
         baseBranch: request.baseBranch, lanes: request.lanes, tags: request.tags, author: request.agent }) };
     })();
-    if ("taskId" in source) return { taskId: source.taskId, reference: this.context.store.numberFor(source.taskId)!.reference };
+    if ("taskId" in source) return { ...this.promotionReply(source.taskId), reference: this.context.store.numberFor(source.taskId)!.reference };
     if ("leadId" in source) return { lead: this.context.store.lead(source.leadId) };
     let lead = await this.checkLeadAfterMutation(source.created);
     if (lead.checkOperationId) {

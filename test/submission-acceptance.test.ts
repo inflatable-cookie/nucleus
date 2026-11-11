@@ -265,7 +265,7 @@ Promote once after the refusal.
   f.runtime.approveLead({ id: lead.id, version: lead.version, digest: lead.digest!, approver: 'planner', note: 'Operator authorized', relayed: true });
   // No host can prove the origin thread: the promotion must refuse before any insert.
   f.runtime.engine.identifyOriginHost = async () => undefined;
-  await assert.rejects(f.runtime.promoteLeadToTask({ id: lead.id, note: 'Operator authorized', agent: 'planner' }), /Origin host is unknown or ambiguous/);
+  await assert.rejects(f.runtime.promoteLeadToTask({ id: lead.id, note: 'Operator authorized', agent: 'planner', board: false }), /Origin host is unknown or ambiguous/);
   const refused = f.runtime.store.operations().find(operation => operation.kind === 'source_promote')!;
   assert.equal(refused.state, 'failed');
   assert.equal(refused.effect?.status, 'reconciled', 'a refusal proved not to have inserted settles definite');
@@ -283,10 +283,10 @@ Promote once after the refusal.
   assert.equal(f.runtime.store.tasks().length, 0);
   // Retrying the same lead promotes exactly once, and a further retry replays that task.
   f.runtime.engine.identifyOriginHost = async () => 'fixture-host';
-  const promoted = await f.runtime.promoteLeadToTask({ id: lead.id, note: 'Operator authorized', agent: 'planner' });
+  const promoted = await f.runtime.promoteLeadToTask({ id: lead.id, note: 'Operator authorized', agent: 'planner', board: false });
   assert.ok('taskId' in promoted, JSON.stringify(promoted));
   assert.equal(f.runtime.store.tasks().length, 1);
-  const again = await f.runtime.promoteLeadToTask({ id: lead.id, note: 'Operator authorized', agent: 'planner' });
+  const again = await f.runtime.promoteLeadToTask({ id: lead.id, note: 'Operator authorized', agent: 'planner', board: false });
   assert.deepEqual(again, { taskId: promoted.taskId, reference: promoted.reference, ...(('hostId' in promoted && promoted.hostId) ? { hostId: promoted.hostId } : {}), ...(('hostSelection' in promoted && promoted.hostSelection) ? { hostSelection: promoted.hostSelection } : {}) });
   assert.equal(f.runtime.store.tasks().length, 1);
   assert.deepEqual(f.runtime.store.lead(lead.id).targets.map(target => target.reference), [promoted.taskId]);

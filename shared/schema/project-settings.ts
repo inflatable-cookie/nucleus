@@ -10,7 +10,7 @@ export const projectQaStateSchema = z.enum(["queued", "running", "passed", "fail
 
 export type ProjectQaState = z.infer<typeof projectQaStateSchema>;
 
-export const projectSettingsProblemSchema = z.enum(["Planner thread is gone", "No planner", "Last QA failed"]);
+export const projectSettingsProblemSchema = z.enum(["Planner thread is gone", "No planner", "Planner ticket pending", "Last QA failed"]);
 
 export type ProjectSettingsProblem = z.infer<typeof projectSettingsProblemSchema>;
 
