@@ -15,11 +15,13 @@ import type { Decisions } from "../planning/decisions";
 import type { Store } from "../store/store";
 import { now } from "../store/store";
 import { coveringGrant, grantSignoff, reconcileRoutingGrants } from "./routing-grants";
+import { liveRun } from "../task-decision-rules";
 
 const ROLES = ["worker", "reviewer", "coordinator"] as const;
 type Role = (typeof ROLES)[number];
 type Request = NonNullable<NonNullable<Task["profileRequests"]>[Role]>;
 export type Signoff = NonNullable<Request["signoff"]>;
+export type ApprovedRoute = { role: Role; profileId: string; decisionId: string; reason: string; now: boolean };
 
 export const OPERATOR_BOARD = "operator (board)";
 export const SIGNOFF_DECLINE = "Decline: keep automatic selection";
@@ -65,12 +67,13 @@ function outcome(decision: DecisionView | null, approve: string, choices: Map<st
  * sign-off and has none, apply each answered one, and withdraw open ones on a
  * finished task. Idempotent; a task with nothing to do is not written.
  */
-export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, taskId: string, profiles: readonly Profile[]): void {
+export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, taskId: string, profiles: readonly Profile[]): ApprovedRoute[] {
+  const approvedRoutes: ApprovedRoute[] = [];
   let task: Task;
-  try { task = store.task(taskId); } catch { return; }
-  if (task.removedAt) return;
+  try { task = store.task(taskId); } catch { return approvedRoutes; }
+  if (task.removedAt) return approvedRoutes;
   reconcileRoutingGrants(store, decisions);
-  try { task = store.task(taskId); } catch { return; }
+  try { task = store.task(taskId); } catch { return approvedRoutes; }
   const finished = task.phase === "done" || task.phase === "cancelled";
   // Requests can be amended away. Their open decisions are no longer answerable
   // against task state, so close only decisions created by this routing flow.
@@ -140,6 +143,15 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
         ? { replacementProfile: { ...task.replacementProfile, profileId: result.profileId } } : {};
       task = store.update(task.id, { profileRequests: { ...task.profileRequests, [role]: next }, ...replacement }, "routing_signoff",
         JSON.stringify({ role, requested: request.profileId, profileId: next.profileId, status: result.signoff.status, decisionId: signoff.decisionId, note: result.signoff.note }));
+      if (result.signoff.status === "approved" && signoff.decisionId) {
+        const currentRun = task.resolution.currentRunId ? store.run(task.resolution.currentRunId) : null;
+        const expectedRole = role === "worker" ? "revision" : role === "reviewer" ? "reviewer" : null;
+        const live = liveRun(currentRun) && currentRun.role === expectedRole ? currentRun : null;
+        const selectedProfileId = live?.profile?.id ?? (role === "worker" && !currentRun ? task.profile?.id : null);
+        approvedRoutes.push({ role, profileId: next.profileId, decisionId: signoff.decisionId,
+          reason: `Approved routing decision ${signoff.decisionId}: ${request.reason}`.slice(0, 4000),
+          now: Boolean(live && selectedProfileId && selectedProfileId !== next.profileId) });
+      }
       continue;
     }
     // Task 515: an approval already given for this task and profile is not
@@ -173,6 +185,7 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
     task = store.update(task.id, { profileRequests: { ...task.profileRequests, [role]: { ...request, signoff: pending } } }, "routing_signoff_requested",
       JSON.stringify({ role, profileId: request.profileId, decisionId: decision.id }));
   }
+  return approvedRoutes;
 }
 
 /**

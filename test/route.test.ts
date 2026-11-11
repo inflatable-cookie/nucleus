@@ -13,7 +13,7 @@ import type { Adapter } from '../core/host';
 import type { ResolutionAdapter } from '../core/resolution';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { Decisions } from '../core/planning/decisions';
-import { reconcileRoutingSignoffs } from '../core/dispatch/routing-signoff';
+import { reconcileRoutingSignoffs, SIGNOFF_DECLINE, signoffApprove } from '../core/dispatch/routing-signoff';
 
 /**
  * Spec 050 `route`: an owner points one role's next run at a named profile on
@@ -456,6 +456,81 @@ test('route now stops and replaces a live revision worker without losing the PR 
     assert.equal(replaced.profile?.id, 'sol', 'the replacement starts on the new route');
     assert.equal(replaced.prUrl, 'https://github.com/example/repo/pull/1', 'the PR is kept');
     assert.equal(replaced.resumePrNumber, 1, 'the PR number is retained across the replacement');
+  } finally { await f.close(); }
+});
+
+test('an approved pending worker request routes the live automatic run now and keeps its workspace and branch', async () => {
+  const f = fixture(); try {
+    const nova = f.engine.profiles.find(p => p.id === 'nova')!;
+    f.store.update(f.task.id, { phase: 'working', completion: null,
+      profileRequests: { worker: { profileId: 'nova', reason: 'Frontier analysis', required: true } } });
+    f.store.putRun({ id: 'rev-live', taskId: f.task.id, role: 'revision', generation: 1, head, base, agentId: 'worker', workspaceId: 'workspace',
+      profile: f.engine.profiles.find(p => p.id === 'author')!, status: 'running', createdAt: new Date().toISOString(),
+      lastObservedAt: null, active: true, idleSince: null, completion: null, released: false } as Run);
+    f.store.setCredential('rev-live', 'token');
+    f.store.update(f.task.id, { resolution: { ...f.current().resolution, currentRunId: 'rev-live' } });
+    f.observations.set('worker', { id: 'worker', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '', activeTurnId: 'turn-1' });
+    reconcileRoutingSignoffs(f.store, new Decisions(f.store), f.task.id, f.engine.profiles);
+    const pending = f.current().profileRequests!.worker!.signoff!;
+    const decision = f.engine.signoffDecisions.get({ id: pending.decisionId! });
+    f.engine.signoffDecisions.answer({ id: decision.id, version: decision.version, answer: signoffApprove(nova.name),
+      answeredBy: 'operator (board)', relayed: false, note: '' });
+
+    await f.engine.taskQuantumOwner.taskQuantum(f.task.id);
+    assert.deepEqual(f.stops, ['worker']);
+    assert.equal(f.current().workspaceId, 'workspace');
+    assert.equal(f.current().branch, f.task.branch);
+    assert.equal(f.current().directory, '/worktree');
+    assert.equal(f.current().profileRequests!.worker!.signoff!.decisionId, decision.id);
+    assert.match(f.current().profileRequests!.worker!.reason, /Frontier analysis/);
+  } finally { await f.close(); }
+});
+
+test('an approval after worker handoff sets its next route without interrupting the reviewer', async () => {
+  const f = fixture(); try {
+    const nova = f.engine.profiles.find(p => p.id === 'nova')!;
+    f.store.update(f.task.id, { phase: 'awaiting_review',
+      profileRequests: { worker: { profileId: 'nova', reason: 'Frontier analysis', required: true } } });
+    f.store.putRun({ id: 'review-live', taskId: f.task.id, role: 'reviewer', generation: 1, head, base, agentId: 'reviewer', workspaceId: 'workspace',
+      profile: f.engine.profiles.find(p => p.id === 'luna')!, status: 'running', createdAt: new Date().toISOString(),
+      lastObservedAt: null, active: true, idleSince: null, completion: null, released: false } as Run);
+    f.store.update(f.task.id, { resolution: { ...f.current().resolution, currentRunId: 'review-live', reviewerAgentId: 'reviewer', reviewerProfile: f.engine.profiles.find(p => p.id === 'luna')! } });
+    reconcileRoutingSignoffs(f.store, new Decisions(f.store), f.task.id, f.engine.profiles);
+    const pending = f.current().profileRequests!.worker!.signoff!;
+    const decision = f.engine.signoffDecisions.get({ id: pending.decisionId! });
+    f.engine.signoffDecisions.answer({ id: decision.id, version: decision.version, answer: signoffApprove(nova.name),
+      answeredBy: 'operator (board)', relayed: false, note: '' });
+
+    await f.engine.taskQuantumOwner.taskQuantum(f.task.id);
+    assert.equal(f.current().resolution.currentRunId, 'review-live');
+    assert.equal(f.store.run('review-live')!.released, false);
+    assert.equal(f.stops.length, 0);
+    assert.equal(f.current().profileRequests!.worker!.profileId, 'nova');
+    assert.equal(f.current().profileRequests!.worker!.signoff!.decisionId, decision.id);
+  } finally { await f.close(); }
+});
+
+test('declining a pending worker profile request leaves its live automatic run alone', async () => {
+  const f = fixture(); try {
+    f.store.update(f.task.id, { phase: 'working', completion: null,
+      profileRequests: { worker: { profileId: 'nova', reason: 'Frontier analysis', required: true } } });
+    f.store.putRun({ id: 'rev-live', taskId: f.task.id, role: 'revision', generation: 1, head, base, agentId: 'worker', workspaceId: 'workspace',
+      profile: f.engine.profiles.find(p => p.id === 'author')!, status: 'running', createdAt: new Date().toISOString(),
+      lastObservedAt: null, active: true, idleSince: null, completion: null, released: false } as Run);
+    f.store.setCredential('rev-live', 'token');
+    f.store.update(f.task.id, { resolution: { ...f.current().resolution, currentRunId: 'rev-live' } });
+    f.observations.set('worker', { id: 'worker', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '', activeTurnId: 'turn-1' });
+    reconcileRoutingSignoffs(f.store, new Decisions(f.store), f.task.id, f.engine.profiles);
+    const pending = f.current().profileRequests!.worker!.signoff!;
+    const decision = f.engine.signoffDecisions.get({ id: pending.decisionId! });
+    f.engine.signoffDecisions.answer({ id: decision.id, version: decision.version, answer: SIGNOFF_DECLINE,
+      answeredBy: 'operator (board)', relayed: false, note: '' });
+
+    await f.engine.taskQuantumOwner.taskQuantum(f.task.id);
+    assert.deepEqual(f.stops, []);
+    assert.equal(f.current().resolution.currentRunId, 'rev-live');
+    assert.equal(f.store.run('rev-live')!.released, false);
+    assert.equal(f.current().profileRequests!.worker!.signoff!.status, 'declined');
   } finally { await f.close(); }
 });
 
