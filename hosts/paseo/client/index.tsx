@@ -1,5 +1,6 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { paseoHost, paseoShell } from "./shell";
+import { registerUsageSurfaces } from "./usage";
 import { bindBoardShell } from "../../../client/shell";
 import { registerNativeQuestionPills } from "../../../client/native-questions";
 import { registerDecisionPills } from "../../../client/decision-pill";
@@ -19,8 +20,20 @@ export default function contribute(client: PluginClientContext) {
   const removePanel = client.addWorkspacePanel({ id: BOARD_PANEL_ID, title: "Nucleus board", icon: "LayoutDashboard", locations: ["workspace"], context: "workspace", Component: QueueBoardPanel });
   const removeCommand = client.addCommandCenterItem({ id: BOARD_PANEL_ID, title: "Open Nucleus board", icon: "LayoutDashboard", keywords: ["queue", "board", "nucleus", "tasks"], context: "workspace", onSelect: context => context.openPanel(BOARD_PANEL_ID) });
   registerSettingsOpener(section => host.openSettings(SETTINGS_SCREEN_ID, section ? { section } : undefined));
+  // Spec 059 step 2: the Usage screen and the sidebar ring rail where the host
+  // supports them; the page itself lives on the board's navigation everywhere.
+  const removeUsage = registerUsageSurfaces(client);
   // Spec 032: a composer pill per asking agent while it has an open decision.
   const removeDecisionPills = registerDecisionPills(host, BOARD_PANEL_ID);
   const removeNativeQuestionPills = registerNativeQuestionPills(host);
-  return () => { removeNativeQuestionPills(); removeDecisionPills(); removeCommand(); removePanel(); removeSettings(); removeSidebarItem(); removeSurface(); };
+  return () => {
+    removeUsage();
+    removeNativeQuestionPills();
+    removeDecisionPills();
+    removeCommand();
+    removePanel();
+    removeSettings();
+    removeSidebarItem();
+    removeSurface();
+  };
 }
