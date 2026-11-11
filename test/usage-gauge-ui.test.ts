@@ -11,19 +11,22 @@ import {
   type UsageStateOutput,
 } from "../shared/schema/usage";
 
-// Spec 059 step 2 (nucleus#1113): the Usage page's pressure dial maps state and
-// value correctly; the page renders subscriptions from a `usage.state` fixture;
-// the sidebar rail renders and links to the page; the plugin shell renders the
-// page from the board's navigation. Synthetic fixtures only. The web shell is
-// exercised by test/web-shell.test.ts against the built bundle.
+// Spec 059 step 2 (nucleus#1113, #1123): the Usage page's pressure dial maps state and
+// value correctly; the page renders subscriptions from a `usage.state` fixture; the
+// Paseo sidebar row carries the board button and the rings, opens the board on its
+// Usage tab and takes the host's active state; a host without the newer APIs keeps
+// the native sidebar item; every provider mark paints in the requested colour. The
+// plugin shell renders the page from the board's navigation. Synthetic fixtures only.
+// The web shell is exercised by test/web-shell.test.ts against the built bundle.
 useNativeStubs();
 type UsageModule = typeof import("../client/usage");
-type HostModule = typeof import("../hosts/paseo/client/usage");
 let usage: UsageModule;
-let hostUsage: HostModule;
+let sidebar: typeof import("../hosts/paseo/client/sidebar");
+let queue: typeof import("../client/queue");
 const load = async () => {
   usage = await import("../client/usage");
-  hostUsage = await import("../hosts/paseo/client/usage");
+  sidebar = await import("../hosts/paseo/client/sidebar");
+  queue = await import("../client/queue");
   return usage;
 };
 
@@ -473,9 +476,9 @@ test("the page renders subscriptions from a fixture usage.state", async () => {
   );
 });
 
-test("the sidebar rail renders rings per subscription and links to the page", async () => {
+test("the sidebar row carries the board button and the rings on one line", async () => {
   await load();
-  const opened: Array<{ screenId: string }> = [];
+  const opened: string[] = [];
   // The fake client mirrors the plugin's rpc: the caller hands the contract, the
   // invoke receives its name.
   const invoke = invokeWith(fixture.state);
@@ -483,30 +486,64 @@ test("the sidebar rail renders rings per subscription and links to the page", as
     rpc: (contract: { name: string }, input: unknown) =>
       invoke(contract.name, input),
   } as never;
-  const RailItem = hostUsage.createUsageRailItem(client);
+  const Row = sidebar.createNucleusSidebarRow(client);
   const tree = mount(
-    h(RailItem, {
+    h(Row, {
       theme: { colors: c },
+      layout: { compact: false },
       currentScreen: null,
       openScreen: (input: { screenId: string }) => {
-        opened.push(input);
+        opened.push(input.screenId);
       },
     }),
   );
   await settle(
     () => tree.all(/usage: /).length === fixture.subscriptions.length,
   );
-  const railLogos = tree.ofType("Image").map((node) => node.props.accessibilityLabel);
+
+  // One row: the Nucleus button (icon and title) on the left, the rings trailing
+  // on the right; the button takes the free width, so the rings sit at the end.
+  const rowNode = tree.get("Nucleus sidebar row");
+  assert.equal(rowNode.props.style.flexDirection, "row");
+  assert.equal(
+    rowNode.props.style.width,
+    "100%",
+    "the row spans the sidebar, so its trailing rings meet the right edge",
+  );
+  assert.equal(
+    rowNode.props.style.backgroundColor,
+    "transparent",
+    "an idle row carries no highlight",
+  );
+  const button = tree.get("Nucleus");
+  assert.equal(button.props.accessibilityState.selected, false);
+  assert.equal(button.props.style.flex, 1, "the button takes the row's left side");
+  const icon = button.children.find(
+    (child) => typeof child !== "string",
+  ) as HostNode;
+  assert.equal(icon.type, "Icon");
+  assert.equal(icon.props.name, "ListTodo");
+  assert.equal(
+    icon.props.color,
+    dark.foregroundMuted,
+    "an idle row's icon takes the muted theme colour",
+  );
+  assert.ok(tree.text().includes("Nucleus"), "the row names the board button");
+
+  // Hover lights the whole row, from the theme's raised surface.
+  rowNode.props.onPointerEnter();
+  assert.equal(tree.get("Nucleus sidebar row").props.style.backgroundColor, dark.surface2);
+  tree.get("Nucleus sidebar row").props.onPointerLeave();
+  assert.equal(tree.get("Nucleus sidebar row").props.style.backgroundColor, "transparent");
+
+  // The button opens the board; the rings open the board on its Usage tab.
+  tree.get("Nucleus").props.onPress();
+  assert.deepEqual(opened, [sidebar.BOARD_SCREEN_ID], "the button opens the board");
+
+  const ringLogos = tree.ofType("Image").map((node) => node.props.accessibilityLabel);
   for (const provider of ["Claude", "Codex", "Grok"]) {
-    assert.ok(railLogos.includes(`${provider} logo`), `${provider} logo renders in the rail`);
+    assert.ok(ringLogos.includes(`${provider} logo`), `${provider} logo renders in the row`);
   }
-  const railSvgMarks = tree.ofType("Image").map((node) =>
-    decodeURIComponent(node.props.source.uri.split(",")[1]),
-  );
-  assert.ok(
-    railSvgMarks.every((svg) => svg.includes(`fill="${dark.foreground}"`)),
-    "rail marks use the theme text colour regardless of reading state",
-  );
   const labels = tree
     .all(/usage: /)
     .map((node) => node.props.accessibilityLabel as string);
@@ -522,13 +559,194 @@ test("the sidebar rail renders rings per subscription and links to the page", as
     labels.every((label) => label.endsWith("Opens the usage page")),
     "every ring says where it leads",
   );
-  const ring = tree.query(/^Codex usage: /)!;
-  ring.props.onPress();
+  const railSvgMarks = tree.ofType("Image").map((node) =>
+    decodeURIComponent(node.props.source.uri.split(",")[1]),
+  );
+  assert.ok(
+    railSvgMarks.every(
+      (svg) =>
+        /fill="#f0f6fc"/.test(svg) &&
+        [...svg.matchAll(/fill="([^"]*)"/g)].every(([, value]) => value === dark.foreground),
+    ),
+    "row marks paint in the theme text colour regardless of reading state",
+  );
+  tree.query(/^Codex usage: /)!.props.onPress();
   assert.deepEqual(
     opened,
-    [{ screenId: hostUsage.USAGE_SCREEN_ID }],
-    "pressing a ring opens the Usage screen",
+    [sidebar.BOARD_SCREEN_ID, sidebar.BOARD_SCREEN_ID],
+    "a ring opens the board surface, not a separate usage screen",
   );
+
+  // The press asked the board for its Usage tab: a board that mounts next lands there.
+  const board = mountBoard();
+  await settle(() => board.text().includes("Codex · codex-main"));
+  assert.ok(
+    board.text().includes("Will run out"),
+    "the ring's request lands on the board's Usage tab",
+  );
+  board.update(h(React.Fragment, {}));
+});
+
+test("the row shows the board's active state and a ring moves an open board", async () => {
+  await load();
+  const opened: string[] = [];
+  const invoke = invokeWith(fixture.state);
+  const client = {
+    rpc: (contract: { name: string }, input: unknown) =>
+      invoke(contract.name, input),
+  } as never;
+  const Row = sidebar.createNucleusSidebarRow(client);
+  const tree = mount(
+    h(Row, {
+      theme: { colors: c },
+      layout: { compact: false },
+      currentScreen: { screenId: sidebar.BOARD_SCREEN_ID },
+      openScreen: (input: { screenId: string }) => {
+        opened.push(input.screenId);
+      },
+    }),
+  );
+  await settle(
+    () => tree.all(/usage: /).length === fixture.subscriptions.length,
+  );
+  const button = tree.get("Nucleus");
+  assert.equal(
+    button.props.accessibilityState.selected,
+    true,
+    "the board's own screen marks the row active",
+  );
+  assert.equal(
+    tree.get("Nucleus sidebar row").props.style.backgroundColor,
+    dark.surface2,
+    "the active row carries Paseo's highlight",
+  );
+  const icon = button.children.find(
+    (child) => typeof child !== "string",
+  ) as HostNode;
+  assert.equal(icon.props.color, dark.foreground, "an active row's icon takes the text colour");
+
+  // An open board moves to the tab a ring asks for, without waiting for a remount.
+  const board = mountBoard();
+  await settle(() => board.text().includes("Tasks ("));
+  tree.query(/^Claude usage: /)!.props.onPress();
+  assert.deepEqual(opened, [sidebar.BOARD_SCREEN_ID]);
+  await settle(() => board.text().includes("Codex · codex-main"));
+  queue.requestBoardTab("queue");
+  await settle(() => board.text().includes("Tasks ("));
+  board.update(h(React.Fragment, {}));
+});
+
+test("every provider mark paints the whole mark in the requested colour", async () => {
+  await load();
+  const assets = await import("../client/provider-logo-assets");
+  for (const provider of ["claude", "codex", "grok"]) {
+    for (const color of [dark.foreground, dark.foregroundMuted]) {
+      const source = assets.providerLogoSource(provider, color);
+      assert.ok(
+        source?.startsWith("data:image/svg+xml;utf8,"),
+        `${provider} is an SVG data URI`,
+      );
+      const svg = decodeURIComponent(source!.split(",")[1]);
+      const root = /<svg\b[^>]*>/i.exec(svg)![0];
+      assert.ok(
+        root.includes(`fill="${color}"`),
+        `${provider}'s root svg carries the colour, so unpainted children inherit it`,
+      );
+      const fills = [...svg.matchAll(/fill="([^"]*)"/g)].map(([, value]) => value);
+      assert.ok(fills.length > 1, `${provider} keeps its painted paths`);
+      assert.deepEqual(
+        fills.filter((value) => value !== color),
+        [],
+        `${provider} paints every element in the requested colour`,
+      );
+      assert.ok(!svg.includes("currentColor"), `${provider} leaves no currentColor`);
+      assert.ok(!svg.includes("foreignObject"), `${provider} SVG is renderer-safe`);
+    }
+  }
+  // Recolouring is per colour, and a repeated read reuses the built source.
+  assert.notEqual(
+    assets.providerLogoSource("claude", dark.foreground),
+    assets.providerLogoSource("claude", dark.foregroundMuted),
+  );
+  assert.equal(
+    assets.providerLogoSource("claude", dark.foreground),
+    assets.providerLogoSource("claude", dark.foreground),
+  );
+  assert.equal(assets.providerLogoSource("unknown", dark.foreground), null);
+});
+
+test("the entry registers the combined row only where the host carries it", async () => {
+  await load();
+  const contribute = (await import("../hosts/paseo/client/index")).default;
+  const fake = (newer: boolean) => {
+    const calls = {
+      sidebarItems: 0,
+      surfaces: [] as string[],
+      screens: [] as string[],
+      rows: [] as string[],
+    };
+    const remove = () => {};
+    const host: Record<string, unknown> = {
+      // The decision pills read the board snapshot and the open decisions; the board
+      // fixtures the shell test uses are not needed here.
+      rpc: async (contract: { name: string }) =>
+        contract.name === "decision.list"
+          ? []
+          : contract.name === "queue.ui-snapshot"
+            ? { revision: 1 }
+            : {},
+      paseo: {
+        agents: { list: async () => ({ entries: [], pageInfo: { hasMore: false } }) },
+      },
+      addSurface: (id: string) => {
+        calls.surfaces.push(id);
+        return remove;
+      },
+      addSidebarItem: () => {
+        calls.sidebarItems += 1;
+        return remove;
+      },
+      addSettingsScreen: () => remove,
+      addWorkspacePanel: () => remove,
+      addCommandCenterItem: () => remove,
+      addComposerPill: () => ({ update: () => {}, remove }),
+      openPanel: () => {},
+      openSettings: () => {},
+    };
+    if (newer) {
+      host.addScreen = (contribution: { id: string }) => {
+        calls.screens.push(contribution.id);
+        return remove;
+      };
+      host.addSidebarHeaderItem = (contribution: { id: string }) => {
+        calls.rows.push(contribution.id);
+        return remove;
+      };
+    }
+    return { calls, host };
+  };
+
+  const older = fake(false);
+  const removeOlder = contribute(older.host as never);
+  try {
+    assert.equal(older.calls.sidebarItems, 1, "a host without the newer APIs keeps the native sidebar item");
+    assert.deepEqual(older.calls.surfaces, ["main"], "and the plugin's own board surface");
+    assert.deepEqual(older.calls.screens, [], "and registers no plugin screen");
+    assert.deepEqual(older.calls.rows, [], "and no custom row");
+  } finally {
+    removeOlder();
+  }
+
+  const newer = fake(true);
+  const removeNewer = contribute(newer.host as never);
+  try {
+    assert.equal(newer.calls.sidebarItems, 0, "a newer host registers no duplicate native item");
+    assert.deepEqual(newer.calls.surfaces, [], "the untitled legacy surface is not registered as well");
+    assert.deepEqual(newer.calls.screens, [sidebar.BOARD_SCREEN_ID], "the board registers as a titled screen");
+    assert.deepEqual(newer.calls.rows, [sidebar.BOARD_ROW_ID], "one Nucleus row carries button and rings");
+  } finally {
+    removeNewer();
+  }
 });
 
 test("provider logos fall back for unknown providers and titles omit duplicate groups", async () => {
@@ -555,8 +773,12 @@ test("provider logos fall back for unknown providers and titles omit duplicate g
   }
 });
 
-test("the plugin shell renders the page from the board navigation", async () => {
-  await load();
+/**
+ * The board mounted under the plugin shell's providers against a quiet fixture:
+ * empty snapshot, no QA runs, no records. Returns the mounted tree; callers cast
+ * it away with `update(h(React.Fragment, {}))` when no longer needed.
+ */
+function mountBoard() {
   const snapshot = {
     revision: 1,
     connected: true,
@@ -588,7 +810,6 @@ test("the plugin shell renders the page from the board navigation", async () => 
     paused: false,
     hostId: "host",
   };
-  const at = AT;
   const invoke = async (method: string, input: unknown) => {
     if (method === "usage.state") return fixture.state;
     if (method === "queue.ui-snapshot") return snapshot;
@@ -600,7 +821,7 @@ test("the plugin shell renders the page from the board navigation", async () => 
     if (method === "host.run.board")
       return {
         runs: [],
-        accounting: { readAt: at, entries: [], complete: true },
+        accounting: { readAt: AT, entries: [], complete: true },
       };
     if (method === "lead.board") return { cards: [], links: [] };
     if (method === "decision.list") return [];
@@ -617,12 +838,12 @@ test("the plugin shell renders the page from the board navigation", async () => 
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const tree = mount(
+  return mount(
     h(QueryClientProvider, {
       client,
       children: h(PluginRpcProvider, {
         invoke,
-        children: h((await import("../client/queue")).MainSurface as never, {
+        children: h(queue.MainSurface as never, {
           theme: { colors: c },
           host: { id: "host", label: "Host" },
           layout: { compact: false, platform: "ios" as const },
@@ -630,6 +851,11 @@ test("the plugin shell renders the page from the board navigation", async () => 
       }),
     }),
   );
+}
+
+test("the plugin shell renders the page from the board navigation", async () => {
+  await load();
+  const tree = mountBoard();
   await settle(() => tree.text().includes("Tasks ("));
   tree.press("Usage");
   await settle(() => tree.text().includes("Codex · codex-main"));
@@ -637,4 +863,5 @@ test("the plugin shell renders the page from the board navigation", async () => 
     tree.text().includes("Will run out"),
     "the board navigation reaches the Usage page in the plugin shell",
   );
+  tree.update(h(React.Fragment, {}));
 });

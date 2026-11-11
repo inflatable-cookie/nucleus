@@ -43,6 +43,19 @@ let settingsOpener: ((section?: SettingsTarget) => void) | null = null;
 export function registerSettingsOpener(open: (section?: SettingsTarget) => void): void { settingsOpener = open; }
 
 /**
+ * A tab the sidebar's usage rings ask the board to show (nucleus#1123). The rings
+ * sit beside the Nucleus button in the Paseo sidebar, and each opens the board on
+ * its Usage tab; a request made while no board is mounted waits for the next one,
+ * and while a board is open the newest request moves it.
+ */
+let requestedBoardTab: BoardTab | null = null;
+const boardTabListeners = new Set<(tab: BoardTab) => void>();
+export function requestBoardTab(tab: BoardTab): void {
+  requestedBoardTab = tab;
+  for (const show of boardTabListeners) show(tab);
+}
+
+/**
  * The board shell: tabs, project scope and the open task or record. The header
  * (`board/header.tsx`), the Pipeline (`board/pipeline.tsx`) and the reads
  * (`board/use-board-data.ts`) live in their own modules.
@@ -59,6 +72,14 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard }: Board
   const changeLaneStatus = useRpc(api.laneStatus);
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<BoardTab>("queue");
+  // A ring's tab request is taken on mount (that ring just opened the board) and
+  // while the board is open; the request is spent once a board has taken it.
+  useEffect(() => {
+    const show = (next: BoardTab) => setTab(next);
+    boardTabListeners.add(show);
+    if (requestedBoardTab) { const pending = requestedBoardTab; requestedBoardTab = null; show(pending); }
+    return () => { boardTabListeners.delete(show); };
+  }, []);
   // A board QA card opens the QA runs page on its run (Tom, 2026-11-01).
   const [qaFocusId, setQaFocusId] = useState<string | null>(null);
   const [surfaceScope, setSurfaceScope] = useProjectScope();

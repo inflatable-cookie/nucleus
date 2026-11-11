@@ -7,14 +7,44 @@ const providerLogoSvgs: Record<string, string> = {
 
 const sourceCache = new Map<string, string>();
 
-/** Recolour only the monochrome mark to the theme text colour, never the pressure state. */
+/** The root `<svg>` tag: the fill it declares is what every unpainted child inherits. */
+const rootTag = /<svg\b[^>]*>/i;
+/** A fill that paints: `none` (and the empty value) leaves the shape unpainted. */
+const paints = (value: string) => !/^(?:none)?$/i.test(value.trim());
+
+/**
+ * Recolour the whole monochrome mark to the theme text colour, and only the mark:
+ * the pressure state keeps its own colour. The fill goes on the root `<svg>` — the
+ * vendor assets declare their own child fills (and a root `fill="none"`), and a
+ * child fill the vendor hard-codes would otherwise win over the inherited one and
+ * render the mark in the asset's own colour, invisible on the dark theme
+ * (nucleus#1123). Every painted child fill is rewritten, and `currentColor` — which
+ * a renderer may resolve to black — becomes the same colour.
+ */
+export function themedProviderSvg(svg: string, color: string): string {
+  const root = rootTag.exec(svg);
+  if (!root) throw new Error("provider mark has no root <svg>");
+  const paint = (match: string, value: string) =>
+    paints(value) ? `fill="${color}"` : match;
+  const rootWithFill = (/\sfill="[^"]*"/i.test(root[0])
+    ? root[0].replace(/(\sfill=")[^"]*(")/i, (_match, open: string, close: string) => `${open}${color}${close}`)
+    : root[0].replace(/^<svg/i, () => `<svg fill="${color}"`)
+  ).replace(/currentColor/g, () => color);
+  const body = svg
+    .slice(root[0].length)
+    .replace(/fill="([^"]*)"/gi, paint)
+    .replace(/currentColor/g, () => color);
+  return `${rootWithFill}${body}`;
+}
+
+/** The mark as a data URI, recoloured to `color`. Unknown providers have no bundle entry. */
 export function providerLogoSource(provider: string, color: string): string | null {
   const svg = providerLogoSvgs[provider];
   if (!svg) return null;
   const cacheKey = `${provider}:${color}`;
   const cached = sourceCache.get(cacheKey);
   if (cached) return cached;
-  const themed = svg.replace(/fill="(?:#[0-9a-fA-F]{3,8}|white)"/gi, `fill="${color}"`);
+  const themed = themedProviderSvg(svg, color);
   const source = `data:image/svg+xml;utf8,${encodeURIComponent(themed)}`;
   sourceCache.set(cacheKey, source);
   return source;
