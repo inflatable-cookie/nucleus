@@ -94,8 +94,18 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     findWorkspaces = (task: Task) => this.native.findWorkspaces(task);
     findAgents(task: Task) { return this.native.findAgents({ 'nucleus.task': task.id }); }
     findRunAgents(run: Run) { return this.native.findAgents({ 'nucleus.run': run.id, 'nucleus.task': run.taskId }); }
+    /** T3 sends an empty per-thread environment, so the consultation prompt itself binds the recipient as the question.answer caller. */
+    private bindAnswerRoute(recipient: string, prompt: string, questionId: string): string {
+      const invocation = `PASEO_AGENT_ID=${JSON.stringify(recipient)} nucleus question.answer -`;
+      if (prompt.includes('nucleus question.answer -')) return prompt.replaceAll('nucleus question.answer -', invocation);
+      return `${prompt}\nAnswer with this command; write nothing else in this thread. For operator-only matters set "decision":"operator" instead of answer.\n${invocation} <<'JSON'\n${JSON.stringify({ questionId, answer: '<answer or exact choice>', reason: '<one line>' })}\nJSON`;
+    }
     async askReviewer(reviewer: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string }) {
-      await this.native.sendMessage(reviewer, { messageId: input.messageId, text: input.prompt });
+      await this.native.sendMessage(reviewer, { messageId: input.messageId, text: this.bindAnswerRoute(reviewer, input.prompt, input.messageId) });
+      return null;
+    }
+    async askPlanner(planner: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string }) {
+      await this.native.sendMessage(planner, { messageId: input.messageId, text: this.bindAnswerRoute(planner, input.prompt, input.messageId) });
       return null;
     }
     observe(id: string) { return this.native.observe(id); }

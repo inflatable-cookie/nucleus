@@ -35,6 +35,11 @@ const waitUntil = async (ready: () => boolean, label: string, timeoutMs = 5_000)
   while (!ready() && Date.now() - start < timeoutMs) await new Promise(resolve => setTimeout(resolve, 20));
   assert.ok(ready(), label);
 };
+const boundAnswerCommand = (commands: Array<{ type?: string; threadId?: string; commandId?: string; text?: string }>, threadId: string, commandId?: string) =>
+  commands.find(command => command.type === 'message.dispatch' && command.threadId === threadId
+    && (commandId === undefined || command.commandId === commandId)
+    && typeof command.text === 'string'
+    && command.text.includes(`PASEO_AGENT_ID=${JSON.stringify(threadId)} nucleus question.answer -`));
 
 const helperTask = {
   id: 'task', runId: 'run-t3', title: 'T3 trial', originAgentId: 'origin', coordinatorAgentId: null,
@@ -399,15 +404,17 @@ test('T3 adapter asks a retained reviewer and binds uncertain run creation', asy
   assert.equal(await adapter.askReviewer!(reviewer.id, {
     prompt: 'Consult the retained T3 reviewer.', signal: new AbortController().signal, timeoutMs: 1_000, messageId: 'ns-agent-ask-reviewer-1',
   }), null);
-  assert.ok(server.commands.some(command => command.type === 'message.dispatch' && command.threadId === reviewer.id
-    && command.commandId === 'ns-agent-ask-reviewer-1' && command.text === 'Consult the retained T3 reviewer.'));
+  const boundConsult = boundAnswerCommand(server.commands, reviewer.id, 'ns-agent-ask-reviewer-1');
+  assert.ok(boundConsult);
+  assert.match(boundConsult.text!, /Consult the retained T3 reviewer/);
 
   const store = new Store(join(directory, 'queue.sqlite'));
   store.setMeta('paused', false);
+  store.setMeta('hostId', host.hostId);
   const engine = new Engine(store, adapter, 0);
-  engine.resolution.agentAskWaitMs = 400;
+  engine.resolution.agentAskWaitMs = 8_000;
   engine.resolution.agentAskPollMs = 20;
-  engine.resolution.delegatedAnswerWaitMs = 200;
+  engine.resolution.delegatedAnswerWaitMs = 6_000;
   const task = store.insert(submissionSchema.parse({
     submissionId: 't3-ask-reviewer', title: 'T3 ask reviewer', repoPath: directory, planningCommit: 'a'.repeat(40),
     handoffPath: 'handoff.md', originAgentId: 'origin',
@@ -422,11 +429,96 @@ test('T3 adapter asks a retained reviewer and binds uncertain run creation', asy
   const stop = await startCallbacks(socketPath, helper, engine);
   try {
     const pending = spawnHelper(helper, ticket, { question: 'Should the T3 reviewer advise this ask?', kind: 'process' }, ['ask']);
-    await waitUntil(() => store.eventsAll(task.id).some(event => event.kind === 'agent_ask_delegated' && event.detail.includes(`reviewer ${reviewer.id}`)), 'ask delegated to reviewer');
+    await waitUntil(() => {
+      const ask = store.eventsAll(task.id).find(event => event.kind === 'agent_ask');
+      return Boolean(ask && boundAnswerCommand(server.commands, reviewer.id, `ns-agent-ask-reviewer-${ask.detail.split(':')[0]!}`));
+    }, 'reviewer consult dispatched with bound answer route');
     assert.equal(store.eventsAll(task.id).some(event => event.kind === 'agent_ask_delegation_missed' && event.detail.includes('delivery adapter unavailable')), false);
     const askId = store.eventsAll(task.id).find(event => event.kind === 'agent_ask')!.detail.split(':')[0]!;
-    assert.ok(server.commands.some(command => command.type === 'message.dispatch' && command.threadId === reviewer.id
-      && command.commandId === `ns-agent-ask-reviewer-${askId}`));
-    await pending;
+    engine.resolution.answerDelegatedQuestion({
+      questionId: `ns-agent-ask-reviewer-${askId}`, answer: 'Keep the current T3 approach.', reason: 'Within the approved outcome.',
+    }, reviewer.id);
+    const answered = await pending;
+    assert.equal(answered.code, 0, answered.err);
+    const receipt = JSON.parse(answered.out) as { status: string; answer?: string };
+    assert.equal(receipt.status, 'answered');
+    assert.equal(receipt.answer, 'Keep the current T3 approach.');
+  } finally { await engine.stop(); await stop(); store.close(); }
+});
+
+test('T3 adapter asks a project planner, including a reviewer planning ruling', async (t: TestContext) => {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 't3-ask-planner-')));
+  const server = await t3Fake(t, directory);
+  const host = createHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', probeThreadId: 'synthetic-probe',
+    statePath: join(directory, 'hosts', 't3code.json'), timeoutMs: 2_000 });
+  t.after(() => host.close());
+  await host.connect();
+  const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace', directory, project: { projectId: 'synthetic-project' } });
+  const profile = { id: 'p', name: 'p', provider: 'synthetic-provider', model: 'synthetic-model', notes: '', available: true, problem: '', supportedThinking: [] } as Profile;
+  const worker = await host.createAgent({
+    workspaceId: workspace.id, title: 'Synthetic worker', mcpBindingPath: null, profile,
+    attempt: () => ({ requestId: 'create-worker', prompt: 'work', labels: { 'nucleus.task': 'task', 'nucleus.run': 'run-worker' }, environment: {} }),
+  });
+  const reviewer = await host.createAgent({
+    workspaceId: workspace.id, title: 'Synthetic reviewer', mcpBindingPath: null, profile,
+    attempt: () => ({ requestId: 'create-reviewer', prompt: 'review', labels: { 'nucleus.task': 'task', 'nucleus.run': 'run-review', 'nucleus.role': 'reviewer' }, environment: {} }),
+  });
+  const planner = await host.createAgent({
+    workspaceId: workspace.id, title: 'Synthetic planner', mcpBindingPath: null, profile,
+    attempt: () => ({ requestId: 'create-planner', prompt: 'plan', labels: { 'nucleus.role': 'planner' }, environment: {} }),
+  });
+  const adapter = createAdapter(Policy, host, { socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'worker-report.mjs') });
+  assert.equal(await adapter.askPlanner!(planner.id, {
+    prompt: 'Ask the T3 project planner.', signal: new AbortController().signal, timeoutMs: 1_000, messageId: 'ns-agent-ask-planner-1',
+  }), null);
+  const boundPlanner = boundAnswerCommand(server.commands, planner.id, 'ns-agent-ask-planner-1');
+  assert.ok(boundPlanner);
+  assert.match(boundPlanner.text!, /Ask the T3 project planner/);
+
+  const store = new Store(join(directory, 'queue.sqlite'));
+  store.setMeta('paused', false);
+  store.setMeta('hostId', host.hostId);
+  store.upsertProject({ key: 't3-trial', name: 'T3 trial', repositories: [{ origin: null, path: directory }] });
+  store.setProjectPlanner({ key: 't3-trial', agentId: planner.id, setBy: 'test' });
+  const engine = new Engine(store, adapter, 0);
+  engine.resolution.agentAskWaitMs = 12_000;
+  engine.resolution.agentAskPollMs = 20;
+  engine.resolution.delegatedAnswerWaitMs = 6_000;
+  const task = store.insert(submissionSchema.parse({
+    submissionId: 't3-ask-planner', title: 'T3 ask planner', repoPath: directory, planningCommit: 'a'.repeat(40),
+    handoffPath: 'handoff.md', originAgentId: 'origin',
+  }), host.hostId, 'handoff', 'a'.repeat(40));
+  store.update(task.id, {
+    phase: 'working', runId: 'run-worker', agentId: worker.id, workspaceId: workspace.id, profile,
+    resolution: { ...store.task(task.id).resolution, reviewerAgentId: reviewer.id },
+  });
+  store.setCredential('run-worker', 'fixture-secret');
+  const socketPath = join(directory, 's'), helper = join(directory, 'worker-report.mjs'), ticket = join(directory, 'ticket.json');
+  writeFileSync(ticket, JSON.stringify({ socketPath, token: 'fixture-secret', taskId: task.id, runId: 'run-worker' }), { mode: 0o600 });
+  const stop = await startCallbacks(socketPath, helper, engine);
+  try {
+    const pending = spawnHelper(helper, ticket, { question: 'Does this T3 ask need a planning ruling?', kind: 'process' }, ['ask']);
+    await waitUntil(() => {
+      const ask = store.eventsAll(task.id).find(event => event.kind === 'agent_ask');
+      return Boolean(ask && boundAnswerCommand(server.commands, reviewer.id, `ns-agent-ask-reviewer-${ask.detail.split(':')[0]!}`));
+    }, 'reviewer consult dispatched with bound answer route');
+    const askId = store.eventsAll(task.id).find(event => event.kind === 'agent_ask')!.detail.split(':')[0]!;
+    engine.resolution.answerDelegatedQuestion({
+      questionId: `ns-agent-ask-reviewer-${askId}`,
+      answer: 'Decision: planner — This changes the approved product outcome.',
+      reason: 'A planning ruling is needed.',
+    }, reviewer.id);
+    await waitUntil(() => Boolean(boundAnswerCommand(server.commands, planner.id, `ns-agent-ask-${askId}`)),
+      'planner consult dispatched with bound answer route');
+    assert.ok(store.eventsAll(task.id).some(event => event.kind === 'agent_ask_planning_ruling' && event.detail.includes(`reviewer ${reviewer.id}`)));
+    assert.equal(store.eventsAll(task.id).some(event => event.kind === 'agent_ask_delegation_missed'), false);
+    engine.resolution.answerDelegatedQuestion({
+      questionId: `ns-agent-ask-${askId}`, answer: 'Keep the T3 planner outcome.', reason: 'Within the approved brief.',
+    }, planner.id);
+    const answered = await pending;
+    assert.equal(answered.code, 0, answered.err);
+    const receipt = JSON.parse(answered.out) as { status: string; answer?: string };
+    assert.equal(receipt.status, 'answered');
+    assert.equal(receipt.answer, 'Keep the T3 planner outcome. — Within the approved brief.');
   } finally { await engine.stop(); await stop(); store.close(); }
 });
