@@ -132,6 +132,17 @@ export class SchedulingLifecycle {
   }
 
   async advancePhase(t: Task): Promise<void> {
+    // A released run without a recorded result is settled history: its claim
+    // ended without a verdict, so it is not the task's live work and a wait
+    // derived from it names a continuation that can never happen (nucleus#1106).
+    // Clear the binding so this pass proceeds to the phase's ordinary next step,
+    // which dispatches the run or shows why it cannot.
+    const bound = t.resolution.currentRunId ? this.context.store.run(t.resolution.currentRunId) : null;
+    if (bound && bound.released && !bound.completion)
+      t = this.context.update(t, { currentRunId: null,
+        ...(bound.role === 'reviewer' ? { reviewerAgentId: null, reviewerProfile: null } : {}) },
+        {}, 'released_run_binding_cleared',
+        `${bound.role} run ${bound.id} was released without a result; it no longer holds the task`);
     const run = t.resolution.currentRunId ? this.context.store.run(t.resolution.currentRunId) : null;
     if (run) {
       await this.context.advanceCompletedRun(t, run);

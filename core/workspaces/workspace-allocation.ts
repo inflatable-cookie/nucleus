@@ -154,7 +154,10 @@ export function workspaceCreationRefusal(state: WorkspaceCreationState): string 
     case "unknown":
       return `Workspace creation is uncertain (${state.evidence}); awaiting a visible result, not retrying creation`;
     case "partial":
-      return `Paseo left an orphan ${state.orphan.directory ? `worktree at ${state.orphan.directory} (locked: ${state.orphan.lockReason})` : "branch with no worktree"} on branch ${state.orphan.branch} at ${state.orphan.head}, base-identical and unpublished. Retry validation with removeOrphanWorkspace to remove the worktree and that branch before replaying creation`;
+      // The stop names the owner verb and fields that exit it, never an internal
+      // parameter: `retry_effect effect=workspace_creation discard=true` removes
+      // the proven orphan and replays the same create once (nucleus#1106).
+      return `Paseo left an orphan ${state.orphan.directory ? `worktree at ${state.orphan.directory} (locked: ${state.orphan.lockReason})` : "branch with no worktree"} on branch ${state.orphan.branch} at ${state.orphan.head}, base-identical and unpublished. Retry with retry_effect effect=workspace_creation discard=true; it removes the orphan and replays the same create once`;
     case "conflicting":
       return `Task worktree or branch left by an earlier create is not a provable orphan (${state.evidence}); resolve it manually before replaying creation`;
     case "found_done":
@@ -162,7 +165,7 @@ export function workspaceCreationRefusal(state: WorkspaceCreationState): string 
     case "proof_head_mismatch":
       return `Proof-only checkout at ${state.directory} is clean but at ${state.head}, not the required commit; re-detach it before execution`;
     case "absent":
-      return "Workspace creation is absent from inventory; retry_effect workspace_creation replays the same create once";
+      return "Workspace creation is absent from inventory; retry_effect effect=workspace_creation replays the same create once";
   }
 }
 

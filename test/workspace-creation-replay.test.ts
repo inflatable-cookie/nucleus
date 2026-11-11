@@ -19,6 +19,8 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
+import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
+import { workspaceCreationRefusal } from '../core/workspaces/workspace-allocation';
 import { submissionSchema, type Profile, type Task } from '../shared/contracts';
 import type { Adapter } from '../core/host';
 
@@ -79,13 +81,92 @@ test('an orphan worktree is reported precisely and removed only on the explicit 
     f.adapter.inspectWorkspaceCreation = async () => removed ? { kind: 'absent' } : { kind: 'partial', orphan, evidence: 'locked initializing' };
     f.adapter.removeOrphanWorkspace = async () => { removed++; };
     await assert.rejects(() => f.engine.performTaskControl({ taskId: task.id, version: task.version, action:'restart',reason:'Replay the pre-dispatch validation' }),
-      /orphan worktree at \/orphan \(locked: initializing\).*removeOrphanWorkspace/);
+      error => {
+        const refusal = (error as Error).message;
+        assert.match(refusal, /orphan worktree at \/orphan \(locked: initializing\).*retry_effect effect=workspace_creation discard=true/);
+        assert.doesNotMatch(refusal, /removeOrphanWorkspace/, 'no refusal names an internal parameter');
+        return true;
+      });
     assert.equal(removed, 0);
     assert.equal(f.store.task(task.id).workspaceIntent, true);
     const replayed = await f.engine.performTaskControl({ taskId: task.id, version: task.version, action:'retry_effect',effect:'workspace_creation',discard:true,reason:'Replay the workspace creation' });
     assert.equal(removed, 1);
     assert.equal(replayed.phase, 'queued');
     assert.equal(f.store.eventsAll(task.id).some(event => event.kind === 'orphan_workspace_removed'), true);
+  } finally { await f.close(); }
+});
+
+/** The classified facts for the incident's shape: a proven base-identical,
+ * unpublished orphan branch with no worktree. */
+const partialClassification = (task: Task) => ({ kind: 'partial' as const,
+  orphan: { directory: null, branch: task.branch, head: 'b'.repeat(40), lockReason: 'partial' }, evidence: 'branch with no worktree' });
+
+// nucleus#1106 shape 1: the incident's orphan branch with no worktree was proven
+// base-identical and unpublished, yet the task sat in needs_attention for hours
+// because the replay gate admitted only the dispatching phase. The same recovery
+// path now clears the proven orphan and replays creation from its own parked stop.
+test('recovery clears a proven orphan from its own parked stop and replays creation once', async () => {
+  const f = fixture([]); try {
+    const submitted = f.uncertain();
+    const classified = partialClassification(submitted);
+    const refusal = workspaceCreationRefusal(classified);
+    assert.match(refusal, /retry_effect effect=workspace_creation discard=true/);
+    assert.doesNotMatch(refusal, /removeOrphanWorkspace/, 'the stop names the owner verb and fields, never an internal parameter');
+    f.store.update(submitted.id, { resolution: { ...f.store.task(submitted.id).resolution,
+      stop: { reason: 'operator_needed', detail: refusal, since: new Date().toISOString(), suggestedVerbs: ['restart', 'route', 'move'] } } }, 'task_stopped', refusal);
+    f.adapter.inspectWorkspaceCreation = async () => classified;
+    let removed = 0;
+    f.adapter.removeOrphanWorkspace = async (_t, value) => { removed++; assert.equal(value.branch, submitted.branch); };
+    await f.engine.wake();
+    const current = f.store.task(submitted.id);
+    assert.equal(current.phase, 'working', 'the replayed creation dispatched a worker');
+    assert.equal(removed, 1);
+    assert.equal(f.calls.workspaces, 1);
+    assert.equal(f.calls.agents, 1);
+    assert.equal(f.store.eventsAll(submitted.id).filter(event => event.kind === 'workspace_creation_auto_replay').length, 1);
+    assert.equal(f.store.eventsAll(submitted.id).some(event => event.kind === 'orphan_workspace_removed'), true);
+    assert.equal(current.resolution.stop, null, 'the parked stop is settled by the replay');
+    await f.engine.wake();
+    assert.equal(removed, 1, 'one automatic replay, not a loop');
+    assert.equal(f.calls.workspaces, 1);
+  } finally { await f.close(); }
+});
+
+test('a parked task under an open attention episode keeps its stop', async () => {
+  const f = fixture([]); try {
+    const submitted = f.uncertain();
+    const classified = partialClassification(submitted);
+    f.adapter.inspectWorkspaceCreation = async () => classified;
+    f.store.update(submitted.id, { resolution: { ...f.store.task(submitted.id).resolution, attention: true,
+      stop: { reason: 'operator_needed', detail: workspaceCreationRefusal(classified), since: new Date().toISOString(), suggestedVerbs: ['restart', 'route', 'move'] } } }, 'task_stopped');
+    let removed = 0;
+    f.adapter.removeOrphanWorkspace = async () => { removed++; };
+    await f.engine.wake();
+    await f.engine.wake();
+    const current = f.store.task(submitted.id);
+    assert.equal(current.phase, 'needs_attention');
+    assert.equal(current.resolution.attention, true, 'an open attention episode keeps its stop');
+    assert.equal(removed, 0, 'an attended task is not steamrolled');
+    assert.equal(f.calls.workspaces, 0);
+    assert.equal(f.store.eventsAll(submitted.id).some(event => event.kind === 'workspace_creation_auto_replay'), false);
+  } finally { await f.close(); }
+});
+
+// nucleus#1106 shape 2: `next` offers the verb the stop names, with its fields.
+test('next offers retry_effect workspace_creation with discard for the parked orphan', async () => {
+  const f = fixture([]); try {
+    const submitted = f.uncertain();
+    const classified = partialClassification(submitted);
+    const refusal = workspaceCreationRefusal(classified);
+    f.store.update(submitted.id, { resolution: { ...f.store.task(submitted.id).resolution,
+      stop: { reason: 'operator_needed', detail: refusal, since: new Date().toISOString(), suggestedVerbs: ['restart', 'route', 'move'] } } }, 'task_stopped', refusal);
+    f.adapter.inspectWorkspaceCreation = async () => classified;
+    const next = ownerTaskNext(collectOwnerVerbFacts(f.store, f.store.task(submitted.id)));
+    const exit = next.verbs.filter(verb => verb.verb === 'retry_effect' && verb.available);
+    const named = exit.find(verb => (verb.args as { effect?: string } | undefined)?.effect === 'workspace_creation');
+    assert.ok(named, 'next offers the replay the stop names');
+    assert.deepEqual(named!.fill, ['reason', 'discard']);
+    assert.match(next.stop!.detail, /retry_effect effect=workspace_creation discard=true/);
   } finally { await f.close(); }
 });
 
