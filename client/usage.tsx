@@ -14,7 +14,6 @@ import {
 import { roles, space, type as typeScale } from "./design";
 import { PopoverHost } from "./popover";
 import {
-  formatLocalDateTime,
   formatRelativeSpan,
   formatRelativeTime,
 } from "../shared/date-time";
@@ -114,6 +113,119 @@ export function windowShortLabel(
   const hours = /(\d+)\s*-?\s*hour/.exec(name);
   if (hours) return `${hours[1]}h`;
   return name.split(/\s+/).slice(-1)[0]!.slice(0, 8) || "usage";
+}
+
+/** A customer-facing name for a provider window, never its internal ID. */
+export function friendlyWindowName(window: UsageWindow): string {
+  if (/credit|billing/i.test(window.name)) return "Billing period";
+  const seconds = window.windowSeconds;
+  if (seconds !== null) {
+    if (seconds >= 6 * 24 * 3_600) return "This week";
+    if (seconds >= 3_600 && seconds < 24 * 3_600) {
+      const hours = Math.max(1, Math.round(seconds / 3_600));
+      return `Next ${hours} ${hours === 1 ? "hour" : "hours"}`;
+    }
+  }
+  return window.name
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+const weekdays = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+/** The reset day used in sentences and the window row. */
+export function resetDay(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? null : weekdays[date.getDay()]!;
+}
+
+function resetTime(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/** Plain-language verdict for the subscription's projected pressure. */
+export function usageVerdict(
+  subscription: UsageSubscription,
+  now: number,
+): string {
+  const { projection, reading, stale } = subscription;
+  if (
+    projection.state === "unknown" ||
+    stale?.expired ||
+    reading.status !== "ok"
+  )
+    return "Usage unavailable right now.";
+  const window = bindingWindow(subscription);
+  const day = resetDay(window?.resetsAt ?? null);
+  if (!window || !day) return "Usage unavailable right now.";
+  const reset = Date.parse(window.resetsAt!);
+  if (projection.state === "will_run_out") {
+    const projected = projection.windows.find(
+      (entry) => entry.windowId === window.windowId,
+    );
+    if (projected?.exhaustsInMs == null)
+      return `At this pace you'll run out before ${day}'s reset.`;
+    const runsOutAt = new Date(now + projected.exhaustsInMs);
+    const timeOfDay =
+      runsOutAt.getHours() < 12
+        ? "morning"
+        : runsOutAt.getHours() < 17
+          ? "afternoon"
+          : runsOutAt.getHours() < 21
+            ? "evening"
+            : "tonight";
+    const daysBefore = Math.round(
+      (reset - runsOutAt.getTime()) / (24 * 3_600_000),
+    );
+    const lead =
+      daysBefore >= 1
+        ? `about ${daysBefore} day${daysBefore === 1 ? "" : "s"} before`
+        : "shortly before";
+    return `At this pace you'll run out ${weekdays[runsOutAt.getDay()]} ${timeOfDay}, ${lead} ${day}'s reset.`;
+  }
+  const projectedUse = projection.projectedUseAtReset;
+  if (projectedUse === null) return "Usage unavailable right now.";
+  if (projection.state === "on_track") {
+    const spare = Math.max(0, Math.round((1 - projectedUse) * 100));
+    return `On track. You should reach ${day}'s reset with about ${spare}% to spare.`;
+  }
+  return `Plenty of room. On track to use about ${Math.round(projectedUse * 100)}% by ${day}'s reset.`;
+}
+
+/** Fraction of a known window that has elapsed, for the bar's on-pace marker. */
+export function windowElapsedFraction(
+  window: UsageWindow,
+  now: number,
+): number | null {
+  if (!window.resetsAt) return null;
+  const reset = Date.parse(window.resetsAt);
+  const length =
+    window.windowSeconds !== null
+      ? window.windowSeconds * 1000
+      : window.windowStartsAt
+        ? reset - Date.parse(window.windowStartsAt)
+        : NaN;
+  if (
+    !Number.isFinite(reset) ||
+    !Number.isFinite(length) ||
+    length <= 0 ||
+    reset <= now ||
+    reset - length > now
+  )
+    return null;
+  return Math.max(0, Math.min(1, (now - (reset - length)) / length));
 }
 
 /** The binding window of a subscription's reading, when the projection names one. */
@@ -383,56 +495,104 @@ export function PressureRing({
   );
 }
 
-/** One window's detail line: used percent, reset time (relative and absolute), exhaustion when it runs out. */
-export function windowDetailLine(
-  window: UsageWindow,
-  projection: UsageProjection,
-  now: number,
-): string {
-  const parts = [`${Math.round(window.usedFraction * 100)}% used`];
-  const reset = formatRelativeTime(window.resetsAt, now);
-  if (reset)
-    parts.push(`resets ${reset} (${formatLocalDateTime(window.resetsAt!)})`);
-  else parts.push("reset time unknown");
-  const projected = projection.windows.find(
-    (entry) => entry.windowId === window.windowId,
-  );
-  if (projected?.exhaustsInMs != null) {
-    parts.push(
-      projected.exhaustsInMs === 0
-        ? "exhausted now"
-        : `runs out in ${formatRelativeSpan(projected.exhaustsInMs)}`,
-    );
-  }
-  return `${window.name}: ${parts.join(" · ")}`;
-}
-
-/** One subscription's freshness line: sample age, source and the next scheduled read. */
-export function freshnessLine(
-  subscription: UsageSubscription,
-  now: number,
-): string {
-  const parts: string[] = [];
-  const sampled = formatRelativeTime(subscription.reading.asOf, now);
-  if (sampled) parts.push(`sampled ${sampled}`);
-  if (subscription.reading.source) parts.push(subscription.reading.source);
-  const next = formatRelativeTime(subscription.nextReadAt, now);
-  if (next) parts.push(`next read ${next}`);
-  return parts.join(" · ") || "not sampled yet";
-}
-
 /** The description behind the card's (?): what the dial means and where the reading came from. */
-function cardHelp(subscription: UsageSubscription): string {
+function cardHelp(subscription: UsageSubscription, now: number): string {
   const r = subscription.reading;
   const shape =
     r.status === "ok"
       ? "Centre means the subscription lands at 100% exactly at its reset; right means it runs out first; left means it reaches the reset with usage to spare."
       : "No usable projection for this subscription right now. It is never shown as 0 or green.";
-  const source = r.accountId ? ` Reading ${r.accountId}` : "";
+  const reason = r.reason ? ` ${r.reason}` : "";
+  const source = ` Sampled ${formatRelativeTime(r.asOf, now) ?? "at an unknown time"} via ${r.source}.${r.accountId ? ` Account ${r.accountId}.` : ""}`;
+  const next = subscription.nextReadAt
+    ? ` Next read ${formatRelativeTime(subscription.nextReadAt, now) ?? "unknown"}.`
+    : "";
+  const pace = subscription.projection.windows.find(
+    (entry) => entry.windowId === subscription.projection.bindingWindowId,
+  )?.pace;
+  const paceDetail =
+    pace === null || pace === undefined
+      ? ""
+      : ` Projected pace ${Math.round(pace * 100)}% of an even pace.`;
   const path = subscription.sourcePath
     ? ` Source path ${subscription.sourcePath}.`
     : "";
-  return `${shape}${source}${path}`;
+  return `${shape}${reason}${source}${next}${paceDetail}${path}`;
+}
+
+/** A window row with used amount and the elapsed-time marker for on pace. */
+function UsageWindowRow({
+  c,
+  window,
+  now,
+  expired,
+}: {
+  c: Colors;
+  window: UsageWindow;
+  now: number;
+  expired: boolean;
+}) {
+  const r = roles(c);
+  const used = Math.round(window.usedFraction * 100);
+  const elapsed = windowElapsedFraction(window, now);
+  const reset = window.resetsAt
+    ? `Resets ${resetDay(window.resetsAt)} ${resetTime(window.resetsAt)}`
+    : "Reset time unavailable";
+  return (
+    <View
+      style={{ gap: 4 }}
+      accessibilityLabel={`${friendlyWindowName(window)}. ${reset}. ${used}% used${expired ? ". Expired" : ""}`}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          gap: space.xs,
+        }}
+      >
+        <Text
+          style={{
+            color: r.foreground,
+            fontSize: typeScale.metadata.fontSize,
+            fontWeight: "600",
+          }}
+        >
+          {friendlyWindowName(window)}{expired ? " · expired" : ""}
+        </Text>
+        <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{reset}</Text>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}>
+        <View
+          accessibilityRole="progressbar"
+          accessibilityLabel={`${used}% used${elapsed === null ? "" : `; ${Math.round(elapsed * 100)}% of the window elapsed`}`}
+          style={{
+            height: 6,
+            flex: 1,
+            borderRadius: 3,
+            backgroundColor: r.border,
+            overflow: "visible",
+            position: "relative",
+          }}
+        >
+          <View style={{ height: 6, width: `${used}%`, borderRadius: 3, backgroundColor: r.accent }} />
+          {elapsed !== null && (
+            <View
+              testID="usage-pace-marker"
+              style={{
+                position: "absolute",
+                left: `${elapsed * 100}%`,
+                top: -3,
+                width: 1,
+                height: 12,
+                backgroundColor: r.foreground,
+              }}
+            />
+          )}
+        </View>
+        <Text style={{ color: r.foreground, fontSize: typeScale.metadata.fontSize }}>{used}% used</Text>
+      </View>
+    </View>
+  );
 }
 
 /** One subscription's card: dial and caption, window details, freshness and any read error. */
@@ -452,13 +612,13 @@ export function UsageCard({
   const r = roles(c);
   const reading = subscription.reading;
   const projection = subscription.projection;
-  const state = projection.state;
-  const color = pressureColor(state, c);
-  const caption = dialCaption(subscription);
-  const heading = usageCardHeading(subscription.provider, subscription.group);
+  const state = subscription.stale?.expired ? "unknown" : projection.state;
+  const heading = providerLabel(subscription.provider);
+  const verdict = usageVerdict(subscription, now);
+  const caption = state === "unknown" ? usageStateWord(state) : dialCaption(subscription);
   return (
     <View
-      accessibilityLabel={`${heading} usage: ${usageStateWord(state)}${caption === usageStateWord(state) ? "" : `, ${caption}`}`}
+      accessibilityLabel={`${heading} usage: ${verdict}`}
       style={{ ...sectionCard(c), gap: space.xs }}
     >
       <View
@@ -483,20 +643,10 @@ export function UsageCard({
         >
           {heading}
         </Text>
-        <Text
-          style={{
-            color,
-            fontWeight: "600",
-            fontSize: typeScale.metadata.fontSize,
-            lineHeight: typeScale.metadata.lineHeight,
-          }}
-        >
-          {usageStateWord(state)}
-        </Text>
         <HelpTip
           c={c}
           label={heading}
-          text={cardHelp(subscription)}
+          text={cardHelp(subscription, now)}
           open={helpOpen}
           onOpenChange={setHelpOpen}
         />
@@ -505,14 +655,14 @@ export function UsageCard({
             c={c}
             anchor={anchor}
             label={heading}
-            text={cardHelp(subscription)}
+            text={cardHelp(subscription, now)}
           />
         )}
       </View>
       <View
         style={{
           flexDirection: "row",
-          alignItems: "flex-end",
+          alignItems: "center",
           gap: space.sm,
           flexWrap: "wrap",
         }}
@@ -520,76 +670,52 @@ export function UsageCard({
         <PressureDial
           c={c}
           state={state}
-          dial={projection.dial}
+          dial={state === "unknown" ? null : projection.dial}
           label={caption}
-          size={compact ? 104 : 128}
+          size={compact ? 80 : 88}
         />
-        <View style={{ gap: 2, paddingBottom: space.xs }}>
+        <View style={{ gap: 2, flex: 1, paddingBottom: space.xs }}>
           <Text
             accessibilityRole="text"
             style={{
-              color,
+              color: r.foreground,
               fontWeight: "600",
               fontSize: typeScale.body.fontSize,
               lineHeight: typeScale.body.lineHeight,
             }}
           >
-            {caption}
+            {verdict}
           </Text>
-          {projection.bindingWindowName && reading.status === "ok" && (
-            <Text style={muted(c)}>
-              binding window: {projection.bindingWindowName}
-            </Text>
-          )}
         </View>
       </View>
       {reading.status === "ok" ? (
-        <View style={{ gap: 2 }}>
+        <View style={{ gap: space.xs }}>
           {reading.windows.map((window) => (
-            <Text
+            <UsageWindowRow
               key={window.windowId}
-              style={{
-                ...muted(c),
-                fontSize: typeScale.metadata.fontSize,
-                lineHeight: typeScale.metadata.lineHeight,
-              }}
-            >
-              {windowDetailLine(window, projection, now)}
-            </Text>
+              c={c}
+              window={window}
+              now={now}
+              expired={Boolean(subscription.stale?.expired)}
+            />
           ))}
         </View>
-      ) : (
+      ) : null}
+      {subscription.stale && (
         <Text
           accessibilityRole="text"
           style={{
-            color: r.warning,
+            ...muted(c),
             fontSize: typeScale.metadata.fontSize,
             lineHeight: typeScale.metadata.lineHeight,
           }}
         >
-          {reading.status === "not_available" ? "Not available" : "Unknown"}
-          {reading.reason ? `: ${reading.reason}` : ""}
+          Showing the reading from {formatRelativeSpan(subscription.stale.ageMs)} ago: couldn't refresh ({subscription.stale.reason})
         </Text>
       )}
-      <Text
-        style={{
-          ...muted(c),
-          fontSize: typeScale.metadata.fontSize,
-          lineHeight: typeScale.metadata.lineHeight,
-        }}
-      >
-        {freshnessLine(subscription, now)}
-      </Text>
-      {subscription.lastError && (
-        <Text
-          accessibilityRole="text"
-          style={{
-            color: r.warning,
-            fontSize: typeScale.metadata.fontSize,
-            lineHeight: typeScale.metadata.lineHeight,
-          }}
-        >
-          Last read failed: {subscription.lastError}
+      {!subscription.stale && now - Date.parse(reading.asOf) > 60 * 60_000 && (
+        <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+          updated {formatRelativeTime(reading.asOf, now)}
         </Text>
       )}
     </View>
@@ -661,17 +787,6 @@ export function UsagePage({
               now={now}
             />
           ))}
-          {state && (
-            <Text
-              style={{
-                ...muted(c),
-                fontSize: typeScale.metadata.fontSize,
-                lineHeight: typeScale.metadata.lineHeight,
-              }}
-            >
-              Read {formatRelativeTime(state.generatedAt, now) ?? "just now"}
-            </Text>
-          )}
         </ScrollView>
       </View>
     </PopoverHost>

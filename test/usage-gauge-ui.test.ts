@@ -387,7 +387,7 @@ test("the rail ring paints only the used share: empty at fraction 0, full at 1",
   assert.deepEqual(clips(full), ["right", "left"], "a full ring mounts both halves");
 });
 
-test("labels and short window names read as the brief writes them", async () => {
+test("friendly labels and reset verdicts read as the brief writes them", async () => {
   await load();
   const label = (projected: number | null) =>
     usage.projectedUseLabel({
@@ -420,60 +420,65 @@ test("labels and short window names read as the brief writes them", async () => 
   );
   assert.equal(usage.usageStateWord("will_run_out"), "Will run out");
   assert.equal(usage.usageStateWord("unknown"), "Unknown");
+  assert.equal(usage.friendlyWindowName(window()), "This week");
+  assert.equal(usage.friendlyWindowName(window({ windowSeconds: 5 * 3600, name: "5-hour" })), "Next 5 hours");
+  assert.equal(usage.friendlyWindowName(window({ name: "Credits" })), "Billing period");
+  assert.equal(usage.resetDay(new Date(RESET).toISOString()), "Saturday");
+  assert.match(usage.usageVerdict(fixture.subscriptions[2]!, NOW), /^On track\. You should reach Saturday's reset with about \d+% to spare\.$/);
+  assert.match(usage.usageVerdict(fixture.subscriptions[1]!, NOW), /^Plenty of room\. On track to use about \d+% by Saturday's reset\.$/);
+  assert.match(usage.usageVerdict(fixture.subscriptions[0]!, NOW), /^At this pace you'll run out Friday (morning|afternoon|evening|tonight), about 1 day before Saturday's reset\.$/);
+  assert.equal(usage.usageVerdict(fixture.subscriptions[3]!, NOW), "Usage unavailable right now.");
 });
 
-test("the page renders subscriptions from a fixture usage.state", async () => {
+test("the page renders verdicts and friendly usage window rows", async () => {
   await load();
   const tree = mountPage(fixture.state);
-  const over = Math.round(
-    (fixture.subscriptions[0]!.projection.projectedUseAtReset! - 1) * 100,
-  );
-  await settle(() => tree.text().includes("Codex · codex-main"));
+  await settle(() => tree.text().includes("Codex"));
   const text = tree.text();
 
-  // Each card names its provider and group, the state, and the dial caption
-  // with the projected use at reset and the binding window ("wk").
-  assert.ok(text.includes("Codex · codex-main"), "the codex card renders");
   const pageLogos = tree.ofType("Image").map((node) => node.props.accessibilityLabel);
   for (const provider of ["Claude", "Codex", "Grok"]) {
     assert.ok(pageLogos.includes(`${provider} logo`), `${provider} logo renders on the page`);
   }
-  assert.ok(text.includes("Will run out"));
-  assert.ok(
-    new RegExp(`\\+${over}% over · wk`).test(text),
-    `the caption carries +${over}% over · wk`,
-  );
-  assert.ok(
-    text.includes("-63% spare · wk") || /-\d+% spare · wk/.test(text),
-    "the spare card shows its spare",
-  );
-  assert.ok(
-    text.includes("binding window: Weekly"),
-    "the binding window is named",
-  );
+  assert.ok(text.includes("At this pace you'll run out Friday"));
+  assert.ok(text.includes("Plenty of room. On track to use about"));
+  assert.ok(text.includes("On track. You should reach Saturday's reset"));
+  assert.ok(text.includes("Usage unavailable right now."));
+  assert.ok(text.includes("This week"), "weekly windows use a friendly name");
+  assert.ok(text.includes("Resets Saturday 12:00"), "reset row carries day and local time");
+  assert.ok(text.includes("62% used"));
+  assert.ok(!text.includes("codex-main"), "the subscription group stays hidden");
+  assert.ok(!text.includes("binding window"), "internal binding label stays hidden");
+  assert.ok(!text.includes("app-server"), "reader source stays out of visible text");
+  assert.ok(!text.includes("next read"), "next read stays in the help popover");
+  assert.ok(!text.includes("updated"), "fresh readings do not show an age note");
+  assert.ok(!text.includes("0% used · reset time unknown · "), "a broken subscription never reads as an empty window");
+  const marker = tree.ofType("View").find((node) => node.props.testID === "usage-pace-marker");
+  assert.equal(marker?.props.style.left, `${(4 / 7) * 100}%`, "the marker tracks elapsed window time");
+});
 
-  // Window details: used percent, reset time relative and absolute, exhaustion.
-  assert.match(text, /Weekly: 62% used · resets in .+ \(.*\) · runs out in .+/);
-  assert.match(
-    text,
-    /sampled just now · app-server · next read in 5m/,
-    "freshness names age, source and next read",
-  );
+test("stale readings remain visible with a quiet warning and expired readings lose the dial", async () => {
+  await load();
+  const subscriptions = [...fixture.state.subscriptions];
+  subscriptions[0] = {
+    ...subscriptions[0]!,
+    stale: { reason: "timed out", failedAt: AT, ageMs: 40 * 60_000, expired: false },
+  };
+  const staleTree = mountPage({ ...fixture.state, subscriptions });
+  await settle(() => staleTree.text().includes("Showing the reading from"));
+  assert.ok(staleTree.text().includes("Showing the reading from 40m ago: couldn't refresh (timed out)"));
+  assert.ok(staleTree.text().includes("At this pace you'll run out Friday"));
+  staleTree.update(h(React.Fragment, {}));
 
-  // Unknown and not available say so plainly, never 0 or green.
-  assert.match(
-    text,
-    /Unknown: codex usage read failed: app-server not reachable/,
-  );
-  assert.match(text, /Not available: no cached usage for this subscription/);
-  assert.ok(
-    !text.includes("0% used · reset time unknown · "),
-    "a broken subscription never reads as an empty window",
-  );
-  assert.ok(
-    text.includes("Last read failed: app-server not reachable"),
-    "the stored read error shows",
-  );
+  subscriptions[0] = {
+    ...subscriptions[0]!,
+    stale: { reason: "timed out", failedAt: AT, ageMs: 2 * HOUR, expired: true },
+    projection: { ...subscriptions[0]!.projection, state: "unknown", dial: null },
+  };
+  const expiredTree = mountPage({ ...fixture.state, subscriptions });
+  await settle(() => expiredTree.text().includes("Usage unavailable right now."));
+  assert.ok(expiredTree.text().includes("62% used"));
+  assert.ok(expiredTree.text().includes("This week · expired"));
 });
 
 test("the sidebar row carries the board button and the rings on one line", async () => {
@@ -579,9 +584,9 @@ test("the sidebar row carries the board button and the rings on one line", async
 
   // The press asked the board for its Usage tab: a board that mounts next lands there.
   const board = mountBoard();
-  await settle(() => board.text().includes("Codex · codex-main"));
+  await settle(() => board.text().includes("Codex"));
   assert.ok(
-    board.text().includes("Will run out"),
+    board.text().includes("At this pace you'll run out"),
     "the ring's request lands on the board's Usage tab",
   );
   board.update(h(React.Fragment, {}));
@@ -630,7 +635,7 @@ test("the row shows the board's active state and a ring moves an open board", as
   await settle(() => board.text().includes("Tasks ("));
   tree.query(/^Claude usage: /)!.props.onPress();
   assert.deepEqual(opened, [sidebar.BOARD_SCREEN_ID]);
-  await settle(() => board.text().includes("Codex · codex-main"));
+  await settle(() => board.text().includes("Codex"));
   queue.requestBoardTab("queue");
   await settle(() => board.text().includes("Tasks ("));
   board.update(h(React.Fragment, {}));
@@ -858,9 +863,9 @@ test("the plugin shell renders the page from the board navigation", async () => 
   const tree = mountBoard();
   await settle(() => tree.text().includes("Tasks ("));
   tree.press("Usage");
-  await settle(() => tree.text().includes("Codex · codex-main"));
+  await settle(() => tree.text().includes("Codex"));
   assert.ok(
-    tree.text().includes("Will run out"),
+    tree.text().includes("At this pace you'll run out"),
     "the board navigation reaches the Usage page in the plugin shell",
   );
   tree.update(h(React.Fragment, {}));
