@@ -1259,7 +1259,11 @@ export class QueueRuntime {
   decisionAgentProjects(input: Parameters<Decisions["agentProjects"]>[0]) { return this.questions.decisionAgentProjects(input); }
   async listNativeQuestions(input: { taskId: string; agentId?: string; agentRef?: string }) { return this.questions.listNativeQuestions(input); }
   async answerNativeQuestion(input: { taskId: string; agentId?: string; agentRef?: string; requestId: string; answers: Record<string, string> }) { return this.questions.answerNativeQuestion(input); }
-  answerHostPermission(input: import('../shared/rpc/questions').HostPermissionAnswerInput) { return answerHostPermission(this.hostRegistry, input); }
+  answerHostPermission(input: import('../shared/rpc/questions').HostPermissionAnswerInput) {
+    return answerHostPermission(this.hostRegistry, input, { store: this.store,
+      attention: (task, reason) => this.engine.withHost(task.hostId, () => this.engine.resolution.attention(task, reason, 'uncertain_delivery')),
+    });
+  }
   answerDelegatedQuestion(input: import("../shared/contracts").QuestionAnswerRequest) { return this.questions.answerDelegatedQuestion(input); }
   answerDecision(input: Parameters<Decisions["answer"]>[0]) { return this.questions.answerDecision(input); }
   withdrawDecision(input: Parameters<Decisions["withdraw"]>[0]) { return this.questions.withdrawDecision(input); }

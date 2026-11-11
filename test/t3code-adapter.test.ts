@@ -5,7 +5,7 @@ import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T3CodeHost } from '../hosts/t3code/adapter';
-import { ProvenPreSendRefusalError } from '../core/host';
+import { ProvenPreSendRefusalError, HostUnknownDeliveryError } from '../core/host';
 import type { HostAgentSpec } from '../shared/host';
 import type { Profile } from '../shared/contracts';
 import { t3Fake, STAMP } from './support/t3code-fake';
@@ -109,19 +109,28 @@ test('follow-ups keep exact text and native target, with no resend after interru
   assert.equal(server.commands.length, 3);
 });
 
-test('decoder-formatted defects keep the durable intent unknown and are never retried', async t => {
-  const { host, server, spec } = await fixture(t);
+test('decoder-formatted defects keep durable diagnostics while remaining unknown after reload', async t => {
+  const { host, server, spec, options } = await fixture(t);
   const created = await host.createAgent(spec());
   server.controls.postEffectDefect = true;
   await assert.rejects(host.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), error => {
-    assert.ok(!(error instanceof ProvenPreSendRefusalError));
+    assert.ok(error instanceof HostUnknownDeliveryError);
+    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', field: 'commandId' });
     return true;
   });
   assert.equal(host.state.read().intents['schema-refusal']?.status, 'unknown');
+  assert.deepEqual(host.state.read().intents['schema-refusal']?.diagnostic, { command: 'message.dispatch', field: 'commandId' });
   assert.ok(server.threads.get(created.id)!.messages.some((message: { text: string }) => message.text === 'Synthetic'), 'handler performed the effect before the identical defect');
   const sent = server.commands.length;
   server.controls.postEffectDefect = false;
-  await assert.rejects(host.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), /unknown.*not resent/);
+  host.close();
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close()); await reloaded.connect();
+  await assert.rejects(reloaded.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), error => {
+    assert.ok(error instanceof HostUnknownDeliveryError);
+    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', field: 'commandId' });
+    assert.match(error.message, /unknown.*not resent.*message.dispatch.*commandId/);
+    return true;
+  });
   assert.equal(server.commands.length, sent);
 });
 

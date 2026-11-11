@@ -1163,6 +1163,9 @@ fixtures. Its decoder runs before handlers, but its untagged remote defects
 cannot prove their phase; even schema-formatted failures remain unknown and
 are never resent (planner ruling, 2026-11-11). Sanitized reported command and field
 names are diagnostics only. Only a proven local pre-write refusal is known non-delivery.
+Reported names persist on the unknown native intent. The registered permission
+route also carries them into the exact owning task's durable attention; a reload
+or blocked repeat does not erase them or authorize another write.
 Never send a compatibility canary mutation to the operator's T3.
 
 `host.permission-answer` requires an explicit registered host, native agent,

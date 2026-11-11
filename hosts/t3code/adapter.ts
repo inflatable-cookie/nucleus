@@ -3,7 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { z } from 'zod';
 import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMessage, HostSendGuard, HostAsk, HostWorkspaceRef, HostRetainedAgentRef, HostCatalog, HostTimelinePage, HostThread, NativeDecisionInput, NativeDecisionAnswer } from '../../shared/host';
 import type { Task, Profile } from '../../shared/contracts';
-import { ProvenPreSendRefusalError } from '../../core/host';
+import { ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
 import { T3StateFile, canonical, type T3State } from './state';
 import { decode, config, shellSnapshot, projection, threadSnapshot, shellThread, project, T3CompatibilityError } from './contracts';
@@ -158,10 +158,10 @@ export class T3CodeHost implements Host {
     const reserved = this.state.update(state => {
       const matches = response ? responseIntents(state, response.binding.agentId, response.binding.requestId) : [];
       const possibleWrites = matches.filter(([, intent]) => intent.status !== 'refused' || !intent.response);
-      if (possibleWrites.length > 1) throw Error('T3Code response delivery is unknown; multiple prior intents exist and nothing was resent');
+      if (possibleWrites.length > 1) throw new HostUnknownDeliveryError(possibleWrites.find(([, intent]) => intent.diagnostic)?.[1].diagnostic);
       const [boundKey, old] = possibleWrites[0] ?? matches.find(([id]) => id === key) ?? [key, state.intents[key]];
       // Inspect the original outcome before payload checks or native status reads.
-      if (old?.status === 'unknown' || old?.status === 'refused' && matches.length && !old.response) throw Error('T3Code delivery is unknown; command was not resent');
+      if (old?.status === 'unknown' || old?.status === 'refused' && matches.length && !old.response) throw new HostUnknownDeliveryError(old.diagnostic);
       if (old && matches.length) {
         const wire = JSON.parse(old.payload).payload;
         const legacyInput = canonical({ type: wire.type, response: wire.type === 'runtime-request.respond'
@@ -182,7 +182,7 @@ export class T3CodeHost implements Host {
     key = reserved.key; const prior = reserved.prior;
     if (prior?.status === 'settled') return prior.result;
     if (prior?.status === 'refused') throw new ProvenPreSendRefusalError('T3Code command was refused; no retry');
-    if (prior) throw Error('T3Code delivery is unknown; command was not resent');
+    if (prior) throw new HostUnknownDeliveryError(prior.diagnostic);
     let wrote = false;
     try {
       if (response) {
@@ -200,7 +200,13 @@ export class T3CodeHost implements Host {
         : !wrote || error instanceof T3RpcError && error.delivery === 'not_sent'
           ? new ProvenPreSendRefusalError(error instanceof T3RpcError ? error.message : 'T3Code send fence refused before delivery') : null;
       if (refusal) this.state.update(state => { state.intents[key] = { ...state.intents[key], payload: encoded, status: 'refused' }; });
-      throw refusal ?? error;
+      if (refusal) throw refusal;
+      const diagnostic = sanitizeHostDeliveryDiagnostic(error instanceof T3RpcError ? { command: error.command, field: error.field }
+        : error instanceof HostUnknownDeliveryError ? error.diagnostic : undefined);
+      const unknown = new HostUnknownDeliveryError(diagnostic);
+      try { this.state.update(state => { state.intents[key] = { ...state.intents[key], diagnostic }; }); }
+      catch (persistenceError) { unknown.cause = persistenceError; }
+      throw unknown;
     }
   }
   async createAgent(spec: HostAgentSpec) {

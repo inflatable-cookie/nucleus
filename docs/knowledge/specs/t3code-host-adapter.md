@@ -76,6 +76,11 @@ and is never resent. Only a local refusal before the socket write proves
 non-delivery (planner ruling, 2026-11-11). Sanitized reported command and field
 names remain diagnostic text, never proof of a decoder phase; raw error bodies,
 actual values and credentials are omitted.
+Those names are stored on the durable unknown intent and returned on blocked
+repeats, including after reload. A registered permission failure also records
+them through the owning task's existing attention policy, selected by its exact
+host, agent and workspace identity; standalone native operations retain them in
+the intent ledger without inventing a task owner.
 
 ## Identity and workspaces
 

@@ -2,10 +2,16 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, openSync, fsyncSync
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { sanitizeHostDeliveryDiagnostic } from '../../core/host';
 
 const workspace = z.object({ id: z.string(), directory: z.string(), projectId: z.string(), title: z.string() });
 const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.record(z.string(), z.string()) });
+const diagnostic = z.object({ command: z.string().optional(), field: z.string().optional() }).strict().refine(value => {
+  const clean = sanitizeHostDeliveryDiagnostic(value);
+  return clean.command === value.command && clean.field === value.field;
+});
 const intent = z.object({ payload: z.string(), status: z.enum(['unknown', 'settled', 'refused']), result: z.unknown().optional(),
+  diagnostic: diagnostic.optional(),
   response: z.object({ agentId: z.string(), workspaceId: z.string(), requestId: z.string(), input: z.string() }).optional() });
 const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedVersion: z.string(),
   workspaces: z.record(z.string(), workspace), agents: z.record(z.string(), agent), intents: z.record(z.string(), intent) });

@@ -7,7 +7,7 @@ import { createHost, createAdapter } from '../hosts/t3code';
 import { HostFacade } from '../core/host/host-facade';
 import { HostRegistry, type KnownHost } from '../core/host/host-registry';
 import { Admission, admitAdapter } from '../core/host/admission';
-import { ProvenPreSendRefusalError, type Adapter } from '../core/host';
+import { HostUnknownDeliveryError, ProvenPreSendRefusalError, type Adapter } from '../core/host';
 import { answerHostPermission } from '../service/host-permissions';
 import { QueueService } from '../service/transport/server';
 import { ServiceClient } from '../shared/service/client';
@@ -15,6 +15,10 @@ import { readServiceInfo } from '../service/transport/identity';
 import { hostPermissionAnswer, type HostPermissionAnswerInput } from '../shared/rpc/questions';
 import { callCatalogueMethod } from '../service/transport/dispatch';
 import { t3Fake } from './support/t3code-fake';
+import { QueueRuntime } from '../service/runtime-owner';
+import { Store } from '../core/store/store';
+import { Engine } from '../core/engine';
+import { submissionSchema, type Run } from '../shared/contracts';
 
 async function nativeFixture(t: TestContext) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 't3p-')));
@@ -48,6 +52,26 @@ function isUnknown(error: unknown): boolean {
   assert.equal(error instanceof ProvenPreSendRefusalError, false, 'an uncertain original response never becomes a known pre-send refusal');
   assert.match(error.message, /unknown.*not resent/);
   return true;
+}
+
+function permissionTask(store: Store, key: string, hostId: string, input: HostPermissionAnswerInput, own = true) {
+  const base = 'a'.repeat(40);
+  return store.insert(submissionSchema.parse({ submissionId: key, title: 'Synthetic permission owner', repoPath: '/fixture',
+    planningCommit: base, handoffPath: 'synthetic-handoff', originAgentId: own ? 'synthetic-origin' : input.agentId }),
+  hostId, 'Synthetic handoff', base, { phase: 'working', ...(own ? { agentId: input.agentId, workspaceId: input.workspaceId } : {}) });
+}
+
+async function permissionRuntime(t: TestContext, fixture: Awaited<ReturnType<typeof nativeFixture>>) {
+  const directory = join(fixture.directory, 'service');
+  const primary = { client: { isConnected: true }, hostId: 'synthetic-primary', socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'helper.mjs'),
+    connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
+  const runtime = new QueueRuntime({ dataDir: directory, adapterFactory: () => primary, timers: false });
+  t.after(() => runtime.drain());
+  await runtime.started; await runtime.bootstrap;
+  const admission = new Admission({ startIntervalMs: 0 });
+  const adapter = admitAdapter(createAdapter(fixture.host), admission);
+  runtime.hostRegistry.connect(fixture.host.hostId, fixture.server.endpoint, { adapter, admission });
+  return runtime;
 }
 
 test('the permission façade is late-bound and returns the registered adapter promise unchanged', async () => {
@@ -221,6 +245,107 @@ test('an older unbound refused permission intent remains unknown when a new inte
   assert.equal(server.requests.length, reads);
   assert.equal(server.commands.filter(command => command.type === 'runtime-request.respond').length, 0);
   assert.equal(host.state.read().intents['legacy-refused']?.status, 'refused', 'the historical record is not relabelled');
+});
+
+test('reported command and field enter the exact owning task attention and survive store/host reload', async t => {
+  const fixture = await nativeFixture(t);
+  const { host, server, input, directory, config } = fixture;
+  const runtime = await permissionRuntime(t, fixture);
+  const store = runtime.store;
+  const task = permissionTask(store, 'permission-review-owner', host.hostId, input, false);
+  const run: Run = { id: 'synthetic-review-run', taskId: task.id, hostId: host.hostId, role: 'reviewer', generation: 1,
+    head: 'a'.repeat(40), base: 'a'.repeat(40), agentId: input.agentId, workspaceId: input.workspaceId, profile: null,
+    status: 'running', createdAt: '2026-01-01T00:00:00.000Z', lastObservedAt: null, active: true, idleSince: null, completion: null, released: false };
+  store.putRun(run);
+  store.update(task.id, { phase: 'reviewing', resolution: { ...store.task(task.id).resolution, currentRunId: run.id, reviewerAgentId: input.agentId } });
+  const collision = permissionTask(store, 'permission-foreign-host', 'different-host', input);
+  const otherWorkspace = permissionTask(store, 'permission-foreign-workspace', host.hostId, { ...input, workspaceId: `${input.workspaceId}-other` });
+  const originOnly = permissionTask(store, 'permission-origin-only', host.hostId, input, false);
+  const terminal = permissionTask(store, 'permission-terminal', host.hostId, input);
+  store.update(terminal.id, { phase: 'cancelled', finishedAt: '2026-01-01T00:00:00.000Z' });
+  const untouched = [collision, otherWorkspace, originOnly, terminal].map(item => ({ id: item.id, task: store.task(item.id) }));
+  server.controls.postEffectDefect = true;
+  await assert.rejects(runtime.answerHostPermission(input), error => {
+    assert.ok(error instanceof HostUnknownDeliveryError);
+    assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId' });
+    return true;
+  });
+  const attention = store.task(task.id);
+  assert.equal(attention.resolution.attention, true);
+  assert.equal(attention.phase, 'reviewing', 'existing attention policy preserves a live run phase');
+  assert.equal(attention.resolution.incident?.cause, 'uncertain_delivery');
+  assert.match(attention.reason, /delivery is unknown/);
+  assert.match(attention.reason, /command runtime-request\.respond/);
+  assert.match(attention.reason, /field commandId/);
+  assert.equal(store.run(run.id)?.released, false);
+  const deliveryEvents = store.eventsAll(task.id).filter(event => event.kind === 'host_permission_delivery_unknown');
+  assert.equal(deliveryEvents.length, 1);
+  const evidence = JSON.parse(deliveryEvents[0]!.detail);
+  assert.equal(evidence.command, 'runtime-request.respond'); assert.equal(evidence.field, 'commandId'); assert.equal(evidence.delivery, 'unknown');
+  assert.doesNotMatch(JSON.stringify({ reason: attention.reason, evidence, intent: host.state.read().intents[input.intentId]!.diagnostic }), /synthetic-bearer|Missing key|\n  at|synthetic-ticket/);
+  for (const item of untouched) assert.deepEqual(store.task(item.id), item.task, 'colliding, foreign, origin-only and terminal tasks are untouched');
+  const storePath = store.path;
+  await runtime.drain(); host.close();
+
+  const saved = new Store(storePath);
+  const reloaded = createHost({ ...config, statePath: join(directory, 'hosts', 't3code.json'), timeoutMs: 2_000 });
+  t.after(() => reloaded.close());
+  await reloaded.connect();
+  let known: readonly KnownHost[] = [];
+  const registry = new HostRegistry<{ adapter: Adapter; admission: Admission }>({ read: () => known, write: hosts => { known = hosts; }, transaction: work => work() });
+  const admission = new Admission({ startIntervalMs: 0 });
+  const adapter = admitAdapter(createAdapter(reloaded), admission);
+  registry.connect(reloaded.hostId, server.endpoint, { adapter, admission });
+  const engine = new Engine(saved, adapter);
+  try {
+    assert.equal(saved.task(task.id).resolution.attention, true);
+    assert.equal(saved.task(task.id).reason, attention.reason);
+    const requests = server.requests.length;
+    for (const intentId of [input.intentId, 'new-intent-after-task-reload']) {
+      await assert.rejects(answerHostPermission(registry, { ...input, intentId }, { store: saved,
+        attention: (current, reason) => engine.withHost(current.hostId, () => engine.resolution.attention(current, reason, 'uncertain_delivery')),
+      }), error => {
+        assert.ok(error instanceof HostUnknownDeliveryError);
+        assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId' });
+        return true;
+      });
+    }
+    assert.equal(server.requests.length, requests);
+    assert.equal(server.commands.filter(command => command.type === 'runtime-request.respond').length, 1);
+    assert.equal(saved.eventsAll(task.id).filter(event => event.kind === 'host_permission_delivery_unknown').length, 1);
+    assert.equal(saved.task(task.id).reason, attention.reason);
+    for (const item of untouched) assert.deepEqual(saved.task(item.id), item.task);
+  } finally { await engine.stop(); saved.close(); }
+});
+
+test('ambiguous exact-host task ownership refuses before a response and before altering either task', async t => {
+  const fixture = await nativeFixture(t);
+  const runtime = await permissionRuntime(t, fixture);
+  const first = permissionTask(runtime.store, 'ambiguous-first', fixture.host.hostId, fixture.input);
+  const second = permissionTask(runtime.store, 'ambiguous-second', fixture.host.hostId, fixture.input);
+  const before = [runtime.store.task(first.id), runtime.store.task(second.id)];
+  await assert.rejects(runtime.answerHostPermission(fixture.input), /ownership is ambiguous/);
+  assert.equal(fixture.server.commands.filter(command => command.type === 'runtime-request.respond').length, 0);
+  assert.deepEqual([runtime.store.task(first.id), runtime.store.task(second.id)], before);
+});
+
+test('ownership moving during an uncertain send retains history on the original task without flagging the new owner', async t => {
+  const fixture = await nativeFixture(t);
+  const runtime = await permissionRuntime(t, fixture);
+  const original = permissionTask(runtime.store, 'permission-original-owner', fixture.host.hostId, fixture.input);
+  const next = permissionTask(runtime.store, 'permission-next-owner', fixture.host.hostId, { ...fixture.input, workspaceId: 'different-workspace' });
+  fixture.server.controls.postEffectDefect = true;
+  fixture.server.controls.mutationObserver = () => {
+    runtime.store.update(original.id, { agentId: 'replacement-agent', workspaceId: 'replacement-workspace' });
+    runtime.store.update(next.id, { agentId: fixture.input.agentId, workspaceId: fixture.input.workspaceId });
+  };
+  await assert.rejects(runtime.answerHostPermission(fixture.input), HostUnknownDeliveryError);
+  assert.equal(runtime.store.task(original.id).resolution.attention, false);
+  assert.equal(runtime.store.task(next.id).resolution.attention, false);
+  const events = runtime.store.eventsAll(original.id).filter(event => event.kind === 'host_permission_delivery_unknown');
+  assert.equal(events.length, 1);
+  assert.equal(JSON.parse(events[0]!.detail).field, 'commandId');
+  assert.equal(runtime.store.eventsAll(next.id).some(event => event.kind === 'host_permission_delivery_unknown'), false);
 });
 
 test('the owner-authenticated service socket answers a permission on its registered T3 host', async t => {
