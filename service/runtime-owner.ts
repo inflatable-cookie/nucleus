@@ -3,7 +3,7 @@ import "./install/roll-request";
 import { currentServiceBuildId } from "../shared/service/build";
 import { RuntimeQuestions } from "../core/runtime/questions";
 import { RuntimeSettings } from "../core/runtime/settings";
-import { PlannerParticipantTickets } from "../core/dispatch/participant-tickets";
+import { ParticipantTickets } from "../core/dispatch/participant-tickets";
 import { RuntimeRepositories } from "../core/runtime/repositories";
 import { RuntimePlanning } from "../core/runtime/planning";
 import { RuntimeBoard } from "../core/runtime/board";
@@ -329,7 +329,7 @@ export class QueueRuntime {
   private readonly questions: RuntimeQuestions;
   private readonly settingsOperations: RuntimeSettings;
   private readonly repositories: RuntimeRepositories;
-  private readonly plannerTickets: PlannerParticipantTickets;
+  private readonly plannerTickets: ParticipantTickets;
   private readonly planning: RuntimePlanning;
   private readonly board: RuntimeBoard;
   private readonly cachedTaskDetail: ReturnType<typeof createTaskDetailCache>;
@@ -555,7 +555,7 @@ export class QueueRuntime {
       get startError() { return runtime.startError; },
       get adapter() { return runtime.adapter; },
     });
-    this.plannerTickets = new PlannerParticipantTickets(this.engine, { socketPath: this.paseo.socketPath, helperPath: this.paseo.helperPath });
+    this.plannerTickets = new ParticipantTickets(this.engine, { socketPath: this.paseo.socketPath, helperPath: this.paseo.helperPath });
     this.repositories = new RuntimeRepositories({
       store: this.store, engine: this.engine, hostRuns: this.hostRuns,
       requiredCheckTransport: this.requiredCheckTransport,
@@ -1631,6 +1631,9 @@ export class QueueRuntime {
   parkProject(input: { key: string; version: number }) { return this.repositories.parkProject(input); }
   unparkProject(input: { key: string; version: number }) { return this.repositories.unparkProject(input); }
   async setProjectPlanner(input: { key: string; agentId: string | null; setBy?: string; note?: string }) { return this.repositories.setProjectPlanner(input); }
+  projectAgents(input: { project: string }) { return this.repositories.projectAgents(input); }
+  registerProjectAgent(input: import("../shared/contracts").AgentRegisterInput) { return this.repositories.registerProjectAgent(input); }
+  unregisterProjectAgent(input: import("../shared/contracts").AgentUnregisterInput) { return this.repositories.unregisterProjectAgent(input); }
   projectOwnerCandidates() { return this.repositories.projectOwnerCandidates(); }
   projectSettings() { return this.repositories.projectSettings(); }
   resetProjectCancellation(input: {key:string;operationId:string;tasks:Array<{taskId:string;version:number}>}) { return this.repositories.resetProjectCancellation(input); }

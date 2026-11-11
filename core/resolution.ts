@@ -82,6 +82,7 @@ import { type AgentAskReceipt, type AgentAskRequest, type AgentAskShape } from '
 import { AgentAsks } from './questions/agent-asks';
 import { ProofAutorun } from './qa/proof-autorun';
 import { Observation } from './recovery/observation';
+import { observedHostIdOf, resolveProjectAgent } from './planning/project-agents';
 import { AgentMessages, type AgentMessageReceipt, type AgentMessageRequest, type AgentMessageRole } from './questions/agent-messages';
 
 import { type WorktreeValidationScan } from './workspaces/worktree-validation';
@@ -950,6 +951,23 @@ export class Resolution {
 
   /** A newly live planner gets one fresh chance to settle each proof wait parked for it. */
   projectPlannerRegistered(projectKey: string, plannerId: string): Promise<void> { return this.questions.projectPlannerRegistered(projectKey, plannerId); }
+  /**
+   * Task 1110: the send-time address of one of a project's registered agents.
+   * `name` null is the project's fallback planner, the thread `to: {project}`
+   * resolves to. A named thread is observed on its own host first: an archived,
+   * gone or unreadable thread refuses with that state, and nothing is sent.
+   */
+  async resolveProjectAgentTarget(projectKey: string, name: string | null): Promise<{ agentId: string; hostId: string; name: string }> {
+    const project = this.store.projectByKey(projectKey);
+    if (!project) throw new Error(`Unknown project ${projectKey}`);
+    const entry = name === null
+      ? (project.agents ?? []).find(agent => agent.agentId === project.planner?.agentId)
+      : (project.agents ?? []).find(agent => agent.name === name);
+    const current = () => ({ host: this.host, observedHostId: observedHostIdOf(this.adapter) });
+    if (entry && entry.hostId !== observedHostIdOf(this.adapter) && this.originHostAvailable(entry.hostId))
+      return this.withHost(entry.hostId, () => resolveProjectAgent(current(), this.store.projectByKey(projectKey)!, name));
+    return resolveProjectAgent(current(), project, name);
+  }
   deciderProfile(task: Task): Profile | null { return this.delegation.deciderProfile(task); }
   decisionContext(task: Task): string[] { return this.delegation.decisionContext(task); }
   startRunnableProof(task: Task): Promise<boolean> { return this.proofAutorun.startRunnableProof(task); }

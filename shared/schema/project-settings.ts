@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { projectRepositorySchema, projectSchema, repositorySettingsSchema } from "./projects";
+import { projectAgentViewSchema } from "./project-agents";
 
 /**
  * Settings → Projects (nucleus#948): one read for the page. Writes stay on
@@ -39,6 +40,8 @@ export const projectSettingsRowSchema = z.object({
     override: z.number().int().min(0).max(64).nullable(),
   }).strict(),
   plannerLive: z.boolean().nullable(),
+  /** Task 1110: the project's named agents with live state; the board shows the same list `project.agents` returns. */
+  agents: z.array(projectAgentViewSchema).optional(),
   latestQa: projectSettingsQaSchema.nullable(),
   problems: z.array(projectSettingsProblemSchema),
 }).strict();

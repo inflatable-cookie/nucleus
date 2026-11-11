@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
-import { PlannerParticipantTickets, resolveTicketCaller, plannerTicketKey } from '../core/dispatch/participant-tickets';
+import { ParticipantTickets, agentTicketKey, resolveTicketCaller } from '../core/dispatch/participant-tickets';
 import { formatAgentId } from '../shared/agent-identity';
 import { runSchema, submissionSchema } from '../shared/contracts';
 import { RuntimeRepositories, type RepositoriesContext } from '../core/runtime/repositories';
@@ -24,11 +24,11 @@ function fixture() {
   engine.identifyOriginHost = async () => 't3code:synthetic';
   engine.hostAvailable = () => available;
   const paths = { socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'helper.mjs') };
-  const tickets = new PlannerParticipantTickets(engine, paths);
+  const tickets = new ParticipantTickets(engine, paths);
   store.upsertProject({ key: 'example', name: 'Example', repositories: [{ origin: 'synthetic/example', path: '/synthetic/example' }] });
   const assign = (agentId: string | null) => store.setProjectPlanner({ key: 'example', agentId, setBy: 'operator' });
   const ticket = () => {
-    const record = store.getMeta<{ path: string }>(plannerTicketKey('example'))!;
+    const record = store.getMeta<{ path: string }>(agentTicketKey('example', 'planner'))!;
     return JSON.parse(readFileSync(record.path, 'utf8')) as { socketPath: string; participantId: string; token: string };
   };
   return { directory, store, engine, messages, paths, tickets, assign, ticket,
@@ -45,7 +45,7 @@ test('planner assignment issues an owner-only ticket through a host with no envi
     assert.deepEqual(resolveTicketCaller(f.store, { participantId: ticket.participantId }, ticket.token), {
       caller: formatAgentId('t3code:synthetic', 'planner'), hostId: 't3code:synthetic', source: 'participant-ticket',
     });
-    const record = f.store.getMeta<{ path: string }>(plannerTicketKey('example'))!;
+    const record = f.store.getMeta<{ path: string }>(agentTicketKey('example', 'planner'))!;
     assert.equal(statSync(record.path).mode & 0o777, 0o600);
     assert.equal(f.messages[0]?.id, 'planner');
     assert.ok(f.messages[0]?.text.includes(record.path));
@@ -55,17 +55,21 @@ test('planner assignment issues an owner-only ticket through a host with no envi
   } finally { f.store.close(); }
 });
 
-test('reassigning, clearing, and returning to a planner revoke every previous ticket', async () => {
+test('reassigning the planner name revokes the previous thread; clearing the fallback keeps the registration and its ticket', async () => {
   const f = fixture();
   try {
     f.assign('planner'); await f.tickets.ensure(); const original = f.ticket();
     f.assign('replacement'); await f.tickets.ensure(); const replacement = f.ticket();
-    assert.throws(() => resolveTicketCaller(f.store, original, original.token), /revoked or invalid/);
+    assert.throws(() => resolveTicketCaller(f.store, original, original.token), /revoked or invalid/,
+      'the planner name moved to another thread, so its old ticket is revoked');
     f.assign(null);
-    assert.throws(() => resolveTicketCaller(f.store, replacement, replacement.token), /revoked or invalid/);
+    assert.equal(resolveTicketCaller(f.store, replacement, replacement.token).caller, formatAgentId('t3code:synthetic', 'replacement'),
+      'clearing the fallback role does not unregister the named agent');
     f.assign('planner'); await f.tickets.ensure();
     assert.notEqual(f.ticket().participantId, original.participantId);
     assert.throws(() => resolveTicketCaller(f.store, original, original.token), /revoked or invalid/);
+    assert.throws(() => resolveTicketCaller(f.store, replacement, replacement.token), /revoked or invalid/,
+      'reassigning the name back revokes the replacement');
   } finally { f.store.close(); }
 });
 
@@ -73,13 +77,13 @@ test('recorded planners receive a ticket when their host connects, with no repla
   const f = fixture();
   try {
     f.assign('legacy-planner'); f.offline(); await f.tickets.ensure();
-    assert.equal(f.store.getMeta(plannerTicketKey('example')), undefined);
+    assert.equal(f.store.getMeta(agentTicketKey('example', 'planner')), undefined);
     f.online(); f.failSend(); await f.tickets.ensure();
     const ticket = f.ticket();
     assert.equal(resolveTicketCaller(f.store, ticket, ticket.token).caller, formatAgentId('t3code:synthetic', 'legacy-planner'));
     await f.tickets.ensure();
     assert.equal(f.messages.length, 1);
-    assert.equal(f.store.getMeta<{ delivery: string }>(plannerTicketKey('example'))?.delivery, 'unknown');
+    assert.equal(f.store.getMeta<{ delivery: string }>(agentTicketKey('example', 'planner'))?.delivery, 'unknown');
   } finally { f.store.close(); }
 });
 
@@ -101,7 +105,7 @@ test('caller callback authenticates a run or current participant and refuses rev
       completion: null, released: true }));
     f.store.setCredential('released-reviewer', 'released-token');
     await assert.rejects(callbackRequest({ socketPath: f.paths.socketPath, token: 'released-token' }, '/caller', { taskId: task.id, runId: 'released-reviewer' }), /released/);
-    f.assign(null);
+    f.assign('replacement'); await f.tickets.ensure();
     await assert.rejects(callbackRequest(participant, '/caller', request), /revoked or invalid/);
     await assert.rejects(callbackRequest({ socketPath: f.paths.socketPath, token: 'wrong' }, '/caller', { taskId: task.id, runId: 'worker-run' }), /Unauthorized/);
   } finally { await close(); f.store.close(); }
@@ -133,7 +137,7 @@ test('a registered planner question prompt names its participant ticket on a hos
     const task = f.store.insert(submissionSchema.parse({ submissionId: 'planner-question', title: 'Question', repoPath: '/synthetic/example', planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: 'planner' }), 't3code:synthetic', 'handoff', 'a'.repeat(40));
     Object.assign(f.engine.adapter, { ...f.paths, reportingViaMcp: false });
     const command = f.engine.resolution.delegatePrompt(task, 'planner-question', 'Continue?', 'planner', 't3code:synthetic');
-    const record = f.store.getMeta<{ path: string }>(plannerTicketKey('example'))!;
+    const record = f.store.getMeta<{ path: string }>(agentTicketKey('example', 'planner'))!;
     assert.ok(command.includes(record.path));
     assert.ok(command.includes('nucleus question.answer -'));
     assert.ok(!command.includes('NUCLEUS_TICKET= nucleus'));

@@ -89,6 +89,27 @@ export const projectOwnerSchema = z.object({
 
 export type ProjectOwner = z.infer<typeof projectOwnerSchema>;
 
+/** A name the operator and other threads use to address one registered thread. */
+export const projectAgentNameSchema = z.string().trim().min(1).max(64)
+  .regex(/^[a-z0-9][a-z0-9-]*$/, "Agent name uses lowercase letters, digits and dashes");
+
+/**
+ * Task 1110: one named, non-task thread a project registers (a planner, lead or
+ * cross-section coordinator). A thread holds at most one name per project, and a
+ * name always resolves to one thread: renaming or reassigning it replaces the
+ * entry and revokes its participant ticket.
+ */
+export const projectAgentSchema = z.object({
+  name: projectAgentNameSchema,
+  purpose: z.string().trim().min(1).max(400),
+  agentId: z.string().trim().min(1).max(300),
+  hostId: z.string().trim().min(1).max(240),
+  registeredBy: z.string().trim().min(1).max(300),
+  registeredAt: z.string(),
+}).strict();
+
+export type ProjectAgent = z.infer<typeof projectAgentSchema>;
+
 export const projectSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/),
   name: z.string().trim().min(1).max(200),
@@ -103,8 +124,11 @@ export const projectSchema = z.object({
   owner: projectOwnerSchema.nullable().optional(),
   ownerMissingAt: z.string().nullable().optional(),
   ownerCheckedAt: z.string().nullable().optional(),
-  // Spec 058 (task 540): the planner thread that answers this project's delegated questions. It grants nothing else.
-  planner: z.object({ agentId: z.string().trim().min(1).max(300), setBy: z.string().trim().min(1).max(300), setAt: z.string(), }).strict().nullable().optional(),
+  // Spec 058 (task 540): the fallback planner thread that answers this project's delegated
+  // questions and receives `to: {project}`; `name` is its address in `agents`. It grants nothing else.
+  planner: z.object({ agentId: z.string().trim().min(1).max(300), name: projectAgentNameSchema.optional(), setBy: z.string().trim().min(1).max(300), setAt: z.string(), }).strict().nullable().optional(),
+  // Task 1110: every named, non-task thread the project registers. Absent on rows written before it.
+  agents: z.array(projectAgentSchema).max(100).optional(),
 }).strict().refine(project => project.repositories.some(repo =>
   repo.origin && project.primary.origin ? repo.origin === project.primary.origin : Boolean(repo.path && repo.path === project.primary.path)),
   "Primary repository must belong to the project");
@@ -172,7 +196,7 @@ export const projectQuerySchema = z.union([
   z.object({ repository: z.string().min(1) }).strict(),
 ]);
 
-/** Spec 058 (task 540): the operator or the planner thread itself names the project's planner; null clears it. */
+/** Spec 058 (task 540): the operator or the planner thread itself names the project's fallback planner; null clears it. */
 export const projectSetPlannerInputSchema = z.object({
   key: projectSchema.shape.key,
   agentId: z.string().trim().min(1).max(300).nullable(),

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { basename, resolve } from "node:path";
-import { taskHasUnreleasedRun, repositorySettingsSchema, DEFAULT_REPOSITORY_CHECKS_POLICY, DEFAULT_HOST_KIND, type RepositoryChecksPolicy, type HostKind, projectSchema, projectTombstoneSchema, projectUpsertInputSchema, projectDispatchLimitOverridesSchema, projectPlanSchema, projectQaRunSchema, repositoryMatchSpecificity, DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT, isOperatorOrigin, QUEUE_REPOSITORY_ORIGIN, NUCLEUS_REPOSITORY_ORIGIN, type Lead, type Decision, type ProjectPlan, type PendingSubmission, type Run, type Outcome, type Task, type Lane, type Project, type ProjectRemovalBlocker, type ProjectManagementPreview, type ProjectManageInput, type ProjectRemoveRepositoryInput, type ProjectMergeInput, type ProjectMergeResult, type ProjectMergeCheck, type ProjectMergeCheckInput, type ProjectTombstone, type ProjectUpsertInput, type RepositorySettings, type ProjectCloseout, type ProjectValidation, type ProjectQa } from "../../shared/contracts";
+import { taskHasUnreleasedRun, repositorySettingsSchema, DEFAULT_REPOSITORY_CHECKS_POLICY, DEFAULT_HOST_KIND, type RepositoryChecksPolicy, type HostKind, projectSchema, projectTombstoneSchema, projectUpsertInputSchema, projectDispatchLimitOverridesSchema, projectPlanSchema, projectQaRunSchema, repositoryMatchSpecificity, DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT, isOperatorOrigin, QUEUE_REPOSITORY_ORIGIN, NUCLEUS_REPOSITORY_ORIGIN, type Lead, type Decision, type ProjectPlan, type PendingSubmission, type Run, type Outcome, type Task, type Lane, type Project, type ProjectRemovalBlocker, type ProjectManagementPreview, type ProjectManageInput, type ProjectRemoveRepositoryInput, type ProjectMergeInput, type ProjectMergeResult, type ProjectMergeCheck, type ProjectMergeCheckInput, type ProjectAgent, type ProjectTombstone, type ProjectUpsertInput, type RepositorySettings, type ProjectCloseout, type ProjectValidation, type ProjectQa } from "../../shared/contracts";
 import { type QueueOperation } from "../../shared/operations";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { projectRemovalBlockerText, projectRemovalBlockers, projectRemovalRefusal, projectRepositoryMatches } from "../../shared/project-removal";
@@ -8,6 +8,8 @@ import { repositoryScratchNamespace } from "../workspaces/run-scratch";
 import { applyRepositoryRekey as applyRekey, previewRepositoryRekey as previewRekey } from "../planning/repository-rekey";
 import { repositoryRekeyInputSchema, repositoryRekeyReceiptSchema, type RepositoryRekeyInput, type RepositoryRekeyPreview, type RepositoryRekeyPreviewInput, type RepositoryRekeyReceipt, type RepositoryRekeyReceiptQuery, type RepositoryRekeyResult } from "../../shared/repository-rekey";
 import { StoreCore, now, digest, operationInputHash } from "./store-core";
+import { parseAgentId } from "../../shared/agent-identity";
+import { DEFAULT_PLANNER_AGENT_NAME } from "../../shared/schema/project-agents";
 
 const PROJECT_DISPATCH_LIMIT_OVERRIDES_META_KEY = "projectDispatchLimitOverrides";
 interface ProjectsAccess {
@@ -229,7 +231,10 @@ export class StoreProjects {
     return this.core.transaction(() => {
       const project = this.projectByKey(input.key);
       if (!project) throw new Error(`Unknown project ${input.key}`);
-      const planner = input.agentId ? { agentId: input.agentId, setBy: input.setBy, setAt: at } : null;
+      const registered = input.agentId ? (project.agents ?? []).find(agent => agent.agentId === input.agentId) : undefined;
+      const planner = input.agentId
+        ? { agentId: input.agentId, ...(registered ? { name: registered.name } : {}), setBy: input.setBy, setAt: at }
+        : null;
       // Every assignment, including clearing or reassigning the same thread, revokes its old identity ticket.
       this.core.deleteMeta(`plannerParticipant:${input.key}`);
       this.core.setMeta(`plannerParticipantGeneration:${input.key}`, randomUUID());
@@ -240,6 +245,98 @@ export class StoreProjects {
       this.core.advanceRevision();
       return updated;
     });
+  }
+  /**
+   * Task 1110: one named, non-task thread. A thread holds at most one name per
+   * project, so registering the same thread under a new name renames it and a
+   * name given to another thread reassigns it. The dispatch ticket service
+   * revokes a superseded participant ticket after this write.
+   */
+  registerProjectAgent(input: { key: string; name: string; purpose: string; agentId: string; hostId: string; registeredBy: string; note?: string }, at = now()): Project {
+    return this.core.transaction(() => {
+      const project = this.projectByKey(input.key);
+      if (!project) throw new Error(`Unknown project ${input.key}`);
+      const { project: updated, kind } = this.upsertProjectAgent(project, input, at);
+      this.core.event(`project:${input.key}`, `project_agent_${kind}`, `${input.name} -> ${input.agentId}${input.registeredBy ? ` by ${input.registeredBy}` : ""}${input.note ? `; ${input.note}` : ""}`);
+      this.core.advanceRevision();
+      return updated;
+    });
+  }
+  /**
+   * Task 1110: remove one named agent. The project's fallback planner cannot be
+   * removed while it holds that role: name another planner with
+   * `project.set-planner` first, so `to: {project}` never dangles.
+   */
+  unregisterProjectAgent(input: { key: string; name: string; unregisteredBy: string; note?: string }, at = now()): Project {
+    return this.core.transaction(() => {
+      const project = this.projectByKey(input.key);
+      if (!project) throw new Error(`Unknown project ${input.key}`);
+      const entry = (project.agents ?? []).find(agent => agent.name === input.name);
+      if (!entry) throw new Error(`Project ${input.key} has no agent named "${input.name}"`);
+      if (project.planner?.agentId === entry.agentId)
+        throw new Error(`"${input.name}" is ${project.name}'s fallback planner; name another planner with project.set-planner before unregistering it`);
+      const updated = projectSchema.parse({ ...project, agents: (project.agents ?? []).filter(agent => agent.name !== input.name) });
+      this.db.prepare("UPDATE projects SET data=? WHERE key=?").run(JSON.stringify(updated), input.key);
+      this.core.event(`project:${input.key}`, "project_agent_unregistered", `${input.name} (was ${entry.agentId}) by ${input.unregisteredBy}${input.note ? `; ${input.note}` : ""}`);
+      this.core.advanceRevision();
+      return updated;
+    });
+  }
+  /**
+   * Task 1110: every fallback planner is a registered agent, including rows
+   * written before this registry existed and planners set outside the RPC. This
+   * is idempotent and does nothing for a cleared or already-registered planner.
+   */
+  ensureProjectFallbackAgent(input: { key: string; hostId?: string | null }, at = now()): Project {
+    return this.core.transaction(() => {
+      const project = this.projectByKey(input.key);
+      if (!project) throw new Error(`Unknown project ${input.key}`);
+      if (!project.planner?.agentId) return project;
+      const planner = project.planner;
+      const current = (project.agents ?? []).find(agent => agent.agentId === planner.agentId);
+      if (current) {
+        if (planner.name === current.name) return project;
+        const repaired = projectSchema.parse({ ...project, planner: { ...planner, name: current.name } });
+        this.db.prepare("UPDATE projects SET data=? WHERE key=?").run(JSON.stringify(repaired), input.key);
+        this.core.advanceRevision();
+        return repaired;
+      }
+      const hostId = parseAgentId(planner.agentId)?.hostId ?? input.hostId ?? null;
+      if (!hostId) return project;
+      const { project: updated } = this.upsertProjectAgent(project, {
+        key: input.key, name: planner.name ?? DEFAULT_PLANNER_AGENT_NAME, purpose: "Project fallback planner",
+        agentId: planner.agentId, hostId, registeredBy: planner.setBy,
+      }, at);
+      this.core.event(`project:${input.key}`, "project_agent_registered", `fallback planner ${planner.agentId} registered as "${updated.planner?.name ?? DEFAULT_PLANNER_AGENT_NAME}"`);
+      this.core.advanceRevision();
+      return updated;
+    });
+  }
+  /** Inside one write transaction: the registry edit and the planner name that follows it. */
+  private upsertProjectAgent(project: Project, input: { key: string; name: string; purpose: string; agentId: string; hostId: string; registeredBy: string }, at: string):
+    { project: Project; kind: "registered" | "renamed" | "reassigned" | "updated" } {
+    const byName = (project.agents ?? []).find(agent => agent.name === input.name);
+    const byThread = (project.agents ?? []).find(agent => agent.agentId === input.agentId);
+    let kind: "registered" | "renamed" | "reassigned" | "updated";
+    let entry: ProjectAgent;
+    if (byName && byName.agentId === input.agentId && byName.hostId === input.hostId) {
+      kind = "updated";
+      entry = byName.purpose === input.purpose ? byName : { ...byName, purpose: input.purpose };
+    } else {
+      kind = byName ? "reassigned" : byThread ? "renamed" : "registered";
+      entry = { name: input.name, purpose: input.purpose, agentId: input.agentId, hostId: input.hostId, registeredBy: input.registeredBy, registeredAt: at };
+    }
+    const agents = [...(project.agents ?? []).filter(agent => agent.name !== input.name && agent.agentId !== input.agentId), entry]
+      .sort((a, b) => a.registeredAt.localeCompare(b.registeredAt) || a.name.localeCompare(b.name));
+    if (agents.length > 100) throw new Error(`Project ${project.key} already has 100 named agents`);
+    // The planner's name follows its registered thread, so the fallback marker never names another agent.
+    const plannerName = project.planner?.agentId ? agents.find(agent => agent.agentId === project.planner!.agentId)?.name : undefined;
+    const planner = project.planner
+      ? { agentId: project.planner.agentId, ...(plannerName ? { name: plannerName } : {}), setBy: project.planner.setBy, setAt: project.planner.setAt }
+      : project.planner;
+    const updated = projectSchema.parse({ ...project, agents, planner });
+    this.db.prepare("UPDATE projects SET data=? WHERE key=?").run(JSON.stringify(updated), input.key);
+    return { project: updated, kind };
   }
   /**
    * Spec 058 cutover 5: the one-time owner→planner migration drops a project's archived or

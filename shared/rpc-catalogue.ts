@@ -89,6 +89,11 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
   { name: "project.park", contract: contracts.projectPark, method: "parkProject", mutating: true },
   { name: "project.unpark", contract: contracts.projectUnpark, method: "unparkProject", mutating: true },
   { name: "project.set-planner", contract: contracts.projectSetPlanner, method: "setProjectPlanner", mutating: true },
+  // Task 1110: the project's named, non-task threads. Registering issues a
+  // participant ticket; listing observes each entry's live state.
+  { name: "project.agents", contract: contracts.projectAgents, method: "projectAgents", mutating: false },
+  { name: "agent.register", contract: contracts.agentRegister, method: "registerProjectAgent", mutating: true },
+  { name: "agent.unregister", contract: contracts.agentUnregister, method: "unregisterProjectAgent", mutating: true },
   { name: "project.owner-candidates", contract: contracts.projectOwnerCandidates, method: "projectOwnerCandidates", mutating: false },
   { name: "project.settings", contract: contracts.projectSettings, method: "projectSettings", mutating: false },
   { name: "project.reset-cancellation", contract: contracts.projectResetCancellation, method: "resetProjectCancellation", mutating: true },

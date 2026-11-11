@@ -8,7 +8,7 @@ import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
 import { RuntimeRepositories, type RepositoriesContext } from '../core/runtime/repositories';
 import { ProjectLifecycle } from '../core/planning/project-lifecycle';
-import { PlannerParticipantTickets, plannerTicketKey, resolveTicketCaller } from '../core/dispatch/participant-tickets';
+import { ParticipantTickets, agentTicketKey, resolveTicketCaller } from '../core/dispatch/participant-tickets';
 import { formatAgentId, sameCallerIdentity } from '../shared/agent-identity';
 import { runSchema, submissionSchema } from '../shared/contracts';
 
@@ -22,7 +22,7 @@ function fixture() {
   engine.identifyOriginHost = async () => { throw Error('Native thread identity is ambiguous across hosts'); };
   engine.resolution.projectPlannerRegistered = async (_key, agentId) => { registrations.push(agentId); };
   const dir = mkdtempSync(join(tmpdir(), 'planner-self-'));
-  const tickets = new PlannerParticipantTickets(engine, { socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs') });
+  const tickets = new ParticipantTickets(engine, { socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs') });
   const repositories = new RuntimeRepositories({ store, engine, markStoreAccess() {}, plannerChanged: () => tickets.ensure() } as unknown as RepositoriesContext);
   return { store, engine, registrations, deliveries, repositories };
 }
@@ -36,7 +36,7 @@ test('a self-assigned planner retains its ticket-proven host when naming its nat
     assert.equal(sameCallerIdentity(result.planner?.agentId, setter), true);
     assert.deepEqual(f.registrations, [setter]);
     assert.deepEqual(f.deliveries, ['planner']);
-    const record = f.store.getMeta<{ path: string }>(plannerTicketKey('example'))!;
+    const record = f.store.getMeta<{ path: string }>(agentTicketKey('example', 'planner'))!;
     const ticket = JSON.parse(readFileSync(record.path, 'utf8'));
     assert.equal(resolveTicketCaller(f.store, { participantId: ticket.participantId }, ticket.token).caller, setter);
   } finally { f.store.close(); }

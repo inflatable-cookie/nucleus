@@ -75,6 +75,8 @@ export function buildProjectSettings(input: {
   liveAgentIds: ReadonlySet<string>;
   liveKnown: boolean;
   observedHostId?: string;
+  /** Task 1110: each project's named agents with live state, read once for the page. */
+  agents?: Record<string, import("../../shared/contracts").ProjectAgentView[]>;
   latestQaRuns: ProjectQaRun[];
 }): ProjectSettings {
   return projectSettingsSchema.parse({
@@ -102,6 +104,7 @@ export function buildProjectSettings(input: {
         })),
         slots: { value: override ?? input.defaultSlots, override },
         plannerLive,
+        agents: input.agents?.[project.key] ?? [],
         latestQa,
         problems: projectSettingsProblems({
           plannerId,

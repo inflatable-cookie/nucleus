@@ -188,12 +188,13 @@ record (`host.run.accounting.dispose`'s `authority`, `qa-fence`,
 provenance and authenticate nothing; the CLI refuses some of them when they
 claim the operator's own identity.
 
-The CLI and helpers resolve the calling thread from a Nucleus-issued run or planner
+The CLI and helpers resolve the calling thread from a Nucleus-issued run or
 participant ticket first, then a host-supplied identity; caller records are
 host-qualified and existing bare Paseo IDs retain their legacy interpretation.
-Planner assignment issues and delivers an owner-only participant ticket through the
-host; reassignment or clearing revokes it, and startup issues one for existing
-planners while their host fallback remains usable. Tickets prevent same-user
+Every named project agent receives one owner-only participant ticket through its
+host; renaming, reassigning or unregistering revokes it, and startup issues one
+for a planner registered before the registry existed while adopting a ticket it
+already delivered ([Spec 059](../specs/059-named-project-agents.md)). Tickets prevent same-user
 accidents; they do not add adversarial authentication or grant planning authority
 (Tom, 2026-11-11).
 

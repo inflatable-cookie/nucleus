@@ -22,14 +22,15 @@ ticket or route to bypass it. All other helpers connect directly to Nucleus;
 
 The CLI and submit, subscribe and reparent helpers identify the calling thread from its
 Nucleus-issued ticket first, then its host's identity. `NUCLEUS_TICKET` names the run
-or planner participant ticket; use the path delivered to this thread. An invalid or
-revoked ticket refuses. If neither source exists, the refusal names the sources tried.
+or participant ticket; use the path delivered to this thread. An invalid or revoked
+ticket refuses. If neither source exists, the refusal names the sources tried.
 Explicit operator and relayed-note paths keep their existing meaning.
 
-Assigning a planner issues an owner-only participant ticket and delivers its path
-through that planner's host. Reassigning or clearing the planner revokes it. Existing
-planners receive one at startup; their host identity keeps working until delivery.
-Caller records use host-qualified identities; existing bare Paseo IDs still resolve.
+Every named project agent receives an owner-only participant ticket through its
+host (Spec 059). Renaming, reassigning or unregistering it revokes the ticket, and a
+planner registered before the registry existed receives one at startup while a
+ticket it already delivered is adopted. Caller records use host-qualified
+identities; existing bare Paseo IDs still resolve.
 
 ### Paseo host
 
@@ -346,9 +347,19 @@ Every PR has exactly one reviewer, the retained Nucleus reviewer. Never create e
 reviewer, review-lens or "independent native" reader agents, or workspaces for them; a
 needed native proof runs once through the task's `proof` route (Spec 058, Tom 2026-11-01).
 
-Set a project's planner with `project.set-planner` (`key`, `agentId` or null).
-The planner may set itself; the calling thread is recorded as `setBy`. This
-grants nothing except answering delegated questions for that project.
+Set a project's fallback planner with `project.set-planner` (`key`, `agentId` or
+null). The planner may set itself; the calling thread is recorded as `setBy`. A
+thread that is not registered yet is registered under the default name `planner`.
+This grants nothing except answering delegated questions for that project.
+
+A project's named agents are its non-task threads (Spec 059): `agent.register`
+(`project`, `name`, `purpose`; the CLI registers the calling thread, the board
+names one live thread), `agent.unregister` (`project`, `name`) and `project.agents`
+(`project`) for the list with each entry's host, live state, last seen and fallback
+marker. Names are unique per project, a thread holds one name, and renaming or
+reassigning a name revokes the old participant ticket. `project.set-planner`
+marks any registered agent as the fallback; clearing it leaves the thread
+registered, and the fallback cannot be unregistered while it holds that role.
 
 ### Complexity and demand
 
@@ -510,10 +521,12 @@ read's `digest` as an optional extra stale-edit fence alongside the required
 `plan.get` returns a version but no digest, so `plan.set` uses its version fence.
 Projects are permanent
 records: `project.upsert`, `project.get`, `project.park`, `project.unpark`,
-`project.remove`, `projects`. Project ownership is retired (Spec 058 cutover 5):
-`project.set-planner` names the thread that answers delegated questions and
-receives the project-level notices; it grants no authority, and there is no
-project owner to claim or assign.
+`project.remove`, `projects`, `agent.register`, `agent.unregister`, `project.agents`.
+Project ownership is retired (Spec 058 cutover 5): `project.set-planner` marks
+the project's fallback planner — the registered agent that answers delegated
+questions and receives the project-level notices, and the thread `to: {project}`
+resolves to. It grants no authority, and there is no project owner to claim or
+assign.
 Repository settings (`repository.set`, `repository.get`, `repositories`) carry
 closeout authority, the prospective-merge validation command, formal-review
 login, the optional milestone `qa`
@@ -1048,10 +1061,13 @@ own completion nomination follow the new owner without further steps; third-part
 holds, settled notices and finished tasks stay as recorded. Repeating the request
 changes nothing.
 
-A project may name a planner with `project.set-planner` (`key`, `agentId` or
-null; the calling thread is recorded as `setBy`). It answers delegated questions
-and receives the project-level notices that once went to the retired owner; it
-grants no verb, hold or acceptance authority.
+A project may name a fallback planner with `project.set-planner` (`key`, `agentId`
+or null; the calling thread is recorded as `setBy`, and an unregistered thread is
+registered under the default name `planner`). It answers delegated questions,
+receives the project-level notices that once went to the retired owner, and is the
+thread `to: {project}` resolves to; it grants no verb, hold or acceptance
+authority. `project.agents` lists the project's named, non-task threads, and
+`agent.register`/`agent.unregister` maintain them (Spec 059).
 
 ## Review entry for external PRs
 

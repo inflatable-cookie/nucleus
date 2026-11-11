@@ -248,6 +248,14 @@ if (method === 'task.register' && input && typeof input === 'object' && !Array.i
   // The resolver overwrites a typed caller; the service binds this thread's worktree.
   input.caller = await callingThread();
 }
+if (method === 'agent.register' && input && typeof input === 'object' && !Array.isArray(input)) {
+  // Task 1110: a thread registers itself from its Nucleus ticket; another thread is named from the board.
+  if (input.agentId !== undefined) throw new Error('CLI agent.register registers the calling thread; register another thread from the board');
+  input.caller = await callingThread();
+}
+if (method === 'agent.unregister' && input && typeof input === 'object' && !Array.isArray(input)) {
+  input.caller = await callingThread();
+}
 // Self-force is authenticated by this run's ticket, never a typed caller.
 if (['task', 'queue.task'].includes(method) && input?.force && process.env.NUCLEUS_TICKET) {
   const ticket = JSON.parse(await readFile(process.env.NUCLEUS_TICKET, 'utf8'));
