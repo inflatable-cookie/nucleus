@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { identitySourceSchema } from "../host-kind";
 
 /** Spec 058: a delegated answer is a command from the recipient's calling thread. */
 const questionAnswerFields = {
@@ -18,6 +19,8 @@ export const questionAnswerRequestSchema = z.object({ ...questionAnswerFields,
   questionId: questionAnswerFields.questionId.optional(),
   taskId: z.string().trim().min(1).max(200).optional(),
   reference: z.string().trim().min(1).max(200).optional(),
+  /** The answering thread's own identity source, filled by the CLI from its environment. */
+  identitySource: identitySourceSchema.optional(),
 }).strict().refine(answerShape, {message: 'Provide exactly one of answer, choice or decision'})
   .refine(value => [value.questionId,value.taskId,value.reference].filter(value=>value!==undefined).length===1,
     {path:['questionId'],message:'Pass exactly one of questionId, taskId or reference'});

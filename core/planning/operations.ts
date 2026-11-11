@@ -7,6 +7,7 @@ import { leadCheckOperationPayloadSchema, reviewEntryInputSchema, sourcePromotio
 import { OPERATION_COMPATIBILITY_WAIT_MS, operationIsSettled, type OperationAcceptance, type OperationResult, type QueueOperation } from "../../shared/operations";
 import { repositoryRekeyInputSchema, type RepositoryRekeyInput } from "../../shared/repository-rekey";
 import { isTransportFailure } from "../../shared/transport";
+import type { IdentitySource } from "../../shared/host-kind";
 import { validateCompletionRecipients } from "../scheduling/cohort";
 import type { Engine } from "../engine";
 import { git, proveRebindableDispatchBase, SubmissionUnavailableError, validateSubmission, verifyPublishedPlanning } from "../git/index";
@@ -107,6 +108,8 @@ export function operationFailureSettlement(facts: {
   preSendBoundaryStarted: boolean;
   /** The retry was refused by an owned-tool hold, which is definite whatever its prose. */
   ownedToolRetryRefused: boolean;
+  /** A source promotion whose own insert is provably absent refused before committing. */
+  sourcePromotionAbsent?: boolean;
   /** The settled record's effect changed since its intent, so no failure may rewrite it. */
   effectChangedSinceIntent: boolean;
   hasEffect: boolean;
@@ -127,7 +130,7 @@ export function operationFailureSettlement(facts: {
   // 4b285a6e). A fence refusal (`DurableFenceRefusal`) is the same definite
   // class: its prose — "its delivery is unknown" and kin — never re-classifies
   // Queue's own pre-send refusal as an unknown effect.
-  const state = facts.ownedToolRetryRefused ? "failed"
+  const state = facts.ownedToolRetryRefused || facts.sourcePromotionAbsent ? "failed"
     : facts.preSendBoundaryStarted && !facts.typedPreSendRefusal ? "needs_attention"
     : facts.typedPreSendRefusal ? "failed"
     : uncertainOperationError(facts.message) ? "needs_attention" : "failed";
@@ -294,7 +297,11 @@ export class Operations {
         } else {
           const owner = this.store.getMeta(sourceOwnerKey(current.id)) as { pid?: unknown } | null;
           const pid = typeof owner?.pid === 'number' && Number.isInteger(owner.pid) && owner.pid > 0 ? owner.pid : null;
-          const absent = pid !== null && !pidAlive(pid);
+          // A recorded owner that is this process is proved not to be mid-commit
+          // once no lane here is running it: the insert only happens inside that
+          // operation's own handler, so absence now is absence for good.
+          const idleHere = pid === process.pid && !activeSourcePromotions.has(current.id);
+          const absent = pid !== null && (!pidAlive(pid) || idleHere);
           if (!absent) {
             const diagnostic = 'Source promotion outcome is uncertain: its executing process may still commit';
             this.store.putOperation({ ...current, state: current.state === 'running' && activeSourcePromotions.has(current.id) ? 'running' : 'needs_attention',
@@ -463,6 +470,10 @@ export class Operations {
         typedPreSendRefusal: typedPreSendRefusal(error),
         preSendBoundaryStarted: Boolean(currentOperation?.preSendBoundaryStartedAt),
         ownedToolRetryRefused: refusedOwnedToolRetry,
+        sourcePromotionAbsent: running.kind === 'source_promote' && effect?.kind === 'source_promotion'
+          && currentOperation?.state === 'running' && currentOperation.attempts === running.attempts && currentOperation.inputHash === running.inputHash
+          && operationIdForKey(running.key) === running.id && operationInputHash(payload) === running.inputHash
+          && this.sourcePromotionUncommitted(payload),
         effectChangedSinceIntent: Boolean(settledBefore.preSendBoundaryStartedAt && !isDeepStrictEqual(settledBefore.effect, effect)),
         hasEffect: Boolean(effect),
         message,
@@ -510,6 +521,21 @@ export class Operations {
           : effect && (effectStatus === "reconciled" || effectStatus === "uncertain")
             ? { ...effect, status: effectStatus, result: message.slice(0, 2000), resultAt: now() } : null });
     }
+  }
+  /**
+   * A source promotion's insert and its source target commit in one store
+   * transaction, so a missing target read back after the handler threw proves
+   * the insert never happened. An unreadable or ambiguous history answers
+   * `false`: only a clean absence is proof.
+   */
+  private sourcePromotionUncommitted(payload: unknown): boolean {
+    const parsed = sourcePromotionOperationPayloadSchema.safeParse(payload);
+    if (!parsed.success) return false;
+    const { source } = parsed.data;
+    try {
+      return this.store.sourcePromotionResult({ kind: source.kind, id: source.id }, source.repository,
+        source.version, source.digest) === null;
+    } catch { return false; }
   }
   /**
    * #927: the refusals a durable operation owes before it may wait for its
@@ -747,10 +773,10 @@ export class Operations {
       : await this.engine.performTaskControl(control, operation.id);
     return { taskId: task.id, taskVersion: task.version, phase: task.phase, number: task.number, reference: task.reference };
   }
-  async submitPlanningSource(submission: Submission, source: { kind:"lead"|"papercut"; id:string; repository:string; digest:string; expectedSource:string }, initial: Partial<Task> = {}, hostId?: string): Promise<OperationResult> {
-    return this.engine.performSubmit(submission, false, { source, initial }, hostId);
+  async submitPlanningSource(submission: Submission, source: { kind:"lead"|"papercut"; id:string; repository:string; digest:string; expectedSource:string }, initial: Partial<Task> = {}, hostId?: string, identitySource?: IdentitySource): Promise<OperationResult> {
+    return this.engine.performSubmit(submission, false, { source, initial, ...(identitySource ? { identitySource } : {}) }, hostId);
   }
-  async performSubmit(submission: Submission, requirePushedPlanning = false, promotion?: {source:{kind:"lead"|"papercut";id:string;repository:string;digest:string;expectedSource:string}; initial?: Partial<Task>}, hostId?: string, hostSelection?: QueueOperation['hostSelection']): Promise<OperationResult> {
+  async performSubmit(submission: Submission, requirePushedPlanning = false, promotion?: {source:{kind:"lead"|"papercut";id:string;repository:string;digest:string;expectedSource:string}; initial?: Partial<Task>; identitySource?: IdentitySource}, hostId?: string, hostSelection?: QueueOperation['hostSelection']): Promise<OperationResult> {
     hostId ??= this.engine.selectIngressHost(submission.hostId, submission.repoPath);
     // A replay after a lost response resolves the durable submission identity
     // before any remote validation or insertion.
@@ -773,10 +799,14 @@ export class Operations {
     // liveness timeout - in front of every accepted handoff, so a flapping transport failed
     // the submission and left no task at all.
     const needsRecipients = Boolean(submission.notifyOriginOnCloseout) || submission.completionNotificationAgentIds.length > 0;
-    const originHostId = await this.engine.identifyOriginHost(submission.originAgentId);
+    // The origin identity's own source proved its host; it is evidence about that
+    // identity only, so an offline host that has no part in it cannot turn a
+    // decidable origin into an ambiguous one.
+    const originIdentity = promotion?.identitySource ?? submission.originIdentity;
+    const originHostId = await this.engine.identifyOriginHost(submission.originAgentId, originIdentity);
     if (needsRecipients && !originHostId) throw new SubmissionUnavailableError("Origin host is unknown or ambiguous");
     const resolved = needsRecipients ? await validateCompletionRecipients(submission, async id => {
-      const host = await this.engine.identifyOriginHost(id);
+      const host = await this.engine.identifyOriginHost(id, id === submission.originAgentId ? originIdentity : undefined);
       if (!host || host !== originHostId) throw new SubmissionUnavailableError("Completion recipient host is unknown or differs from the recorded origin host");
       return this.engine.withHost(host, () => this.engine.host.originAgent(id));
     }) : null;

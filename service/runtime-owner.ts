@@ -47,7 +47,8 @@ import type { RegistrationAdapter } from "../core/host/registration";
 import type { Adapter } from "../core/host/adapter";
 import { HostFacade } from "../core/host/host-facade";
 import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/admission";
-import { HostRegistry, HOST_IDLE_GRACE_MS, resolveOriginHost, type KnownHost } from "../core/host/host-registry";
+import { HostRegistry, HOST_IDLE_GRACE_MS, resolveOriginHost, type KnownHost, type OriginHostEvidence } from "../core/host/host-registry";
+import type { IdentitySource } from "../shared/host-kind";
 import { T3HostConnection, type T3ConnectionConfig } from './t3code-host';
 import { answerHostPermission } from './host-permissions';
 import { lifecycleSignalSchema, type LifecycleSignal, type LifecycleSignalReceipt } from "../shared/lifecycle-signal";
@@ -521,13 +522,15 @@ export class QueueRuntime {
     this.engine.inventoryHostMatches = id => this.hostSession?.id === id;
     this.engine.retiredObservationKey = id => id === this.hostRegistry.known()[0]?.id ? 'retiredObservations' : `retiredObservations:${JSON.stringify(id)}`;
     this.engine.canReuseUnqualifiedOriginWorkspace = () => this.hostRegistry.known().length === 1;
-    this.engine.identifyOriginHost = agentId => {
+    this.engine.identifyOriginHost = (agentId, identitySource) => {
       const qualified = parseAgentId(agentId);
       if (qualified) return Promise.resolve(this.hostRegistry.get(qualified.hostId) ? qualified.hostId : undefined);
-      return resolveOriginHost(this.hostRegistry, agentId, (host, id) => {
-      if (!host.adapter.originAgent) throw new Error("Host cannot observe an origin agent");
-      return new HostFacade({ adapter: host.adapter }).originAgent(id);
-      });
+      return resolveOriginHost(this.hostRegistry, agentId, async (host, id) => {
+        if (!host.adapter.originAgent) return 'unknown';
+        // A thrown read is an unread inventory, never authoritative absence.
+        try { return await new HostFacade({ adapter: host.adapter }).originAgent(id) ? 'mine' : 'not-mine'; }
+        catch { return 'unknown'; }
+      }, this.originHostEvidence(agentId, identitySource));
     };
     this.engine.hostAvailable = id => {
       const selected = this.hostRegistry.get(id);
@@ -560,12 +563,13 @@ export class QueueRuntime {
       get adapter() { return runtime.adapter; },
     });
     this.plannerTickets = new PlannerParticipantTickets(this.engine, { socketPath: this.paseo.socketPath, helperPath: this.paseo.helperPath });
+    this.engine.plannerTicketPending = () => this.plannerTickets.pendingPlanners();
     this.repositories = new RuntimeRepositories({
       store: this.store, engine: this.engine, hostRuns: this.hostRuns,
       requiredCheckTransport: this.requiredCheckTransport,
       markStoreAccess: () => this.markStoreAccess(),
       projectQaRunner: () => this.projectQaRunner(),
-      plannerChanged: () => this.plannerTickets.ensure(),
+      plannerChanged: projectKey => this.plannerTickets.assigned(projectKey),
       get started() { return runtime.started; },
     });
     this.planning = new RuntimePlanning({
@@ -743,6 +747,19 @@ export class QueueRuntime {
     this.connected(); // Retire a disconnected primary claim before counting.
     this.t3Host?.retireDisconnected();
     return this.hostRegistry.onlineIds().length > 0;
+  }
+
+  /**
+   * The caller's identity source proved which host its own native identity
+   * belongs to. That is evidence about that one thread only: it applies only when
+   * the source names the identity being resolved and that host is registered. It
+   * never grants a host to another identity and never selects a host to run
+   * anything on.
+   */
+  private originHostEvidence(agentId: string, identitySource: IdentitySource | undefined): OriginHostEvidence | undefined {
+    if (!identitySource || identitySource.agent !== agentId) return undefined;
+    const known = this.hostRegistry.known().some(entry => entry.id === identitySource.hostId);
+    return known ? { hostId: identitySource.hostId, source: 'caller identity source' } : undefined;
   }
 
   /** A lost host connection is not evidence that any host run ended. */
@@ -1667,7 +1684,10 @@ export class QueueRuntime {
     }
     await this.refresh(); void this.wakeAndSettlePostBootstrapTimeout(); return { ok: true as const };
   }
-  async submitHandoff(input: import("../core/planning/handoff").HandoffInput) { return this.planning.submitHandoff(input); }
+  async submitHandoff(input: import("../core/planning/handoff").HandoffInput & { identitySource?: import("../shared/host-kind").IdentitySource }) {
+    const { identitySource, ...handoff } = input;
+    return this.planning.submitHandoff({ ...handoff, ...(identitySource ? { originIdentity: identitySource } : {}) });
+  }
 
   /**
    * Legacy synchronous removal. The Effigy runtime-scope capture and workspace
@@ -1699,11 +1719,15 @@ export class QueueRuntime {
    * service binds the task to that thread's own live worktree. The Paseo
    * bridge path carries no reliable caller identity and is refused.
    */
-  resolveHostCaller(input: { hostKind: HostKind; nativeAgentId: string }) {
+  async resolveHostCaller(input: { hostKind: HostKind; nativeAgentId: string }) {
     const hosts = this.hostRegistry.onlineIds().filter(id => hostKindOf(id) === input.hostKind);
     if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
     const hostId = hosts[0]!;
-    return { caller: formatAgentId(hostId, input.nativeAgentId), hostId, source: 'host' as const };
+    const caller = formatAgentId(hostId, input.nativeAgentId);
+    // This call is the planner thread's own proof of life, so its participant
+    // ticket travels in the response instead of a message into its thread.
+    const participantTicket = await this.plannerTickets.forCaller(caller);
+    return { caller, hostId, source: 'host' as const, ...(participantTicket ? { participantTicket } : {}) };
   }
 
   async registerTask(input: import('../shared/contracts').TaskRegistrationInput, _accepted: unknown, context?: { via?: string | null }) {

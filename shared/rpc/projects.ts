@@ -27,7 +27,11 @@ export const projectPark = defineRpc({ name: "project.park", input: projectVisib
 
 export const projectUnpark = defineRpc({ name: "project.unpark", input: projectVisibilityInputSchema, output: projectSchema });
 
-export const projectSetPlanner = defineRpc({ name: "project.set-planner", input: projectSetPlannerInputSchema, output: projectSchema });
+/**
+ * The assignment response, carrying the participant identity ticket when the
+ * calling thread named itself as its project's planner.
+ */
+export const projectSetPlanner = defineRpc({ name: "project.set-planner", input: projectSetPlannerInputSchema, output: projectSchema.extend({ participantTicket: z.string().min(1).optional() }) });
 
 export const projectOwnerCandidates = defineRpc({ name: "project.owner-candidates", input: z.object({}).strict(), output: z.array(projectOwnerCandidateSchema) });
 

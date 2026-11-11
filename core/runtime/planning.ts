@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { z } from "zod";
 import { type Store, digest as storeDigest, operationIdForKey } from "../store/store";
-import { type Engine, SOURCE_PROMOTION_NOT_DELIVERED } from "../engine";
+import { type Engine } from "../engine";
 import { git, validateSubmission } from "../git/index";
 import type { Submission, Lead } from "../../shared/contracts";
 import { OPERATION_COMPATIBILITY_WAIT_MS, operationIsSettled, type OperationAcceptance, type OperationResult } from "../../shared/operations";
@@ -44,7 +44,7 @@ export class RuntimePlanning {
       return { created: this.context.leads.add({ repositories: [repository], title: request.title, body: request.body,
         baseBranch: request.baseBranch, lanes: request.lanes, tags: request.tags, author: request.agent }) };
     })();
-    if ("taskId" in source) return { taskId: source.taskId, reference: this.context.store.numberFor(source.taskId)!.reference };
+    if ("taskId" in source) return { ...this.promotionReply(source.taskId), reference: this.context.store.numberFor(source.taskId)!.reference };
     if ("leadId" in source) return { lead: this.context.store.lead(source.leadId) };
     let lead = await this.checkLeadAfterMutation(source.created);
     if (lead.checkOperationId) {
@@ -59,11 +59,12 @@ export class RuntimePlanning {
     this.approveLead({ id: lead.id, version: lead.version, digest: briefDigest(lead.body),
       approver: request.agent, note: request.note, relayed: true });
     const result = await this.promoteLeadToTask({ id: lead.id, repository: repository.origin, agent: request.agent,
-      note: request.note, board: false, ...("hostId" in request ? { hostId: request.hostId } : {}), hold: request.hold });
+      note: request.note, board: false, ...("hostId" in request ? { hostId: request.hostId } : {}),
+      ...("identitySource" in request ? { identitySource: request.identitySource } : {}), hold: request.hold });
     if (!("accepted" in result)) return result;
     const operation = await this.context.engine.awaitOperation(result.operation.id, Infinity);
     if (operation.state === "succeeded" && operation.result?.taskId)
-      return { taskId: operation.result.taskId, reference: operation.result.reference ?? "" };
+      return { ...this.promotionReply(operation.result.taskId), reference: operation.result.reference ?? "" };
     throw new Error(`Task promotion ${operation.id}: ${operation.diagnostic || operation.state}; inspect lead.get before retrying`);
   }
 
@@ -215,13 +216,21 @@ export class RuntimePlanning {
     return checkedBaseBranch===lead.baseBranch && approvedBaseBranch===lead.baseBranch
       && approvedHead===check.planningCommit;
   }
-  promoteLeadToTask(input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string}}) {
+  /**
+   * A settled promotion's reply names its task and the host selection that task
+   * took, so the caller can see which host it will run on without a second read.
+   */
+  private promotionReply(taskId: string): { taskId: string; hostId?: string; hostSelection?: import('../../shared/host-selection').HostSelection } {
+    const task = this.context.store.task(taskId);
+    return { taskId: task.id, ...(task.hostSelection ? { hostId: task.hostSelection.hostId, hostSelection: task.hostSelection } : {}) };
+  }
+  promoteLeadToTask(input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string};identitySource?:z.infer<typeof sourcePromotionInputSchema>["identitySource"]}) {
     return this.promotePlanningSource("lead",input);
   }
-  promotePapercutToTask(input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string};complexity?:z.infer<typeof sourcePromotionInputSchema>["complexity"]}) {
+  promotePapercutToTask(input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string};complexity?:z.infer<typeof sourcePromotionInputSchema>["complexity"];identitySource?:z.infer<typeof sourcePromotionInputSchema>["identitySource"]}) {
     return this.promotePlanningSource("papercut",input);
   }
-  private async promotePlanningSource(kind:"lead"|"papercut",input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string};complexity?:z.infer<typeof sourcePromotionInputSchema>["complexity"]}):Promise<z.infer<typeof sourcePromotionOutputSchema>> {
+  private async promotePlanningSource(kind:"lead"|"papercut",input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string};complexity?:z.infer<typeof sourcePromotionInputSchema>["complexity"];identitySource?:z.infer<typeof sourcePromotionInputSchema>["identitySource"]}):Promise<z.infer<typeof sourcePromotionOutputSchema>> {
     await this.context.started;
     const request=sourcePromotionInputSchema.parse(input);
     if (!request.board && (!request.agent?.trim() || !request.note.trim())) throw new Error("Agent promotion requires an agent and operator authorization note");
@@ -236,7 +245,7 @@ export class RuntimePlanning {
       ? storeDigest(JSON.stringify([lead.version,briefDigest(lead.body)]))
       : storeDigest(JSON.stringify(cut));
     const existing=this.context.store.sourcePromotionResult({kind,id:request.id},repository.origin,lead?.version??null,sourceDigest);
-    if (existing) return {taskId:existing.taskId!,reference:existing.reference!};
+    if (existing) return {...this.promotionReply(existing.taskId!),reference:existing.reference!};
     if (lead) {
       if (!/^---\r?\n/.test(lead.body)) throw new Error("Lead has no brief to promote");
       parseNorthstarDocument(lead.body,"draft");
@@ -256,9 +265,12 @@ export class RuntimePlanning {
     const baseKey=`source-promote:${operationInputHash([kind,request.id,repository.origin,revision])}`;
     let key=unfinished?.key??baseKey;
     if (!unfinished) {
+      // A failed attempt whose effect is reconciled is proven not to have
+      // inserted anything, so the same lead may be promoted again under a fresh
+      // key; an uncertain attempt keeps its key and must be reconciled first.
       for (let retry=1;;retry++) {
         const prior=this.context.store.operationForKey(key);
-        if (prior?.state!=='failed' || prior.diagnostic!==SOURCE_PROMOTION_NOT_DELIVERED) break;
+        if (prior?.state!=='failed' || prior.effect?.status!=='reconciled') break;
         key=`${baseKey}:retry:${retry}`;
       }
     }
@@ -275,7 +287,7 @@ export class RuntimePlanning {
     if ("backpressured" in acceptance) return acceptance;
     const operation=await this.context.engine.awaitOperation(acceptance.operation.id,OPERATION_COMPATIBILITY_WAIT_MS);
     if (operation.state==="succeeded" && operation.result?.taskId)
-      return {taskId:operation.result.taskId,reference:operation.result.reference??""};
+      return {...this.promotionReply(operation.result.taskId),reference:operation.result.reference??""};
     if (operation.state==="failed") throw new Error(operation.diagnostic||"Task promotion failed");
     return {accepted:true,operation};
   }
@@ -394,7 +406,8 @@ ${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
       held:false,phase:"queued",mergeHold:false,holdOwner:null,holdReason:null,holdAt:null,holdGeneration:0,
       holdUntil:null,holdBlocking:null,originAgentId:owner,holds:{},
     },"dispatch",owner,input.hold.reason,until):{};
-    return this.context.engine.submitPlanningSource(submission,{kind,id:input.id,repository:repository.origin,digest,expectedSource},{...initial,...(selection ? {hostSelection:selection} : {})},hostId);
+    return this.context.engine.submitPlanningSource(submission,{kind,id:input.id,repository:repository.origin,digest,expectedSource},
+      {...initial,...(selection ? {hostSelection:selection} : {})},hostId,input.identitySource);
   }
   importLeads(input: Parameters<Leads["import"]>[0]) { return this.context.leads.import(input); }
   getLaneDocument(input: { key: string; version?: number }) {

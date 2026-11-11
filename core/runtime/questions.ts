@@ -78,9 +78,9 @@ export class RuntimeQuestions {
   }
 
   answerDelegatedQuestion(input: import("../../shared/contracts").QuestionAnswerRequest) {
-    const {taskId,reference,...answer}=input;
+    const {taskId,reference,identitySource,...answer}=input;
     const questionId=answer.questionId ?? this.context.engine.resolution.delegatedQuestionForTask(taskId??reference!,input.caller);
-    return this.context.engine.resolution.answerDelegatedQuestionFromHost({...answer,questionId}, input.caller);
+    return this.context.engine.resolution.answerDelegatedQuestionFromHost({...answer,questionId}, input.caller, identitySource);
   }
 
   answerDecision(input: Parameters<Decisions["answer"]>[0]) {

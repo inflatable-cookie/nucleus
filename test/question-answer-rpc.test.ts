@@ -44,7 +44,8 @@ test("question.answer routes the command to the owner with the calling thread", 
     answer,
   );
   assert.deepEqual(result, receipt);
-  assert.deepEqual(calls, [[answer, "planner-thread"]]);
+  // The caller's identity source rides along; absent here, so it stays undefined.
+  assert.deepEqual(calls, [[answer, "planner-thread", undefined]]);
 });
 
 test("question.answer requires one answer shape and a one-line reason", () => {

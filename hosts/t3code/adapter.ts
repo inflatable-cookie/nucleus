@@ -256,7 +256,19 @@ export class T3CodeHost implements Host {
       ...(pending[0] ? { pendingRequest: { id: pending[0].id, kind: pending[0].kind === 'user_input' ? 'question' : pending[0].kind, firstLine: null } } : {}) };
   }
   async observationInventory(ids: readonly string[]) { try { return new Map(await Promise.all(ids.map(async id => [id, await this.observe(id)] as const))); } catch { return null; } }
-  async originAgent(id: string) { this.requireConnection(); const p = await this.readProjection(id); return { id, workspaceId: this.workspaceFor(p.thread), title: p.thread.title, archived: !!p.thread.archivedAt }; }
+  /**
+   * The origin-agent read distinguishes authoritative absence from an unread
+   * inventory. Only a complete shell read may say T3 has no such thread; a
+   * failed read or projection is thrown so the caller records it as unknown.
+   */
+  async originAgent(id: string) {
+    this.requireConnection();
+    const { threads } = await this.inventory();
+    const found = threads.find(t => t.id === id);
+    if (!found) return null;
+    const p = await this.readProjection(id);
+    return { id, workspaceId: this.workspaceFor(p.thread), title: p.thread.title, archived: !!p.thread.archivedAt };
+  }
   async listLiveAgents() { return (await this.inventory()).threads.filter(t => !t.archivedAt && !t.deletedAt).map(t => ({ id: t.id, title: t.title, workspaceId: this.workspaceFor(t), labels: this.state.read().agents[t.id]?.labels ?? {} })); }
   async agentTimelinePage(id: string, limit = 100): Promise<HostTimelinePage | null> {
     try { const p = await this.readProjection(id); const entries = p.turnItems.slice(-limit).map(item => ({ timestamp: item.updatedAt ?? item.createdAt ?? p.updatedAt, item }));

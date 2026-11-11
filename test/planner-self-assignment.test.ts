@@ -17,13 +17,16 @@ function fixture() {
   const store = new Store(':memory:');
   store.upsertProject({ key: 'example', name: 'Example', repositories: [{ origin: 'synthetic/example', path: '/synthetic/example' }] });
   const registrations: string[] = [], deliveries: string[] = [];
-  const engine = new Engine(store, { hostId: host, notify: async (id: string) => { deliveries.push(id); } } as unknown as Adapter, 0);
+  const engine = new Engine(store, { hostId: host, notify: async (id: string) => { deliveries.push(id); },
+    originAgent: async (id: string) => ({ id, workspaceId: 'ws', title: 'Planner', archived: false }),
+    observe: async (id: string) => ({ id, workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),
+  } as unknown as Adapter, 0);
   engine.hostAvailable = () => true;
   engine.identifyOriginHost = async () => { throw Error('Native thread identity is ambiguous across hosts'); };
   engine.resolution.projectPlannerRegistered = async (_key, agentId) => { registrations.push(agentId); };
   const dir = mkdtempSync(join(tmpdir(), 'planner-self-'));
   const tickets = new PlannerParticipantTickets(engine, { socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs') });
-  const repositories = new RuntimeRepositories({ store, engine, markStoreAccess() {}, plannerChanged: () => tickets.ensure() } as unknown as RepositoriesContext);
+  const repositories = new RuntimeRepositories({ store, engine, markStoreAccess() {}, plannerChanged: (key: string) => tickets.assigned(key) } as unknown as RepositoriesContext);
   return { store, engine, registrations, deliveries, repositories };
 }
 
@@ -35,8 +38,10 @@ test('a self-assigned planner retains its ticket-proven host when naming its nat
     assert.equal(result.planner?.agentId, setter);
     assert.equal(sameCallerIdentity(result.planner?.agentId, setter), true);
     assert.deepEqual(f.registrations, [setter]);
-    assert.deepEqual(f.deliveries, ['planner']);
+    // Self-assignment hands the ticket back in its own response; nothing is messaged.
+    assert.deepEqual(f.deliveries, []);
     const record = f.store.getMeta<{ path: string }>(plannerTicketKey('example'))!;
+    assert.equal((result as { participantTicket?: string }).participantTicket, record.path);
     const ticket = JSON.parse(readFileSync(record.path, 'utf8'));
     assert.equal(resolveTicketCaller(f.store, { participantId: ticket.participantId }, ticket.token).caller, setter);
   } finally { f.store.close(); }
