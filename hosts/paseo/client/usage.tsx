@@ -75,7 +75,11 @@ function noOutline(): ViewStyle {
     : {};
 }
 
-/** One subscription's ring: state colour and fill (the binding window's used share), provider mark inside. */
+/**
+ * One subscription's ring, counting down: it fills with the binding window's
+ * remaining share, so it starts full and empties as the window is used. An
+ * unknown or expired reading stays empty and muted. Provider mark inside.
+ */
 export function UsageRailRing({
   c,
   subscription,
@@ -90,11 +94,17 @@ export function UsageRailRing({
   const binding = bindingWindow(subscription);
   const known =
     subscription.projection.state !== "unknown" &&
-    subscription.reading.status === "ok";
+    subscription.reading.status === "ok" &&
+    !subscription.stale?.expired &&
+    binding !== null;
+  const state = known ? subscription.projection.state : "unknown";
+  const remaining = known ? Math.max(0, Math.min(1, 1 - binding!.usedFraction)) : 0;
+  const left = known ? `, ${Math.round(remaining * 100)}% left` : "";
+  const word = usageStateWord(state);
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${providerLabel(subscription.provider)} usage: ${usageStateWord(subscription.projection.state)}${caption === usageStateWord(subscription.projection.state) ? "" : `, ${caption}`}. Opens the usage page`}
+      accessibilityLabel={`${providerLabel(subscription.provider)} usage: ${word}${known && caption !== word ? `, ${caption}` : ""}${left}. Opens the usage page`}
       onPress={onPress}
       hitSlop={touchSlop(22)}
       style={{ alignItems: "center", justifyContent: "center", ...noOutline() }}
@@ -102,8 +112,8 @@ export function UsageRailRing({
       <PressureRing
         size={26}
         thickness={2.5}
-        fraction={known && binding ? binding.usedFraction : 0}
-        color={ringColor(c, subscription.projection.state)}
+        fraction={remaining}
+        color={ringColor(c, state)}
         trackColor={c.border}
       >
         <ProviderLogo

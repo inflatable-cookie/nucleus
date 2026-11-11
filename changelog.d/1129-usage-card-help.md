@@ -1,0 +1,2 @@
+- The Usage page's provider cards drop their (?) popover; the page's own (?) still explains the dial. The binding window's row now shows its projected pace, e.g. "58% used · pace 132%".
+- The Paseo sidebar usage rings count down: each fills with what's left of its window and empties as it is used; an unknown or expired reading stays empty and muted, and the ring's label says what's left.

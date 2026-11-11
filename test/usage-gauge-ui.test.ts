@@ -10,6 +10,7 @@ import type { UsageProjectionWindow } from "../shared/usage-projection";
 import {
   usageStateOutputSchema,
   type UsageStateOutput,
+  type UsageSubscription,
 } from "../shared/schema/usage";
 
 // Spec 059 step 2 (nucleus#1113, #1123): the Usage page's pressure dial maps state and
@@ -388,6 +389,48 @@ test("the rail ring paints only the used share: empty at fraction 0, full at 1",
   assert.deepEqual(clips(full), ["right", "left"], "a full ring mounts both halves");
 });
 
+test("sidebar rings count down: full when unused, the remaining share when partly used, empty and muted when unknown", async () => {
+  await load();
+  const host = await import("../hosts/paseo/client/usage");
+  // The ring's arcs are its only Views with a coloured border edge; each carries its sweep as a rotation.
+  const arcs = (tree: ReturnType<typeof mount>) =>
+    tree
+      .ofType("View")
+      .filter((node) => node.props.style?.transform && node.props.style.borderWidth)
+      .map((node) => ({
+        rotate: node.props.style.transform[0].rotate as string,
+        color: (node.props.style.borderTopColor === "transparent" ? node.props.style.borderBottomColor : node.props.style.borderTopColor) as string,
+      }));
+  const ring = (subscription: UsageSubscription) =>
+    mount(h(host.UsageRailRing, { c, subscription, onPress: () => {} }));
+  const label = (tree: ReturnType<typeof mount>) =>
+    tree.get(/usage: /).props.accessibilityLabel as string;
+
+  const unused = subscription({
+    provider: "claude",
+    reading: reading([window({ usedFraction: 0 })], "cache"),
+    projection: projectUsage({ now: NOW, windows: [window({ usedFraction: 0 })] }),
+  })!;
+  const full = ring(unused);
+  assert.deepEqual(arcs(full).map((arc) => arc.rotate), ["45deg", "45deg"], "an unused window fills the whole ring");
+  assert.match(label(full), /, 100% left\. Opens the usage page$/);
+
+  const partly = ring(fixture.subscriptions[0]!);
+  // 62% used leaves 38%: the right half sweeps 0.38 of a turn from 12 o'clock, the left half stays unmounted.
+  assert.deepEqual(arcs(partly).map((arc) => arc.rotate), [`${360 * (1 - 0.62) - 135}deg`]);
+  assert.equal(arcs(partly)[0]!.color, dark.statusDanger);
+  assert.match(label(partly), /^Codex usage: Will run out.*, 38% left\. Opens the usage page$/);
+
+  const unknown = ring(fixture.subscriptions[3]!);
+  assert.deepEqual(arcs(unknown).map((arc) => arc.rotate), ["-135deg"], "an unknown reading paints no arc");
+  assert.equal(arcs(unknown)[0]!.color, dark.foregroundMuted, "an unknown ring stays muted");
+  assert.ok(!label(unknown).includes("left"), "an unknown ring claims nothing about what's left");
+
+  const expired = ring({ ...fixture.subscriptions[0]!, stale: { expired: true, ageMs: 9 * HOUR, failedAt: AT, reason: "read failed" } });
+  assert.deepEqual(arcs(expired).map((arc) => arc.rotate), ["-135deg"], "an expired reading empties the ring");
+  assert.equal(arcs(expired)[0]!.color, dark.foregroundMuted);
+});
+
 test("friendly labels and reset verdicts read as the brief writes them", async () => {
   await load();
   const label = (projected: number | null) =>
@@ -448,6 +491,9 @@ test("the page renders verdicts and friendly usage window rows", async () => {
   assert.ok(text.includes("This week"), "weekly windows use a friendly name");
   assert.ok(text.includes("Resets Saturday 12:00"), "reset row carries day and local time");
   assert.ok(text.includes("62% used"));
+  assert.ok(text.includes("62% used · pace 109%"), "the binding window shows projected pace");
+  assert.ok(tree.query("Usage help"), "the page-level help remains");
+  assert.equal(tree.query("Codex help"), undefined, "provider cards have no help button");
   assert.ok(!text.includes("codex-main"), "the subscription group stays hidden");
   assert.ok(!text.includes("binding window"), "internal binding label stays hidden");
   assert.ok(!text.includes("app-server"), "reader source stays out of visible text");
@@ -456,6 +502,21 @@ test("the page renders verdicts and friendly usage window rows", async () => {
   assert.ok(!text.includes("0% used · reset time unknown · "), "a broken subscription never reads as an empty window");
   const marker = tree.ofType("View").find((node) => node.props.testID === "usage-pace-marker");
   assert.equal(marker?.props.style.left, `${(4 / 7) * 100}%`, "the marker tracks elapsed window time");
+});
+
+test("the binding row omits pace when its projection is unknown", async () => {
+  await load();
+  const subscriptions = fixture.state.subscriptions.map((subscription) => ({
+    ...subscription,
+    projection: {
+      ...subscription.projection,
+      windows: subscription.projection.windows.map((entry) => ({ ...entry, pace: null })),
+    },
+  }));
+  const tree = mountPage({ ...fixture.state, subscriptions });
+  await settle(() => tree.text().includes("Codex"));
+  assert.ok(tree.text().includes("62% used"));
+  assert.ok(!/· pace \d/.test(tree.text()), "unknown pace is not rendered");
 });
 
 test("stale readings remain visible with a quiet warning and expired readings lose the dial", async () => {
