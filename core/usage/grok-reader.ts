@@ -17,8 +17,8 @@ import {
   type UsageSource,
 } from "./readers";
 
-const GROK_INITIALIZE_TIMEOUT_MS = 4_000;
-const GROK_REQUEST_TIMEOUT_MS = 3_000;
+export const GROK_INITIALIZE_TIMEOUT_MS = 15_000;
+export const GROK_BILLING_TIMEOUT_MS = 10_000;
 const GROK_FALLBACK_TIMEOUT_MS = 20_000;
 const OUTPUT_EXCERPT_BYTES = 400;
 
@@ -206,7 +206,7 @@ async function readBilling(
       }
     }
   });
-  const timeoutMs = options.timeoutMs ?? GROK_REQUEST_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? GROK_BILLING_TIMEOUT_MS;
   const finish = async <T>(promise: Promise<T>, duration: number, label: string): Promise<T> => {
     let timer: NodeJS.Timeout;
     try {

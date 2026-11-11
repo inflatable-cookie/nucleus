@@ -371,6 +371,7 @@ test("failed reads back off by doubling to the hour cap, and success resets the 
       const subscription = service.state().subscriptions[0]!;
       assert.equal(subscription.reading.status, "unknown");
       assert.match(subscription.lastError!, /exited 1/);
+      assert.equal(subscription.stale, null, "a failed first read has no last good value");
       const gap =
         Date.parse(subscription.nextReadAt!) -
         Date.parse(subscription.lastAttemptAt!);
@@ -389,6 +390,101 @@ test("failed reads back off by doubling to the hour cap, and success resets the 
       Date.parse(subscription.nextReadAt!) -
       Date.parse(subscription.lastAttemptAt!);
     assert.equal(gap, USAGE_READ_INTERVAL_MS.grok);
+  } finally {
+    store.close();
+  }
+});
+
+test("a failed refresh serves the last good reading and projects it until its windows expire", async () => {
+  const { store } = fixture();
+  try {
+    store.setProfiles([profile("p1", "grok")]);
+    store.setMeta("pool", [poolEntry("p1", "grok-1")]);
+    const base = Date.parse("2026-11-11T12:00:00.000Z");
+    let now = base;
+    const good = okReading([{ usedFraction: 0.7 }], new Date(base).toISOString(), "grok-account");
+    const failed = usageReadingSchema.parse({
+      status: "unknown", reason: "billing timed out", asOf: new Date(base + 600_000).toISOString(),
+      source: "grok-cli", accountId: null, windows: [],
+    });
+    let attempts = 0;
+    const service = new UsageService(store, {
+      env: {}, now: () => new Date(now),
+      readers: { grok: { provider: "grok", read: async () => attempts++ === 0 ? good : failed } },
+    });
+    await service.refresh({ dueOnly: false });
+    now = base + 600_000;
+    await service.refresh({ dueOnly: false });
+    const subscription = service.state().subscriptions[0]!;
+    assert.deepEqual(subscription.reading, good);
+    assert.equal(subscription.projection.state, "will_run_out");
+    assert.deepEqual(subscription.stale, {
+      reason: "billing timed out",
+      failedAt: new Date(now).toISOString(),
+      ageMs: 600_000,
+      expired: false,
+    });
+    assert.match(subscription.lastError!, /billing timed out/);
+  } finally {
+    store.close();
+  }
+});
+
+test("a failed read identifying a different account does not reuse another account's value", async () => {
+  const { store } = fixture();
+  try {
+    store.setProfiles([profile("p1", "grok")]);
+    store.setMeta("pool", [poolEntry("p1", "grok-1")]);
+    const good = okReading([{ usedFraction: 0.7 }], "2026-11-11T12:00:00.000Z", "account-a");
+    const failed = usageReadingSchema.parse({
+      status: "unknown", reason: "account changed during read", asOf: "2026-11-11T12:01:00.000Z",
+      source: "grok-cli", accountId: "account-b", windows: [],
+    });
+    let attempts = 0;
+    const service = new UsageService(store, {
+      env: {}, now: () => new Date("2026-11-11T12:01:00.000Z"),
+      readers: { grok: { provider: "grok", read: async () => attempts++ === 0 ? good : failed } },
+    });
+    await service.refresh({ dueOnly: false });
+    await service.refresh({ dueOnly: false });
+    const subscription = service.state().subscriptions[0]!;
+    assert.equal(subscription.reading.status, "unknown");
+    assert.equal(subscription.stale, null);
+    assert.equal(subscription.projection.state, "unknown");
+  } finally {
+    store.close();
+  }
+});
+
+test("a last good reading stays visible after reset but its stale projection is unknown", async () => {
+  const { store } = fixture();
+  try {
+    store.setProfiles([profile("p1", "grok")]);
+    store.setMeta("pool", [poolEntry("p1", "grok-1")]);
+    const base = Date.parse("2026-11-11T12:00:00.000Z");
+    let now = base;
+    const good = okReading([{
+      usedFraction: 0.4,
+      resetsAt: new Date(base + 1_000).toISOString(),
+    }], new Date(base).toISOString());
+    const failed = usageReadingSchema.parse({
+      status: "unknown", reason: "offline", asOf: new Date(base + 2_000).toISOString(),
+      source: "grok-cli", accountId: null, windows: [],
+    });
+    let attempts = 0;
+    const service = new UsageService(store, {
+      env: {}, now: () => new Date(now),
+      readers: { grok: { provider: "grok", read: async () => attempts++ === 0 ? good : failed } },
+    });
+    await service.refresh({ dueOnly: false });
+    now = base + 2_000;
+    await service.refresh({ dueOnly: false });
+    const subscription = service.state().subscriptions[0]!;
+    assert.deepEqual(subscription.reading, good);
+    assert.equal(subscription.projection.state, "unknown");
+    assert.equal(subscription.projection.dial, null);
+    assert.equal(subscription.stale?.expired, true);
+    assert.equal(subscription.stale?.ageMs, 2_000);
   } finally {
     store.close();
   }

@@ -85,6 +85,7 @@ interface StoredReadState {
   lastError: string | null;
   failures: number;
   reading: UsageReading | null;
+  lastGoodReading: UsageReading | null;
 }
 
 const readStateKey = (target: UsageSubscriptionTarget) =>
@@ -190,11 +191,28 @@ export class UsageService {
     const subscriptions: UsageSubscription[] = this.targets(pool, profiles).map(
       (target) => {
         const stored = this.readState(target);
-        const reading = stored?.reading ?? notSampledReading();
-        const projection = projectUsage({
-          now: now.getTime(),
-          windows: reading.windows,
-        });
+        const hasFailure = Boolean(stored?.lastError);
+        let lastGoodReading = stored?.lastGoodReading ??
+          (stored?.reading?.status === "ok" ? stored.reading : null);
+        if (
+          hasFailure &&
+          stored?.reading?.accountId &&
+          stored.reading.accountId !== lastGoodReading?.accountId
+        ) lastGoodReading = null;
+        const staleReading = hasFailure ? lastGoodReading : null;
+        const reading = staleReading ?? stored?.reading ?? notSampledReading();
+        const expired = Boolean(staleReading && allWindowsExpired(staleReading, now.getTime()));
+        const projection = expired
+          ? unknownProjection()
+          : projectUsage({ now: now.getTime(), windows: reading.windows });
+        const stale = staleReading && stored?.lastAttemptAt && stored.lastError
+          ? {
+              reason: stored.lastError,
+              failedAt: stored.lastAttemptAt,
+              ageMs: readingAgeMs(staleReading, now.getTime()),
+              expired,
+            }
+          : null;
         return {
           group: target.group,
           provider: target.provider,
@@ -202,6 +220,7 @@ export class UsageService {
           sourcePath: target.sourcePath,
           reading,
           projection,
+          stale,
           nextReadAt: stored?.nextReadAt ?? null,
           lastAttemptAt: stored?.lastAttemptAt ?? null,
           lastError: stored?.lastError ?? null,
@@ -294,6 +313,9 @@ export class UsageService {
       lastError: reading.status === "ok" ? null : reading.reason,
       failures,
       reading,
+      lastGoodReading: reading.status === "ok"
+        ? reading
+        : stored?.lastGoodReading ?? (stored?.reading?.status === "ok" ? stored.reading : null),
     };
     try {
       this.store.transaction(() => {
@@ -404,8 +426,34 @@ function parseReadState(data: string): StoredReadState | null {
           ? parsed.failures
           : 0,
       reading: parsed.reading ? usageReadingSchema.parse(parsed.reading) : null,
+      lastGoodReading: parsed.lastGoodReading
+        ? usageReadingSchema.parse(parsed.lastGoodReading)
+        : (parsed.reading?.status === "ok" ? usageReadingSchema.parse(parsed.reading) : null),
     };
   } catch {
     return null;
   }
+}
+
+function allWindowsExpired(reading: UsageReading, now: number): boolean {
+  return reading.windows.length > 0 && reading.windows.every((window) => {
+    const reset = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+    return Number.isFinite(reset) && reset <= now;
+  });
+}
+
+function readingAgeMs(reading: UsageReading, now: number): number {
+  const asOf = Date.parse(reading.asOf);
+  return Number.isFinite(asOf) ? Math.max(0, now - asOf) : 0;
+}
+
+function unknownProjection(): ReturnType<typeof projectUsage> {
+  return {
+    state: "unknown",
+    bindingWindowId: null,
+    bindingWindowName: null,
+    projectedUseAtReset: null,
+    dial: null,
+    windows: [],
+  };
 }

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readCodexUsage, readCodexRollout } from "../core/usage/codex-reader";
 import { readClaudeUsage } from "../core/usage/claude-reader";
-import { readGrokUsage } from "../core/usage/grok-reader";
+import { GROK_BILLING_TIMEOUT_MS, GROK_INITIALIZE_TIMEOUT_MS, readGrokUsage } from "../core/usage/grok-reader";
 
 function scratch(prefix: string) {
   const dir = mkdtempSync(join(tmpdir(), `${prefix}-`));
@@ -33,10 +33,10 @@ function grokAgentFixture(
         if (request.params?.protocolVersion !== '1' || !request.params?.clientCapabilities ||
           (expectedHome !== null && process.env.GROK_HOME !== expectedHome)) {
           response.error = { code: -32602, message: 'invalid initialize parameters or Grok home' };
-          process.stdout.write(JSON.stringify(response) + '\\n');
-          return;
-        }
-        response.result = {};
+        } else response.result = {};
+        if (behavior === 'slow-initialize') setTimeout(() => process.stdout.write(JSON.stringify(response) + '\\n'), 4100);
+        else process.stdout.write(JSON.stringify(response) + '\\n');
+        return;
       } else if (request.method === '_x.ai/billing' && behavior === 'unsupported') {
         response.error = { code: -32601, message: 'Method not found' };
       } else if (request.method === '_x.ai/billing') {
@@ -388,6 +388,8 @@ test("the claude reader reports a cache with no usable window as unknown", async
 });
 
 test("the grok reader reads nested credits through agent stdio", async () => {
+  assert.equal(GROK_INITIALIZE_TIMEOUT_MS, 15_000);
+  assert.equal(GROK_BILLING_TIMEOUT_MS, 10_000);
   const dir = scratch("usage-grok");
   const fixturePath = new URL("./fixtures/grok-billing-current.json", import.meta.url).pathname;
   const reading = await readGrokUsage({ home: join(dir, "home") }, {
@@ -405,6 +407,17 @@ test("the grok reader reads nested credits through agent stdio", async () => {
   assert.equal(reading.windows[0]!.resetsAt, "2026-11-28T00:00:00.000Z");
   assert.equal(reading.windows[0]!.windowSeconds, null);
   assert.equal(reading.reason, null);
+});
+
+test("Grok agent stdio accepts a cold initialize that takes longer than four seconds", async () => {
+  const dir = scratch("usage-grok-slow-initialize");
+  const fixturePath = new URL("./fixtures/grok-billing-current.json", import.meta.url).pathname;
+  const reading = await readGrokUsage({ home: "" }, {
+    ...grokAgentFixture(dir, fixturePath, "slow-initialize"),
+    env: {},
+  });
+  assert.equal(reading.status, "ok");
+  assert.equal(reading.windows[0]!.usedFraction, 0.125);
 });
 
 test("the grok reader supports legacy billing and keeps unsupported or unparseable usage unknown", async () => {
@@ -467,7 +480,9 @@ test("the grok reader supports legacy billing and keeps unsupported or unparseab
     args: [fallbackScript, "agent", "stdio"],
     fallbackArgs: [fallbackScript, "usage", "--json"],
     env: {},
-    timeoutMs: 100,
+    // This fixture runs while other reader tests, including the cold-start delay,
+    // may be active under the shared test concurrency limit.
+    timeoutMs: 5_000,
   });
   assert.equal(fallback.status, "ok");
   assert.equal(fallback.windows[0]!.usedFraction, 0.23);
