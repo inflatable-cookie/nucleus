@@ -1,16 +1,15 @@
 # Nucleus
 
-Nucleus is a local service that runs agent software tasks end to end. Each task
-gets one worker in an isolated worktree; an independent reviewer checks the
-resulting PR at its exact head; mechanical gates merge it; local `main` is
-synchronized; closeout and recovery follow. Tasks are durable and survive
-restarts, and side effects are reconciled from evidence, never blindly retried.
-Nucleus never invents planning decisions, grants execution authority from
-documents, or bypasses exact-head review.
+Nucleus is a local service that runs agent coding tasks end to end. Each task
+gets one worker in its own worktree. A separate reviewer checks the PR at its
+exact head, mechanical gates merge it, local `main` is synced, and closeout
+follows. Tasks survive restarts. Side effects are reconciled from evidence,
+never retried blindly. Nucleus carries out approved work; it doesn't plan it,
+and nothing merges without review of the exact head.
 
-Host applications connect through a host interface. Paseo is the first: the
-board runs as a plugin screen in its sidebar. Other hosts follow the same
-interface, and a host without a plugin UI uses the local web board. Nucleus is
+Agent apps connect through a host interface. Paseo is the first host: the
+board runs as a plugin screen in its sidebar. More hosts, such as T3Code, are
+planned; a host without a plugin UI uses the local web board. Nucleus is
 trusted local software, not a sandbox between agents.
 
 ## Install
@@ -91,7 +90,7 @@ effigy tasks        # task inventory
 effigy test --plan  # the test shape
 ```
 
-`effigy qa` runs the full local board. Validate only what you changed; see
+`effigy qa` runs the full local QA. Validate only what you changed; see
 `AGENTS.md` for the working rules and validation policy, and the
 [orchestration contract](docs/knowledge/contracts/orchestration.md) before
 changing state transitions or external effects. Release builds and rolling to

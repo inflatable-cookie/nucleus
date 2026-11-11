@@ -956,6 +956,8 @@ request identities and submitted handoffs are not rewritten.
   board hold clears no task hold and uses the existing dispatch order and capacity
   gates. Each dispatch pass reads this setting once, with no additional task scan.
   Scheduled and manual project QA are unaffected: QA has its own fence.
+- A new store starts paused with an empty worker pool, so nothing dispatches
+  until the operator adds profiles and resumes. Pause survives restarts.
 - Pause stores submissions and defers new dispatch; existing work drains (Tom,
   2026-11-05 and 2026-11-08). Under pause, no new run of any kind
   starts (dispatch, revision, reviewer, coordinator, recovery, proof, or a
