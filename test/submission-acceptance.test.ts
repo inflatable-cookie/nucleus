@@ -38,12 +38,13 @@ async function fixture(t: any, offline = false, notify = false, lookup?: (id: st
   const publish = async (next = text) => { await writeFile(path, next); await git(repo, 'add', '.'); await git(repo, 'commit', '-m', 'Fixture'); await git(repo, 'push', 'origin', 'main'); };
   await publish();
   let available = !offline, lookups = 0;
+  const lookupIds: string[] = [];
   const adapter = {
     client: { isConnected: !offline }, hostId: 'fixture-host',
     socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'),
     connect: async () => { if (!available) throw Error('Transport not connected'); adapter.client.isConnected = true; },
     close: async () => {}, catalog: async () => ({ providers: [] }),
-    originAgent: async (id: string) => { lookups++; await lookup?.(id); return { id, workspaceId: 'origin-ws', archived: false }; },
+    originAgent: async (id: string) => { lookups++; lookupIds.push(id); await lookup?.(id); return { id, workspaceId: 'origin-ws', archived: false }; },
   } as unknown as Adapter & { client: { isConnected: boolean } };
   const runtime = new QueueRuntime({ dataDir: join(dir, 'data'), adapterFactory: () => adapter, timers: false });
   t.after(async () => { await runtime.drain(); await rm(dir, { recursive: true, force: true }); });
@@ -55,7 +56,7 @@ async function fixture(t: any, offline = false, notify = false, lookup?: (id: st
   }
   return { runtime, adapter, dir, repo, remote, path, publish, text,
     input: { hostId: 'fixture-host', handoffPath: path, originAgentId: 'origin', baseBranch: 'main', dryRun: false },
-    online: () => { available = true; }, lookups: () => lookups };
+    online: () => { available = true; }, lookups: () => lookups, lookupIds };
 }
 
 test('offline handoff accepts once and survives a restart with its committed instruction', { timeout: 15000 }, async t => {
@@ -326,4 +327,34 @@ Promote from the Paseo planner's own lead.
   f.runtime.approveLead({ id: other.id, version: other.version, digest: other.digest!, approver: 'planner-two', note: 'Operator authorized', relayed: true });
   await assert.rejects(f.runtime.promoteLeadToTask({ id: other.id, note: 'Operator authorized', agent: caller,
     identitySource: { agent: caller, hostId: 'fixture-host' }, board: false }), /Origin host is unknown or ambiguous/);
+});
+
+test('a qualified origin and completion recipient pass the promotion cohort check as native host IDs', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  const origin = formatAgentId('fixture-host', 'planner');
+  const recipient = formatAgentId('fixture-host', 'completion-recipient');
+  const body = `---
+title: Qualified origin promotion
+queue:
+  complexity: medium
+  notifyOriginOnCloseout: true
+  completionNotificationAgentIds: ['${recipient}']
+---
+
+## Outcome
+
+Promote with qualified origin and completion recipient identities.
+`;
+  const lead = await f.runtime.addLead({ repositories: [{ origin: f.repo, path: f.repo }], title: 'Qualified origin promotion', body, lanes: [], author: origin });
+  assert.equal(lead.check?.ok, true, lead.check?.message);
+  f.runtime.approveLead({ id: lead.id, version: lead.version, digest: lead.digest!, approver: 'planner', note: 'Operator authorized', relayed: true });
+  const promoted = await f.runtime.promoteLeadToTask({ id: lead.id, note: 'Operator authorized', agent: origin,
+    identitySource: { agent: origin, hostId: 'fixture-host' }, board: false });
+  assert.ok('taskId' in promoted, JSON.stringify(promoted));
+  const task = f.runtime.store.task(promoted.taskId);
+  assert.equal(task.originHostId, 'fixture-host');
+  assert.equal(task.originWorkspaceId, 'origin-ws');
+  assert.deepEqual(task.creatorCompletionRecipients, [{ agentId: recipient, workspaceId: 'origin-ws' }]);
+  assert.ok(f.lookupIds.includes('planner'), 'the origin lookup receives its native Paseo ID');
+  assert.ok(f.lookupIds.includes('completion-recipient'), 'the completion lookup receives its native Paseo ID');
 });
