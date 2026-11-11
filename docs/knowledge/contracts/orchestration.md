@@ -2812,10 +2812,13 @@ movement invalidates source approval and preserves the normal readiness gates.
 - A daily pass while unpaused purges each task whose history has passed the
   4-day expiry window (Tom, 2026-10-20; see [Closeout and
   outcomes](#closeout-and-outcomes)), deleting its events, runs, receipts,
-  notices and hook records. Unreleased runs, a pending archive intent or
-  merge without a recorded commit, an unfinished build-output cleanup,
-  workspace retirement or runtime retirement, unsettled hook custody and an
-  origin that never resolved all defer the purge; pausing pauses retention.
+  notices and hook records. These defer the purge: unreleased runs; a
+  pending archive intent or a merge without a recorded commit; an unfinished
+  build-output cleanup, workspace retirement or runtime retirement; an
+  external workspace archive in `intent` or `uncertain`; a done task's
+  workspace, closeout workspace or review-source view not yet archived; a
+  notice in `pending`, `intent` or `uncertain`; unsettled hook custody; and
+  an origin that never resolved. Pausing pauses retention.
   A task whose hook retention is not settled keeps its whole history: hook
   records carry the only proof of an isolated checkout's ownership.
 - A purge leaves a tombstone naming the task identity, submission identity,

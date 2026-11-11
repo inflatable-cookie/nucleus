@@ -5,7 +5,8 @@ gets one worker in its own worktree. A separate reviewer checks the PR at its
 exact head, mechanical gates merge it, local `main` is synced, and closeout
 follows. Tasks survive restarts. Side effects are reconciled from evidence,
 never retried blindly. Nucleus carries out approved work; it doesn't plan it,
-and nothing merges without review of the exact head.
+and nothing merges without review of the exact head (or the
+operator's recorded acceptance of it).
 
 Agent apps connect through a host interface. Paseo is the first host: the
 board runs as a plugin screen in its sidebar. More hosts, such as T3Code, are
@@ -90,7 +91,7 @@ effigy tasks        # task inventory
 effigy test --plan  # the test shape
 ```
 
-`effigy qa` runs the full local QA. Validate only what you changed; see
+`effigy qa` is the full local QA, run as milestone QA on `main`. Validate only what you changed; see
 `AGENTS.md` for the working rules and validation policy, and the
 [orchestration contract](docs/knowledge/contracts/orchestration.md) before
 changing state transitions or external effects. Release builds and rolling to
