@@ -1,4 +1,3 @@
-import { dirname, join } from 'node:path';
 import type { Adapter, HostPolicyConstructor, HostPolicyPort, HostWorktreeWorkspaceSpec } from '../../core/host';
 import { ProvenPreSendRefusalError } from '../../core/host';
 import type { HostAgentSpec, HostCapabilities, HostPermissionDecision, HostWorkspaceSpec } from '../../shared/host';
@@ -96,24 +95,12 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     findAgents(task: Task) { return this.native.findAgents({ 'nucleus.task': task.id }); }
     findRunAgents(run: Run) { return this.native.findAgents({ 'nucleus.run': run.id, 'nucleus.task': run.taskId }); }
     /**
-     * T3 has no Paseo identity, so a consult names the recipient run's helper
-     * ticket. T3-hosted planners are out of trial; missing `askPlanner` becomes
-     * a board decision.
+     * T3 has no Paseo identity. Core's consult prompt names `question.answer`
+     * with the reissued run ticket; this send does not rewrite it. T3-hosted
+     * planners are out of trial; missing `askPlanner` becomes a board decision.
      */
-    private quote(value: string) { return `'${value.replaceAll("'", "'\\''")}'`; }
-    private recipientTicketPath(recipient: string): string {
-      this.requireHelper();
-      const runId = this.native.state.read().agents[recipient]?.labels['nucleus.run'];
-      if (!runId) throw new ProvenPreSendRefusalError('T3Code consult requires the recipient run ticket');
-      return join(dirname(this.helperPath), 'tickets', `${runId}.json`);
-    }
-    private bindAnswerRoute(recipient: string, prompt: string, questionId: string): string {
-      const invocation = `node ${this.quote(this.helperPath)} ${this.quote(this.recipientTicketPath(recipient))} answer`;
-      if (prompt.includes('nucleus question.answer -')) return prompt.replaceAll('nucleus question.answer -', invocation);
-      return `${prompt}\nAnswer with this command; write nothing else in this thread. For operator-only matters set "decision":"operator" instead of answer.\n${invocation} <<'JSON'\n${JSON.stringify({ questionId, answer: '<answer or exact choice>', reason: '<one line>' })}\nJSON`;
-    }
     async askReviewer(reviewer: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string }) {
-      await this.native.sendMessage(reviewer, { messageId: input.messageId, text: this.bindAnswerRoute(reviewer, input.prompt, input.messageId) });
+      await this.native.sendMessage(reviewer, { messageId: input.messageId, text: input.prompt });
       return null;
     }
     observe(id: string) { return this.native.observe(id); }

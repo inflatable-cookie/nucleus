@@ -206,14 +206,14 @@ helper and ticket named in the prompt. Service composition injects
 `HostPolicies` through the public `core/host` constructor, so review
 verification (live author/reviewer independence and exact-head checks) and
 retained-thread continuation, recovery and checkpoint delivery use the same
-core policy as Paseo. The Adapter supplies `askReviewer` (a T3 message that
-names the recipient run's helper ticket and the `answer` subcommand) and
-`findRunAgents` (exact `nucleus.run` plus `nucleus.task` label lookup), so a
-helper ask reaches a retained T3 reviewer through the same authenticated
-ticket-bound callback as reporting, and uncertain reviewer or coordinator
-creation can bind. T3-hosted planners are out of trial: missing `askPlanner`
-becomes an answerable board decision with the planner message, never a silently
-pending ask. Production planners stay Paseo threads. `host.permission-answer` still grants no
+core policy as Paseo. The Adapter supplies `askReviewer` (a T3 message that sends the core consult
+prompt unchanged) and `findRunAgents` (exact `nucleus.run` plus `nucleus.task`
+label lookup). Core names `question.answer` with the reissued recipient run
+ticket; a shared ticket-first caller resolver fills identity for any host, so
+T3 does not rewrite the command to a separate endpoint. Uncertain reviewer or
+coordinator creation can bind. T3-hosted planners are out of trial: missing
+`askPlanner` becomes an answerable board decision with the planner message,
+never a silently pending ask. Production planners stay Paseo threads. `host.permission-answer` still grants no
 task lifecycle dispatch. An unconfigured T3 adapter changes no default route. A
 configured second host never causes implicit rerouting of a live task, origin
 notice or pending question.

@@ -491,7 +491,7 @@ export class Resolution {
   }
   /** Command receipts, never conversation output, settle every delegated route. */
   delegatedAnswerWaitMs = DELEGATED_ANSWER_TIMEOUT_MS;
-  delegatePrompt(task: Task, id: string, prompt: string): string { return this.delegation.delegatePrompt(task, id, prompt); }
+  delegatePrompt(task: Task, id: string, prompt: string, recipient?: string): string { return this.delegation.delegatePrompt(task, id, prompt, recipient); }
   openDelegatedQuestion(task: Task, id: string, recipient: string, prompt: string, timeoutMs: number, role: string, hostId?: string): void { this.delegation.openDelegatedQuestion(task, id, recipient, prompt, timeoutMs, role, hostId); }
   delegatedDelivery(id: string): { taskId: string; recipient: string; role: string; deadline: number } | null { return this.delegation.delegatedDelivery(id); }
   recoverableDelegation(ids: string[], advance = true): boolean { return this.delegation.recoverableDelegation(ids, advance); }

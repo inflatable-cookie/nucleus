@@ -299,8 +299,30 @@ if (method === 'repository.rekey') {
 }
 if (method === 'question.answer') {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('CLI question.answer takes {questionId, answer or choice, reason}');
-  input.caller = process.env.PASEO_AGENT_ID;
-  if (!input.caller) throw new Error('CLI question.answer records the calling thread; PASEO_AGENT_ID is required');
+  const { resolveQuestionAnswerCaller } = await import('../shared/question-caller.mjs');
+  const identity = resolveQuestionAnswerCaller(process.env);
+  if (identity.source === 'ticket') {
+    const ticket = JSON.parse(await readFile(identity.path, 'utf8'));
+    if (typeof ticket.token !== 'string' || typeof ticket.socketPath !== 'string' ||
+        typeof ticket.taskId !== 'string' || typeof ticket.runId !== 'string')
+      throw new Error('The Nucleus run ticket is incomplete; question.answer is unavailable');
+    if (typeof input.questionId !== 'string' || !input.questionId.trim())
+      throw new Error('CLI question.answer with a run ticket takes {questionId, answer or choice, reason}');
+    const { callbackRequest } = await import('../shared/service/callback-client.mjs');
+    const payload = {
+      taskId: ticket.taskId, runId: ticket.runId, questionId: input.questionId,
+      answer: input.answer, choice: input.choice, reason: input.reason,
+      decision: input.decision, overtakes: input.overtakes,
+    };
+    for (const key of Object.keys(payload)) if (payload[key] === undefined) delete payload[key];
+    payload.eventId = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    const result = await callbackRequest({ socketPath: ticket.socketPath, token: ticket.token }, '/answer', payload, {
+      timeoutMs: 45000, timeoutMessage: 'Callback timed out; retry the same JSON',
+    });
+    console.log(JSON.stringify(result));
+    process.exit(0);
+  }
+  input.caller = identity.caller;
 }
 if (method === 'project.set-planner') {
   // Spec 058 (task 540): the planner names itself, or the operator names one; the calling thread is recorded as the setter.

@@ -7,7 +7,7 @@ import { currentBrief } from '../planning/brief';
 import { parseNativeDelegatedReply } from './question-delegation';
 import type { Resolution } from '../resolution';
 import { chooseProfile } from '../dispatch/routing';
-import { writeRunTicket } from '../dispatch/agent-creation';
+import { runTicketPath, writeRunTicket } from '../dispatch/agent-creation';
 import { nativeAgentId, qualifyLegacyAgentId } from '../../shared/agent-identity';
 
 /** The selection failed before an intent or host call was made. */
@@ -23,18 +23,21 @@ export class Delegation {
   get delegatedAnswerWaitMs() { return this.resolution.delegatedAnswerWaitMs; }
 
   /**
-   * A T3 consult re-issues the recipient run ticket so a released reviewer's
-   * helper can still post `/answer`. Complete and ask keep refusing that run.
+   * Re-issue the latest recipient run ticket so a released reviewer can still
+   * answer through `question.answer`. Complete and ask keep refusing that run.
    */
-  private rebindHelperTicket(task: Task, recipient: string): void {
+  private consultTicketRoute(task: Task, recipient: string): { helperPath: string; ticketPath: string } | undefined {
     if (this.adapter.reportingViaMcp !== false || !this.adapter.helperPath || !this.adapter.socketPath) return;
     const runs = this.store.runs(task.id).filter(run => run.agentId === recipient);
     const run = runs.find(candidate => !candidate.released && !candidate.completion) ?? runs.at(-1);
-    if (!run) return;
+    if (!run) throw Error('Consult requires the recipient run ticket');
     const token = randomBytes(32).toString('hex');
     this.store.setCredential(run.id, token);
-    writeRunTicket({ helperPath: this.adapter.helperPath, socketPath: this.adapter.socketPath }, task, run, token);
+    const paths = { helperPath: this.adapter.helperPath, socketPath: this.adapter.socketPath };
+    writeRunTicket(paths, task, run, token);
+    return { helperPath: paths.helperPath, ticketPath: runTicketPath(paths, run.id) };
   }
+  private quote(value: string) { return `'${value.replaceAll("'", "'\\''")}'`; }
   async requireHost(task: Task, recipient: string, role: 'planner' | 'reviewer'): Promise<string> {
     const recorded = role === 'reviewer' ? task.hostId
       : recipient === task.originAgentId || recipient === task.notificationAgentId ? task.originHostId
@@ -63,8 +66,16 @@ export class Delegation {
     return reidentify ? await reidentify() : host;
   }
 
-  delegatePrompt(task: Task, id: string, prompt: string): string {
-    return `Task: ${task.reference ?? task.id} — ${task.title}\nQuestion id: ${id}\n${prompt}\nAnswer with this command; write nothing else in this thread. For operator-only matters set "decision":"operator" instead of answer.\nnucleus question.answer - <<'JSON'\n${JSON.stringify({ questionId: id, answer: '<answer or exact choice>', reason: '<one line>' })}\nJSON`;
+  delegatePrompt(task: Task, id: string, prompt: string, recipient?: string): string {
+    const json = JSON.stringify({ questionId: id, answer: '<answer or exact choice>', reason: '<one line>' });
+    const route = recipient ? this.consultTicketRoute(task, recipient) : undefined;
+    const command = route
+      ? `NUCLEUS_TICKET=${this.quote(route.ticketPath)} nucleus question.answer -`
+      : 'nucleus question.answer -';
+    const helper = route
+      ? `\nOn a host without per-thread MCP, the packaged nucleus helper with this run's ticket is the same command:\nnode ${this.quote(route.helperPath)} ${this.quote(route.ticketPath)} answer <<'JSON'\n${json}\nJSON`
+      : '';
+    return `Task: ${task.reference ?? task.id} — ${task.title}\nQuestion id: ${id}\n${prompt}\nAnswer with this command; write nothing else in this thread. For operator-only matters set "decision":"operator" instead of answer.\n${command} <<'JSON'\n${json}\nJSON${helper}`;
   }
   openDelegatedQuestion(task: Task, id: string, recipient: string, prompt: string, timeoutMs: number, role: string, hostId?: string): void {
     this.store.event(`delegation:${id}`, 'delegated_delivery', JSON.stringify({ taskId: task.id, recipient, role, prompt,
@@ -120,9 +131,9 @@ export class Delegation {
         && index < windows.length - 1 && windows.slice(index + 1).every(next => !next.delivered)));
   }
   /**
-   * Ticket-bound helper answer: authenticate the recipient run, then record the
-   * delegated receipt as that run's agent. Released reviewer runs may still
-   * answer; `askBinding`'s current-run gate does not apply.
+   * Ticket-bound `question.answer`: authenticate the recipient run, then record
+   * the receipt as that run's agent on its proven host. Released reviewer runs
+   * may still answer; `askBinding`'s current-run gate does not apply.
    */
   answerDelegatedQuestionFromTicket(input: { taskId: string; runId: string; questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, token: string) {
     this.store.authenticate(input.runId, token);
@@ -131,6 +142,16 @@ export class Delegation {
     if (run ? run.taskId !== task.id : task.runId !== input.runId) throw Error('Stale report: task and run identity do not match');
     const caller = run?.agentId ?? task.agentId;
     if (!caller) throw Error('No agent bound to this reporting run');
+    const delivery = this.delegatedDelivery(input.questionId);
+    if (!delivery) throw Error('No delegated question with this id');
+    if (delivery.taskId !== task.id) throw Error('Stale report: task and run identity do not match');
+    const known = this.store.getMeta<Array<{ id: string }>>('hostRegistry') ?? [];
+    const recordedHost = delivery.hostId ?? (known.length === 1 ? known[0]?.id : undefined);
+    const runHost = run?.hostId ?? task.hostId;
+    if (!recordedHost || !runHost || recordedHost !== runHost) throw new DelegatedHostUnavailable('Delegated answer host is not proven');
+    if (delivery.recipient !== caller) throw Error('Only the delegated recipient thread may answer this question');
+    if (delivery.recipientRef && nativeAgentId(delivery.recipientRef, recordedHost) !== caller)
+      throw Error('Delegated recipient identity conflicts with its recorded host');
     return this.answerDelegatedQuestion({
       questionId: input.questionId, answer: input.answer, choice: input.choice, reason: input.reason,
       decision: input.decision, overtakes: input.overtakes,
@@ -195,9 +216,8 @@ export class Delegation {
           const ref = recorded && (JSON.parse(recorded.detail) as { recipientRef?: string }).recipientRef;
           if (!ref) throw Error('Delegated recipient identity was not recorded');
           const recipient = nativeAgentId(ref, hostId!);
-          this.rebindHelperTicket(task, recipient);
           const { onIntent: _onIntent, ...sendInput } = input;
-          return send.call(this.adapter, recipient, { ...sendInput, sourceAgentId: task.hostId === hostId ? input.sourceAgentId ?? task.agentId ?? undefined : undefined, prompt: this.resolution.delegatePrompt(task, input.messageId, input.prompt) });
+          return send.call(this.adapter, recipient, { ...sendInput, sourceAgentId: task.hostId === hostId ? input.sourceAgentId ?? task.agentId ?? undefined : undefined, prompt: this.resolution.delegatePrompt(task, input.messageId, input.prompt, recipient) });
         });
         if (this.stopped()) throw Error('Delegated observation stopped; retain the delivery and answer window');
         this.store.event(`delegation:${input.messageId}`, 'delegated_sent', 'Host send completed');
@@ -231,7 +251,7 @@ export class Delegation {
     const created = await this.resolution.withHost(task.hostId, () => this.adapter.runDecider!(task, { profile: input.profile!, signal: input.signal, timeoutMs: input.timeoutMs, decisionId: input.decisionId }));
     this.resolution.openDelegatedQuestion(task, id, created.agentId, input.prompt, input.timeoutMs, 'decider', task.hostId);
     try {
-      await this.resolution.withHost(task.hostId, () => this.adapter.askPlanner!(created.agentId, { ...input, sourceAgentId: input.sourceAgentId ?? task.agentId ?? undefined, messageId: id, prompt: this.resolution.delegatePrompt(task, id, input.prompt) }));
+      await this.resolution.withHost(task.hostId, () => this.adapter.askPlanner!(created.agentId, { ...input, sourceAgentId: input.sourceAgentId ?? task.agentId ?? undefined, messageId: id, prompt: this.resolution.delegatePrompt(task, id, input.prompt, created.agentId) }));
       return { agentId: created.agentId, text: await this.resolution.waitDelegatedAnswer(id, input.signal) };
     } catch (error) {
       if (this.stopped()) throw error;
