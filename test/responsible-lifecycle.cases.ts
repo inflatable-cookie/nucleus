@@ -631,6 +631,8 @@ test('leave held for the planner places a merge hold with the proof list and clo
 test('registering a live project planner re-asks a proof question parked for the planner once', async () => {
   const f = fixture({ responsible: true, delegates: { planner: 'Choice: Merge now without these proofs (run them after merge)\nReason: The proofs can run after merge.' } });
   try {
+    // Task 1109: with the task planner gone the question parks for the project planner.
+    originGone(f);
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     await proofWait(f);
     f.answer('Leave held for the planner');
@@ -638,6 +640,7 @@ test('registering a live project planner re-asks a proof question parked for the
     await f.settle(3);
     assert.ok(f.current().holds?.merge);
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
+    pushMain(f);
     await f.engine.resolution.projectPlannerRegistered('app', 'planner-1');
     await f.engine.resolution.projectPlannerRegistered('app', 'planner-1');
     assert.equal(f.delegated.planner.length, 1, 'the parked question is asked only once for this planner');
@@ -649,6 +652,8 @@ test('registering a live project planner re-asks a proof question parked for the
 test('bug 25: a re-ask to a newly registered planner carries the task context', async () => {
   const f = fixture({ responsible: true, delegates: { planner: 'Choice: Merge now without these proofs (run them after merge)\nReason: The proofs can run after merge.' } });
   try {
+    // Task 1109: the task planner is gone, so the question waits for the project planner.
+    originGone(f);
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     await proofWait(f);
     f.answer('Leave held for the planner');
@@ -664,6 +669,8 @@ test('bug 25: a re-ask to a newly registered planner carries the task context', 
 test('bug 23: the operator settling a parked proof question beats the re-asked planner', async () => {
   const f = fixture({ responsible: true, delegates: { planner: 'Choice: Merge now without these proofs (run them after merge)\nReason: The proofs can run after merge.' } });
   try {
+    // Task 1109: the task planner is gone, so the operator settles the parked question.
+    originGone(f);
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     await proofWait(f);
     f.answer('Leave held for the planner');
@@ -878,7 +885,8 @@ test('a planner answer arriving after extend_budget is not sent to the task thre
   try {
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
-    f.store.update(f.current().id, { budgetSince: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString() });
+    // Task 1109: the task's planner is the thread whose answer arrives in this window.
+    f.store.update(f.current().id, { budgetSince: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(), plannerAgentId: 'planner-1' });
     (f.adapter as Adapter & { askPlanner: (planner: string, input: { prompt: string }) => Promise<string | null> }).askPlanner = async () =>
       await new Promise<string>(resolve => { finishPlanner = resolve; });
     f.engine.resolution.recordStop(f.current(), 'budget', 'Budget reached: 3 hours');
@@ -1026,6 +1034,11 @@ test('an interrupted budget question is unknown, is never resent, and grants no 
 async function settleUntil(f: ReturnType<typeof fixture>, done: () => boolean) {
   for (let pass = 0; pass < 20 && !done(); pass++) { await f.settle(1); await tick(); }
 }
+/** Task 1109: the task's own planner (the submitting thread) is observed gone, so the project rung decides. */
+function originGone(f: ReturnType<typeof fixture>): void {
+  const read = f.adapter.originAgent!;
+  Object.assign(f.adapter, { originAgent: async (id: string) => id === 'origin' ? null : read(id) });
+}
 /** A registered project's prospective merge gate fetches origin main, which the seeded checkout does not publish. */
 function pushMain(f: ReturnType<typeof fixture>): void {
   execFileSync('git', ['-C', join(f.dir, 'repo'), 'push', '-q', 'origin', 'main'], { encoding: 'utf8' });
@@ -1072,7 +1085,7 @@ test('the retained reviewer native question is answered on the reviewer thread',
     f.adapter.pendingQuestions = async id => id === reviewer ? [{ requestId: 'review-question', questions: [{ header: 'Question 1', question: 'Which selector?', options: [] }] }] : [];
     f.adapter.answerNativeQuestion = async agentId => { delivered.push(agentId); };
     await f.engine.resolution.delegateNativeQuestions();
-    for (let i = 0; i < 20 && !delivered.length; i++) await tick();
+    await settleUntil(f, () => delivered.length > 0);
     assert.deepEqual(delivered, [reviewer]);
   } finally { await f.close(); }
 });
@@ -1100,6 +1113,8 @@ test('a native binary budget approval the planner approves records approve by de
 test('a project planner answers a delegable proof question, the native question clears, and the merge records delegated authority', async () => {
   const f = fixture({ responsible: true, delegates: { planner: PLANNER_MERGE, decider: null } });
   try {
+    // Task 1109: the project planner is the live fallback rung for this task.
+    originGone(f);
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
     await proofWaitReport(f, () => pushMain(f));
@@ -1123,12 +1138,14 @@ test('a project planner answers a delegable proof question, the native question 
   } finally { await f.close(); }
 });
 
-test('with no planner set, a decider answers the delegable question once and is archived', async () => {
+test('with no live planner, a decider answers the delegable question once and is archived', async () => {
   const f = fixture({ responsible: true, delegates: { planner: null, decider: DECIDER_RETURN } });
   try {
+    // Task 1109: the task planner is gone and no project planner is registered.
+    originGone(f);
     await proofWaitReport(f);
     await settleUntil(f, () => f.events('operator_question_applied').length > 0);
-    assert.equal(f.delegated.planner.length, 0, 'no planner is asked when none is set');
+    assert.equal(f.delegated.planner.length, 0, 'no live planner is asked when none remains');
     assert.equal(f.delegated.deciders.length, 1, 'one decider answers');
     assert.ok(f.delegated.deciders[0]!.profile, 'the decider runs on an automatically selected profile');
     assert.equal(f.delegated.answers[0]!.answer, 'Return the task to the worker');
@@ -1144,6 +1161,8 @@ test('a planner that gives no usable answer in time falls through to a decider',
   try {
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'planner-1' });
+    // Task 1109: the task names this planner, so the rung under test is the one asked.
+    f.store.update(f.current().id, { plannerAgentId: 'planner-1' });
     await proofWaitReport(f, () => pushMain(f));
     await settleUntil(f, () => f.events('operator_question_applied').length > 0);
     assert.equal(f.delegated.planner.length, 1, 'the planner was asked');
@@ -1165,6 +1184,7 @@ test('a closed project planner stays registered and still receives the delegated
   const f = fixture({ responsible: true, delegates: { planner: PLANNER_MERGE, decider: null, plannerClosed: true } });
   try {
     seedAppAndQueuePlanners(f);
+    f.store.update(f.current().id, { plannerAgentId: 'planner-1' });
     await proofWaitReport(f, () => pushMain(f));
     await settleUntil(f, () => f.events('operator_question_applied').length > 0);
     assert.equal(f.delegated.planner.length, 1, 'the closed planner is asked once');
@@ -1180,6 +1200,7 @@ test('a closed planner that gives no usable answer stays registered and falls th
   const f = fixture({ responsible: true, delegates: { planner: null, decider: DECIDER_RETURN, plannerClosed: true } });
   try {
     seedAppAndQueuePlanners(f);
+    f.store.update(f.current().id, { plannerAgentId: 'planner-1' });
     await proofWaitReport(f, () => pushMain(f));
     await settleUntil(f, () => f.events('operator_question_applied').length > 0);
     assert.equal(f.delegated.planner.length, 1, 'the closed planner is asked');
@@ -1194,6 +1215,7 @@ test('an archived project planner is cleared and delegated proof questions fall 
   const f = fixture({ responsible: true, delegates: { planner: PLANNER_MERGE, decider: null, plannerArchived: true } });
   try {
     seedAppAndQueuePlanners(f);
+    f.store.update(f.current().id, { plannerAgentId: 'planner-1' });
     await proofWaitReport(f, () => pushMain(f));
     await settleUntil(f, () => f.events('operator_question_applied').length > 0);
     assert.equal(f.delegated.planner.length, 1, 'the Queue planner receives the question once');
@@ -1210,6 +1232,7 @@ test('a missing project planner is cleared and the Queue planner gets the notice
   const f = fixture({ responsible: true, delegates: { planner: PLANNER_MERGE, decider: null, plannerMissing: true } });
   try {
     seedAppAndQueuePlanners(f);
+    f.store.update(f.current().id, { plannerAgentId: 'planner-1' });
     await proofWaitReport(f, () => pushMain(f));
     await settleUntil(f, () => f.events('operator_question_applied').length > 0);
     assert.equal(f.delegated.planner.length, 1, 'the Queue planner receives the question once');

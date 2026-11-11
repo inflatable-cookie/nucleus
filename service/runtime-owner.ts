@@ -563,6 +563,9 @@ export class QueueRuntime {
       get adapter() { return runtime.adapter; },
     });
     this.plannerTickets = new PlannerParticipantTickets(this.engine, { socketPath: this.paseo.socketPath, helperPath: this.paseo.helperPath });
+    // Task 1109: a task planner's participant ticket is issued before the question
+    // that names it, so `question.answer` works on a host without per-thread identity.
+    this.engine.resolution.ensurePlannerTicket = (agentId, hostId) => this.plannerTickets.ensureFor(agentId, hostId);
     this.engine.plannerTicketPending = () => this.plannerTickets.pendingPlanners();
     this.repositories = new RuntimeRepositories({
       store: this.store, engine: this.engine, hostRuns: this.hostRuns,

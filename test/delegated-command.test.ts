@@ -148,16 +148,17 @@ test("real agent ask, blocker escalation and operator delegation settle from com
   const internal = r as any;
   try {
     (r.adapter as any).askPlanner = async (
-      _recipient: string,
+      recipient: string,
       input: { prompt: string },
     ) => {
+      // Task 1109: the first rung is the task's own planner, so answer as the recipient.
       r.answerDelegatedQuestion(
         {
           questionId: idFrom(input.prompt),
           answer: "Continue",
           reason: "Within brief",
         },
-        "planner-1",
+        recipient,
       );
       return null;
     };

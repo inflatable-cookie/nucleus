@@ -20,9 +20,10 @@ const DECISION = { id: 'decision-1', kind: 'process' as const, question: 'May th
 async function until(condition: () => boolean): Promise<void> {
   await waitFor(condition, ANSWERING_WINDOW_MS, 'condition');
 }
-/** Only these threads have gone, overriding the fixture's own answer. */
+/** Only these threads have gone; every other answer, including the fixture's archived state, stands. */
 function threadsGone(f: Fixture, gone: string[]) {
-  Object.assign(f.adapter, { originAgent: async (id: string) => gone.includes(id) ? null : { id, workspaceId: 'workspace', title: id, archived: false } });
+  const read = f.adapter.originAgent!;
+  Object.assign(f.adapter, { originAgent: async (id: string) => gone.includes(id) ? null : read(id) });
 }
 function projectPlanner(f: Fixture, agentId = 'planner-1') {
   f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
@@ -69,6 +70,8 @@ test('bug 8: an escalation with its project planner and origin thread both gone 
 test('bug 8: an escalation with no project planner reaches the live Nucleus planner', async () => {
   const f = fixture({ responsible: true, delegates: { planner: RETURN, decider: null } });
   try {
+    // Task 1109: the task planner is asked first; with it gone the project rung is next.
+    threadsGone(f, ['origin']);
     queuePlanner(f);
     await escalate(f);
     assert.deepEqual(f.delegated.planner.map(item => item.agentId), ['queue-planner']);
@@ -98,6 +101,7 @@ test('bug 8: a native question skips an archived project planner for the Nucleus
   try {
     projectPlanner(f);
     queuePlanner(f);
+    threadsGone(f, ['origin']);
     const delivered = nativeQuestion(f, []);
     await f.engine.resolution.delegateNativeQuestions();
     await until(() => delivered.length > 0);
@@ -111,6 +115,7 @@ test('bug 8: a native question with no project planner reaches the Nucleus plann
   const f = fixture({ responsible: true, delegates: { planner: 'Answer: The focused selector\nReason: It covers the change.', decider: 'Answer: Other\nReason: Decider.' } });
   try {
     queuePlanner(f);
+    threadsGone(f, ['origin']);
     const delivered = nativeQuestion(f, []);
     await f.engine.resolution.delegateNativeQuestions();
     await until(() => delivered.length > 0);
@@ -123,10 +128,107 @@ test('bug 8: an archived Nucleus planner is nobody too, so the question goes str
   const f = fixture({ responsible: true, delegates: { planner: 'Choice: Approve\nReason: Planner.', decider: 'Choice: Hold\nReason: Decider.', plannerArchived: true } });
   try {
     queuePlanner(f, 'planner-1');
+    threadsGone(f, ['origin']);
     const decision = delegateDecision(f);
     assert.equal(await decision.run(), true);
     assert.deepEqual(f.delegated.planner, []);
     assert.deepEqual(decision.delivered, ['Hold']);
+  } finally { await f.close(); }
+});
+
+// Task 1109: each task has its own planner.
+
+const APPROVE = 'Choice: Approve\nReason: Within scope.';
+
+test('task 1109: a question goes to the task planner first and the project planner is never asked', async () => {
+  const f = fixture({ responsible: true, delegates: { planner: APPROVE, decider: RETURN } });
+  try {
+    projectPlanner(f);
+    const decision = delegateDecision(f);
+    assert.equal(await decision.run(), true);
+    assert.deepEqual(f.delegated.planner.map(item => item.agentId), ['origin'], 'the submitting thread is the task planner');
+    assert.deepEqual(decision.delivered, ['Approve']);
+    assert.match(f.events('operator_question_delegated')[0]!.detail, /: task planner origin; asked/);
+    assert.equal(f.delegated.deciders.length, 0);
+  } finally { await f.close(); }
+});
+
+test('task 1109: a silent task planner falls to the project planner, then the decider', async () => {
+  const f = fixture({ responsible: true, delegates: { planner: null, decider: RETURN } });
+  f.engine.resolution.delegatedAnswerWaitMs = 50;
+  const asked: string[] = [];
+  try {
+    projectPlanner(f);
+    f.adapter.askPlanner = async (planner: string, input: { messageId: string }) => {
+      asked.push(planner);
+      if (planner === 'planner-1') f.engine.resolution.answerDelegatedQuestion({ questionId: input.messageId, choice: 'Hold', reason: 'The project holds it.' }, planner);
+      return null;
+    };
+    const decision = delegateDecision(f);
+    assert.equal(await decision.run(), true);
+    assert.deepEqual(asked, ['origin', 'planner-1'], 'the task planner is asked, then the project planner');
+    assert.deepEqual(decision.delivered, ['Hold']);
+    assert.equal(f.delegated.deciders.length, 0);
+  } finally { await f.close(); }
+});
+
+test('task 1109: an observed-gone task planner is skipped at once for the project planner', async () => {
+  const f = fixture({ responsible: true, delegates: { planner: APPROVE, decider: RETURN } });
+  try {
+    threadsGone(f, ['origin']);
+    projectPlanner(f);
+    const decision = delegateDecision(f);
+    assert.equal(await decision.run(), true);
+    assert.deepEqual(f.delegated.planner.map(item => item.agentId), ['planner-1']);
+    assert.equal(f.delegated.deciders.length, 0);
+  } finally { await f.close(); }
+});
+
+test('task 1109: a task planner that is also the project planner is one rung, asked once', async () => {
+  const f = fixture({ responsible: true, delegates: { planner: APPROVE, decider: RETURN } });
+  try {
+    projectPlanner(f, 'origin');
+    const decision = delegateDecision(f);
+    assert.equal(await decision.run(), true);
+    assert.deepEqual(f.delegated.planner.map(item => item.agentId), ['origin']);
+    assert.equal(f.delegated.deciders.length, 0);
+  } finally { await f.close(); }
+});
+
+test('task 1109: reparenting changes the first rung to the new owner', async () => {
+  const f = fixture({ responsible: true, delegates: { planner: APPROVE, decider: RETURN } });
+  try {
+    projectPlanner(f);
+    await f.engine.reparent({ toAgentId: 'planner-1', taskIds: [f.current().id], caller: 'origin', reason: 'The successor promotes this task' } as never);
+    assert.equal(f.current().notificationAgentId, 'planner-1');
+    const decision = delegateDecision(f);
+    assert.equal(await decision.run(), true);
+    assert.deepEqual(f.delegated.planner.map(item => item.agentId), ['planner-1']);
+  } finally { await f.close(); }
+});
+
+test('task 1109: a brief-named planner is the first rung instead of the owner', async () => {
+  const f = fixture({ responsible: true, delegates: { planner: APPROVE, decider: RETURN } });
+  try {
+    f.store.update(f.current().id, { plannerAgentId: 'named-planner' });
+    const decision = delegateDecision(f);
+    assert.equal(await decision.run(), true);
+    assert.deepEqual(f.delegated.planner.map(item => item.agentId), ['named-planner']);
+  } finally { await f.close(); }
+});
+
+test('task 1109: operator-only kinds still go straight to the operator and ask no planner', async () => {
+  const f = fixture({ responsible: true, delegates: { planner: APPROVE, decider: RETURN } });
+  try {
+    projectPlanner(f);
+    const delegated = f.engine.resolution as unknown as {
+      delegateDecision(taskId: string, decision: { id: string; kind: 'scope'; question: string; options: string[] }, request: null, signal: AbortSignal, deliver: () => Promise<void>): Promise<boolean>;
+    };
+    const answered = await f.engine.withHost(f.current().hostId!, () => delegated.delegateDecision(f.current().id,
+      { id: 'scope-question', kind: 'scope', question: 'Should the product change?', options: ['Yes', 'No'] }, null, new AbortController().signal, async () => {}));
+    assert.equal(answered, false);
+    assert.deepEqual(f.delegated.planner, [], 'an operator-only kind never reaches a planner');
+    assert.equal(f.delegated.deciders.length, 0);
   } finally { await f.close(); }
 });
 
@@ -286,7 +388,7 @@ test('qualified planners receive missing-planner, board-question and escalation 
  const controller=new AbortController();
  let boardAnswer:Promise<string>|undefined;
  try {
-  threadsGone(f,['planner-1']);
+  threadsGone(f,['planner-1','origin']);
   projectPlanner(f);
   const caller=formatAgentId('host','queue-planner');
   queuePlanner(f,caller);

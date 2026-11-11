@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { formatAgentId, parseAgentId } from '../../shared/agent-identity';
 import { hostKindOf } from '../../shared/host-kind';
-import type { Project } from '../../shared/contracts';
+import { isOperatorOrigin, taskOwner, taskPlanner, type Project } from '../../shared/contracts';
 import type { Engine } from '../engine';
 import { writeOwnedJson } from '../machine/owned-file.mjs';
 import { digest, type Store } from '../store/store';
@@ -11,17 +11,48 @@ import { digest, type Store } from '../store/store';
 export const plannerTicketKey = (project: string) => `plannerParticipant:${project}`;
 /** A planner with no usable ticket yet: the board's project entry says so. */
 export const plannerTicketPendingKey = (project: string) => `plannerTicketPending:${project}`;
+/** Task 1109: one identity ticket per task-planner thread, so a planner on any host can answer. */
+export const taskPlannerTicketKey = (hostId: string, nativeAgentId: string) =>
+  `taskPlannerParticipant:${JSON.stringify([hostId, nativeAgentId])}`;
 interface PlannerParticipant {
   participantId: string;
-  projectKey: string;
+  /** Project tickets carry their project and assignment; task-planner tickets carry neither. */
+  projectKey?: string;
   agentId: string;
-  setAt: string;
+  setAt?: string;
   hostId: string;
   nativeAgentId: string;
   tokenHash: string;
   path: string;
   /** How the thread received its identity: its own call, one host message, or unknown. */
   delivery: 'intent' | 'self' | 'delivered' | 'unknown';
+}
+/** The thread every live task's planning questions reach, with the host its identity is proven on. */
+interface PlannedThread { agentId: string; nativeAgentId: string; hostId?: string }
+
+/**
+ * The thread each live task's planning questions reach (task 1109). A task planner
+ * that no live task names is no longer a planner, which is what revokes its ticket;
+ * reparenting moves the task, and so the scope.
+ */
+function plannedThreads(store: Store): PlannedThread[] {
+  const planned = new Map<string, PlannedThread>();
+  for (const task of store.liveTasks()) {
+    const planner = taskPlanner(task);
+    if (isOperatorOrigin(planner)) continue;
+    const qualified = parseAgentId(planner);
+    const nativeAgentId = qualified?.nativeAgentId ?? planner;
+    const hostId = qualified?.hostId ?? (taskOwner(task) === planner ? task.originHostId : undefined);
+    const key = JSON.stringify([hostId ?? null, nativeAgentId]);
+    if (!planned.has(key)) planned.set(key, { agentId: planner, nativeAgentId, hostId });
+  }
+  return [...planned.values()];
+}
+
+/** Whether a ticket's thread still plans a live task, on the host its ticket was issued for. */
+function stillPlansATask(store: Store, participant: Pick<PlannerParticipant, 'nativeAgentId' | 'hostId'>): boolean {
+  return plannedThreads(store).some(planned => planned.nativeAgentId === participant.nativeAgentId
+    && (!planned.hostId || planned.hostId === participant.hostId));
 }
 export type CallerTicket = { taskId: string; runId: string } | { participantId: string };
 
@@ -34,17 +65,24 @@ export function plannerParticipantTicketPath(store: Store, recipient: string, ho
       && project.planner?.agentId === participant.agentId && project.planner.setAt === participant.setAt)
       return participant.path;
   }
-  return undefined;
+  if (!hostId) return undefined;
+  const participant = store.getMeta<PlannerParticipant>(taskPlannerTicketKey(hostId, native));
+  return participant?.nativeAgentId === native && stillPlansATask(store, participant) ? participant.path : undefined;
 }
 
 /** Authenticate a ticket against its current Nucleus record, never its claimed identity. */
 export function resolveTicketCaller(store: Store, input: CallerTicket, token: string) {
   if ('participantId' in input) {
     const projectKey = store.getMeta<string>(`plannerParticipantId:${input.participantId}`);
-    const participant = projectKey ? store.getMeta<PlannerParticipant>(plannerTicketKey(projectKey)) : null;
+    const taskPlannerKey = store.getMeta<string>(`taskPlannerParticipantId:${input.participantId}`);
+    const participant = projectKey ? store.getMeta<PlannerParticipant>(plannerTicketKey(projectKey))
+      : taskPlannerKey ? store.getMeta<PlannerParticipant>(taskPlannerKey) : null;
     const planner = projectKey ? store.projectByKey(projectKey)?.planner : null;
     if (!participant || participant.participantId !== input.participantId || participant.tokenHash !== digest(token)
-      || !planner || planner.agentId !== participant.agentId || planner.setAt !== participant.setAt)
+      // A project ticket is revoked by its assignment changing; a task-planner ticket by
+      // no live task naming that thread any more (reparenting moves the scope).
+      || (projectKey ? !planner || planner.agentId !== participant.agentId || planner.setAt !== participant.setAt
+        : !stillPlansATask(store, participant)))
       throw Error('Planner participant ticket is revoked or invalid');
     return { caller: formatAgentId(participant.hostId, participant.nativeAgentId), hostId: participant.hostId, source: 'participant-ticket' as const };
   }
@@ -63,10 +101,15 @@ export function resolveTicketCaller(store: Store, input: CallerTicket, token: st
  * and the ticket reaches the thread either in the response to its own
  * authenticated call or, only where that route does not exist and the thread is
  * observed live, through one host message. No send is ever repeated.
+ *
+ * Task 1109 adds a second scope: the thread that answers one task's planning
+ * questions. Its ticket is keyed per thread, because one thread may plan many
+ * tasks, and it travels the same two routes.
  */
 export class PlannerParticipantTickets {
   private pending: Promise<void> | null = null;
   private requested = false;
+  private readonly issuing = new Map<string, Promise<void>>();
   constructor(private readonly engine: Engine, private readonly paths: { socketPath: string; helperPath: string }) {}
 
   /** Startup and reconnect reconciliation. It records state and sends nothing. */
@@ -109,7 +152,11 @@ export class PlannerParticipantTickets {
         return undefined;
       }
     }
-    return undefined;
+    // Task 1109: a thread that still plans live tasks takes its task-planner ticket here too.
+    if (this.engine.store.getMeta(taskPlannerTicketKey(qualified.hostId, qualified.nativeAgentId))
+      || !stillPlansATask(this.engine.store, { nativeAgentId: qualified.nativeAgentId, hostId: qualified.hostId })) return undefined;
+    try { return (await this.issueTaskPlanner(caller, qualified.hostId, qualified.nativeAgentId, 'self'))?.path; }
+    catch { return undefined; }
   }
 
   /**
@@ -160,6 +207,27 @@ export class PlannerParticipantTickets {
     return undefined;
   }
 
+  /**
+   * Task 1109: issue a task planner's ticket before a question names it. A Paseo
+   * host hands it over on the planner's own next call, so nothing is sent; another
+   * host gets one message, and only while the thread is observed live. A failed
+   * send is retained as unknown and never repeated.
+   */
+  ensureFor(agentId: string, hostId: string): Promise<void> {
+    const qualified = parseAgentId(agentId);
+    const nativeAgentId = qualified?.nativeAgentId ?? agentId;
+    const ownHost = qualified?.hostId ?? hostId;
+    const key = taskPlannerTicketKey(ownHost, nativeAgentId);
+    if (!ownHost || this.engine.store.getMeta(key)
+      || !stillPlansATask(this.engine.store, { nativeAgentId, hostId: ownHost })) return Promise.resolve();
+    const running = this.issuing.get(key);
+    if (running) return running;
+    const work = this.issueTaskPlanner(agentId, ownHost, nativeAgentId, 'message')
+      .then(() => undefined).finally(() => this.issuing.delete(key));
+    this.issuing.set(key, work);
+    return work;
+  }
+
   private markPendingPlanners(): void {
     for (const project of this.engine.store.projects()) {
       if (!project.planner || this.engine.store.getMeta(plannerTicketKey(project.key))) continue;
@@ -197,6 +265,12 @@ export class PlannerParticipantTickets {
     });
   }
 
+  private ticketPath(participantId: string): string {
+    const directory = join(dirname(this.paths.helperPath), 'tickets');
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    return join(directory, `participant-${participantId}.json`);
+  }
+
   private async issue(project: Project, route: 'self' | 'message'): Promise<PlannerParticipant | undefined> {
     const planner = project.planner!;
     const generation = this.engine.store.getMeta<string>(`plannerParticipantGeneration:${project.key}`);
@@ -205,8 +279,8 @@ export class PlannerParticipantTickets {
     if (!hostId) return undefined;
     const nativeAgentId = qualified?.nativeAgentId ?? planner.agentId;
     const participantId = randomUUID(), token = randomBytes(32).toString('hex');
-    const directory = join(dirname(this.paths.helperPath), 'tickets');
-    const path = join(directory, `participant-${participantId}.json`);
+    const key = plannerTicketKey(project.key);
+    const path = this.ticketPath(participantId);
     const participant: PlannerParticipant = { participantId, projectKey: project.key, agentId: planner.agentId,
       setAt: planner.setAt, hostId, nativeAgentId, tokenHash: digest(token), path, delivery: route === 'self' ? 'self' : 'intent' };
     const stillCurrent = () => {
@@ -214,12 +288,11 @@ export class PlannerParticipantTickets {
       return current?.agentId === planner.agentId && current.setAt === planner.setAt
         && this.engine.store.getMeta<string>(`plannerParticipantGeneration:${project.key}`) === generation;
     };
-    if (!stillCurrent() || this.engine.store.getMeta(plannerTicketKey(project.key))) return undefined;
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    if (!stillCurrent() || this.engine.store.getMeta(key)) return undefined;
     writeOwnedJson(path, { socketPath: this.paths.socketPath, participantId, token });
     this.engine.store.transaction(() => {
       if (!stillCurrent()) throw Error('Planner changed before ticket delivery');
-      this.engine.store.setMeta(plannerTicketKey(project.key), participant);
+      this.engine.store.setMeta(key, participant);
       this.engine.store.setMeta(`plannerParticipantId:${participantId}`, project.key);
       this.engine.store.deleteMeta(plannerTicketPendingKey(project.key));
     });
@@ -229,12 +302,51 @@ export class PlannerParticipantTickets {
         messageId: `nucleus-planner-ticket-${participantId}`,
         text: `Nucleus has registered you as the planner for ${project.name}. Your participant ticket identifies this thread on any host. For Nucleus CLI commands, set NUCLEUS_TICKET=${JSON.stringify(path)}. It takes priority over host identity and is revoked when this planner assignment changes.`,
       }));
-      if (this.engine.store.getMeta<PlannerParticipant>(plannerTicketKey(project.key))?.participantId === participantId)
-        this.engine.store.setMeta(plannerTicketKey(project.key), { ...participant, delivery: 'delivered' });
+      if (this.engine.store.getMeta<PlannerParticipant>(key)?.participantId === participantId)
+        this.engine.store.setMeta(key, { ...participant, delivery: 'delivered' });
     } catch (error) {
-      if (this.engine.store.getMeta<PlannerParticipant>(plannerTicketKey(project.key))?.participantId === participantId)
-        this.engine.store.setMeta(plannerTicketKey(project.key), { ...participant, delivery: 'unknown' });
+      if (this.engine.store.getMeta<PlannerParticipant>(key)?.participantId === participantId)
+        this.engine.store.setMeta(key, { ...participant, delivery: 'unknown' });
       throw error;
+    }
+    return participant;
+  }
+
+  /**
+   * Task 1109: the same write and the same two routes for a thread that answers one
+   * task's planning questions. Its scope is re-derived from live tasks, so nothing
+   * here has to be revoked by hand when a task is reparented.
+   */
+  private async issueTaskPlanner(agentId: string, hostId: string, nativeAgentId: string,
+    route: 'self' | 'message'): Promise<PlannerParticipant | undefined> {
+    const key = taskPlannerTicketKey(hostId, nativeAgentId);
+    const stillPlans = () => stillPlansATask(this.engine.store, { nativeAgentId, hostId });
+    if (!stillPlans() || this.engine.store.getMeta(key)) return undefined;
+    if (!this.engine.withHost(hostId, () => this.engine.hostAvailable(hostId))) return undefined;
+    // A Paseo host hands the ticket over on the planner's own next call.
+    if (route === 'message' && (hostKindOf(hostId) === 'paseo' || !await this.observeLive(agentId, hostId).catch(() => false))) return undefined;
+    const participantId = randomUUID(), token = randomBytes(32).toString('hex');
+    const path = this.ticketPath(participantId);
+    const participant: PlannerParticipant = { participantId, agentId, hostId, nativeAgentId,
+      tokenHash: digest(token), path, delivery: route === 'self' ? 'self' : 'intent' };
+    writeOwnedJson(path, { socketPath: this.paths.socketPath, participantId, token });
+    this.engine.store.transaction(() => {
+      if (!stillPlans()) throw Error('Task planner changed before ticket delivery');
+      this.engine.store.setMeta(key, participant);
+      this.engine.store.setMeta(`taskPlannerParticipantId:${participantId}`, key);
+    });
+    if (route === 'self') return participant;
+    try {
+      await this.engine.withHost(hostId, () => this.engine.host.sendMessage(nativeAgentId, {
+        messageId: `nucleus-planner-ticket-${participantId}`,
+        text: `Nucleus has registered you as the planner for a task it is running. Your participant ticket identifies this thread on any host. For Nucleus CLI commands, set NUCLEUS_TICKET=${JSON.stringify(path)}. It takes priority over host identity and is revoked when no live task names you as its planner.`,
+      }));
+      if (this.engine.store.getMeta<PlannerParticipant>(key)?.participantId === participantId)
+        this.engine.store.setMeta(key, { ...participant, delivery: 'delivered' });
+    } catch (error) {
+      if (this.engine.store.getMeta<PlannerParticipant>(key)?.participantId === participantId)
+        this.engine.store.setMeta(key, { ...participant, delivery: 'unknown' });
+      this.engine.store.event('queue', 'task_planner_ticket_unavailable', error instanceof Error ? error.message : String(error));
     }
     return participant;
   }

@@ -26,9 +26,15 @@ or planner participant ticket; use the path delivered to this thread. An invalid
 revoked ticket refuses. If neither source exists, the refusal names the sources tried.
 Explicit operator and relayed-note paths keep their existing meaning.
 
-Assigning a planner issues an owner-only participant ticket and delivers its path
-through that planner's host. Reassigning or clearing the planner revokes it. Existing
-planners receive one at startup; their host identity keeps working until delivery.
+Assigning a planner issues an owner-only participant ticket and hands its path over
+without messaging the thread: the planner that named itself takes it in that
+assignment's response, any other planner takes it in the response to its own next
+authenticated call, and only a thread observed live on a host with no
+calling-thread identity of its own receives one message. Reassigning or clearing the
+planner revokes it, and a planner with no ticket yet shows as pending on the board.
+A task's own planner receives the same ticket, keyed per thread and scoped to the
+tasks that name it, so it can answer on a host without per-thread identity;
+reparenting a task moves that scope and revokes the outgoing planner's ticket.
 Caller records use host-qualified identities; existing bare Paseo IDs still resolve.
 
 ### Paseo host
@@ -300,13 +306,21 @@ qualification when its exact run, commit, selector and inputs match, preserving
 the original failed outcome and review. The board presents that operator-only
 acceptance; it creates no run, review verdict, allowance or other proof credit.
 
-#### Delegated answers and the project planner
+#### Delegated answers and the task's planner
+
+A task's planning questions climb one ladder: the task planner first, then the
+project planner when it is a different thread, then a short-lived decider, then the
+board for operator-only kinds. The task planner is the thread that submitted or
+promoted the task, or the one a brief named with `queue.planner`; the project
+planner keeps project-level matters and is the fallback rung. A rung observed
+archived or gone is skipped at once; a silent rung still times out.
 
 Nucleus sends a short `<nucleus-system>` message only when the planner is idle.
 Answer by running the exact `nucleus question.answer` command in the message, then
 write nothing else in the thread. Chat output is never an answer. Busy time counts
 toward the ten-minute window; without an answer, the same question falls through
-to a short-lived decider. Reviewer consults use the same command.
+to the next rung and then a short-lived decider. Reviewer consults use the same
+command.
 
 ```sh
 nucleus question.answer - <<'JSON'
@@ -348,7 +362,9 @@ needed native proof runs once through the task's `proof` route (Spec 058, Tom 20
 
 Set a project's planner with `project.set-planner` (`key`, `agentId` or null).
 The planner may set itself; the calling thread is recorded as `setBy`. This
-grants nothing except answering delegated questions for that project.
+grants nothing except answering a project's delegated questions when a task's own
+planner cannot, and receiving the project-level notices. A task's own planner is
+recorded on the task: its owner, or the thread a brief named with `queue.planner`.
 
 ### Complexity and demand
 
@@ -1034,8 +1050,8 @@ node bin/nucleus-reparent.mjs NEW_OWNER_AGENT_ID --task TASK_ID [--task TASK_ID 
 node bin/nucleus-reparent.mjs NEW_OWNER_AGENT_ID --project PROJECT --from OLD_OWNER_AGENT_ID --reason TEXT
 ```
 
-The calling thread (its Nucleus ticket or host identity) must be the tasks' current owner, the project's registered
-planner, or the Nucleus planner; the operator can do the same from the board. A
+The calling thread (its Nucleus ticket or host identity) must be the tasks' current owner, the task's own planner,
+the project's registered planner, or the Nucleus planner; the operator can do the same from the board. A
 planner uses this for a task whose origin is missing or was never a thread (for
 example an external submitter's label such as `sweep`), usually naming itself as
 the new owner (task 602). Project ownership is retired (Spec 058 cutover 5): a
@@ -1049,9 +1065,12 @@ holds, settled notices and finished tasks stay as recorded. Repeating the reques
 changes nothing.
 
 A project may name a planner with `project.set-planner` (`key`, `agentId` or
-null; the calling thread is recorded as `setBy`). It answers delegated questions
-and receives the project-level notices that once went to the retired owner; it
-grants no verb, hold or acceptance authority.
+null; the calling thread is recorded as `setBy`). It answers a project's delegated
+questions when the asking task's own planner cannot, and receives the
+project-level notices that once went to the retired owner; it grants no verb,
+hold or acceptance authority. A task's planner is recorded on the task itself —
+its submitting owner, or the thread its brief named — and `helper reparent` moves
+it.
 
 ## Review entry for external PRs
 

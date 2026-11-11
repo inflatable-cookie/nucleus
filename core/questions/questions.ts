@@ -428,7 +428,10 @@ export class Questions {
     if (noticed()) return;
     void (async () => {
       if (noticed()) return;
-      const { planner } = await this.resolution.projectPlannerFor(task);
+      // Task 1109: a task's own planner hears about its board question first; the
+      // project planner is the fallback rung.
+      const own = await this.resolution.taskPlannerFor(task);
+      const planner = own?.agentId ?? (await this.resolution.projectPlannerFor(task)).planner;
       if (!planner || noticed()) return;
       const host = await this.resolution.identifyOriginHost(planner);
       if (!host || noticed()) return;
@@ -628,8 +631,8 @@ export class Questions {
           || events.some(event => ['operator_question_answered', 'responsible_question_answered', 'operator_question_stale_answered', 'responsible_question_stale_answered'].includes(event.kind) && event.detail.startsWith(`${decision.id}:`))
           || events.some(event => event.kind === 'operator_question_delegation_missed' && event.detail.startsWith(`${decision.id}: no delegated answer was produced;`))
           || (events.some(event => event.kind === 'operator_question_delegation_unknown' && event.detail.startsWith(`${decision.id}:`))
-            && !this.resolution.recoverableDelegation([`queue-delegate-${decision.id}`, `ns-decider-${decision.id}`], false))
-          || !this.resolution.recoverableDelegation([`queue-delegate-${decision.id}`, `ns-decider-${decision.id}`])) continue;
+            && !this.resolution.recoverableDelegation([`queue-delegate-${decision.id}`, `queue-delegate-${decision.id}-project`, `ns-decider-${decision.id}`], false))
+          || !this.resolution.recoverableDelegation([`queue-delegate-${decision.id}`, `queue-delegate-${decision.id}-project`, `ns-decider-${decision.id}`])) continue;
         if (request && events.some(event => event.kind === 'operator_question_decided' && event.detail.startsWith(`${decision.id}:`))) continue;
         this.resolution.recoveringQueueAsks.add(decision.id);
         void this.resolution.delegateDecision(task.id, decision, request, new AbortController().signal, async (fresh, answer) => {
@@ -698,12 +701,14 @@ export class Questions {
     };
     const ask = { question: decision.question, choices: decision.options, context: this.resolution.decisionContext(task) };
     let answer: DelegatedAnswer | null = null;
-    const selectedPlanner = await this.resolution.projectPlannerFor(task);
+    // Task 1109: the task's own planner first, then the project's, then the decider.
+    const { rungs, projectFailed } = await this.resolution.plannerRungsFor(task);
+    const planners = rungs.map(item => ({ ...item, messageId: `queue-delegate-${decision.id}${item.rung === 'project' ? '-project' : ''}` }));
     let unknown = false;
     let result;
     try {
       result = await delegateQuestion(this.resolution, task, {
-        planner: selectedPlanner.planner, plannerMessageId: `queue-delegate-${decision.id}`, decisionId: decision.id,
+        planners, decisionId: decision.id,
         context: ask, signal,
         current: () => !answered(),
         canAdvance: () => this.resolution.queueBudgetQuestionCurrent(taskId, decision),
@@ -713,7 +718,8 @@ export class Questions {
           const parsed = parseDelegatedAnswer(text, decision.options);
           return parsed ? { kind: 'choice' as const, ...parsed } : null;
         },
-        onIntent: (role, agentId) => this.store.event(taskId, 'operator_question_delegated', `${decision.id}: ${role === 'planner' ? `planner ${agentId}; asked` : 'decider requested'}`),
+        onIntent: (role, agentId, rung) => this.store.event(taskId, 'operator_question_delegated', `${decision.id}: ${role === 'planner' ? `${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked` : 'decider requested'}`),
+        onSkip: (rung, agentId, detail) => this.store.event(taskId, 'operator_question_delegation_skipped', `${decision.id}: ${rung} planner ${agentId} skipped: ${detail}`.slice(0, 4000)),
         onMiss: detail => this.store.event(taskId, 'operator_question_delegation_missed', `${decision.id}: ${detail}`),
         onUnknown: (role, agentId, error) => {
           unknown = true;
@@ -733,7 +739,7 @@ export class Questions {
       return false;
     }
     if (result?.reply.kind === 'choice') {
-      if (result.role === 'decider' && selectedPlanner.failed && result.reply.choice === 'Leave held for the planner')
+      if (result.role === 'decider' && projectFailed && result.reply.choice === 'Leave held for the planner')
         this.store.event(taskId, 'operator_question_delegation_missed', `${decision.id}: decider ${result.agentId} could not decide because the planner just failed; the question remains with the Nucleus planner`);
       else answer = { role: result.role, agentId: result.agentId, ...recordDelegatedChoice(result.reply), ...(result.role === 'decider' ? { overtakes: undefined } : {}) };
     }

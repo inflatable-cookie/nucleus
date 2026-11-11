@@ -4,7 +4,9 @@ import {mkdtemp,realpath,mkdir,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {git} from '../core/git/index';
-import {heldBriefQueuePolicy, parseNorthstarDocument, prepareHandoff} from '../core/planning/handoff';
+import {heldBriefQueuePolicy, parseNorthstarDocument, prepareHandoff, submissionQueueFields} from '../core/planning/handoff';
+import {Store} from '../core/store/store';
+import {submissionSchema, taskPlanner} from '../shared/contracts';
 const sections=['What This Thread Was Doing','Why It Matters','Current State','Boundaries','Important Context','Suggested Next Move','Completion Protocol'];
 const content=`---
 title: Disposable handoff
@@ -111,4 +113,27 @@ test('every document intake path refuses queue.goal or queue.subjectSets without
 
 test('handoff dispatch accepts Nucleus and the permanent legacy value',()=>{
  for(const value of ['nucleus','northstar-queue']) assert.doesNotThrow(()=>parseNorthstarDocument(content.replace('queue_dispatch: northstar-queue',`queue_dispatch: ${value}`),'handoff'));
+});
+
+test('task 1109: a brief names the task planner, and the operator is refused as one',async t=>{
+ const root=await realpath(await mkdtemp(join(tmpdir(),'northstar-planner-')));t.after(()=>rm(root,{recursive:true,force:true}));
+ const brief=`---\ntitle: Planner brief\nqueue_approval: "Operator approved"\nqueue:\n  planner: named-planner\n---\n\nThe brief body.\n`;
+ const parsed=parseNorthstarDocument(brief,'brief');
+ assert.equal(parsed.queue.planner,'named-planner');
+ const fields=submissionQueueFields(parsed.queue);
+ assert.equal(fields.plannerAgentId,'named-planner');
+ assert.deepEqual(fields.lanes,[]);
+ const submission=submissionSchema.parse({submissionId:'planner-brief',title:'Planner brief',repoPath:join(root,'repo'),
+  planningCommit:'a'.repeat(40),brief:{text:brief},originAgentId:'origin',...fields});
+ const store=new Store(':memory:');
+ try{
+  const task=store.insert(submission,'host','brief','a'.repeat(40));
+  assert.equal(task.plannerAgentId,'named-planner');
+  assert.equal(taskPlanner(task),'named-planner','a brief-named planner is the first rung');
+  assert.throws(()=>store.insert({...submission,submissionId:'operator-planner',plannerAgentId:'operator'},'host','brief','a'.repeat(40)),
+   /operator is not a thread/);
+  const ordinary=store.insert({...submission,submissionId:'owner-planner',plannerAgentId:null},'host','brief','a'.repeat(40));
+  assert.equal(ordinary.plannerAgentId,null);
+  assert.equal(taskPlanner(ordinary),'origin','unset keeps the submitting thread as the planner');
+ }finally{store.close()}
 });

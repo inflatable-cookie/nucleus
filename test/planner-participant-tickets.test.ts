@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
-import { PlannerParticipantTickets, resolveTicketCaller, plannerTicketKey, plannerTicketPendingKey } from '../core/dispatch/participant-tickets';
+import { PlannerParticipantTickets, resolveTicketCaller, plannerTicketKey, plannerTicketPendingKey, taskPlannerTicketKey } from '../core/dispatch/participant-tickets';
 import { formatAgentId } from '../shared/agent-identity';
 import { runSchema, submissionSchema } from '../shared/contracts';
 import { RuntimeRepositories, type RepositoriesContext } from '../core/runtime/repositories';
@@ -259,4 +259,43 @@ test('a registered planner question prompt names its participant ticket on a hos
     assert.ok(command.includes('nucleus question.answer -'));
     assert.ok(!command.includes('NUCLEUS_TICKET= nucleus'));
   } finally { f.store.close(); }
+});
+
+test('task 1109: a task planner on a ticket-only host answers, and reparenting moves the ticket scope', async () => {
+  const f = fixture();
+  const close = await startCallbacks(f.paths.socketPath, f.paths.helperPath, f.engine);
+  try {
+    const planner = formatAgentId(t3, 'task-planner');
+    const task = f.store.insert(submissionSchema.parse({ submissionId: 'task-planner-ticket', title: 'Task planner',
+      repoPath: '/synthetic/example', planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: planner }), t3, 'handoff', 'a'.repeat(40));
+    const key = taskPlannerTicketKey(t3, 'task-planner');
+    // A host that supplies no calling-thread identity receives one message naming its ticket.
+    await f.tickets.ensureFor(planner, t3);
+    const record = f.store.getMeta<{ path: string; delivery: string }>(key)!;
+    assert.ok(record, 'the task planner received a participant ticket');
+    assert.equal(record.delivery, 'delivered');
+    assert.deepEqual(f.messages.map(message => message.id), ['task-planner']);
+    assert.ok(f.messages[0]!.text.includes(record.path));
+    const ticket = JSON.parse(readFileSync(record.path, 'utf8')) as { participantId: string; token: string };
+    const caller = resolveTicketCaller(f.store, { participantId: ticket.participantId }, ticket.token);
+    assert.deepEqual(caller, { caller: planner, hostId: t3, source: 'participant-ticket' });
+    assert.equal(statSync(record.path).mode & 0o777, 0o600);
+    // The ticket answers the question the task's own planner was asked.
+    f.engine.resolution.openDelegatedQuestion(task, 'task-planner-window', planner, 'Question: Continue?', 10_000, 'planner', t3, 'task');
+    const receipt = await f.engine.resolution.answerDelegatedQuestionFromHost({ questionId: 'task-planner-window', answer: 'Continue', reason: 'Within the brief' }, caller.caller);
+    assert.equal(receipt.answer, 'Continue');
+    // Reparenting moves the scope: the old planner's ticket is revoked and the new owner takes one.
+    await f.engine.reparent({ toAgentId: 'successor', taskIds: [task.id], caller: 'operator (board)', reason: 'The successor promotes this task' } as never);
+    assert.equal(f.store.task(task.id).notificationAgentId, 'successor');
+    assert.throws(() => resolveTicketCaller(f.store, { participantId: ticket.participantId }, ticket.token), /revoked or invalid/);
+    const before = f.messages.length;
+    const handed = await f.tickets.forCaller(formatAgentId(t3, 'successor'));
+    const successor = f.store.getMeta<{ path: string; delivery: string }>(taskPlannerTicketKey(t3, 'successor'))!;
+    assert.equal(handed, successor.path, 'the new owner takes its ticket in its own call');
+    assert.equal(successor.delivery, 'self');
+    assert.equal(f.messages.length, before, 'the self route sends nothing into the thread');
+    const successorTicket = JSON.parse(readFileSync(successor.path, 'utf8')) as { participantId: string; token: string };
+    assert.equal(resolveTicketCaller(f.store, { participantId: successorTicket.participantId }, successorTicket.token).caller,
+      formatAgentId(t3, 'successor'));
+  } finally { await close(); f.store.close(); }
 });

@@ -228,7 +228,10 @@ ticket path that is gone, so T3 does not rewrite the command to a separate
 endpoint. A T3-hosted planner has no calling-thread identity of its own, so its
 participant ticket is delivered by one message, and only after the thread is
 observed live; assignment from the board or the thread's own call is the trigger,
-and an archived, gone or unreadable thread is left ticket pending instead. Uncertain reviewer or
+and an archived, gone or unreadable thread is left ticket pending instead. A task's
+own planner follows the same rule: before a question names a T3-hosted task planner,
+Nucleus issues its ticket by that one message, and only while the thread is
+observed live. Uncertain reviewer or
 coordinator creation can bind. T3-hosted planners are out of trial: missing
 `askPlanner` becomes an answerable board decision with the planner message,
 never a silently pending ask. Production planners stay Paseo threads. `host.permission-answer` still grants no

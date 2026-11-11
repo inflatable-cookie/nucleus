@@ -95,6 +95,16 @@ export function taskOwner(task: { notificationAgentId?: string | null; originAge
 }
 
 /**
+ * The thread a task's planning questions reach first (Tom, 2026-11-11): the planner
+ * the brief named, else its owner — the thread that submitted or promoted it, so
+ * reparenting moves it. The operator answers no delegated question and is never a
+ * planner thread; callers check `isOperatorOrigin` on the result.
+ */
+export function taskPlanner(task: { plannerAgentId?: string | null; notificationAgentId?: string | null; originAgentId: string }): string {
+  return task.plannerAgentId || taskOwner(task);
+}
+
+/**
  * A hold fence owned by "whoever owns the task now". A hold the owner places is
  * stored with this marker rather than its thread id, so changing the owner moves
  * the hold's release prompts with it and leaves no stale identity behind.

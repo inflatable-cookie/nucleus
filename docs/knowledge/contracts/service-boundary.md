@@ -198,6 +198,10 @@ only to a thread observed live on a host that supplies no calling-thread identit
 its own, and never into an archived, gone or unreadable thread. A planner without a
 ticket is recorded ticket pending and the board's project entry says so. Startup
 reconciles that state and sends nothing. Reassignment or clearing revokes the ticket.
+The same ticket covers a task's own planner (task 1109): keyed per proven host and
+thread rather than per task, handed over by the same two routes, and valid only
+while a live task still names that thread as its planner. Reparenting moves the
+scope, which revokes the outgoing planner's ticket without a separate write.
 Tickets prevent same-user accidents; they do not add adversarial authentication or
 grant planning authority (Tom, 2026-11-11).
 
