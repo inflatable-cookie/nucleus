@@ -474,7 +474,11 @@ command and the optional hosted-check policy
 (`checksPolicy`: `all` by default, or `required` to gate only the checks GitHub
 requires for the PR's base branch and record the rest as advisory evidence).
 The operator edits these fields in Settings → Projects, inside each project's
-repository rows.
+repository rows. Formal reviews need macOS: the reviewer token is read at call
+time from the macOS login keychain (service `nucleus.github-reviewer`, account
+`<org>`; store it with `security add-generic-password -a <org> -s nucleus.github-reviewer -w`).
+A token kept under the legacy service `paseo-queue.github-reviewer` is still
+read as a fallback.
 The Settings → Limits section also lists every project slot override for editing
 or removal; each project's Slots field is the same setting, and clearing it
 returns to the inherited value. Project in-flight capacity is always twice its

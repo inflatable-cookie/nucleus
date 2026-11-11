@@ -61,6 +61,7 @@ export {
   publishReviewOnce,
   validateReviewComment,
   REVIEWER_TOKEN_SERVICE,
+  LEGACY_REVIEWER_TOKEN_SERVICE,
   type ReviewerSetting,
   type FormalReviewRuntime,
   readReviewerToken,

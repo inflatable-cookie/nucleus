@@ -1133,3 +1133,23 @@ terms = []
 paths = []
 config_keys = []
 allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
+
+[[retired]]
+id = "legacy-reviewer-keychain-service"
+retired = "2026-11-11"
+replacement = "The formal-reviewer keychain service is `nucleus.github-reviewer` (Tom, 2026-11-11, pre-public tidy). `readReviewerToken` reads the new service first and the legacy `paseo-queue.github-reviewer` service as a fallback so existing tokens keep working; the missing-token refusal names both, and operators move the item with `security add-generic-password -a <org> -s nucleus.github-reviewer -w`. The legacy name survives only as that read fallback."
+owner = "docs/knowledge/specs/033-formal-pr-reviews.md"
+terms = ["paseo-queue.github-reviewer"]
+paths = []
+config_keys = []
+allow = [
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/specs/033-formal-pr-reviews.md",
+  "docs/knowledge/contracts/orchestration.md",
+  "core/forge/reviews.ts",
+  "core/forge/index.ts",
+  "test/formal-reviews.test.ts",
+  "README.md",
+  "CHANGELOG.md",
+  "changelog.d/",
+]
