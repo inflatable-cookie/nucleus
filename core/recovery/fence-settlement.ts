@@ -578,13 +578,13 @@ export class RunRelease {
   async supersededIdleFence(run: Run): Promise<string | null> {
     let state: Awaited<ReturnType<Adapter["observe"]>> | null = null;
     try { state = await this.engine.host.observe(run.agentId!); }
-    catch {
-      // A thread its host reports archived or gone is the stopped proof the
-      // ordinary archive path accepts, so an unreadable live observation no
-      // longer holds it. Anything weaker stays unobservable and held.
+    catch { state = null; }
+    if (!state) {
+      // A missing or throwing live observation is unobservable. A thread its
+      // host reports archived or gone is the stopped proof the ordinary archive
+      // path accepts, so that one case no longer holds it.
       if (!await this.threadArchivedOrGone(run.agentId!)) return "its agent is unobservable";
-    }
-    if (state) {
+    } else {
       if (!state.id || state.id !== run.agentId) return "its agent is unreadable";
       if (state.workspaceId !== run.workspaceId) return "its agent is outside the run workspace";
       if (state.active || state.activeTurnId) return "its agent is active";
