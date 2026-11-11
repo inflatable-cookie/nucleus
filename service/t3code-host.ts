@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { createHost, createAdapter } from '../hosts/t3code';
-import type { Adapter } from '../core/host';
+import type { Adapter, HostPolicyConstructor } from '../core/host';
+import { HostPolicies } from '../core/host/host-policies';
 import { Admission, admitAdapter } from '../core/host/admission';
 import type { HostRegistry } from '../core/host/host-registry';
 
@@ -43,7 +44,7 @@ export class T3HostConnection {
     private readonly makeAdmission: () => Admission,
     private readonly dependencies: ConnectionDependencies = {
       create: config => createHost(config),
-      adapter: host => createAdapter(host as ReturnType<typeof createHost>, {
+      adapter: host => createAdapter(HostPolicies as unknown as HostPolicyConstructor, host as ReturnType<typeof createHost>, {
         socketPath: join(dataDir, 'callback.sock'),
         helperPath: join(dataDir, 'worker-report.mjs'),
       }),

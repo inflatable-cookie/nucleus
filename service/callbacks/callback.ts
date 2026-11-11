@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { chmodSync, readFileSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { bulkDispositionRequestSchema, completionSchema, dependencyIdsSchema, taskControlRequestSchema } from "../../shared/contracts";
 import {Reports,reportSchema} from "../../core/intake/report";
-import {agentAskSchema} from "../../core/questions/agent-ask";
+import {agentAskSchema, AGENT_ASK_WAIT_MS} from "../../core/questions/agent-ask";
 import {agentMessageSchema} from "../../core/questions/agent-messages";
 import type { Engine } from "../../core/engine";
 import { z } from "zod";
@@ -21,6 +21,9 @@ const disposeTaskSchema = dependencyCallerSchema.extend({
   if (request.action === "withdraw_cancel" && (request.replacementTaskId || request.workDisposition))
     context.addIssue({ code: "custom", path: ["action"], message: "Cancellation withdrawal does not take a replacement or work disposition" });
 });
+export const CALLBACK_SOCKET_TIMEOUT_MS = 45_000;
+/** Helper ask waits longer than the server's bounded in-turn wait so a delayed answer is not a socket timeout. */
+export const CALLBACK_ASK_TIMEOUT_MS = AGENT_ASK_WAIT_MS + 30_000;
 const selfControlSchema = dependencyCallerSchema.extend({input: taskControlRequestSchema}).strict();
 const bulkDispositionSchema = dependencyCallerSchema.and(bulkDispositionRequestSchema);
 const bulkDispositionDetailSchema = dependencyCallerSchema.extend({ operationId: z.string().min(1).max(160) }).strict();
@@ -56,7 +59,7 @@ for(const [key,bound] of [['taskId',taskId],['runId',runId]])
 if(route!=='/complete'){
   const payload={...input,taskId,runId};
   payload.eventId=input.eventId||createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-  const result=await callbackRequest({socketPath,token},route,payload,{timeoutMs:45000,timeoutMessage:'Callback timed out; retry the same JSON'});
+  const result=await callbackRequest({socketPath,token},route,payload,{timeoutMs:route==='/ask'?` + CALLBACK_ASK_TIMEOUT_MS + `:` + CALLBACK_SOCKET_TIMEOUT_MS + String.raw`,timeoutMessage:'Callback timed out; retry the same JSON'});
   console.log(JSON.stringify(result));
   return;
 }

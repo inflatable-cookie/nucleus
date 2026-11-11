@@ -1,7 +1,7 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -9,20 +9,30 @@ import { observeIdle } from './support/fakes';
 import { createHost, createAdapter } from '../hosts/t3code';
 import { t3Fake } from './support/t3code-fake';
 import { questionRoute } from '../core/questions/question-route';
+import { AGENT_ASK_WAIT_MS } from '../core/questions/agent-ask';
 import { resolveIngressHost } from '../core/host/ingress-host';
+import { HostPolicies } from '../core/host/host-policies';
+import type { HostPolicyConstructor } from '../core/host';
 import { workerPrompt, runPrompt } from '../core/dispatch/prompts';
 import { workerAgentSpec, runTicketPath } from '../core/dispatch/agent-creation';
-import { workerHelper, startCallbacks } from '../service/callbacks/callback';
+import { workerHelper, startCallbacks, CALLBACK_ASK_TIMEOUT_MS, CALLBACK_SOCKET_TIMEOUT_MS } from '../service/callbacks/callback';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { QueueRuntime } from '../service/runtime-owner';
 import { assembleOwnerTaskNext } from '../core/verbs/task-next';
-import { submissionSchema, summarizeTask, taskNextSchema, type Run, type Task } from '../shared/contracts';
+import { submissionSchema, summarizeTask, taskNextSchema, type Completion, type Profile, type Run, type Task } from '../shared/contracts';
 import type { Adapter as HostAdapter } from '../core/host/adapter';
+
+const Policy = HostPolicies as unknown as HostPolicyConstructor;
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const settle = async (ready: () => boolean, label = 'condition') => {
   for (let i = 0; i < 80 && !ready(); i++) await tick();
+  assert.ok(ready(), label);
+};
+const waitUntil = async (ready: () => boolean, label: string, timeoutMs = 5_000) => {
+  const start = Date.now();
+  while (!ready() && Date.now() - start < timeoutMs) await new Promise(resolve => setTimeout(resolve, 20));
   assert.ok(ready(), label);
 };
 
@@ -119,17 +129,21 @@ test('workerAgentSpec writes no MCP binding on T3 and an empty environment', t =
   assert.match(paseo.mcpBindingPath, /mcp-run-t3\.json$/);
 });
 
-test('a T3 budget question lands on the board and notifies the project planner', async () => {
+test('a T3 budget question lands on the board and recovery keeps it off the MCP route', async () => {
   const store = new Store(':memory:');
   store.setMeta('paused', false);
   store.setMeta('hostId', 't3code:synthetic-environment');
   const notices: Array<{ id: string; messageId: string; text: string }> = [];
+  let failPlanner = true;
   const adapter = {
-    capabilities: () => ({ reportingViaMcp: false, supportsCoordinatorRecovery: false, nativeDecisions: false, uiContributions: false, lifecycleDispatch: true, perThreadEnvironment: false }),
+    capabilities: () => ({ reportingViaMcp: false, supportsCoordinatorRecovery: true, nativeDecisions: false, uiContributions: false, lifecycleDispatch: true, perThreadEnvironment: false }),
     reportingViaMcp: false,
     observe: observeIdle('ws', 'worker'),
     originAgent: async (id: string) => id === 'planner' ? { id, archived: false, workspaceId: 'planner-ws', title: 'Planner' } : null,
-    notify: async (id: string, messageId: string, text: string) => { notices.push({ id, messageId, text }); },
+    notify: async (id: string, messageId: string, text: string) => {
+      if (id === 'planner' && failPlanner) throw new Error('planner host unavailable');
+      notices.push({ id, messageId, text });
+    },
   } as unknown as HostAdapter;
   const engine = new Engine(store, adapter, 0);
   engine.identifyOriginHost = async () => 'paseo-host';
@@ -153,12 +167,25 @@ test('a T3 budget question lands on the board and notifies the project planner',
     assert.equal(decisions.length, 1);
     assert.match(decisions[0]!.question, /reached its budget/);
     assert.match(decisions[0]!.context ?? '', /the task host cannot take a native question/);
-    await settle(() => notices.length === 1, 'planner notice');
+    await settle(() => store.eventsAll(task.id).some(event => event.kind === 'operator_question_planner_missed'), 'planner miss');
+    assert.equal(notices.length, 0);
+    assert.equal(store.eventsAll(task.id).some(event => event.kind === 'queue_ask_payload'), false, 'board route does not record an MCP ask payload');
+    assert.equal(store.eventsAll(task.id).some(event => event.kind === 'queue_ask_delivery'), false, 'T3 does not prompt the worker to call nucleus_ask');
+    failPlanner = false;
+    await engine.resolution.resumeAskQuestions();
+    await settle(() => notices.length === 1, 'planner notice retry');
     assert.equal(notices[0]!.id, 'planner');
     assert.match(notices[0]!.messageId, /^ns-queue-question-/);
     assert.match(notices[0]!.text, /cannot take a native question/);
     assert.ok(store.eventsAll(task.id).some(event => event.kind === 'operator_question_planner_notice'));
-    assert.equal(store.eventsAll(task.id).some(event => event.kind === 'queue_ask_delivery'), false, 'T3 does not prompt the worker to call nucleus_ask');
+    const questionId = store.eventsAll(task.id).find(event => event.kind === 'operator_question')!.detail.split(':')[0]!;
+    store.event(task.id, 'queue_ask_payload', JSON.stringify({
+      id: questionId, kind: 'budget', question: decisions[0]!.question,
+      options: ['Extend the budget', 'Change the approach', 'Stop and keep the work'],
+    }));
+    await engine.resolution.resumeAskQuestions();
+    assert.equal(store.eventsAll(task.id).some(event => event.kind === 'queue_ask_delivery'), false, 'recovery never tells the T3 worker to call MCP');
+    assert.equal(notices.some(notice => notice.id === 'worker' || notice.text.includes('Call the question MCP tool')), false);
   } finally { await engine.stop(); store.close(); }
 });
 
@@ -215,11 +242,13 @@ test('T3 Adapter enables lifecycleDispatch; the Host stays native-only; create w
   t.after(() => host.close());
   await host.connect();
   assert.equal(host.capabilities().lifecycleDispatch, false);
-  const native = createAdapter(host);
+  const native = createAdapter(Policy, host);
   assert.equal(native.capabilities().lifecycleDispatch, true);
+  assert.equal(native.capabilities().supportsCoordinatorRecovery, true);
   assert.equal(native.reportingViaMcp, false);
+  assert.equal(native.supportsCoordinatorRecovery, true);
   assert.throws(() => native.createAgent({} as never, 'unused', 'unused'), /helper path/);
-  const wired = createAdapter(host, { socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'worker-report.mjs') });
+  const wired = createAdapter(Policy, host, { socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'worker-report.mjs') });
   assert.equal(wired.capabilities().lifecycleDispatch, true);
   assert.equal(runTicketPath({ helperPath: join(directory, 'worker-report.mjs') }, 'run-t3'), join(directory, 'tickets', 'run-t3.json'));
 });
@@ -260,4 +289,88 @@ test('the helper ask and message subcommands post to the ticket-bound routes', a
     assert.match(foreign.err, /Report taskId does not match the callback ticket/);
     assert.equal(requests.length, 2);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the helper ask timeout outlasts the server wait and covers delayed and pending answers', async () => {
+  assert.ok(CALLBACK_ASK_TIMEOUT_MS > AGENT_ASK_WAIT_MS);
+  assert.match(workerHelper, new RegExp(String.raw`timeoutMs:route==='/ask'\?${CALLBACK_ASK_TIMEOUT_MS}:${CALLBACK_SOCKET_TIMEOUT_MS}`));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 't3-helper-ask-wait-')));
+  const store = new Store(join(dir, 'queue.sqlite'));
+  store.setMeta('paused', false);
+  const profile = { id: 'p', name: 'p', provider: 'synthetic', model: 'm', notes: '', available: true, problem: '', supportedThinking: [] } as Profile;
+  const adapter = {
+    observe: observeIdle('ws', 'worker'),
+    notify: async () => {},
+    askPlanner: async () => null,
+    originAgent: async () => null,
+  } as unknown as HostAdapter;
+  const engine = new Engine(store, adapter, 0);
+  engine.resolution.agentAskWaitMs = 400;
+  engine.resolution.agentAskPollMs = 20;
+  const task = store.insert(submissionSchema.parse({
+    submissionId: 't3-ask-wait', title: 'T3 ask wait', repoPath: '/repo', planningCommit: 'a'.repeat(40),
+    handoffPath: 'handoff.md', originAgentId: 'origin',
+  }), 't3code:synthetic-environment', 'handoff', 'a'.repeat(40));
+  store.update(task.id, {
+    phase: 'working', runId: 'run-1', agentId: 'worker', workspaceId: 'ws', profile,
+  });
+  store.setCredential('run-1', 'fixture-secret');
+  const socketPath = join(dir, 's'), helper = join(dir, 'worker-report.mjs'), ticket = join(dir, 'ticket.json');
+  writeFileSync(ticket, JSON.stringify({ socketPath, token: 'fixture-secret', taskId: task.id, runId: 'run-1' }), { mode: 0o600 });
+  const stop = await startCallbacks(socketPath, helper, engine);
+  try {
+    const delayed = spawnHelper(helper, ticket, { question: 'Delay this T3 helper ask?', kind: 'process' }, ['ask']);
+    await waitUntil(() => store.eventsAll(task.id).some(event => event.kind === 'agent_ask'), 'ask recorded');
+    const askId = store.eventsAll(task.id).find(event => event.kind === 'agent_ask')!.detail.split(':')[0]!;
+    store.event(task.id, 'agent_ask_answered', `${askId}: answered by planner planner: proceed`);
+    const answered = await delayed;
+    assert.equal(answered.code, 0, answered.err);
+    const receipt = JSON.parse(answered.out) as { status: string; answer?: string };
+    assert.equal(receipt.status, 'answered');
+    assert.equal(receipt.answer, 'proceed');
+    const pending = await spawnHelper(helper, ticket, { question: 'A different pending T3 helper ask?', kind: 'process' }, ['ask']);
+    assert.equal(pending.code, 0, pending.err);
+    assert.equal((JSON.parse(pending.out) as { status: string }).status, 'pending');
+  } finally { await engine.stop(); await stop(); store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('T3 adapter verifies reviews and continues retained threads without a fresh launch', async (t: TestContext) => {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 't3-review-continue-')));
+  const server = await t3Fake(t, directory);
+  const host = createHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', probeThreadId: 'synthetic-probe',
+    statePath: join(directory, 'hosts', 't3code.json'), timeoutMs: 2_000 });
+  t.after(() => host.close());
+  await host.connect();
+  const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace', directory, project: { projectId: 'synthetic-project' } });
+  const profile = { id: 'p', name: 'p', provider: 'synthetic-provider', model: 'synthetic-model', notes: '', available: true, problem: '', supportedThinking: [] } as Profile;
+  const worker = await host.createAgent({
+    workspaceId: workspace.id, title: 'Synthetic worker', mcpBindingPath: null, profile,
+    attempt: () => ({ requestId: 'create-worker', prompt: 'work', labels: { 'nucleus.task': 'task' }, environment: {} }),
+  });
+  const helperPath = join(directory, 'worker-report.mjs');
+  const adapter = createAdapter(Policy, host, {
+    socketPath: join(directory, 'callback.sock'), helperPath,
+  });
+  adapter.runScratch = { mount: directory, root: join(directory, 'scratch'), create: path => mkdirSync(path, { recursive: true }), remove: () => true };
+  const task = {
+    id: 'task', title: 'T3 review', repoPath: directory, directory, workspaceId: workspace.id, agentId: worker.id, runId: 'run-t3',
+    branch: 'ns-task', baseBranch: 'main', retiredWorkers: [], resolution: {}, profile,
+  } as unknown as Task;
+  const run = {
+    id: 'run-t3', taskId: task.id, role: 'reviewer', generation: 1, head: 'a'.repeat(40),
+    agentId: worker.id, workspaceId: workspace.id, profile,
+  } as unknown as Run;
+  await assert.rejects(adapter.verifyReview(task, run, { status: 'changes_requested', summary: 'needs work', head: run.head } as unknown as Completion),
+    /not independent|authored this task/);
+  const preflight = await adapter.preflightWorkerContinuation(task);
+  assert.deepEqual(preflight, { available: true });
+  await adapter.continueWorker(task, 'checkpoint-1', 'Continue the retained T3 worker.');
+  assert.ok(server.commands.some(command => command.type === 'message.dispatch' && command.threadId === worker.id && command.text === 'Continue the retained T3 worker.'));
+  await adapter.continueRun(run, 'ns-run-continue', 'Continue the retained T3 run.');
+  assert.ok(server.commands.some(command => command.type === 'message.dispatch' && command.text === 'Continue the retained T3 run.'));
+  await adapter.sendRun(task, run, 'token');
+  assert.ok(server.commands.some(command => command.type === 'message.dispatch' && command.commandId === 'ns-run-run-t3'));
+  const reviewer = await adapter.continueReviewer(task, run, 'ns-reviewer-1', 'Review in place.', async () => true, () => true);
+  assert.equal(reviewer.sent, true);
+  assert.ok(server.commands.some(command => command.type === 'message.dispatch' && command.commandId === 'ns-reviewer-1' && command.text === 'Review in place.'));
 });

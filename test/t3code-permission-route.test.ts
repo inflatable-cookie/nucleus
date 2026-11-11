@@ -7,7 +7,8 @@ import { createHost, createAdapter } from '../hosts/t3code';
 import { HostFacade } from '../core/host/host-facade';
 import { HostRegistry, type KnownHost } from '../core/host/host-registry';
 import { Admission, admitAdapter } from '../core/host/admission';
-import { HostUnknownDeliveryError, ProvenPreSendRefusalError, type Adapter } from '../core/host';
+import { HostUnknownDeliveryError, ProvenPreSendRefusalError, type Adapter, type HostPolicyConstructor } from '../core/host';
+import { HostPolicies } from '../core/host/host-policies';
 import { answerHostPermission } from '../service/host-permissions';
 import { QueueService } from '../service/transport/server';
 import { ServiceClient } from '../shared/service/client';
@@ -43,7 +44,7 @@ function registered(host: ReturnType<typeof createHost>, endpoint: string) {
   let known: readonly KnownHost[] = [];
   const registry = new HostRegistry<{ adapter: Adapter; admission: Admission }>({ read: () => known, write: hosts => { known = hosts; }, transaction: work => work() });
   const admission = new Admission({ startIntervalMs: 0 });
-  registry.connect(host.hostId, endpoint, { adapter: admitAdapter(createAdapter(host), admission), admission });
+  registry.connect(host.hostId, endpoint, { adapter: admitAdapter(createAdapter(HostPolicies as unknown as HostPolicyConstructor, host), admission), admission });
   return (input: HostPermissionAnswerInput) => answerHostPermission(registry, input);
 }
 
@@ -69,7 +70,7 @@ async function permissionRuntime(t: TestContext, fixture: Awaited<ReturnType<typ
   t.after(() => runtime.drain());
   await runtime.started; await runtime.bootstrap;
   const admission = new Admission({ startIntervalMs: 0 });
-  const adapter = admitAdapter(createAdapter(fixture.host), admission);
+  const adapter = admitAdapter(createAdapter(HostPolicies as unknown as HostPolicyConstructor, fixture.host), admission);
   runtime.hostRegistry.connect(fixture.host.hostId, fixture.server.endpoint, { adapter, admission });
   return runtime;
 }
@@ -89,7 +90,7 @@ test('a host-qualified catalogue call reaches only the registered T3 adapter; Ad
   const { host, server, workspace, input, projection, permission } = await nativeFixture(t);
   let known: readonly KnownHost[] = [];
   const registry = new HostRegistry<{ adapter: Adapter; admission: Admission }>({ read: () => known, write: hosts => { known = hosts; }, transaction: work => work() });
-  const native = createAdapter(host);
+  const native = createAdapter(HostPolicies as unknown as HostPolicyConstructor, host);
   const admission = new Admission({ startIntervalMs: 0 });
   let otherCalls = 0;
   const other = { answerNativePermission: async () => { otherCalls++; } } as unknown as Adapter;
@@ -137,7 +138,7 @@ test('concurrent changed decisions under one intent reach the native payload fen
   let known: readonly KnownHost[] = [];
   const registry = new HostRegistry<{ adapter: Adapter; admission: Admission }>({ read: () => known, write: hosts => { known = hosts; }, transaction: work => work() });
   const admission = new Admission({ startIntervalMs: 0 });
-  registry.connect(host.hostId, server.endpoint, { adapter: admitAdapter(createAdapter(host), admission), admission });
+  registry.connect(host.hostId, server.endpoint, { adapter: admitAdapter(createAdapter(HostPolicies as unknown as HostPolicyConstructor, host), admission), admission });
   const replies = await Promise.allSettled([
     answerHostPermission(registry, input),
     answerHostPermission(registry, { ...input, decision: 'decline' }),
@@ -295,7 +296,7 @@ test('reported command and field enter the exact owning task attention and survi
   let known: readonly KnownHost[] = [];
   const registry = new HostRegistry<{ adapter: Adapter; admission: Admission }>({ read: () => known, write: hosts => { known = hosts; }, transaction: work => work() });
   const admission = new Admission({ startIntervalMs: 0 });
-  const adapter = admitAdapter(createAdapter(reloaded), admission);
+  const adapter = admitAdapter(createAdapter(HostPolicies as unknown as HostPolicyConstructor, reloaded), admission);
   registry.connect(reloaded.hostId, server.endpoint, { adapter, admission });
   const engine = new Engine(saved, adapter);
   try {

@@ -73,7 +73,8 @@ export class Questions {
     const options = ['Continue the current approach', 'Change the approach', 'Stop and keep the work'];
     this.store.transaction(() => {
       this.store.event(t.id, 'responsible_question', `${id}: head ${head}; question ${digest(question)} (${question.length} chars); reviewer finding ${digest(finding)} (${finding.length} chars); worker return ${digest(workerReturn)} (${workerReturn.length} chars)`);
-      if (!supportsNativeQuestions(t.profile?.provider)) this.store.event(t.id, 'queue_ask_payload', JSON.stringify({ id, kind: 'review', question, options }));
+      if (!supportsNativeQuestions(t.profile?.provider) && questionRoute(this.adapter, t.profile?.provider) !== 'board')
+        this.store.event(t.id, 'queue_ask_payload', JSON.stringify({ id, kind: 'review', question, options }));
     });
     this.resolution.waiting(this.store.task(t.id), RESPONSIBLE_QUESTION_WAIT, 'responsible_question');
     const controller = new AbortController();
@@ -148,7 +149,8 @@ export class Questions {
       const options = question.choices.map(choice => choice.label);
       this.store.transaction(() => {
         this.store.event(task.id, 'operator_question', `${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? 'none'}; head ${task.prHead ?? 'none'}; question ${digest(question.question)} (${question.question.length} chars); options ${options.join(' | ') || 'none'}`);
-        if (!supportsNativeQuestions(task.profile?.provider)) this.store.event(task.id, 'queue_ask_payload', JSON.stringify({ id: question.id, kind: question.kind, question: question.question, options }));
+        if (!supportsNativeQuestions(task.profile?.provider) && questionRoute(this.adapter, task.profile?.provider) !== 'board')
+          this.store.event(task.id, 'queue_ask_payload', JSON.stringify({ id: question.id, kind: question.kind, question: question.question, options }));
       });
       const controller = new AbortController();
       this.resolution.responsibleQuestions.set(question.id, controller);
@@ -419,23 +421,29 @@ export class Questions {
     return promise;
   }
   private notifyPlannerOfBoardQuestion(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }): void {
+    const noticed = () => {
+      try { return this.store.eventsAll(task.id).some(event => event.kind === 'operator_question_planner_notice' && event.detail.startsWith(`${decision.id}:`)); }
+      catch { return true; }
+    };
+    if (noticed()) return;
     void (async () => {
+      if (noticed()) return;
       const { planner } = await this.resolution.projectPlannerFor(task);
-      if (!planner) return;
+      if (!planner || noticed()) return;
       const host = await this.resolution.identifyOriginHost(planner);
-      if (!host) return;
-      const events = this.store.eventsAll(task.id);
-      if (events.some(event => event.kind === 'operator_question_planner_notice' && event.detail.startsWith(`${decision.id}:`))) return;
+      if (!host || noticed()) return;
       await this.resolution.withHost(host, async () => {
-        if (!this.resolution.originHostAvailable(host) || !this.adapter.notify) return;
+        if (noticed() || !this.resolution.originHostAvailable(host) || !this.adapter.notify) return;
         const choices = decision.options.length ? ` Choices: ${decision.options.join(' | ')}.` : '';
         const reference = this.store.task(task.id).reference ?? task.title;
         await this.adapter.notify(planner, `ns-queue-question-${decision.id}`,
           `Nucleus raised a question on ${reference} (kind ${decision.kind}) because the task host cannot take a native question. Answer it on the board (question.answer) or through nucleus_ask. Question: ${decision.question}${choices}`);
-        this.store.event(task.id, 'operator_question_planner_notice', `${decision.id}: planner ${planner}`);
+        if (!noticed()) this.store.event(task.id, 'operator_question_planner_notice', `${decision.id}: planner ${planner}`);
       });
     })().catch(error => {
-      this.store.event(task.id, 'operator_question_planner_missed', `${decision.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
+      try {
+        this.store.event(task.id, 'operator_question_planner_missed', `${decision.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
+      } catch { /* store closed after shutdown */ }
     });
   }
   raiseAskDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, signal: AbortSignal): Promise<string> {
@@ -461,6 +469,7 @@ export class Questions {
       return this.resolution.withHost(task.hostId, () => this.deliverQueueAsk(task, decision, true));
     }
     if (!this.resolution.hostAvailable(task)) return;
+    if (questionRoute(this.adapter, task.profile?.provider) === 'board') return;
     if (!this.resolution.queueBudgetQuestionCurrent(task.id, decision)) return;
     const deliveryId = queueAskDeliveryId(task.id, decision.question, decision.options);
     if (this.store.eventsAll(task.id).some(event => event.kind === 'queue_ask_delivery' && event.detail.startsWith(`${deliveryId}:`))) return;
@@ -633,16 +642,36 @@ export class Questions {
       }
       // A Queue-originated delegate send may have landed before shutdown. Its
       // established recovery path keeps the linked board question available.
+      const board = questionRoute(this.adapter, task.profile?.provider) === 'board';
       for (const event of events.filter(item => item.kind === 'queue_ask_payload')) {
         let question: { id: string; kind: OperatorQuestionKind; question: string; options: string[] };
         try { question = JSON.parse(event.detail) as typeof question; }
         catch { continue; /* Invalid payload cannot authorize recovery. */ }
         const marked = (kind: string) => events.some(item => item.kind === kind && item.detail.startsWith(`${question.id}:`));
+        if (board) {
+          if (!this.resolution.queueAskRaises.has(question.id) && !this.resolution.recoveringQueueAsks.has(question.id) && !marked('operator_question_decision') &&
+              !marked('operator_question_answered') && !marked('responsible_question_answered'))
+            this.resolution.ensureQueueRaiseDecision(task, question, 'the task host cannot take a native question');
+          this.notifyPlannerOfBoardQuestion(task, question);
+          continue;
+        }
         if (this.resolution.queueAskRaises.has(question.id) && !marked('operator_question_answered') && !marked('responsible_question_answered'))
           await this.resolution.deliverQueueAsk(this.store.task(task.id), question);
         if (!this.resolution.queueAskRaises.has(question.id) && !this.resolution.recoveringQueueAsks.has(question.id) && !marked('operator_question_decision') &&
             !marked('operator_question_answered') && !marked('responsible_question_answered'))
           this.resolution.ensureQueueRaiseDecision(task, question, 'the previous delivery or answer could not be observed');
+      }
+      if (board) {
+        for (const view of new Decisions(this.store).list({ task: task.id, status: 'open' })) {
+          const link = events.find(item => item.kind === 'operator_question_decision' && item.detail.includes(`decision ${view.id}`));
+          if (!link) continue;
+          const id = link.detail.split(':')[0]!;
+          if (['operator_question_answered', 'responsible_question_answered', 'operator_question_superseded']
+            .some(kind => events.some(item => item.kind === kind && item.detail.startsWith(`${id}:`)))) continue;
+          const current = operatorQuestionFor(this.store, this.store.task(task.id));
+          if (current?.id === id)
+            this.notifyPlannerOfBoardQuestion(task, { id: current.id, kind: current.kind, question: current.question, options: current.choices.map(choice => choice.label) });
+        }
       }
     }
     // Task 562: pending asks collect their joined answers and every recorded

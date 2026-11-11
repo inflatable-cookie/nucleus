@@ -202,7 +202,11 @@ Expose explicit unsupported capabilities for per-thread MCP reporting,
 Nucleus-raised native decisions and UI contributions. Do not substitute empty
 success results. The Host keeps `lifecycleDispatch` false; the Adapter turns it
 on once the Nucleus helper path is wired, so T3 threads report through the
-helper and ticket named in the prompt. `host.permission-answer` still grants no
+helper and ticket named in the prompt. Service composition injects
+`HostPolicies` through the public `core/host` constructor, so review
+verification (live author/reviewer independence and exact-head checks) and
+retained-thread continuation, recovery and checkpoint delivery use the same
+core policy as Paseo. `host.permission-answer` still grants no
 task lifecycle dispatch. An unconfigured T3 adapter changes no default route. A
 configured second host never causes implicit rerouting of a live task, origin
 notice or pending question.
