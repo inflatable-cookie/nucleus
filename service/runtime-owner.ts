@@ -3,6 +3,7 @@ import "./install/roll-request";
 import { currentServiceBuildId } from "../shared/service/build";
 import { RuntimeQuestions } from "../core/runtime/questions";
 import { RuntimeSettings } from "../core/runtime/settings";
+import { PlannerParticipantTickets } from "../core/dispatch/participant-tickets";
 import { RuntimeRepositories } from "../core/runtime/repositories";
 import { RuntimePlanning } from "../core/runtime/planning";
 import { RuntimeBoard } from "../core/runtime/board";
@@ -28,7 +29,6 @@ import { readPrStates, type PrState } from '../core/forge/pr-status';
 import { type ProfileSettings } from "../shared/pool";
 import { type ProviderMap } from "../shared/profiles";
 
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -39,8 +39,10 @@ import { backupCommand, backupDirForDataDir, backupHealth, listBackupSnapshots, 
 import { HostPolicies } from "../core/host/host-policies";
 import type { HostPolicyConstructor } from "../core/host";
 import { resolveIngressHost } from "../core/host/ingress-host";
+import { formatAgentId, parseAgentId } from "../shared/agent-identity";
+import { hostKindOf, type HostKind } from "../shared/host-kind";
 import { DEFAULT_HOST_KIND } from "../shared/host-kind";
-import { createHost, hostConnected, hostConnectionRequired } from "../hosts/paseo";
+import { createHost, hostConnected, hostConnectionRequired, paseoHome } from "../hosts/paseo";
 import type { RegistrationAdapter } from "../core/host/registration";
 import type { Adapter } from "../core/host/adapter";
 import { HostFacade } from "../core/host/host-facade";
@@ -327,6 +329,7 @@ export class QueueRuntime {
   private readonly questions: RuntimeQuestions;
   private readonly settingsOperations: RuntimeSettings;
   private readonly repositories: RuntimeRepositories;
+  private readonly plannerTickets: PlannerParticipantTickets;
   private readonly planning: RuntimePlanning;
   private readonly board: RuntimeBoard;
   private readonly cachedTaskDetail: ReturnType<typeof createTaskDetailCache>;
@@ -481,8 +484,8 @@ export class QueueRuntime {
       raw.scratchNamespaceFor = task => this.store.scratchNamespaceFor(task);
       this.adapter = admitAdapter(raw, this.admission);
     } else {
-      const paseoHome = options.paseoHome ?? (process.env.PASEO_HOME || join(homedir(), ".paseo"));
-      const sourcePath = options.sourcePath ?? (compiledIdentity ? stableInstalledPath(sourcePathFromModule()) : pluginRegistration(JSON.parse(readFileSync(join(paseoHome, "config.json"), "utf8")).plugins)?.path);
+      const hostHome = options.paseoHome ?? paseoHome();
+      const sourcePath = options.sourcePath ?? (compiledIdentity ? stableInstalledPath(sourcePathFromModule()) : pluginRegistration(JSON.parse(readFileSync(join(hostHome, "config.json"), "utf8")).plugins)?.path);
       if (!sourcePath || !existsSync(join(sourcePath, "mcp-report.mjs"))) throw new Error("Installed plugin source is missing the MCP reporting bridge");
       const raw = createHost(HostPolicies as unknown as HostPolicyConstructor, this.settings.daemonUrl, join(this.dataDir, "callback.sock"), join(this.dataDir, "worker-report.mjs"), this.settings.password, join(sourcePath, "mcp-report.mjs"));
       raw.scratchNamespaceFor = task => this.store.scratchNamespaceFor(task);
@@ -514,10 +517,14 @@ export class QueueRuntime {
     this.engine.inventoryHostMatches = id => this.hostSession?.id === id;
     this.engine.retiredObservationKey = id => id === this.hostRegistry.known()[0]?.id ? 'retiredObservations' : `retiredObservations:${JSON.stringify(id)}`;
     this.engine.canReuseUnqualifiedOriginWorkspace = () => this.hostRegistry.known().length === 1;
-    this.engine.identifyOriginHost = agentId => resolveOriginHost(this.hostRegistry, agentId, (host, id) => {
+    this.engine.identifyOriginHost = agentId => {
+      const qualified = parseAgentId(agentId);
+      if (qualified) return Promise.resolve(this.hostRegistry.get(qualified.hostId) ? qualified.hostId : undefined);
+      return resolveOriginHost(this.hostRegistry, agentId, (host, id) => {
       if (!host.adapter.originAgent) throw new Error("Host cannot observe an origin agent");
       return new HostFacade({ adapter: host.adapter }).originAgent(id);
-    });
+      });
+    };
     this.engine.hostAvailable = id => {
       const selected = this.hostRegistry.get(id);
       return Boolean(selected && (this.engine.activeHostId ? this.engine.activeHostId === id : selected.adapter === this.adapter && this.connected()));
@@ -548,11 +555,13 @@ export class QueueRuntime {
       get startError() { return runtime.startError; },
       get adapter() { return runtime.adapter; },
     });
+    this.plannerTickets = new PlannerParticipantTickets(this.engine, { socketPath: this.paseo.socketPath, helperPath: this.paseo.helperPath });
     this.repositories = new RuntimeRepositories({
       store: this.store, engine: this.engine, hostRuns: this.hostRuns,
       requiredCheckTransport: this.requiredCheckTransport,
       markStoreAccess: () => this.markStoreAccess(),
       projectQaRunner: () => this.projectQaRunner(),
+      plannerChanged: () => this.plannerTickets.ensure(),
       get started() { return runtime.started; },
     });
     this.planning = new RuntimePlanning({
@@ -780,7 +789,10 @@ export class QueueRuntime {
     const planner = this.store.projectPlannerRecipient(this.store.queueProject());
     if (!planner || !this.adapter.notify) return;
     try {
-      await this.adapter.notify(planner, `ns-plugin-presence-${at}`, `Nucleus: ${message}\nReload the plugin with: paseo plugin reload nucleus`);
+      const hostId = await this.engine.identifyOriginHost(planner);
+      if (!hostId) return;
+      await this.engine.withHost(hostId, () => this.engine.host.sendMessage(planner, {
+        messageId: `ns-plugin-presence-${at}`, text: `Nucleus: ${message}\nReload the plugin with: paseo plugin reload nucleus` }));
     } catch { /* the board error is the operator-visible surface */ }
   }
   private boardError(): string {
@@ -946,8 +958,11 @@ export class QueueRuntime {
     if (this.closing || this.idleShutdownLatched) return false;
     // The legacy primary identity is recorded first; a secondary reconnect
     // remains independent of primary availability after that first bootstrap.
-    if (this.hostRegistry.known().length) void this.t3Host?.ensureConnected();
-    if (this.bootstrapped && this.connected()) return true;
+    if (this.hostRegistry.known().length) void this.t3Host?.ensureConnected().then(() => this.plannerTickets.ensure());
+    if (this.bootstrapped && this.connected()) {
+      await this.plannerTickets.ensure();
+      return true;
+    }
     if (this.bootstrapRunning) return this.bootstrapRunning.then(() => this.bootstrapped, () => this.bootstrapped);
     const attemptId = ++this.bootstrapAttemptId;
     this.bootstrapStartedAt = new Date().toISOString();
@@ -973,6 +988,7 @@ export class QueueRuntime {
         }
         void this.t3Host?.ensureConnected();
         await this.boundedBootstrapStep("Daemon catalog refresh", this.refresh());
+        await this.plannerTickets.ensure();
         if (this.closing) return;
         this.engine.resumeBulkDispositions();
         // Bootstrap unfinished durable operations from their stored identity; an
@@ -1533,13 +1549,13 @@ export class QueueRuntime {
 
   async completionSubscription(input: { taskId: string; version: number; agentId: string; action: "subscribe" | "unsubscribe" }) {
     await this.started;
-    if (!this.connected() || this.startError) throw new Error(this.startError || "Daemon is disconnected");
+    if (!this.anyHostConnected()) throw new Error(this.startError || "All hosts are disconnected");
     return this.engine.completionSubscription(input);
   }
 
   async reparent(input: ReparentInput) {
     await this.started;
-    if (!this.connected() || this.startError) throw new Error(this.startError || "Daemon is disconnected");
+    if (!this.anyHostConnected()) throw new Error(this.startError || "All hosts are disconnected");
     return this.engine.reparent(input);
   }
   availabilityControl(input: z.infer<typeof import("../shared/contracts").availabilityControl.input>) { return this.settingsOperations.availabilityControl(input); }
@@ -1580,7 +1596,12 @@ export class QueueRuntime {
   private retainedQaRunner: ProjectQaRunner | null = null;
   private projectQaRunner(): ProjectQaRunner {
     return this.retainedQaRunner ??= new ProjectQaRunner(this.store, { dataDir: this.dataDir, hostRunStateDir: this.hostRunStateDir, ownerInstance: this.owner,
-      notify: this.adapter.notify?.bind(this.adapter) });
+      notify: async (agentId, messageId, text) => {
+        const identity = parseAgentId(agentId);
+        const hostId = identity?.hostId ?? await this.engine.identifyOriginHost(agentId);
+        if (!hostId || !this.engine.withHost(hostId, () => this.engine.hostAvailable(hostId))) throw new Error('QA notification host is unavailable');
+        await this.engine.withHost(hostId, () => this.engine.host.sendMessage(identity?.nativeAgentId ?? agentId, { messageId, text }));
+      } });
   }
   async runProjectQa(input: { repository: string; baseBranch?: string; requestId?: string; expectedHead?: string; wait?: boolean }) { return this.repositories.runProjectQa(input); }
   async cancelProjectQa(input: { id: string; reason: string }) { return this.repositories.cancelProjectQa(input); }
@@ -1658,14 +1679,23 @@ export class QueueRuntime {
 
   /**
    * Spec 058 slice 4: any thread registers itself as a responsible task.
-   * The caller rides the CLI from PASEO_AGENT_ID, never a typed name, and the
+   * The caller rides the CLI from its Nucleus ticket or host identity, never a typed name, and the
    * service binds the task to that thread's own live worktree. The Paseo
    * bridge path carries no reliable caller identity and is refused.
    */
+  resolveHostCaller(input: { hostKind: HostKind; nativeAgentId: string }) {
+    const hosts = this.hostRegistry.onlineIds().filter(id => hostKindOf(id) === input.hostKind);
+    if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
+    const hostId = hosts[0]!;
+    return { caller: formatAgentId(hostId, input.nativeAgentId), hostId, source: 'host' as const };
+  }
+
   async registerTask(input: import('../shared/contracts').TaskRegistrationInput, _accepted: unknown, context?: { via?: string | null }) {
     await this.started;
     if (!this.anyHostConnected()) throw new Error(this.startError || 'All hosts are disconnected');
-    const hostId = this.engine.selectIngressHost(input.hostId);
+    const caller = parseAgentId(input.caller);
+    if (caller && input.hostId && caller.hostId !== input.hostId) throw new Error('Calling thread belongs to a different registration host');
+    const hostId = this.engine.selectIngressHost(input.hostId ?? caller?.hostId);
     if (!hostId || !this.engine.withHost(hostId, () => this.engine.hostAvailable(hostId))) throw new Error('Selected registration host is unavailable');
     const { registerTask } = await import('../core/host/registration');
     const result = await this.engine.withHost(hostId, () => registerTask(this.store, this.engine.adapter as Adapter & RegistrationAdapter, this.engine.profiles, input, { via: context?.via ?? null }));

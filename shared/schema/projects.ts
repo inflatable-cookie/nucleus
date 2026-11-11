@@ -176,7 +176,7 @@ export const projectQuerySchema = z.union([
 export const projectSetPlannerInputSchema = z.object({
   key: projectSchema.shape.key,
   agentId: z.string().trim().min(1).max(300).nullable(),
-  /** The calling thread; the CLI fills it from PASEO_AGENT_ID, and the board fills the operator. */
+  /** The calling thread; the CLI resolves its Nucleus ticket or host identity, and the board fills the operator. */
   setBy: z.string().trim().min(1).max(300).default("operator"),
   /** Optional reason, recorded beside the change in the project's event history. */
   note: z.string().trim().max(2000).optional(),

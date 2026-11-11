@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readPayload } from './payload.mjs';
 import { queueClient } from './queue-client.mjs';
+import { cliCallerSource, resolveCliCaller } from './caller.mjs';
 import { bootstrapEntries, bootstrapSources } from './bootstrap-sources.mjs';
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
@@ -207,6 +208,8 @@ const uiCommand = requestedMethod === 'ui';
 const file = uiCommand ? undefined : rest.find(arg => arg !== '--wait');
 // Spec 050: the CLI verb name for the task.next read RPC.
 const method = uiCommand ? 'service.ui-link' : requestedMethod === 'next' ? 'task.next' : requestedMethod;
+let callerIdentity;
+const callingThread = async () => (await (callerIdentity ??= resolveCliCaller({ viaPaseo }))).caller;
 const input = uiCommand ? { action: rest.includes('--revoke') ? 'revoke' : 'issue' } : readPayload(file);
 if (method === 'task.next' && input && typeof input === 'object') delete input.caller;
 if (rest.includes('--wait')) {
@@ -215,77 +218,76 @@ if (rest.includes('--wait')) {
 }
 if (method === 'project.qa.run' && input && typeof input === 'object') {
   input.requestId ??= randomUUID();
-  input.submitterAgentId ??= process.env.PASEO_AGENT_ID || undefined;
+  input.submitterAgentId = await callingThread();
   console.error(`QA request ID: ${input.requestId}; reconcile with project.qa.request-status, never repeat with a new ID after unknown delivery.`);
 }
 if (method === 'lead.approve') {
   if (!input || typeof input !== 'object' || Array.isArray(input) || input.relayed === false || input.approver === 'operator (board)')
     throw new Error('CLI lead approval must identify the agent and be relayed');
   input.relayed = true;
+  input.approver = await callingThread();
 }
 if (method === 'decision.answer') {
   if (!input || typeof input !== 'object' || Array.isArray(input) || input.relayed === false || input.answeredBy === 'operator (board)' || input.answeredBy === 'operator')
     throw new Error('CLI decision.answer must identify the relaying agent and be relayed');
   input.relayed = true;
   if (!input.note?.trim()) throw new Error('CLI decision.answer requires a note quoting the operator authorization');
+  input.answeredBy = await callingThread();
 }
 if ((method === 'queue.routing-grant' || method === 'routing-grant') && input && typeof input === 'object' && !Array.isArray(input)) {
   if (input.action === 'revoke' || input.caller === 'operator (board)' || input.caller === 'operator')
     throw new Error('CLI cannot revoke a routing grant or claim the operator board; revoke from the board');
-  input.caller = process.env.PASEO_AGENT_ID;
-  if (!input.caller) throw new Error('CLI queue.routing-grant records the calling planner; PASEO_AGENT_ID is required');
+  input.caller = await callingThread();
 }
 if (method === 'lead.submit' || method === 'lead.promote-task' || method === 'papercut.promote-task') {
   if (input?.board) throw new Error('CLI promotion must identify the agent and cannot claim board approval');
-  if (!input?.agent || !input?.note?.trim()) throw new Error('CLI task promotion requires an agent and operator authorization note');
+  if (!input?.note?.trim()) throw new Error('CLI task promotion requires an agent and operator authorization note');
+  input.agent = await callingThread();
 }
 if (method === 'task.register' && input && typeof input === 'object' && !Array.isArray(input)) {
-  // Spec 058 slice 4: the caller's identity comes from its authenticated Paseo
-  // thread, never from a typed name. The shell's PASEO_AGENT_ID overwrites any
-  // typed caller, and the service binds the task to that thread's own worktree.
-  input.caller = process.env.PASEO_AGENT_ID;
-  if (!input.caller) throw new Error('CLI task.register records the calling thread as worker; PASEO_AGENT_ID is required');
+  // The resolver overwrites a typed caller; the service binds this thread's worktree.
+  input.caller = await callingThread();
 }
 // Self-force is authenticated by this run's ticket, never a typed caller.
 if (['task', 'queue.task'].includes(method) && input?.force && process.env.NUCLEUS_TICKET) {
   const ticket = JSON.parse(await readFile(process.env.NUCLEUS_TICKET, 'utf8'));
-  if (typeof ticket.token !== 'string' || typeof ticket.socketPath !== 'string' ||
-      typeof ticket.taskId !== 'string' || typeof ticket.runId !== 'string')
-    throw new Error('The Nucleus run ticket is incomplete; self-force is unavailable');
-  const { callbackRequest } = await import('../shared/service/callback-client.mjs');
-  const result = await callbackRequest({socketPath: ticket.socketPath,
-    token: ticket.token}, '/task-control', {
-    callerTaskId: ticket.taskId,
-    callerRunId: ticket.runId, input,
-  }, {timeoutMs:45000, timeoutMessage:'Self-force timed out; read the operation before retrying'});
-  console.log(JSON.stringify(result));
-  process.exit(0);
-}
-if ((method === 'task' || method === 'queue.task') && input && typeof input === 'object' && !Array.isArray(input)) {
-  // Spec 050: the calling thread rides along on every task control so the
-  // owner_control audit event can name it. Record only; absent keeps the
-  // legacy operator control record.
-  if (input.caller === undefined && process.env.PASEO_AGENT_ID) input.caller = process.env.PASEO_AGENT_ID;
+  if (!ticket.participantId) {
+    if (typeof ticket.token !== 'string' || typeof ticket.socketPath !== 'string' ||
+        typeof ticket.taskId !== 'string' || typeof ticket.runId !== 'string')
+      throw new Error('The Nucleus run ticket is incomplete; self-force is unavailable');
+    const { callbackRequest } = await import('../shared/service/callback-client.mjs');
+    const result = await callbackRequest({socketPath: ticket.socketPath,
+      token: ticket.token}, '/task-control', {
+      callerTaskId: ticket.taskId,
+      callerRunId: ticket.runId, input,
+    }, {timeoutMs:45000, timeoutMessage:'Self-force timed out; read the operation before retrying'});
+    console.log(JSON.stringify(result));
+    process.exit(0);
+  }
 }
 if ((method === 'task' || method === 'queue.task') && ['set_routing', 'exclude_worker'].includes(input?.action) && !(input.action === 'set_routing' && input.critical !== undefined && !['scope','complexity','preferredProfileId','requirePreferred','thinkingOptionId','profileRequests'].some(key => input[key] !== undefined))) {
   if (!input.note?.trim()) throw new Error(`CLI ${input.action} requires a note naming operator authorization`);
   input.relayed = true;
 }
+if ((method === 'task' || method === 'queue.task') && input && typeof input === 'object' && !Array.isArray(input)) {
+  // Spec 050: the calling thread rides along on every task control so the
+  // owner_control audit event can name it.
+  input.caller = await callingThread();
+}
 if ((method === 'task' || method === 'queue.task') && input?.action === 'accept_receipt') {
-  if (!process.env.PASEO_AGENT_ID || !input.relayed || !input.note?.trim())
+  if (!input.relayed || !input.note?.trim())
     throw new Error('CLI receipt acceptance requires the relaying thread and an operator authorization note');
-  input.caller = process.env.PASEO_AGENT_ID;
+  input.caller = await callingThread();
 }
 if ((method === 'task' || method === 'queue.task') && input?.action === 'complete') {
   // Spec 050: a completion is recorded against the calling thread, like every owner verb.
-  if (!process.env.PASEO_AGENT_ID) throw new Error('CLI complete requires PASEO_AGENT_ID for the calling owner thread');
+  input.caller = await callingThread();
   if (typeof input.reason !== 'string' || !input.reason.trim()) throw new Error('CLI complete requires a reason');
 }
 if ((method === 'task' || method === 'queue.task') && (input?.action === 'hold' || input?.action === 'keep_hold')) {
   // Spec 040: a hold has a reason and an owner, for every caller. The owner is the calling thread.
   if (typeof input.reason !== 'string' || !input.reason.trim()) throw new Error(`CLI ${input.action} requires a reason`);
-  input.agentId = input.agentId ?? process.env.PASEO_AGENT_ID;
-  if (!input.agentId) throw new Error(`CLI ${input.action} records the calling thread as owner; PASEO_AGENT_ID is required`);
+  input.agentId = await callingThread();
 }
 if (method === 'repository.rekey') {
   // Spec 056: a re-key is an operator act. The CLI records who asked, who
@@ -295,40 +297,41 @@ if (method === 'repository.rekey') {
   if (typeof input.reason !== 'string' || !input.reason.trim()) throw new Error('CLI repository.rekey requires a reason quoting the operator authorization');
   if (typeof input.idempotencyKey !== 'string' || !input.idempotencyKey.trim()) throw new Error('CLI repository.rekey requires the caller\'s idempotencyKey');
   input.author ??= 'operator';
-  if (input.relayedBy === undefined) input.relayedBy = process.env.PASEO_AGENT_ID && process.env.PASEO_AGENT_ID !== input.author ? process.env.PASEO_AGENT_ID : null;
+  input.relayedBy = await callingThread();
 }
 if (method === 'question.answer') {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('CLI question.answer takes {questionId, answer or choice, reason}');
-  const { resolveQuestionAnswerCaller } = await import('../shared/question-caller.mjs');
-  const identity = resolveQuestionAnswerCaller(process.env);
+  const identity = cliCallerSource();
   if (identity.source === 'ticket') {
     const ticket = JSON.parse(await readFile(identity.path, 'utf8'));
-    if (typeof ticket.token !== 'string' || typeof ticket.socketPath !== 'string' ||
-        typeof ticket.taskId !== 'string' || typeof ticket.runId !== 'string')
-      throw new Error('The Nucleus run ticket is incomplete; question.answer is unavailable');
-    if (typeof input.questionId !== 'string' || !input.questionId.trim())
-      throw new Error('CLI question.answer with a run ticket takes {questionId, answer or choice, reason}');
-    const { callbackRequest } = await import('../shared/service/callback-client.mjs');
-    const payload = {
-      taskId: ticket.taskId, runId: ticket.runId, questionId: input.questionId,
-      answer: input.answer, choice: input.choice, reason: input.reason,
-      decision: input.decision, overtakes: input.overtakes,
-    };
-    for (const key of Object.keys(payload)) if (payload[key] === undefined) delete payload[key];
-    payload.eventId = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-    const result = await callbackRequest({ socketPath: ticket.socketPath, token: ticket.token }, '/answer', payload, {
-      timeoutMs: 45000, timeoutMessage: 'Callback timed out; retry the same JSON',
-    });
-    console.log(JSON.stringify(result));
-    process.exit(0);
-  }
-  input.caller = identity.caller;
+    if (ticket.participantId) {
+      input.caller = (await resolveCliCaller({ viaPaseo, source: identity })).caller;
+    } else {
+      if (typeof ticket.token !== 'string' || typeof ticket.socketPath !== 'string' ||
+          typeof ticket.taskId !== 'string' || typeof ticket.runId !== 'string')
+        throw new Error('The Nucleus run ticket is incomplete; question.answer is unavailable');
+      if (typeof input.questionId !== 'string' || !input.questionId.trim())
+        throw new Error('CLI question.answer with a run ticket takes {questionId, answer or choice, reason}');
+      const { callbackRequest } = await import('../shared/service/callback-client.mjs');
+      const payload = {
+        taskId: ticket.taskId, runId: ticket.runId, questionId: input.questionId,
+        answer: input.answer, choice: input.choice, reason: input.reason,
+        decision: input.decision, overtakes: input.overtakes,
+      };
+      for (const key of Object.keys(payload)) if (payload[key] === undefined) delete payload[key];
+      payload.eventId = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+      const result = await callbackRequest({ socketPath: ticket.socketPath, token: ticket.token }, '/answer', payload, {
+        timeoutMs: 45000, timeoutMessage: 'Callback timed out; retry the same JSON',
+      });
+      console.log(JSON.stringify(result));
+      process.exit(0);
+    }
+  } else input.caller = await callingThread();
 }
 if (method === 'project.set-planner') {
   // Spec 058 (task 540): the planner names itself, or the operator names one; the calling thread is recorded as the setter.
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('CLI project.set-planner takes {key, agentId}');
-  input.setBy = process.env.PASEO_AGENT_ID;
-  if (!input.setBy) throw new Error('CLI project.set-planner records the calling thread as the setter; PASEO_AGENT_ID is required');
+  input.setBy = await callingThread();
 }
 // Most methods are `queue.*`; a few (such as `lanes`) are registered without a prefix.
 // Try the prefixed name first and fall back to the name as given if it is not a method.

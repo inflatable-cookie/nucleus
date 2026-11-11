@@ -436,8 +436,8 @@ export class Questions {
         if (noticed() || !this.resolution.originHostAvailable(host) || !this.adapter.notify) return;
         const choices = decision.options.length ? ` Choices: ${decision.options.join(' | ')}.` : '';
         const reference = this.store.task(task.id).reference ?? task.title;
-        await this.adapter.notify(planner, `ns-queue-question-${decision.id}`,
-          `Nucleus raised a question on ${reference} (kind ${decision.kind}) because the task host cannot take a native question. Answer it on the board (question.answer) or through nucleus_ask. Question: ${decision.question}${choices}`);
+        await this.resolution.host.sendMessage(planner, { messageId: `ns-queue-question-${decision.id}`,
+          text: `Nucleus raised a question on ${reference} (kind ${decision.kind}) because the task host cannot take a native question. Answer it on the board (question.answer) or through nucleus_ask. Question: ${decision.question}${choices}` });
         if (!noticed()) this.store.event(task.id, 'operator_question_planner_notice', `${decision.id}: planner ${planner}`);
       });
     })().catch(error => {

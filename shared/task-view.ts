@@ -1,3 +1,4 @@
+import { sameCallerIdentity } from './agent-identity';
 import type { Task, Run, Project, TaskDetail, TaskSummary, Completion, CompletionPolicy, CompletionMembership, WorkerExclusion, OwnerAcceptanceRecord, HoldKind, UnchangedBoard, AwaitingProof, ProofRoute } from "./contracts";
 import type { Incident } from "./incident";
 import { isDispositionComplete } from "./disposition";
@@ -25,23 +26,24 @@ export * from "./task-stop";
 export function completionMembership(policy: CompletionPolicy): CompletionMembership[] {
   const members = new Map<string, {agentId:string;workspaceId:string;sources:Set<"origin"|"creator"|"self">;originEntry:boolean}>();
   const add = (agentId:string, workspaceId:string, source:"origin"|"creator"|"self", originEntry=false) => {
-    const member=members.get(agentId)??{agentId,workspaceId,sources:new Set(),originEntry:false};
-    member.workspaceId=workspaceId;member.sources.add(source);member.originEntry ||= originEntry;members.set(agentId,member);
+    const key = [...members.keys()].find(id => sameCallerIdentity(id,agentId)) ?? agentId;
+    const member=members.get(key)??{agentId:key,workspaceId,sources:new Set(),originEntry:false};
+    member.workspaceId=workspaceId;member.sources.add(source);member.originEntry ||= originEntry;members.set(key,member);
   };
   // The owner's entry is keyed by the creator and delivered to whoever owns the
   // task now (`originEntry`). A creator that nominated itself, or the owner's own
   // subscription choice, is that same entry, never a literal copy of a thread that
   // may since have handed the task on (Tom, 2026-10-26: one owner field).
-  const owner=taskOwner(policy),origin=policy.originAgentId,ownerEntry=(agentId:string)=>agentId===origin||agentId===owner;
+  const owner=taskOwner(policy),origin=policy.originAgentId,ownerEntry=(agentId:string)=>sameCallerIdentity(agentId,origin)||sameCallerIdentity(agentId,owner);
   if(policy.notifyOriginOnCloseout && policy.originWorkspaceId)add(origin,policy.originWorkspaceId,"origin",true);
   for(const recipient of policy.creatorCompletionRecipients){
     if(ownerEntry(recipient.agentId))add(origin,policy.originWorkspaceId??recipient.workspaceId,"creator",true);
     else add(recipient.agentId,recipient.workspaceId,"creator");
   }
   for(const override of policy.completionSubscriptionOverrides){
-    const key=override.agentId===owner?origin:override.agentId;
+    const key=ownerEntry(override.agentId)?origin:override.agentId;
     if(override.subscribed)add(key,key===origin?policy.originWorkspaceId??override.workspaceId:override.workspaceId,"self",key===origin);
-    else members.delete(key);
+    else for (const id of members.keys()) if (sameCallerIdentity(id,key)) members.delete(id);
   }
   return [...members.values()].sort((a,b)=>a.agentId.localeCompare(b.agentId)).map(member=>({
     agentId:member.agentId,workspaceId:member.workspaceId,sources:[...member.sources].sort() as ("origin"|"creator"|"self")[],originEntry:member.originEntry,

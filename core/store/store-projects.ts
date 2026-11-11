@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { basename, resolve } from "node:path";
 import { taskHasUnreleasedRun, repositorySettingsSchema, DEFAULT_REPOSITORY_CHECKS_POLICY, DEFAULT_HOST_KIND, type RepositoryChecksPolicy, type HostKind, projectSchema, projectTombstoneSchema, projectUpsertInputSchema, projectDispatchLimitOverridesSchema, projectPlanSchema, projectQaRunSchema, repositoryMatchSpecificity, DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT, isOperatorOrigin, QUEUE_REPOSITORY_ORIGIN, NUCLEUS_REPOSITORY_ORIGIN, type Lead, type Decision, type ProjectPlan, type PendingSubmission, type Run, type Outcome, type Task, type Lane, type Project, type ProjectRemovalBlocker, type ProjectManagementPreview, type ProjectManageInput, type ProjectRemoveRepositoryInput, type ProjectMergeInput, type ProjectMergeResult, type ProjectMergeCheck, type ProjectMergeCheckInput, type ProjectTombstone, type ProjectUpsertInput, type RepositorySettings, type ProjectCloseout, type ProjectValidation, type ProjectQa } from "../../shared/contracts";
 import { type QueueOperation } from "../../shared/operations";
@@ -229,6 +230,9 @@ export class StoreProjects {
       const project = this.projectByKey(input.key);
       if (!project) throw new Error(`Unknown project ${input.key}`);
       const planner = input.agentId ? { agentId: input.agentId, setBy: input.setBy, setAt: at } : null;
+      // Every assignment, including clearing or reassigning the same thread, revokes its old identity ticket.
+      this.core.deleteMeta(`plannerParticipant:${input.key}`);
+      this.core.setMeta(`plannerParticipantGeneration:${input.key}`, randomUUID());
       const updated = projectSchema.parse({ ...project, planner });
       this.db.prepare("UPDATE projects SET data=? WHERE key=?").run(JSON.stringify(updated), input.key);
       this.core.event(`project:${input.key}`, planner ? "project_planner_set" : "project_planner_cleared",

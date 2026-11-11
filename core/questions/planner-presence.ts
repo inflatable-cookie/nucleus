@@ -31,7 +31,7 @@ export class PlannerPresence {
       if (!host) return;
       await this.context.withHost(host, async () => {
         if (!this.context.originHostAvailable(host) || !this.context.adapter.notify) return;
-        await this.context.adapter.notify(agentId, `ns-stale-answer-${questionId}`, `Your answer to Nucleus question ${questionId} arrived after an owner control superseded it. Nucleus recorded it as stale; it has no effect.`);
+        await this.context.host.sendMessage(agentId, { messageId: `ns-stale-answer-${questionId}`, text: `Your answer to Nucleus question ${questionId} arrived after an owner control superseded it. Nucleus recorded it as stale; it has no effect.` });
       });
     })().catch(() => { /* the stale answer remains durably recorded */ });
   }

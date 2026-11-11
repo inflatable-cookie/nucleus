@@ -7,6 +7,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { questionAnswerInputSchema, questionAnswerRequestSchema, submissionSchema } from "../shared/contracts";
+import { hostCallerIdentity } from "../hosts/paseo/cli/index.mjs";
 import { resolveQuestionAnswerCaller } from "../shared/question-caller.mjs";
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
@@ -119,7 +120,7 @@ test("CLI question.answer refuses a typed caller when no calling-thread environm
   assert.notEqual(result.status, 0);
   assert.match(
     result.stderr,
-    /question.answer records the calling thread; a run ticket or PASEO_AGENT_ID is required/,
+    /no caller identity found.*Nucleus run or participant ticket.*host-supplied identity/,
   );
 });
 
@@ -128,15 +129,15 @@ test("question.answer caller resolver prefers an existing run ticket over PASEO_
   const ticket = join(dir, "run.json");
   writeFileSync(ticket, "{}");
   try {
-    assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: ticket, PASEO_AGENT_ID: "paseo-thread" }),
+    assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: ticket, PASEO_AGENT_ID: "paseo-thread" }, hostCallerIdentity),
       { source: "ticket", path: ticket });
-    assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: join(dir, "gone.json"), PASEO_AGENT_ID: "paseo-thread" }),
-      { source: "agent", caller: "paseo-thread" });
-    assert.deepEqual(resolveQuestionAnswerCaller({ PASEO_AGENT_ID: "paseo-thread" }),
-      { source: "agent", caller: "paseo-thread" });
+    assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: join(dir, "gone.json"), PASEO_AGENT_ID: "paseo-thread" }, hostCallerIdentity),
+      { source: "host", hostKind: "paseo", nativeAgentId: "paseo-thread" });
+    assert.deepEqual(resolveQuestionAnswerCaller({ PASEO_AGENT_ID: "paseo-thread" }, hostCallerIdentity),
+      { source: "host", hostKind: "paseo", nativeAgentId: "paseo-thread" });
     assert.throws(() => resolveQuestionAnswerCaller({ NUCLEUS_TICKET: join(dir, "gone.json") }),
-      /a run ticket or PASEO_AGENT_ID is required/);
-    assert.throws(() => resolveQuestionAnswerCaller({}), /a run ticket or PASEO_AGENT_ID is required/);
+      /Nucleus run or participant ticket.*host-supplied identity/);
+    assert.throws(() => resolveQuestionAnswerCaller({}), /Nucleus run or participant ticket.*host-supplied identity/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -162,7 +163,7 @@ test("CLI question.answer with a missing run ticket does not fail as ENOENT", ()
   assert.notEqual(result.status, 0);
   assert.match(
     result.stderr,
-    /question.answer records the calling thread; a run ticket or PASEO_AGENT_ID is required/,
+    /no caller identity found.*Nucleus run or participant ticket.*host-supplied identity/,
   );
   assert.doesNotMatch(result.stderr, /ENOENT|no such file/i);
 });

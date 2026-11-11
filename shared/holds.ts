@@ -1,3 +1,4 @@
+import { sameCallerIdentity } from './agent-identity';
 import type { Task, TaskHolds, HoldFence, HoldKind } from "./contracts";
 
 /** Fields `holdsOf` reads, including the legacy single-hold projection. */
@@ -107,7 +108,7 @@ export function holdOwnerOf(task: { notificationAgentId?: string | null; originA
 
 /** The owner value a new hold fence stores: the marker when the placing thread owns the task. */
 export function storedHoldOwner(task: { notificationAgentId?: string | null; originAgentId: string }, owner: string): string {
-  return owner !== TASK_OWNER_HOLD && !isOperatorOrigin(owner) && owner === taskOwner(task) ? TASK_OWNER_HOLD : owner;
+  return owner !== TASK_OWNER_HOLD && !isOperatorOrigin(owner) && sameCallerIdentity(owner, taskOwner(task)) ? TASK_OWNER_HOLD : owner;
 }
 
 

@@ -1,3 +1,4 @@
+import { resolveTicketCaller } from "../../core/dispatch/participant-tickets";
 import { createServer } from "node:http";
 import { chmodSync, readFileSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { bulkDispositionRequestSchema, completionSchema, dependencyIdsSchema, taskControlRequestSchema } from "../../shared/contracts";
@@ -7,6 +8,7 @@ import {agentMessageSchema} from "../../core/questions/agent-messages";
 import type { Engine } from "../../core/engine";
 import { z } from "zod";
 
+const callerTicketSchema = z.union([z.object({ taskId: z.string().min(1), runId: z.string().min(1) }).strict(), z.object({ participantId: z.string().uuid() }).strict()]);
 const dependencyCallerSchema=z.object({callerTaskId:z.string().min(1),callerRunId:z.string().min(1)});
 const dependencyDetailSchema=dependencyCallerSchema.extend({taskId:z.string().min(1)}).strict();
 const dependencyUpdateSchema=dependencyDetailSchema.extend({version:z.number().int().positive(),dependsOn:dependencyIdsSchema}).strict();
@@ -95,7 +97,7 @@ export async function startCallbacks(socketPath: string, helperPath: string, eng
   const reports=new Reports(engine);
   const server = createServer(async (req, res) => {
     res.setHeader("content-type", "application/json");
-    if (req.method !== "POST" || !["/complete","/report","/ask","/message","/answer","/task-dependencies","/set-dependencies","/project-queue","/promote-task","/task-disposition","/task-next","/dispose-task","/bulk-task-disposition","/bulk-task-disposition-detail","/bulk-task-disposition-retry","/task-control"].includes(req.url ?? "")) { res.writeHead(404).end('{"error":"Not found"}'); return; }
+    if (req.method !== "POST" || !["/caller","/complete","/report","/ask","/message","/answer","/task-dependencies","/set-dependencies","/project-queue","/promote-task","/task-disposition","/task-next","/dispose-task","/bulk-task-disposition","/bulk-task-disposition-detail","/bulk-task-disposition-retry","/task-control"].includes(req.url ?? "")) { res.writeHead(404).end('{"error":"Not found"}'); return; }
     const auth = req.headers.authorization;
     if (!auth?.startsWith("Bearer ")) { res.writeHead(401).end('{"error":"Unauthorized callback"}'); return; }
     const maxRequestBytes = req.url === "/complete" || req.url === "/report" ? 5 * 1024 * 1024 : 65536;
@@ -108,7 +110,8 @@ export async function startCallbacks(socketPath: string, helperPath: string, eng
       }
       const input = JSON.parse(Buffer.concat(chunks).toString());
       let receipt:unknown;
-      if(req.url==="/report")receipt=await reports.report(reportSchema.parse(input),auth.slice(7));
+      if(req.url==="/caller")receipt=resolveTicketCaller(engine.store,callerTicketSchema.parse(input),auth.slice(7));
+      else if(req.url==="/report")receipt=await reports.report(reportSchema.parse(input),auth.slice(7));
       else if(req.url==="/ask")receipt=await engine.resolution.agentAsk(agentAskSchema.parse(input),auth.slice(7));
       else if(req.url==="/message")receipt=await engine.resolution.agentMessage(agentMessageSchema.parse(input),auth.slice(7));
       else if(req.url==="/answer")receipt=engine.resolution.answerDelegatedQuestionFromTicket(helperAnswerSchema.parse(input),auth.slice(7));

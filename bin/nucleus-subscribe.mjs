@@ -1,3 +1,4 @@
+import { resolveCliCaller } from './caller.mjs';
 // Completion-subscription helper: subscribe or unsubscribe the calling thread.
 
 import { queueClient } from './queue-client.mjs';
@@ -6,8 +7,7 @@ process.argv=process.argv.filter(arg=>arg!=='--via-paseo');
 
 const [taskId,action]=process.argv.slice(2);
 if(!taskId||!['subscribe','unsubscribe'].includes(action))throw Error('Usage: node bin/nucleus-subscribe.mjs TASK_ID subscribe|unsubscribe');
-const agentId=process.env.PASEO_AGENT_ID;
-if(!agentId)throw Error('PASEO_AGENT_ID is required; this helper only changes the calling thread subscription');
+const agentId=(await resolveCliCaller({viaPaseo})).caller;
 // Subscribing is idempotent, so a moved task version or a transient transport fault is
 // retried with a fresh version read. Anything else, or exhaustion, fails with one line.
 const reasonOf=error=>(error instanceof Error?error.message:String(error)).split('\n')[0].replace(/^Queue service request failed \([a-z_]+\): /,'');

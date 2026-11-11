@@ -1,6 +1,2 @@
-export type QuestionAnswerCaller =
-  | { source: "ticket"; path: string }
-  | { source: "agent"; caller: string };
-
-/** Ticket-first caller identity for `question.answer`. */
-export function resolveQuestionAnswerCaller(env?: NodeJS.ProcessEnv): QuestionAnswerCaller;
+export { callerSource as resolveQuestionAnswerCaller } from './caller.mjs';
+export type { CallerSource as QuestionAnswerCaller } from './caller.mjs';

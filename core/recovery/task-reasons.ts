@@ -1,3 +1,5 @@
+import { parseAgentId, sameCallerIdentity } from '../../shared/agent-identity';
+import { hostKindOf } from '../../shared/host-kind';
 import { ProvenPreSendRefusalError } from '../host/errors';
 export { ProvenPreSendRefusalError } from '../host/errors';
 /**
@@ -247,7 +249,13 @@ const escalationOutlived = (task: Task): boolean =>
 /** Queue planner ids are stored as full UUIDs; callers sometimes arrive as the 8-char prefix. */
 function plannerIdMatches(planner: string | undefined, caller: string): boolean {
   if (!planner) return false;
-  if (planner === caller) return true;
+  if (sameCallerIdentity(planner, caller)) return true;
+  const plannerRef = parseAgentId(planner), callerRef = parseAgentId(caller);
+  if (plannerRef && callerRef && plannerRef.hostId !== callerRef.hostId) return false;
+  if (plannerRef && !callerRef && hostKindOf(plannerRef.hostId) !== 'paseo'
+    || callerRef && !plannerRef && hostKindOf(callerRef.hostId) !== 'paseo') return false;
+  planner = plannerRef?.nativeAgentId ?? planner;
+  caller = callerRef?.nativeAgentId ?? caller;
   if (!/^[0-9a-f-]+$/i.test(planner) || !/^[0-9a-f-]+$/i.test(caller)) return false;
   const a = planner.replace(/-/g, '').toLowerCase();
   const b = caller.replace(/-/g, '').toLowerCase();

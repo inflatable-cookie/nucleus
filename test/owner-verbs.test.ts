@@ -1,3 +1,4 @@
+import { formatAgentId } from '../shared/agent-identity';
 import { profile } from './support/fakes';
 import { settleSupersededFences } from '../core/recovery/fence-settlement';
 import { test } from 'node:test';
@@ -1354,4 +1355,20 @@ test('a continuation whose prior run has no cleanup record is told so, and a fin
     const done = f.next();
     assert.ok(!done.verbs.some(verb => verb.note && /run-bound build output cleanup/.test(verb.note)), 'a finished task carries no continuation disclosure');
   } finally { await f.close(); }
+});
+
+
+test('qualified owner verb callers keep planner force authority scoped to the same host', async () => {
+ const f=fixture();try {
+  f.store.upsertProject({key:'caller-project',name:'Caller project',repositories:[{origin:null,path:'/repo'}]});
+  f.store.setProjectPlanner({key:'caller-project',agentId:'planner',setBy:'operator (board)'});
+  assert.equal(f.engine.forceCallerAuthorized(f.task(),formatAgentId('host','planner')),true);
+  f.store.setProjectPlanner({key:'caller-project',agentId:formatAgentId('host','planner'),setBy:'operator (board)'});
+  assert.equal(f.engine.forceCallerAuthorized(f.task(),formatAgentId('host','planner')),true);
+  assert.equal(f.engine.forceCallerAuthorized(f.task(),formatAgentId('other-host','planner')),false);
+  const result=await f.engine.performTaskControl(taskControlInputSchema.parse({taskId:f.taskId,version:f.task().version,
+    action:'hold',reason:'Waiting',caller:formatAgentId('host','planner'),agentId:formatAgentId('host','planner')}));
+  assert.equal(holdsOf(result).dispatch?.owner,formatAgentId('host','planner'));
+  assert.equal(JSON.parse(f.events('owner_control').at(-1)!.detail).caller,formatAgentId('host','planner'));
+ }finally{await f.close();}
 });

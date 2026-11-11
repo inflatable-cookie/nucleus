@@ -122,7 +122,7 @@ export class Notices {
     if (!record) return 'done';
     const target = d.target(record);
     d.mark(record, 'intent', '');
-    try { await this.adapter.notify!(target.agentId, target.id, target.text, target.sourceAgentId); d.mark(record, 'delivered', ''); }
+    try { await this.resolution.host.sendMessage(target.agentId, { messageId: target.id, text: target.text, sourceAgentId: target.sourceAgentId }); d.mark(record, 'delivered', ''); }
     catch (error) { d.mark(record, 'uncertain', String(error)); }
     return 'done';
   }

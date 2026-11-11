@@ -86,6 +86,14 @@ The [adapter contract](../specs/t3code-host-adapter.md) owns its nightly protoco
 mapping and private-server proof surface. `service/t3code-host.ts` registers its
 independent connection and admission state alongside Paseo.
 
+Host-specific environment names belong under their own `hosts/<host>/` integration.
+The publication gate and folder-import tests enforce this for runtime roots,
+including string literals and environment properties; ordinary identifier constants
+are not environment reads. The exact-count exception list in
+`scripts/host-environment-exceptions.json` only shrinks: the two published hook
+protocol aliases remain until their protocol migration, and caller identity has no
+exception.
+
 ## Supporting layout
 
 | Folder (including second level) | Ownership |

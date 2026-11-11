@@ -277,7 +277,7 @@ are unchanged.
   closeout, usage and operator questions.
 - **Identity from the thread, never a typed name.** The input carries no agent,
   workspace or branch field, so the binding cannot be steered from input. The
-  CLI overwrites `caller` from `PASEO_AGENT_ID` and the service binds the task
+  CLI overwrites `caller` from the calling thread’s Nucleus ticket or host identity and the service binds the task
   to that thread's own live Paseo worktree. The Paseo bridge path, whose
   envelope carries no reliable caller identity, is refused, as is a caller that
   is not a live Paseo thread.

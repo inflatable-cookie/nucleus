@@ -1,3 +1,4 @@
+import { parseAgentId, sameCallerIdentity } from '../../shared/agent-identity';
 import type { Resolution } from '../resolution';
 import { recordResultApplied, resultApplied } from '../intake/applied-result';
 import { wireLabel } from "../../shared/wire-labels";
@@ -75,7 +76,7 @@ export const INTERACTIVE_WAIT_REASON = "Interactive session: waiting for the ope
  * replace the adapter.
  */
 export type WorkerReconcileContext = Pick<Engine, 'acceptWorkerResult' | 'adapter' | 'admission' | 'branchPrLookupDue' | 'compareSiblings' | 'continuationOwnsReturn' | 'hooks' | 'host' | 'idleGraceMs' | 'note' | 'reconcileBlockedReturn' | 'reconcileBranchPr' | 'reconcileObservation' | 'reconcileReportingBinding' | 'recordObservation' | 'reportingBindingRecheckDue' | 'stopped' | 'store' | 'updateAfterOperatorRemap'>
-  & { readonly resolution: Pick<Resolution, 'adoptReplacementPr' | 'attention' | 'extendCallbackReminder' | 'heavyRunAlive' | 'reconcileStalledTurnStop' | 'recovery' | 'remindStoppedWorker' | 'resolveIncident' | 'responsiblePrReportRefused' | 'settleAutomaticReplayHold' | 'stalls' | 'suppressAutomaticRetry' | 'update' | 'waiting'> };
+  & { readonly resolution: Pick<Resolution, 'adoptReplacementPr' | 'attention' | 'extendCallbackReminder' | 'heavyRunAlive' | 'identifyOriginHost' | 'withHost' | 'reconcileStalledTurnStop' | 'recovery' | 'remindStoppedWorker' | 'resolveIncident' | 'responsiblePrReportRefused' | 'settleAutomaticReplayHold' | 'stalls' | 'suppressAutomaticRetry' | 'update' | 'waiting'> };
 
 export class WorkerReconcile {
   constructor(readonly engine: WorkerReconcileContext) {}
@@ -463,7 +464,11 @@ export class WorkerReconcile {
         const messageId = `ns-report-ready-${task.id}-${current.completion.eventId}`;
         this.store.event(task.id, 'report_ready_planner_notice_intent', `${planner}: ${messageId}`);
         try {
-          await this.adapter.notify(planner, messageId, `Nucleus: report ready for planner acceptance\nTask: ${current.title} (${current.id})\n${current.completion.headline ?? current.completion.summary}\nArtifact: ${artifact.key} v${artifact.version} (${artifact.digest})\nUse the existing complete owner verb with the artifact and an acceptance reason, or move to work with an instruction if the report needs revision. No PR or reviewer was started.`);
+          const hostId = parseAgentId(planner)?.hostId ?? (sameCallerIdentity(planner, current.notificationAgentId ?? current.originAgentId)
+            ? current.originHostId : await this.resolution.identifyOriginHost(planner));
+          if (!hostId) throw Error('Report acceptance planner host is unknown');
+          await this.resolution.withHost(hostId, () => this.engine.host.sendMessage(planner, { messageId,
+            text: `Nucleus: report ready for planner acceptance\nTask: ${current.title} (${current.id})\n${current.completion!.headline ?? current.completion!.summary}\nArtifact: ${artifact.key} v${artifact.version} (${artifact.digest})\nUse the existing complete owner verb with the artifact and an acceptance reason, or move to work with an instruction if the report needs revision. No PR or reviewer was started.` }));
           this.store.event(task.id, 'report_ready_planner_notice_delivered', planner);
         } catch (error) { this.store.event(task.id, 'report_ready_planner_notice_unknown', `${planner}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000)); }
       }

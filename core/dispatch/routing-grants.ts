@@ -1,3 +1,5 @@
+import { hostKindOf } from '../../shared/host-kind';
+import { parseAgentId, sameCallerIdentity } from '../../shared/agent-identity';
 /**
  * Spec 052 planner grants (Tom, 2026-11-06). A planner asks for standing
  * permission to use frontier and above-ceiling profiles for a block of work; the
@@ -70,7 +72,7 @@ function replaceGrant(store: Store, next: RoutingGrant): RoutingGrant {
 }
 
 function liveForPlanner(grants: RoutingGrant[], planner: string, at = Date.now()): RoutingGrant | undefined {
-  return grants.find(grant => grant.planner === planner && (grant.status === "pending" || grantIsLive(grant, at)));
+  return grants.find(grant => sameCallerIdentity(grant.planner, planner) && (grant.status === "pending" || grantIsLive(grant, at)));
 }
 
 function grantCoversProfile(store: Store, grant: RoutingGrant, profileId: string): boolean {
@@ -84,7 +86,7 @@ export function coveringGrant(store: Store, task: Task, profileId: string, at = 
   expireStaleGrants(store, at);
   const owner = taskOwner(task);
   for (const grant of readRoutingGrants(store)) {
-    if (!grantIsLive(grant, at) || grant.planner !== owner) continue;
+    if (!grantIsLive(grant, at) || !sameCallerIdentity(grant.planner, owner, undefined, task.originHostId)) continue;
     if (grantCoversProfile(store, grant, profileId)) return grant;
   }
   return null;
@@ -145,7 +147,7 @@ function applyGrantToTask(store: Store, decisions: Decisions, task: Task, grant:
 function settleCoveredTasks(store: Store, decisions: Decisions, grant: RoutingGrant): void {
   if (!grantIsLive(grant)) return;
   for (const task of store.liveTasks()) {
-    if (taskOwner(task) !== grant.planner) continue;
+    if (!sameCallerIdentity(taskOwner(task), grant.planner, task.originHostId)) continue;
     applyGrantToTask(store, decisions, task, grant);
   }
 }
@@ -196,12 +198,14 @@ export function reconcileRoutingGrants(store: Store, decisions: Decisions): void
 }
 
 /** An archived planner thread ends its grant. `live` is the unarchived agent set; a failed inventory must not call this. */
-export function archiveRoutingGrants(store: Store, decisions: Decisions, live: ReadonlySet<string>): void {
+export function archiveRoutingGrants(store: Store, decisions: Decisions, live: ReadonlySet<string>, observedHostId?: string): void {
   reconcileRoutingGrants(store, decisions);
   const at = now();
   for (const grant of readRoutingGrants(store)) {
     if (!(grant.status === "pending" || grantIsLive(grant))) continue;
-    if (live.has(grant.planner)) continue;
+    const plannerHost = parseAgentId(grant.planner)?.hostId;
+    if (plannerHost && plannerHost !== observedHostId || !plannerHost && observedHostId && hostKindOf(observedHostId) !== 'paseo') continue;
+    if ([...live].some(id => sameCallerIdentity(grant.planner, id, undefined, observedHostId))) continue;
     if (grant.status === "pending" && grant.decisionId)
       withdrawOpenGrant(decisions, grant.decisionId, "The planner thread was archived; the grant no longer applies");
     const ended = replaceGrant(store, { ...grant, status: "archived", endedAt: at, endedBy: "queue", endReason: "archived" });
@@ -212,7 +216,7 @@ export function archiveRoutingGrants(store: Store, decisions: Decisions, live: R
 function findGrant(store: Store, grantId: string | undefined, planner?: string): RoutingGrant {
   const grants = readRoutingGrants(store);
   const grant = grantId ? grants.find(item => item.id === grantId)
-    : planner ? liveForPlanner(grants, planner) ?? grants.filter(item => item.planner === planner).at(-1)
+    : planner ? liveForPlanner(grants, planner) ?? grants.filter(item => sameCallerIdentity(item.planner, planner)).at(-1)
       : undefined;
   if (!grant) throw new Error(grantId ? `Unknown routing grant ${grantId}` : "No routing grant for this planner");
   return grant;
@@ -250,7 +254,7 @@ export function applyRoutingGrant(store: Store, decisions: Decisions, input: {
     if (caller === GRANT_OPERATOR_BOARD || caller === "operator")
       throw new Error("The operator revokes a grant from the board; a planner ends their own");
     const grant = findGrant(store, input.grantId, caller);
-    if (grant.planner !== caller) throw new Error("A planner ends only their own grant");
+    if (!sameCallerIdentity(grant.planner, caller)) throw new Error("A planner ends only their own grant");
     const ended = endGrant(store, decisions, grant, caller, "ended", input.reason?.trim() || "ended");
     return { grant: ended, joined: false, alreadyActive: false };
   }

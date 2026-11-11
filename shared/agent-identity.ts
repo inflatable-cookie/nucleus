@@ -1,3 +1,5 @@
+import { hostKindOf } from './host-kind';
+
 /** Versioned, canonical Nucleus identity. Native IDs remain opaque. */
 const PREFIX = 'nucleus-agent:v1:';
 
@@ -29,5 +31,25 @@ export function nativeAgentId(id: string, hostId: string): string {
   const parsed = parseAgentId(id);
   if (!parsed) throw new Error('Expected a qualified agent identity');
   if (parsed.hostId !== hostId) throw new Error('Agent identity belongs to a different host');
+  return parsed.nativeAgentId;
+}
+
+/** Caller fields accept old bare Paseo IDs without changing the stored record. */
+export function sameCallerIdentity(left: string | null | undefined, right: string | null | undefined,
+  leftHostId?: string | null, rightHostId?: string | null): boolean {
+  if (!left || !right) return false;
+  const a = parseAgentId(left), b = parseAgentId(right);
+  const aHost = a?.hostId ?? leftHostId, bHost = b?.hostId ?? rightHostId;
+  if ((a?.nativeAgentId ?? left) !== (b?.nativeAgentId ?? right)) return false;
+  if (aHost && bHost) return aHost === bHost;
+  // Unqualified historical caller fields belong to Paseo, never a new host.
+  return (!aHost || hostKindOf(aHost) === 'paseo') && (!bHost || hostKindOf(bHost) === 'paseo');
+}
+
+/** Resolve a caller for a host API; a qualified identity must match that host. */
+export function callerNativeId(id: string, hostId: string | null | undefined): string {
+  const parsed = parseAgentId(id);
+  if (!parsed) return id;
+  if (!hostId || parsed.hostId !== hostId) throw new Error('Caller identity belongs to a different or unknown host');
   return parsed.nativeAgentId;
 }

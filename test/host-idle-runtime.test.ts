@@ -1,3 +1,4 @@
+import { formatAgentId } from '../shared/agent-identity';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -76,8 +77,8 @@ test('losing plugin presence while a host is connected raises a board fault and 
     await runtime.started;
     await runtime.bootstrap;
     runtime.store.upsertProject({ key: 'nucleus', name: 'Nucleus', repositories: [{ origin: NUCLEUS_REPOSITORY_ORIGIN, path: '/nucleus' }] });
-    runtime.store.setProjectPlanner({ key: 'nucleus', agentId: 'planner-1', setBy: 'test' });
-    assert.equal(runtime.store.projectPlannerRecipient(runtime.store.queueProject()), 'planner-1');
+    runtime.store.setProjectPlanner({ key: 'nucleus', agentId: formatAgentId('host', 'planner-1'), setBy: 'test' });
+    assert.equal(runtime.store.projectPlannerRecipient(runtime.store.queueProject()), formatAgentId('host', 'planner-1'));
     runtime.hostPresenceClosed();
     // The notification also waits for Paseo call admission after bootstrap.
     await notified;

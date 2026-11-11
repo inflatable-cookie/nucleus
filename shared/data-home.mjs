@@ -7,7 +7,7 @@
 //
 // The data home is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set. Tom, 2026-11-09:
 // retire the move machinery (the move completed 08:05 UTC that day). This resolver
-// reads no journal, knows no legacy leaf, and ignores `PASEO_HOME`. A leftover
+// reads no journal, knows no legacy leaf, and ignores host configuration. A leftover
 // `~/.nucleus-stage-journal.json` and a sealed `~/.paseo/northstar-queue` are ignored.
 // Resolution for `process.env` is computed once per process.
 //

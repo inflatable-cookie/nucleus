@@ -23,3 +23,9 @@ export async function queueClient({ viaPaseo = false, dataDir, rollWaitMs, onPro
     return client.invokePluginRpc(pluginId, method, input);
   } };
 }
+
+/** Only this host interprets its calling-thread environment. */
+export function hostCallerIdentity(env = process.env) {
+  const nativeAgentId = typeof env.PASEO_AGENT_ID === 'string' ? env.PASEO_AGENT_ID.trim() : '';
+  return nativeAgentId ? { hostKind: 'paseo', nativeAgentId } : null;
+}

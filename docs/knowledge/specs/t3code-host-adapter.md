@@ -210,7 +210,7 @@ core policy as Paseo. The Adapter supplies `askReviewer` (a T3 message that send
 prompt unchanged) and `findRunAgents` (exact `nucleus.run` plus `nucleus.task`
 label lookup). Core names `question.answer` with the reissued recipient run
 ticket for any host that has a recipient run on that proven host; MCP hosts
-without a matching run clear an inherited `NUCLEUS_TICKET` so `PASEO_AGENT_ID`
+without a matching run clear an inherited `NUCLEUS_TICKET` so the host's identity
 answers. Equal native IDs on different hosts do not share a consult ticket. A
 shared ticket-first caller resolver fills identity for any host and skips a
 ticket path that is gone, so T3 does not rewrite the command to a separate

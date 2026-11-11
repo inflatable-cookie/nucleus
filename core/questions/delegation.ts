@@ -7,8 +7,9 @@ import { currentBrief } from '../planning/brief';
 import { parseNativeDelegatedReply } from './question-delegation';
 import type { Resolution } from '../resolution';
 import { chooseProfile } from '../dispatch/routing';
+import { plannerParticipantTicketPath } from '../dispatch/participant-tickets';
 import { runTicketPath, writeRunTicket } from '../dispatch/agent-creation';
-import { nativeAgentId, qualifyLegacyAgentId } from '../../shared/agent-identity';
+import { formatAgentId, nativeAgentId, parseAgentId, qualifyLegacyAgentId } from '../../shared/agent-identity';
 
 /** The selection failed before an intent or host call was made. */
 export class DelegatedHostUnavailable extends Error {}
@@ -26,17 +27,19 @@ export class Delegation {
    * Name a replacement `question.answer` identity for the recipient. Helper-reporting
    * hosts re-issue the latest run ticket. MCP hosts with a recipient run do the same
    * so ticket-first CLI does not inherit a purged launch ticket; MCP hosts without a
-   * run on this task clear `NUCLEUS_TICKET` so `PASEO_AGENT_ID` answers. Runs match
+   * run on this task clear `NUCLEUS_TICKET` so the host identity answers. Runs match
    * proven host and native identity, so a Paseo planner cannot inherit a T3 worker
    * ticket that shares the native id. Complete and ask keep refusing the released run.
    */
-  private consultTicketRoute(task: Task, recipient: string, provenHost?: string): { kind: 'ticket'; helperPath: string; ticketPath: string } | { kind: 'clear' } | undefined {
+  private consultTicketRoute(task: Task, recipient: string, provenHost?: string): { kind: 'ticket'; helperPath: string; ticketPath: string } | { kind: 'participant'; ticketPath: string } | { kind: 'clear' } | undefined {
     if (!this.adapter.helperPath || !this.adapter.socketPath) return;
     const runs = provenHost
       ? this.store.runs(task.id).filter(run => run.agentId === recipient && run.hostId === provenHost)
       : [];
     const run = runs.find(candidate => !candidate.released && !candidate.completion) ?? runs.at(-1);
     if (!run) {
+      const participant = plannerParticipantTicketPath(this.store, recipient, provenHost);
+      if (participant) return { kind: 'participant', ticketPath: participant };
       if (this.adapter.reportingViaMcp === false) throw Error('Consult requires the recipient run ticket');
       return { kind: 'clear' };
     }
@@ -79,7 +82,7 @@ export class Delegation {
     const json = JSON.stringify({ questionId: id, answer: '<answer or exact choice>', reason: '<one line>' });
     const provenHost = hostId ?? this.delegatedDelivery(id)?.hostId;
     const route = recipient ? this.consultTicketRoute(task, recipient, provenHost) : undefined;
-    const command = route?.kind === 'ticket'
+    const command = route?.kind === 'ticket' || route?.kind === 'participant'
       ? `NUCLEUS_TICKET=${this.quote(route.ticketPath)} nucleus question.answer -`
       : route?.kind === 'clear'
         ? 'NUCLEUS_TICKET= nucleus question.answer -'
@@ -90,6 +93,9 @@ export class Delegation {
     return `Task: ${task.reference ?? task.id} — ${task.title}\nQuestion id: ${id}\n${prompt}\nAnswer with this command; write nothing else in this thread. For operator-only matters set "decision":"operator" instead of answer.\n${command} <<'JSON'\n${json}\nJSON${helper}`;
   }
   openDelegatedQuestion(task: Task, id: string, recipient: string, prompt: string, timeoutMs: number, role: string, hostId?: string): void {
+    const qualified = parseAgentId(recipient);
+    if (qualified && hostId && qualified.hostId !== hostId) throw Error('Delegated recipient belongs to a different host');
+    recipient = qualified?.nativeAgentId ?? recipient;
     this.store.event(`delegation:${id}`, 'delegated_delivery', JSON.stringify({ taskId: task.id, recipient, role, prompt,
       ...(hostId ? { hostId, recipientRef: qualifyLegacyAgentId(recipient, hostId) } : {}),
       deadline: Date.now() + Math.min(timeoutMs, this.delegatedAnswerWaitMs) }));
@@ -103,12 +109,15 @@ export class Delegation {
   questionForTask(identity: string, caller: string): string {
     const taskId=this.store.resolveTaskId(identity);
     this.store.task(taskId);
-    const rows=this.store.db.prepare("SELECT DISTINCT taskId FROM events WHERE kind='delegated_delivery' AND json_extract(detail,'$.taskId')=? AND json_extract(detail,'$.recipient')=?").all(taskId,caller);
+    const identityCaller = parseAgentId(caller);
+    const nativeCaller = identityCaller?.nativeAgentId ?? caller;
+    const rows=this.store.db.prepare("SELECT DISTINCT taskId FROM events WHERE kind='delegated_delivery' AND json_extract(detail,'$.taskId')=?").all(taskId);
     const ids=rows.map(row=>String(row.taskId).replace(/^delegation:/,''))
       .filter(id=>{
         const delivery=this.delegatedDelivery(id);
         const events=this.store.eventsAll(`delegation:${id}`);
-        return delivery?.recipient===caller&&delivery.deadline>=Date.now()
+        return delivery && (delivery.recipient===nativeCaller || delivery.recipient===caller)
+          && (!identityCaller || delivery.hostId===identityCaller.hostId) && delivery.deadline>=Date.now()
           &&!events.some(event=>['delegated_answer','delegated_closed'].includes(event.kind));
       });
     if(ids.length!==1)throw Error(ids.length?'More than one open question for this task and caller; pass questionId':'No open question for this task and caller; pass questionId to inspect an existing answer');
@@ -117,18 +126,21 @@ export class Delegation {
   /** A raw caller name cannot identify a host when inventories are ambiguous. */
   async answerFromHost(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) {
     const delivery = this.delegatedDelivery(input.questionId);
-    if (!delivery || delivery.recipient !== caller) throw Error('Only the delegated recipient thread may answer this question');
-    const observedHost = await this.hostThroughBridge(await this.resolution.identifyOriginHost(caller), () => this.resolution.identifyOriginHost(caller));
+    const qualified = parseAgentId(caller);
+    const nativeCaller = qualified?.nativeAgentId ?? caller;
+    if (!delivery || ![nativeCaller, caller].includes(delivery.recipient)) throw Error('Only the delegated recipient thread may answer this question');
+    const identify = () => qualified ? Promise.resolve(qualified.hostId) : this.resolution.identifyOriginHost(caller);
+    const observedHost = await this.hostThroughBridge(await identify(), identify);
     if (!observedHost || !this.resolution.withHost(observedHost, () => this.resolution.originHostAvailable(observedHost)))
       throw new DelegatedHostUnavailable('Delegated answer host is unavailable or ambiguous');
     const known = this.store.getMeta<Array<{ id: string }>>('hostRegistry') ?? [];
     const recordedHost = delivery.hostId ?? (known.length === 1 ? known[0]?.id : undefined);
     if (!recordedHost || recordedHost !== observedHost) throw new DelegatedHostUnavailable('Delegated answer host is not proven');
-    if (delivery.recipientRef && nativeAgentId(delivery.recipientRef, recordedHost) !== caller)
+    if (delivery.recipientRef && nativeAgentId(delivery.recipientRef, recordedHost) !== nativeCaller)
       throw Error('Delegated recipient identity conflicts with its recorded host');
     if (JSON.stringify(this.delegatedDelivery(input.questionId)) !== JSON.stringify(delivery))
       throw Error('Delegated recipient changed during host verification');
-    return this.answerDelegatedQuestion(input, caller);
+    return this.answerDelegatedQuestion(input, qualified ? caller : nativeCaller);
   }
   /** Ordered windows: an observed miss advances to an unstarted next delegate; unknown sends never do. */
   recoverableDelegation(ids: string[], advance = true): boolean {
@@ -167,15 +179,17 @@ export class Delegation {
     return this.answerDelegatedQuestion({
       questionId: input.questionId, answer: input.answer, choice: input.choice, reason: input.reason,
       decision: input.decision, overtakes: input.overtakes,
-    }, caller);
+    }, formatAgentId(runHost, caller));
   }
   answerDelegatedQuestion(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) {
     const key = `delegation:${input.questionId}`;
     const events = this.store.eventsAll(key);
     const delivery = events.findLast(event => event.kind === 'delegated_delivery');
     if (!delivery) throw Error('No delegated question with this id');
-    const authority = JSON.parse(delivery.detail) as { taskId: string; recipient: string; role: string; prompt: string; deadline: number };
-    if (!caller || authority.recipient !== caller) throw Error('Only the delegated recipient thread may answer this question');
+    const authority = JSON.parse(delivery.detail) as { taskId: string; recipient: string; role: string; prompt: string; deadline: number; hostId?: string };
+    const qualified = parseAgentId(caller);
+    const recordedHost = authority.hostId ?? (this.store.getMeta<Array<{ id: string }>>('hostRegistry')?.length === 1 ? this.store.getMeta<Array<{ id: string }>>('hostRegistry')?.[0]?.id : undefined);
+    if (!caller || ![caller, qualified?.nativeAgentId].includes(authority.recipient) || (qualified && qualified.hostId !== recordedHost)) throw Error('Only the delegated recipient thread may answer this question');
     const recorded = events.find(event => event.kind === 'delegated_answer');
     if (recorded) return JSON.parse(recorded.detail);
     if (events.some(event => event.kind === 'delegated_closed') || Date.now() > authority.deadline) throw Error('This delegated answer window has closed');
@@ -298,8 +312,8 @@ export class Delegation {
         this.store.event(`project:${project.key}`, 'project_planner_missing_notified', `${missing}: notifying Nucleus planner ${planner} on host ${host}`);
         await this.resolution.withHost(host, async () => {
           if (this.adapter.notify) try {
-            await this.adapter.notify(planner, `ns-project-planner-missing-${project.key}`,
-              `Project ${project.name} has no live planner (${missing} is missing or archived). Nucleus is routing its delegated questions here until a live project planner is registered.`);
+            await this.resolution.host.sendMessage(planner, { messageId: `ns-project-planner-missing-${project.key}`,
+              text: `Project ${project.name} has no live planner (${missing} is missing or archived). Nucleus is routing its delegated questions here until a live project planner is registered.` });
           } catch { /* the durable notice record prevents repeated notifications */ }
         });
       }

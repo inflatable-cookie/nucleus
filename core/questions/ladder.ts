@@ -80,8 +80,8 @@ export class Ladder {
       // The durable intent is recorded before the send, so a delivery nobody
       // observed stays unknown and is never repeated.
       this.store.event(t.id, 'planner_escalation_attention_sent', `${escalation.id}: ${recipient} on host ${host}`);
-      await this.resolution.withHost(host, () => this.adapter.notify!(recipient,
-        `ns-escalation-attention-${escalation.id}`, unknownEscalationAttentionDetail(escalation, owner)));
+      await this.resolution.withHost(host, () => this.resolution.host.sendMessage(recipient, {
+        messageId: `ns-escalation-attention-${escalation.id}`, text: unknownEscalationAttentionDetail(escalation, owner) }));
       this.store.event(t.id, 'planner_escalation_attention_delivered', `${escalation.id}: ${recipient}`);
     } catch (error) {
       this.store.event(t.id, 'planner_escalation_attention_unknown', `${escalation.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));

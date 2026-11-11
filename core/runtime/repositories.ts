@@ -1,3 +1,4 @@
+import { parseAgentId } from "../../shared/agent-identity";
 import { qaFenceStatus, writeQaFence } from "../qa/qa-fence";
 import type { ProjectQaFenceInput } from "../../shared/contracts";
 import { isAbsolute } from "node:path";
@@ -23,6 +24,7 @@ export interface RepositoriesContext {
   hostRuns: Pick<HostRunScheduler, "list" | "releaseCapacity" | "disposeAccounting" | "accountingStatus" | "accountingList" | "boardState">;
   projectQaRunner(): ProjectQaRunner;
   markStoreAccess(): void;
+  plannerChanged?(): Promise<void>;
 }
 
 export class RuntimeRepositories {
@@ -251,8 +253,12 @@ export class RuntimeRepositories {
 
   async setProjectPlanner(input: { key: string; agentId: string | null; setBy?: string; note?: string }) {
     this.context.markStoreAccess();
-    const project = this.context.store.setProjectPlanner({ key: input.key, agentId: input.agentId, setBy: input.setBy ?? 'operator', note: input.note });
-    if (input.agentId) void this.context.engine.resolution.projectPlannerRegistered(input.key, input.agentId).catch(() => {});
+    const setter = input.setBy ? parseAgentId(input.setBy) : null;
+    // A thread naming itself keeps its proven host even when the host exposes no environment ID.
+    const agentId = setter && input.agentId === setter.nativeAgentId ? input.setBy! : input.agentId;
+    const project = this.context.store.setProjectPlanner({ key: input.key, agentId, setBy: input.setBy ?? 'operator', note: input.note });
+    await this.context.plannerChanged?.();
+    if (agentId) void this.context.engine.resolution.projectPlannerRegistered(input.key, agentId).catch(() => {});
     return project;
   }
 

@@ -212,8 +212,8 @@ it accepts an observed merge, not a routine transition or a rewritten record.
 ## Verbs
 
 All take `taskId`, optional `expectedVersion` (refused only when given and
-stale) and `reason`. The CLI fills `caller` from `PASEO_AGENT_ID` and refuses a
-call without it. Any authenticated local caller may use them; the event
+stale) and `reason`. The CLI fills `caller` from the calling thread’s Nucleus ticket or host identity and refuses a
+call without either source. Any authenticated local caller may use them; the event
 records whether the caller is the task project's owner thread.
 
 A worker restart or move continues a blocked author's work; the observed

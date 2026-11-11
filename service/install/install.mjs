@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { gunzipSync } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { dataHome } from '../../shared/data-home.mjs';
+import { paseoHome } from '../../hosts/paseo/index.mjs';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const home = () => resolve(process.env.HOME || homedir());
@@ -216,7 +217,7 @@ export async function version() {
 export async function integrate(host) {
   if (host !== 'paseo') throw Error('Supported integration: paseo. Run nucleus integrate paseo');
   await realpath(current());
-  const path = join(process.env.PASEO_HOME || join(home(), '.paseo'), 'config.json');
+  const path = join(paseoHome(), 'config.json');
   const config = await stat(path) ? await json(path) : {};
   config.plugins ??= {};
   // Registration knows only `nucleus` (nucleus#971): a config that still names

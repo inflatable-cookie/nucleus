@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { edgeRule, folderViolations, importEdges } from '../scripts/check-folder-imports.mjs';
+import { checkHostEnvironment, hostEnvironmentNames } from '../scripts/check-host-environment.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 test('folder imports match the known violations; remove resolved edges, never add exceptions', () => {
@@ -31,6 +32,7 @@ test('folder rules cover processes, public host indexes and host SDK confinement
     ['hosts/paseo/adapter/client.ts', 'core/host/index.ts', '../../../core/host', null],
     ['service/runtime/index.ts', 'hosts/paseo/adapter/client.ts', '../../hosts/paseo/adapter/client', 'host-public-index'],
     ['service/runtime/index.ts', 'hosts/paseo/index.ts', '../../hosts/paseo', null],
+    ['service/install/install.mjs', 'hosts/paseo/index.mjs', '../../hosts/paseo/index.mjs', null],
     ['client/board/card.tsx', 'hosts/paseo/index.ts', '../../hosts/paseo', 'client-neutral'],
     ['core/engine.ts', '@getpaseo/client', '@getpaseo/client', 'host-sdk-location'],
     ['hosts/other/index.ts', '@getpaseo/client', '@getpaseo/client', 'host-sdk-location'],
@@ -77,4 +79,24 @@ test('declaration modules enforce type boundaries and resolve declaration target
     'shared-neutral: shared/legacy.d.ts -> ../core/types [core/types.d.ts]',
     'shared-neutral: shared/module.d.mts -> ../hosts/paseo/types.mjs [hosts/paseo/types.d.mts]',
   ]);
+});
+
+
+test('host environment debt contains only the published hook protocol exceptions', () => {
+  assert.deepEqual(checkHostEnvironment(root), []);
+});
+
+test('host environment gate rejects planted core literals and confines each host vocabulary', () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'host-environment-'));
+  mkdirSync(join(fixture, 'core'));
+  writeFileSync(join(fixture, 'core', 'planted.ts'), "export const planted = 'PASEO_PLANTED';");
+  assert.deepEqual(checkHostEnvironment(fixture), [
+    'core/planted.ts: host environment PASEO_PLANTED belongs in its host integration (1 occurrences)',
+  ]);
+  assert.deepEqual(hostEnvironmentNames('hosts/paseo/environment.mjs', "const id = process.env.PASEO_AGENT_ID;"), []);
+  assert.deepEqual(hostEnvironmentNames('hosts/t3code/environment.mjs', "const id = process.env.T3_THREAD_ID;"), []);
+  assert.deepEqual(hostEnvironmentNames('hosts/paseo/environment.mjs', "const id = process.env.T3_THREAD_ID;"), ['T3_THREAD_ID']);
+  assert.deepEqual(hostEnvironmentNames('core/constants.ts', 'const MAX_PASEO_CALL_LIMIT = 4; const value = MAX_PASEO_CALL_LIMIT;'), []);
+  assert.deepEqual(hostEnvironmentNames('core/escaped.ts', "const key = 'PASEO_\\u0041GENT_ID';"), ['PASEO_AGENT_ID']);
+  assert.deepEqual(hostEnvironmentNames('core/env.ts', '// PASEO_AGENT_ID must stay in its host\nconst x = { PASEO_HOME: "x" };'), ['PASEO_AGENT_ID', 'PASEO_HOME']);
 });
