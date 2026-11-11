@@ -11,12 +11,20 @@ export const agentMessageRecordSchema = z.object({
   id: z.string(),
   /** Content identity for the duplicate rule: sender, recipient, role and text digest. */
   contentKey: z.string(),
-  fromTaskId: z.string(), fromRole: z.enum(["worker", "reviewer"]),
+  /** A task id, or `project:<key>` for a planner or named agent sender (its label is fromReference). */
+  fromTaskId: z.string(), fromRole: z.enum(["worker", "reviewer", "planner", "agent"]),
   fromAgentId: z.string().nullable().default(null), fromReference: z.string().nullable().default(null), fromProject: z.string().nullable().default(null),
   fromHostId: z.string().min(1).nullable().optional(),
-  toTaskId: z.string(), toRole: z.enum(["worker", "reviewer"]),
+  /** A task id, or `project:<key>` for a planner or named agent recipient (its project is toProjectKey). */
+  toTaskId: z.string(), toRole: z.enum(["worker", "reviewer", "planner", "agent"]),
   toAgentId: z.string().nullable().default(null), toReference: z.string().nullable().default(null),
   toHostId: z.string().min(1).nullable().optional(),
+  /** A planner or named-agent recipient's project: its messages wait in that project's inbox while no thread is live. */
+  toProjectKey: z.string().min(1).nullable().optional(),
+  /** A named project agent's name; null for the project planner. */
+  toAgentName: z.string().min(1).nullable().optional(),
+  /** The task whose planner ladder a planner recipient is: its own planner first, then the project's. */
+  toLadderTaskId: z.string().min(1).nullable().optional(),
   textDigest: z.string(),
   /** The message body itself, bounded to the send limit; both tasks' detail shows it. */
   text: z.string().min(1),

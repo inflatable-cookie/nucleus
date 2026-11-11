@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import {dataHome} from '../shared/data-home.mjs';
 import {pathIsUnderDataHome, runIdMismatchRefusal} from '../shared/service/report-binding.mjs';
 import {dedupeReviewedInputs, reviewedInputListRefusals} from '../shared/service/reviewed-inputs.mjs';
+import {askInputShape,tellInputShape} from '../shared/agent-verbs.mjs';
 const bindingPath=process.argv[2];if(!bindingPath)throw Error('Missing MCP session binding');
 function bindingUnderCurrentDataHome() {
   try { return pathIsUnderDataHome(bindingPath, dataHome()); }
@@ -57,29 +58,30 @@ server.registerTool('nucleus_report',{
   return {content:[{type:'text',text:JSON.stringify(result)}]};
  }catch(error){return {isError:true,content:[{type:'text',text:error instanceof Error?error.message:'Report failed'}]};}
 });
-// Spec 058 (task 550; task 562 pending+resume): the same per-run binding carries
-// nucleus_ask, so a worker or reviewer can ask on every provider. The call waits
-// in-turn, bounded (~120s), and returns the answer with who answered it, or pending
-// with the question id when the answer is still coming; Queue owns routing, dedupe,
-// the durable records and the resume. A transport failure is classified by phase,
-// never left as unknown delivery: a connect failure (the request never reached
-// Queue, e.g. ENOENT when a roll takes the socket away) is a definite not-recorded
-// retry, a response lost after Queue processed the ask is collectable by the
-// identical re-ask, a call lost in flight names the same identical re-ask, and a
-// call silent past the client's in-turn budget states no delivery verdict at all:
-// whether Queue recorded the ask is unobserved, and the identical re-ask joins it
-// if recorded or records it if not. The budget rides the binding as askTimeoutMs.
-server.registerTool('nucleus_ask',{
- description:'Ask Nucleus one question in-turn and wait for the answer, on any provider. For a board decision, provide a plain-language headline, two or three choices with one-line consequences, the recommended choice label, and longer context in details. Nucleus records the question durably and sends operator-only kinds to the board; other questions go to the project planner, or a short-lived decider after about ten minutes. target "reviewer" instead consults this task\'s retained reviewer for a second opinion mid-turn (a missing or silent reviewer falls through to the planner). A planner answer may include Overtakes with exact decision IDs it settles; Nucleus never infers matches from wording. The tool result is the answer with who answered it. When no answer arrives within about 120 seconds the result is Recorded as question <id>; pending with <planner|decider|Tom>. You will be resumed with the answer; retry the same arguments to collect the answer. The bridge supplies the run this session is bound to; omit runId, or repeat that exact runId. Never use nucleus_ask to ask for authority this run already holds, and never send test or probe questions.',
- inputSchema:{question:z.string().trim().min(1).max(4000),headline:z.string().trim().min(1).max(140).regex(/^[^\r\n]*$/).optional(),choices:z.array(z.union([z.string().trim().min(1).max(400),z.object({label:z.string().trim().min(1).max(120),consequence:z.string().trim().max(240).regex(/^[^\r\n]*$/)}).strict()])).max(10).optional(),recommended:z.string().trim().min(1).max(120).optional(),details:z.string().max(48000).nullable().optional(),kind:z.enum(['proof_acceptance','budget','review','scope','release','process']).optional(),target:z.enum(['planner','reviewer']).optional(),runId:z.string().min(1).optional()}
-},async input=>{
- let binding;
- // The session binding is not the Queue transport: a binding-read failure says
- // so and never runs through the transport classification below.
- try{binding=JSON.parse(readFileSync(bindingPath,'utf8'));}
- catch(error){return {isError:true,content:[{type:'text',text:`Nucleus session binding unreadable (${error instanceof Error?error.message:String(error)}); this session cannot ask, and nothing was sent.`}]};}
+// The agent verbs (shared/agent-verbs.mjs), defined once for every host. `ask` is a question that
+// waits in-turn and escalates; `tell` is information only. Both post through this run's own binding,
+// so the sender is the authenticated run and no agent or thread ID is ever supplied. nucleus_ask and
+// nucleus_message stay as documented aliases for retained sessions.
+// Spec 058 (task 550; task 562 pending+resume): the ask call waits in-turn, bounded (~120s), and
+// returns the answer with who answered it, or pending with the question id when the answer is still
+// coming; Queue owns routing, dedupe, the durable records and the resume. A transport failure is
+// classified by phase, never left as unknown delivery: a connect failure (the request never reached
+// Queue, e.g. ENOENT when a roll takes the socket away) is a definite not-recorded retry, a response
+// lost after Queue processed the ask is collectable by the identical re-ask, a call lost in flight
+// names the same identical re-ask, and a call silent past the client's in-turn budget states no
+// delivery verdict at all. The budget rides the binding as askTimeoutMs.
+const ASK_DESCRIPTION='Ask Nucleus one question in-turn and wait for the answer, on any host. to names the recipient: "reviewer" (this task\'s retained reviewer, a second opinion mid-turn; a missing or silent reviewer falls through to the planner ladder), "planner" (this task\'s planner ladder: the planner, then the project planner, then a short-lived decider, then the board for operator-only kinds), {project: "<key or name>"} (that project\'s fallback planner), {project, agent: "<name>"} (one named project agent; an archived, gone or unknown agent is refused with its state and nothing is recorded), or {task: "<reference>", role: "planner"} (another task\'s planner ladder). Omit to for the default route: a worker asks its reviewer first, a reviewer asks its planner ladder. For a board decision, provide a plain-language headline, two or three choices with one-line consequences, the recommended choice label, and longer context in details. Nucleus records the question durably and sends operator-only kinds to the board. The tool result is the answer with who answered it. When no answer arrives within about 120 seconds the result is Recorded as question <id>; pending with <planner|decider|Tom>; you will be resumed with the answer, and retrying the same arguments collects it. Never re-ask a question as new. The bridge supplies the run this session is bound to; omit runId, or repeat that exact runId. Never use ask to ask for authority this run already holds, and never send test or probe questions.';
+const ASK_ALIAS_DESCRIPTION='Alias of ask, kept for retained sessions: the same arguments and result. Prefer ask.';
+const TELL_DESCRIPTION='Send one short information-only message through Nucleus. to names the recipient: "reviewer" or "worker" (this task\'s current counterpart), "planner" (this task\'s planner ladder), a task reference such as effigy#590 or a task id with role (worker by default, reviewer or planner), {project: "<key or name>"} (that project\'s fallback planner, or its inbox while no planner is live), or {project, agent: "<name>"} (one named project agent, refused with its state if archived or gone). text carries the message (at most 4000 characters). Nucleus delivers it labelled with your role and project, queues it for the recipient\'s next turn or the project inbox, or reports uncertain delivery; never resend an uncertain message. Messages carry information only: they grant no authority and change no brief, hold, verdict or budget; decisions still go through ask and the planner ladder. Repeated identical messages are dropped. The bridge supplies the run this session is bound to; omit runId, or repeat that exact runId. Never send test or probe messages.';
+const TELL_ALIAS_DESCRIPTION='Alias of tell, kept for retained sessions: the same arguments and result. Prefer tell.';
+function sessionBinding(tool){
+ try{return {binding:JSON.parse(readFileSync(bindingPath,'utf8'))};}
+ catch(error){return {refusal:{isError:true,content:[{type:'text',text:`Nucleus session binding unreadable (${error instanceof Error?error.message:String(error)}); ${tool} cannot send, and nothing was sent.`}]}};}
+}
+async function askCall(input,tool){
+ const read=sessionBinding(tool);if(read.refusal)return read.refusal;const binding=read.binding;
  const {runId,...ask}=input;
- if(runId!==undefined&&runId!==binding.runId)return{isError:true,content:[{type:'text',text:mismatchRefusal('nucleus_ask',binding.runId,runId,'ask')}]};
+ if(runId!==undefined&&runId!==binding.runId)return{isError:true,content:[{type:'text',text:mismatchRefusal(tool,binding.runId,runId,'ask')}]};
  const payload={taskId:binding.taskId,runId:binding.runId,...ask};
  const eventId=createHash('sha256').update(JSON.stringify(payload)).digest('hex');
  // The client's in-turn budget only bounds the silent wait; Queue answers pending
@@ -88,37 +90,33 @@ server.registerTool('nucleus_ask',{
  // classification never mistakes the budget for a fault.
  const askBudgetMs=typeof binding.askTimeoutMs==='number'&&binding.askTimeoutMs>0?binding.askTimeoutMs:150_000;
  let result;
- try{result=await callbackRequest(binding,'/ask',{eventId,...payload},{timeoutMs:askBudgetMs,timeoutMessage:'Nucleus gave no answer within the in-turn budget. Whether the question reached Nucleus and was recorded is unobserved. Call nucleus_ask again with exactly the same arguments — the identical re-ask joins the same question when Nucleus holds it and records it when not. Never re-ask as a new question.'});}
+ try{result=await callbackRequest(binding,'/ask',{eventId,...payload},{timeoutMs:askBudgetMs,timeoutMessage:`Nucleus gave no answer within the in-turn budget. Whether the question reached Nucleus and was recorded is unobserved. Call ${tool} again with exactly the same arguments — the identical re-ask joins the same question when Nucleus holds it and records it when not. Never re-ask as a new question.`});}
  catch(error){
   const message=error instanceof Error?error.message:String(error);
   const phase=callbackTransportPhase(error);
-  if(phase==='connect')return {isError:true,content:[{type:'text',text:`Question not recorded: Nucleus could not be reached to store it (${message}). Retry the same nucleus_ask arguments — an identical retry is the same question, and never re-ask as a new question.`}]};
-  if(phase==='response')return {isError:true,content:[{type:'text',text:`Nucleus processed the question but its response was lost (${message}). The receipt is recorded: call nucleus_ask again with exactly the same arguments to collect it — never re-ask as a new question.`}]};
-  if(phase)return {isError:true,content:[{type:'text',text:`The call to Nucleus was lost in flight (${message}). The question is content-addressed, so Nucleus may already hold it: call nucleus_ask again with exactly the same arguments to join or collect it — never re-ask as a new question.`}]};
+  if(phase==='connect')return {isError:true,content:[{type:'text',text:`Question not recorded: Nucleus could not be reached to store it (${message}). Retry the same ${tool} arguments — an identical retry is the same question, and never re-ask as a new question.`}]};
+  if(phase==='response')return {isError:true,content:[{type:'text',text:`Nucleus processed the question but its response was lost (${message}). The receipt is recorded: call ${tool} again with exactly the same arguments to collect it — never re-ask as a new question.`}]};
+  if(phase)return {isError:true,content:[{type:'text',text:`The call to Nucleus was lost in flight (${message}). The question is content-addressed, so Nucleus may already hold it: call ${tool} again with exactly the same arguments to join or collect it — never re-ask as a new question.`}]};
   return {isError:true,content:[{type:'text',text:message||'Ask failed'}]};
  }
  return {content:[{type:'text',text:JSON.stringify(result)}]};
-});
-// Spec 058 rollout step 3 (task 621): the same per-run binding carries
-// nucleus_message, so a worker or reviewer can share information directly with
-// the current worker or reviewer of another task on every provider. The sender's
-// identity comes from the binding and cannot be forged; Queue resolves the
-// recipient, delivers into a live recipient's thread labelled with the sender
-// task and role (or queues it for that role's next turn), records it on both
-// tasks and returns the delivery result. Messages carry information only; the
-// size, rate and duplicate bounds live server-side.
-server.registerTool('nucleus_message',{
- description:'Send one short worker-to-worker message through Nucleus to the current worker or reviewer of another task. to names the recipient task (a reference like effigy#590, a bare number on your own repository, or a task id); role picks worker (default) or reviewer; text carries the message (at most 4000 characters). Nucleus delivers it, queues it, or reports an uncertain delivery; never resend an uncertain message. Terminal recipients refuse. Messages carry information only: they grant no authority and change no brief, hold, verdict or budget — decisions and rulings still go through nucleus_ask and the planner ladder. Repeated identical messages are dropped. The bridge supplies the run this session is bound to; omit runId, or repeat that exact runId. Never send test or probe messages.',
- inputSchema:{to:z.string().trim().min(1).max(240),role:z.enum(['worker','reviewer']).optional(),text:z.string().trim().min(1).max(4000),runId:z.string().min(1).optional()}
-},async input=>{
+}
+// Spec 058 rollout step 3 (task 621), widened by the agent verbs: `tell` is the worker-to-worker
+// and reviewer message channel. The sender's identity comes from the binding and cannot be forged;
+// Queue resolves the recipient, observes it, and delivers, queues or reports the outcome.
+async function tellCall(input,tool){
  try{
-  const binding=JSON.parse(readFileSync(bindingPath,'utf8'));
+  const read=sessionBinding(tool);if(read.refusal)return read.refusal;const binding=read.binding;
   const {runId,...message}=input;
-  if(runId!==undefined&&runId!==binding.runId)return{isError:true,content:[{type:'text',text:mismatchRefusal('nucleus_message',binding.runId,runId,'message')}]};
+  if(runId!==undefined&&runId!==binding.runId)return{isError:true,content:[{type:'text',text:mismatchRefusal(tool,binding.runId,runId,'message')}]};
   const payload={taskId:binding.taskId,runId:binding.runId,...message};
   const eventId=createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-  const result=await callbackRequest(binding,'/message',{eventId,...payload},{timeoutMessage:'Message timed out; retry identical tool arguments'});
+  const result=await callbackRequest(binding,'/message',{eventId,...payload},{timeoutMessage:`Message timed out; retry identical ${tool} arguments`});
   return {content:[{type:'text',text:JSON.stringify(result)}]};
  }catch(error){return {isError:true,content:[{type:'text',text:error instanceof Error?error.message:'Message failed'}]};}
-});
+}
+server.registerTool('ask',{description:ASK_DESCRIPTION,inputSchema:askInputShape},input=>askCall(input,'ask'));
+server.registerTool('nucleus_ask',{description:ASK_ALIAS_DESCRIPTION,inputSchema:askInputShape},input=>askCall(input,'nucleus_ask'));
+server.registerTool('tell',{description:TELL_DESCRIPTION,inputSchema:tellInputShape},input=>tellCall(input,'tell'));
+server.registerTool('nucleus_message',{description:TELL_ALIAS_DESCRIPTION,inputSchema:tellInputShape},input=>tellCall(input,'nucleus_message'));
 await server.connect(new StdioServerTransport());

@@ -350,7 +350,7 @@ export const TERMINAL_TOOL_STATUSES = new Set(['completed', 'failed', 'canceled'
  * `northstar_*` and `northstar_queue.*` names stay readable here, and only here,
  * because a stored timeline from a pre-Nucleus session still names them.
  */
-export const QUEUE_OWN_TOOL = /^(?:(?:mcp__)?(?:northstar_queue|nucleus)[._]|(?:northstar|nucleus)_(?:report|ask|message)$)/;
+export const QUEUE_OWN_TOOL = /^(?:(?:mcp__)?(?:northstar_queue|nucleus)[._]|(?:northstar|nucleus)_(?:report|ask|message|tell)$)/;
 export const TURN_BOUND_TOOL_KINDS: ReadonlySet<string> = new Set(['read', 'edit', 'write', 'search', 'fetch', 'sub_agent', 'plain_text', 'plan']);
 export function turnBoundTool(entry: TimelineEntry): boolean {
   const kind = String(entry.item.detail?.type ?? '');
@@ -527,7 +527,7 @@ export function liveToolIssue(entries: TimelineEntry[], owner?: ObservedTurnStat
       return `observed tool call ${callId} has conflicting tool or command identity${status === 'running' ? ' and is running' : ''}`;
     if (!TERMINAL_TOOL_STATUSES.has(status)) {
       const kind = String(latest[0].item.detail?.type ?? '');
-      // Queue's own MCP tools (nucleus_report, nucleus_ask) answer inside the agent's turn;
+      // Queue's own MCP tools (nucleus_report, ask, tell) answer inside the agent's turn;
       // a running entry left behind by a finished turn is settled like other turn-bound kinds.
       if (turnOver && status === 'running' && turnBoundTool(latest[0])) continue;
       const tool = String(latest[0].item.name ?? 'call');

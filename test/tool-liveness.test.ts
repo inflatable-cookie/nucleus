@@ -119,7 +119,7 @@ test('turn settlement never covers partial, status-less or ambiguous evidence', 
 // after the agent's turn ended held the owned-tool fence, so merge and continuation waited for ever.
 // Queue's own MCP tools answer inside the turn, so an idle agent settles them like a sub-agent call.
 test("a left-behind Queue MCP tool call is settled on an idle agent and still live while its turn is", () => {
-  for (const name of ['northstar_queue.northstar_ask', 'northstar_queue.northstar_report', 'mcp__northstar_queue__northstar_ask', 'nucleus_ask', 'nucleus_report', 'northstar_queue.nucleus_ask', 'mcp__northstar_queue__nucleus_report', 'nucleus.nucleus_ask', 'mcp__nucleus__nucleus_message']) {
+  for (const name of ['northstar_queue.northstar_ask', 'northstar_queue.northstar_report', 'mcp__northstar_queue__northstar_ask', 'nucleus_ask', 'nucleus_report', 'northstar_queue.nucleus_ask', 'mcp__northstar_queue__nucleus_report', 'nucleus.nucleus_ask', 'mcp__nucleus__nucleus_message', 'mcp__nucleus__ask', 'mcp__nucleus__tell', 'nucleus_tell']) {
     const entry = turnCall('running', subAgentRunning.timestamp, 'codex-turn-8', { name, detail: { type: 'unknown' } });
     assert.equal(liveToolIssue([entry], idleAgent), null, name);
     assert.match(liveToolIssue([entry], { ...idleAgent, active: true })!, /is running/, name);

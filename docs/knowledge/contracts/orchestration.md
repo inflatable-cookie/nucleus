@@ -655,14 +655,20 @@ Pures in `question-delegation.ts`: `binaryApprovalChoice`,
 kinds (`scope`, `release`). Delegates remain on Resolution.
 
 **AgentAsks** (`core/questions/agent-asks.ts`). Records, routes, waits on and resumes
-`nucleus_ask`. Holds the in-flight routing set and the in-turn wait and poll
+`ask` (alias `nucleus_ask`). Holds the in-flight routing set and the in-turn wait and poll
 cadence. Enforces [Delegated answers](#delegated-answers-preserve-the-planners-conversation).
 `askBinding` is a free function in `core/questions/agent-ask.ts`. Delegates remain on
 Resolution.
 
 **AgentMessages** (`core/questions/agent-messages.ts`). Sends, delivers and sweeps
-`nucleus_message`. Holds the in-flight delivery set. Delegates remain on
-Resolution.
+`tell` (alias `nucleus_message`). Holds the in-flight delivery set. Delegates remain on
+Resolution. Every recipient is named by role, task, project or named agent and resolved
+from the caller's run or participant ticket; a caller never supplies a thread ID.
+Each recipient thread is observed before a send, and an archived or gone thread is never
+sent to. A `tell` to a planner with no live thread waits in its project's inbox (a
+queued record with `toProjectKey`) and is delivered by the sweep to the next live planner.
+A named agent that is archived or gone refuses at send. An `ask` routed to an archived
+rung moves on to the next rung.
 
 **EffectReconcile** (`core/recovery/effect-reconcile.ts`). Settles an unknown send from
 its exact message: reviewer deliveries, run creations and attention notices.
@@ -784,7 +790,7 @@ confident, for a later pass:
   not to commit it. Operator `amend_brief` (text and reason) pins a new version
   before merge and is refused after it; each run records the version it was
   given. A live worker or reviewer is told of the amendment as a message queued
-  behind its current step (not an interrupt); an open `nucleus_ask` is answered
+  behind its current step (not an interrupt); an open `ask` is answered
   with the new brief. The next run is given the new version. `amend_brief` with
   no text re-pins a handoff and refuses brief tasks.
 - Adoption requires a committed handoff and takes over an existing isolated

@@ -50,7 +50,7 @@ test('root mcp-report.mjs is a logic-free entry into the canonical bridge', () =
   }
   assert.ok(existsSync(new URL('../bin/mcp-report.mjs', import.meta.url)));
   const mcp = read('bin/mcp-report.mjs');
-  for (const tool of ['nucleus_report', 'nucleus_ask', 'nucleus_message']) assert.match(mcp, new RegExp(`registerTool\\('${tool}'`));
+  for (const tool of ['nucleus_report', 'ask', 'tell', 'nucleus_ask', 'nucleus_message']) assert.match(mcp, new RegExp(`registerTool\\('${tool}'`));
   for (const retired of ['northstar_report', 'northstar_ask', 'northstar_message']) assert.ok(!mcp.includes(`'${retired}'`), `the retired ${retired} name is not registered`);
 });
 
