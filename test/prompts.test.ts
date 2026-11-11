@@ -196,7 +196,7 @@ test("worker and reviewer prompts name the worker-to-worker message tool and its
   const workerPromptText = workerPrompt(messageRuleTask, true);
   assert.match(
     workerPromptText,
-    /nucleus_message MCP tool with to \(a task reference like effigy#590 or a task id\), role \(worker, the default, or reviewer\) and text/,
+    /call the tell MCP tool with to: \"reviewer\" or \"worker\" for your task\'s own counterpart/,
   );
   assert.match(
     workerPromptText,
@@ -204,7 +204,7 @@ test("worker and reviewer prompts name the worker-to-worker message tool and its
   );
   assert.match(
     workerPromptText,
-    /decisions still go through nucleus_ask and the planner ladder/,
+    /decisions still go through ask and the planner ladder/,
   );
   const revisionTask = {
     ...messageRuleTask,
@@ -229,7 +229,7 @@ test("worker and reviewer prompts name the worker-to-worker message tool and its
   );
   assert.match(
     revisionPromptText,
-    /nucleus_message MCP tool with to \(a task reference like effigy#590 or a task id\)/,
+    /call the tell MCP tool with to: \"reviewer\" or \"worker\" for your task\'s own counterpart/,
   );
   const reviewerRun = {
     id: "review",
@@ -248,7 +248,7 @@ test("worker and reviewer prompts name the worker-to-worker message tool and its
   );
   assert.match(
     reviewerPromptText,
-    /nucleus_message MCP tool with to \(a task reference like effigy#590 or a task id\)/,
+    /call the tell MCP tool with to: \"reviewer\" or \"worker\" for your task\'s own counterpart/,
   );
   assert.match(
     reviewerPromptText,

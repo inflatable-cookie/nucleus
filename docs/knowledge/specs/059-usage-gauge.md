@@ -52,11 +52,11 @@ exhaustion from a refused run, after the fact.
 
 - **The pressure projection is pure** (`shared/usage-projection.ts`). Per window: used fraction
   `u`, elapsed fraction `e` from the window length and reset (a billing period's own start and
-  end count as the window), uniform pace `p = u/e` blended half-and-half with the recent burn
-  from samples within the last hour; dial `clamp(log2 p, -1, 1)`, damped toward centre while
-  `e < 0.05`, pinned right at `u >= 1`; `exhaustsInMs` counts when exhaustion lands before that
-  window's own reset (pace above 1), except a fully used window — exhausted now, whatever its
-  reset says — which reports `exhaustsInMs` 0. The binding window is whichever hits 100%
+  end count as the window), and uniform pace `p = u/e`; recent samples do not affect the pace,
+  dial, state, or exhaustion time. The dial is `clamp(log2 p, -1, 1)`, damped toward centre while
+  `e < 0.05`, pinned right at `u >= 1`; `exhaustsInMs` uses the same uniform rate and counts when
+  exhaustion lands before that window's own reset, except a fully used window — exhausted now,
+  whatever its reset says — which reports `exhaustsInMs` 0. The binding window is whichever hits 100%
   earliest before its own reset; a fully used window binds regardless of its reset, and with
   none running out the closest call (highest dial) names the dial. The state is `will_run_out`
   when the binding window exhausts before its reset or is already fully used, `on_track` when
@@ -95,8 +95,9 @@ exhaustion from a refused run, after the fact.
 `test/usage-readers.test.ts` (each reader against recorded shapes, including unknown and renamed
 fields, and subprocess fixtures for the Codex app-server and Grok agent stdio paths, including
 current credits, legacy billing, unsupported method and timeout);
-`test/usage-projection.test.ts` (on track, spare, run-out, early damping, recent burn, multiple
-windows, pinned at 100%, stale and insufficient data);
+`test/usage-projection.test.ts` (on track, spare, run-out, early damping, recent burn, usage ahead
+of elapsed time without recent-sample influence, multiple windows, pinned at 100%, stale and
+insufficient data);
 `test/usage-service.test.ts` (subscription mapping, account separation, pacing, backoff to the
 cap, retention, thrown-reader recovery); `test/catalogue.test.ts` (the read-only
 classification); `test/usage-gauge-ui.test.ts` (the dial maps state and value — centre, left,

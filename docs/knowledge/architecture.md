@@ -229,11 +229,13 @@ owner to the rules it enforces.
 - `core/recovery/transient-resume.ts` resumes a retained run or the initial worker in the
   same thread after a transient provider error, and arms rate-limit failover when
   the resumes run out. `Resolution` keeps each method as a delegate.
-- `core/questions/agent-messages.ts` sends, delivers and sweeps `nucleus_message`. Its
+- `core/questions/agent-messages.ts` sends, delivers and sweeps `tell` (alias `nucleus_message`).
+  Recipients are defined once in `shared/agent-verbs.mjs`; `core/questions/agent-targets.ts`
+  resolves task and project references. Its
   `AgentMessages` class holds the in-flight delivery set; `Resolution` keeps a
   same-name delegate for each moved method. `askBinding`, the run-identity rule asks and messages
   share, is a free function in `core/questions/agent-ask.ts`.
-- `core/questions/agent-asks.ts` records, routes, waits on and resumes `nucleus_ask`. Its
+- `core/questions/agent-asks.ts` records, routes, waits on and resumes `ask` (alias `nucleus_ask`). Its
   `AgentAsks` class holds the in-flight routing set and the in-turn wait and poll
   cadence; `Resolution` keeps a same-name delegate for each moved method.
 - `core/questions/questions.ts` handles raised and delegated decisions, and `core/questions/native-questions.ts` handles native task-thread questions. `Resolution` retains delegates; `Questions` holds the shared in-flight state. `operatorQuestionStep` and `answeredQuestionOutcome` are the pure raise and answered-native decisions; `applyBinaryApproval` in `question-delegation.ts` is the named final reply for a binary approval.

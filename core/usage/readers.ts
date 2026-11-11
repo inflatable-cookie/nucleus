@@ -12,12 +12,11 @@ import {
 } from "../../shared/schema/usage";
 import {
   projectUsage,
-  type UsageBurnSample,
   type UsageProjectionInput,
   type UsageProjectionWindow,
 } from "../../shared/usage-projection";
 
-export type { UsageProvider, UsageProjectionWindow, UsageBurnSample };
+export type { UsageProvider, UsageProjectionWindow };
 export type { UsageProjectionInput };
 
 export interface UsageSource {

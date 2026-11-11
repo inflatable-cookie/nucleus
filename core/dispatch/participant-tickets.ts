@@ -94,6 +94,18 @@ export function plannerParticipantTicketPath(store: Store, recipient: string, ho
   return participant?.nativeAgentId === native && stillPlansATask(store, participant) ? participant.path : undefined;
 }
 
+/**
+ * The project a project-scoped participant ticket speaks for: the project planner
+ * (`name` null) or one named agent. A task-planner ticket names no project and reads as null.
+ * Read after `resolveTicketCaller` has authenticated the ticket.
+ */
+export function participantProjectScope(store: Store, participantId: string): { projectKey: string; name: string | null } | null {
+  const scoped = store.getMeta<{ projectKey: string; name: string }>(agentTicketIdKey(participantId));
+  if (scoped) return { projectKey: scoped.projectKey, name: scoped.name };
+  const projectKey = store.getMeta<string>(`plannerParticipantId:${participantId}`);
+  return projectKey ? { projectKey, name: null } : null;
+}
+
 /** Authenticate a ticket against its current Nucleus record, never its claimed identity. */
 export function resolveTicketCaller(store: Store, input: CallerTicket, token: string) {
   if ('participantId' in input) {

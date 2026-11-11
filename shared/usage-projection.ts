@@ -1,8 +1,7 @@
 /**
  * The pressure projection (Spec 059): pure logic over one subscription's
- * windows and its recent stored samples. Per window the uniform pace is
- * `u / e` — used fraction over elapsed fraction — blended with recent burn
- * from the samples; the dial is `clamp(log2 pace, -1, 1)` (centre on track,
+ * windows. Per window the uniform pace is `u / e` — used fraction over elapsed
+ * fraction — and the dial is `clamp(log2 pace, -1, 1)` (centre on track,
  * right red runs out, left green spare), damped toward centre early in a
  * window and pinned right once the window is fully used. The binding window
  * is whichever hits 100% earliest before its own reset.
@@ -23,20 +22,9 @@ export interface UsageProjectionWindow {
   resetsAt: string | null;
 }
 
-/** One stored sample used for the recent-burn blend. */
-export interface UsageBurnSample {
-  windowId: string;
-  usedFraction: number;
-  sampledAt: string;
-}
-
 export interface UsageProjectionInput {
   now: number;
   windows: readonly UsageProjectionWindow[];
-  /** Samples within the recent-burn horizon; the caller filters the window. */
-  burn?: readonly UsageBurnSample[];
-  /** How far back recent burn counts; one hour (Spec 059). */
-  burnHorizonMs?: number;
 }
 
 /** The dial dead zone around pace 1 that still reads "on track" (about ±3.5%). */
@@ -48,8 +36,6 @@ export const USAGE_DAMPING_ELAPSED = 0.05;
  * (`log2 2 = 1`), so a projection past 200% carries no extra meaning.
  */
 export const USAGE_PROJECTED_USE_CAP = 2;
-const DEFAULT_BURN_HORIZON_MS = 60 * 60 * 1000;
-
 const clamp = (value: number, low: number, high: number) =>
   Math.min(high, Math.max(low, value));
 const finite = (value: number | null | undefined): value is number =>
@@ -83,44 +69,10 @@ export function usageWindowElapsed(
   return clamp((windowMs - (resetsAt - now)) / windowMs, 0, 1);
 }
 
-/** Recent burn as a pace (usage fraction per window), or null when samples cannot say. */
-function recentBurnPace(
-  window: UsageProjectionWindow,
-  burn: readonly UsageBurnSample[],
-  now: number,
-  horizonMs: number,
-): number | null {
-  const elapsed = usageWindowElapsed(window, now);
-  if (elapsed === null) return null;
-  const windowMs = usageWindowLengthMs(window);
-  if (!finite(windowMs)) return null;
-  const relevant = burn
-    .filter((sample) => sample.windowId === window.windowId)
-    .map((sample) => ({
-      at: Date.parse(sample.sampledAt),
-      used: sample.usedFraction,
-    }))
-    .filter((sample) => finite(sample.at) && finite(sample.used))
-    .filter((sample) => sample.at >= now - horizonMs && sample.at <= now)
-    .sort((a, b) => a.at - b.at);
-  if (relevant.length < 2) return null;
-  const first = relevant[0]!;
-  const last = relevant[relevant.length - 1]!;
-  const dtMs = last.at - first.at;
-  if (dtMs <= 0) return null;
-  const du = last.used - first.used;
-  // Fractions per window-time; a window sampled across less than a quarter of
-  // the horizon says little, so it never overrules the uniform pace alone.
-  if (dtMs < horizonMs / 4) return null;
-  return du / (dtMs / windowMs);
-}
-
 /** Project one window, or null when its shape carries too little data to project. */
 export function projectUsageWindow(
   window: UsageProjectionWindow,
   now: number,
-  burn: readonly UsageBurnSample[] = [],
-  burnHorizonMs = DEFAULT_BURN_HORIZON_MS,
 ): UsageWindowProjection | null {
   const used = clamp(window.usedFraction, 0, 1);
   const elapsed = usageWindowElapsed(window, now);
@@ -145,12 +97,7 @@ export function projectUsageWindow(
       exhaustsInMs: null,
     };
   if (elapsed <= 0) return null;
-  const uniform = used / elapsed;
-  const recent = recentBurnPace(window, burn, now, burnHorizonMs);
-  const pace =
-    recent !== null && recent >= 0
-      ? clamp(0.5 * uniform + 0.5 * recent, 0, 1e6)
-      : uniform;
+  const pace = used / elapsed;
   const dialRaw = clamp(Math.log2(Math.max(pace, 1e-9)), -1, 1);
   const dial =
     elapsed < USAGE_DAMPING_ELAPSED
@@ -172,11 +119,8 @@ export function projectUsageWindow(
 
 /** Project a subscription's windows into the binding window and the pressure state. */
 export function projectUsage(input: UsageProjectionInput): UsageProjection {
-  const horizon = input.burnHorizonMs ?? DEFAULT_BURN_HORIZON_MS;
   const projected = input.windows
-    .map((window) =>
-      projectUsageWindow(window, input.now, input.burn ?? [], horizon),
-    )
+    .map((window) => projectUsageWindow(window, input.now))
     .filter((entry): entry is UsageWindowProjection => entry !== null);
   if (!projected.length) {
     return {

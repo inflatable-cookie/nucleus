@@ -40,6 +40,10 @@ try {
     if (child.signal) throw Error(`Helper stopped by ${child.signal}; inspect its result before retrying`);
     process.exitCode = child.status ?? 1;
   }
+  else if (command === 'ask' || command === 'tell') {
+    // The helper form of the agent verbs for hosts without an MCP binding (task 1108).
+    await import('./agent-verbs.mjs');
+  }
   else if (command === 'data-home') {
     // The one resolver, printed for the operator: which folder, why, and the path inventory.
     console.log(JSON.stringify({ ...resolveDataHome(), entries: DATA_HOME_ENTRIES }, null, 2));

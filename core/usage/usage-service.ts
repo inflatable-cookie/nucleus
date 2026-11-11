@@ -17,10 +17,7 @@ import {
   type UsageStateOutput,
   type UsageSubscription,
 } from "../../shared/schema/usage";
-import {
-  projectUsage,
-  type UsageBurnSample,
-} from "../../shared/usage-projection";
+import { projectUsage } from "../../shared/usage-projection";
 import type { Store } from "../store/store";
 import { readClaudeUsage } from "./claude-reader";
 import { readCodexUsage } from "./codex-reader";
@@ -42,8 +39,6 @@ export const USAGE_READ_INTERVAL_MS: Record<UsageProvider, number> = {
 /** Errors back off from this base, capped at an hour (Spec 059). */
 export const USAGE_BACKOFF_BASE_MS = 60_000;
 export const USAGE_BACKOFF_MAX_MS = 60 * 60_000;
-/** Recent burn counts from the stored samples within this horizon. */
-export const USAGE_BURN_HORIZON_MS = 60 * 60_000;
 /** Sample retention is bounded (Spec 059: for example 14 days). */
 export const USAGE_SAMPLE_RETENTION_MS = 14 * 24 * 60 * 60_000;
 /** How often the runtime checks which subscriptions are due for a read. */
@@ -101,7 +96,6 @@ export interface UsageServiceOptions {
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
   sampleRetentionMs?: number;
-  burnHorizonMs?: number;
   /** Cadence overrides per provider; tests and deployments may slow a provider down. */
   readIntervalMs?: Partial<Record<UsageProvider, number>>;
 }
@@ -110,7 +104,6 @@ export class UsageService {
   private stopped = false;
   private reading = false;
   private readonly retentionMs: number;
-  private readonly burnHorizonMs: number;
   private readonly intervals: Record<UsageProvider, number>;
   private readonly now: () => Date;
   private readonly readers: Record<UsageProvider, ProviderUsageReader>;
@@ -120,7 +113,6 @@ export class UsageService {
     private readonly options: UsageServiceOptions = {},
   ) {
     this.retentionMs = options.sampleRetentionMs ?? USAGE_SAMPLE_RETENTION_MS;
-    this.burnHorizonMs = options.burnHorizonMs ?? USAGE_BURN_HORIZON_MS;
     this.intervals = { ...USAGE_READ_INTERVAL_MS, ...options.readIntervalMs };
     this.now = options.now ?? (() => new Date());
     const codex: ProviderUsageReader = {
@@ -199,15 +191,9 @@ export class UsageService {
       (target) => {
         const stored = this.readState(target);
         const reading = stored?.reading ?? notSampledReading();
-        const burn =
-          reading.status === "ok"
-            ? this.burnSamples(target, reading.accountId, now.getTime())
-            : [];
         const projection = projectUsage({
           now: now.getTime(),
           windows: reading.windows,
-          burn,
-          burnHorizonMs: this.burnHorizonMs,
         });
         return {
           group: target.group,
@@ -368,36 +354,6 @@ export class UsageService {
           reading.asOf,
           reading.source,
         );
-    }
-  }
-
-  private burnSamples(
-    target: UsageSubscriptionTarget,
-    accountId: string | null,
-    nowMs: number,
-  ): UsageBurnSample[] {
-    try {
-      const rows = this.store.db
-        .prepare(
-          "SELECT window_id,used_fraction,sampled_at FROM usage_samples WHERE group_id=? AND provider=? AND account_id IS ? AND sampled_at>=? ORDER BY id",
-        )
-        .all(
-          target.group,
-          target.provider,
-          accountId,
-          new Date(nowMs - this.burnHorizonMs).toISOString(),
-        ) as Array<{
-        window_id: string;
-        used_fraction: number;
-        sampled_at: string;
-      }>;
-      return rows.map((row) => ({
-        windowId: row.window_id,
-        usedFraction: row.used_fraction,
-        sampledAt: row.sampled_at,
-      }));
-    } catch {
-      return [];
     }
   }
 
