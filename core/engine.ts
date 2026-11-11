@@ -150,7 +150,7 @@ export class Engine {
   identifyOriginHost: (agentId: string, identitySource?: IdentitySource) => Promise<string | undefined> = async () => this.activeHostId ?? this.selectIngressHost();
   withHost<T>(id: string, fn: () => T): T { return this.hostContext.run(id, fn); }
   /** Runtime supplies the authenticated live-host selection at acceptance. */
-  selectIngressHost: (explicit?: string, _repoPath?: string) => string | undefined = explicit => explicit ?? this.store.getMeta<string>("hostId") ?? undefined;
+  selectIngressHost: (explicit?: string, _repoPath?: string, _origin?: string | null) => string | undefined = explicit => explicit ?? this.store.getMeta<string>("hostId") ?? undefined;
   hostAvailable: (id: string) => boolean = () => true;
   taskHostAvailable(task: Task): boolean {
     return Boolean(task.hostId && (!this.activeHostId || this.activeHostId === task.hostId) && this.hostAvailable(task.hostId)

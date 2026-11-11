@@ -1,0 +1,1 @@
+Host selection now resolves repository settings by origin, including repositories whose settings row has no checkout path. Selection receipts record the host kind used, and failures for configured repositories name the repository.
