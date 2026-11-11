@@ -22,6 +22,9 @@ exhaustion from a refused run, after the fact.
   readable providers tracks each as its own subscription; a provider with no reader gains no
   subscription. Two accounts never merge: readings carry the provider's own `accountId` /
   `accountUuid`, and samples key on it.
+  Every pool entry counts, enabled or not, and an unavailable reader keeps its gauge: a profile
+  in the pool shows intent to use the provider, and a disabled entry is temporary (Tom,
+  2026-11-11). Only removing the profile removes the gauge.
 
 - **Readers in core, no credentials, no turns** (`core/usage/`). None polls a provider endpoint
   and none reads a credential file:
