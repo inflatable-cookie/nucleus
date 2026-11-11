@@ -448,6 +448,9 @@ test("the page renders verdicts and friendly usage window rows", async () => {
   assert.ok(text.includes("This week"), "weekly windows use a friendly name");
   assert.ok(text.includes("Resets Saturday 12:00"), "reset row carries day and local time");
   assert.ok(text.includes("62% used"));
+  assert.ok(text.includes("62% used · pace 109%"), "the binding window shows projected pace");
+  assert.ok(tree.query("Usage help"), "the page-level help remains");
+  assert.equal(tree.query("Codex help"), undefined, "provider cards have no help button");
   assert.ok(!text.includes("codex-main"), "the subscription group stays hidden");
   assert.ok(!text.includes("binding window"), "internal binding label stays hidden");
   assert.ok(!text.includes("app-server"), "reader source stays out of visible text");
@@ -456,6 +459,21 @@ test("the page renders verdicts and friendly usage window rows", async () => {
   assert.ok(!text.includes("0% used · reset time unknown · "), "a broken subscription never reads as an empty window");
   const marker = tree.ofType("View").find((node) => node.props.testID === "usage-pace-marker");
   assert.equal(marker?.props.style.left, `${(4 / 7) * 100}%`, "the marker tracks elapsed window time");
+});
+
+test("the binding row omits pace when its projection is unknown", async () => {
+  await load();
+  const subscriptions = fixture.state.subscriptions.map((subscription) => ({
+    ...subscription,
+    projection: {
+      ...subscription.projection,
+      windows: subscription.projection.windows.map((entry) => ({ ...entry, pace: null })),
+    },
+  }));
+  const tree = mountPage({ ...fixture.state, subscriptions });
+  await settle(() => tree.text().includes("Codex"));
+  assert.ok(tree.text().includes("62% used"));
+  assert.ok(!/· pace \d/.test(tree.text()), "unknown pace is not rendered");
 });
 
 test("stale readings remain visible with a quiet warning and expired readings lose the dial", async () => {

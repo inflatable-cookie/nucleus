@@ -74,11 +74,14 @@ exhaustion from a refused run, after the fact.
   vertically centred (centre on track, right red runs out, left green spare), and one column to
   its right with the provider mark and name, a plain verdict sentence and a row per window (name,
   reset day and time rounded to the nearest minute, a bar in the state colour with a neutral
-  on-pace marker at elapsed time, percent used). Below a card width of 460 px the dial stacks
+  on-pace marker at elapsed time, percent used, with the binding window's projected pace as quiet secondary text, e.g. "58% used ·
+  pace 132%", left out when the pace is unknown). Below a card width of 460 px the dial stacks
   above the column. The verdict says "Plenty of room" only when projected use at reset is 80% or
-  less; above that, short of running out, it says "On track" with the spare share. Sample age,
-  source and next read sit in the card's (?) popover. Unknown and not-available readings read plainly with their reason, never
-  as 0 or green. The page refreshes on a slow minute interval — the readers pace themselves, so
+  less; above that, short of running out, it says "On track" with the spare share. Cards carry no
+  (?) of their own (nucleus#1129): the page's (?) beside "Usage" is the one explanation of the
+  dial, and reader diagnostics (sample source, account, next read, source path) stay in
+  `usage.state` but out of the UI; a stale reading keeps its inline warning. Unknown and not-available readings read "Usage
+  unavailable right now." with an empty dial, never 0 or green; their reason stays in `usage.state`. The page refreshes on a slow minute interval — the readers pace themselves, so
   the page adds no fast polling. Provider headings omit a group that only repeats the provider;
   the shared ProviderLogo uses bundled official marks for Codex, Claude and Grok, with the
   existing generic icon retained for unknown providers. See [third-party notices](../../../THIRD_PARTY_NOTICES.md)

@@ -3,8 +3,6 @@ import { Image, ScrollView, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { Icon, useRpc, type BoardSurfaceProps } from "./shell";
 import {
-  HelpTip,
-  HelpPopover,
   LabelHelp,
   muted,
   row,
@@ -509,31 +507,6 @@ export function PressureRing({
   );
 }
 
-/** The description behind the card's (?): what the dial means and where the reading came from. */
-function cardHelp(subscription: UsageSubscription, now: number): string {
-  const r = subscription.reading;
-  const shape =
-    r.status === "ok"
-      ? "Centre means the subscription lands at 100% exactly at its reset; right means it runs out first; left means it reaches the reset with usage to spare."
-      : "No usable projection for this subscription right now. It is never shown as 0 or green.";
-  const reason = r.reason ? ` ${r.reason}` : "";
-  const source = ` Sampled ${formatRelativeTime(r.asOf, now) ?? "at an unknown time"} via ${r.source}.${r.accountId ? ` Account ${r.accountId}.` : ""}`;
-  const next = subscription.nextReadAt
-    ? ` Next read ${formatRelativeTime(subscription.nextReadAt, now) ?? "unknown"}.`
-    : "";
-  const pace = subscription.projection.windows.find(
-    (entry) => entry.windowId === subscription.projection.bindingWindowId,
-  )?.pace;
-  const paceDetail =
-    pace === null || pace === undefined
-      ? ""
-      : ` Projected pace ${Math.round(pace * 100)}% of an even pace.`;
-  const path = subscription.sourcePath
-    ? ` Source path ${subscription.sourcePath}.`
-    : "";
-  return `${shape}${reason}${source}${next}${paceDetail}${path}`;
-}
-
 /** A window row with used amount and the elapsed-time marker for on pace. */
 function UsageWindowRow({
   c,
@@ -541,22 +514,25 @@ function UsageWindowRow({
   now,
   expired,
   color,
+  pace,
 }: {
   c: Colors;
   window: UsageWindow;
   now: number;
   expired: boolean;
+  pace: number | null | undefined;
   /** The subscription's state colour; the used portion takes it, the pace marker stays neutral. */
   color: string;
 }) {
   const r = roles(c);
   const used = Math.round(window.usedFraction * 100);
+  const paceLabel = pace == null ? null : `pace ${Math.round(pace * 100)}%`;
   const elapsed = windowElapsedFraction(window, now);
   const reset = resetLabel(window.resetsAt);
   return (
     <View
       style={{ gap: 4 }}
-      accessibilityLabel={`${friendlyWindowName(window)}. ${reset}. ${used}% used${expired ? ". Expired" : ""}`}
+      accessibilityLabel={`${friendlyWindowName(window)}. ${reset}. ${used}% used${paceLabel ? `, ${paceLabel}` : ""}${expired ? ". Expired" : ""}`}
     >
       <View
         style={{
@@ -607,7 +583,10 @@ function UsageWindowRow({
             />
           )}
         </View>
-        <Text style={{ color: r.foreground, fontSize: typeScale.metadata.fontSize }}>{used}% used</Text>
+        <Text style={{ color: r.foreground, fontSize: typeScale.metadata.fontSize }}>
+          {used}% used
+          {paceLabel ? <Text style={{ color: r.muted }}>{` · ${paceLabel}`}</Text> : null}
+        </Text>
       </View>
     </View>
   );
@@ -635,9 +614,7 @@ export function UsageCard({
   subscription: UsageSubscription;
   now: number;
 }) {
-  const [helpOpen, setHelpOpen] = useState(false);
   const [width, setWidth] = useState(0);
-  const anchor = React.useRef<View | null>(null);
   const r = roles(c);
   const reading = subscription.reading;
   const projection = subscription.projection;
@@ -648,6 +625,9 @@ export function UsageCard({
   const caption = state === "unknown" ? usageStateWord(state) : dialCaption(subscription);
   const stacked = width > 0 && width < USAGE_CARD_STACK_WIDTH;
   const dialSize = compact ? 152 : USAGE_CARD_DIAL_SIZE;
+  const bindingPace = projection.windows.find(
+    (entry) => entry.windowId === projection.bindingWindowId,
+  )?.pace;
   return (
     <View
       accessibilityLabel={`${heading} usage: ${verdict}`}
@@ -676,7 +656,6 @@ export function UsageCard({
         }}
       >
         <View
-          ref={anchor}
           style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}
         >
           <ProviderLogo
@@ -697,21 +676,6 @@ export function UsageCard({
           >
             {heading}
           </Text>
-          <HelpTip
-            c={c}
-            label={heading}
-            text={cardHelp(subscription, now)}
-            open={helpOpen}
-            onOpenChange={setHelpOpen}
-          />
-          {helpOpen && (
-            <HelpPopover
-              c={c}
-              anchor={anchor}
-              label={heading}
-              text={cardHelp(subscription, now)}
-            />
-          )}
         </View>
         <Text
           accessibilityRole="text"
@@ -734,6 +698,7 @@ export function UsageCard({
                 now={now}
                 expired={Boolean(subscription.stale?.expired)}
                 color={color}
+                pace={window.windowId === projection.bindingWindowId ? bindingPace : null}
               />
             ))}
           </View>
@@ -762,8 +727,7 @@ export function UsageCard({
 
 /**
  * The Usage page: one card per tracked subscription. Reached from the board's
- * navigation in both shells and mounted as the plugin's own Usage screen; the
- * page brings its own popover layer, so its (?) explanations draw above the
+ * navigation in both shells. The page's (?) explains the dial once, above the
  * cards wherever it mounts. The web board serves `usage.state` like any other
  * read. Refreshes on a slow interval — the readers pace themselves, so this
  * adds no fast polling.

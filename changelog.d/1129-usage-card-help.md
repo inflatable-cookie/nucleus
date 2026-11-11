@@ -1,0 +1,1 @@
+- The Usage page's provider cards drop their (?) popover; the page's own (?) still explains the dial. The binding window's row now shows its projected pace, e.g. "58% used · pace 132%".
