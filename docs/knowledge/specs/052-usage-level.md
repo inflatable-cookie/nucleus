@@ -113,8 +113,15 @@ a brief Saved or the reason it was not saved (Tom, 2026-10-22; Saving… stays q
   requested profile, pick another from the role's pool, or decline. Nothing
   waits for the answer (Tom: "don't hold things up"): an unsigned request pins
   nothing, sets no thinking level and never leaves a role waiting, so the role
-  runs on automatic selection within the level, and an approval applies from
-  that role's next run. Only an answer given on the board counts (Tom: "Board
+  runs on automatic selection within the level. When an approval arrives, Nucleus
+  applies it through `route`: a live role run that was selected automatically
+  while the request awaited sign-off is replaced on the approved profile, and a
+  role with no live run (including a worker that has handed over to review) gets
+  the route for its next run. Workspace and branch stay in place. The replacement
+  ceiling and worker replacement guard still apply; if they refuse a live worker
+  replacement, the approved route is saved for the next run and the activity
+  records why the live run stayed. A decline leaves the run alone. Only an
+  answer given on the board counts (Tom: "Board
   UI"); a relayed answer, a withdrawal or an answer that names no option
   declines, and the requester gets the answer as for any decision. The
   operator's own board `route` or `set_routing` is its own sign-off. An
