@@ -256,6 +256,13 @@ export class StoreProjects {
     return this.core.transaction(() => {
       const project = this.projectByKey(input.key);
       if (!project) throw new Error(`Unknown project ${input.key}`);
+      const fallback = project.planner?.agentId;
+      const fallbackEntry = fallback ? (project.agents ?? []).find(agent => agent.agentId === fallback) : undefined;
+      // The fallback planner's address belongs to the role: moving it without moving
+      // the role would leave the project with an unregistered fallback. The operator
+      // reassigns the fallback with project.set-planner, which moves the name with it.
+      if (fallbackEntry && fallbackEntry.name === input.name && fallbackEntry.agentId !== input.agentId)
+        throw new Error(`"${input.name}" is ${project.name}'s fallback planner address; reassign the fallback with project.set-planner before giving its name to another thread`);
       const { project: updated, kind } = this.upsertProjectAgent(project, input, at);
       this.core.event(`project:${input.key}`, `project_agent_${kind}`, `${input.name} -> ${input.agentId}${input.registeredBy ? ` by ${input.registeredBy}` : ""}${input.note ? `; ${input.note}` : ""}`);
       this.core.advanceRevision();
@@ -287,7 +294,7 @@ export class StoreProjects {
    * written before this registry existed and planners set outside the RPC. This
    * is idempotent and does nothing for a cleared or already-registered planner.
    */
-  ensureProjectFallbackAgent(input: { key: string; hostId?: string | null }, at = now()): Project {
+  ensureProjectFallbackAgent(input: { key: string; hostId?: string | null; previousPlannerId?: string | null }, at = now()): Project {
     return this.core.transaction(() => {
       const project = this.projectByKey(input.key);
       if (!project) throw new Error(`Unknown project ${input.key}`);
@@ -303,11 +310,18 @@ export class StoreProjects {
       }
       const hostId = parseAgentId(planner.agentId)?.hostId ?? input.hostId ?? null;
       if (!hostId) return project;
+      const preferred = planner.name ?? DEFAULT_PLANNER_AGENT_NAME;
+      const holder = (project.agents ?? []).find(agent => agent.name === preferred);
+      // Reassign the preferred name only when the previous fallback held it (a
+      // rotation moves the name). Another thread's address is never dropped: the
+      // fallback registers under a free default name instead.
+      const name = !holder || (input.previousPlannerId && holder.agentId === input.previousPlannerId)
+        ? preferred : freeProjectAgentName(project.agents ?? [], DEFAULT_PLANNER_AGENT_NAME);
       const { project: updated } = this.upsertProjectAgent(project, {
-        key: input.key, name: planner.name ?? DEFAULT_PLANNER_AGENT_NAME, purpose: "Project fallback planner",
+        key: input.key, name, purpose: "Project fallback planner",
         agentId: planner.agentId, hostId, registeredBy: planner.setBy,
       }, at);
-      this.core.event(`project:${input.key}`, "project_agent_registered", `fallback planner ${planner.agentId} registered as "${updated.planner?.name ?? DEFAULT_PLANNER_AGENT_NAME}"`);
+      this.core.event(`project:${input.key}`, "project_agent_registered", `fallback planner ${planner.agentId} registered as "${name}"`);
       this.core.advanceRevision();
       return updated;
     });
@@ -795,4 +809,15 @@ export class StoreProjects {
     this.db.prepare("INSERT INTO project_plans(project,version,data) VALUES(?,?,?)").run(target, version,
       JSON.stringify(projectPlanSchema.parse({ project: target, version, entries, author: "operator (project management)", createdAt: now(), ...idle })));
   }
+}
+
+/** The fallback's default address when its preferred one is another thread's: `planner`, `planner-2`, … */
+function freeProjectAgentName(agents: readonly ProjectAgent[], base: string): string {
+  const taken = new Set(agents.map(agent => agent.name));
+  if (!taken.has(base)) return base;
+  for (let index = 2; index <= 100; index += 1) {
+    const candidate = `${base}-${index}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  throw new Error(`No free default agent name is available beside "${base}"`);
 }

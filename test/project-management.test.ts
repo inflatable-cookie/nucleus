@@ -172,3 +172,26 @@ test('the list reports running, idle, archived, gone and unknown without turning
     assert.equal(listed.find(agent => agent.name === 'lead-archived')?.lastSeen, null, 'an archived thread has no read stamp');
   } finally { f.store.close(); }
 });
+
+test('a registration cannot take the fallback planner address; nothing is dropped and no stranger is ticketed', async () => {
+  const f = projectAgentsFixture({ hostId: 't3code:synthetic' });
+  const fallback = formatAgentId('t3code:synthetic', 'lead-y'), stranger = formatAgentId('t3code:synthetic', 'lead-x');
+  f.live('lead-y'); f.live('lead-x');
+  try {
+    await f.repositories.setProjectPlanner({ key: 'example', agentId: fallback, setBy: 'operator' });
+    assert.equal(f.project().planner?.name, 'planner');
+    const before = ticketOf(f, 'planner');
+    const sends = f.sends.length;
+    await assert.rejects(() => f.repositories.registerProjectAgent({
+      project: 'example', name: 'planner', purpose: 'A stranger claiming the address', caller: stranger,
+    }), /fallback planner address.*project\.set-planner/);
+    assert.deepEqual(f.project().agents?.map(agent => ({ name: agent.name, agentId: agent.agentId })),
+      [{ name: 'planner', agentId: fallback }], 'the fallback keeps its entry and the stranger is not registered');
+    assert.equal(f.sends.length, sends, 'the refused registration issues no ticket');
+    assert.equal(resolveTicketCaller(f.store, { participantId: before.participantId }, before.token).caller, fallback,
+      'the fallback keeps the ticket it already held');
+    assert.equal((await f.engine.projectAgents('example'))[0]?.fallback, true);
+    assert.deepEqual(await f.engine.resolution.resolveProjectAgentTarget('example', 'planner'),
+      { agentId: fallback, hostId: 't3code:synthetic', name: 'planner' });
+  } finally { f.store.close(); }
+});

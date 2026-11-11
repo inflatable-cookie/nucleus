@@ -26,7 +26,11 @@ function fixture() {
   const paths = { socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'helper.mjs') };
   const tickets = new ParticipantTickets(engine, paths);
   store.upsertProject({ key: 'example', name: 'Example', repositories: [{ origin: 'synthetic/example', path: '/synthetic/example' }] });
-  const assign = (agentId: string | null) => store.setProjectPlanner({ key: 'example', agentId, setBy: 'operator' });
+  // The RPC records the previous fallback so a rotation may move its default name.
+  const assign = (agentId: string | null, previousPlannerId: string | null = null) => {
+    store.setProjectPlanner({ key: 'example', agentId, setBy: 'operator' });
+    if (agentId) store.ensureProjectFallbackAgent({ key: 'example', hostId: 't3code:synthetic', previousPlannerId });
+  };
   const ticket = () => {
     const record = store.getMeta<{ path: string }>(agentTicketKey('example', 'planner'))!;
     return JSON.parse(readFileSync(record.path, 'utf8')) as { socketPath: string; participantId: string; token: string };
@@ -59,13 +63,13 @@ test('reassigning the planner name revokes the previous thread; clearing the fal
   const f = fixture();
   try {
     f.assign('planner'); await f.tickets.ensure(); const original = f.ticket();
-    f.assign('replacement'); await f.tickets.ensure(); const replacement = f.ticket();
+    f.assign('replacement', 'planner'); await f.tickets.ensure(); const replacement = f.ticket();
     assert.throws(() => resolveTicketCaller(f.store, original, original.token), /revoked or invalid/,
       'the planner name moved to another thread, so its old ticket is revoked');
     f.assign(null);
     assert.equal(resolveTicketCaller(f.store, replacement, replacement.token).caller, formatAgentId('t3code:synthetic', 'replacement'),
       'clearing the fallback role does not unregister the named agent');
-    f.assign('planner'); await f.tickets.ensure();
+    f.assign('planner', 'replacement'); await f.tickets.ensure();
     assert.notEqual(f.ticket().participantId, original.participantId);
     assert.throws(() => resolveTicketCaller(f.store, original, original.token), /revoked or invalid/);
     assert.throws(() => resolveTicketCaller(f.store, replacement, replacement.token), /revoked or invalid/,
@@ -105,7 +109,7 @@ test('caller callback authenticates a run or current participant and refuses rev
       completion: null, released: true }));
     f.store.setCredential('released-reviewer', 'released-token');
     await assert.rejects(callbackRequest({ socketPath: f.paths.socketPath, token: 'released-token' }, '/caller', { taskId: task.id, runId: 'released-reviewer' }), /released/);
-    f.assign('replacement'); await f.tickets.ensure();
+    f.assign('replacement', 'planner'); await f.tickets.ensure();
     await assert.rejects(callbackRequest(participant, '/caller', request), /revoked or invalid/);
     await assert.rejects(callbackRequest({ socketPath: f.paths.socketPath, token: 'wrong' }, '/caller', { taskId: task.id, runId: 'worker-run' }), /Unauthorized/);
   } finally { await close(); f.store.close(); }
@@ -120,9 +124,11 @@ test('a planner reassigned during host lookup never receives the superseded tick
   const waiting = new Promise<void>(resolve => { release = resolve; });
   f.engine.identifyOriginHost = async () => { entered(); await waiting; return 't3code:synthetic'; };
   try {
-    f.assign('old-planner');
+    // A planner set outside the RPC: its registration waits on the host lookup.
+    f.store.setProjectPlanner({ key: 'example', agentId: 'old-planner', setBy: 'operator' });
     const issuing = f.tickets.ensure(); await started;
-    f.assign('current-planner'); const changed = f.tickets.ensure(); release();
+    f.store.setProjectPlanner({ key: 'example', agentId: 'current-planner', setBy: 'operator' });
+    const changed = f.tickets.ensure(); release();
     await Promise.all([issuing, changed]);
     assert.deepEqual(f.messages.map(message => message.id), ['current-planner']);
     const current = f.ticket();

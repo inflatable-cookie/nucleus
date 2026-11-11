@@ -118,3 +118,24 @@ test('a planner set outside the RPC is registered on the next startup reconcilia
     assert.deepEqual(f.sends.map(send => send.id), ['lead-a']);
   } finally { f.store.close(); }
 });
+
+test('a fallback registered while another thread holds the default name takes a free name and the RPC answer matches the store', async () => {
+  const f = projectAgentsFixture({ hostId: host });
+  const holder = formatAgentId(host, 'lead-x'), planner = formatAgentId(host, 'lead-z');
+  f.live('lead-x'); f.live('lead-z');
+  try {
+    await f.repositories.registerProjectAgent({ project: 'example', name: 'planner', purpose: 'Owns the UI cross-section', caller: holder });
+    const holderTicket = f.store.getMeta<{ participantId: string }>(agentTicketKey('example', 'planner'))!;
+    const project = await f.repositories.setProjectPlanner({ key: 'example', agentId: planner, setBy: 'operator' });
+    assert.deepEqual(project, f.project(), 'the RPC answer is the state the store holds');
+    assert.deepEqual(project.agents?.map(agent => ({ name: agent.name, agentId: agent.agentId })),
+      [{ name: 'planner', agentId: holder }, { name: 'planner-2', agentId: planner }],
+      'another thread\'s address is never dropped for the fallback');
+    assert.equal(project.planner?.name, 'planner-2');
+    assert.equal(f.store.getMeta<{ participantId: string }>(agentTicketKey('example', 'planner'))?.participantId,
+      holderTicket.participantId, 'the holder keeps its address and its ticket');
+    const listed = await f.engine.projectAgents('example');
+    assert.equal(listed.find(agent => agent.agentId === planner)?.fallback, true);
+    assert.equal(listed.find(agent => agent.agentId === holder)?.fallback, false);
+  } finally { f.store.close(); }
+});

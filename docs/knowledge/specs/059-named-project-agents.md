@@ -38,6 +38,12 @@ same thread under the same name only updates the purpose.
 fallback planner cannot be unregistered while it holds that role: name another
 planner with `project.set-planner` first, so the fallback never dangles.
 
+The fallback planner's address belongs to the role. `agent.register` refuses to
+give that name to another thread — moving the fallback with `project.set-planner`
+moves the name with it — and a fallback registered while another thread already
+holds its preferred default name takes a free one (`planner-2`), so a
+registration is never silently dropped for another thread's address.
+
 ### 2. List
 
 `project.agents` takes `{project}` and returns each entry's name, purpose,

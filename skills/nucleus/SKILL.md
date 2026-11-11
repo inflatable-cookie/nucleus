@@ -360,6 +360,10 @@ marker. Names are unique per project, a thread holds one name, and renaming or
 reassigning a name revokes the old participant ticket. `project.set-planner`
 marks any registered agent as the fallback; clearing it leaves the thread
 registered, and the fallback cannot be unregistered while it holds that role.
+Its address belongs to the role: `agent.register` refuses to give the fallback's
+name to another thread (move the fallback with `project.set-planner` instead),
+and a fallback whose preferred default name is taken registers under a free name
+such as `planner-2`.
 
 ### Complexity and demand
 

@@ -1650,7 +1650,7 @@ export class Store {
   /** Task 1110: the project's named, non-task threads, registered and revoked one at a time. */
   registerProjectAgent(input: { key: string; name: string; purpose: string; agentId: string; hostId: string; registeredBy: string; note?: string }, at = now()): Project { return this.projectsStore.registerProjectAgent(input, at); }
   unregisterProjectAgent(input: { key: string; name: string; unregisteredBy: string; note?: string }, at = now()): Project { return this.projectsStore.unregisterProjectAgent(input, at); }
-  ensureProjectFallbackAgent(input: { key: string; hostId?: string | null }, at = now()): Project { return this.projectsStore.ensureProjectFallbackAgent(input, at); }
+  ensureProjectFallbackAgent(input: { key: string; hostId?: string | null; previousPlannerId?: string | null }, at = now()): Project { return this.projectsStore.ensureProjectFallbackAgent(input, at); }
   /**
    * Spec 058 cutover 5: the one-time owner→planner migration drops a project's archived or
    * missing owner record. The live-owner case keeps its owner field as readable history and

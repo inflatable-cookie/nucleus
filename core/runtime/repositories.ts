@@ -257,14 +257,15 @@ export class RuntimeRepositories {
     // A thread naming itself keeps its proven host even when the host exposes no environment ID.
     const agentId = setter && input.agentId === setter.nativeAgentId ? input.setBy! : input.agentId;
     const hostId = agentId ? parseAgentId(agentId)?.hostId ?? (this.context.engine.adapter as { hostId?: string }).hostId ?? null : null;
+    const previousPlannerId = this.context.store.projectByKey(input.key)?.planner?.agentId ?? null;
     let project = this.context.store.setProjectPlanner({ key: input.key, agentId, setBy: input.setBy ?? 'operator', note: input.note });
     // Task 1110: the fallback planner is one of the project's registered agents;
     // naming a thread that is not registered yet registers it under the default
     // name, so `to: {project}` and `to: {project, agent}` address the same list.
-    if (agentId) project = this.context.store.ensureProjectFallbackAgent({ key: input.key, hostId });
+    if (agentId) project = this.context.store.ensureProjectFallbackAgent({ key: input.key, hostId, previousPlannerId });
     await this.context.plannerChanged?.();
     if (agentId) void this.context.engine.resolution.projectPlannerRegistered(input.key, agentId).catch(() => {});
-    return project;
+    return this.context.store.projectByKey(input.key) ?? project;
   }
 
   /** Task 1110: one project's named, non-task threads with their live state. */
@@ -290,7 +291,7 @@ export class RuntimeRepositories {
       registeredBy: input.caller ?? 'operator (board)', note: input.note,
     });
     await this.context.plannerChanged?.();
-    return registered;
+    return this.context.store.projectByKey(input.project) ?? registered;
   }
 
   /** Task 1110: remove one named agent; its participant ticket stops resolving. */
@@ -300,7 +301,7 @@ export class RuntimeRepositories {
       key: input.project, name: input.name, unregisteredBy: input.caller ?? 'operator (board)', note: input.note,
     });
     await this.context.plannerChanged?.();
-    return project;
+    return this.context.store.projectByKey(input.project) ?? project;
   }
 
   projectOwnerCandidates() { this.context.markStoreAccess(); return this.context.engine.projectOwnerCandidates(); }
