@@ -164,6 +164,12 @@ projection when shell summaries lack request details or timeline coverage.
 Project-enrichment snapshots marked with `resolvedRepositoryIdentityRoots` can
 carry empty thread arrays; they never replace the authoritative inventory.
 
+The origin-thread read takes the complete shell and archived inventory before it
+reads a projection: a thread the complete inventory does not carry is authoritative
+absence (not mine), while a failed inventory or projection is an unread read
+(unknown) and never absence. A native question about a thread T3 does not have
+therefore never makes a two-host origin lookup ambiguous.
+
 Report active run, idle, pending question/permission and archived state from
 positive native facts. A thread is gone only after a complete authoritative read
 proves absence/deletion. Partial reads reject or return the contract's unknown
@@ -214,7 +220,10 @@ without a matching run clear an inherited `NUCLEUS_TICKET` so the host's identit
 answers. Equal native IDs on different hosts do not share a consult ticket. A
 shared ticket-first caller resolver fills identity for any host and skips a
 ticket path that is gone, so T3 does not rewrite the command to a separate
-endpoint. Uncertain reviewer or
+endpoint. A T3-hosted planner has no calling-thread identity of its own, so its
+participant ticket is delivered by one message, and only after the thread is
+observed live; assignment from the board or the thread's own call is the trigger,
+and an archived, gone or unreadable thread is left ticket pending instead. Uncertain reviewer or
 coordinator creation can bind. T3-hosted planners are out of trial: missing
 `askPlanner` becomes an answerable board decision with the planner message,
 never a silently pending ask. Production planners stay Paseo threads. `host.permission-answer` still grants no

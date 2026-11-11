@@ -33,7 +33,7 @@ function row(key: string, name: string, repos: Repo[], extra: Partial<ProjectSet
   return {
     project: { key, name, version: 3, visibility: 'active', repositories: repos, primary: repos[0]!, drain: null, ...(planner ? { planner: { agentId: planner, setBy: 'operator', setAt: '2026-11-08T00:00:00.000Z' } } : {}) },
     repositories: repos.map((repository, index) => ({ repository, primary: index === 0, settings: settings?.[index] ?? null })),
-    slots: { value: 4, override: null }, plannerLive: planner ? true : null, latestQa: null, problems: [],
+    slots: { value: 4, override: null }, plannerLive: planner ? true : null, plannerTicket: planner ? 'issued' : null, latestQa: null, problems: [],
     ...rest,
   } as ProjectSettingsRow;
 }

@@ -47,7 +47,10 @@ export function projectAgentsFixture(options: { hostId?: string } = {}) {
   engine.identifyOriginHost = async () => hostId;
   engine.hostAvailable = () => available;
   const tickets = new ParticipantTickets(engine, { socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'helper.mjs') });
-  const repositories = new RuntimeRepositories({ store, engine, markStoreAccess() {}, plannerChanged: () => tickets.ensure() } as unknown as RepositoriesContext);
+  const repositories = new RuntimeRepositories({ store, engine, markStoreAccess() {},
+    plannerChanged: (key: string) => tickets.assigned(key),
+    agentChanged: (key: string, name: string, caller: string | null) => tickets.agentChanged(key, name, caller),
+  } as unknown as RepositoriesContext);
   store.upsertProject({ key: 'example', name: 'Example', repositories: [{ origin: 'synthetic/example', path: '/synthetic/example' }] });
   return {
     directory, store, engine, adapter, sends, observed, tickets, repositories, hostId,

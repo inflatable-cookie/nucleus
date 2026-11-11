@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readPayload } from './payload.mjs';
 import { queueClient } from './queue-client.mjs';
 import { cliCallerSource, resolveCliCaller } from './caller.mjs';
+import { identitySourceFor } from '../shared/caller.mjs';
 import { bootstrapEntries, bootstrapSources } from './bootstrap-sources.mjs';
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
@@ -173,7 +174,7 @@ Methods without a dot are tried as queue.<method> first, for example:
   papercut.close, papercut.set-lanes, lead.add, lead.edit, lead.get, lead.version,
   lead.list, lead.set-lanes, lead.set-tags, lead.drop, lead.reopen, lead.promote, lead.check, lead.approve, lead.promote-task, lead.submit, lead.import,
   decision.add, decision.get, decision.list, decision.answer, decision.withdraw, decision.link, decision.supersede, queue.routing-grant, lane.document.get,
-  lane.document.edit, plan.get, plans, plan.set, backup.now, backup.list
+  lane.document.edit, plan.get, plans, plan.set, backup.now, backup.list, usage.state
 snapshot accepts optional repository, project, limit (default 100, max 250) and
 cursor; page while hasMore is true. An oversized snapshot is refused with those
 filters named instead of a closed socket.
@@ -210,6 +211,8 @@ const file = uiCommand ? undefined : rest.find(arg => arg !== '--wait');
 const method = uiCommand ? 'service.ui-link' : requestedMethod === 'next' ? 'task.next' : requestedMethod;
 let callerIdentity;
 const callingThread = async () => (await (callerIdentity ??= resolveCliCaller({ viaPaseo }))).caller;
+/** The calling thread's own proven host, bound to that same identity and never to another. */
+const callingThreadSource = async agent => identitySourceFor(await (callerIdentity ??= resolveCliCaller({ viaPaseo })), agent);
 const input = uiCommand ? { action: rest.includes('--revoke') ? 'revoke' : 'issue' } : readPayload(file);
 if (method === 'task.next' && input && typeof input === 'object') delete input.caller;
 if (rest.includes('--wait')) {
@@ -243,6 +246,11 @@ if (method === 'lead.submit' || method === 'lead.promote-task' || method === 'pa
   if (input?.board) throw new Error('CLI promotion must identify the agent and cannot claim board approval');
   if (!input?.note?.trim()) throw new Error('CLI task promotion requires an agent and operator authorization note');
   input.agent = await callingThread();
+  // The promoting thread's proven host travels with the identity it names, so a
+  // registered host that has no part in this promotion cannot make its origin
+  // ambiguous.
+  const identitySource = await callingThreadSource(input.agent);
+  if (identitySource) input.identitySource = identitySource;
 }
 if (method === 'task.register' && input && typeof input === 'object' && !Array.isArray(input)) {
   // The resolver overwrites a typed caller; the service binds this thread's worktree.
@@ -313,7 +321,10 @@ if (method === 'question.answer') {
   if (identity.source === 'ticket') {
     const ticket = JSON.parse(await readFile(identity.path, 'utf8'));
     if (ticket.participantId) {
-      input.caller = (await resolveCliCaller({ viaPaseo, source: identity })).caller;
+      const resolved = await resolveCliCaller({ viaPaseo, source: identity });
+      input.caller = resolved.caller;
+      const identitySource = identitySourceFor(resolved, input.caller);
+      if (identitySource) input.identitySource = identitySource;
     } else {
       if (typeof ticket.token !== 'string' || typeof ticket.socketPath !== 'string' ||
           typeof ticket.taskId !== 'string' || typeof ticket.runId !== 'string')
@@ -334,7 +345,13 @@ if (method === 'question.answer') {
       console.log(JSON.stringify(result));
       process.exit(0);
     }
-  } else input.caller = await callingThread();
+  } else {
+    input.caller = await callingThread();
+    // The answering thread's proven host travels with the identity it names, so a
+    // host with no part in this answer cannot make it ambiguous.
+    const identitySource = await callingThreadSource(input.caller);
+    if (identitySource) input.identitySource = identitySource;
+  }
 }
 if (method === 'project.set-planner') {
   // Spec 058 (task 540): the planner names itself, or the operator names one; the calling thread is recorded as the setter.

@@ -12,6 +12,8 @@ export const leadSubmit = defineRpc({ name: "lead.submit", input: z.object({
   baseBranch: gitBranchNameSchema.default("main"), lanes: laneKeyListSchema.default([]), tags: leadTagsSchema.default([]),
   agent: z.string().trim().min(1).refine(value => value !== "operator (board)", "Identify the relaying agent"),
   note: z.string().trim().min(1), hostId: z.string().trim().min(1).max(240).optional(),
+  /** The promoting caller's own identity source, filled by the CLI from its environment. */
+  identitySource: sourcePromotionInputSchema.shape.identitySource,
   hold: sourcePromotionInputSchema.shape.hold,
 }).strict(), output: z.union([sourcePromotionOutputSchema, z.object({ lead: leadSchema }).strict()]) });
 

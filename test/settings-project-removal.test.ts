@@ -27,7 +27,7 @@ const repo = (origin: string) => ({ origin, path: `/workspace/user/Dev/${origin.
 const project = (key: string, name = key, version = 3): Project => ({ key, name, version, visibility: 'active', repositories: [repo(`acme/${key}`)], primary: repo(`acme/${key}`), drain: null }) as Project;
 const settingsRowOf = (p: Project): ProjectSettingsRow => ({
   project: p, repositories: p.repositories.map((repository, index) => ({ repository, primary: index === 0, settings: null })),
-  slots: { value: 4, override: null }, plannerLive: null, latestQa: null, problems: [],
+  slots: { value: 4, override: null }, plannerLive: null, plannerTicket: null, latestQa: null, problems: [],
 }) as ProjectSettingsRow;
 const settingsOf = (projects: Project[]): ProjectSettings => ({ defaultSlots: 4, projects: projects.map(settingsRowOf) });
 type Item = ProjectManagementPreview['items'][number];

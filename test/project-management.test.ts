@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { formatAgentId } from '../shared/agent-identity';
 import { projectAgents } from '../shared/contracts';
-import { agentTicketKey, resolveTicketCaller } from '../core/dispatch/participant-tickets';
+import { agentTicketKey, plannerTicketKey, resolveTicketCaller } from '../core/dispatch/participant-tickets';
 import { ProjectAgentTargetRefusal } from '../core/planning/project-agents';
 import { projectAgentsFixture } from './support/project-agents-fixture';
 
 const ticketOf = (f: ReturnType<typeof projectAgentsFixture>, name: string) => {
   const record = f.store.getMeta<{ path: string }>(agentTicketKey('example', name))!;
+  return JSON.parse(readFileSync(record.path, 'utf8')) as { participantId: string; token: string };
+};
+const plannerTicketOf = (f: ReturnType<typeof projectAgentsFixture>) => {
+  const record = f.store.getMeta<{ path: string }>(plannerTicketKey('example'))!;
   return JSON.parse(readFileSync(record.path, 'utf8')) as { participantId: string; token: string };
 };
 
@@ -25,7 +29,9 @@ test('a ticket-only host registers the calling thread by name and lists it with 
       name: 'lead-parser', purpose: 'Owns the parser cross-section', agentId: caller,
       hostId: 't3code:synthetic', registeredBy: caller, registeredAt: entry!.registeredAt,
     });
-    assert.deepEqual(f.sends.map(send => send.id), ['lead-parser'], 'one participant ticket, delivered through the host');
+    assert.deepEqual(f.sends, [], 'the ticket travels in the registration response, not a message into the thread');
+    const handed = (registered as { participantTicket?: string }).participantTicket;
+    assert.equal(handed, f.store.getMeta<{ path: string }>(agentTicketKey('example', 'lead-parser'))?.path);
     const ticket = ticketOf(f, 'lead-parser');
     assert.equal(resolveTicketCaller(f.store, { participantId: ticket.participantId }, ticket.token).caller, caller);
 
@@ -48,7 +54,11 @@ test('a Paseo host registers a bare thread id and the same list read answers it'
     });
     assert.deepEqual(registered.agents?.map(agent => ({ name: agent.name, agentId: agent.agentId, hostId: agent.hostId })),
       [{ name: 'lead-a', agentId: 'lead-a', hostId: 'paseo-synthetic' }]);
-    assert.deepEqual(f.sends.map(send => send.id), ['lead-a']);
+    assert.deepEqual(f.sends, [], 'a Paseo board registration sends nothing');
+    assert.equal(f.store.getMeta(agentTicketKey('example', 'lead-a')), undefined);
+    // The thread takes its ticket in the response to its own next call.
+    const handed = await f.tickets.forCaller(formatAgentId('paseo-synthetic', 'lead-a'));
+    assert.equal(handed, f.store.getMeta<{ path: string }>(agentTicketKey('example', 'lead-a'))?.path);
     const ticket = ticketOf(f, 'lead-a');
     assert.equal(resolveTicketCaller(f.store, { participantId: ticket.participantId }, ticket.token).caller,
       formatAgentId('paseo-synthetic', 'lead-a'));
@@ -83,11 +93,13 @@ test('re-registering the same thread and name updates the purpose without a seco
   const caller = formatAgentId('t3code:synthetic', 'lead-a');
   f.live('lead-a');
   try {
-    await f.repositories.registerProjectAgent({ project: 'example', name: 'lead-a', purpose: 'First purpose', caller });
+    const registered = await f.repositories.registerProjectAgent({ project: 'example', name: 'lead-a', purpose: 'First purpose', caller });
     const first = ticketOf(f, 'lead-a');
+    assert.equal((registered as { participantTicket?: string }).participantTicket, f.store.getMeta<{ path: string }>(agentTicketKey('example', 'lead-a'))?.path);
     const again = await f.repositories.registerProjectAgent({ project: 'example', name: 'lead-a', purpose: 'Sharper purpose', caller });
     assert.equal(again.agents?.[0]?.purpose, 'Sharper purpose');
-    assert.equal(f.sends.length, 1, 'no second delivery');
+    assert.equal((again as { participantTicket?: string }).participantTicket, undefined, 'no second ticket');
+    assert.equal(f.sends.length, 0, 'no message either way');
     assert.equal(resolveTicketCaller(f.store, { participantId: first.participantId }, first.token).caller, caller);
   } finally { f.store.close(); }
 });
@@ -98,7 +110,7 @@ test('unregister removes the entry and revokes the ticket, and refuses to remove
   f.live('lead-a');
   try {
     await f.repositories.registerProjectAgent({ project: 'example', name: 'lead-a', purpose: 'Cross-section', caller });
-    await f.repositories.setProjectPlanner({ key: 'example', agentId: caller, setBy: 'operator' });
+    await f.repositories.setProjectPlanner({ key: 'example', agentId: caller, setBy: caller });
     await assert.rejects(() => f.repositories.unregisterProjectAgent({ project: 'example', name: 'lead-a' }),
       /fallback planner.*project.set-planner/);
     await f.repositories.setProjectPlanner({ key: 'example', agentId: null, setBy: 'operator' });
@@ -146,7 +158,7 @@ test('the project fallback resolves to the registered planner, and no fallback r
     await assert.rejects(() => f.engine.resolution.resolveProjectAgentTarget('example', null),
       (error: unknown) => error instanceof ProjectAgentTargetRefusal && error.state === 'no-fallback');
     await f.repositories.registerProjectAgent({ project: 'example', name: 'lead-a', purpose: 'Cross-section', caller });
-    await f.repositories.setProjectPlanner({ key: 'example', agentId: caller, setBy: 'operator' });
+    await f.repositories.setProjectPlanner({ key: 'example', agentId: caller, setBy: caller });
     assert.deepEqual(await f.engine.resolution.resolveProjectAgentTarget('example', null),
       { agentId: caller, hostId: 't3code:synthetic', name: 'lead-a' });
     assert.equal((await f.engine.projectAgents('example'))[0]?.fallback, true);
@@ -180,7 +192,8 @@ test('a registration cannot take the fallback planner address; nothing is droppe
   try {
     await f.repositories.setProjectPlanner({ key: 'example', agentId: fallback, setBy: 'operator' });
     assert.equal(f.project().planner?.name, 'planner');
-    const before = ticketOf(f, 'planner');
+    assert.equal(f.store.getMeta(agentTicketKey('example', 'planner')), undefined, 'the planner identity ticket covers the entry');
+    const before = plannerTicketOf(f);
     const sends = f.sends.length;
     await assert.rejects(() => f.repositories.registerProjectAgent({
       project: 'example', name: 'planner', purpose: 'A stranger claiming the address', caller: stranger,

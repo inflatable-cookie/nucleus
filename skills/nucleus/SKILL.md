@@ -27,7 +27,7 @@ ticket refuses. If neither source exists, the refusal names the sources tried.
 Explicit operator and relayed-note paths keep their existing meaning.
 
 Every named project agent receives an owner-only participant ticket through its
-host (Spec 059). Renaming, reassigning or unregistering it revokes the ticket, and a
+host (Spec 060). Renaming, reassigning or unregistering it revokes the ticket, and a
 planner registered before the registry existed receives one at startup while a
 ticket it already delivered is adopted. Caller records use host-qualified
 identities; existing bare Paseo IDs still resolve.
@@ -352,7 +352,7 @@ null). The planner may set itself; the calling thread is recorded as `setBy`. A
 thread that is not registered yet is registered under the default name `planner`.
 This grants nothing except answering delegated questions for that project.
 
-A project's named agents are its non-task threads (Spec 059): `agent.register`
+A project's named agents are its non-task threads (Spec 060): `agent.register`
 (`project`, `name`, `purpose`; the CLI registers the calling thread, the board
 names one live thread), `agent.unregister` (`project`, `name`) and `project.agents`
 (`project`) for the list with each entry's host, live state, last seen and fallback
@@ -1071,7 +1071,7 @@ registered under the default name `planner`). It answers delegated questions,
 receives the project-level notices that once went to the retired owner, and is the
 thread `to: {project}` resolves to; it grants no verb, hold or acceptance
 authority. `project.agents` lists the project's named, non-task threads, and
-`agent.register`/`agent.unregister` maintain them (Spec 059).
+`agent.register`/`agent.unregister` maintain them (Spec 060).
 
 ## Review entry for external PRs
 

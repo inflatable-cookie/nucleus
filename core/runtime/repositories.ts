@@ -24,7 +24,10 @@ export interface RepositoriesContext {
   hostRuns: Pick<HostRunScheduler, "list" | "releaseCapacity" | "disposeAccounting" | "accountingStatus" | "accountingList" | "boardState">;
   projectQaRunner(): ProjectQaRunner;
   markStoreAccess(): void;
-  plannerChanged?(): Promise<void>;
+  /** One assignment; a self-named planner receives its identity ticket in this response. */
+  plannerChanged?(projectKey: string): Promise<string | undefined>;
+  /** One named-agent registration; a self-registering thread receives its ticket in this response. */
+  agentChanged?(projectKey: string, name: string, caller: string | null): Promise<string | undefined>;
 }
 
 export class RuntimeRepositories {
@@ -263,9 +266,11 @@ export class RuntimeRepositories {
     // naming a thread that is not registered yet registers it under the default
     // name, so `to: {project}` and `to: {project, agent}` address the same list.
     if (agentId) project = this.context.store.ensureProjectFallbackAgent({ key: input.key, hostId, previousPlannerId });
-    await this.context.plannerChanged?.();
+    // The thread that named itself receives its participant ticket right here:
+    // an assignment is answered in the call that made it, never by a message.
+    const participantTicket = await this.context.plannerChanged?.(input.key);
     if (agentId) void this.context.engine.resolution.projectPlannerRegistered(input.key, agentId).catch(() => {});
-    return this.context.store.projectByKey(input.key) ?? project;
+    return participantTicket ? { ...project, participantTicket } : project;
   }
 
   /** Task 1110: one project's named, non-task threads with their live state. */
@@ -274,8 +279,10 @@ export class RuntimeRepositories {
   /**
    * Task 1110: register a named, non-task thread. The calling thread registers
    * itself from its Nucleus ticket (`caller`), or the board names one live thread
-   * (`agentId`). The registration is one durable write; the dispatch ticket
-   * service then issues and delivers that thread's participant ticket.
+   * (`agentId`). The registration is one durable write; the ticket service then
+   * hands the agent its participant ticket the way every participant gets one:
+   * in its own call's response, or (where that route does not exist) one host
+   * message to a live thread, never a startup send.
    */
   async registerProjectAgent(input: AgentRegisterInput) {
     this.context.markStoreAccess();
@@ -290,8 +297,9 @@ export class RuntimeRepositories {
       key: input.project, name: input.name, purpose: input.purpose, agentId, hostId,
       registeredBy: input.caller ?? 'operator (board)', note: input.note,
     });
-    await this.context.plannerChanged?.();
-    return this.context.store.projectByKey(input.project) ?? registered;
+    const participantTicket = await this.context.agentChanged?.(input.project, input.name, input.caller ?? null);
+    const stored = this.context.store.projectByKey(input.project) ?? registered;
+    return participantTicket ? { ...stored, participantTicket } : stored;
   }
 
   /** Task 1110: remove one named agent; its participant ticket stops resolving. */
@@ -300,7 +308,7 @@ export class RuntimeRepositories {
     const project = this.context.store.unregisterProjectAgent({
       key: input.project, name: input.name, unregisteredBy: input.caller ?? 'operator (board)', note: input.note,
     });
-    await this.context.plannerChanged?.();
+    await this.context.agentChanged?.(input.project, input.name, null);
     return this.context.store.projectByKey(input.project) ?? project;
   }
 

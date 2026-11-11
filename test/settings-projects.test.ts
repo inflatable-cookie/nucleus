@@ -30,7 +30,7 @@ function row(key: string, name: string, repos: Array<{ origin: string | null; pa
   return {
     project: { key, name, version: 1, visibility: parked ? 'parked' : 'active', repositories: repos, primary: repos[0]!, drain: null },
     repositories: repos.map((repository, index) => ({ repository, primary: index === 0, settings: null })),
-    slots: { value: 4, override: null }, plannerLive: null, latestQa: null, problems: [],
+    slots: { value: 4, override: null }, plannerLive: null, plannerTicket: null, latestQa: null, problems: [],
     ...rest,
   } as ProjectSettingsRow;
 }

@@ -7,7 +7,7 @@ import { observedHostIdOf, projectAgentViews } from "./project-agents";
 import { UNRESOLVED_SEED } from "../store/store";
 import type { Engine } from '../engine';
 
-export type ProjectLifecycleContext = Pick<Engine, 'adapter' | 'host' | 'store' | 'activeHostId'>;
+export type ProjectLifecycleContext = Pick<Engine, 'adapter' | 'host' | 'store' | 'activeHostId'> & Partial<Pick<Engine, 'plannerTicketPending'>>;
 
 export class ProjectLifecycle {
   constructor(readonly context: ProjectLifecycleContext) {}
@@ -36,6 +36,7 @@ export class ProjectLifecycle {
         ? [formatAgentId(hostId, agent.id), ...(hostKindOf(hostId) === 'paseo' ? [agent.id] : [])]
         : [agent.id])),
       liveKnown, observedHostId: hostId ?? undefined,
+      plannerTicketPending: this.context.plannerTicketPending?.() ?? new Set(),
       agents,
       latestQaRuns: this.context.store.latestQaRunsFor(projectSettingsQaKeys(projects)),
     });

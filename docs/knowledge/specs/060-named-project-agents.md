@@ -1,4 +1,4 @@
-# 059 — Named project agents
+# 060 — Named project agents
 
 Status: implemented
 Owner: Nucleus runtime maintainers
