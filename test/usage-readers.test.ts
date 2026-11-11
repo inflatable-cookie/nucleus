@@ -480,7 +480,9 @@ test("the grok reader supports legacy billing and keeps unsupported or unparseab
     args: [fallbackScript, "agent", "stdio"],
     fallbackArgs: [fallbackScript, "usage", "--json"],
     env: {},
-    timeoutMs: 100,
+    // This fixture runs while other reader tests, including the cold-start delay,
+    // may be active under the shared test concurrency limit.
+    timeoutMs: 5_000,
   });
   assert.equal(fallback.status, "ok");
   assert.equal(fallback.windows[0]!.usedFraction, 0.23);
