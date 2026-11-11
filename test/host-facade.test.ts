@@ -194,14 +194,26 @@ test("the class carries exactly the façade's declared method set", () => {
 
 test('qualified callers reach only their recorded host and host APIs receive native IDs', async () => {
   const calls: Calls[] = [];
-  const owner = { adapter: fakeAdapter(calls, 'selected', { withNotify: true }), activeHostId: 't3code:one' };
+  const adapter = fakeAdapter(calls, 'selected', { withNotify: true }) as unknown as Record<string, unknown>;
+  adapter.originAgent = async (id: string) => { calls.push({ method: 'originAgent', args: ['selected', id] }); return { id, workspaceId: 'workspace', title: 'planner', archived: false }; };
+  adapter.pendingQuestions = async (id: string) => { calls.push({ method: 'pendingQuestions', args: ['selected', id] }); return []; };
+  const owner = { adapter: adapter as unknown as Adapter, activeHostId: 't3code:one' };
   const host = new HostFacade(owner);
-  await host.observe(formatAgentId('t3code:one', 'planner'));
-  await host.sendMessage(formatAgentId('t3code:one', 'planner'), { messageId: 'message', text: 'Hello' });
+  const qualified = formatAgentId('t3code:one', 'planner');
+  await host.originAgent(qualified);
+  await host.observe(qualified);
+  await host.sendMessage(qualified, { messageId: 'message', text: 'Hello', sourceAgentId: qualified });
+  await host.pendingQuestions(qualified);
+  await host.archiveAgent(qualified);
   assert.deepEqual(calls, [
+    { method: 'originAgent', args: ['selected', 'planner'] },
     { method: 'observe', args: ['selected', 'planner'] },
-    { method: 'notify', args: ['selected', 'planner', 'message', 'Hello', undefined] },
+    { method: 'notify', args: ['selected', 'planner', 'message', 'Hello', 'planner'] },
+    { method: 'pendingQuestions', args: ['selected', 'planner'] },
+    { method: 'archiveAgent', args: ['selected', 'planner'] },
   ]);
   assert.throws(() => host.observe(formatAgentId('t3code:other', 'planner')), /different or unknown host/);
-  assert.equal(calls.length, 2, 'a mismatched host receives no call');
+  assert.throws(() => host.originAgent(formatAgentId('t3code:other', 'planner')), /different or unknown host/);
+  assert.throws(() => host.sendMessage(formatAgentId('t3code:other', 'planner'), { messageId: 'wrong-host', text: 'No send' }), /different or unknown host/);
+  assert.equal(calls.length, 5, 'a mismatched host receives no call');
 });

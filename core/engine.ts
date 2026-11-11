@@ -39,6 +39,7 @@ import { DispatchAdmission } from "./dispatch/admission";
 import { Store, digest, now } from "./store/store";
 import type { Adapter, AgentObservation } from "./host/adapter";
 import { HostFacade } from "./host/host-facade";
+import { callerNativeId } from '../shared/agent-identity';
 
 import type { TaskControlInput, TaskControlRequest } from "../shared/contracts";
 import type { TaskControlTask } from "../shared/contracts";
@@ -324,7 +325,36 @@ export class Engine {
             return value.call(selected, input, taskId, proof);
           };
         }
-        return typeof value === 'function' ? value.bind(selected) : value;
+        if (typeof value !== 'function') return value;
+        // Some older call sites still use adapter methods directly instead of
+        // HostFacade. Keep that compatibility safe at the transport boundary:
+        // qualified IDs are unwrapped only for the selected host, for every
+        // host method whose arguments identify an agent.
+        const native = (agentId: unknown): unknown => typeof agentId === 'string'
+          ? callerNativeId(agentId, id ?? (selected as Adapter & { hostId?: string }).hostId)
+          : agentId;
+        const agentArgs: Record<string, number[]> = {
+          originAgent: [0], observe: [0], archiveAgent: [0], stopAgentTurn: [0],
+          agentTimeline: [0], agentTimelinePage: [0], pendingQuestions: [0],
+          answeredQuestions: [0], dismissNativeQuestion: [0], answerNativeQuestion: [0],
+          answerNativePermission: [0], subscribeRunUsage: [0],
+          notify: [0, 3], enqueueMessage: [0, 3], interruptAndContinue: [0],
+          askPlanner: [0], askReviewer: [0],
+        };
+        const positions = agentArgs[String(property)];
+        return (...args: unknown[]) => {
+          const normalized = args.slice();
+          for (const position of positions ?? []) if (normalized[position] !== undefined)
+            normalized[position] = native(normalized[position]);
+          if ((property === 'askPlanner' || property === 'askReviewer') && normalized[1]
+            && typeof normalized[1] === 'object' && 'sourceAgentId' in normalized[1]) {
+            const input = normalized[1] as { sourceAgentId?: unknown };
+            normalized[1] = { ...input, ...(input.sourceAgentId === undefined ? {} : { sourceAgentId: native(input.sourceAgentId) }) };
+          }
+          if (property === 'observationInventory' && Array.isArray(normalized[0]))
+            normalized[0] = (normalized[0] as unknown[]).map(native);
+          return value.apply(selected, normalized);
+        };
       },
       set: (fallback, property, value) => Reflect.set(fallback, property, value, fallback),
     });
