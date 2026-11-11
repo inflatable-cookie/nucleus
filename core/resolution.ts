@@ -63,6 +63,7 @@ import { RetryRoutes } from './recovery/retry-routes';
 import { ExternalMerge, type ExternalMergeContext } from './merge/external-merge';
 import { AbsentRestarts } from './recovery/absent-restarts';
 import { Delegation } from './questions/delegation';
+import type { PlannerRung } from './questions/delegation';
 import { Ladder } from './questions/ladder';
 import { TransientResume } from './recovery/transient-resume';
 import { EffectReconcile } from './recovery/effect-reconcile';
@@ -178,7 +179,7 @@ export class Resolution {
 
   readonly validationRetry = new ValidationRetry(schedulingContext(this, ['store', 'update']));
 
-  readonly plannerPresence = new PlannerPresence(schedulingContext(this, ['adapter', 'host', 'identifyOriginHost', 'originHostAvailable', 'plannerThreadGone', 'projectPlannerFor', 'store', 'withHost']));
+  readonly plannerPresence = new PlannerPresence(schedulingContext(this, ['adapter', 'host', 'identifyOriginHost', 'originHostAvailable', 'plannerThreadGone', 'projectPlannerFor', 'store', 'taskPlannerFor', 'withHost']));
 
   readonly orphanRunsOwner = new OrphanRuns(schedulingContext(this, ['store']));
 
@@ -492,15 +493,15 @@ export class Resolution {
   /** Command receipts, never conversation output, settle every delegated route. */
   delegatedAnswerWaitMs = DELEGATED_ANSWER_TIMEOUT_MS;
   delegatePrompt(task: Task, id: string, prompt: string, recipient?: string, hostId?: string): string { return this.delegation.delegatePrompt(task, id, prompt, recipient, hostId); }
-  openDelegatedQuestion(task: Task, id: string, recipient: string, prompt: string, timeoutMs: number, role: string, hostId?: string): void { this.delegation.openDelegatedQuestion(task, id, recipient, prompt, timeoutMs, role, hostId); }
-  delegatedDelivery(id: string): { taskId: string; recipient: string; role: string; deadline: number } | null { return this.delegation.delegatedDelivery(id); }
+  openDelegatedQuestion(task: Task, id: string, recipient: string, prompt: string, timeoutMs: number, role: string, hostId?: string, rung?: 'task' | 'project'): void { this.delegation.openDelegatedQuestion(task, id, recipient, prompt, timeoutMs, role, hostId, rung); }
+  delegatedDelivery(id: string): { taskId: string; recipient: string; role: string; deadline: number; hostId?: string; rung?: 'task' | 'project' } | null { return this.delegation.delegatedDelivery(id); }
   recoverableDelegation(ids: string[], advance = true): boolean { return this.delegation.recoverableDelegation(ids, advance); }
   answerDelegatedQuestion(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) { return this.delegation.answerDelegatedQuestion(input, caller); }
   answerDelegatedQuestionFromTicket(input: { taskId: string; runId: string; questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, token: string) { return this.delegation.answerDelegatedQuestionFromTicket(input, token); }
   delegatedQuestionForTask(identity: string, caller: string) { return this.delegation.questionForTask(identity, caller); }
   answerDelegatedQuestionFromHost(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) { return this.delegation.answerFromHost(input, caller); }
   waitDelegatedAnswer(id: string, signal: AbortSignal): Promise<string | null> { return this.delegation.waitDelegatedAnswer(id, signal); }
-  askBound(task: Task, recipient: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string; onIntent?: () => void }, role: 'planner' | 'reviewer'): Promise<string | null> { return this.delegation.askBound(task, recipient, input, role); }
+  askBound(task: Task, recipient: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string; onIntent?: () => void; rung?: 'task' | 'project' }, role: 'planner' | 'reviewer'): Promise<string | null> { return this.delegation.askBound(task, recipient, input, role); }
   deciderBound(task: Task, input: { prompt: string; profile: Profile | null; signal: AbortSignal; timeoutMs: number; decisionId: string; sourceAgentId?: string }): Promise<{ agentId: string; text: string | null }> { return this.delegation.deciderBound(task, input); }
   paused() { return this.stopped() || this.store.getMeta('paused') === true; }
   startsNoRuns() { return this.paused(); }
@@ -918,8 +919,18 @@ export class Resolution {
   recordAndRouteAsk(task: Task, run: Pick<Run, 'id' | 'role' | 'agentId'>, ask: AgentAskShape): string | null { return this.agentAsks.recordAndRouteAsk(task, run, ask); }
   /** Only a positive observation counts: a failed read leaves the thread in place. */
   plannerThreadGone(agentId: string): Promise<boolean> { return this.plannerPresence.plannerThreadGone(agentId); }
+  /** Task 1109: the thread that answers this task's questions first — its planner, else its owner. */
+  taskPlannerFor(task: Task): Promise<PlannerRung | null> { return this.delegation.taskPlannerFor(task); }
+  /** Task 1109: the ordered planner rungs a task's questions climb — its own planner, then the project's. */
+  plannerRungsFor(task: Task): Promise<{ rungs: PlannerRung[]; projectFailed: boolean }> { return this.delegation.plannerRungsFor(task); }
+  /**
+   * Task 1109: issue a planner's participant ticket before a question names it,
+   * supplied by the runtime that owns ticket delivery; absent in tests and when no
+   * runtime is bound, where the recipient's host identity answers.
+   */
+  ensurePlannerTicket: ((agentId: string, hostId: string) => Promise<void>) | null = null;
   projectPlannerFor(task: Task): Promise<{ planner: string | null; failed: boolean }> { return this.delegation.projectPlannerFor(task); }
-  /** An escalation's rung: the shared planner lookup, then the task's live origin thread, the order Spec 058 gives notices. */
+  /** An escalation's rung: the task's own planner, then the project planner, the order task 1109 gives questions. */
   escalationRecipient(task: Task): Promise<string | null> { return this.plannerPresence.escalationRecipient(task); }
   routeAgentAsk(task: Task, ask: AgentAskShape): Promise<void> { return this.agentAsks.routeAgentAsk(task, ask); }
   routeReviewerAsk(task: Task, ask: AgentAskShape): Promise<void> { return this.agentAsks.routeReviewerAsk(task, ask); }

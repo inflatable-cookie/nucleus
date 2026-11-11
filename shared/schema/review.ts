@@ -318,6 +318,11 @@ export const submissionSchema = z.object({
   mergeHold: z.boolean().optional(),
   // Spec 040: a brief or handoff that requests a merge hold says why; its owner is the submitting agent.
   mergeHoldReason: z.string().trim().min(1).max(4000).optional(),
+  // Task 1109: the thread that answers this task's planning questions first. Null
+  // means its owner — the thread that submitted or promoted it; reparenting moves
+  // that default with the owner. A brief may name another planner thread through
+  // `queue.planner`.
+  plannerAgentId: z.string().trim().min(1).max(300).nullable().default(null),
   requirePreferred: z.boolean().default(false), thinkingOptionId: z.string().default(""),
   // Retired with Spec 037's brief gates (Spec 058 cutover 2): new submissions
   // refuse both keys; the optional fields stay readable so stored rows keep

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
-import { PlannerParticipantTickets, resolveTicketCaller, plannerTicketKey } from '../core/dispatch/participant-tickets';
+import { PlannerParticipantTickets, resolveTicketCaller, plannerTicketKey, taskPlannerTicketKey } from '../core/dispatch/participant-tickets';
 import { formatAgentId } from '../shared/agent-identity';
 import { runSchema, submissionSchema } from '../shared/contracts';
 import { RuntimeRepositories, type RepositoriesContext } from '../core/runtime/repositories';
@@ -124,6 +124,38 @@ test('a planner reassigned during host lookup never receives the superseded tick
     const current = f.ticket();
     assert.equal(resolveTicketCaller(f.store, current, current.token).caller, formatAgentId('t3code:synthetic', 'current-planner'));
   } finally { f.store.close(); }
+});
+
+test('a task planner on a ticket-only host answers, and reparenting moves the ticket scope', async () => {
+  const f = fixture();
+  const close = await startCallbacks(f.paths.socketPath, f.paths.helperPath, f.engine);
+  try {
+    const planner = formatAgentId('t3code:synthetic', 'task-planner');
+    const task = f.store.insert(submissionSchema.parse({ submissionId: 'task-planner-ticket', title: 'Task planner',
+      repoPath: '/synthetic/example', planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: planner }), 't3code:synthetic', 'handoff', 'a'.repeat(40));
+    // No project planner: the submitting thread is the task's planner.
+    await f.tickets.ensure();
+    const record = f.store.getMeta<{ path: string }>(taskPlannerTicketKey('t3code:synthetic', 'task-planner'))!;
+    assert.ok(record, 'the task planner received a participant ticket');
+    assert.ok(f.messages.some(message => message.id === 'task-planner' && message.text.includes(record.path)));
+    const ticket = JSON.parse(readFileSync(record.path, 'utf8')) as { participantId: string; token: string };
+    const caller = resolveTicketCaller(f.store, { participantId: ticket.participantId }, ticket.token);
+    assert.deepEqual(caller, { caller: planner, hostId: 't3code:synthetic', source: 'participant-ticket' });
+    // The ticket answers the question the task's own planner was asked.
+    f.engine.resolution.openDelegatedQuestion(task, 'task-planner-window', planner, 'Question: Continue?', 10_000, 'planner', 't3code:synthetic', 'task');
+    const receipt = await f.engine.resolution.answerDelegatedQuestionFromHost({ questionId: 'task-planner-window', answer: 'Continue', reason: 'Within the brief' }, caller.caller);
+    assert.equal(receipt.answer, 'Continue');
+    // Reparenting moves the scope: the old planner's ticket is revoked and the new owner gets one.
+    Object.assign(f.engine.adapter, { originAgent: async (id: string) => ({ id, workspaceId: 'synthetic-workspace', title: id, archived: false }) });
+    await f.engine.reparent({ toAgentId: 'successor', taskIds: [task.id], caller: 'operator (board)', reason: 'The successor promotes this task' } as never);
+    assert.equal(f.store.task(task.id).notificationAgentId, 'successor');
+    assert.throws(() => resolveTicketCaller(f.store, { participantId: ticket.participantId }, ticket.token), /revoked or invalid/);
+    await f.tickets.ensure();
+    const successor = f.store.getMeta<{ path: string }>(taskPlannerTicketKey('t3code:synthetic', 'successor'))!;
+    const successorTicket = JSON.parse(readFileSync(successor.path, 'utf8')) as { participantId: string; token: string };
+    assert.equal(resolveTicketCaller(f.store, { participantId: successorTicket.participantId }, successorTicket.token).caller,
+      formatAgentId('t3code:synthetic', 'successor'));
+  } finally { await close(); f.store.close(); }
 });
 
 test('a registered planner question prompt names its participant ticket on a host without environment identity', async () => {

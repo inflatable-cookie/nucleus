@@ -82,9 +82,11 @@ export function taskContextLines(context: readonly string[]): string[] {
 }
 
 /** Native questions may be free text and must first be classified by the delegate. */
-export function nativeDelegationPrompt(role: DelegateRole, input: DelegationContext): string {
+export function nativeDelegationPrompt(role: DelegateRole, input: DelegationContext, planner?: 'task' | 'project'): string {
+  // Task 1109: a task's own planner is asked first; naming the rung keeps the prompt honest.
+  const who = role === 'planner' ? (planner === 'task' ? "the task's planner" : ROLE_WORDS[role]) : ROLE_WORDS[role];
   return [
-    `Question for ${ROLE_WORDS[role]}: ${input.question}`,
+    `Question for ${who}: ${input.question}`,
     ...input.choices.map(choice => `- ${choice}`),
     ...taskContextLines(input.context),
     'If only the operator can decide, use decision: "operator" with a one-line reason.',

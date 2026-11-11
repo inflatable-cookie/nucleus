@@ -14,11 +14,12 @@ const laneSelectionSchema=z.union([laneKeySchema,laneKeyListSchema,z.null()]);
  * takes a list; giving both is refused. The resolved membership travels to the
  * submission as the one `lanes` list, in the order given and without duplicates.
  */
-export function submissionQueueFields(queue:{lane?:string|string[]|null;lanes?:string[];[key:string]:unknown}):Record<string,unknown>{
- const {lane,lanes,stages:_stages,subjectSets:_subjectSets,goal:_goal,reportOnly:_reportOnly,reportLane:_reportLane,...rest}=queue;
+export function submissionQueueFields(queue:{lane?:string|string[]|null;lanes?:string[];planner?:string;[key:string]:unknown}):Record<string,unknown>{
+ const {lane,lanes,planner,stages:_stages,subjectSets:_subjectSets,goal:_goal,reportOnly:_reportOnly,reportLane:_reportLane,...rest}=queue;
  if(lane!==undefined&&lanes!==undefined)throw Error('Provide queue.lane or queue.lanes, not both');
  const resolved=lanes??(lane===undefined||lane===null?[]:Array.isArray(lane)?lane:[lane]);
- return {...rest,lanes:resolved};
+ // Task 1109: a brief names the task's own planning thread; unset keeps its owner.
+ return {...rest,lanes:resolved,...(planner===undefined?{}:{plannerAgentId:planner})};
 }
 /** Explain the limited routing effect of task-level preferences on proof-only work. */
 export function proofOnlyPreferenceWarning(submission:Pick<Submission,'proofOnly'|'preferredProfileId'|'requirePreferred'>):string|null{
@@ -46,7 +47,7 @@ const refuseRetiredQueueFlags=<T extends {responsible?:boolean;manualVerificatio
  if(queue.reviewVerdicts!==undefined)ctx.addIssue({code:'custom',path:['reviewVerdicts'],message:'queue.reviewVerdicts is no longer available; state the outcome and acceptance in prose in the brief body, and use queue.mergeHold for a needed hold'});
  if(queue.reviewPassGate!==undefined)ctx.addIssue({code:'custom',path:['reviewPassGate'],message:'queue.reviewPassGate is no longer available; state the acceptance conditions in prose in the brief body, and use queue.mergeHold for a needed hold'});
 };
-const queueFieldsObjectSchema=z.object({profileRequests:submissionSchema.shape.profileRequests,dependsOn:submissionSchema.shape.dependsOn.optional(),lane:laneSelectionSchema.optional(),lanes:laneKeyListSchema.optional(),laneDocuments:laneKeyListSchema.optional(),scope:scopeSchema.optional(),complexity:capabilityLevelSchema.nullable().optional(),preferredProfileId:z.string().optional(),requirePreferred:z.boolean().optional(),thinkingOptionId:z.string().optional(),skipPRReview:z.boolean().optional(),siblings:z.boolean().optional(),manualVerification:z.boolean().optional(),interactive:z.boolean().optional(),responsible:z.boolean().optional(),critical:z.boolean().optional(),reportOnly:z.boolean().optional(),reportLane:laneKeySchema.optional(),mergeHold:submissionSchema.shape.mergeHold,mergeHoldReason:submissionSchema.shape.mergeHoldReason,proofExecution:submissionSchema.shape.proofExecution,proofOnly:submissionSchema.shape.proofOnly,requiresOperatorGo:submissionSchema.shape.requiresOperatorGo,notifyOriginOnCloseout:z.boolean().optional(),reviewVerdicts:reviewVerdictsOptInSchema.optional(),reviewPassGate:reviewPassGateSchema.optional(),completionNotificationAgentIds:submissionSchema.shape.completionNotificationAgentIds.optional()}).strict();
+const queueFieldsObjectSchema=z.object({profileRequests:submissionSchema.shape.profileRequests,dependsOn:submissionSchema.shape.dependsOn.optional(),lane:laneSelectionSchema.optional(),lanes:laneKeyListSchema.optional(),laneDocuments:laneKeyListSchema.optional(),scope:scopeSchema.optional(),complexity:capabilityLevelSchema.nullable().optional(),preferredProfileId:z.string().optional(),planner:z.string().trim().min(1).max(300).optional(),requirePreferred:z.boolean().optional(),thinkingOptionId:z.string().optional(),skipPRReview:z.boolean().optional(),siblings:z.boolean().optional(),manualVerification:z.boolean().optional(),interactive:z.boolean().optional(),responsible:z.boolean().optional(),critical:z.boolean().optional(),reportOnly:z.boolean().optional(),reportLane:laneKeySchema.optional(),mergeHold:submissionSchema.shape.mergeHold,mergeHoldReason:submissionSchema.shape.mergeHoldReason,proofExecution:submissionSchema.shape.proofExecution,proofOnly:submissionSchema.shape.proofOnly,requiresOperatorGo:submissionSchema.shape.requiresOperatorGo,notifyOriginOnCloseout:z.boolean().optional(),reviewVerdicts:reviewVerdictsOptInSchema.optional(),reviewPassGate:reviewPassGateSchema.optional(),completionNotificationAgentIds:submissionSchema.shape.completionNotificationAgentIds.optional()}).strict();
 const queueFieldsSchema=z.preprocess(renameLegacyQueueScope,queueFieldsObjectSchema.superRefine((queue,ctx)=>{
  requireProofOnlyQueue(queue,ctx);
  refuseRetiredQueueFlags(queue,ctx);

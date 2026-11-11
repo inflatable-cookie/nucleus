@@ -487,7 +487,8 @@ test("a still-blocked run after the consult opens one planner escalation and its
     await until(() => f.events("planner_escalation_answered").length > 0);
     assert.match(
       f.events("planner_escalation_answered")[0]!.detail,
-      /answered by planner planner-1/,
+      // Task 1109: the task's own planner (its submitting thread) answers first.
+      /answered by planner origin/,
     );
     // The delegated answer applies through the ordinary verbs: move to work, delegated authority.
     await until(() => f.events("planner_escalation_applied").length > 0);
@@ -511,7 +512,7 @@ test("a still-blocked run after the consult opens one planner escalation and its
     assert.ok(ownerControl, "the applied verb records its control");
     assert.match(
       ownerControl!.detail,
-      /"caller":"planner-1"/,
+      /"caller":"origin"/,
       "the delegated answer records its answering agent",
     );
   } finally {
@@ -1017,7 +1018,7 @@ test("the joint question on the third non-converging round is answered by the pl
     assert.equal(f.delegated.deciders.length, 0);
     assert.match(
       f.events("responsible_question_answered")[0]!.detail,
-      /delegated planner planner-1/,
+      /delegated planner origin/,
     );
     await f.settle(3);
     assert.equal(
@@ -1466,7 +1467,8 @@ test('a delegated stop applies through the ordinary verb', async () => {
     await until(() => f.events('planner_escalation_applied').length + f.events('planner_escalation_refused').length > 0);
     assert.equal(f.events('planner_escalation_refused').length, 0, f.events('planner_escalation_refused')[0]?.detail);
     assert.match(f.events('planner_escalation_applied')[0]!.detail, /stop and keep the work/);
-    assert.equal(f.current().holds.dispatch?.owner, 'planner-1');
+    // Task 1109: the answering planner is the task's owner, so the hold follows the owner.
+    assert.equal(f.current().holds.dispatch?.owner, 'task-owner');
   } finally { await f.close(); }
 });
 

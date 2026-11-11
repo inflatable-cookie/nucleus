@@ -631,7 +631,7 @@ const PARSED: ParsedText[] = [
   { site: 'ask run', re: /\brun ([^\s(]+)/, sample: 'a-1: kind scope; run r-1 (worker); agent x', writers: ['${ask.id}: kind ${ask.kind}; run ${run.id} (${run.role}); agent ${run.agentId ?? \'unknown\'}; question ${digest(ask.question)} (${ask.question.length} chars)'] },
   { site: 'ask run and agent', re: /run (\S+) \([^)]+\); agent ([^;\s]+)/, sample: 'a-1: kind scope; run r-1 (worker); agent x; question d (1 chars)' },
   { site: 'ask joined', re: /queue question (\S+)/, sample: 'a-1: queue question q-1', writers: ['${ask.id}: queue question ${joined}', ': queue question ${decision.id}'], reads: ['`${askId}: queue question `', "split('queue question ')"] },
-  { site: 'ask delegated planner', re: /planner (\S+);/, sample: 'a-1: planner p-1; asked', writers: ['planner ${agentId}; asked'], reads: ['`${askId}: planner `'] },
+  { site: 'ask delegated planner', re: /planner (\S+);/, sample: 'a-1: task planner p-1; asked', writers: ["${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked"], reads: ['`${askId}: planner `', '`${askId}: task planner `', '`${askId}: project planner `'] },
   { site: 'ask delegated reviewer', re: /reviewer (\S+);/, sample: 'a-1: reviewer r-1; consult', writers: ['${ask.id}: reviewer ${reviewer}; consult'], reads: ['`${askId}: reviewer `'] },
   { site: 'ask delegated decider', reads: ['`${askId}: decider`'], writers: ['decider requested'] },
   { site: 'ladder cause', re: /cause ([0-9a-f]{64})/, sample: `e-1: cause ${'f'.repeat(64)}; run r-1; question d (1 chars)`, writers: ['${id}: cause ${input.cause}; run ${input.runId ?? \'worker\'}; question ${digest('] },
@@ -654,7 +654,7 @@ const PARSED: ParsedText[] = [
  * leaves the others, so these carry a floor. A PR that deletes a site lowers it.
  */
 const SITES: Record<string, number> = {
-  'planner ${agentId}; asked': 3,
+  "${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked": 3,
   'decider requested': 3,
   'Task changed; refresh before retrying': 38,
   'Task or run changed; refresh before retrying': 3,

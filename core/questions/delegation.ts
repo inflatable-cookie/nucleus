@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Profile, Task } from '../../shared/contracts';
-import { awaitingProofTexts } from '../../shared/contracts';
+import { awaitingProofTexts, isOperatorOrigin, taskPlanner, taskOwner } from '../../shared/contracts';
+import { sameCallerIdentity } from '../../shared/agent-identity';
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { groupIsUnavailable } from '../../shared/pool';
 import { currentBrief } from '../planning/brief';
@@ -13,6 +14,15 @@ import { formatAgentId, nativeAgentId, parseAgentId, qualifyLegacyAgentId } from
 
 /** The selection failed before an intent or host call was made. */
 export class DelegatedHostUnavailable extends Error {}
+
+/** Which planner rung a question is on: the task's own planner, or the project's. */
+export type PlannerRungName = 'task' | 'project';
+
+/** One planner rung, with the message window its question travels on. */
+export interface PlannerRung {
+  agentId: string;
+  rung: PlannerRungName;
+}
 
 /** One question to one delegate, under an answer window, on the `delegation:<id>` stream. */
 export class Delegation {
@@ -92,16 +102,17 @@ export class Delegation {
       : '';
     return `Task: ${task.reference ?? task.id} — ${task.title}\nQuestion id: ${id}\n${prompt}\nAnswer with this command; write nothing else in this thread. For operator-only matters set "decision":"operator" instead of answer.\n${command} <<'JSON'\n${json}\nJSON${helper}`;
   }
-  openDelegatedQuestion(task: Task, id: string, recipient: string, prompt: string, timeoutMs: number, role: string, hostId?: string): void {
+  openDelegatedQuestion(task: Task, id: string, recipient: string, prompt: string, timeoutMs: number, role: string, hostId?: string, rung?: PlannerRungName): void {
     const qualified = parseAgentId(recipient);
     if (qualified && hostId && qualified.hostId !== hostId) throw Error('Delegated recipient belongs to a different host');
     recipient = qualified?.nativeAgentId ?? recipient;
     this.store.event(`delegation:${id}`, 'delegated_delivery', JSON.stringify({ taskId: task.id, recipient, role, prompt,
       ...(hostId ? { hostId, recipientRef: qualifyLegacyAgentId(recipient, hostId) } : {}),
+      ...(rung ? { rung } : {}),
       deadline: Date.now() + Math.min(timeoutMs, this.delegatedAnswerWaitMs) }));
   }
   /** A restart may resume observation, never delivery. Unknown sends remain fenced. */
-  delegatedDelivery(id: string): { taskId: string; recipient: string; role: string; deadline: number; hostId?: string; recipientRef?: string } | null {
+  delegatedDelivery(id: string): { taskId: string; recipient: string; role: string; deadline: number; hostId?: string; recipientRef?: string; rung?: PlannerRungName } | null {
     const event = this.store.eventsAll(`delegation:${id}`).findLast(event => event.kind === 'delegated_delivery');
     return event ? JSON.parse(event.detail) : null;
   }
@@ -225,12 +236,16 @@ export class Delegation {
     this.store.event(key, 'delegated_closed', 'No command answer in the window');
     return null;
   }
-  async askBound(task: Task, recipient: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string; onIntent?: () => void }, role: 'planner' | 'reviewer'): Promise<string | null> {
+  async askBound(task: Task, recipient: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string; onIntent?: () => void; rung?: PlannerRungName }, role: 'planner' | 'reviewer'): Promise<string | null> {
     const existing = this.resolution.delegatedDelivery(input.messageId);
     const hostId = existing ? undefined : await this.requireHost(task, recipient, role);
     if (!existing && !this.resolution.withHost(hostId!, () => role === 'planner' ? this.adapter.askPlanner : this.adapter.askReviewer)) return null;
     if (!existing) {
-      this.openDelegatedQuestion(task, input.messageId, recipient, input.prompt, input.timeoutMs, role, hostId);
+      // Task 1109: a planner on a host without per-thread identity needs its ticket
+      // before the question names it. Issuance is a convenience for the answer; a
+      // failed delivery keeps the question on its ordinary host identity.
+      if (role === 'planner') await this.resolution.ensurePlannerTicket?.(recipient, hostId!).catch(() => {});
+      this.openDelegatedQuestion(task, input.messageId, recipient, input.prompt, input.timeoutMs, role, hostId, input.rung);
       input.onIntent?.();
     }
     try {
@@ -288,6 +303,33 @@ export class Delegation {
       throw error;
     }
   }
+  /**
+   * Task 1109 (Tom, 2026-11-11): a task's own planner first — the thread a brief
+   * named, else its owner, the thread that submitted or promoted it. It is skipped
+   * at once when observed archived or gone, never cleared: the owner record still
+   * routes the task's origin notices.
+   */
+  async taskPlannerFor(task: Task): Promise<PlannerRung | null> {
+    const planner = taskPlanner(task);
+    if (!planner || isOperatorOrigin(planner) || await this.resolution.plannerThreadGone(planner)) return null;
+    return { agentId: planner, rung: 'task' };
+  }
+
+  /**
+   * The planner rungs one task's questions climb, in order: its own planner, then
+   * the project's planner when that is a different thread (Tom, 2026-11-11). A rung
+   * observed archived or gone is skipped here; a silent rung still times out in
+   * `delegateQuestion`, and the decider follows the rungs.
+   */
+  async plannerRungsFor(task: Task): Promise<{ rungs: PlannerRung[]; projectFailed: boolean }> {
+    const rungs: PlannerRung[] = [];
+    const own = await this.taskPlannerFor(task);
+    if (own) rungs.push(own);
+    const { planner, failed } = await this.projectPlannerFor(task);
+    if (planner && !rungs.some(rung => sameCallerIdentity(rung.agentId, planner))) rungs.push({ agentId: planner, rung: 'project' });
+    return { rungs, projectFailed: failed };
+  }
+
   /**
    * The one lookup every delegated route uses for the planner rung (Tom, 2026-11-06). A missing or archived
    * registered planner becomes a visible project gap and routes to Queue's planner; with no live planner at

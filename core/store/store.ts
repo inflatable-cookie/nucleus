@@ -782,6 +782,10 @@ export class Store {
         throw new Error('reviewVerdicts and reviewPassGate are no longer available; state the outcome and acceptance in prose in the brief, and use mergeHold for a needed hold');
       // Every new task runs the responsible lifecycle.
       const responsible = input.responsible ?? true;
+      // Task 1109: a task's planner is a thread that answers its planning questions;
+      // the operator answers no delegated question, so a named planner cannot be it.
+      if (input.plannerAgentId && isOperatorOrigin(input.plannerAgentId))
+        throw new Error('The operator is not a thread; name a planner thread or leave the task to its owner');
       const thinkingConflict = workerThinkingConflict(input.thinkingOptionId, input.profileRequests?.worker);
       if (thinkingConflict) throw new Error(thinkingConflict);
       const id = randomUUID();

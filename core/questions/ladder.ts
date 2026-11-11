@@ -115,7 +115,7 @@ export class Ladder {
         .finally(() => this.routingConsults.delete(consult.id));
     }
     for (const escalation of plannerEscalations(events)) {
-      const windows = [`ns-escalation-${escalation.id}`, `ns-decider-${escalation.id}`];
+      const windows = [`ns-escalation-${escalation.id}`, `ns-escalation-${escalation.id}-project`, `ns-decider-${escalation.id}`];
       if (escalationRecovery({
         missedNoAnswer: events.some(event => event.kind === 'planner_escalation_missed' && event.detail.startsWith(`${escalation.id}: no delegated answer was produced;`)),
         answered: escalation.answered,
@@ -525,16 +525,19 @@ export class Ladder {
     const runId = payload ? (JSON.parse(payload.detail.slice(id.length + 2)) as { runId?: string }).runId : undefined;
     const sourceAgentId = runId ? this.store.run(runId)?.agentId ?? t.agentId ?? undefined : t.agentId ?? undefined;
     let pending = false;
+    // Task 1109: the task's own planner first, then the project planner, then the decider.
+    const rungs = (await this.resolution.plannerRungsFor(t)).rungs;
     const delegated = await delegateQuestion(this.resolution, t, {
-      planner: await this.resolution.escalationRecipient(t), plannerMessageId: `ns-escalation-${id}`, decisionId: id,
+      planners: rungs.map(item => ({ ...item, messageId: `ns-escalation-${id}${item.rung === 'project' ? '-project' : ''}` })), decisionId: id,
       context: { question, choices, context }, signal: new AbortController().signal, sourceAgentId,
       parse: text => parseEscalationReply(text, choices), retainDecider: true,
       current: () => !plannerEscalations(events() as LadderEvent[]).find(item => item.id === id)?.answered,
       canAdvance: () => !escalationOutlived(this.store.task(t.id)),
-      onIntent: (role, agentId) => {
-        if (role === 'planner') this.resolution.waiting(this.store.task(t.id), `Waiting with the planner or task owner ${agentId}: blocker escalation ${id} is open`, 'escalated');
-        this.store.event(t.id, 'planner_escalation_delegated', `${id}: ${role === 'planner' ? `planner ${agentId}; asked` : 'decider requested'}`);
+      onIntent: (role, agentId, rung) => {
+        if (role === 'planner') this.resolution.waiting(this.store.task(t.id), `Waiting with the planner or task owner ${agentId}: blocker escalation ${id} (${rung === 'task' ? 'task planner' : 'project planner'} rung) is open`, 'escalated');
+        this.store.event(t.id, 'planner_escalation_delegated', `${id}: ${role === 'planner' ? `${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked` : 'decider requested'}`);
       },
+      onSkip: (rung, agentId, detail) => this.store.event(t.id, 'planner_escalation_delegation_skipped', `${id}: ${rung} planner ${agentId} skipped: ${detail}`.slice(0, 4000)),
       onMiss: detail => this.store.event(t.id, 'planner_escalation_missed', `${id}: ${detail}`),
       onUnknown: (role, agentId, error) => {
         pending = true;
