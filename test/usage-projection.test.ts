@@ -155,6 +155,36 @@ test("fully used pins right at zero time to exhaustion", () => {
   assert.equal(subscription.projectedUseAtReset, 1);
 });
 
+test("a fully used window stays will_run_out when its reset has passed or is absent", () => {
+  // A full window is exhausted now, whatever its reset says; a passed or absent
+  // reset must never turn the pinned dial into "spare".
+  for (const resetsAt of [new Date(NOW - HOUR).toISOString(), null]) {
+    const exhausted = window({ usedFraction: 1, resetsAt });
+    const projected = projectUsageWindow(exhausted, NOW);
+    assert.ok(projected);
+    assert.equal(projected.dial, 1);
+    assert.equal(projected.exhaustsInMs, 0);
+    const subscription = projectUsage({ now: NOW, windows: [exhausted] });
+    assert.equal(subscription.state, "will_run_out");
+    assert.equal(subscription.bindingWindowId, "weekly");
+    assert.equal(subscription.dial, 1);
+    assert.equal(subscription.projectedUseAtReset, 1);
+  }
+});
+
+test("a fully used window with a passed reset binds ahead of a merely fast window", () => {
+  const exhausted = window({
+    windowId: "spent",
+    name: "Spent",
+    usedFraction: 1,
+    resetsAt: new Date(NOW - HOUR).toISOString(),
+  });
+  const fast = window({ usedFraction: 0.8 });
+  const subscription = projectUsage({ now: NOW, windows: [fast, exhausted] });
+  assert.equal(subscription.state, "will_run_out");
+  assert.equal(subscription.bindingWindowId, "spent");
+});
+
 test("no usable window projects unknown, never zero", () => {
   const noReset = window({ resetsAt: null });
   assert.equal(usageWindowElapsed(noReset, NOW), null);

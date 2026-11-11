@@ -183,7 +183,8 @@ export function projectUsage(input: UsageProjectionInput): UsageProjection {
       windows: [],
     };
   }
-  // Binding: whichever hits 100% earliest before its own reset; with none
+  // Binding: whichever hits 100% earliest before its own reset; a fully used
+  // window is exhausted now and binds regardless of its reset. With none
   // running out, the closest call (highest dial) names the dial.
   const resetsByWindow = new Map(
     input.windows.map((window) => [
@@ -194,9 +195,10 @@ export function projectUsage(input: UsageProjectionInput): UsageProjection {
   const runningOut = projected
     .filter(
       (candidate) =>
-        candidate.exhaustsInMs !== null &&
-        candidate.pace !== null &&
-        candidate.pace > 1,
+        candidate.exhaustsInMs === 0 ||
+        (candidate.pace !== null &&
+          candidate.pace > 1 &&
+          candidate.exhaustsInMs !== null),
     )
     .map((candidate) => ({
       candidate,
@@ -204,7 +206,9 @@ export function projectUsage(input: UsageProjectionInput): UsageProjection {
     }))
     .filter((entry) => {
       const reset = resetsByWindow.get(entry.candidate.windowId);
-      return !finite(reset) || entry.at < reset;
+      return (
+        entry.candidate.exhaustsInMs === 0 || !finite(reset) || entry.at < reset
+      );
     })
     .sort((a, b) => a.at - b.at);
   const binding =
@@ -215,15 +219,14 @@ export function projectUsage(input: UsageProjectionInput): UsageProjection {
     : Math.abs(binding.dial ?? 0) <= USAGE_ON_TRACK_EPSILON
       ? "on_track"
       : "spare";
-  const windowMsByName = new Map(
-    input.windows.map((window) => [window.windowId, window]),
+  const bindingWindow = input.windows.find(
+    (window) => window.windowId === binding.windowId,
   );
-  const bindingWindow = windowMsByName.get(binding.windowId);
   const projectedUse =
-    bindingWindow && binding.pace !== null
+    bindingWindow && (binding.pace !== null || bindingWindow.usedFraction >= 1)
       ? clamp(
           bindingWindow.usedFraction +
-            binding.pace *
+            (binding.pace ?? 0) *
               (1 - (usageWindowElapsed(bindingWindow, input.now) ?? 0)),
           0,
           1,
