@@ -91,7 +91,10 @@ exhaustion from a refused run, after the fact.
   holds the board button on the left (icon and title, opening the board, the host's active
   highlight while the board is the open screen, hover and keyboard focus as the host's native
   items) and one small ring per subscription right-aligned on the same row — the provider mark
-  inside, the ring's colour and fill showing the pressure state. Each ring opens the board on
+  inside, the ring's colour showing the pressure state. Rings count down (nucleus#1129): each
+  fills with the binding window's remaining share (`1 - usedFraction`), so it starts full and
+  empties as the window is used; an unknown or expired reading stays empty and muted, and the
+  ring's accessibility label says what's left. Each ring opens the board on
   its Usage tab, not a separate screen, and there is no standalone Usage screen registration.
   The board registers as a host screen and the row as a host sidebar item through the newer
   registration APIs read as optional members (the pinned plugin SDK's types do not carry
