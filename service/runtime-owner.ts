@@ -47,7 +47,7 @@ import type { RegistrationAdapter } from "../core/host/registration";
 import type { Adapter } from "../core/host/adapter";
 import { HostFacade } from "../core/host/host-facade";
 import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/admission";
-import { HostRegistry, HOST_IDLE_GRACE_MS, resolveOriginHost, type KnownHost, type OriginHostEvidence } from "../core/host/host-registry";
+import { HostRegistry, HOST_IDLE_GRACE_MS, identitySourceHostEvidence, resolveOriginHost, type KnownHost } from "../core/host/host-registry";
 import type { IdentitySource } from "../shared/host-kind";
 import { T3HostConnection, type T3ConnectionConfig } from './t3code-host';
 import { answerHostPermission } from './host-permissions';
@@ -530,7 +530,7 @@ export class QueueRuntime {
         // A thrown read is an unread inventory, never authoritative absence.
         try { return await new HostFacade({ adapter: host.adapter }).originAgent(id) ? 'mine' : 'not-mine'; }
         catch { return 'unknown'; }
-      }, this.originHostEvidence(agentId, identitySource));
+      }, identitySourceHostEvidence(agentId, identitySource, this.hostRegistry.known().map(entry => entry.id)));
     };
     this.engine.hostAvailable = id => {
       const selected = this.hostRegistry.get(id);
@@ -747,19 +747,6 @@ export class QueueRuntime {
     this.connected(); // Retire a disconnected primary claim before counting.
     this.t3Host?.retireDisconnected();
     return this.hostRegistry.onlineIds().length > 0;
-  }
-
-  /**
-   * The caller's identity source proved which host its own native identity
-   * belongs to. That is evidence about that one thread only: it applies only when
-   * the source names the identity being resolved and that host is registered. It
-   * never grants a host to another identity and never selects a host to run
-   * anything on.
-   */
-  private originHostEvidence(agentId: string, identitySource: IdentitySource | undefined): OriginHostEvidence | undefined {
-    if (!identitySource || identitySource.agent !== agentId) return undefined;
-    const known = this.hostRegistry.known().some(entry => entry.id === identitySource.hostId);
-    return known ? { hostId: identitySource.hostId, source: 'caller identity source' } : undefined;
   }
 
   /** A lost host connection is not evidence that any host run ended. */
@@ -1305,7 +1292,7 @@ export class QueueRuntime {
   private async executeLeadCheck(payload: unknown, operationId: string): Promise<OperationResult> { return this.planning.executeLeadCheck(payload, operationId); }
   submitLead(input: Parameters<RuntimePlanning["submitLead"]>[0]) { return this.planning.submitLead(input); }
   approveLead(input:{id:string;version:number;digest:string;approver:string;note:string;relayed:boolean}) { return this.planning.approveLead(input); }
-  promoteLeadToTask(input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string}}) { return this.planning.promoteLeadToTask(input); }
+  promoteLeadToTask(input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string};identitySource?:IdentitySource}) { return this.planning.promoteLeadToTask(input); }
   promotePapercutToTask(input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string};complexity?:z.infer<typeof sourcePromotionInputSchema>["complexity"]}) { return this.planning.promotePapercutToTask(input); }
   private async executeSourcePromotion(payload:unknown, hostId?: string, selection?: import('../shared/operations').QueueOperation['hostSelection']):Promise<OperationResult> { return this.planning.executeSourcePromotion(payload, hostId, selection); }
   importLeads(input: Parameters<Leads["import"]>[0]) { return this.planning.importLeads(input); }
@@ -1453,7 +1440,7 @@ export class QueueRuntime {
       if(!adapter.inspectReviewEntry||!adapter.originAgent)throw Error('Review entry is unavailable on this adapter');
       const routingConflict=this.engine.independentReviewRoutingRefusal({...input.submission,declaredAuthorModels:input.authorDeclaration.models});
       if(routingConflict)return {eligible:false as const,refusals:[{code:"author_identity_unverified" as const,explanation:routingConflict}],pendingHandover:null,resolved:null};
-      const originHost = await this.engine.identifyOriginHost(input.submission.originAgentId);
+      const originHost = await this.engine.identifyOriginHost(input.submission.originAgentId, input.submission.originIdentity);
       if (!originHost) throw Error('Review-entry origin host is unknown or ambiguous');
       if (originHost === hostId) return previewReviewEntry(this.store,adapter,input);
       const proof = await this.engine.withHost(originHost, async () => {
@@ -1479,7 +1466,7 @@ export class QueueRuntime {
       if (!adapter.inspectReviewEntry || !adapter.originAgent) throw Error('Review entry is unavailable on this adapter');
       const payload = this.store.operationPayload(input.operationId) as { input?: ReviewEntryInput };
       const originId = payload.input?.submission.originAgentId;
-      const originHost = originId ? await this.engine.identifyOriginHost(originId) : undefined;
+      const originHost = originId ? await this.engine.identifyOriginHost(originId, payload.input?.submission.originIdentity) : undefined;
       if (!originHost || !originId) throw Error('Review-entry origin host is unknown or ambiguous');
       if (originHost === selectedHost) return reconcileReviewEntryOperation(this.store, adapter, input.operationId, input.inputHash);
       const proof = await this.engine.withHost(originHost, async () => {

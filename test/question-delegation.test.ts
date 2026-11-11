@@ -12,7 +12,7 @@ import { Engine } from '../core/engine';
 import { Store } from '../core/store/store';
 import { submissionSchema } from '../shared/contracts';
 import type { Adapter } from '../core/host/adapter';
-import { HostRegistry, resolveOriginHost } from '../core/host/host-registry';
+import { HostRegistry, identitySourceHostEvidence, resolveOriginHost } from '../core/host/host-registry';
 
 test('native question on one host reaches its planner on another and waits while either is offline', async () => {
   const store = new Store(':memory:');
@@ -498,8 +498,8 @@ test('a delegated answer resolves through the origin lookup, and an offline host
   registry.disconnect('t3code:nightly', t3);
   engine.identifyOriginHost = (id, identitySource) => resolveOriginHost(registry, id,
     async (host, agent) => host.knows && agent === 'planner' ? 'mine' : 'not-mine',
-    // The runtime only ever applies a source to the identity it names.
-    identitySource && identitySource.agent === id ? { hostId: identitySource.hostId, source: 'caller identity source' } : undefined);
+    // The runtime's own rule: a source is evidence only for the thread it names.
+    identitySourceHostEvidence(id, identitySource, registry.known().map(entry => entry.id)));
   engine.hostAvailable = () => true;
   const input = { questionId: 'offline-window', answer: 'Continue', reason: 'Within scope' };
   try {
