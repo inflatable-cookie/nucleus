@@ -10,6 +10,7 @@ import { PlannerParticipantTickets, resolveTicketCaller, plannerTicketKey, plann
 import { formatAgentId } from '../shared/agent-identity';
 import { runSchema, submissionSchema } from '../shared/contracts';
 import { RuntimeRepositories, type RepositoriesContext } from '../core/runtime/repositories';
+import { QueueRuntime } from '../service/runtime-owner';
 import { startCallbacks } from '../service/callbacks/callback';
 import { callbackRequest } from '../shared/service/callback-client.mjs';
 import { callerResolve } from '../shared/rpc/service';
@@ -93,6 +94,25 @@ test('a live planner receives its ticket in the response to its own next call', 
     // Another thread never takes this planner's ticket.
     assert.equal(await f.tickets.forCaller(formatAgentId(t3, 'other-thread')), undefined);
     assert.equal(await f.tickets.forCaller(formatAgentId(paseo, 'planner')), undefined);
+  } finally { f.store.close(); }
+});
+
+test('caller.resolve hands a registered planner its ticket in the response and sends nothing', async () => {
+  const f = fixture();
+  try {
+    f.assign(formatAgentId(t3, 'planner'));
+    await f.tickets.ensure();
+    // The runtime's own resolution path, with only the pieces it reads here.
+    const resolved = await QueueRuntime.prototype.resolveHostCaller.call(
+      { hostRegistry: { onlineIds: () => [t3] }, plannerTickets: f.tickets } as never,
+      { hostKind: 't3code', nativeAgentId: 'planner' });
+    assert.equal(resolved.caller, formatAgentId(t3, 'planner'));
+    assert.equal(resolved.participantTicket, f.record()?.path);
+    assert.deepEqual(f.messages, []);
+    const second = await QueueRuntime.prototype.resolveHostCaller.call(
+      { hostRegistry: { onlineIds: () => [t3] }, plannerTickets: f.tickets } as never,
+      { hostKind: 't3code', nativeAgentId: 'planner' });
+    assert.equal(second.participantTicket, undefined, 'the ticket is handed over once');
   } finally { f.store.close(); }
 });
 
