@@ -19,7 +19,7 @@ Product documentation lives outside `docs/knowledge/`:
 
 | Product docs | Location |
 | --- | --- |
-| Operator and API guide, CLI methods, retention | [README.md](../../README.md) |
+| Project front page: what Nucleus is, install, getting started | [README.md](../../README.md) |
 | The Nucleus skill for planners and workers | [skills/nucleus/SKILL.md](../../skills/nucleus/SKILL.md) |
 
 Nucleus implements the legacy Northstar handoff protocol (committed handoffs,

@@ -2805,6 +2805,25 @@ movement invalidates source approval and preserves the normal readiness gates.
   during pagination still holds. Nucleus never reads provider files to settle a
   call.
 
+### History retention
+
+- A daily pass while unpaused purges each task whose history has passed the
+  4-day expiry window (Tom, 2026-10-20; see [Closeout and
+  outcomes](#closeout-and-outcomes)), deleting its events, runs, receipts,
+  notices and hook records. Unreleased runs, a pending archive intent or
+  merge without a recorded commit, an unfinished build-output cleanup,
+  workspace retirement or runtime retirement, unsettled hook custody and an
+  origin that never resolved all defer the purge; pausing pauses retention.
+  A task whose hook retention is not settled keeps its whole history: hook
+  records carry the only proof of an isolated checkout's ownership.
+- A purge leaves a tombstone naming the task identity, submission identity,
+  input hash, task reference and whether the goal was met, so dependencies
+  still resolve (a purged prerequisite never satisfies a dependent and reads
+  as "history purged") and a repeated submission returns the retained record
+  instead of launching the work again. Outcome rows are permanent and never
+  purged ([Spec 025](../specs/025-outcome-query.md)); usage samples are
+  pruned separately at 14 days ([Spec 059](../specs/059-usage-gauge.md)).
+
 ## Test infrastructure
 
 Client render tests share `test/support/board-shell.ts` for source and bundled

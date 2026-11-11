@@ -16,7 +16,7 @@ planning records.
 - Contracts: [knowledge/contracts/](knowledge/contracts/README.md)
 - Specs: [knowledge/specs/](knowledge/specs/README.md)
 - Release: [knowledge/contracts/release.md](knowledge/contracts/release.md)
-- Operator and API guide: [README.md](../README.md)
+- Project front page: [README.md](../README.md)
 
 ## What's next
 
