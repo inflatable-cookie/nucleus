@@ -1,0 +1,212 @@
+# T3Code host adapter
+
+Status: design checkpoint; adapter and private-server proof are not implemented.
+Owner: Nucleus runtime maintainers
+
+## Boundary
+
+T3Code supplies native thread operations. Nucleus continues to own task and run
+identity, worktrees, durable effect intent, callback authentication, review and
+merge policy. Service composition injects those policies through `core/host`;
+the adapter never imports their implementation or another host. Paseo remains
+the primary host (Tom, 2026-11-11).
+
+Worker, reviewer and recovery identities are separate top-level T3 threads.
+No role uses T3's delegated-task relationship. The adapter does not patch T3,
+attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute
+T3 UI. CLI reporting, board routing and project opt-in belong to the next step.
+Registering a transport must not make an unsupported task workflow executable.
+
+## Protocol and connection
+
+The implementation lives behind `hosts/t3code/index.ts`. Its small RPC client
+owns wire encoding, bounded responses, cancellation, deadlines and subscription
+cleanup; adapter modules translate those responses into Nucleus host contracts.
+No unpublished T3 package becomes a dependency.
+
+The proof target is nightly `0.1.6-nightly.20261030.3917`, source
+[`97e35bcf23e4dcf34c2dcffadd37c08db0e01e52`](https://github.com/pingdotgg/t3code/tree/97e35bcf23e4dcf34c2dcffadd37c08db0e01e52),
+identified by the installed app's build metadata and matching release. The newer
+planner research checkout is navigation evidence, not the proof target. Version
+strings are diagnostic facts, never an allowlist. A newer nightly may connect
+when the required protocol and decoded structures match. Record the last nightly
+version that passed, without claiming that the private proof has happened yet.
+The target nightly uses orchestration protocol `2`.
+
+Connection order:
+
+1. Read an optional local T3 connection configuration with endpoint and session
+   bearer issued through `t3 auth session issue`. Keep it owner-only and outside
+   the repository; expose no bearer in settings responses, diagnostics or logs.
+2. Exchange the bearer at `/api/auth/websocket-ticket/rpc`, then open `/ws` with
+   the short-lived ticket and the supported orchestration protocol. The client needs
+   `orchestration:read` and `orchestration:operate`; missing scopes fail closed.
+3. Read `server.getConfig` through the authenticated socket. Validate
+   `environment.environmentId`, `serverVersion` and
+   `orchestrationProtocolVersion`. Then strictly decode a full shell snapshot
+   and one thread subscription, including every field Nucleus consumes.
+   A missing method, missing field or changed field type refuses connection
+   with its exact name. A missing protocol version is also a refusal.
+   The public environment descriptor is only a preflight hint.
+4. Only after those probes, claim `t3code:<environmentId>` in the existing host
+   registry. Reconnecting must prove the same environment at the same endpoint. Give this host its own
+   admission and breaker state; disconnect only its session token.
+
+The wire is Effect RPC JSON: `Request` frames carry an ID, method tag, payload
+and headers; `Exit` settles unary calls; `Chunk` carries subscription values and
+requires `Ack`; `Interrupt` releases a subscription. The client validates the
+subset it consumes. Malformed frames, error exits, premature stream completion,
+timeouts and disconnects invalidate affected reads. Ticket URLs, headers and
+raw remote error bodies are never logged.
+Strict decoding validates consumed fields and their types while tolerating
+unrelated extra fields, so additive nightly changes do not become version pins.
+
+T3 provides no RPC schema discovery or dry run. Never send a canary mutation to
+establish compatibility. Pin the target nightly's command shapes as synthetic
+contract fixtures and compare them with newer nightly source during the drift
+check; the version itself does not decide compatibility.
+If no readable thread exists for the subscription probe, compatibility remains
+unestablished with a clear diagnostic; do not create a probe thread on a live host.
+
+Mutation shapes are checked on first use. In the target nightly's RPC server,
+the request schema is decoded before the handler runs: a decoder failure sends
+a request defect instead of invoking the handler. Only a positively identified
+boundary-decode rejection is a known pre-effect refusal. Put that task in
+attention with the command and field named, without retrying. Generic defects,
+handler errors, response-encoding failures and unrecognized errors remain unknown
+delivery. The wire uses a formatted schema issue inside an Effect defect rather
+than a dedicated decode-phase tag, so a generic `Die` is never sufficient proof.
+Diagnostics name the schema location without echoing submitted payloads.
+
+## Identity and workspaces
+
+Native T3 thread IDs stay opaque. Existing task, run, message and question host
+fields qualify them; a legacy string prefix grants no host attribution. Equal
+native IDs on Paseo and T3 must resolve to different participants. A missing host
+or ambiguous inventory cannot authorize a callback or answer.
+
+T3's project and existing Git worktree form its workspace handle. Persist their
+mapping through the service's durable intent boundary, including the canonical
+directory, project ID, task/run ownership and native thread ID. Do not recover
+ownership from titles or tags. Discovery uses complete host inventory plus this
+map. An unreadable map or partial inventory is unknown, never an empty result.
+
+Nucleus prepares and verifies the Git worktree before handing it to T3. Creation
+uses only `existing_worktree`; T3 must confirm it belongs to the selected project.
+The adapter never asks T3 to create, rename, remove or clean a worktree. Thread
+archive is a catalog operation, not evidence that a folder was removed. Native
+workspace operations without an equivalent must explicitly refuse rather than
+pretend to be a Paseo workspace.
+
+## Operations and delivery
+
+| Host operation | T3 RPC or command | Required result |
+| --- | --- | --- |
+| Create | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt and `existing_worktree` | Top-level thread with the exact project and directory |
+| Follow-up | `orchestration.dispatchCommand` / `message.dispatch` | Stable command and message IDs; receipt records acceptance |
+| Observe | `orchestration.subscribeShell` and `orchestration.subscribeThread` | Fresh complete state, including active run and pending request |
+| Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
+| Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
+| Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
+
+Use `launchThread` for creation because it supplies the native workspace strategy
+and initial-message preparation. Other mutations use `dispatchCommand`. Each
+operation binds a stable command ID, native target and canonical payload to the
+existing durable intent before send. Launch also binds its explicit thread and
+initial-message IDs. Persist the mapping before remote creation so a lost reply
+cannot produce an unowned thread.
+
+T3 receipts reject a command ID belonging to another thread, but do not compare
+payloads on the same thread. Nucleus must reject a changed payload under an
+existing intent ID locally. A transport reconnect does not resend a mutation.
+An uncertain result stays uncertain until native receipt/projection evidence
+settles that exact intent. Never resend an uncertain mutation to obtain its
+receipt, or replace the command or thread ID to escape doubt.
+
+Guarded sends retain core's `allowed`, `stillAllowed` and `beforeSend` ordering.
+The last synchronous fence precedes the socket write. A proven local refusal
+uses the existing pre-send error/result. After a possible write, only the
+positively identified boundary-decode rejection above proves non-delivery;
+everything else is unknown. A command receipt proves acceptance, not provider completion
+or a Nucleus report.
+
+## Observation and restart
+
+Start with an unfiltered shell subscription and explicitly read
+`orchestration.getArchivedShellSnapshot`; the target nightly's live shell loader
+does not include archived records even though its schema has an archive array.
+Do not enable omission of older settled threads or idle children. Require the
+initial snapshot and synchronization/completion evidence before answering an inventory
+read. Track its sequence and apply updates in order. A reconnect, gap, invalid
+update or unfinished snapshot invalidates cached inactivity. Read the thread
+projection when shell summaries lack request details or timeline coverage.
+Project-enrichment snapshots marked with `resolvedRepositoryIdentityRoots` can
+carry empty thread arrays; they never replace the authoritative inventory.
+
+Report active run, idle, pending question/permission and archived state from
+positive native facts. A thread is gone only after a complete authoritative read
+proves absence/deletion. Partial reads reject or return the contract's unknown
+result. A disconnected thread never becomes idle or gone by timeout. Timeline
+pages retain gap and coverage facts; a bounded tail is not full history.
+Active and archive snapshots have separate sequences: their union alone cannot
+prove absence across a racing archive. A direct retained-thread read must settle
+that identity before reporting it gone.
+
+On T3 startup, active runs are cancelled and live approvals expire. Pending
+questions may remain pending with `responseCapability: {type: "message"}`.
+Read this capability from the fresh thread projection and answer through
+`runtime-request.respond`, which owns the message-based continuation. Do not
+invent a second follow-up. Expired or nonresumable approvals cannot be answered
+again. An interrupted answer remains uncertain even if the request later expires;
+expiry is not evidence that the original answer was never delivered.
+
+## Composition and unsupported capabilities
+
+Service composition reads optional T3 configuration and imports only its public
+host index. It registers the second connection independently of Paseo. Replace
+single-connection assumptions only where needed to select the recorded host,
+enumerate sessions and account for shutdown. Preserve the existing Paseo identity,
+configuration, SDK behavior, callbacks and migration history.
+
+Expose explicit unsupported capabilities for per-thread MCP reporting,
+Nucleus-raised native decisions and UI contributions. Do not substitute empty
+success results. Until the next step supplies reporting and board routing,
+lifecycle dispatch that requires them refuses before thread creation; the private
+proof exercises the adapter's native operations directly. An unconfigured T3
+adapter changes no default route. A configured second host never causes implicit
+rerouting of a task, origin notice or pending question.
+
+## Verification before implementation acceptance
+
+Fake-server tests cover each operation, the exact wire envelopes and scopes,
+authorization refusal, missing/incompatible protocol, a previously untested
+nightly passing structural probes, identity conflicts, malformed
+and incomplete snapshots, lost replies, immutable intent replay, subscription
+cleanup and restart during both kinds of request. Verify first-use boundary
+schema refusal separately from ambiguous handler/transport errors. Contract
+fixtures pin the nightly command shapes rather than a server-version allowlist.
+Cross-host cases deliberately reuse native IDs and keep task, run, message and
+question ownership separate.
+
+The private proof starts an unmodified checkout of the target nightly revision,
+or its bundled server copied into fresh run scratch, with separate home, data,
+configuration and synthetic Git project/worktree. A local scripted provider drives questions, approvals and a
+stoppable run without operator provider credentials. It must exercise the real
+T3 server and RPC, not replace the orchestration service. Configure networking
+on loopback; issue the bearer only from that private instance. Never discover
+or reuse a live T3 home, session or desktop data directory.
+Seed a synthetic thread during private fixture setup for the read-only connect
+probe; that setup is confined to the private server.
+
+Retain redacted observations for create, follow-up, observe, answer, stop and
+archive, plus compatibility refusal and restart behavior, with source revision,
+nightly version and protocol. Re-check the newest nightly at the end and report
+command/schema drift separately from runtime proof on the target nightly.
+Store proof artifacts only in scratch; public PR text includes
+no local paths, credentials or private project names. Execute the proof through
+an Effigy selector, and keep every process and temporary root owned by the run.
+
+Implementation acceptance requires `effigy check`, each new adapter test file
+alone, `test/host-composition.test.ts`, `test/host-identity-boundary.test.ts` and
+`test/folder-imports.test.ts` alone, `effigy qa:docs`, and the private proof.
+This checkpoint claims none of the missing implementation or native proof.

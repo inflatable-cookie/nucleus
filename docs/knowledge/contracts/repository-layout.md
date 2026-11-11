@@ -77,6 +77,13 @@ The web shell stays in `client/web/`: a browser transport does not implement an
 agent-host adapter. A future agent app gets its own `hosts/<app>/` subtree;
 adding it must not make core or board code depend on its SDK.
 
+The proposed T3Code adapter belongs behind `hosts/t3code/index.ts`, with its
+minimal private-protocol client and adapter modules inside that host subtree.
+It has no plugin-backend or client contribution entry. Service composition
+reaches only the public index; no T3 protocol type enters core or shared.
+The [adapter design](../specs/t3code-host-adapter.md) is a checkpoint, not an
+implemented second host.
+
 ## Supporting layout
 
 | Folder (including second level) | Ownership |
