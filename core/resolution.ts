@@ -42,6 +42,7 @@ import { DEFAULT_UNCERTAIN_MERGE_RETRY_MS } from '../shared/contracts';
 import { RepositoryHooks, type CloseoutAuthority } from './hooks/hooks';
 
 import type { HookEventName, HookRecord } from '../shared/hooks';
+import type { IdentitySource } from '../shared/host-kind';
 import { OriginRouting } from './questions/origin';
 import { Recovery } from './recovery/recovery';
 import { Checkpoints } from './intake/checkpoint';
@@ -441,7 +442,7 @@ export class Resolution {
   awaitHostBridge: ((waitMs: number) => Promise<boolean>) | null = null;
   hostBridgeWaitMs = 90_000;
   canReuseUnqualifiedOriginWorkspace: () => boolean = () => true;
-  identifyOriginHost: (id: string) => Promise<string | undefined> = async () => {
+  identifyOriginHost: (id: string, identitySource?: IdentitySource) => Promise<string | undefined> = async () => {
     const hostId = (this.adapter as { hostId?: unknown }).hostId;
     return typeof hostId === 'string' && hostId ? hostId : undefined;
   };
@@ -499,7 +500,7 @@ export class Resolution {
   answerDelegatedQuestion(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) { return this.delegation.answerDelegatedQuestion(input, caller); }
   answerDelegatedQuestionFromTicket(input: { taskId: string; runId: string; questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, token: string) { return this.delegation.answerDelegatedQuestionFromTicket(input, token); }
   delegatedQuestionForTask(identity: string, caller: string) { return this.delegation.questionForTask(identity, caller); }
-  answerDelegatedQuestionFromHost(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) { return this.delegation.answerFromHost(input, caller); }
+  answerDelegatedQuestionFromHost(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string, identitySource?: IdentitySource) { return this.delegation.answerFromHost(input, caller, identitySource); }
   waitDelegatedAnswer(id: string, signal: AbortSignal): Promise<string | null> { return this.delegation.waitDelegatedAnswer(id, signal); }
   askBound(task: Task, recipient: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string; onIntent?: () => void; rung?: 'task' | 'project' }, role: 'planner' | 'reviewer'): Promise<string | null> { return this.delegation.askBound(task, recipient, input, role); }
   deciderBound(task: Task, input: { prompt: string; profile: Profile | null; signal: AbortSignal; timeoutMs: number; decisionId: string; sourceAgentId?: string }): Promise<{ agentId: string; text: string | null }> { return this.delegation.deciderBound(task, input); }

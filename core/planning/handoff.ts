@@ -102,7 +102,9 @@ function invalidFrontmatter(error:unknown){
   }
   return error instanceof Error?error.message:String(error);
 }
-export interface HandoffInput {hostId?:string;handoffPath?:string;briefPath?:string;repoPath?:string;originAgentId:string;coordinatorAgentId?:string;baseBranch:string;planningCommit?:string;dryRun:boolean}
+export interface HandoffInput {hostId?:string;handoffPath?:string;briefPath?:string;repoPath?:string;originAgentId:string;coordinatorAgentId?:string;baseBranch:string;planningCommit?:string;dryRun:boolean;
+ /** The origin identity's own source, filled by the submitting CLI from its environment. */
+ originIdentity?:import('../../shared/host-kind').IdentitySource}
 export type HeldBriefQueue = z.infer<typeof draftMetadataSchema>['queue'];
 /**
  * Read `queue` policy from a Queue-held brief that is already admitted.
@@ -194,7 +196,7 @@ export async function captureHandoff(input:HandoffInput):Promise<{submission:Sub
  // Pin identity to the last handoff revision, not unrelated main commits.
  // The Northstar submitter is one adapter for the generic, opaque instruction artifact.
  const instruction=await instructionForCommit(repoPath,planningCommit,handoffPath,'text/markdown');
- const submission=submissionSchema.parse({submissionId:`northstar-${digest(`${repoPath}\n${handoffPath}\n${planningCommit}`).slice(0,48)}`,title:metadata.title,repoPath,baseBranch:input.baseBranch,planningCommit,handoffPath,instruction,originAgentId:input.originAgentId,coordinatorAgentId:input.coordinatorAgentId??'',...submissionQueueFields(metadata.queue)});
+ const submission=submissionSchema.parse({submissionId:`northstar-${digest(`${repoPath}\n${handoffPath}\n${planningCommit}`).slice(0,48)}`,title:metadata.title,repoPath,baseBranch:input.baseBranch,planningCommit,handoffPath,instruction,originAgentId:input.originAgentId,coordinatorAgentId:input.coordinatorAgentId??'',...(input.originIdentity?{originIdentity:input.originIdentity}:{}),...submissionQueueFields(metadata.queue)});
  if(await git(repoPath,'rev-parse','HEAD')!==head)throw Error('Integration HEAD changed during handoff preparation; retry');
  const warning=proofOnlyPreferenceWarning(submission);
  return {submission,approval:metadata.queue_approval!,...(warning?{warning}:{})};
@@ -230,7 +232,7 @@ async function captureBrief(input:HandoffInput):Promise<{submission:Submission;a
  const dirty=Boolean(await git(repoPath,'status','--porcelain','--untracked-files=no'));
  if(dirty)throw Error('Integration checkout has uncommitted changes; brief planning must be a clean integration head');
  const pinned=briefDigest(text);
- const submission=submissionSchema.parse({submissionId:`northstar-brief-${digest(`${repoPath}\n${pinned}`).slice(0,42)}`,title:metadata.title,repoPath,baseBranch:input.baseBranch,planningCommit:head,brief:{text,mediaType:'text/markdown',digest:pinned},originAgentId:input.originAgentId,coordinatorAgentId:input.coordinatorAgentId??'',...submissionQueueFields(metadata.queue)});
+ const submission=submissionSchema.parse({submissionId:`northstar-brief-${digest(`${repoPath}\n${pinned}`).slice(0,42)}`,title:metadata.title,repoPath,baseBranch:input.baseBranch,planningCommit:head,brief:{text,mediaType:'text/markdown',digest:pinned},originAgentId:input.originAgentId,coordinatorAgentId:input.coordinatorAgentId??'',...(input.originIdentity?{originIdentity:input.originIdentity}:{}),...submissionQueueFields(metadata.queue)});
  if(await git(repoPath,'rev-parse',originRef)!==head)throw Error('Integration origin changed during brief preparation; retry');
  const warning=proofOnlyPreferenceWarning(submission);
  return {submission,approval:metadata.queue_approval!,digest:pinned,...(warning?{warning}:{})};

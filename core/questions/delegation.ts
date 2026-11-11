@@ -11,6 +11,7 @@ import { chooseProfile } from '../dispatch/routing';
 import { plannerParticipantTicketPath } from '../dispatch/participant-tickets';
 import { runTicketPath, writeRunTicket } from '../dispatch/agent-creation';
 import { formatAgentId, nativeAgentId, parseAgentId, qualifyLegacyAgentId } from '../../shared/agent-identity';
+import type { IdentitySource } from '../../shared/host-kind';
 
 /** The selection failed before an intent or host call was made. */
 export class DelegatedHostUnavailable extends Error {}
@@ -135,12 +136,14 @@ export class Delegation {
     return ids[0]!;
   }
   /** A raw caller name cannot identify a host when inventories are ambiguous. */
-  async answerFromHost(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) {
+  async answerFromHost(input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string, identitySource?: IdentitySource) {
     const delivery = this.delegatedDelivery(input.questionId);
     const qualified = parseAgentId(caller);
     const nativeCaller = qualified?.nativeAgentId ?? caller;
     if (!delivery || ![nativeCaller, caller].includes(delivery.recipient)) throw Error('Only the delegated recipient thread may answer this question');
-    const identify = () => qualified ? Promise.resolve(qualified.hostId) : this.resolution.identifyOriginHost(caller);
+    // The answering thread's own proven host is evidence about that identity, so
+    // a host with no part in this answer cannot make it ambiguous.
+    const identify = () => qualified ? Promise.resolve(qualified.hostId) : this.resolution.identifyOriginHost(caller, identitySource);
     const observedHost = await this.hostThroughBridge(await identify(), identify);
     if (!observedHost || !this.resolution.withHost(observedHost, () => this.resolution.originHostAvailable(observedHost)))
       throw new DelegatedHostUnavailable('Delegated answer host is unavailable or ambiguous');

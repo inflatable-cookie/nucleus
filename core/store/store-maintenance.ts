@@ -42,7 +42,8 @@ export interface RetainedRowPrune {
 // the run's credential (it authenticates nothing) instead of deleting the row, so
 // a live re-bind of the same run identity restores the same credential.
 // Schema 57 (task 1010): one row stores independent publication counters.
-export const CURRENT_SCHEMA = 57;
+// Schema 58 (task 1112): the usage gauge's stored samples and per-subscription read state.
+export const CURRENT_SCHEMA = 58;
 
 /**
  * Spec 028 revision "Store compaction" (audit B9): the WAL file is bounded after a

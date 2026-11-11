@@ -246,3 +246,48 @@ test('submission survives a definite SSH refusal using the same receipt', { time
     if (previous.mode === undefined) delete process.env.NUCLEUS_TEST_SSH_MODE; else process.env.NUCLEUS_TEST_SSH_MODE = previous.mode;
   }
 });
+
+test('a promotion refused before any insert reconciles as refused-before-commit, and a retry promotes exactly once', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  const body = `---
+title: Refused origin promotion
+queue:
+  complexity: medium
+  notifyOriginOnCloseout: true
+---
+
+## Outcome
+
+Promote once after the refusal.
+`;
+  const lead = await f.runtime.addLead({ repositories: [{ origin: f.repo, path: f.repo }], title: 'Refused origin promotion', body, lanes: [], author: 'planner' });
+  assert.equal(lead.check?.ok, true, lead.check?.message);
+  f.runtime.approveLead({ id: lead.id, version: lead.version, digest: lead.digest!, approver: 'planner', note: 'Operator authorized', relayed: true });
+  // No host can prove the origin thread: the promotion must refuse before any insert.
+  f.runtime.engine.identifyOriginHost = async () => undefined;
+  await assert.rejects(f.runtime.promoteLeadToTask({ id: lead.id, note: 'Operator authorized', agent: 'planner', board: false }), /Origin host is unknown or ambiguous/);
+  const refused = f.runtime.store.operations().find(operation => operation.kind === 'source_promote')!;
+  assert.equal(refused.state, 'failed');
+  assert.equal(refused.effect?.status, 'reconciled', 'a refusal proved not to have inserted settles definite');
+  assert.equal(f.runtime.store.tasks().length, 0);
+  // The pre-fix shape of the same refusal: an uncertain effect left in attention.
+  f.runtime.store.putOperation({ ...refused, state: 'needs_attention', settledAt: new Date().toISOString(),
+    diagnostic: 'Source promotion outcome is uncertain: its executing process may still commit',
+    effect: { ...refused.effect!, status: 'uncertain', result: 'Source promotion outcome is uncertain: its executing process may still commit' } });
+  // The existing route reconciles it: no task exists for the submission identity,
+  // and this process is provably not executing it.
+  f.runtime.engine.operationStatus(refused.id);
+  const reconciled = f.runtime.store.operation(refused.id)!;
+  assert.equal(reconciled.state, 'failed');
+  assert.match(reconciled.diagnostic, /no task or source insert was committed/);
+  assert.equal(f.runtime.store.tasks().length, 0);
+  // Retrying the same lead promotes exactly once, and a further retry replays that task.
+  f.runtime.engine.identifyOriginHost = async () => 'fixture-host';
+  const promoted = await f.runtime.promoteLeadToTask({ id: lead.id, note: 'Operator authorized', agent: 'planner', board: false });
+  assert.ok('taskId' in promoted, JSON.stringify(promoted));
+  assert.equal(f.runtime.store.tasks().length, 1);
+  const again = await f.runtime.promoteLeadToTask({ id: lead.id, note: 'Operator authorized', agent: 'planner', board: false });
+  assert.deepEqual(again, { taskId: promoted.taskId, reference: promoted.reference, ...(('hostId' in promoted && promoted.hostId) ? { hostId: promoted.hostId } : {}), ...(('hostSelection' in promoted && promoted.hostSelection) ? { hostSelection: promoted.hostSelection } : {}) });
+  assert.equal(f.runtime.store.tasks().length, 1);
+  assert.deepEqual(f.runtime.store.lead(lead.id).targets.map(target => target.reference), [promoted.taskId]);
+});

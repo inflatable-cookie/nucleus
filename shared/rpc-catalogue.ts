@@ -121,6 +121,7 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
   { name: "queue.submit-instruction", contract: contracts.submitInstruction, method: "submitInstruction", mutating: true },
   { name: "queue.handoff", contract: contracts.submitHandoff, method: "submitHandoff", mutating: true },
   { name: "queue.pool", contract: contracts.configurePool, method: "configurePool", mutating: true },
+  { name: "usage.state", contract: contracts.usageState, method: "usageState", mutating: false },
   { name: "profile.list", contract: contracts.listNucleusProfiles, method: "profileList", mutating: false },
   { name: "profile.create", contract: contracts.createNucleusProfile, method: "profileCreate", mutating: true },
   { name: "profile.update", contract: contracts.updateNucleusProfile, method: "profileUpdate", mutating: true },

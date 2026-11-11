@@ -26,12 +26,15 @@ or planner participant ticket; use the path delivered to this thread. An invalid
 revoked ticket refuses. If neither source exists, the refusal names the sources tried.
 Explicit operator and relayed-note paths keep their existing meaning.
 
-Assigning a planner issues an owner-only participant ticket and delivers its path
-through that planner's host. Reassigning or clearing the planner revokes it. A
-task's own planner receives the same ticket, scoped to the tasks it plans, so it
-can answer on a host without per-thread identity; reparenting a task moves that
-scope and revokes the old planner's ticket. Existing planners receive one at
-startup; their host identity keeps working until delivery.
+Assigning a planner issues an owner-only participant ticket and hands its path over
+without messaging the thread: the planner that named itself takes it in that
+assignment's response, any other planner takes it in the response to its own next
+authenticated call, and only a thread observed live on a host with no
+calling-thread identity of its own receives one message. Reassigning or clearing the
+planner revokes it, and a planner with no ticket yet shows as pending on the board.
+A task's own planner receives the same ticket, keyed per thread and scoped to the
+tasks that name it, so it can answer on a host without per-thread identity;
+reparenting a task moves that scope and revokes the outgoing planner's ticket.
 Caller records use host-qualified identities; existing bare Paseo IDs still resolve.
 
 ### Paseo host

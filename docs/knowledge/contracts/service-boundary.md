@@ -191,11 +191,32 @@ claim the operator's own identity.
 The CLI and helpers resolve the calling thread from a Nucleus-issued run or planner
 participant ticket first, then a host-supplied identity; caller records are
 host-qualified and existing bare Paseo IDs retain their legacy interpretation.
-Planner assignment issues and delivers an owner-only participant ticket through the
-host; reassignment or clearing revokes it, and startup issues one for existing
-planners while their host fallback remains usable. Tickets prevent same-user
-accidents; they do not add adversarial authentication or grant planning authority
-(Tom, 2026-11-11).
+Planner assignment issues an owner-only participant ticket that reaches the thread
+in the response to its own next authenticated call, or in the response to the
+assignment when the thread named itself. A ticket message is the last route: it goes
+only to a thread observed live on a host that supplies no calling-thread identity of
+its own, and never into an archived, gone or unreadable thread. A planner without a
+ticket is recorded ticket pending and the board's project entry says so. Startup
+reconciles that state and sends nothing. Reassignment or clearing revokes the ticket.
+The same ticket covers a task's own planner (task 1109): keyed per proven host and
+thread rather than per task, handed over by the same two routes, and valid only
+while a live task still names that thread as its planner. Reparenting moves the
+scope, which revokes the outgoing planner's ticket without a separate write.
+Tickets prevent same-user accidents; they do not add adversarial authentication or
+grant planning authority (Tom, 2026-11-11).
+
+Origin-thread resolution distinguishes three host answers: the thread is mine, the
+host authoritatively has no such thread, and the read proved nothing (transport
+failure, incomplete inventory, no such capability). A host that cannot prove absence
+never reports it. Exactly one claimant resolves the origin, and every host that could
+be asked must rule itself out. A registered host that is offline cannot rule itself
+out, so it leaves the origin unknown — unless the identity's own source already
+proved which host it belongs to (the caller resolution above, or a qualified
+identity); that evidence belongs to that one thread, contradicts a claim from
+anywhere else, and decides nothing about another identity. Two claimants always
+refuse. A host lookup is a read, never a grant of execution authority, and an origin
+refusal settles a promotion as refused before commit rather than as an uncertain
+effect.
 
 `queue.capacity` takes nine bounded numbers (`capacitySchema`,
 `shared/contracts.ts`) and no caller claim. `RuntimeOwner.configureCapacity`

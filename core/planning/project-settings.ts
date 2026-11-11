@@ -14,17 +14,20 @@ import {
 export const PROJECT_SETTINGS_PROBLEMS = {
   plannerGone: "Planner thread is gone",
   noPlanner: "No planner",
+  plannerTicketPending: "Planner ticket pending",
   qaFailed: "Last QA failed",
 } as const satisfies Record<string, ProjectSettingsProblem>;
 
 export function projectSettingsProblems(input: {
   plannerId: string | undefined;
   plannerLive: boolean | null;
+  plannerTicketPending?: boolean;
   latestQaFailed: boolean;
 }): ProjectSettingsProblem[] {
   const problems: ProjectSettingsProblem[] = [];
   if (input.plannerId && input.plannerLive === false) problems.push(PROJECT_SETTINGS_PROBLEMS.plannerGone);
   else if (!input.plannerId) problems.push(PROJECT_SETTINGS_PROBLEMS.noPlanner);
+  if (input.plannerId && input.plannerTicketPending) problems.push(PROJECT_SETTINGS_PROBLEMS.plannerTicketPending);
   if (input.latestQaFailed) problems.push(PROJECT_SETTINGS_PROBLEMS.qaFailed);
   return problems;
 }
@@ -76,6 +79,8 @@ export function buildProjectSettings(input: {
   liveKnown: boolean;
   observedHostId?: string;
   latestQaRuns: ProjectQaRun[];
+  /** Projects whose planner has no usable participant ticket yet. */
+  plannerTicketPending?: ReadonlySet<string>;
 }): ProjectSettings {
   return projectSettingsSchema.parse({
     defaultSlots: input.defaultSlots,
@@ -102,10 +107,12 @@ export function buildProjectSettings(input: {
         })),
         slots: { value: override ?? input.defaultSlots, override },
         plannerLive,
+        plannerTicket: !plannerId ? null : input.plannerTicketPending?.has(project.key) ? 'pending' : 'issued',
         latestQa,
         problems: projectSettingsProblems({
           plannerId,
           plannerLive,
+          plannerTicketPending: Boolean(plannerId) && Boolean(input.plannerTicketPending?.has(project.key)),
           latestQaFailed: anyLatestQaFailed(project, input.latestQaRuns),
         }),
       };

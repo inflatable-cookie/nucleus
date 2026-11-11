@@ -321,3 +321,20 @@ test('host identity conflicts and unsupported per-thread bindings refuse before 
   assert.equal(changed.connected, false);
   assert.equal(server.commands.length, 0);
 });
+
+test('the origin read answers authoritative absence, and only an unread inventory is unknown', async t => {
+  const { host, server, workspace, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  assert.deepEqual(await host.originAgent(created.id),
+    { id: created.id, workspaceId: workspace.id, title: 'Synthetic role', archived: false });
+  // T3 has no such thread: a complete shell plus archive read proves absence, so
+  // the lookup answers not-mine instead of throwing.
+  assert.equal(await host.originAgent('native-id-t3-does-not-have'), null);
+  // A projection that cannot be read completely proves nothing about the thread.
+  server.controls.incompleteThread = true;
+  await assert.rejects(host.originAgent(created.id), /incomplete projection/);
+  server.controls.incompleteThread = false;
+  // A read that cannot run at all is a failed read, never authoritatively absent.
+  host.close();
+  await assert.rejects(host.originAgent(created.id), /authenticated host connection/);
+});

@@ -47,7 +47,8 @@ import type { RegistrationAdapter } from "../core/host/registration";
 import type { Adapter } from "../core/host/adapter";
 import { HostFacade } from "../core/host/host-facade";
 import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/admission";
-import { HostRegistry, HOST_IDLE_GRACE_MS, resolveOriginHost, type KnownHost } from "../core/host/host-registry";
+import { HostRegistry, HOST_IDLE_GRACE_MS, resolveOriginHost, type KnownHost, type OriginHostEvidence } from "../core/host/host-registry";
+import type { IdentitySource } from "../shared/host-kind";
 import { T3HostConnection, type T3ConnectionConfig } from './t3code-host';
 import { answerHostPermission } from './host-permissions';
 import { lifecycleSignalSchema, type LifecycleSignal, type LifecycleSignalReceipt } from "../shared/lifecycle-signal";
@@ -63,6 +64,7 @@ import { type OperationAcceptance, type OperationResult } from "../shared/operat
 import { capacitySchema, projectDispatchLimitSchema, DEFAULT_GLOBAL_LIMIT, DEFAULT_UNCERTAIN_MERGE_RETRY_MS, UNCERTAIN_MERGE_PROOF_TIMEOUT_MS, sourcePromotionInputSchema, submissionSchema, submitInstruction as submitInstructionRpc, reviewEntryReconcileInputSchema, BACKUP_INTERVAL_MS, BACKUP_DUE_CHECK_MS, BACKUP_FAILURE_RETRY_MS, BACKUP_HEALTH_REFRESH_MS, type BoundRun } from "../shared/contracts";
 import { createTelemetrySnapshotCache, taskControlTelemetry } from '../core/telemetry/telemetry';
 import { RunUsageTracker } from '../core/telemetry/run-usage-tracker';
+import { UsageService, USAGE_TICK_INTERVAL_MS } from '../core/usage/usage-service';
 import { createTaskDetailCache } from '../core/telemetry/task-detail';
 import { createUiSnapshotFactsCache } from '../core/telemetry/ui-snapshot';
 import { QA_BOARD_PASS_FADE_MS } from '../core/qa/qa-board';
@@ -313,6 +315,8 @@ export class QueueRuntime {
   private readonly spawnToken: string | undefined;
   readonly hostRuns: HostRunScheduler;
   readonly papercuts: Papercuts;
+  /** Spec 059: the subscription usage gauge's paced readers, samples and projection. */
+  readonly usage: UsageService;
   readonly leads: Leads;
   readonly decisions: Decisions;
   readonly adapter: Adapter;
@@ -446,6 +450,7 @@ export class QueueRuntime {
     this.hostRuns = HostRunScheduler.forStore(this.store);
     this.hostRuns.setLaunchPredicate(() => !this.closing && !this.idleShutdownLatched);
     this.papercuts = new Papercuts(this.store);
+    this.usage = new UsageService(this.store);
     this.leads = new Leads(this.store);
     this.decisions = new Decisions(this.store);
     options.instrumentStore?.(this.store);
@@ -517,13 +522,15 @@ export class QueueRuntime {
     this.engine.inventoryHostMatches = id => this.hostSession?.id === id;
     this.engine.retiredObservationKey = id => id === this.hostRegistry.known()[0]?.id ? 'retiredObservations' : `retiredObservations:${JSON.stringify(id)}`;
     this.engine.canReuseUnqualifiedOriginWorkspace = () => this.hostRegistry.known().length === 1;
-    this.engine.identifyOriginHost = agentId => {
+    this.engine.identifyOriginHost = (agentId, identitySource) => {
       const qualified = parseAgentId(agentId);
       if (qualified) return Promise.resolve(this.hostRegistry.get(qualified.hostId) ? qualified.hostId : undefined);
-      return resolveOriginHost(this.hostRegistry, agentId, (host, id) => {
-      if (!host.adapter.originAgent) throw new Error("Host cannot observe an origin agent");
-      return new HostFacade({ adapter: host.adapter }).originAgent(id);
-      });
+      return resolveOriginHost(this.hostRegistry, agentId, async (host, id) => {
+        if (!host.adapter.originAgent) return 'unknown';
+        // A thrown read is an unread inventory, never authoritative absence.
+        try { return await new HostFacade({ adapter: host.adapter }).originAgent(id) ? 'mine' : 'not-mine'; }
+        catch { return 'unknown'; }
+      }, this.originHostEvidence(agentId, identitySource));
     };
     this.engine.hostAvailable = id => {
       const selected = this.hostRegistry.get(id);
@@ -559,12 +566,13 @@ export class QueueRuntime {
     // Task 1109: a task planner's participant ticket is issued before the question
     // that names it, so `question.answer` works on a host without per-thread identity.
     this.engine.resolution.ensurePlannerTicket = (agentId, hostId) => this.plannerTickets.ensureFor(agentId, hostId);
+    this.engine.plannerTicketPending = () => this.plannerTickets.pendingPlanners();
     this.repositories = new RuntimeRepositories({
       store: this.store, engine: this.engine, hostRuns: this.hostRuns,
       requiredCheckTransport: this.requiredCheckTransport,
       markStoreAccess: () => this.markStoreAccess(),
       projectQaRunner: () => this.projectQaRunner(),
-      plannerChanged: () => this.plannerTickets.ensure(),
+      plannerChanged: projectKey => this.plannerTickets.assigned(projectKey),
       get started() { return runtime.started; },
     });
     this.planning = new RuntimePlanning({
@@ -626,6 +634,15 @@ export class QueueRuntime {
       // pre-emptible, so running it more often only tightens the net.
       this.timers.push(setInterval(() => tick(false), this.sweepIntervalMs));
       this.timers.push(setInterval(() => tick(true), PROFILE_REFRESH_INTERVAL_MS));
+      // Spec 059: paced subscription usage reads run independently of host connections;
+      // a read touches only the provider's own local CLI or config, never an endpoint.
+      const usageTimer = setInterval(() => {
+        if (this.closing) return;
+        void this.usage.tick().catch(() => { /* the next tick retries; a missed sample is not a fault */ });
+      }, USAGE_TICK_INTERVAL_MS);
+      usageTimer.unref?.();
+      this.timers.push(usageTimer);
+      void this.usage.tick().catch(() => { /* the first paced pass runs now, not a minute in */ });
       // Task 530: the live run set's tabs and labels reconcile on their own cadence,
       // faster than the lifecycle sweep and independent of it.
       this.liveRunPresence?.start(LIVE_RUN_PRESENCE_INTERVAL_MS);
@@ -733,6 +750,19 @@ export class QueueRuntime {
     this.connected(); // Retire a disconnected primary claim before counting.
     this.t3Host?.retireDisconnected();
     return this.hostRegistry.onlineIds().length > 0;
+  }
+
+  /**
+   * The caller's identity source proved which host its own native identity
+   * belongs to. That is evidence about that one thread only: it applies only when
+   * the source names the identity being resolved and that host is registered. It
+   * never grants a host to another identity and never selects a host to run
+   * anything on.
+   */
+  private originHostEvidence(agentId: string, identitySource: IdentitySource | undefined): OriginHostEvidence | undefined {
+    if (!identitySource || identitySource.agent !== agentId) return undefined;
+    const known = this.hostRegistry.known().some(entry => entry.id === identitySource.hostId);
+    return known ? { hostId: identitySource.hostId, source: 'caller identity source' } : undefined;
   }
 
   /** A lost host connection is not evidence that any host run ended. */
@@ -1233,6 +1263,7 @@ export class QueueRuntime {
       await settled(this.admissionEndpoint?.stop(), 5_000);
     } finally {
       this.runUsage.close();
+      this.usage.stop();
       if (this.store.getMeta<{ owner: string }>("processOwner")?.owner === this.owner) this.store.deleteMeta("processOwner");
       this.store.close();
       this.phase = "stopped";
@@ -1253,6 +1284,8 @@ export class QueueRuntime {
   private drainProjection(): { drained: boolean; boundRuns: BoundRun[] } { return this.board.drainProjection(); }
 
   addPapercut(input: Parameters<Papercuts["add"]>[0]) { return this.papercuts.add(input); }
+  /** Spec 059: the subscriptions' usage readings, projections and freshness. Read-only. */
+  usageState() { return this.usage.state(); }
   listPapercuts(input: { repository?: string; state?: Papercut["state"] }) { return this.papercuts.list(input); }
   getPapercut(input: { id: string }) { return this.papercuts.get(input); }
   editPapercut(input: Parameters<Papercuts["edit"]>[0]) { return this.papercuts.edit(input); }
@@ -1654,7 +1687,10 @@ export class QueueRuntime {
     }
     await this.refresh(); void this.wakeAndSettlePostBootstrapTimeout(); return { ok: true as const };
   }
-  async submitHandoff(input: import("../core/planning/handoff").HandoffInput) { return this.planning.submitHandoff(input); }
+  async submitHandoff(input: import("../core/planning/handoff").HandoffInput & { identitySource?: import("../shared/host-kind").IdentitySource }) {
+    const { identitySource, ...handoff } = input;
+    return this.planning.submitHandoff({ ...handoff, ...(identitySource ? { originIdentity: identitySource } : {}) });
+  }
 
   /**
    * Legacy synchronous removal. The Effigy runtime-scope capture and workspace
@@ -1686,11 +1722,15 @@ export class QueueRuntime {
    * service binds the task to that thread's own live worktree. The Paseo
    * bridge path carries no reliable caller identity and is refused.
    */
-  resolveHostCaller(input: { hostKind: HostKind; nativeAgentId: string }) {
+  async resolveHostCaller(input: { hostKind: HostKind; nativeAgentId: string }) {
     const hosts = this.hostRegistry.onlineIds().filter(id => hostKindOf(id) === input.hostKind);
     if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
     const hostId = hosts[0]!;
-    return { caller: formatAgentId(hostId, input.nativeAgentId), hostId, source: 'host' as const };
+    const caller = formatAgentId(hostId, input.nativeAgentId);
+    // This call is the planner thread's own proof of life, so its participant
+    // ticket travels in the response instead of a message into its thread.
+    const participantTicket = await this.plannerTickets.forCaller(caller);
+    return { caller, hostId, source: 'host' as const, ...(participantTicket ? { participantTicket } : {}) };
   }
 
   async registerTask(input: import('../shared/contracts').TaskRegistrationInput, _accepted: unknown, context?: { via?: string | null }) {

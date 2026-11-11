@@ -16,19 +16,62 @@ export interface HostRegistryStore {
   writeDisconnectedAt?(at: number | null): void;
 }
 
-/** A partial or ambiguous inventory is not evidence of the origin's host. */
-export async function resolveOriginHost<T>(registry: HostRegistry<T>, agentId: string, lookup: (host: T, id: string) => Promise<unknown | null>): Promise<string | undefined> {
-  const online = registry.onlineIds(), known = registry.known();
+/**
+ * One host's answer about an identity. `mine` is a positive read, `not-mine` is
+ * authoritative absence from a complete inventory, and `unknown` is a read that
+ * proved nothing (transport failure, incomplete inventory, no such capability).
+ * A host that cannot tell absence from a failed read never answers `not-mine`.
+ */
+export type OriginLookup = 'mine' | 'not-mine' | 'unknown';
+
+/**
+ * The caller's identity source named the host it belongs to (the caller
+ * resolution in `shared/caller.mjs` proves it from a ticket or the host's own
+ * fallback). It is evidence about the identity's own host, never another
+ * thread's.
+ */
+export interface OriginHostEvidence { hostId: string; source: string }
+
+const answered = (value: unknown): OriginLookup => value === 'unknown' ? 'unknown'
+  : value === 'mine' ? 'mine'
+  : value === 'not-mine' || value === null || value === undefined ? 'not-mine'
+  : value ? 'mine' : 'not-mine';
+
+/**
+ * A partial or ambiguous inventory is not evidence of the origin's host.
+ *
+ * Exactly one host must say `mine` and every host that could be asked must rule
+ * itself out. An offline host cannot rule itself out, so it leaves the answer
+ * unknown — unless the identity's own source names its host: that evidence rules
+ * every other host out, and a claim from anywhere else is a conflict, not a
+ * resolution. Two claimants are always a refusal.
+ */
+export async function resolveOriginHost<T>(registry: HostRegistry<T>, agentId: string,
+  lookup: (host: T, id: string) => Promise<OriginLookup | unknown | null>,
+  evidence?: OriginHostEvidence): Promise<string | undefined> {
+  const online = registry.onlineIds(), known = registry.known().map(entry => entry.id);
+  // Stale evidence (a host this registry never knew) decides nothing.
+  const named = evidence && known.includes(evidence.hostId) ? evidence.hostId : undefined;
   if (online.length === 1 && known.length === 1) return online[0];
-  if (online.length !== known.length) return undefined;
-  const matches: string[] = [];
+  const claimants: string[] = [];
+  let undecided = false;
   for (const id of online) {
     const host = registry.get(id);
-    if (!host) return undefined;
-    try { if (await lookup(host, agentId)) matches.push(id); }
-    catch { return undefined; }
+    if (!host) { undecided = true; continue; }
+    let answer: OriginLookup;
+    try { answer = answered(await lookup(host, agentId)); }
+    catch { undecided = true; continue; }
+    if (answer === 'unknown') undecided = true;
+    else if (answer === 'mine') claimants.push(id);
   }
-  return matches.length === 1 ? matches[0] : undefined;
+  if (claimants.length !== 1) return undefined;
+  const claimant = claimants[0];
+  // The caller's identity source is decisive: it names the host the identity
+  // belongs to, so a claimant elsewhere contradicts it.
+  if (named) return named === claimant ? claimant : undefined;
+  // Without that evidence an offline or undecided host leaves the answer unknown.
+  if (undecided || online.length !== known.length) return undefined;
+  return claimant;
 }
 
 export class HostRegistry<T> {
