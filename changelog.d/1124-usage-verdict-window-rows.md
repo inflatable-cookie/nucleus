@@ -1,0 +1,1 @@
+The Usage page now leads with a plain projection verdict and shows each usage window with a friendly name, reset time, used amount and on-pace marker. Technical reading details stay in the help popover, and stale readings remain visible with a quiet refresh warning.
