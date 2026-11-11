@@ -1,12 +1,12 @@
 /**
- * The Lanes destination is folded into Planning (nucleus#866, lane `nucleus-ui`):
- * the plan, the project chooser and "Find lanes" are one screen, so the board
- * keeps three destinations.
+ * The board's destinations (nucleus#866 folded Lanes into Planning; nucleus#1113
+ * added Usage): Tasks, Planning, QA runs and the subscription usage page.
  */
 export const navigationViews = [
   { id: "queue", label: "Tasks" },
   { id: "planning", label: "Planning" },
   { id: "qa", label: "QA runs" },
+  { id: "usage", label: "Usage" },
 ] as const;
 
 /** The workspace panel uses the same primary tabs as the main surface. */

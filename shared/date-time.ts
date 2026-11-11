@@ -13,6 +13,30 @@ export function formatLocalDateTime(iso: string): string {
   return `${WEEKDAYS[(d.getDay() + 6) % 7]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** One rounded span in its largest unit: "45s", "12m", "3h", "2d". */
+export function formatRelativeSpan(ms: number): string {
+  const abs = Math.abs(ms);
+  if (abs < 60_000) return `${Math.max(1, Math.round(abs / 1000))}s`;
+  if (abs < 3_600_000) return `${Math.round(abs / 60_000)}m`;
+  if (abs < DAY_MS) return `${Math.round(abs / 3_600_000)}h`;
+  return `${Math.round(abs / DAY_MS)}d`;
+}
+
+/** "in 45m" for a future instant, "5m ago" for a past one, "just now" within half a minute, or null when there is no readable instant. */
+export function formatRelativeTime(
+  iso: string | null,
+  now: number,
+): string | null {
+  if (!iso) return null;
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return null;
+  const diff = at - now;
+  if (Math.abs(diff) < 30_000) return "just now";
+  return diff >= 0
+    ? `in ${formatRelativeSpan(diff)}`
+    : `${formatRelativeSpan(diff)} ago`;
+}
+
 /** The days of one month as Monday-first weeks; `null` pads the first and last week. */
 export function monthGrid(year: number, month: number): (number | null)[][] {
   const lead = (new Date(year, month, 1).getDay() + 6) % 7;

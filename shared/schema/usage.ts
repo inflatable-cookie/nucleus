@@ -94,13 +94,15 @@ export type UsageWindowProjection = z.infer<typeof usageWindowProjectionSchema>;
 /**
  * The projection for one subscription: the binding window is whichever hits
  * 100% earliest before its own reset, and the dial names and shows it.
+ * `projectedUseAtReset` keeps its over-projection (past 100% up to the cap, so a
+ * label can say "+18% over"); a fully used window reads exactly 1.
  */
 export const usageProjectionSchema = z
   .object({
     state: usagePressureStateSchema,
     bindingWindowId: z.string().max(120).nullable(),
     bindingWindowName: z.string().max(120).nullable(),
-    projectedUseAtReset: z.number().min(0).max(1).nullable(),
+    projectedUseAtReset: z.number().min(0).max(2).nullable(),
     dial: z.number().min(-1).max(1).nullable(),
     windows: z.array(usageWindowProjectionSchema),
   })

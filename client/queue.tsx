@@ -15,11 +15,12 @@ import { activeSelection, effectiveSelection, scopeContains } from "../shared/pr
 import { navigationViews, openTaskCount, workspaceNavigationViews, type SettingsTarget } from "../shared/queue-navigation";
 import { errorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
+import { UsagePage } from "./usage";
 import { QaRunsTab, liveHostRun, type RunAccounting } from "./qa-runs-tab";
 import { attention } from "./board/text";
 import { BoardHeader } from "./board/header";
 import { PipelineBoard, usePipelineState } from "./board/pipeline";
-import { useBoardAct, usePlanningData, useQaData, useRecordQueries, useTaskDetail } from "./board/use-board-data";
+import { useBoardAct, usePlanningData, useQaData, useRecordQueries, useTaskDetail, type BoardTab } from "./board/use-board-data";
 import { TaskDialog } from "./task/task-dialog";
 import { useTaskDraftStore } from "./task/drafts";
 import { LeadDialog } from "./records/lead-dialog";
@@ -57,7 +58,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard }: Board
   const saveLaneDocument = useRpc(api.laneDocumentEdit);
   const changeLaneStatus = useRpc(api.laneStatus);
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"queue" | "planning" | "qa">("queue");
+  const [tab, setTab] = useState<BoardTab>("queue");
   // A board QA card opens the QA runs page on its run (Tom, 2026-11-01).
   const [qaFocusId, setQaFocusId] = useState<string | null>(null);
   const [surfaceScope, setSurfaceScope] = useProjectScope();
@@ -364,6 +365,11 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard }: Board
             onOpenTask={selectTask}
             c={c}
           />
+        )}
+        {tab === "usage" && (
+          <View style={{ flex: 1, minHeight: 0 }}>
+            <UsagePage theme={theme} layout={{ compact }} />
+          </View>
         )}
         {tab === "queue" && (
         <View style={{ flex: 1, minHeight: 0, gap: 12, zIndex: 0 }}>
