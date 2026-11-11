@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { briefDigestSchema, briefInputSchema, draftProvenanceSchema, laneDocumentRefSchema, leadProvenanceSchema, planningSourceSchema, type LaneDocumentRef } from "./briefs";
 import { instructionArtifactSchema, repoRelativePathSchema } from "../hooks";
+import { dedupeReviewedInputs, reviewedInputListRefusals } from "../service/reviewed-inputs.mjs";
 import { capabilityLevelSchema, completionAgentIdsSchema, profileRequestsSchema, profileSchema, scopeSchema, submissionRecordFromLegacy } from "./settings";
 import { dependencyIdsSchema, holdKindSchema, laneKeyListSchema } from "../schema/task-primitives";
 import { recoveryActionSchema, taskTitleSchema } from "./task-common";
@@ -49,15 +50,28 @@ export const reviewedInputSchema = z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
 
-export const reviewedInputListSchema = z.array(z.union([reviewedInputSchema, z.object({ directory: repoRelativePathSchema }).strict(), z.object({ glob: repoRelativePathSchema }).strict(), z.object({ digest: z.string().regex(/^[a-f0-9]{64}$/), count: z.number().int().positive() }).strict()])).max(512, "Summarise reviewedInputs as directories or a digest")
-  .superRefine((rows, ctx) => {
-    if (new Set(rows.filter(row => "path" in row).map(row => row.path)).size !== rows.filter(row => "path" in row).length)
-      ctx.addIssue({ code: "custom", message: "Reviewed input paths must be unique" });
-    if (new TextEncoder().encode(JSON.stringify(rows)).byteLength > 128 * 1024)
-      ctx.addIssue({ code: "custom", message: "Reviewed input closure must be at most 128 KiB" });
-  });
-
 export type ReviewedInput = z.infer<typeof reviewedInputSchema>;
+
+/** One bounded `reviewedInputs` entry: exact files, a path summary or a digest summary. */
+export type ReviewedInputEntry = ReviewedInput | { directory: string } | { glob: string } | { digest: string; count: number };
+
+export type ReviewedInputList = ReviewedInputEntry[];
+
+/**
+ * Papercut 8647384e (2026-11-10): a verdict refused for a malformed entry became
+ * a planner escalation twice (nucleus#1070 duplicate path, nucleus#1098 malformed
+ * SHA-256). The list rule lives in `shared/service/reviewed-inputs.mjs`, which the
+ * report schema and the `nucleus_report` bridge both read: a refusal names the
+ * exact entry, field and expected shape, and a harmless duplicate is
+ * de-duplicated instead of refused. Only entries that claim different content for
+ * the same path still refuse.
+ */
+export const reviewedInputListSchema = z.array(z.unknown())
+  .transform(rows => dedupeReviewedInputs(rows) as ReviewedInputList)
+  .superRefine((rows, ctx) => {
+    for (const issue of reviewedInputListRefusals(rows))
+      ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
+  });
 
 export const factRelocationInputSchema = z.object({
   fromPath: repoRelativePathSchema.refine(path => path.startsWith("docs/") && path.endsWith(".md"), "Relocation source must be a Markdown file under docs/"),

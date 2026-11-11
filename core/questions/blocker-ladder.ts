@@ -238,6 +238,8 @@ export interface PlannerEscalation {
   question: string | null;
   answered: boolean;
   unknown: boolean;
+  /** When the last unknown-delivery record was written; the stall threshold reads it. */
+  unknownAt?: string | null;
   /** A send that landed but produced no usable answer; the escalation stays open. */
   missed: boolean;
   /** The Spec 032 decision that carries it to the operator, when one was classified. */
@@ -291,6 +293,9 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
     const unknown = eventDetail(events, "planner_escalation_unknown").some(
       (event) => event.detail.startsWith(`${id}:`),
     );
+    const unknownAt = eventDetail(events, "planner_escalation_unknown")
+      .filter((event) => event.detail.startsWith(`${id}:`))
+      .at(-1)?.at ?? null;
     const decision = eventDetail(
       events,
       "planner_escalation_decision_linked",
@@ -311,6 +316,7 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
                 event.detail.startsWith(`${id}: answered by ordinary `),
             ))),
       unknown,
+      unknownAt,
       missed: eventDetail(events, "planner_escalation_missed").some((event) =>
         event.detail.startsWith(`${id}:`),
       ),
@@ -451,10 +457,50 @@ export const escalationWaitDetail = {
     `Waiting with the operator: the release GO for the proof-only qualification at ${commit} is open (question ${questionId}); no run starts until the operator answers`,
 } as const;
 
+/**
+ * Papercut 2ef86450 (2026-11-10): an escalation whose delivery is unknown waited
+ * unreported (effigy#862 sat 98+ minutes with owner "queue") until a planner
+ * noticed by hand. Nucleus must never resend an unknown send, but after the stall
+ * threshold somebody has to hear it: the task surfaces as visible attention and
+ * the project planner receives one agent-channel message.
+ *
+ * The open escalation this reads is still open, unknown-delivered and not yet the
+ * operator's; its own recorded unknown timestamp is what has to outlive the
+ * threshold. A miss (a send that landed without a usable answer) is a different
+ * fact and keeps its ordinary wait.
+ */
+export function stalledUnknownEscalation(facts: {
+  escalations: readonly PlannerEscalation[];
+  now: number;
+  thresholdMs: number;
+}): PlannerEscalation | null {
+  const open = facts.escalations
+    .filter((escalation) => !escalation.answered && escalation.unknown && !escalation.decisionId)
+    .at(-1);
+  if (!open?.unknownAt) return null;
+  const since = Date.parse(open.unknownAt);
+  if (!Number.isFinite(since)) return null;
+  return facts.now - since >= Math.max(0, facts.thresholdMs) ? open : null;
+}
+
+/** The attention detail: the owner, the question and every exit, with no resend. */
+export function unknownEscalationAttentionDetail(
+  escalation: Pick<PlannerEscalation, "id" | "question">,
+  owner: string,
+): string {
+  const question = (escalation.question ?? "the escalation question was not recorded")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1200);
+  return `Blocker escalation ${escalation.id} never reported a delivery, so nobody knows whether it reached anyone; Nucleus never resends it. Owner: ${owner}. The question: ${question} Exits: answer it with question.answer, dispose of the task with an ordinary owner verb (next lists the available ones), or ask again with a fresh question ID once ${owner} or the operator confirms the first question was not seen.`;
+}
+
 /** What a parked blocked or errored responsible task does on one advance pass. */
 type BlockerLadderStep =
   | { kind: "classify" }
   | { kind: "wait"; detail: string }
+  /** An unknown-delivery escalation outlived the stall threshold: surface it, never resend it. */
+  | { kind: "attention"; escalation: PlannerEscalation }
   | { kind: "continue" };
 
 /**
@@ -467,6 +513,8 @@ export function blockerLadderStep(facts: {
   completion: Pick<Completion, "status" | "providerUnavailable"> | null | undefined;
   escalations: readonly PlannerEscalation[];
   consults: readonly ReviewerConsult[];
+  /** An open escalation whose unknown delivery outlived the stall threshold, if any. */
+  unknownStall?: PlannerEscalation | null;
 }): BlockerLadderStep {
   if (
     facts.completion &&
@@ -475,6 +523,7 @@ export function blockerLadderStep(facts: {
     !facts.classified
   )
     return { kind: "classify" };
+  if (facts.unknownStall) return { kind: "attention", escalation: facts.unknownStall };
   const openEscalations = facts.escalations.filter(
     (escalation) => !escalation.answered,
   );

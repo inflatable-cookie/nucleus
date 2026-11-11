@@ -10,7 +10,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {Store} from '../core/store/store';
 import {Engine} from '../core/engine';
-import {submissionSchema} from '../shared/contracts';
+import {completionSchema,submissionSchema} from '../shared/contracts';
 import {startCallbacks} from '../service/callbacks/callback';
 import {reportSchema} from '../core/intake/report';
 import {createServer} from 'node:http';
@@ -64,14 +64,21 @@ for(const scope of ['legacy','report'])test(`real MCP ${scope} launch exposes on
    assert.equal((await client.callTool({name:'nucleus_dispose_task',arguments:{taskId:target.id,version:target.version,action:'cancel',reason:'Not exposed'}})).isError,true);
    assert.equal(store.task(target.id).phase,'queued');
   }
-  const reviewedInputs=[{directory:'plans'}, {digest:'b'.repeat(64),count:1000}];
+  const reviewedInputs=[{directory:'plans'}, {directory:'plans'}, {digest:'b'.repeat(64),count:1000}];
+  const dedupedReviewedInputs=[{directory:'plans'}, {digest:'b'.repeat(64),count:1000}];
   const args={runId:'run-1',status:'blocked',headline:'Blocked on the fixture',summary:'Acceptance result',...{reviewedInputs}};
   {
    const tooMany=await client.callTool({name:'nucleus_report',arguments:{...args,reviewedInputs:Array.from({length:1000},(_,i)=>({path:`plans/${i}.md`,sha256:'b'.repeat(64)}))}});
    assert.equal(tooMany.isError,true); assert.match(JSON.stringify(tooMany),/Summarise reviewedInputs as directories or a digest/);
    const invalid=await client.callTool({name:'nucleus_report',arguments:{...args,reviewedInputs:[{path:'../outside.ts',sha256:'b'.repeat(64)}]}});
    assert.equal(invalid.isError,true,'non-normalized reviewed input paths are rejected');
-   assert.equal(store.task(t.id).completion,null,'invalid receipts do not complete the task');
+   // Papercut 8647384e: a refused report names the exact entry, field and expected
+   // shape so the reviewer corrects that field and resends the same verdict instead
+   // of reporting blocked and turning it into a planner escalation.
+   const malformedDigest=await client.callTool({name:'nucleus_report',arguments:{...args,reviewedInputs:[{directory:'plans'},{path:'plans/b.md',sha256:'not-a-digest'}]}});
+   assert.equal(malformedDigest.isError,true);
+   assert.match(String((malformedDigest.content as {text:string}[])[0].text),/reviewedInputs\[1\] sha256 must be 64 lowercase hexadecimal characters/);
+   assert.equal(store.task(t.id).completion,null,'a malformed receipt does not complete the task');
    const typo={runId:'run-1-typo',status:args.status,headline:args.headline,summary:args.summary};
    const rejected=await client.callTool({name:'nucleus_report',arguments:typo});assert.equal(rejected.isError,true);
    // Queue #535 (papercut 5ac8ffb0): the session is bound to one run, so a typed runId that names any
@@ -93,7 +100,7 @@ for(const scope of ['legacy','report'])test(`real MCP ${scope} launch exposes on
   assert.equal((await client.callTool({name:'northstar_report',arguments:args})).isError,true);
   assert.equal(store.task(t.id).completion?.summary,args.summary);
   assert.equal(store.task(t.id).completion?.headline,args.headline,'the accepted report keeps the headline it carried');
-  assert.deepEqual(store.task(t.id).completion?.reviewedInputs,reviewedInputs,'the authenticated completion retains exactly the submitted receipt');
+  assert.deepEqual(store.task(t.id).completion?.reviewedInputs,dedupedReviewedInputs,'the authenticated completion retains the submitted receipt with its harmless duplicate de-duplicated');
   {
    const omitted=await client.callTool({name:'nucleus_report',arguments:{status:args.status,headline:args.headline,summary:args.summary,reviewedInputs}});assert.deepEqual(omitted,first,'the bridge supplies its bound runId when omitted');
    const staleReporter=store.insert(submissionSchema.parse({submissionId:'stale-reporter',title:'Stale reporter',repoPath:'/fixture',planningCommit:'a'.repeat(40),handoffPath:'stale-reporter.md',originAgentId:'origin'}),'host','handoff','a'.repeat(40));
@@ -170,4 +177,26 @@ test('a runId mismatch through a ticket outside the current data home refuses wi
   assert.equal(ask.isError,true);
   assert.match(String((ask.content as {text:string}[])[0].text),/Do not resend through this callback/);
  }finally{await client.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+/**
+ * Papercut 8647384e: intake's `reviewedInputs` refusal is read by a reviewer whose
+ * turn stays open, so it must name the exact entry, field and expected shape. The
+ * same entry recorded twice is harmless and is de-duplicated; two entries that
+ * claim different content for one path still refuse, naming both.
+ */
+test('reviewedInputs names a malformed entry and de-duplicates harmless repeats', () => {
+  const completion = (reviewedInputs: unknown) => ({ eventId: 'e', taskId: 't', runId: 'r', status: 'blocked', summary: 's', reviewedInputs });
+  const digest = 'b'.repeat(64);
+  assert.deepEqual(completionSchema.parse(completion([
+    { path: 'plans/a.md', sha256: digest }, { path: 'plans/a.md', sha256: digest }, { directory: 'plans' }, { directory: 'plans' },
+  ])).reviewedInputs, [{ path: 'plans/a.md', sha256: digest }, { directory: 'plans' }]);
+  assert.throws(() => completionSchema.parse(completion([{ directory: 'plans' }, { path: 'plans/a.md', sha256: 'b'.repeat(63) }])),
+    /reviewedInputs\[1\] sha256 must be 64 lowercase hexadecimal characters/);
+  assert.throws(() => completionSchema.parse(completion([{ path: 'plans/a.md', count: 2 }])),
+    /reviewedInputs\[0\] must be exactly one of \{path, sha256\}, \{directory\}, \{glob\} or \{digest, count\}/);
+  assert.throws(() => completionSchema.parse(completion([{ path: 'plans/a.md', sha256: digest }, { path: 'plans/a.md', sha256: 'c'.repeat(64) }])),
+    /reviewedInputs\[1\]\.sha256 differs from reviewedInputs\[0\]\.sha256 for path plans\/a\.md/);
+  assert.throws(() => completionSchema.parse(completion(Array.from({ length: 513 }, (_, index) => ({ directory: `plans/${index}` })))),
+    /Summarise reviewedInputs as directories or a digest/);
 });

@@ -184,7 +184,7 @@ export class Resolution {
 
   readonly progressContinuation = new ProgressContinuation(schedulingContext(this, ['adapter', 'host', 'ownedToolHold', 'progressEffectsPending', 'startsNoRuns', 'store']));
 
-  readonly schedulingLifecycle = new SchedulingLifecycle(schedulingContext(this, ['acceptedPrWorkspaceMayApply', 'adapter', 'advanceAttempt', 'advanceChangesRequested', 'advanceClosing', 'advanceCompletedRun', 'advanceMerging', 'advancePhase', 'advanceSkippedReview', 'advanceSyncing', 'attentionReplayApplies', 'blockerLadderApplies', 'blockerLadderStep', 'hooks', 'hostAvailable', 'launch', 'operatorReturn', 'pauseForPrerequisiteWait', 'paused', 'reapplyPendingReview', 'reconcileAcceptedPrWorkspace', 'recordStoredResult', 'recovery', 'reobservePendingChecks', 'replayHeldAttention', 'restoreRecordedMergePhase', 'settleAdvanceFailure', 'settleSourceApprovalProof', 'settleUnchangedCheckGate', 'sourceApprovalWaitApplies', 'startsNoRuns', 'stopped', 'store', 'supersedeEarlierRecovery', 'unchangedCheckGateApplies', 'update', 'verification', 'waiting']));
+  readonly schedulingLifecycle = new SchedulingLifecycle(schedulingContext(this, ['acceptedPrWorkspaceMayApply', 'adapter', 'advanceAttempt', 'advanceChangesRequested', 'advanceClosing', 'advanceCompletedRun', 'advanceMerging', 'advancePhase', 'advanceSkippedReview', 'advanceSyncing', 'attentionReplayApplies', 'attentionUnknownEscalation', 'blockerLadderApplies', 'blockerLadderStep', 'hooks', 'hostAvailable', 'launch', 'operatorReturn', 'pauseForPrerequisiteWait', 'paused', 'reapplyPendingReview', 'reconcileAcceptedPrWorkspace', 'recordStoredResult', 'recovery', 'reobservePendingChecks', 'replayHeldAttention', 'restoreRecordedMergePhase', 'settleAdvanceFailure', 'settleSourceApprovalProof', 'settleUnchangedCheckGate', 'sourceApprovalWaitApplies', 'startsNoRuns', 'stopped', 'store', 'supersedeEarlierRecovery', 'unchangedCheckGateApplies', 'update', 'verification', 'waiting']));
 
   private reviewLifecycleContext(): ReviewLifecycleContext {
     const resolution = this;
@@ -247,7 +247,7 @@ export class Resolution {
   }
   readonly acceptedPrWorkspace = new AcceptedPrWorkspace(recoveryContext(this, ['adapter', 'attention', 'startsNoRuns', 'store']));
   readonly recoveryLifecycle = new RecoveryLifecycle(Object.assign(
-    recoveryContext(this, ['attention', 'environmentDeferred', 'gitTransientFailure', 'responsibleBlockerLadder', 'store', 'update', 'waiting']),
+    recoveryContext(this, ['attention', 'attentionUnknownEscalation', 'environmentDeferred', 'gitTransientFailure', 'responsibleBlockerLadder', 'store', 'update', 'waiting']),
     { replayHeldAttention: (t: Task) => this.mergePhase.replayHeldAttention(t) },
   ));
 
@@ -809,6 +809,7 @@ export class Resolution {
   escalateConsultedBlocker(t: Task, input: { id: string }): void { return this.ladder.escalateConsultedBlocker(t, input); }
   openReviewContinuationEscalation(t: Task, state: 'exhausted' | 'closed'): string { return this.ladder.openReviewContinuationEscalation(t, state); }
   escalateRefusedCoordinator(t: Task, reason: string): void { return this.ladder.escalateRefusedCoordinator(t, reason); }
+  attentionUnknownEscalation(t: Task, escalation: { id: string; question: string | null }): void { return this.ladder.attentionUnknownEscalation(t, escalation); }
   openPlannerEscalation(t: Task, input: { cause: string; runId: string | null; question: string; payload: object; suggestedVerbs?: TaskStopVerb[]; causeDetail?: string }): void { return this.ladder.openPlannerEscalation(t, input); }
   routePlannerEscalation(t: Task, id: string, question: string): Promise<void> { return this.ladder.routePlannerEscalation(t, id, question); }
   classifyEscalationToOperator(t: Task, id: string, reason: string, who: string): void { return this.ladder.classifyEscalationToOperator(t, id, reason, who); }

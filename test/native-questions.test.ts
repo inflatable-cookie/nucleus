@@ -241,3 +241,54 @@ for (const updateBeforeRefresh of [false, true]) {
     } finally { ui?.update(React.createElement('View')); card.update(React.createElement('View')); stop(); }
   });
 }
+
+/**
+ * Papercut 7cb34906 (a consumer task): three native budget questions
+ * stayed pending after two `extend_budget` calls, and launches declined with
+ * "retained worker still owns its turn: pending question" until the planner
+ * answered them by hand. A budget extension clears the budget stop its questions
+ * belong to, so it supersedes every recorded budget question for the task and
+ * dismisses the ones still pending on the thread through the host.
+ */
+test('extend_budget dismisses Nucleus budget questions still pending on the worker thread', async () => {
+  const store = new Store(':memory:');
+  store.setMeta('paused', false);
+  store.setMeta('hostId', 'host');
+  const task = store.insert(submissionSchema.parse({
+    submissionId: 'budget', title: 'Budget', repoPath: '/repo', planningCommit: 'a'.repeat(40),
+    handoffPath: 'handoff.md', originAgentId: 'origin',
+  }), 'host', 'handoff', 'a'.repeat(40));
+  const queued = store.update(task.id, {
+    phase: 'blocked', reason: 'Budget reached', agentId: 'worker', workspaceId: 'workspace',
+    budgetSince: new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString(),
+  });
+  // Three recorded budget questions: one from the current stop, two older ones whose
+  // native prompts are still pending on the thread.
+  for (const id of ['budget-1', 'budget-2', 'budget-3'])
+    store.event(queued.id, 'operator_question', `${id}: kind budget; stop budget; head none; question ${digest(id)} (3 chars); options Extend the budget | Stop and keep the work`);
+  const dismissed: unknown[] = [];
+  const adapter = {
+    pendingQuestions: async (id: string) => id === 'worker' ? [
+      { requestId: 'native-1', questions: [{ header: 'Question 1', question: '[Queue decision budget-1] Budget reached. Continue?', options: ['Extend the budget'] }] },
+      { requestId: 'native-2', questions: [{ header: 'Question 1', question: '[Queue decision budget-3] Budget reached. Continue?', options: ['Extend the budget'] }] },
+      { requestId: 'unrelated', questions: [{ header: 'Question 1', question: 'An unrelated host question?', options: [] }] },
+    ] : [],
+    dismissNativeQuestion: async (...args: unknown[]) => { dismissed.push(args); },
+    observe: observeIdle('workspace'),
+  } as unknown as Adapter;
+  const engine = new Engine(store, adapter, 0);
+  try {
+    await engine.performTaskControl({ taskId: queued.id, version: store.task(queued.id).version,
+      action: 'extend_budget', reason: 'Continue the current approach', caller: 'operator (board)' });
+    for (let i = 0; i < 20 && dismissed.length < 2; i++) await tick();
+    const events = store.eventsAll(queued.id);
+    for (const id of ['budget-1', 'budget-2', 'budget-3']) {
+      assert.ok(events.some(event => event.kind === 'operator_question_superseded' && event.detail.startsWith(`${id}:`)), `${id}: superseded by the extension`);
+      assert.ok(events.some(event => event.kind === 'native_question_dismiss_intent' && event.detail.startsWith(`${id}:`)), `${id}: dismissal recorded`);
+    }
+    assert.deepEqual(dismissed, [['worker', 'workspace', 'native-1'], ['worker', 'workspace', 'native-2']],
+      'every pending Nucleus budget question is dismissed through the host, and nothing else is');
+    assert.equal(store.task(queued.id).resolution.stop, null);
+    assert.equal(store.task(queued.id).resolution.budgetExtensions, 1);
+  } finally { await engine.stop(); store.close(); }
+});
