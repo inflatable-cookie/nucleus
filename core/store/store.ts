@@ -52,6 +52,7 @@ import { stageDeclarationFromBrief } from "../stages";
 import { HOST_RUN_OUTPUT_FAILURE_DUE_PAGE,HOST_RUN_OUTPUT_FAILURE_SUMMARY_EXAMPLES,type HostRunOutputFailure,type HostRunOutputReclassification } from "../host-runs/host-run-output-failures";
 import { qualifiedThreadArchiveEffectKey } from "./store-core";
 import { ContentFingerprint,HISTORY_RETENTION_MS,StoreFacts } from "./store-maintenance";
+import type { BudgetClock } from "../../shared/task-budget";
 /**
  * The store's write funnels are closed for a bounded maintenance window; nothing may
  * start a transaction, and the window itself proves no other connection holds a lock.
@@ -1015,6 +1016,24 @@ export class Store {
       if (this.tasksStore.taskProjection) { this.tasksStore.setProjectedTask(validated); this.tasksStore.integrationTaskIndex = null; }
       this.advanceRevision(); this.taskChanged(id); return next;
     });
+  }
+  /**
+   * Spec 058 budgets (nucleus#1153): the wall-clock pause interval is a Queue-owned
+   * bookkeeping record, like runtime retirements. A sweep or quantum that opens or
+   * closes an interval spends no task version: an owner who read the task and sent a
+   * control at that version must not be refused as stale because the Queue's own pass
+   * saw the hold. The board still revision-refreshes, and the caller records the
+   * interval's audit event in the same transaction.
+   */
+  setBudgetClock(id: string, budgetClock: BudgetClock): Task {
+    if (!this.db.isTransaction) return this.transaction(() => this.setBudgetClock(id, budgetClock));
+    this.tasksStore.syncProjectionForWrite();
+    const task = this.task(id);
+    const next = { ...task, resolution: { ...task.resolution, budgetClock }, updatedAt: now() };
+    const validated = this.tasksStore.validatedTask(next);
+    this.db.prepare("UPDATE tasks SET data=? WHERE id=?").run(this.taskRow(next, task), id);
+    if (this.tasksStore.taskProjection) { this.tasksStore.setProjectedTask(validated); this.tasksStore.integrationTaskIndex = null; }
+    this.advanceRevision(); this.taskChanged(id); return next;
   }
   taskOrNull(id: string): Task | null { return this.tasksStore.taskOrNull(id); }
   purgeOldTasks(at=Date.now(),cleanupFiles?:(taskId:string,runIds:string[])=>void) { return this.maintenanceStore.purgeOldTasks(at, cleanupFiles); }

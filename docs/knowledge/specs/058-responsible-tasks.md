@@ -391,6 +391,9 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
   bar, and the transitions are durable `budget_clock_paused` / `budget_clock_resumed`
   events. A budget pause, a merge hold, capacity queueing and the task's own
   validation keep charging: they are the task's work or its own answer to give.
+  The clock is a Queue-owned record like runtime retirements: opening or closing an
+  interval spends no task version, so a sweep or quantum never makes an owner's
+  control sent at the version it read stale (milestone QA 54d51476).
 - **Holds.** A dispatch hold suppresses the question because it blocks runs. A merge
   hold does not: it does not block runs and cannot leave a budget pause without an
   answer.

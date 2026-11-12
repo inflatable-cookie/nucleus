@@ -642,8 +642,11 @@ export class Operations {
     if (!["queued", "needs_attention", "blocked", "error"].includes(current.phase) || current.entrypoint === "review")
       throw new Error("Validation retry requires an initial pre-dispatch task");
     if (current.agentIntent || current.agentId) throw new Error("A worker creation is already in flight; uncertain creation cannot be replayed");
-    if (current.runId || current.completion || current.prUrl || current.prHead || current.resumePrNumber || current.resolution.mergeIntent ||
-        current.resolution.currentRunId || current.resolution.recoveryActive || this.store.runs(current.id).some(run => !run.released || run.role !== "recovery"))
+    // The same settled rule the restart shape uses (nucleus#1147): only an unreleased
+    // run owns the task. A released run, historical or not, is a previous owner move's
+    // history, and the retained workspace is verified before any new worker starts.
+    if (current.completion || current.prUrl || current.prHead || current.resumePrNumber || current.resolution.mergeIntent ||
+        current.resolution.currentRunId || current.resolution.recoveryActive || this.store.runs(current.id).some(run => !run.released))
       throw new Error("Validation retry requires settled pre-dispatch state with no worker or PR");
     // Round 4: re-admission is state; the scheduler waits for unpause to dispatch.
     if (this.engine.stopped) throw new Error("Validation cannot be retried while Nucleus is stopping");
