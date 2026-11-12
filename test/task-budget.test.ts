@@ -137,9 +137,12 @@ test('only a Nucleus-side hold stops the clock; the task\'s own waits keep charg
   assert.match(nucleusHeldReason({ stopReason: null, dispatchHeld: true })!, /dispatch hold blocks every run/);
   assert.match(nucleusHeldReason({ stopReason: 'operator_needed', dispatchHeld: false, incidentCause: 'workspace_state' })!, /host fault: workspace_state/);
   assert.match(nucleusHeldReason({ stopReason: 'operator_needed', dispatchHeld: false, incidentCause: 'uncertain_delivery' })!, /host fault: uncertain_delivery/);
+  assert.match(nucleusHeldReason({ stopReason: 'operator_needed', dispatchHeld: false, presendRefusal: true })!, /refusal stopped the task before any send/);
+  assert.match(nucleusHeldReason({ stopReason: null, dispatchHeld: false, observationOutage: true })!, /could not observe this task/);
   assert.equal(nucleusHeldReason({ stopReason: 'operator_needed', dispatchHeld: false, incidentCause: 'hook_failure' }), null,
     'a hook the change broke is the task\'s own work');
   assert.equal(nucleusHeldReason({ stopReason: 'operator_needed', dispatchHeld: false, incidentCause: 'worker_blocked' }), null);
+  assert.equal(nucleusHeldReason({ stopReason: null, dispatchHeld: false, presendRefusal: false, observationOutage: false }), null);
   assert.equal(nucleusHeldReason({ stopReason: 'budget', dispatchHeld: false }), null, 'a budget pause is already spent');
   assert.equal(nucleusHeldReason({ stopReason: 'validation', dispatchHeld: false }), null, 'a worktree validation is the task\'s own work');
   assert.equal(nucleusHeldReason({ stopReason: 'capacity', dispatchHeld: false }), null, 'queueing for a slot is not a fault');

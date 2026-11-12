@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Incident, Run, Task } from '../../shared/contracts';
 import type { IncidentCause } from '../../shared/incident';
 import { isTransientExternalFailure, taskStopClassification, taskStopRecord, taskStopVerbsFor, type TaskStopReason, type TaskStopVerb } from '../../shared/task-stop';
-import { nucleusHeldReason, type BudgetClock } from '../../shared/task-budget';
+import { NUCLEUS_HELD_REFUSAL_EVENTS, nucleusHeldReason, type BudgetClock } from '../../shared/task-budget';
 import { holdsOf } from '../../shared/holds';
 import { incidentKey } from './incident';
 import { isRepositoryContention, repositoryContentionNeedsAttention } from '../scheduling/repository-contention';
@@ -37,43 +37,56 @@ export class TaskStops {
   }
   /**
    * Spec 058 budgets (nucleus#1153): charge the wall clock for the task's own work
-   * only. Called once per task quantum — the one place that observes every live
-   * task each pass — it opens a pause interval while the task is held for a
-   * Nucleus-side cause and closes it when the task can make progress again, so
-   * the budget is not spent on Nucleus's downtime. Intervals are durable on the
-   * task (`resolution.budgetClock`) and recorded as events for the board's
-   * telemetry; the budget read subtracts them.
+   * only. Called once per task quantum and once per task visit in the sweep — the
+   * two places that observe every live task each pass — it opens a pause interval
+   * while the task is held for a Nucleus-side cause and closes it when the task can
+   * make progress again, so the budget is not spent on Nucleus's downtime.
+   * Intervals are durable on the task (`resolution.budgetClock`) and recorded as
+   * events for the board's telemetry; the budget read subtracts them.
    *
-   * A wedged or failed sweep is the third cause: the sweep records
-   * `observation_outage` when a task quantum overruns its bound, and this method
-   * closes that interval with `observation_resumed` — it runs only once the
-   * quantum returned, which is exactly when the lane can move again.
+   * A wedged or failed sweep is one cause: the sweep records `observation_outage`
+   * when a task quantum overruns its bound, and the pause opens on the first
+   * observation — while the lane is still wedged, so the board can see it. Only
+   * `options.returned` (the wedged quantum's own finish) closes it, with
+   * `observation_resumed`: a sweep visiting a still-running lane never claims it
+   * returned.
    */
   settleBudgetClock(task: Task, options: { returned?: boolean } = {}): Task {
     const current = this.store.task(task.id);
     const at = Date.parse(now());
     const clock: BudgetClock = current.resolution.budgetClock ?? { pausedMs: 0, pauses: 0, since: null, reason: null };
     const terminal = current.phase === 'done' || current.phase === 'cancelled';
+    const events = this.store.eventsAll(current.id);
+    // The earliest outage the lane has not yet returned from; repeated observations
+    // of one wedged quantum never move its start forward.
+    const resumedAt = events.findLastIndex(event => event.kind === 'observation_resumed');
+    const outageAt = events.findIndex((event, index) => index > resumedAt && event.kind === 'observation_outage');
+    const outage = outageAt >= 0 ? events[outageAt]!.at : null;
+    // A proven pre-send refusal holds the task while the attention it set is still
+    // the current episode: an owner resume writes `attention_episode_resolved`. The
+    // task's own reason is checked too, so a later, different fault can never read
+    // as a stale refusal.
+    const refusalAt = events.findLastIndex(event => (NUCLEUS_HELD_REFUSAL_EVENTS as readonly string[]).includes(event.kind));
+    const presendRefusal = refusalAt >= 0 && refusalAt > events.findLastIndex(event => event.kind === 'attention_episode_resolved')
+      && current.resolution.attention === true && /refused before send/i.test(current.reason);
     const held = terminal ? null : nucleusHeldReason({
       stopReason: current.resolution.stop?.reason ?? null,
       dispatchHeld: Boolean(holdsOf(current).dispatch),
       incidentCause: current.resolution.incident && current.resolution.incident.status !== 'resolved'
         ? current.resolution.incident.cause : null,
+      presendRefusal,
+      // While the lane is wedged only the outage may hold it; the returned quantum
+      // has to be able to close the interval.
+      observationOutage: Boolean(outage) && !options.returned,
     });
-    const events = this.store.eventsAll(current.id);
-    // The earliest outage the lane has not yet returned from. Repeated outage
-    // observations for one wedged quantum never move its start forward. Only the
-    // quantum that came back may close it: the sweep visits a wedged task while its
-    // quantum is still running and must not call that a return.
-    const resumedAt = events.findLastIndex(event => event.kind === 'observation_resumed');
-    const outageAt = options.returned ? events.findIndex((event, index) => index > resumedAt && event.kind === 'observation_outage') : -1;
-    const outage = outageAt >= 0 ? events[outageAt]!.at : null;
     const running = Boolean(clock.since);
+    const closingOutage = Boolean(outage) && Boolean(options.returned);
     // Nothing to close and nothing to open: the usual pass writes nothing.
-    if ((!running && !held && !outage) || (running && held && !outage)) return current;
-    const starts = [clock.since, outage]
-      .map(value => (value ? Date.parse(value) : Number.NaN))
-      .filter(started => Number.isFinite(started) && started <= at);
+    if (running && held && !closingOutage) return current;
+    if (!running && !held && !closingOutage) return current;
+    const starts = clock.since
+      ? [Date.parse(clock.since)].filter(started => Number.isFinite(started) && started <= at)
+      : [];
     const pausedTo = starts.length ? Math.min(...starts) : at;
     const next: BudgetClock = {
       pausedMs: clock.pausedMs + Math.max(0, at - pausedTo),
@@ -87,7 +100,7 @@ export class TaskStops {
     return this.store.transaction(() => {
       const updated = this.store.update(current.id, { resolution: { ...current.resolution, budgetClock: next } },
         held ? 'budget_clock_paused' : 'budget_clock_resumed', detail);
-      if (outage) this.store.event(current.id, 'observation_resumed', `the task quantum returned after ${outage}; its lane moves again`);
+      if (closingOutage) this.store.event(current.id, 'observation_resumed', `the task quantum returned after ${outage}; its lane moves again`);
       return updated;
     });
   }

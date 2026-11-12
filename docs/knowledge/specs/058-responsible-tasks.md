@@ -379,10 +379,13 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
   Nucleus-side cause: a recorded `external_unavailable`, `workspace_unavailable`,
   `route_unavailable` or `provider_unavailable` stop (a host-adapter refusal before a
   send, a missing workspace, no runnable profile, a provider outage), an unresolved
-  `workspace_state` or `uncertain_delivery` incident (a pre-send refusal or a delivery
-  whose outcome is unknown), a dispatch hold, or a sweep `observation_outage` on its
-  lane. The interval closes when the task can make progress again, and its time is
-  subtracted from the wall figure. The paused
+  `workspace_state` or `uncertain_delivery` incident, a proven pre-send refusal that
+  parked the task in attention (`worker_creation_refused_before_send` and the
+  reviewer-launch equivalents, held until an owner resume resolves the episode), a
+  dispatch hold, or a sweep `observation_outage` on its lane. An outage pause opens on
+  the first observation, while the lane is still wedged, and only that quantum's own
+  return closes it. The interval closes when the task can make progress again, and its
+  time is subtracted from the wall figure. The paused
   total is reported as `wallMs.pausedMs` on the detail and named on the budget's time
   bar, and the transitions are durable `budget_clock_paused` / `budget_clock_resumed`
   events. A budget pause, a merge hold, capacity queueing and the task's own

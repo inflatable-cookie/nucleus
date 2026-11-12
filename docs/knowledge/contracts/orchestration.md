@@ -2290,10 +2290,12 @@ movement invalidates source approval and preserves the normal readiness gates.
   `resolution.budgetClock`: it opens an interval while the task waits on a
   Nucleus-side cause — a recorded `external_unavailable`, `workspace_unavailable`,
   `route_unavailable` or `provider_unavailable` stop, an unresolved
-  `workspace_state`/`uncertain_delivery` incident (a host-adapter pre-send refusal or
-  a delivery of unknown outcome), a dispatch hold (which blocks every run the task
-  could start), or a sweep `observation_outage` on its lane — and closes it when the
-  task can make progress again. Closed pauses are durable, recorded
+  `workspace_state`/`uncertain_delivery` incident, a proven pre-send refusal that
+  parked the task in attention (held until an owner resume resolves the episode), a
+  dispatch hold (which blocks every run the task could start), or a sweep
+  `observation_outage` on its lane — and closes it when the task can make progress
+  again. An outage pause opens on the first observation, while the lane is still
+  wedged, and only that quantum's own return closes it. Closed pauses are durable, recorded
   as `budget_clock_paused`/`budget_clock_resumed` (and `observation_resumed`) events,
   reported as `wallMs.pausedMs` on the detail and named on the budget's time bar, and
   subtracted from the wall figure, so a defect never spends a task's budget. A budget

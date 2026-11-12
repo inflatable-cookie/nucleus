@@ -65,20 +65,43 @@ export const NUCLEUS_HELD_STOP_REASONS = ["external_unavailable", "workspace_una
 export type NucleusHeldStopReason = (typeof NUCLEUS_HELD_STOP_REASONS)[number];
 
 /**
- * Incidents that are the host adapter's or a workspace's own fault — a pre-send
- * refusal (the send never left), a workspace that is not there or not clean, or a
- * delivery whose outcome is unknown. The task can send nothing until one settles.
+ * Incidents that are the host adapter's or a workspace's own fault — a workspace
+ * that is not there or not clean, or a delivery whose outcome is unknown. The task
+ * can send nothing until one settles.
  */
 export const NUCLEUS_HELD_INCIDENT_CAUSES = ["workspace_state", "uncertain_delivery"] as const;
 
 /**
- * Why the task's wall clock is stopped right now, or null while it runs: a
- * Nucleus-fault wait, a dispatch hold (which blocks every run the task could
- * start), or an unresolved host/workspace incident. A merge hold is not one: the
- * task can still progress its own work.
+ * The durable event a host adapter (or the launcher acting on its typed refusal)
+ * writes when a proven pre-send refusal stopped a run: nothing was sent, so the
+ * task is blocked on the adapter, not on its own work. The interval stays open
+ * while the task still carries that attention and closes when an owner resumes it
+ * (the `attention_episode_resolved` a resuming control writes).
  */
-export function nucleusHeldReason(input: { stopReason: TaskStopReason | null | undefined; dispatchHeld: boolean; incidentCause?: string | null }): string | null {
+export const NUCLEUS_HELD_REFUSAL_EVENTS = [
+  "worker_creation_refused_before_send",
+  "creation_refused_before_send",
+  "ordinary_review_refused_before_send",
+  "review_prompt_refused_before_send",
+] as const;
+
+/**
+ * Why the task's wall clock is stopped right now, or null while it runs: a
+ * dispatch hold (which blocks every run the task could start), an observation
+ * outage on its lane, a proven pre-send refusal, an unresolved host/workspace
+ * incident, or a Nucleus-fault wait. A merge hold is not one: the task can still
+ * progress its own work.
+ */
+export function nucleusHeldReason(input: {
+  stopReason: TaskStopReason | null | undefined;
+  dispatchHeld: boolean;
+  incidentCause?: string | null;
+  presendRefusal?: boolean;
+  observationOutage?: boolean;
+}): string | null {
   if (input.dispatchHeld) return "a dispatch hold blocks every run";
+  if (input.observationOutage) return "the sweep could not observe this task (an observation outage)";
+  if (input.presendRefusal) return "a host-adapter refusal stopped the task before any send";
   const cause = input.incidentCause;
   if (cause && (NUCLEUS_HELD_INCIDENT_CAUSES as readonly string[]).includes(cause)) return `the task waits on a host fault: ${cause}`;
   const reason = input.stopReason;
