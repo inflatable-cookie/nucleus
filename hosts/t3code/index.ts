@@ -110,6 +110,9 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     observe(id: string) { return this.native.observe(id); }
     observationInventory(ids: readonly string[]) { return this.native.observationInventory(ids); }
     taskWorkspaceArchived(id: string) { return this.native.workspaceArchived(id); }
+    setTaskWorkspaceTitle(task: Task, title: string, requestId: string, uncertain: boolean) {
+      return this.native.setTaskWorkspaceTitle(task, title, requestId, uncertain);
+    }
     originAgent(id: string) { return this.native.originAgent(id); }
     listLiveAgents() { return this.native.listLiveAgents(); }
     workspaceAvailable(id: string) { return this.native.workspaceAvailable(id); }
@@ -124,7 +127,6 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     reconcileSettledThreads() { return this.native.reconcileSettledThreads(); }
     settleReportedThread(agentId: string, runId: string) { return this.native.settleReportedThread(agentId, runId); }
     reconcileReportedSettlements() { return this.native.reconcileReportedSettlements(); }
-    reconcileThreadTitles(tasks: readonly Task[]) { return this.native.reconcileThreadTitles(tasks); }
     agentTimelinePage(id: string, limit?: number) { return this.native.agentTimelinePage(id, limit); }
     agentTimeline(id: string, limit?: number) { return this.native.agentTimeline(id, limit); }
     pendingQuestions(id: string) { return this.native.pendingQuestions(id); }
