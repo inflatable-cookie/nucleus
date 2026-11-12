@@ -9,7 +9,7 @@ import { parseAgentId, sameCallerIdentity } from '../../shared/agent-identity';
  */
 import { randomUUID } from "node:crypto";
 import { requestOnly } from "../../shared/pool";
-import { taskOwner, routingGrantSchema, type RoutingGrant, type Task } from "../../shared/contracts";
+import { clipDecisionQuestion, taskOwner, routingGrantSchema, type RoutingGrant, type Task } from "../../shared/contracts";
 import type { Decisions } from "../planning/decisions";
 import type { Store } from "../store/store";
 import { now } from "../store/store";
@@ -281,7 +281,7 @@ export function applyRoutingGrant(store: Store, decisions: Decisions, input: {
   const untilLine = until ? ` Until ${until}.` : "";
   const decision = decisions.add({
     askedBy: caller,
-    question: `Grant planner ${caller} standing permission to use frontier and above-ceiling profiles for this block of work?`.slice(0, 4000),
+    question: clipDecisionQuestion(`Grant planner ${caller} standing permission to use frontier and above-ceiling profiles for this block of work?`),
     headline: "Grant this planner frontier models?",
     context: [`Requested by ${caller}: ${reason}`, `Covers ${named}.${untilLine}`, "",
       "A yes activates the grant. While it stands, this planner's own profile requests and routes take effect without a per-task question. Automatic selection and other planners are unchanged. Only an answer on the board activates the grant."].join("\n").slice(0, 20000),

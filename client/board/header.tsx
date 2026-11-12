@@ -35,8 +35,8 @@ export type BoardHeaderProps = {
   /** The last control's failure, which the operator can dismiss. */
   error: string;
   onDismissError: () => void;
-  /** The first failed board read, shown when no control failed. */
-  readError: unknown;
+  /** The first failed board read in plain words, shown when no control failed. */
+  readError: string | null;
   staleRead: readonly [string, unknown] | null;
   inset: number;
   settingsOpener: ((section?: SettingsTarget) => void) | null;
@@ -246,7 +246,7 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
               accessibilityRole="alert"
               style={{ color: c.statusDanger, flex: 1 }}
             >
-              {error || String(readError)}
+              {error || readError}
             </Text>
             {error && (
               <ActionButton c={c} action="close" label="Dismiss error" onPress={onDismissError} />

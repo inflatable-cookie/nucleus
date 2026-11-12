@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { decisionLinksSchema, decisionSchema, decisionVersionSchema, type Decision, type DecisionVersion, type DecisionView } from "../../shared/contracts";
+import { clipDecisionQuestion, DECISION_QUESTION_MAX, decisionLinksSchema, decisionSchema, storedDecisionSchema, decisionVersionSchema, type Decision, type DecisionVersion, type DecisionView } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 
@@ -119,7 +119,9 @@ export class Decisions {
       if (overtakes.includes(current.id)) throw new Error("A decision answer cannot overtake itself");
       const answer = { text: input.answer, answeredBy: input.answeredBy, answeredAt: now(),
         relayed: relayed ? input.answeredBy : null, note: input.note, overtakes };
-      const updated = decisionSchema.parse({ ...current, ...this.transition(current, { answer, status: "answered" }), version: next,
+      // A stored record keeps its question as recorded (lenient parse); only
+      // the view clips it, so an over-limit row stays answerable.
+      const updated = storedDecisionSchema.parse({ ...current, ...this.transition(current, { answer, status: "answered" }), version: next,
         updatedAt: now(),
         // The asker relaying the operator's answer already has it; notifying its own thread
         // only spent a turn (Tom, 2026-09-29).
@@ -164,7 +166,7 @@ export class Decisions {
         && sameLinks(links.papercuts, current.links.papercuts)) return this.view(current);
       const next = current.version + 1;
       const stamp = now();
-      const updated = decisionSchema.parse({ ...current, links, version: next, updatedAt: stamp,
+      const updated = storedDecisionSchema.parse({ ...current, links, version: next, updatedAt: stamp,
         versions: [...current.versions, this.snapshot({ ...current, links }, input.by ?? "operator", stamp, next)] });
       return this.view(this.store.updateDecision(updated));
     });
@@ -179,7 +181,7 @@ export class Decisions {
     const current = this.requireOpen(input.id, input.version);
     const stamp = now();
     const withdrawal = { reason: input.reason, withdrawnBy: input.withdrawnBy, withdrawnAt: stamp };
-    const updated = decisionSchema.parse({ ...current, ...this.transition(current, { withdrawal, status: "withdrawn" }), version: current.version + 1,
+    const updated = storedDecisionSchema.parse({ ...current, ...this.transition(current, { withdrawal, status: "withdrawn" }), version: current.version + 1,
       updatedAt: stamp,
       versions: [...current.versions, this.snapshot({ ...current, withdrawal, status: "withdrawn" }, input.withdrawnBy, stamp, current.version + 1)] });
     return this.view(this.store.updateDecision(updated));
@@ -213,7 +215,7 @@ export class Decisions {
         status: "open", answer: null, withdrawal: null, supersededBy: null, delivery: null, createdAt: stamp, updatedAt: stamp, versions: [],
       });
       const created = this.store.addDecision({ ...record, versions: [this.snapshot(record, input.by, stamp)] });
-      const updated = decisionSchema.parse({ ...current, ...this.transition(current, { supersededBy: created.id, status: "superseded" }),
+      const updated = storedDecisionSchema.parse({ ...current, ...this.transition(current, { supersededBy: created.id, status: "superseded" }),
         version: current.version + 1, updatedAt: stamp, versions: [...current.versions, this.snapshot({ ...current, supersededBy: created.id, status: "superseded" }, input.by, stamp, current.version + 1)] });
       this.store.updateDecision(updated);
       return this.view(created);
@@ -244,6 +246,10 @@ export class Decisions {
   }
 
   private view(decision: Decision): DecisionView {
+    // A stored record over the view's limit clips here with a marker instead of
+    // breaking the read. The stored row is never rewritten; the full text stays
+    // in the row (and, for clipped producers, in the decision's details).
+    if (decision.question.length > DECISION_QUESTION_MAX) decision = { ...decision, question: clipDecisionQuestion(decision.question) };
     const asking = decision.askedBy.project;
     let choices = decision.choices?.length ? decision.choices : compactChoices(undefined, decision.options);
     if (choices.length === 3 && choices.every(choice => OLD_DEFAULT_LABELS.has(choice.label))) choices = compactChoices(undefined, undefined);

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Submission } from "../../shared/contracts";
-import { decisionDeliverySchema,decisionSchema,laneSchema,LEAD_PREVIEW_MAX,leadSchema,leadVersionMetadataSchema,leadVersionSchema,papercutSchema,planEntrySchema,projectPlanSchema,type BoardLead,type BoardLeadLink,type Decision,type Lane,type LaneDocumentPin,type LaneDocumentVersion,type Lead,type LeadVersion,type Papercut,type Project,type ProjectPlan,type Task } from "../../shared/contracts";
+import { decisionDeliverySchema,decisionSchema,storedDecisionSchema,laneSchema,LEAD_PREVIEW_MAX,leadSchema,leadVersionMetadataSchema,leadVersionSchema,papercutSchema,planEntrySchema,projectPlanSchema,type BoardLead,type BoardLeadLink,type Decision,type Lane,type LaneDocumentPin,type LaneDocumentVersion,type Lead,type LeadVersion,type Papercut,type Project,type ProjectPlan,type Task } from "../../shared/contracts";
 import { laneListsRepository,normalizeRepositoryOrigin } from "../../shared/lanes";
 import { leadFromPapercut,papercutFromLead } from "../../shared/papercut-lead";
 import { attachableLane } from "../planning/lanes";
@@ -607,11 +607,17 @@ export class StorePlanning {
   decision(id: string): Decision {
     const row = this.core.db.prepare("SELECT data FROM decisions WHERE id=?").get(id);
     if (!row) throw new Error("Decision not found");
-    return decisionSchema.parse(JSON.parse(String(row.data)));
+    // Stored rows predate the view limit or bypassed it; reads stay lenient and
+    // the decision view clips the question, so one over-long record never
+    // breaks a whole read. Writes keep the strict schema.
+    return storedDecisionSchema.parse(JSON.parse(String(row.data)));
   }
 
   updateDecision(record: Decision): Decision {
-    const value = decisionSchema.parse(record);
+    // Lenient like the other stored-record parses: the Decisions boundary
+    // already validated new rows strictly, and an update must never refuse a
+    // row it already holds.
+    const value = storedDecisionSchema.parse(record);
     const result = this.core.db.prepare("UPDATE decisions SET status=?,data=? WHERE id=?").run(value.status, JSON.stringify(value), value.id);
     if (!result.changes) throw new Error("Decision not found");
     this.core.advanceLeadRevision();
@@ -629,7 +635,7 @@ export class StorePlanning {
     const sql = query.status ? "SELECT data FROM decisions WHERE status=? ORDER BY json_extract(data,'$.createdAt') DESC, rowid DESC"
       : "SELECT data FROM decisions ORDER BY json_extract(data,'$.createdAt') DESC, rowid DESC";
     const rows = query.status ? this.core.db.prepare(sql).all(query.status) : this.core.db.prepare(sql).all();
-    return rows.map(row => decisionSchema.parse(JSON.parse(String(row.data)))).filter(decision =>
+    return rows.map(row => storedDecisionSchema.parse(JSON.parse(String(row.data)))).filter(decision =>
       (!query.asker || decision.askedBy.agentId === query.asker)
       && (!query.project || [decision.askedBy.project?.origin, decision.askedBy.project?.path].includes(query.project))
       && (!query.task || decision.links.tasks.includes(query.task))
@@ -640,7 +646,7 @@ export class StorePlanning {
   /** Answered decisions whose notice has not settled; delivery retries until it does. */
   pendingDecisionDeliveries(): Decision[] {
     return this.core.db.prepare("SELECT data FROM decisions WHERE status='answered'").all()
-      .map(row => decisionSchema.parse(JSON.parse(String(row.data))))
+      .map(row => storedDecisionSchema.parse(JSON.parse(String(row.data))))
       .filter(decision => decision.delivery !== null && ["pending", "intent", "uncertain"].includes(decision.delivery.status));
   }
 

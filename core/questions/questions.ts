@@ -1,6 +1,6 @@
 import { delegateQuestion } from './planner-delegation';
 import type { DecisionView } from '../../shared/contracts';
-import { holdsOf,taskControlInputSchema,type Run,type Task,type TaskControlInput } from '../../shared/contracts';
+import { clipDecisionQuestion, holdsOf,taskControlInputSchema,type Run,type Task,type TaskControlInput } from '../../shared/contracts';
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { taskBudget } from '../../shared/task-budget';
 import { queueAskDeliveryId } from './agent-ask';
@@ -62,24 +62,32 @@ export class Questions {
     const reviewer = latest.completion;
     const worker = this.store.runs(t.id).findLast(run => run.role === 'revision' && run.completion)?.completion;
     // The reviewer's authenticated full finding is reviewText; a summary or an
-    // excerpt would not give the operator the disagreement the brief requires, so
-    // the complete finding travels in the question. The completion schema bounds
-    // it at 48000 characters and the worker's return at 12000. The durable send
-    // intent records the exact payload's digest, not a shortened copy.
+    // excerpt would not give the operator the disagreement the brief requires,
+    // so the complete finding travels in the decision's details. The question
+    // itself stays a short readable ask inside the view limit: an over-long
+    // question broke the board read (a too_big refusal under the board header).
+    // The durable send intent records the exact payload's digest, not a copy.
     const head = reviewer?.head ?? t.prHead ?? 'the recorded head';
     const finding = boundInlineReport(reviewer?.reviewText?.trim() || reviewer?.summary?.trim() || 'not recorded', 'reviewer finding');
     const workerReturn = boundInlineReport(worker?.summary?.trim() || 'not recorded', 'worker return');
-    const question = `Three review rounds have not converged on "${t.title}" at ${head}. The reviewer's authenticated findings: ${finding} The worker's latest return: ${workerReturn} How should the next round proceed?`;
+    // The full findings travel in the interactive prompts (the native question
+    // and the planner/decider delegation), which carry no view limit. The
+    // recorded question stays a short readable ask inside the view limit and
+    // the full material travels in the decision's details, so no producer
+    // breaks a board read with a too_big refusal.
+    const fullQuestion = `Three review rounds have not converged on "${t.title}" at ${head}. The reviewer's authenticated findings: ${finding} The worker's latest return: ${workerReturn} How should the next round proceed?`;
+    const question = clipDecisionQuestion(`Three review rounds have not converged on "${t.title}" at ${head}. The reviewer's authenticated findings and the worker's latest return are in the decision details. How should the next round proceed?`);
+    const details = `Reviewer's authenticated findings:\n${finding}\n\nWorker's latest return:\n${workerReturn}`.slice(0, 48000);
     const options = ['Continue the current approach', 'Change the approach', 'Stop and keep the work'];
     this.store.transaction(() => {
       this.store.event(t.id, 'responsible_question', `${id}: head ${head}; question ${digest(question)} (${question.length} chars); reviewer finding ${digest(finding)} (${finding.length} chars); worker return ${digest(workerReturn)} (${workerReturn.length} chars)`);
       if (!supportsNativeQuestions(t.profile?.provider) && questionRoute(this.adapter, t.profile?.provider) !== 'board')
-        this.store.event(t.id, 'queue_ask_payload', JSON.stringify({ id, kind: 'review', question, options }));
+        this.store.event(t.id, 'queue_ask_payload', JSON.stringify({ id, kind: 'review', question, options, details, fullQuestion }));
     });
     this.resolution.waiting(this.store.task(t.id), RESPONSIBLE_QUESTION_WAIT, 'responsible_question');
     const controller = new AbortController();
     this.resolution.responsibleQuestions.set(id, controller);
-    void this.resolution.raiseDecision(this.store.task(t.id), { id, kind: 'review', question, options }, controller.signal)
+    void this.resolution.raiseDecision(this.store.task(t.id), { id, kind: 'review', question, options, details, fullQuestion }, controller.signal)
       .then(answer => {
         this.resolution.settleJointQuestion(t.id, id, answer);
       })
@@ -396,18 +404,23 @@ export class Questions {
     const current = operatorQuestionFor(this.store, this.store.task(taskId));
     return current?.id === decision.id && current.kind === decision.kind;
   }
-  raiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, signal: AbortSignal): Promise<string> {
+  raiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal): Promise<string> {
     if (!this.resolution.queueBudgetQuestionCurrent(task.id, decision)) return Promise.reject(Error('Budget question no longer matches the current stop'));
     const route = questionRoute(this.adapter, task.profile?.provider);
     if (route === 'board') return this.raiseBoardDecision(task, decision, signal);
+    // The native prompt carries the full text when the producer kept one; the
+    // bounded surfaces (the board decision, the ask tool and its exact-text
+    // join) carry the short canonical question. Delegation prefers the full
+    // text the same way.
+    const prompt = decision.fullQuestion ?? decision.question;
     // Spec 058 (task 550): a provider without a native question surface receives the
     // question through `nucleus_ask` instead of a prompt it cannot follow.
     if (route === 'mcp_ask' || !supportsNativeQuestions(task.profile?.provider)) return this.resolution.raiseAskDecision(task, decision, signal);
-    return this.adapter.raiseTaskDecision!(task, { id: decision.id, question: decision.question, options: decision.options, signal,
+    return this.adapter.raiseTaskDecision!(task, { id: decision.id, question: prompt, options: decision.options, signal,
       onRequested: request => { void this.resolution.delegateDecision(task.id, decision, request, signal,
         (fresh, answer) => this.adapter.answerTaskDecision!(fresh, { requestId: request.requestId, header: request.header, answer })); } });
   }
-  raiseBoardDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, signal: AbortSignal): Promise<string> {
+  raiseBoardDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal): Promise<string> {
     let resolve!: (answer: string) => void;
     let reject!: (error: Error) => void;
     const promise = new Promise<string>((res, rej) => { resolve = res; reject = rej; });
@@ -420,7 +433,7 @@ export class Questions {
     void this.notifyPlannerOfBoardQuestion(task, decision);
     return promise;
   }
-  private notifyPlannerOfBoardQuestion(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }): void {
+  private notifyPlannerOfBoardQuestion(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }): void {
     const noticed = () => {
       try { return this.store.eventsAll(task.id).some(event => event.kind === 'operator_question_planner_notice' && event.detail.startsWith(`${decision.id}:`)); }
       catch { return true; }
@@ -449,7 +462,7 @@ export class Questions {
       } catch { /* store closed after shutdown */ }
     });
   }
-  raiseAskDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, signal: AbortSignal): Promise<string> {
+  raiseAskDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal): Promise<string> {
     let resolve!: (answer: string) => void;
     let reject!: (error: Error) => void;
     const promise = new Promise<string>((res, rej) => { resolve = res; reject = rej; });
@@ -466,7 +479,7 @@ export class Questions {
       .catch(() => { /* misses and unknowns are recorded on the events by delegateDecision itself */ });
     return promise;
   }
-  async deliverQueueAsk(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, scoped = false): Promise<void> {
+  async deliverQueueAsk(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, scoped = false): Promise<void> {
     if (!scoped) {
       if (!task.hostId) return;
       return this.resolution.withHost(task.hostId, () => this.deliverQueueAsk(task, decision, true));
@@ -485,8 +498,11 @@ export class Questions {
       this.store.event(task.id, 'queue_ask_prompt_missed', `${decision.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
     }
   }
-  ensureQueueRaiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, why: string): void {
+  ensureQueueRaiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, why: string): void {
     if (!this.resolution.queueBudgetQuestionCurrent(task.id, decision)) return;
+    // Every board question stays within the view limit, whatever its producer
+    // passed: long material belongs in details, never in a clipped question.
+    const question = clipDecisionQuestion(decision.question);
     const events = this.store.eventsAll(task.id);
     if (events.some(event => event.kind === 'operator_question_decision' && event.detail.startsWith(`${decision.id}: decision `))) return;
     this.store.transaction(() => {
@@ -509,8 +525,9 @@ export class Questions {
           consequence: (consequences[label] ?? (raised?.id === decision.id ? raised.choices.find(choice => choice.label === label)?.consequence : null)
             ?? `Records the direction “${label}” for the task's thread.`).replace(/\s+/g, ' ').slice(0, 240) })) : undefined;
       const view = new Decisions(this.store).add({
-        question: decision.question,
-        headline: decisionHeadline(decision.question, taskReference),
+        question,
+        headline: decisionHeadline(question, taskReference),
+        details: decision.details ?? null,
         choices,
         recommended: choices?.[0]?.label,
         context: `Nucleus-raised question ${decision.id} (kind ${decision.kind}) on this task. ${why}`.slice(0, 4000),
@@ -680,11 +697,14 @@ export class Questions {
     // Task 562: pending asks collect their joined answers and every recorded
     // answer resumes its asking agent, even when the in-turn wait already left.
   }
-  async delegateDecision(taskId: string, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] },
+  async delegateDecision(taskId: string, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; fullQuestion?: string | null },
     request: { requestId: string; header: string } | null, signal: AbortSignal,
     deliver: (task: Task, answer: string) => Promise<void>): Promise<boolean> {
     // Nothing raises an operator-only kind through here today. If something ever does, it stays with the operator.
     if (!isDelegableQuestionKind(decision.kind) || this.resolution.stopped() || signal.aborted || !this.resolution.queueBudgetQuestionCurrent(taskId, decision)) return false;
+    // The planner and decider prompts carry the producer's full text when it
+    // kept one; the bounded surfaces keep the short canonical question.
+    const prompt = decision.fullQuestion ?? decision.question;
     const answered = () => this.store.eventsAll(taskId).some(event =>
       (event.kind === 'operator_question_answered' || event.kind === 'operator_question_stale_answered') && event.detail.startsWith(`${decision.id}:`));
     if (answered()) return false;
@@ -693,13 +713,13 @@ export class Questions {
       this.store.event(taskId, 'delegated_decision_route', JSON.stringify({ decision, request }));
     const budgetQuestion = decision.kind === 'budget' ? operatorQuestionFor(this.store, task) : null;
     const recordDelegatedChoice = (parsed: { choice: string; reason: string; overtakes?: string[] }) => {
-      const approved = applyBinaryApproval(decision.question, decision.options, parsed.choice, parsed.reason);
+      const approved = applyBinaryApproval(prompt, decision.options, parsed.choice, parsed.reason);
       const extendsBudget = budgetQuestion?.id === decision.id
         && budgetQuestion.choices.some(choice => choice.label === parsed.choice && choice.extendBudget);
       return extendsBudget ? { ...parsed, budgetAuthority: 'approve_by_default' as const, reason: `approve by default, Tom 2026-11-03 — ${parsed.reason}` }
         : approved ? { ...parsed, reason: approved.reason } : parsed;
     };
-    const ask = { question: decision.question, choices: decision.options, context: this.resolution.decisionContext(task) };
+    const ask = { question: prompt, choices: decision.options, context: this.resolution.decisionContext(task) };
     let answer: DelegatedAnswer | null = null;
     // Task 1109: the task's own planner first, then the project's, then the decider.
     const { rungs, projectFailed } = await this.resolution.plannerRungsFor(task);

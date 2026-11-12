@@ -1,5 +1,5 @@
 import { digest, type Store } from '../store/store';
-import { awaitingProofRoute, awaitingProofTexts, holdsOf, isDispositionActive, type Task, type TaskNextVerb } from '../../shared/contracts';
+import { awaitingProofRoute, awaitingProofTexts, clipDecisionQuestion, holdsOf, isDispositionActive, type Task, type TaskNextVerb } from '../../shared/contracts';
 import { isWaitingTaskStop, type TaskStopRecord } from '../../shared/task-stop';
 import { taskBudget } from '../../shared/task-budget';
 import { collectOwnerVerbFacts, ownerVerbViews, qualifiedAcceptanceEligibility, type OwnerVerbFacts } from '../verbs/owner-verbs';
@@ -113,7 +113,9 @@ type ProofOnlyQuestionTask = Pick<Task, 'proofOnly' | 'requiresOperatorGo' | 'pr
 /** Legacy wording remains verifiable for release questions already recorded. */
 export const proofOnlyGoQuestionText = (task: ProofOnlyQuestionTask, legacy = false): string => {
   const product = legacy ? 'Queue' : 'Nucleus';
-  return `The proof-only qualification for merged commit ${task.proofOnly?.commit ?? ''} touches ${bounded(task.requiresOperatorGo ?? '', 900)}. ${product} will not run selector ${bounded(task.proofExecution?.selector ?? 'not recorded', 300)} until you approve this live-environment action. Should ${product} run the qualification?`;
+  // Every producer stays within the view limit; the limit helper is a no-op
+  // while the bounded parts keep this short.
+  return clipDecisionQuestion(`The proof-only qualification for merged commit ${task.proofOnly?.commit ?? ''} touches ${bounded(task.requiresOperatorGo ?? '', 900)}. ${product} will not run selector ${bounded(task.proofExecution?.selector ?? 'not recorded', 300)} until you approve this live-environment action. Should ${product} run the qualification?`);
 };
 /** Select only a question whose exact bytes match the recorded digest and length. */
 export const recordedProofOnlyGoQuestion = (task: ProofOnlyQuestionTask, detail: string): string | null =>
@@ -230,7 +232,7 @@ function proofWaitQuestion(store: Store, task: Task, stop: TaskStopRecord, facts
     + `Merging now accepts ${head} as it is and runs no proof until after the merge. `
     + (returnable ? '' : 'The worker already had these proofs at this head, so returning it to the worker is not offered. ')
     + `How should the task proceed at that head?`;
-  return { id: proofQuestionId(task, head, external), kind: 'proof_acceptance', question, choices };
+  return { id: proofQuestionId(task, head, external), kind: 'proof_acceptance', question: clipDecisionQuestion(question), choices };
 }
 
 /**
@@ -245,8 +247,8 @@ function budgetQuestion(store: Store, task: Task, stop: TaskStopRecord, now: num
   const reached = budget.exhausted === 'wall_time'
     ? `${Math.round(budget.wallMs.used / 60_000)} of ${budget.wallMs.limit / 60_000} minutes of wall time since the responsible lifecycle began`
     : `${budget.effectiveTokens.used.toLocaleString('en-US')} of ${budget.effectiveTokens.limit.toLocaleString('en-US')} effective tokens`;
-  const question = `The task "${task.title}" reached its budget (${bounded(stop.detail, 200)}): ${reached}. `
-    + `${legacy ? 'Queue' : 'Nucleus'} starts no new run until you answer. How should the task continue?`;
+  const question = clipDecisionQuestion(`The task "${task.title}" reached its budget (${bounded(stop.detail, 200)}): ${reached}. `
+    + `${legacy ? 'Queue' : 'Nucleus'} starts no new run until you answer. How should the task continue?`);
   return {
     id: questionId(task, stop),
     // Tom, 2026-11-03: extensions past 2x use the same delegated path.
@@ -298,8 +300,8 @@ function strandedStopQuestion(task: Task, stop: TaskStopRecord, facts: OwnerVerb
       ...(!(forced ? view.forceFill : view.fill)?.some(field => field !== 'reason') && view.verb !== 'route'
         ? { control: { action: 'owner' as const, args: { ...args, action: view.verb } } } : {}) };
   });
-  const question = `The task "${task.title}" is stopped: ${stop.reason}. ${bounded(stop.detail)} `
+  const question = clipDecisionQuestion(`The task "${task.title}" is stopped: ${stop.reason}. ${bounded(stop.detail)} `
     + `No verb ${legacy ? 'Queue' : 'Nucleus'} can run applies to it now${refusals ? `: ${refusals}` : ''}. `
-    + `The planner can settle it with the available or forced owner verbs below. Recommended: ${choices[0]?.label}.`;
+    + `The planner can settle it with the available or forced owner verbs below. Recommended: ${choices[0]?.label}.`);
   return { id: questionId(task, stop), kind: 'process', question, choices };
 }
