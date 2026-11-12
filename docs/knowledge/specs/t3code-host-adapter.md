@@ -501,7 +501,14 @@ worker through the same explicit `thread.unsettle` every follow-up send uses, an
 its next handover settles it again under that run's own command id. A worker
 handover and a support-thread report share the `thread.settle` command and the
 `expectedLatestRunId` guard; only the worker's own handover settles the worker
-thread, and only a support role's report settles its thread.
+thread, and only a support role's report settles its thread. The adapter records
+each worker settle's command id in its state before the send
+(`workerSettles`), because the support report's reconciler checks unknown settle
+intents against a fresh read and may resend them: a worker settle is a separate
+rule — an unknown outcome stays unknown and is never sent again, while only a
+settle that has not been sent is retried from `pendingSettles`. The mark retires
+with its command's outcome, so an unknown worker settle is never picked up by the
+resend path.
 
 One end-to-end test drives an ordinary task's whole lifecycle on the fake
 Nightly transport (nucleus#1139): promotion onto the T3 host, workspace

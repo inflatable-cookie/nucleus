@@ -23,7 +23,13 @@ const settleIntent = z.object({ agentId: z.string(), runId: z.string(), commandI
   expectedLatestRunId: z.string().optional(), recordedAt: z.string() });
 const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedVersion: z.string(),
   workspaces: z.record(z.string(), workspace), agents: z.record(z.string(), agent), intents: z.record(z.string(), intent),
-  pendingSettles: z.record(z.string(), settleIntent).optional() });
+  pendingSettles: z.record(z.string(), settleIntent).optional(),
+  /**
+   * Worker handover settle command ids, recorded before the send. A worker settle
+   * whose delivery is unknown is never resent (nucleus#1154), so the support-thread
+   * reconciler must be able to tell it apart from a support report's settle.
+   */
+  workerSettles: z.record(z.string(), z.string()).optional() });
 export type T3State = z.infer<typeof schema>;
 export type T3SettleIntent = z.infer<typeof settleIntent>;
 

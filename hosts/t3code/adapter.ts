@@ -507,8 +507,15 @@ export class T3CodeHost implements Host {
   }
   /** Called by the ordinary host sweep; unknown delivery is checked against T3 before reuse. */
   async reconcileReportedSettlements(): Promise<void> {
-    const pending = Object.entries(this.state.read().intents).filter(([, intent]) => {
+    const state = this.state.read();
+    const workerSettles = state.workerSettles ?? {};
+    const pending = Object.entries(state.intents).filter(([key, intent]) => {
       if (intent.status !== 'unknown') return false;
+      // A worker handover settle is never resent (nucleus#1154): an unknown
+      // outcome stays unknown, and only a settle that was never sent may be
+      // retried from its pending record. Resending here would turn one unknown
+      // mutation into a second.
+      if (workerSettles[key]) return false;
       try {
         const wire = JSON.parse(intent.payload);
         return wire.method === 'orchestration.dispatchCommand' && wire.payload?.type === 'thread.settle';
@@ -627,6 +634,7 @@ export class T3CodeHost implements Host {
 
   /** Retry durable worker settle intents during the ordinary host sweep. */
   async reconcileSettledThreads(): Promise<void> {
+    this.pruneWorkerSettles();
     const pending = Object.values(this.state.read().pendingSettles ?? {});
     if (!pending.length) return;
     this.requireConnection();
@@ -654,9 +662,28 @@ export class T3CodeHost implements Host {
     // Still live, or the run has not appeared yet: keep the recorded intent.
     if (!latest || activeStatuses.has(latest.status)) { this.recordSettle({ ...entry, expectedLatestRunId: latest?.id }); return; }
     this.recordSettle({ ...entry, expectedLatestRunId: latest.id });
+    this.markWorkerSettle(entry.commandId, entry.recordedAt);
     await this.effect(entry.commandId, 'orchestration.dispatchCommand',
       { type: 'thread.settle', commandId: entry.commandId, threadId: entry.agentId, expectedLatestRunId: latest.id });
     this.forgetSettle(entry.commandId);
+  }
+
+  /**
+   * Record that this command id is a worker handover settle. The mark is written
+   * before the send so a crash cannot leave an unknown worker settle looking like
+   * a support report's settle to the support reconciler.
+   */
+  private markWorkerSettle(commandId: string, recordedAt: string): void {
+    if (this.state.read().workerSettles?.[commandId]) return;
+    this.state.update(state => { state.workerSettles = { ...state.workerSettles, [commandId]: recordedAt }; });
+  }
+
+  /** Drop marks whose command has an outcome; an unknown one stays, so it is never resent. */
+  private pruneWorkerSettles(): void {
+    const state = this.state.read();
+    const done = Object.keys(state.workerSettles ?? {}).filter(key => state.intents[key]?.status !== 'unknown');
+    if (!done.length) return;
+    this.state.update(next => { for (const key of done) delete next.workerSettles?.[key]; });
   }
 
   /** Record one pending settle; an unchanged record is the same intent, never a rewrite. */
