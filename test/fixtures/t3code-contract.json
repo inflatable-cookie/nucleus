@@ -23,6 +23,11 @@
       "optional": ["expectedLatestRunId", "settledAt"],
       "source": "packages/contracts/src/orchestrationV2.ts (thread.settle); a new message.dispatch clears the manual settled marker, so a woken thread is active again"
     },
+    "thread.metadata.update": {
+      "required": ["type", "commandId", "threadId"],
+      "optional": ["title", "regenerateTitle", "branch", "worktreePath", "expectedWorktreePath", "expectedBranch", "expectedEmpty", "limitRecovery", "linkedPullRequest"],
+      "source": "T3 Code (Nightly) installed bundle: orchestration command union (thread.metadata.update)"
+    },
     "thread.unsettle": {
       "required": ["type", "commandId", "threadId", "reason"],
       "optional": [],

@@ -268,6 +268,8 @@ export interface HostAgentSpec {
   workspaceId: WorkspaceId;
   profile: Profile;
   title: string;
+  /** Queue identity used by hosts that expose a task title in their own thread list. */
+  taskNumber?: number | null;
   /** The reporting binding file the host's MCP configuration names; null when no MCP reporting is attached. */
   mcpBindingPath: string | null;
   /** Core's facts for one create: `mcp` attaches the binding, `retry` is the socket-only attempt after an unsupported MCP. */
