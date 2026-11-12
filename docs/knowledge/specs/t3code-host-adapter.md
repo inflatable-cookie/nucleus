@@ -192,6 +192,8 @@ pretend to be a Paseo workspace.
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
 | Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
+| Settle report | `thread.settle` through dispatch for any completed non-worker role | Immediately after the accepted Nucleus receipt; bind `expectedLatestRunId`, keep an uncertain intent and inspect `settledOverride` before retry |
+| Wake settled support thread | `thread.unsettle` through dispatch before a follow-up message | Stable command intent; a retained reviewer is active again for its next round |
 | Archive workspace | `projects.mutate` / `project.update` `archived: true` | The project is retired with threads and files kept; observation reads `archivedAt` from the inventory |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
 
@@ -201,6 +203,30 @@ operation binds a stable command ID, native target and canonical payload to the
 existing durable intent before send. Launch also binds its explicit thread and
 initial-message IDs. Persist the mapping before remote creation so a lost reply
 cannot produce an unowned thread.
+
+Nightly `0.1.10-nightly.20261111.4529`'s installed bundle defines the command
+shape used for report settlement as:
+
+```ts
+{
+  type: "thread.settle",
+  commandId: CommandId,
+  threadId: ThreadId,
+  expectedLatestRunId?: RunId,
+  settledAt?: DateTimeUtc
+}
+```
+
+After Nucleus accepts a completion from any support role, T3 settles that
+thread using the latest completed native run ID. Workers are unchanged. A new
+review message first sends `thread.unsettle` with `reason: "user"`; T3 does not
+clear a manual settled override on `message.dispatch`. Unknown settlement
+delivery is recorded. On the next host sweep, Nucleus reads the thread's
+`settledOverride` first: `settled` proves success, a changed or active latest
+run retires the old intent without touching the new run, and only the same
+completed latest run permits replay of the identical command. Settlement
+failure never blocks the task report. Existing closeout and retention paths
+still decide when threads are archived.
 
 ### Model options
 

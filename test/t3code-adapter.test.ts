@@ -151,6 +151,49 @@ test('follow-ups keep exact text and native target, with no resend after interru
   assert.equal(server.commands.length, 3);
 });
 
+test('a reported support thread settles against the latest Nightly run', async t => {
+  const { host, server } = await fixture(t);
+  const projection = server.threads.get('synthetic-probe')!;
+  projection.runs.push({ id: 'nightly-review-run', status: 'completed', startedAt: STAMP });
+  await host.settleReportedThread('synthetic-probe', 'nucleus-review-run');
+  const settle = server.commands.find(command => command.type === 'thread.settle')!;
+  assert.equal(settle.method, 'orchestration.dispatchCommand');
+  assert.equal(settle.threadId, 'synthetic-probe');
+  assert.equal(settle.expectedLatestRunId, 'nightly-review-run');
+  assert.equal(projection.thread.settledOverride, 'settled');
+});
+
+test('an uncertain settlement is checked against settledOverride before any resend', async t => {
+  const { host, server, options } = await fixture(t);
+  const projection = server.threads.get('synthetic-probe')!;
+  projection.runs.push({ id: 'nightly-review-run', status: 'completed', startedAt: STAMP });
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(host.settleReportedThread('synthetic-probe', 'nucleus-review-run'), HostUnknownDeliveryError);
+  assert.equal(projection.thread.settledOverride, 'settled', 'the fake server applied the command before losing its reply');
+  const count = server.commands.filter(command => command.type === 'thread.settle').length;
+  host.close(); server.controls.disconnectAfterEffect = false;
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close()); await reloaded.connect();
+  await reloaded.reconcileReportedSettlements();
+  assert.equal(server.commands.filter(command => command.type === 'thread.settle').length, count, 'observed settlement prevents a resend');
+  assert.equal(reloaded.state.read().intents[server.commands.find(command => command.type === 'thread.settle')!.commandId]?.status, 'settled');
+});
+
+test('a settled reviewer is explicitly unsettled before a later round message', async t => {
+  const { host, server } = await fixture(t);
+  const projection = server.threads.get('synthetic-probe')!;
+  projection.runs.push({ id: 'nightly-review-run-1', status: 'completed', startedAt: STAMP });
+  await host.settleReportedThread('synthetic-probe', 'nucleus-review-run-1');
+  await host.sendMessage('synthetic-probe', { messageId: 'review-round-2', text: 'Please review the addressed finding.' });
+  assert.equal(projection.thread.settledOverride, 'active');
+  assert.deepEqual(server.commands.filter(command => command.threadId === 'synthetic-probe').map(command => command.type),
+    ['thread.settle', 'thread.unsettle', 'message.dispatch']);
+  projection.runs.push({ id: 'nightly-review-run-2', status: 'completed', startedAt: STAMP });
+  await host.settleReportedThread('synthetic-probe', 'nucleus-review-run-2');
+  const settlements = server.commands.filter(command => command.type === 'thread.settle');
+  assert.equal(settlements.at(-1)!.expectedLatestRunId, 'nightly-review-run-2');
+  assert.equal(projection.thread.settledOverride, 'settled');
+});
+
 test('decoder-formatted defects keep durable diagnostics while remaining unknown after reload', async t => {
   const { host, server, spec, options } = await fixture(t);
   const created = await host.createAgent(spec());

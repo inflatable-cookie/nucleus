@@ -12,7 +12,7 @@ export const STAMP = '2026-01-01T00:00:00.000Z';
 export function threadProjection(id: string, directory: string): Value {
   return { thread: { id, projectId: 'synthetic-project', title: 'Synthetic thread', providerInstanceId: 'synthetic-provider',
     modelSelection: { instanceId: 'synthetic-provider', model: 'synthetic-model' }, worktreePath: directory, branch: 'synthetic',
-    archivedAt: null, deletedAt: null, updatedAt: STAMP },
+    archivedAt: null, deletedAt: null, settledOverride: null, settledAt: null, updatedAt: STAMP },
     runs: [], runtimeRequests: [], turnItems: [], messages: [], updatedAt: STAMP };
 }
 
@@ -165,6 +165,11 @@ export async function t3Fake(t: TestContext, directory: string) {
             case 'message.dispatch': p.messages.push({ id: payload.messageId, role: 'user', text: payload.text }); break;
             case 'thread.stop': for (const run of p.runs) run.status = 'cancelled'; break;
             case 'thread.archive': p.thread.archivedAt = STAMP; break;
+            case 'thread.settle':
+              if (payload.expectedLatestRunId && p.runs.at(-1)?.id !== payload.expectedLatestRunId)
+                return failure({ _tag: 'Die', defect: 'Latest run changed before thread settlement.' });
+              p.thread.settledOverride = 'settled'; p.thread.settledAt = payload.settledAt ?? STAMP; break;
+            case 'thread.unsettle': p.thread.settledOverride = 'active'; p.thread.settledAt = null; break;
             case 'runtime-request.respond': {
               const item = p.runtimeRequests.find((r: Value) => r.id === payload.requestId)!;
               item.status = 'resolved'; if (payload.answers) item.answers = payload.answers;
