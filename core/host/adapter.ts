@@ -3,7 +3,7 @@ import type { Run, Profile, ReviewEntryInput, StashEntry, Task } from "../../sha
 import type { HostCatalog, HostCatalogOptions, NativeDecisionInput, HostPermissionDecision } from "../../shared/host";
 import type { NucleusProfile } from "../../shared/profiles";
 
-export interface OriginAgent {id:string;workspaceId:string|null;title:string;archived:boolean;}
+export type OriginAgent = import('../../shared/host').OriginAgent;
 /**
  * Spec 017: the catalog placement a preserved external workspace's archive
  * proof reads before it asks Paseo to archive the sidebar entry.
@@ -214,6 +214,13 @@ export interface Adapter extends RunUsageSource {
   /** Dismiss one pending native question through the host; never used for tool or bash permissions. */
   dismissNativeQuestion?(agentId: string, workspaceId: string, requestId: string): Promise<void>;
   archiveAgent(agentId: string): Promise<void>;
+  /**
+   * Permanently remove one thread at closeout (nucleus#1155). Present exactly
+   * when the host can remove a thread: on such a host a task's support threads
+   * stay settled while it is open and are removed when it ends, and a host
+   * without this method keeps today's archive behaviour (Paseo).
+   */
+  deleteAgent?(agentId: string, options?: { resendUnknownAfterRead?: boolean }): Promise<void>;
   /**
    * Spec 017: archive one merged review-entry task's Paseo sidebar entry while
    * preserving its external folder. The implementation must refuse before the

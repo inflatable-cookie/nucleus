@@ -14,6 +14,7 @@ import { plannerTicketKey } from '../core/dispatch/participant-tickets';
 import { digest } from '../core/store/store';
 import { t3Fake, STAMP } from './support/t3code-fake';
 import { createHost, createAdapter } from '../hosts/t3code';
+import { archiveFinishedThreads } from '../core/workspaces/thread-archive';
 import { HostPolicies } from '../core/host/host-policies';
 import type { HostPolicyConstructor, Adapter as HostAdapter } from '../core/host';
 
@@ -27,6 +28,7 @@ interface Fixture {
   repo: string;
   root: string;
   server: Awaited<ReturnType<typeof t3Fake>>;
+  host: ReturnType<typeof createHost>;
   t3: HostAdapter;
   planner: string;
   ticket: { participantId: string; token: string };
@@ -214,7 +216,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
     await runtime.drain();
     host.close();
   };
-  return { runtime, repo, root, server, t3, planner, ticket: { participantId, token }, helperPath, merges, paseoObserves, close };
+  return { runtime, repo, root, server, host, t3, planner, ticket: { participantId, token }, helperPath, merges, paseoObserves, close };
 }
 
 test('an ordinary task runs its whole lifecycle on T3: thinking level, helper report, planner tell, review, revision, merge, closeout, archive', async t => {
@@ -341,13 +343,22 @@ test('an ordinary task runs its whole lifecycle on T3: thinking level, helper re
     }, 'task merged and done', task.id);
     assert.ok(f.merges.length >= 1, 'the merge gate ran');
 
-    // Closeout archive: threads archived, the native project archived once, observed positively.
+    // Closeout cleanup (nucleus#1155): the worker thread is archived, every
+    // support thread is removed, the native project is archived once.
     const workspaceId = f.runtime.store.task(task.id).workspaceId!;
     await driveUntil(f, () => f.runtime.store.task(task.id).resolution.archivedWorkspaceIds.includes(workspaceId), 'workspace archived', task.id);
     assert.equal(await (f.t3 as unknown as { taskWorkspaceArchived(id: string): Promise<boolean> }).taskWorkspaceArchived(workspaceId), true);
     const archiveCommands = f.server.commands.filter(command => command.type === 'thread.archive');
     assert.ok(archiveCommands.some(command => command.threadId === workerThreadId), 'the worker thread was archived');
-    assert.ok(archiveCommands.some(command => command.threadId === reviewerThreadId), 'the reviewer thread was archived');
+    assert.equal(archiveCommands.some(command => command.threadId === reviewerThreadId), false, 'a support thread is never archived');
+    const removals = f.server.commands.filter(command => command.type === 'thread.delete');
+    assert.equal(removals.filter(command => command.threadId === reviewerThreadId).length, 1, 'the reviewer thread was removed once');
+    assert.equal(removals.length, new Set(removals.map(command => command.threadId)).size, 'each support thread is removed once');
+    for (const command of removals) {
+      assert.notEqual(command.threadId, workerThreadId, 'the worker thread is archived, never removed');
+      assert.equal(command.onlyIfUnused, undefined, 'the removal is the real one, not the nightly no-op shape');
+    }
+    assert.equal(f.server.threads.get(reviewerThreadId)!.thread.deletedAt, STAMP);
     const projectArchive = f.server.commands.filter(command => command.method === 'projects.mutate' && command.type === 'project.update' && command.archived === true);
     assert.equal(projectArchive.length, 1, 'the native project archive was sent exactly once');
     assert.equal(projectArchive[0]!.projectId, 'synthetic-project');
@@ -508,5 +519,58 @@ test('the worker thread is watched and messaged on the task host, never the defa
 
     // None of it named a task agent on the default host.
     assert.deepEqual(f.paseoObserves.filter(id => id !== 'planner'), [], 'no task agent was looked up on the default host');
+  } finally { await f.close(); }
+});
+
+test('a released recovery thread on T3 stays settled, not archived, and a second fault continues the same thread (#1155)', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, workerThreadId } = await taskWithWorker(f);
+    const task = f.runtime.store.task(taskId);
+    const workerProfile = task.profile!;
+
+    // The recovery thread Nucleus created for the first fault, on the real adapter.
+    const created = await f.host.createAgent({
+      workspaceId: task.workspaceId!, profile: workerProfile, title: `nucleus#${taskId} · recovery`,
+      mcpBindingPath: null,
+      attempt: () => ({ requestId: 'lifecycle-recovery-intent', prompt: 'Recover the fault', environment: {},
+        labels: { 'nucleus.task': taskId, role: 'recovery' } }),
+    });
+    const recoveryThreadId = created.id;
+    f.server.threads.get(recoveryThreadId)!.runs = [{ id: 'recovery-run-1', status: 'completed', startedAt: STAMP }];
+    const recoveryRun: Run = { id: 'recovery-run-1-record', taskId, role: 'recovery', generation: task.coordinatorGeneration,
+      head: task.planningCommit, base: task.planningCommit, workspaceId: task.workspaceId!, agentId: recoveryThreadId,
+      profile: null, status: 'finished', createdAt: new Date().toISOString(), lastObservedAt: null, active: false,
+      idleSince: null, released: true, hostId: t3Host,
+      completion: { taskId, runId: 'recovery-run-1-record', eventId: 'recovery-event', status: 'recovered', summary: 'Recovered', head: task.planningCommit } };
+    f.runtime.store.putRun(recoveryRun);
+    f.runtime.store.update(taskId, { coordinatorAgentId: recoveryThreadId,
+      resolution: { ...f.runtime.store.task(taskId).resolution, recoveryActive: false, recoveryAttempts: 1,
+        recovery: { id: 'episode-1', key: 'fault', generation: task.coordinatorGeneration, runId: recoveryRun.id,
+          agentId: recoveryThreadId, status: 'resolved', summary: 'Recovered', idleSince: null, incidentId: null } } });
+
+    // The report is accepted and settled (the T3 report path), and the episode ends.
+    await (f.t3 as unknown as { settleReportedThread(agentId: string, runId: string): Promise<void> })
+      .settleReportedThread(recoveryThreadId, 'recovery-run-1');
+    assert.equal(f.server.threads.get(recoveryThreadId)!.thread.settledOverride, 'settled');
+    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
+
+    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === recoveryThreadId), false,
+      'the released recovery thread is not archived while the task is open');
+    assert.equal(f.server.commands.some(command => command.type === 'thread.delete' && command.threadId === recoveryThreadId), false,
+      'and it is not removed before closeout');
+    assert.equal(f.runtime.store.task(taskId).coordinatorAgentId, recoveryThreadId, 'the task keeps its retained recovery thread');
+    assert.equal(f.server.threads.get(workerThreadId)!.thread.archivedAt, null, 'nothing is archived while the task is open');
+
+    // A second fault continues the retained thread: it unsettles and dispatches
+    // into the same identity, and never opens another one.
+    const launches = f.server.commands.filter(command => command.method === 'orchestration.launchThread').length;
+    await f.host.sendMessage(recoveryThreadId, { text: 'A second fault needs recovery', messageId: 'second-fault-message' });
+    assert.ok(f.server.commands.some(command => command.type === 'thread.unsettle' && command.threadId === recoveryThreadId),
+      'the settled recovery thread is explicitly unsettled before its next turn');
+    assert.ok(f.server.commands.some(command => command.type === 'message.dispatch' && command.threadId === recoveryThreadId
+      && command.text === 'A second fault needs recovery'), 'the follow-up lands in the same thread');
+    assert.equal(f.server.commands.filter(command => command.method === 'orchestration.launchThread').length, launches,
+      'no new recovery thread is opened');
   } finally { await f.close(); }
 });

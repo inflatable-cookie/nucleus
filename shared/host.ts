@@ -76,6 +76,22 @@ export interface Host {
   agentTimeline(id: AgentId, limit?: number): Promise<HostTimelineEntry[] | null>;
   stopAgentTurn(id: AgentId): Promise<void>;
   archiveAgent(id: AgentId): Promise<void>;
+  /**
+   * Permanently remove one thread (T3Code, nucleus#1155). Optional: a host that
+   * cannot remove a thread archives it instead, so its closeout keeps the
+   * archive behaviour it has today (Paseo).
+   *
+   * A host with this method keeps a task's support threads settled and visible
+   * while the task is open and removes them at closeout, because nothing they
+   * hold is the only copy: review text, verdicts, recovery reports and decisions
+   * are already in Nucleus's records and on the pull request.
+   *
+   * `resendUnknownAfterRead` repeats the same command under the same identity
+   * only after the caller re-proved the thread's identity, idleness and owned
+   * tools following an unknown delivery; without it an unknown outcome is never
+   * sent again.
+   */
+  deleteAgent?(id: AgentId, options?: { resendUnknownAfterRead?: boolean }): Promise<void>;
   /** Optional: a host without run-usage streams has no method, so usage stays unknown rather than zero. */
   subscribeRunUsage?(id: AgentId, handler: (event: RunUsageStreamEvent) => void): Promise<RunUsageStream>;
 
@@ -285,6 +301,8 @@ export interface OriginAgent {
   workspaceId: WorkspaceId | null;
   title: string;
   archived: boolean;
+  /** The host reports the thread permanently removed, when it distinguishes that from archived (T3Code). */
+  deleted?: boolean;
 }
 
 export interface HostLiveAgent {
@@ -294,6 +312,14 @@ export interface HostLiveAgent {
   /** Wire labels when the host listing carries them; used to classify planner candidates. */
   labels?: Record<string, string>;
 }
+
+/**
+ * The host statuses that prove a thread cannot take another turn: idle, error,
+ * archived (the hosts report `closed`) and removed (T3Code reports `gone`).
+ * A removed thread is as terminal as an archived one, so every check that
+ * decides a thread's liveness reads this one list (nucleus#1155).
+ */
+export const settledThreadStatuses: readonly string[] = ['idle', 'error', 'closed', 'gone'];
 
 /**
  * What the host reports about one agent. Every field the queue reads is here,

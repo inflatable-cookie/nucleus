@@ -558,7 +558,8 @@ export class T3CodeHost implements Host {
     const found = threads.find(t => t.id === id);
     if (!found) return null;
     const p = await this.readProjection(id);
-    return { id, workspaceId: this.workspaceFor(p.thread), title: p.thread.title, archived: !!p.thread.archivedAt };
+    return { id, workspaceId: this.workspaceFor(p.thread), title: p.thread.title, archived: !!p.thread.archivedAt,
+      deleted: !!p.thread.deletedAt };
   }
   async listLiveAgents() { return (await this.inventory()).threads.filter(t => !t.archivedAt && !t.deletedAt).map(t => ({ id: t.id, title: t.title, workspaceId: this.workspaceFor(t), labels: this.state.read().agents[t.id]?.labels ?? {} })); }
   async agentTimelinePage(id: string, limit = 100): Promise<HostTimelinePage | null> {
@@ -610,6 +611,26 @@ export class T3CodeHost implements Host {
   async stopAgentTurn(id: string) { const p = await this.readProjection(id); const runs = p.runs.filter(r => activeStatuses.has(r.status)).map(r => r.id).sort(); if (!runs.length) return;
     const key = identity('stop', canonical([id, runs])); await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.stop', commandId: key, threadId: id }); }
   async archiveAgent(id: string) { const key = identity('archive', id); await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.archive', commandId: key, threadId: id }); }
+  /**
+   * Remove one thread permanently at closeout (nucleus#1155). The Nightly's
+   * `thread.delete` cancels any active run and any pending request, and its
+   * command receipt makes the same command id under the same identity a replay
+   * rather than a second removal.
+   *
+   * `onlyIfUnused` is deliberately not sent: it makes the Nightly answer success
+   * without changing a thread that has runs or messages — every thread Nucleus
+   * created does — so it would report a removal that never happened.
+   *
+   * An unknown outcome is not resent. `resendUnknownAfterRead` repeats the same
+   * recorded command only after the caller re-proved the thread's identity,
+   * idleness and owned tools, which is what the terminal cleanup lane does before
+   * it reissues.
+   */
+  async deleteAgent(id: string, options: { resendUnknownAfterRead?: boolean } = {}) {
+    const key = identity('delete', id);
+    await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.delete', commandId: key, threadId: id }, undefined, undefined,
+      options.resendUnknownAfterRead ? { resendUnknownAfterRead: true } : {});
+  }
   /**
    * Settle a worker thread once Nucleus accepted its handover and moved the task
    * to review (Tom, 2026-11-12). `expectedLatestRunId` names the run this

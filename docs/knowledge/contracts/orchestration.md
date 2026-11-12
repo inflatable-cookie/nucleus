@@ -1931,8 +1931,13 @@ movement invalidates source approval and preserves the normal readiness gates.
   active participant. An accepted verdict at an earlier head never qualifies a
   changed source, and an exhausted author allowance is the owner's disposition,
   never a reason for another review.
-- Reviewer threads are archived after their verdict is verified and applied;
-  the worker stays through revisions until closeout.
+- Reviewer threads are released after their verdict is verified and applied, and
+  the worker stays through revisions until closeout. A released support thread
+  (reviewer, recovery coordinator, executor) is archived at once on a host that
+  cannot remove a thread; a host that can (T3Code) keeps it settled and bound so
+  the next round or episode continues the same thread, and removes it at closeout
+  (`Host.deleteAgent`; T3 adapter spec, [thread
+  lifecycle](../specs/t3code-host-adapter.md#thread-lifecycle)).
 
 ### Publication recovery
 
@@ -2456,8 +2461,10 @@ movement invalidates source approval and preserves the normal readiness gates.
 - Exhausting the semantic budget, broader scope or an authority conflict
   escalates for coordinator judgment. A successful operator resume closes the
   prior incident and episode.
-- Recovery coordinators stay bound across attempts for one issue and are
-  archived after the episode retires or the escalation is answered.
+- Recovery coordinators stay bound across attempts for one issue. On a host that
+  cannot remove a thread the one retained coordinator thread is archived after
+  the episode retires or the escalation is answered; on a host that can, it stays
+  settled, bound, and is removed at closeout.
 - While two faults are open on one run, the first reason stays on the task and
   the later one is recorded as an event.
 
@@ -2546,8 +2553,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   Unknown delivery is observed and reconciled before any retry; an unknown
   outcome never repeats the effect except the explicitly ruled terminal thread
   archive recovery described under [Cleanup](#terminal-workspace-cleanup).
-- Archive failure never holds task advancement; reviewer and coordinator
-  archives have durable intent, observed result and uncertain state.
+- Archive and removal failure never holds task advancement; reviewer and
+  coordinator archives and every closeout removal have durable intent, observed
+  result and uncertain state.
 
 ## Cleanup
 
@@ -2578,6 +2586,18 @@ movement invalidates source approval and preserves the normal readiness gates.
   requires the same identity and workspace, idle or closed state, no active
   turn, permission or live owned tools, and at most three durable retries.
 
+- A done task's threads are cleaned up before its workspace: the worker threads
+  are archived and, on a host that can remove a thread, every support thread
+  (reviewer, recovery coordinator, decider, executor) of the task is removed
+  (`thread.delete`, Tom 2026-11-12; nucleus#1155). Removal loses nothing durable —
+  those runs are released and their verdicts, reports and decisions are already
+  in Nucleus's records and on the PR — and a removed thread is terminal
+  everywhere a thread's liveness is decided, so it never holds the workspace
+  archive. A removal whose reply is lost is checked against the thread's own
+  archived, deleted or absent state before any resend, is retried on the sweep,
+  and never blocks closeout.
+- A host that cannot remove a thread (Paseo) keeps its existing behaviour: a
+  released support thread archives at once, and closeout archives every thread.
 - A done task's workspace is archived with every thread in it (Tom, 2026-09-27);
   only a running thread (active turn or pending permission) makes it wait. No
   unreleased task run may remain. Uncommitted files, unexpected or unpublished

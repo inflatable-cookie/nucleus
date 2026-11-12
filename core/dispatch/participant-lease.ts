@@ -1,4 +1,5 @@
 import { active, assignedThreadWaitReason, coordinative, participantToolRunIds } from '../recovery/task-reasons';
+import { settledThreadStatuses } from '../../shared/host';
 import { recoveryEffects, isBlockingRecoveryEffect, recoveryEffectsRefusal } from '../recovery/recovery-effects';
 import { executionParticipants } from '../machine/execution-participants';
 import { runBindsCurrentWork, type Run, type Task } from '../../shared/contracts';
@@ -33,7 +34,7 @@ export class ParticipantLease {
       let state: Awaited<ReturnType<Adapter['observe']>>;
       try { state = await this.resolution.host.observe(id); }
       catch { return `${issue}; participant ${id} identity could not be rechecked before reaping`; }
-      if (state.id !== id || state.workspaceId !== workspace || active(state) || !['idle', 'closed', 'error'].includes(state.status))
+      if (state.id !== id || state.workspaceId !== workspace || active(state) || !settledThreadStatuses.includes(state.status))
         return `${issue}; participant ${id} resumed or its identity changed before reaping`;
     }
 
@@ -75,7 +76,7 @@ export class ParticipantLease {
   async idle(agentId: string, workspaceId?: string, onBusy?: (state: Awaited<ReturnType<Adapter['observe']>>) => void) {
     const state = await this.resolution.host.observe(agentId);
     if (workspaceId && state.workspaceId !== workspaceId) throw new Error('Agent workspace changed; lease is not safe');
-    const idle = !active(state) && ['idle', 'closed', 'error'].includes(state.status);
+    const idle = !active(state) && settledThreadStatuses.includes(state.status);
     if (!idle) onBusy?.(state);
     return idle;
   }
@@ -218,7 +219,7 @@ export class ParticipantLease {
         if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id} in workspace ${workspace}: current identity, activity or status does not prove it is settled`, 'lifecycle');
         return false;
       }
-      if (active(state) || !['idle', 'closed', 'error'].includes(state.status)) {
+      if (active(state) || !settledThreadStatuses.includes(state.status)) {
         if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id} in workspace ${workspace}: ${assignedThreadWaitReason(state)}`, 'lifecycle');
         return false;
       }

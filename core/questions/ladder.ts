@@ -14,6 +14,7 @@ import { automaticRetryForbidden, reportsExternalCause } from '../recovery/non-d
 import { REVIEWER_CONSULT_TIMEOUT_MS, consultRecovery, escalationRecovery, blockerCauseId, consultContinuationInstruction, escalationAnswerControl, escalationContinuationInstruction, escalationWaitDetail, escalationVerbChoices, unknownEscalationAttentionDetail, type EscalationVerbChoice, type PlannerEscalation, isProviderFailure, findOpenPlannerEscalation, parseEscalationReply, plannerEscalationChoicesFor, plannerEscalationQuestion, plannerEscalations, reviewerConsultQuestion, reviewerConsults, reviewContinuationCauseId, reviewContinuationEscalationQuestion, type LadderEvent } from './blocker-ladder';
 import type { Resolution } from '../resolution';
 import { DelegatedHostUnavailable } from './delegation';
+import { retireDeciderThread } from '../workspaces/thread-archive';
 
 /** Owner-verb suffix on a proof-only escalation: receipt review when that is the wait, else proof. */
 function plannerEscalationOwnerSuffix(t: Task): string {
@@ -555,12 +556,12 @@ export class Ladder {
     }
     if (plannerEscalations(events() as LadderEvent[]).find(item => item.id === id)?.answered) return;
     if (!reply || !who) {
-      if (who?.startsWith('decider ')) await this.resolution.host.archiveAgent(who.slice(8)).catch(() => {});
+      if (who?.startsWith('decider ')) await retireDeciderThread(this.resolution.host, this.resolution.adapter, who.slice(8));
       this.store.event(t.id, 'planner_escalation_missed', `${id}: no delegated answer was produced; the escalation stays open for the planner`);
       return;
     }
     if (reply.kind === 'operator') {
-      if (who.startsWith('decider ')) await this.resolution.host.archiveAgent(who.slice(8)).catch(() => {});
+      if (who.startsWith('decider ')) await retireDeciderThread(this.resolution.host, this.resolution.adapter, who.slice(8));
       this.resolution.classifyEscalationToOperator(this.store.task(t.id), id, reply.reason, who);
       return;
     }
@@ -588,7 +589,7 @@ export class Ladder {
         this.store.event(t.id, 'planner_escalation_unknown', `${id}: refusal follow-up delivery: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
       }
     }
-    if (who.startsWith('decider ')) await this.resolution.host.archiveAgent(who.slice(8)).catch(() => {});
+    if (who.startsWith('decider ')) await retireDeciderThread(this.resolution.host, this.resolution.adapter, who.slice(8));
   }
   /** A planner or decider that explicitly says it cannot decide reaches the operator: one Spec 032 decision. */
   classifyEscalationToOperator(t: Task, id: string, reason: string, who: string): void {

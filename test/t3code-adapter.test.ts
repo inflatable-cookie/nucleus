@@ -479,7 +479,7 @@ test('the origin read answers authoritative absence, and only an unread inventor
   const { host, server, workspace, spec } = await fixture(t);
   const created = await host.createAgent(spec());
   assert.deepEqual(await host.originAgent(created.id),
-    { id: created.id, workspaceId: workspace.id, title: 'Synthetic role', archived: false });
+    { id: created.id, workspaceId: workspace.id, title: 'Synthetic role', archived: false, deleted: false });
   // T3 has no such thread: a complete shell plus archive read proves absence, so
   // the lookup answers not-mine instead of throwing.
   assert.equal(await host.originAgent('native-id-t3-does-not-have'), null);
@@ -801,4 +801,52 @@ test('after a socket drop, observation is an outage until reconnect, then resume
   const resumed = await host.observe(created.id);
   assert.equal(resumed.active, true);
   assert.equal(resumed.activeTurnId, 'resumed-run');
+});
+
+test('a support thread is removed once through the nightly thread.delete command and then reads as absent', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const before = server.commands.length;
+
+  await host.deleteAgent(created.id);
+  const removals = server.commands.filter(command => command.type === 'thread.delete');
+  assert.equal(removals.length, 1);
+  assert.equal(removals[0]!.method, 'orchestration.dispatchCommand');
+  assert.equal(removals[0]!.threadId, created.id);
+  assert.equal(typeof removals[0]!.commandId, 'string');
+  // `onlyIfUnused` would make the nightly answer success without changing a
+  // thread that has runs or messages, reporting a removal that never happened.
+  assert.equal(removals[0]!.onlyIfUnused, undefined);
+  assert.equal(await host.originAgent(created.id), null, 'a removed thread is absent from a complete inventory');
+
+  // The durable receipt replays the recorded answer: one command, never two.
+  await host.deleteAgent(created.id);
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1);
+  assert.ok(server.commands.length > before);
+});
+
+test('an unknown thread.delete outcome is never resent unless the caller proves a reissue', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  // The nightly applied the removal and the reply was lost with the socket.
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(host.deleteAgent(created.id), /unknown/i);
+  server.controls.disconnectAfterEffect = false;
+  assert.equal(server.threads.get(created.id)!.thread.deletedAt, STAMP, 'the removal landed');
+  const sent = server.commands.filter(command => command.type === 'thread.delete');
+  assert.equal(sent.length, 1);
+
+  // Without that proof the recorded unknown outcome refuses, and nothing is sent.
+  await host.connect();
+  await assert.rejects(host.deleteAgent(created.id), /unknown/i);
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1);
+
+  // The terminal lane's reissue repeats the same recorded command after its own
+  // identity, idleness and owned-tool proofs; the nightly replays its receipt.
+  await host.deleteAgent(created.id, { resendUnknownAfterRead: true });
+  const resent = server.commands.filter(command => command.type === 'thread.delete');
+  assert.equal(resent.length, 2);
+  assert.equal(resent[1]!.commandId, resent[0]!.commandId, 'the same identity, never a second removal');
+  assert.equal(resent[1]!.threadId, created.id);
+  assert.equal(server.threads.get(created.id)!.thread.deletedAt, STAMP);
 });

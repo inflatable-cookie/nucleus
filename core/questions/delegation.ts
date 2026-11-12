@@ -7,6 +7,7 @@ import { groupIsUnavailable } from '../../shared/pool';
 import { currentBrief } from '../planning/brief';
 import { parseNativeDelegatedReply } from './question-delegation';
 import type { Resolution } from '../resolution';
+import { retireDeciderThread } from '../workspaces/thread-archive';
 import { chooseProfile } from '../dispatch/routing';
 import { plannerParticipantTicketPath } from '../dispatch/participant-tickets';
 import { runTicketPath, writeRunTicket } from '../dispatch/agent-creation';
@@ -302,7 +303,7 @@ export class Delegation {
       if (this.store.eventsAll(`delegation:${id}`).some(event => event.kind === 'delegated_answer'))
         return { agentId: created.agentId, text: await this.resolution.waitDelegatedAnswer(id, input.signal) };
       this.store.event(`delegation:${id}`, 'delegated_closed', 'Delivery outcome unknown; never resend');
-      await this.resolution.withHost(task.hostId, () => this.resolution.host.archiveAgent(created.agentId)).catch(() => {});
+      await this.resolution.withHost(task.hostId, () => retireDeciderThread(this.resolution.host, this.resolution.adapter, created.agentId));
       throw error;
     }
   }

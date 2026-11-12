@@ -18,6 +18,11 @@
       "required": ["type", "commandId", "threadId"],
       "optional": []
     },
+    "thread.delete": {
+      "required": ["type", "commandId", "threadId"],
+      "optional": ["onlyIfUnused"],
+      "source": "packages/contracts/src/orchestrationV2.ts (thread.delete); cancels active runs and pending requests, and `onlyIfUnused: true` answers success without changing a thread that has runs or messages"
+    },
     "thread.settle": {
       "required": ["type", "commandId", "threadId"],
       "optional": ["expectedLatestRunId", "settledAt"],
@@ -132,6 +137,10 @@
     {
       "method": "orchestration.dispatchCommand",
       "payload": { "type": "thread.archive", "commandId": "fixture:archive", "threadId": "fixture-thread" }
+    },
+    {
+      "method": "orchestration.dispatchCommand",
+      "payload": { "type": "thread.delete", "commandId": "fixture:delete", "threadId": "fixture-thread" }
     },
     {
       "method": "orchestration.dispatchCommand",

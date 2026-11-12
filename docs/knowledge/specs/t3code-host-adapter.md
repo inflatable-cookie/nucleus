@@ -205,6 +205,7 @@ pretend to be a Paseo workspace.
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
 | Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
+| Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Receipt, then the thread reads gone; the same command id under the same identity is a replay, never a second removal |
 | Settle report | `thread.settle` through dispatch for any completed non-worker role | Immediately after the accepted Nucleus receipt; bind `expectedLatestRunId`, keep an uncertain intent and inspect `settledOverride` before retry |
 | Wake settled support thread | `thread.unsettle` through dispatch before a follow-up message | Stable command intent; a retained reviewer is active again for its next round |
 | Archive workspace | `projects.mutate` / `project.update` `archived: true` | The project is retired with threads and files kept; observation reads `archivedAt` from the inventory |
@@ -239,7 +240,8 @@ delivery is recorded. On the next host sweep, Nucleus reads the thread's
 run retires the old intent without touching the new run, and only the same
 completed latest run permits replay of the identical command. Settlement
 failure never blocks the task report. Existing closeout and retention paths
-still decide when threads are archived.
+still decide when threads are archived or removed; the [thread
+lifecycle](#thread-lifecycle) is where that decision lives.
 
 ### Model options
 
@@ -409,6 +411,50 @@ invent a second follow-up. Expired or nonresumable approvals cannot be answered
 again. An interrupted answer remains uncertain even if the request later expires;
 expiry is not evidence that the original answer was never delivered.
 
+## Thread lifecycle
+
+A task's worker thread is its history: at closeout it is archived
+(`thread.archive`) exactly as on Paseo. A task's support threads — reviewer,
+recovery coordinator, decider and proof executor — are removed instead
+(`thread.delete`, nucleus#1155). T3 has no plugin surface, so an archived support
+thread stays a row in the operator's sidebar, and a support thread that a later
+review round, recovery episode or proof head needs had to be reopened as a new
+one. Tom's ruling: "keep them settled until the task is done, then archive the
+worker thread and delete the reviewer and recovery threads."
+
+While the task is open nothing is archived. A released support thread is settled
+(`thread.settle`, above) and the task keeps its binding to that thread, so the
+next round continues the same identity: the follow-up's own `thread.unsettle`
+makes it active again. A new thread is opened only when the host reports the old
+one archived or gone, or when the role's selection changed its profile; a thread
+replaced that way is removed at closeout like the rest. A deliberately replaced
+reviewer is still archived at replacement, because that archive is the proof that
+the displaced reader can never take another turn.
+
+Removal is the nightly's `thread.delete` command, `{type, commandId, threadId}`.
+`onlyIfUnused` is never sent: with it the nightly answers success without
+changing a thread that has runs or messages — every thread Nucleus created — so it
+would report a removal that never happened. The command cancels the thread's
+active run and pending requests, and the terminal lane only issues it for an owned
+thread whose runs are all released, so no accepted report loses its thread and the
+workspace archive's participant proof still holds. Nothing durable lives only in a
+removed thread: review text, verdicts, recovery reports and decisions are in
+Nucleus's records and on the pull request before the removal.
+
+Each removal is a durable effect under the same intent rules as an archive: the
+intent is recorded before the send, a lost reply is checked against the thread's
+own `archivedAt`, `deletedAt` or authoritative absence before anything is
+reissued, and a removal that fails is retried on the sweep without blocking
+closeout. Because the nightly's command receipt replays the identical command id,
+the terminal lane's reissue after fresh identity, idleness and owned-tool proof
+(`resendUnknownAfterRead`) is that same command, never a second removal. A removed
+thread reads `gone` and carries `deleted` on its origin record; `gone` is terminal
+wherever a thread's liveness is decided (`settledThreadStatuses` in
+`shared/host.ts`), so a removed support thread never holds its workspace archive.
+
+Paseo keeps today's behaviour: it has no removal, so a support thread there still
+archives as soon as it is released and closeout archives every thread.
+
 ## Composition and unsupported capabilities
 
 Service composition reads optional T3 configuration and imports only its public
@@ -516,8 +562,11 @@ registration, a worker launch whose profile carries a thinking level (the
 launch carries `modelSelection.options`), a planner `tell` delivered mid-run,
 the worker's report through the packaged helper, an independent reviewer's
 launch and verdict, a revision round addressed on the retained worker, the
-accepted round-two verdict, the merge, closeout, and the archive of both
-threads and the native project, observed positively. The test fails on a tree
+accepted round-two verdict, the merge, closeout, the worker thread's archive, the
+removal of every support thread and the archive of the native project, observed
+positively (nucleus#1155). A second lifecycle test keeps a released recovery
+thread settled while the task is open and continues the same thread for the next
+fault instead of opening another. The test fails on a tree
 without the model-option, archive and steering work.
 
 The private proof starts an unmodified checkout of the target nightly revision,

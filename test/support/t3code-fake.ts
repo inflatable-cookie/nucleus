@@ -105,12 +105,15 @@ export async function t3Fake(t: TestContext, directory: string) {
         }
         case 'orchestration.subscribeShell': {
           const active = [...threads.values()].filter(p => !p.thread.archivedAt && !p.thread.deletedAt).map(shell);
-          return stream([{ kind: 'snapshot', snapshot: { schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: active, archivedThreads: [] } },
+          // A removed thread is in no list: the nightly's own shell reads filter
+          // `deleted_at IS NULL`, so absence is the positive answer there.
+          const archived = [...threads.values()].filter(p => p.thread.archivedAt && !p.thread.deletedAt).map(shell);
+          return stream([{ kind: 'snapshot', snapshot: { schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: active, archivedThreads: archived } },
             ...(controls.enrichment ? [{ kind: 'snapshot', resolvedRepositoryIdentityRoots: [directory], snapshot: { threads: [], archivedThreads: [] } }] : []), ...marker()]);
         }
         case 'orchestration.getArchivedShellSnapshot':
           controls.beforeArchiveRead();
-          return success({ schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: [...threads.values()].filter(p => p.thread.archivedAt).map(shell) });
+          return success({ schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: [...threads.values()].filter(p => p.thread.archivedAt && !p.thread.deletedAt).map(shell) });
         case 'orchestration.subscribeThread': {
           const p = threads.get(payload.threadId);
           if (!p) return failure({ _tag: 'Fail', error: { _tag: 'ThreadNotFoundError' } });
@@ -165,6 +168,13 @@ export async function t3Fake(t: TestContext, directory: string) {
             case 'message.dispatch': p.messages.push({ id: payload.messageId, role: 'user', text: payload.text }); break;
             case 'thread.stop': for (const run of p.runs) run.status = 'cancelled'; break;
             case 'thread.archive': p.thread.archivedAt = STAMP; break;
+            case 'thread.delete':
+              // The nightly cancels active work and answers success; `onlyIfUnused`
+              // is the shape that silently changes nothing, so it must not be sent.
+              assert.equal(payload.onlyIfUnused, undefined, 'thread.delete must not ask the nightly to skip a used thread');
+              if (p.thread.deletedAt === null) p.thread.deletedAt = STAMP;
+              for (const run of p.runs) if (['preparing', 'queued', 'starting', 'running', 'waiting'].includes(run.status)) run.status = 'cancelled';
+              break;
             case 'thread.settle':
               if (payload.expectedLatestRunId && p.runs.at(-1)?.id !== payload.expectedLatestRunId)
                 return failure({ _tag: 'Die', defect: 'Latest run changed before thread settlement.' });

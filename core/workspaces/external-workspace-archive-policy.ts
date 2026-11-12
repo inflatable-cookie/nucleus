@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
+import { settledThreadStatuses } from "../../shared/host";
 import type { HostWorkspaceRef, HostThreadInventory, HostTerminalInventory } from "../../shared/host";
 import type { WorkspaceContinuationHostCalls } from "./workspace-continuation";
 import type { AgentObservation, ExternalWorkspacePlacement, ExternalWorktreeSource, ExternalWorkspaceCatalog, ExternalWorkspaceArchiveInput, ExternalWorkspaceArchiveOutcome, ExternalWorkspaceSourceExpectation } from "../host/adapter";
@@ -119,7 +120,7 @@ export class ExternalWorkspaceArchive {
       // foreign thread in any registration at this exact folder protects it.
       const owned = historicalWireLabel(agent.labels, 'task') === input.taskId || input.ownedAgentIds.has(agent.id);
       if (!owned) return refuse(`Workspace ${agent.workspaceId} holds thread ${agent.id}, which is not this task's`, { observed });
-      if (agent.activeTurn || agent.pendingPermissionKinds.length || !['idle', 'error', 'closed'].includes(agent.status))
+      if (agent.activeTurn || agent.pendingPermissionKinds.length || !settledThreadStatuses.includes(agent.status))
         return refuse(`Waiting for workspace thread ${agent.id} in ${agent.workspaceId} to become idle`, { observed });
       if (!inTarget) continue; // Another registration's threads are checked, never archived here.
       // An archived thread cannot hold a turn, and the daemon may no longer
@@ -134,7 +135,7 @@ export class ExternalWorkspaceArchive {
       try { state = await this.host.observe(agentId); } catch { state = null; }
       if (!state || state.id !== agentId) return refuse(`Workspace thread ${agentId} could not be observed`, { observed, participants });
       if (state.workspaceId !== input.workspaceId) return refuse(`Workspace thread ${agentId} changed workspace`, { observed, participants });
-      if (state.active || state.activeTurnId || state.permissions || !['idle', 'error', 'closed'].includes(state.status))
+      if (state.active || state.activeTurnId || state.permissions || !settledThreadStatuses.includes(state.status))
         return refuse(`Waiting for workspace thread ${agentId} to become idle`, { observed, participants });
     }
     // Paseo's archive kills every terminal in the workspace; an entry (or a

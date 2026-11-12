@@ -16,13 +16,21 @@ function fixture() {
   store.setMeta('hostRegistry', [{ id: 'host', endpoint: 'fixture' }]);
   const initial = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Task', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: 'origin' }), 'host', 'handoff', 'a'.repeat(40));
   const task = store.update(initial.id, { phase: 'verifying', agentId: 'worker', workspaceId: 'workspace', coordinatorAgentId: 'coordinator' });
-  const archived = new Set<string>(), calls: string[] = [];
+  const archived = new Set<string>(), deleted = new Set<string>(), calls: string[] = [];
+  const deletes: { id: string; options?: { resendUnknownAfterRead?: boolean } }[] = [];
   const adapter = {
-    originAgent: async (id: string) => ({ id, workspaceId: 'workspace', title: '', archived: archived.has(id) }),
+    originAgent: async (id: string) => ({ id, workspaceId: 'workspace', title: '', archived: archived.has(id), deleted: deleted.has(id) }),
     archiveAgent: async (id: string) => { calls.push(id); archived.add(id); },
   } as Adapter;
+  // A host that can remove a thread (T3Code): same observations, plus deletion.
+  const t3Adapter = {
+    ...adapter,
+    deleteAgent: async (id: string, options?: { resendUnknownAfterRead?: boolean }) => {
+      deletes.push({ id, ...(options ? { options } : {}) }); deleted.add(id);
+    },
+  } as Adapter;
   const run = (role: Run['role'], id: string, eventId = id): Run => ({ id, taskId: task.id, role, generation: task.coordinatorGeneration, head: 'b'.repeat(40), base: 'a'.repeat(40), workspaceId: 'workspace', agentId: id, profile: null, status: 'finished', createdAt: new Date().toISOString(), lastObservedAt: null, active: false, idleSince: null, released: true, completion: { taskId: task.id, runId: id, eventId, status: role === 'reviewer' ? 'changes_required' : 'recovered', summary: 'Finished', head: 'b'.repeat(40) } });
-  return { store, task, adapter, archived, calls, run, close: () => { store.close(); rmSync(directory, { recursive: true, force: true }); } };
+  return { store, task, adapter, t3Adapter, archived, deleted, calls, deletes, run, close: () => { store.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
 test('archive intent keys preserve legacy evidence and isolate host identities', () => {
@@ -268,5 +276,129 @@ test('a failed observation before archive delivery can retry without replaying a
     await archiveFinishedThreads(f.store, f.adapter, f.task.id);
     assert.deepEqual(f.calls, ['reviewer-1']);
     assert.equal(f.store.getMeta<{status: string}>(qualifiedThreadArchiveEffectKey('host', 'reviewer-1'))?.status, 'archived');
+  } finally { f.close(); }
+});
+
+/** Labels and idleness the terminal lane reads before it touches one owned thread. */
+function ownedAndIdle(f: ReturnType<typeof fixture>, extra: Record<string, { status?: string; active?: boolean; permissions?: boolean }> = {}) {
+  Object.assign(f.adapter, { observe: async (id: string) => ({ id, workspaceId: 'workspace', error: '', labels: { 'northstar.task': f.task.id },
+    status: 'idle', active: false, permissions: false, ...(extra[id] ?? {}) }) });
+  Object.assign(f.t3Adapter, { observe: async (id: string) => ({ id, workspaceId: 'workspace', error: '', labels: { 'northstar.task': f.task.id },
+    status: 'idle', active: false, permissions: false, ...(extra[id] ?? {}) }) });
+}
+
+test('a task whose host can remove threads keeps its released support threads settled, never archived, and retains its reviewer and recovery bindings (#1155)', async () => {
+  const f = fixture(); try {
+    const reviewer = f.run('reviewer', 'reviewer-1'); f.store.putRun(reviewer);
+    const recovery = f.run('recovery', 'coordinator'); f.store.putRun(recovery);
+    const executor = f.run('executor', 'executor-1'); f.store.putRun(executor);
+    const current = f.store.task(f.task.id);
+    f.store.update(f.task.id, { resolution: { ...current.resolution, review: reviewer.completion, reviewerAgentId: reviewer.agentId,
+      recovery: { id: 'episode', key: 'fault', generation: current.coordinatorGeneration, runId: recovery.id, agentId: recovery.agentId,
+        status: 'resolved', summary: '', idleSince: null, incidentId: null }, recoveryActive: false, recoveryAttempts: 3 } });
+
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+
+    assert.deepEqual(f.calls, [], 'nothing is archived while the task is open');
+    assert.deepEqual(f.deletes, [], 'nothing is removed while the task is open');
+    const after = f.store.task(f.task.id);
+    assert.equal(after.resolution.reviewerAgentId, 'reviewer-1', 'the retained reviewer binding stays, so the next round continues the same thread');
+    assert.equal(after.coordinatorAgentId, 'coordinator', 'the retained recovery binding stays, so a second fault continues the same thread');
+    assert.equal(f.store.eventsAll(f.task.id).some(event => ['reviewer_thread_released', 'recovery_thread_released'].includes(event.kind)), false);
+  } finally { f.close(); }
+});
+
+test('at closeout a host that can remove threads archives the worker thread and deletes every support thread once (#1155)', async () => {
+  const f = fixture(); try {
+    ownedAndIdle(f);
+    const reviewer = f.run('reviewer', 'reviewer-1'); f.store.putRun(reviewer);
+    const recovery = f.run('recovery', 'coordinator'); f.store.putRun(recovery);
+    const executor = f.run('executor', 'executor-1'); f.store.putRun(executor);
+    const retired = f.run('revision', 'retired-worker'); f.store.putRun(retired);
+    // A support thread archived earlier in the task's life — a replaced executor —
+    // is still removed at closeout, under its own fresh cleanup record.
+    const replacedExecutor = f.run('executor', 'old-executor'); f.store.putRun(replacedExecutor);
+    f.store.putThreadArchiveEffect(qualifiedThreadArchiveEffectKey('host', 'old-executor'), 'old-executor',
+      { status: 'archived', at: new Date().toISOString(), detail: 'Archive observed' });
+    f.archived.add('old-executor');
+    f.store.update(f.task.id, { phase: 'done', retiredWorkers: [{ agentId: 'retired-worker', runId: retired.id,
+      profile: profileSchema.parse({ id: 'worker-profile', name: 'Worker', provider: 'test', model: 'test/worker', notes: '', available: true, problem: '', supportedThinking: [] }), reason: 'replaced' }],
+      resolution: { ...f.store.task(f.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
+
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+
+    assert.deepEqual([...f.calls].sort(), ['retired-worker', 'worker'], 'the worker threads are archived');
+    assert.deepEqual(f.deletes.map(item => item.id).sort(), ['coordinator', 'executor-1', 'old-executor', 'reviewer-1'],
+      'every reviewer, recovery, coordinator and executor thread is removed, including one archived earlier');
+    assert.deepEqual(f.deleted, new Set(['coordinator', 'executor-1', 'old-executor', 'reviewer-1']));
+    assert.equal(f.archived.has('reviewer-1'), false, 'a support thread is never archived before it is removed');
+
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    assert.deepEqual([...f.calls].sort(), ['retired-worker', 'worker'], 'each worker thread is archived once');
+    assert.equal(f.deletes.length, 4, 'each support thread is removed once');
+    assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === 'thread_archive_observed').length, 6);
+  } finally { f.close(); }
+});
+
+test('a lost thread.delete reply is checked against the host before any resend, and a delete that never landed is reissued only after fresh proof (#1155)', async () => {
+  const f = fixture(); try {
+    ownedAndIdle(f);
+    const reviewer = f.run('reviewer', 'reviewer-1'); f.store.putRun(reviewer);
+    f.store.update(f.task.id, { phase: 'done', resolution: { ...f.store.task(f.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
+
+    // The removal landed but its reply was lost: the recorded outcome is unknown.
+    const landed = f.t3Adapter.deleteAgent!;
+    f.t3Adapter.deleteAgent = async (id, options) => { await landed.call(f.t3Adapter, id, options); throw Error('T3Code transport: thread.delete'); };
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    assert.equal(f.deleted.has('reviewer-1'), true);
+    assert.equal(f.store.getMeta<{ status: string }>(qualifiedThreadArchiveEffectKey('host', 'reviewer-1'))?.status, 'uncertain');
+
+    // The next sweep checks the host's own answer before anything is sent again.
+    f.t3Adapter.deleteAgent = landed;
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    assert.equal(f.deletes.length, 1, 'an observed removal is never sent a second time');
+    assert.equal(f.store.getMeta<{ status: string; detail?: string }>(qualifiedThreadArchiveEffectKey('host', 'reviewer-1'))?.status, 'archived');
+
+    // A removal that never landed is retried on the sweep, under the same identity
+    // and only after the task lane re-proves identity, idleness and owned tools.
+    const second = fixture(); try {
+      ownedAndIdle(second);
+      const other = second.run('recovery', 'coordinator'); second.store.putRun(other);
+      second.store.update(second.task.id, { phase: 'done', resolution: { ...second.store.task(second.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
+      const refused = { delivered: false };
+      const realDelete = second.t3Adapter.deleteAgent!;
+      second.t3Adapter.deleteAgent = async (id, options) => {
+        if (!refused.delivered) { refused.delivered = true; throw Error('T3Code transport: connection lost'); }
+        return realDelete.call(second.t3Adapter, id, options);
+      };
+      const retryProof = async () => null;
+      await archiveFinishedThreads(second.store, second.t3Adapter, second.task.id, retryProof);
+      assert.equal(second.deleted.has('coordinator'), false, 'the failed removal changed nothing on the host');
+      assert.equal(second.store.getMeta<{ status: string; retryable?: boolean }>(qualifiedThreadArchiveEffectKey('host', 'coordinator'))?.status, 'uncertain');
+      await archiveFinishedThreads(second.store, second.t3Adapter, second.task.id, retryProof);
+      assert.deepEqual(second.deletes.map(item => ({ id: item.id, options: item.options })),
+        [{ id: 'coordinator', options: { resendUnknownAfterRead: true } }], 'the reissue is the same command, marked as a proven reissue');
+      assert.equal(second.deleted.has('coordinator'), true);
+      await archiveFinishedThreads(second.store, second.t3Adapter, second.task.id, retryProof);
+      assert.equal(second.deletes.length, 1, 'nothing is sent after the removal is observed');
+    } finally { second.close(); }
+  } finally { f.close(); }
+});
+
+test('a Paseo-bound task keeps today\'s thread handling: released support threads are archived, and closeout archives every thread (#1155)', async () => {
+  const f = fixture(); try {
+    ownedAndIdle(f);
+    const reviewer = f.run('reviewer', 'reviewer-1'); f.store.putRun(reviewer);
+    const current = f.store.task(f.task.id);
+    f.store.update(f.task.id, { resolution: { ...current.resolution, review: reviewer.completion, currentRunId: null } });
+    // The adapter has no deleteAgent, so nothing changes for a host that cannot remove a thread.
+    await archiveFinishedThreads(f.store, f.adapter, f.task.id);
+    assert.deepEqual(f.calls, ['reviewer-1']);
+    assert.deepEqual(f.deletes, []);
+
+    f.store.update(f.task.id, { phase: 'done', resolution: { ...f.store.task(f.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
+    await archiveFinishedThreads(f.store, f.adapter, f.task.id);
+    assert.deepEqual([...f.calls].sort(), ['reviewer-1', 'worker']);
+    assert.deepEqual(f.deletes, [], 'a host without removal never deletes');
   } finally { f.close(); }
 });
