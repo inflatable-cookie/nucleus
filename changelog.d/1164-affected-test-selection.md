@@ -1,0 +1,1 @@
+Each task now runs the test files its committed change can affect before review: `effigy test:affected --run` selects them from the import graph and the test files that name the changed paths. Worker, revision and reviewer prompts carry the run, so a change that breaks a test elsewhere is caught before milestone QA.

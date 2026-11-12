@@ -26,6 +26,8 @@ next with `plan.get` (see the Nucleus skill, `nucleus`).
 - `effigy tasks` — task inventory; `effigy test --plan` shows the test shape.
 - `effigy check` — typecheck and publication gate.
 - `effigy qa:docs` — docs checks.
+- `effigy test:affected [base] [--run]` — the test files the change can affect
+  (import graph against `origin/main` by default; `--run` runs them).
 - `effigy qa` — the full local board: typecheck, docs checks, the parallel
   suite and the serial wall-clock lane (`test:timing`), fast checks first.
 - Parallel unit runs allow each physical test file 120 seconds in total
@@ -103,14 +105,19 @@ guard, proof tuple or exception-specific control is never the fix.
 
 ## Validate
 
-Run `effigy check` once, then only the test files for the code you changed,
-each alone (`effigy test unit -- test/<file>.test.ts`), and `effigy qa:docs` if
-docs changed. Node test options ride after the files,
+Run `effigy check` once. Then, at the committed head, run the affected test files
+once with `effigy test:affected --run` (Tom, 2026-11-12). It selects every
+`test/**/*.test.ts` that transitively imports a changed file, plus any test that
+names a changed file's path, or reads one of its ancestor directories, as a string literal, and
+runs them through the unit runner. Run `effigy test:affected` without `--run` to
+see the list and each file's reason. Run `effigy qa:docs` if docs changed.
+Wall-clock oracles in the selection skip in the parallel lane and run in milestone
+QA's timing lane. Node test options ride after the files for a single file,
 e.g. `effigy test unit -- test/<file>.test.ts --test-skip-pattern=<pattern>`;
 the unit runner moves them ahead of the files. No full suites,
 no `effigy qa`, no Cargo builds (Tom, 2026-10-04). Those run in milestone QA on
-`main` via `project.qa.run`. A missing broader test run is never a review
-finding.
+`main` via `project.qa.run`. A missing or failing affected-test run is a review
+finding; anything wider than the affected set never is.
 Rerun a failing test file alone before believing it; UI changes are checked in
 the installed bundle in dark theme by the planner after the roll. The installed plugin
 runs from `main`, so a worker can't check its own PR's UI, and that check never blocks

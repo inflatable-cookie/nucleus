@@ -1327,6 +1327,12 @@ request identities and submitted handoffs are not rewritten.
   per-repository validation policy setting and its Nucleus-wide default are
   retired, and prompts carry one fixed line naming the section and milestone QA
   on main via `project.qa.run`.
+- The affected-test run (Tom, 2026-11-12, nucleus#1164) is the one standing
+  test run before review: the worker runs `effigy test:affected --run` at the
+  committed head after its commit, and the reviewer judges the reported command
+  and file count there. A missing or failing affected run is a review finding;
+  anything wider than the affected set never is. The worker, revision and
+  reviewer prompts carry `AFFECTED_RUN_RULE` and `AFFECTED_RUN_REVIEWER_NOTE`.
 - Skip full `effigy qa`/`ci` and repeat passes; raw `npx`/`cargo`/`bun`
   validation has no exception. Formatting applies only to changed formatted
   source with a covering Effigy format selector; a missing selector is a
@@ -2946,6 +2952,19 @@ bundled shell imports to the same host hooks and native stand-ins.
   "timing inconclusive under load: N performance oracles failed"; TAP TODO
   failures are not counted as failures.
 
+- The affected-test selection (`scripts/test-affected.mjs`, `effigy test:affected`)
+  reads the committed head only: changed paths come from `git diff --no-renames`
+  against the merge base, and the graph from one `git ls-tree` plus one
+  `git cat-file --batch` read. Import edges reuse `importEdges` from
+  `scripts/check-folder-imports.mjs`. A test is selected when it transitively
+  imports a changed file (through `.js`/`.mjs` emitted specifiers, index files and
+  `.d.mts` declarations of their implementation), when it names a changed path or a
+  path suffix of two or more segments as a string literal in its own source or in
+  the `test/` helpers it reaches, or when it quotes any ancestor directory of the
+  changed file as a whole literal (directory walkers recurse, so `client/` covers
+  `client/board/x.tsx`). A changed test file always
+  runs. Paths outside the graph and the docs (`package.json`, `effigy.toml`,
+  `tsconfig*.json`) are reported as unmapped, never expanded to a full suite.
 - Test races are fixed as a class (Tom, 2026-10-15): a milestone failure that
   passes alone is attributed to its race shape, and one task covers every test
   with that shape. A failed physical file is investigated alone before any
