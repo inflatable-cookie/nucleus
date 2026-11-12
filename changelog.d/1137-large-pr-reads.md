@@ -1,0 +1,1 @@
+Review, merge, closeout, hook, and proof reads now handle large Git results without failing at child output limits. Review prompts keep bounded stat and file-list prefixes, while proof hashes stream file content. Size-limit errors identify the command that exceeded the limit.

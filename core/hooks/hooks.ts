@@ -14,6 +14,7 @@ export { executeHookProgram, type ExecutionOutcome, type ExecutionRequest } from
 import { gitText, snapshotGit, statusEntries, ignoredPathCollides, inspectChangedPaths, repositoryIsCleanAt, isolatedRepositoryIsCleanAt, verifyReviewedHead, verifyRetainedWorktree, verifyMergeCandidate, type GitSnapshot } from "../git/git-snapshot";
 export { SCRATCH_INDEX_PREFIX, parsePorcelain, statusEntries, ignoredPathCollides, snapshotGit, inspectChangedPaths, verifyReviewedHead } from "../git/git-snapshot";
 import { withIntegrationCheckout } from "../git/index";
+import { gitNulEach } from "../git/git-command";
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -1203,8 +1204,8 @@ export class RepositoryHooks {
     let current = this.save(record, { state: "commit_intent", result: { ...result, changedPaths: changed }, summary: result.summary });
     try {
       await gitText(path, "add", "--", ...changed);
-      const stagedList = (await gitText(path, "diff", "--cached", "--name-only")).split("\n").map(name => name.trim()).filter(Boolean).sort();
-      const extra = stagedList.filter(candidate => !changed.includes(candidate));
+      const extra: string[] = [];
+      await gitNulEach(path, ["diff", "--cached", "--name-only", "-z"], candidate => { if (!changed.includes(candidate)) extra.push(candidate); });
       if (extra.length) throw new Error(`Refusing to publish undeclared staged paths: ${extra.join(", ")}`);
       await gitText(path, "commit", "-m", subject, "-m", this.trailers(current));
       const commit = await gitText(path, "rev-parse", "HEAD");
@@ -1260,11 +1261,12 @@ export class RepositoryHooks {
 
   /** Paths the published commit adds or rewrites that exist in the operator checkout as ignored evidence. */
   private async ignoredCollisions(root: string, baseCommit: string, target: string): Promise<string[]> {
-    const diff = await gitRaw(root, ["diff", "--name-only", "--diff-filter=ACMR", baseCommit, target]);
-    if (diff.code !== 0) throw new Error(formatGitError(["diff"], diff.code, diff.signal, diff.stderr));
-    const changed = diff.stdout.toString("utf8").split("\n").map(line => line.trim()).filter(Boolean);
     const ignored = (await statusEntries(root)).filter(entry => entry.ignored).map(entry => entry.path);
-    return changed.filter(path => ignored.some(entry => ignoredPathCollides(path, entry)));
+    const collisions: string[] = [];
+    await gitNulEach(root, ["diff", "--name-only", "-z", "--diff-filter=ACMR", baseCommit, target], path => {
+      if (ignored.some(entry => ignoredPathCollides(path, entry))) collisions.push(path);
+    });
+    return collisions;
   }
 
   private async cleanupPublished(task: Task, record: HookRecord): Promise<HookRecord> {
@@ -1940,10 +1942,11 @@ async function validatePublishedCommit(root: string, record: HookRecord, commit:
     const parent = await gitText(root, "rev-parse", `${commit}^`);
     if (parent !== record.baseCommit) return false;
     const declared = new Set(record.result?.changedPaths ?? []);
-    const diff = await gitRaw(root, ["diff-tree", "--no-commit-id", "--name-only", "-r", commit]);
-    if (diff.code !== 0) return false;
-    const changed = diff.stdout.toString("utf8").trim().split("\n").filter(Boolean).sort();
-    if (changed.some(path => !declared.has(path) || !pathIsAllowed(path, record.allowedPaths))) return false;
+    let valid = true;
+    await gitNulEach(root, ["diff-tree", "--no-commit-id", "--name-only", "-z", "-r", commit], path => {
+      if (!declared.has(path) || !pathIsAllowed(path, record.allowedPaths)) valid = false;
+    });
+    if (!valid) return false;
     return true;
   } catch { return false; }
 }

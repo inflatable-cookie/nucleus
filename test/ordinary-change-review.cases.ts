@@ -597,13 +597,14 @@ test('a review prompt of any delta size carries references and never diff text',
     const small = await ordinaryReviewDelta(f.store.task(f.task.id), prior, smallHead, f.planningCommit);
     referenceForm(small, smallHead);
     assert.match(small, /feature\.txt/);
-    // Past the 200 KB report budget in one new file: still no diff text inlined.
-    writeFileSync(join(f.workspace, 'big.txt'), `${'x'.repeat(1024)}\n`.repeat(300));
+    // A generated file puts this review's patch text well past the old 1 MiB child buffer.
+    writeFileSync(join(f.workspace, 'big.txt'), `${'x'.repeat(1024)}\n`.repeat(1800));
     runGit(f.workspace, 'add', '.'); runGit(f.workspace, 'commit', '-m', 'large delta');
     const bigHead = runGit(f.workspace, 'rev-parse', 'HEAD');
     const big = await ordinaryReviewDelta(f.store.task(f.task.id), prior, bigHead, f.planningCommit);
     referenceForm(big, bigHead);
     assert.match(big, /big\.txt/);
+    assert.doesNotMatch(big, /Pure rebase confirmation/, 'the added generated file is a source change, not a rebase');
     assert.ok(!big.includes('x'.repeat(256)), 'no delta body travels in the prompt');
   } finally { f.close(); }
 });

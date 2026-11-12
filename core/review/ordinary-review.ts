@@ -1,6 +1,7 @@
 import { realpathSync } from 'node:fs';
 import type { Run, Task } from '../../shared/contracts';
 import { git, queueCheckoutStatus } from '../git/index';
+import { gitPrefix } from '../git/git-command';
 import { GitIdentityError, readGitCheckout, readGitRef } from '../git/git-identity';
 
 /**
@@ -85,7 +86,7 @@ export async function ordinaryReviewDelta(task: Task, prior: Run, head: string, 
   const newBase = await read('merge-base', base, head);
   // The range-diff is read to classify the round and never inlined: range-diff
   // emits '=' rows for an unchanged patch series; an empty series is also unchanged.
-  const range = await read('range-diff', '--no-color', `${oldBase}..${prior.head}`, `${newBase}..${head}`);
+  const range = await read('range-diff', '--no-color', '--no-patch', `${oldBase}..${prior.head}`, `${newBase}..${head}`);
   const confirmation = range.split('\n').filter(Boolean).every(line => /^\s*\d+:\s+\S+\s+=\s+\d+:/.test(line));
   const header = `Prior run: ${prior.id}; priorHead: ${prior.head}\nBase movement: ${prior.base} -> ${base}\n${confirmation ? 'Pure rebase confirmation: unchanged patch series. Judge actual covering evidence at this new head; issue a genuine new verdict.' : 'Review the revision delta and resolve the earlier findings.'}\n`;
   const findings = `Earlier findings:\n${prior.completion?.reviewText ?? prior.completion?.summary}\nEarlier verdicts:\n${JSON.stringify(prior.completion?.verdicts ?? [])}\nBrief: earlier v${prior.briefVersion ?? 'legacy'}, current v${task.briefVersions.at(-1)?.version ?? 'legacy'}; amendments are marked in the supplied brief.\n`;
@@ -93,8 +94,8 @@ export async function ordinaryReviewDelta(task: Task, prior: Run, head: string, 
   // diffs are what git is for). The reviewer gets the stat, the changed files,
   // the exact SHAs and the commands to read the delta in its own checkout,
   // plus the earlier findings.
-  const stat = boundDeltaSection(await read('diff', '--stat', '--no-color', `${prior.head}..${head}`), 'diff stat');
-  const files = boundDeltaSection(await read('diff', '--name-only', '--no-color', `${prior.head}..${head}`), 'changed files');
+  const stat = boundDeltaSection(await gitPrefix(task.directory!, ['diff', '--stat', '--no-color', '--stat-count=100', `${prior.head}..${head}`], REVIEW_PROMPT_SECTION_BUDGET), 'diff stat');
+  const files = boundDeltaSection(await gitPrefix(task.directory!, ['diff', '--name-only', '--no-color', `${prior.head}..${head}`], REVIEW_PROMPT_SECTION_BUDGET), 'changed files');
   return `${header}The delta and range-diff are never inlined; read them in this checkout with the commands below before judging, and do not report a verdict from the stat alone.\nDiff stat:\n${stat}\nChanged files:\n${files}\nExact SHAs: priorHead ${prior.head}, head ${head}, oldBase ${oldBase} (of ${prior.base}..${prior.head}), newBase ${newBase} (of ${base}..${head})\nCommands to read the delta:\n  git diff --no-ext-diff --no-color ${prior.head}..${head}\n  git range-diff --no-color ${oldBase}..${prior.head} ${newBase}..${head}\n${findings}`;
 }
 

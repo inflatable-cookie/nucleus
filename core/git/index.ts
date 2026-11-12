@@ -1,6 +1,6 @@
 import { ForgeOutageError, githubHealthy, isForgeNetworkFailure, classifyGitCommandFailure, GitTransientError } from '../forge/forge-health';
 import { SshAuthExhaustedError } from './git-auth-retry';
-import { gitRaw as runGitRaw } from "./git-command";
+import { gitRaw as runGitRaw, nameOutputLimit } from "./git-command";
 import { execFile, execFileSync } from "node:child_process";
 import { lstatSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -31,21 +31,22 @@ export async function command(file: string, args: string[], cwd: string, extraEn
     })() : await run();
     return options?.trim === false ? result.stdout : result.stdout.trim();
   } catch (error) {
-    if (file === "gh" && isLoginSessionFault(error)) {
+    const namedError = nameOutputLimit(error, [file, ...args]);
+    if (file === "gh" && isLoginSessionFault(namedError)) {
       notifyLoginSessionFault();
-      throw new LoginSessionFaultError(error);
+      throw new LoginSessionFaultError(namedError);
     }
     const remoteFailure = file === "git" && ["fetch", "push", "ls-remote"].includes(args[0]) &&
-      (error instanceof SshAuthExhaustedError || isForgeNetworkFailure(error));
+      (namedError instanceof SshAuthExhaustedError || isForgeNetworkFailure(namedError));
     const githubRemote = remoteFailure && Boolean(githubRepositoryFromRemote(await command("git", ["remote", "get-url", "origin"], cwd).catch(() => "")));
-    const kind = (file === "git" || file === "gh") ? classifyGitCommandFailure(error) : null;
+    const kind = (file === "git" || file === "gh") ? classifyGitCommandFailure(namedError) : null;
     // A failed remote mutation can have reached its recipient. Its caller's
     // durable intent, not this classification, governs any later retry.
     const ghRead = args[0] === 'pr' && ['view', 'list'].includes(args[1]) || args[0] === 'api'
       && !args.some(arg => ['-f', '-F', '--field', '--raw-field', '--input'].includes(arg))
       && !args.some((arg, i) => ['-X', '--method'].includes(arg) && args[i + 1]?.toUpperCase() !== 'GET');
     const mutating = file === 'git' && args[0] === 'push' || file === 'gh' && !ghRead;
-    const wrapped = error instanceof GitTransientError ? error : kind ? new GitTransientError(kind, error, kind === 'network' && mutating) : error;
+    const wrapped = namedError instanceof GitTransientError ? namedError : kind ? new GitTransientError(kind, namedError, kind === 'network' && mutating) : namedError;
     if ((file === "gh" && isForgeNetworkFailure(error) || githubRemote) && !await githubHealthy())
       throw new ForgeOutageError(wrapped);
     throw wrapped;

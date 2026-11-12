@@ -13,11 +13,11 @@
  * it publishes no review, spends no reviewer credit and cannot reach merge.
  */
 import { git, gitRaw } from '../git/index';
+import { gitHash, gitNulEach } from '../git/git-command';
 import { withFetchLock } from '../git/git-fetch';
 import { TERMINAL_TOOL_STATUSES, type TimelineEntry } from '../recovery/stall';
 import { now, type Store } from '../store/store';
 import { awaitingProofRoute, awaitingProofText, awaitingProofTexts, type AwaitingProof, type ProofExecutionRecord, type Run, type Task } from '../../shared/contracts';
-import { createHash } from 'node:crypto';
 
 /** A typed refusal with the invariant and the verb that clears it. */
 export class ProofExecutionRefusal extends Error {
@@ -190,8 +190,12 @@ export async function verifyProofSource(task: Task, expectedHead: string, option
   // Build outputs are allowed; tracked source and the index must still equal the pinned tree.
   const tracked = await required('The tracked-source proof', git(directory, 'status', '--porcelain', '--untracked-files=no'));
   if (tracked) refuseProof('source_dirty', `The proof executor requires source identical to the published head; tracked changes are present: ${tracked.split('\n').slice(0, 5).join('; ')}`);
-  const cached = await required('The staged-source proof', git(directory, 'diff', '--cached', '--name-only', expectedHead, '--'));
-  if (cached) refuseProof('source_dirty', `The proof executor requires an index identical to the published head; staged changes are present: ${cached.split('\n').slice(0, 5).join('; ')}`);
+  try { await git(directory, 'diff', '--cached', '--quiet', expectedHead, '--'); }
+  catch (error) {
+    if ((error as { code?: unknown }).code === 1)
+      refuseProof('source_dirty', 'The proof executor requires an index identical to the published head; staged changes are present');
+    throw new ProofExecutionRefusal('source_unavailable', `The staged-source proof could not be read: ${error instanceof Error ? error.message : String(error)}`);
+  }
   let remoteHead = head;
   if (options.remote !== false && task.proofOnly) {
     // Task 560: the fetch rewrites this checkout's `FETCH_HEAD`, so the read
@@ -512,12 +516,16 @@ export async function docsOnlyProofAutorunSkip(task: Task, head: string): Promis
   if (!prior || !declaration || prior.head === head || prior.selector !== declaration.selector
     || prior.inputs.length !== declaration.inputs.length
     || prior.inputs.some((input, index) => input !== declaration.inputs[index]) || !task.directory) return null;
-  let changed: string[];
-  try { changed = (await gitRaw(task.directory, 'diff', '--name-only', '-z', prior.head, head, '--')).split('\0').filter(Boolean); }
+  let changedCount = 0;
+  let docsOnly = true;
+  try { await gitNulEach(task.directory, ['diff', '--name-only', '-z', prior.head, head, '--'], path => {
+    changedCount++;
+    if (!path.startsWith('docs/') && !path.endsWith('.md')) docsOnly = false;
+  }); }
   catch { return null; }
   // An empty diff changes no byte a proof could read; it skips like a docs-only head.
-  if (changed.length === 0) return `empty diff since proof execution at ${prior.head}; no changed path can affect the proof`;
-  if (!changed.every(path => path.startsWith('docs/') || path.endsWith('.md'))) return null;
+  if (changedCount === 0) return `empty diff since proof execution at ${prior.head}; no changed path can affect the proof`;
+  if (!docsOnly) return null;
   return `docs-only changes since proof execution at ${prior.head}; selector and declared input hashes are unchanged`;
 }
 
@@ -529,8 +537,8 @@ export async function proofAutorunWaitingInputs(task: Task, head: string): Promi
     || prior.selector !== declaration.selector || prior.inputs.length !== declaration.inputs.length
     || prior.inputs.some((input, index) => input !== declaration.inputs[index])) return null;
   if (!task.directory) return `cannot verify declared inputs against proof execution at ${prior.head}; waiting for input re-declaration`;
-  let changed: string[];
-  try { changed = (await gitRaw(task.directory, 'diff', '--name-only', '-z', prior.head, head, '--')).split('\0').filter(Boolean); }
+  const changed: string[] = [];
+  try { await gitNulEach(task.directory, ['diff', '--name-only', '-z', prior.head, head, '--'], path => { changed.push(path); }); }
   catch { return `cannot verify changed paths since proof execution at ${prior.head}; waiting for input re-declaration`; }
   const declared = new Set(declaration.inputs.map(input => input.replace(/^sha256:/, '').toLowerCase()));
   if (declared.size === 0 || changed.length === 0) return null;
@@ -541,8 +549,7 @@ export async function proofAutorunWaitingInputs(task: Task, head: string): Promi
     let newHash: string | null = null;
     for (const revision of [prior.head, head]) {
       try {
-        const content = await gitRaw(task.directory, 'show', `${revision}:${path}`);
-        const hash = createHash('sha256').update(content).digest('hex');
+        const hash = await gitHash(task.directory, ['show', `${revision}:${path}`]);
         if (revision === prior.head) oldHash = hash;
         else newHash = hash;
       } catch { /* added or removed path: inspect the other side */ }
