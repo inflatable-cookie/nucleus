@@ -12,6 +12,7 @@ import { decode, config, optionDescriptor, shellSnapshot, projection, threadSnap
 export interface T3CodeConfig { endpoint: string; bearer: string; statePath: string; timeoutMs?: number; probeThreadId?: string }
 const identity = (purpose: string, value: string) => `nucleus-${purpose}-${createHash('sha256').update(value).digest('hex').slice(0, 40)}`;
 const activeStatuses = new Set(['preparing', 'queued', 'starting', 'running', 'waiting']);
+const inventoryReadAttempts = 5;
 const unsupported = (capability: string): never => { throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`); };
 /**
  * The option descriptor a model's thinking level rides: the nightly marks a
@@ -180,15 +181,20 @@ export class T3CodeHost implements Host {
   }
   private async inventory() {
     this.requireConnection();
-    const shell = await this.readShell();
-    const archived = decode(z.object({ schemaVersion: z.number().int().positive(), snapshotSequence: z.number().int().nonnegative(),
-      projects: z.array(project), threads: z.array(shellThread) }), await this.rpc.call('orchestration.getArchivedShellSnapshot', {}), 'getArchivedShellSnapshot');
-    // Both loaders report the application event cursor. An archive/unarchive
-    // between them can otherwise disappear from their union. Refuse that read.
-    if (shell.snapshotSequence !== archived.snapshotSequence) throw new T3CompatibilityError('inventory.snapshotSequence changed between live and archived reads');
-    const threads = [...shell.threads, ...shell.archivedThreads, ...archived.threads];
-    if (this.pendingThreadShape && threads[0]) await this.readProjection(threads[0].id);
-    return { projects: shell.projects, threads };
+    for (let attempt = 1; attempt <= inventoryReadAttempts; attempt++) {
+      const shell = await this.readShell();
+      const archived = decode(z.object({ schemaVersion: z.number().int().positive(), snapshotSequence: z.number().int().nonnegative(),
+        projects: z.array(project), threads: z.array(shellThread) }), await this.rpc.call('orchestration.getArchivedShellSnapshot', {}), 'getArchivedShellSnapshot');
+      // Both loaders report the application event cursor. If it moved between
+      // reads, repeat the read-only pair until both describe the same snapshot.
+      if (shell.snapshotSequence === archived.snapshotSequence) {
+        const threads = [...shell.threads, ...shell.archivedThreads, ...archived.threads];
+        if (this.pendingThreadShape && threads[0]) await this.readProjection(threads[0].id);
+        return { projects: shell.projects, threads };
+      }
+      if (attempt < inventoryReadAttempts) await new Promise(resolve => setTimeout(resolve, attempt * 10));
+    }
+    throw new T3CompatibilityError(`inventory kept moving between live and archived reads after ${inventoryReadAttempts} attempts`);
   }
   private workspaceFor(thread: Projection['thread']) {
     return Object.values(this.state.read().workspaces).find(w => w.projectId === thread.projectId && w.directory === thread.worktreePath)?.id ?? null;
