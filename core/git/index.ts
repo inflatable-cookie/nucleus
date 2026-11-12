@@ -1,6 +1,6 @@
 import { ForgeOutageError, githubHealthy, isForgeNetworkFailure, classifyGitCommandFailure, GitTransientError } from '../forge/forge-health';
 import { SshAuthExhaustedError } from './git-auth-retry';
-import { gitRaw as runGitRaw, nameOutputLimit } from "./git-command";
+import { gitRaw as runGitRaw, gitNulEach, nameOutputLimit } from "./git-command";
 import { execFile, execFileSync } from "node:child_process";
 import { lstatSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -518,11 +518,14 @@ export async function verifyWorkspace(task: Task, directory: string) {
  */
 export async function readStash(directory: string): Promise<StashEntry[]> {
   if (!await git(directory, "rev-parse", "--verify", "--quiet", "refs/stash").then(() => true, () => false)) return [];
-  const log = await git(directory, "log", "--walk-reflogs", "--format=%H%x09%gs", "refs/stash");
-  return log.split("\n").filter(Boolean).map(line => {
+  const entries: StashEntry[] = [];
+  await gitNulEach(directory, ["log", "--walk-reflogs", "-z", "--format=%H%x09%gs", "refs/stash"], record => {
+    const line = record.replace(/^\n+|\n+$/g, "");
+    if (!line) return;
     const tab = line.indexOf("\t");
-    return { sha: line.slice(0, tab), subject: line.slice(tab + 1) };
+    entries.push({ sha: line.slice(0, tab), subject: line.slice(tab + 1) });
   });
+  return entries;
 }
 /** The branch a stash entry was taken on, from `WIP on <branch>: ...` or `On <branch>: ...`. */
 export const stashBranch = (subject: string) => subject.match(/^(?:WIP on|On) ([^:]+):/)?.[1] ?? null;

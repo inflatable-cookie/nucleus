@@ -55,7 +55,8 @@ function gitRawOnce(cwd: string, args: string[], maxBuffer: number, extraEnv: Re
 
 /** Node's maxBuffer error omits argv, which makes an attention reason impossible to act on. */
 export function nameOutputLimit(error: unknown, command: readonly string[]): unknown {
-  if (!(error instanceof Error) || !/maxBuffer length exceeded/i.test(error.message)) return error;
+  if (!(error instanceof Error) || !/maxBuffer length exceeded/i.test(error.message)
+    || /exceeded its stdout output limit/i.test(error.message)) return error;
   const named = Object.assign(new Error(`${command.join(' ')} exceeded its stdout output limit: ${error.message}`), error);
   named.cause = error;
   return named;
@@ -70,7 +71,7 @@ export function formatGitError(args: readonly string[], code: number, signal: No
 /** Read a bounded prefix from a growing Git result without buffering the full output. */
 export function gitPrefix(cwd: string, args: string[], maxBytes: number): Promise<string> {
   return withSpawnSlot(() => new Promise((resolve, reject) => {
-    const child = spawn("git", args, { cwd, env: { ...process.env, ...GIT_ENV }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("git", args, { cwd, timeout: 30_000, killSignal: "SIGKILL", env: { ...process.env, ...GIT_ENV }, stdio: ["ignore", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
     let size = 0;
     let stderr = "";
@@ -104,7 +105,7 @@ export function gitPrefix(cwd: string, args: string[], maxBytes: number): Promis
 /** Process a potentially large NUL-delimited Git result one record at a time. */
 export async function gitNulEach(cwd: string, args: string[], visit: (record: string) => void | Promise<void>): Promise<void> {
   await withSpawnSlot(async () => {
-    const child = spawn("git", args, { cwd, env: { ...process.env, ...GIT_ENV }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("git", args, { cwd, timeout: 30_000, killSignal: "SIGKILL", env: { ...process.env, ...GIT_ENV }, stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     const closed = new Promise<number | null>((resolve, reject) => {
       child.once("error", reject);
@@ -134,7 +135,7 @@ export async function gitNulEach(cwd: string, args: string[], visit: (record: st
 /** Hash a potentially large Git blob as it streams from the child process. */
 export async function gitHash(cwd: string, args: string[]): Promise<string> {
   return withSpawnSlot(async () => {
-    const child = spawn("git", args, { cwd, env: { ...process.env, ...GIT_ENV }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("git", args, { cwd, timeout: 30_000, killSignal: "SIGKILL", env: { ...process.env, ...GIT_ENV }, stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     const closed = new Promise<number | null>((resolve, reject) => {
       child.once("error", reject);

@@ -26,7 +26,12 @@ export async function consumerBlockAdvance(repoPath: string, record: HookRecord,
     if ((await gitRaw(repoPath, ['merge-base', '--is-ancestor', record.baseCommit, head])).code !== 0) return null;
     const owned = [...record.allowedPaths, ...(record.manifest ? [record.manifest.path] : [])];
     if (!owned.length) return null;
-    const changed = await git(repoPath, 'diff', '--name-only', record.baseCommit, head, '--', ...owned.map(path => `:(literal)${path}`));
-    return changed ? head : null;
+    try {
+      await git(repoPath, 'diff', '--quiet', record.baseCommit, head, '--', ...owned.map(path => `:(literal)${path}`));
+      return null;
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 1) return head;
+      throw error;
+    }
   } catch { return null; }
 }

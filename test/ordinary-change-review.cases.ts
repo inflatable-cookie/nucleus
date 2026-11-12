@@ -1,6 +1,7 @@
 import { test } from './support/sharded-test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ownerRevisionFixture, runGit } from './support/review-entry-fixture';
@@ -577,11 +578,11 @@ test('a review prompt of any delta size carries references and never diff text',
   try {
     const prior = { id: 'prior', head: f.oldHead, base: f.planningCommit,
       completion: { summary: 'Read source', reviewText: 'Earlier finding: keep the API shape' } } as Run;
-    const referenceForm = (delta: string, head: string) => {
+    const referenceForm = (delta: string, head: string, priorHead = prior.head) => {
       assert.ok(delta.length < REVIEW_PROMPT_INLINE_BUDGET, `reference prompt is ${delta.length} characters`);
       assert.match(delta, /Diff stat:/);
       assert.match(delta, /Changed files:/);
-      assert.ok(delta.includes(prior.head) && delta.includes(head), 'the exact prior and new SHAs travel');
+      assert.ok(delta.includes(priorHead) && delta.includes(head), 'the exact prior and new SHAs travel');
       assert.match(delta, /git diff --no-ext-diff --no-color/);
       assert.match(delta, /git range-diff --no-color/);
       assert.match(delta, /Earlier finding: keep the API shape/);
@@ -597,15 +598,27 @@ test('a review prompt of any delta size carries references and never diff text',
     const small = await ordinaryReviewDelta(f.store.task(f.task.id), prior, smallHead, f.planningCommit);
     referenceForm(small, smallHead);
     assert.match(small, /feature\.txt/);
-    // A generated file puts this review's patch text well past the old 1 MiB child buffer.
-    writeFileSync(join(f.workspace, 'big.txt'), `${'x'.repeat(1024)}\n`.repeat(1800));
-    runGit(f.workspace, 'add', '.'); runGit(f.workspace, 'commit', '-m', 'large delta');
-    const bigHead = runGit(f.workspace, 'rev-parse', 'HEAD');
-    const big = await ordinaryReviewDelta(f.store.task(f.task.id), prior, bigHead, f.planningCommit);
-    referenceForm(big, bigHead);
+    // Change part of the generated blob while keeping the patch similar enough
+    // for range-diff to pair the commits; its patch-of-patches exceeds 1 MiB.
+    const generatedPath = join(f.workspace, 'big.txt');
+    const generated = (change: boolean) => `${Array.from({ length: 2200 }, (_, line) => `${String(line).padStart(4, '0')}-${(change && line >= 1500 ? 'y' : 'x').repeat(1024)}`).join('\n')}\n`;
+    writeFileSync(generatedPath, generated(false));
+    runGit(f.workspace, 'add', 'big.txt'); runGit(f.workspace, 'commit', '-m', 'regenerate bindings');
+    const priorGeneratedHead = runGit(f.workspace, 'rev-parse', 'HEAD');
+    writeFileSync(generatedPath, generated(true));
+    runGit(f.workspace, 'add', 'big.txt'); runGit(f.workspace, 'commit', '--amend', '--no-edit');
+    const generatedHead = runGit(f.workspace, 'rev-parse', 'HEAD');
+    const rangeDiff = execFileSync('git', ['-C', f.workspace, 'range-diff', '--no-color',
+      `${f.planningCommit}..${priorGeneratedHead}`, `${f.planningCommit}..${generatedHead}`],
+      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+    assert.ok(Buffer.byteLength(rangeDiff) > 1024 * 1024,
+      `the fixture range-diff exceeds the old child buffer (${Buffer.byteLength(rangeDiff)} bytes)`);
+    const generatedPrior = { ...prior, head: priorGeneratedHead };
+    const big = await ordinaryReviewDelta(f.store.task(f.task.id), generatedPrior, generatedHead, f.planningCommit);
+    referenceForm(big, generatedHead, priorGeneratedHead);
     assert.match(big, /big\.txt/);
-    assert.doesNotMatch(big, /Pure rebase confirmation/, 'the added generated file is a source change, not a rebase');
-    assert.ok(!big.includes('x'.repeat(256)), 'no delta body travels in the prompt');
+    assert.doesNotMatch(big, /Pure rebase confirmation/, 'the changed generated patch is not a pure rebase');
+    assert.ok(!big.includes('x'.repeat(256)) && !big.includes('y'.repeat(256)), 'no generated content travels in the prompt');
   } finally { f.close(); }
 });
 

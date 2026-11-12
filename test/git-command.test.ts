@@ -42,5 +42,9 @@ test("the default shared Git timeout is bounded", async () => {
 
 test("a child output limit names the Git command", async () => {
   const { directory, env } = fakeGit("process.stdout.write('x'.repeat(4096));");
-  await assert.rejects(command("git", ["overflow"], directory, env, { maxBuffer: 1024 }), /git overflow exceeded its stdout output limit/);
+  await assert.rejects(command("git", ["overflow"], directory, env, { maxBuffer: 1024 }), error => {
+    assert.match((error as Error).message, /git overflow exceeded its stdout output limit/);
+    assert.equal(((error as Error).message.match(/git overflow/g) ?? []).length, 1);
+    return true;
+  });
 });
