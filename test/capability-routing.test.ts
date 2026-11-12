@@ -275,11 +275,11 @@ test('set_routing naming a profile before the catalog loads refuses as retryable
 
 test('nucleus#1139: a task\'s host catalog keeps profiles it cannot run out of selection', async t => {
   // One profile with a thinking level the T3 catalog does not report, one it does.
-  const luna=profile('luna','luna-model',{thinkingOptionId:'xhigh',supportedThinking:['xhigh']});
-  const sol=profile('sol','sol-model',{thinkingOptionId:'high',supportedThinking:['high']});
+  const luna=profile('luna','luna-model',{thinkingOptionId:'xhigh',supportedThinking:['xhigh'],provider:'codex'});
+  const sol=profile('sol','sol-model',{thinkingOptionId:'high',supportedThinking:['high'],provider:'codex'});
   const all=[luna,sol];
   const pool=all.map((p,i)=>poolSchema.parse({profileId:p.id,enabled:true,group:`g-${i}`,roles:['worker'],weight:1,scopes:['general','mechanical','complex'],capability:'medium'}));
-  const t3Catalog={providers:[{key:'test',label:'test',available:true,problem:'',models:[
+  const t3Catalog={providers:[{key:'codex',label:'Codex',available:true,problem:'',models:[
     {id:'luna-model',label:'Luna',aliases:[],thinkingOptions:[{id:'low',label:'Low'},{id:'high',label:'High'}],defaultThinkingOptionId:null,modes:[],features:[]},
     {id:'sol-model',label:'Sol',aliases:[],thinkingOptions:[{id:'high',label:'High'}],defaultThinkingOptionId:null,modes:[],features:[]}]}]};
   const primaryAdapter={profiles:async()=>all,observe:observeIdle('ws','agent'),catalog:async()=>({providers:[]})} as unknown as Adapter;
@@ -303,14 +303,14 @@ test('nucleus#1139: a task\'s host catalog keeps profiles it cannot run out of s
     // The primary set is untouched: both profiles available from the empty primary catalog.
     const onPrimary=engine.profilesFor(undefined);
     assert.equal(onPrimary.find(p=>p.id==='luna')?.available,false,'the primary catalog offers no providers at all');
-    assert.match(onPrimary.find(p=>p.id==='luna')?.problem ?? '',/Provider test is not available/);
+    assert.match(onPrimary.find(p=>p.id==='luna')?.problem ?? '',/Provider codex is not available/);
     const task=taskOf({complexity:'high',thinkingOptionId:'xhigh'});
     assert.equal(ids(chooseProfile(task,onT3,pool,equalUsage(pool),new Set())),null,'a task pinned to xhigh has no eligible T3 profile');
     assert.equal(ids(chooseProfile({...task,thinkingOptionId:'high'},onT3,pool,equalUsage(pool),new Set())),'sol','the supported level selects Sol on T3');
     // Route validation reads the task host's snapshot too: a mode or feature
     // value the host does not report refuses the routing instead of recording
     // a request that refuses at launch (nucleus#1139 review).
-    const novaFeature=profile('nova','sol-model',{featureValues:{fast:true}});
+    const novaFeature=profile('nova','sol-model',{featureValues:{fast:true},provider:'codex'});
     store.setProfiles([...store.profiles(),{id:novaFeature.id,name:novaFeature.id,provider:novaFeature.provider,model:novaFeature.model,featureValues:{fast:true},notes:''}]);
     const storeTask=store.insert(taskOf({complexity:'high'}),'t3code:env','handoff','a'.repeat(40));
     store.update(storeTask.id,{phase:'queued',reason:'Queued for dispatch',profile:sol,profileGroup:'g-1',workspaceId:'ws',directory:'/worktree'});
@@ -322,7 +322,7 @@ test('nucleus#1139: a task\'s host catalog keeps profiles it cannot run out of s
       /Profile nova is unavailable: Configured option fast is not supported/);
     // The same routing on the primary host's view is only unavailable for a
     // different reason, never the T3 feature answer.
-    assert.equal(engine.profilesFor(undefined).find(p=>p.id==='nova')?.problem,'Provider test is not available on this host');
+    assert.equal(engine.profilesFor(undefined).find(p=>p.id==='nova')?.problem,'Provider codex is not available on this host');
   }finally{await engine.stop();store.close();rmSync(dir,{recursive:true,force:true});}
 });
 
