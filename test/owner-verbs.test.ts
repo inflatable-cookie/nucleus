@@ -16,7 +16,7 @@ import {
   authorDeclarationSchema, completionSchema, dispositionSchema, incidentSchema, reviewCheckpointRecordSchema, reviewEntryRecordSchema, runSchema, submissionSchema,
   holdsOf, TASK_CONTROL_RELAYED_NOTE_ACTIONS, taskControlInputSchema, taskNextInputSchema, taskNextSchema, taskStopKind,
   taskControlRequestSchema,
-  type Run, type Submission, type Task, type TaskControlInput,
+  type Run, type Submission, type Task, type TaskControlInput, type TaskNextVerb,
 } from '../shared/contracts';
 import { collectOwnerVerbFacts, ownerTaskNext, ownerVerbs } from '../core/verbs/owner-verbs';
 import { heldBriefQueuePolicy } from '../core/planning/handoff';
@@ -431,6 +431,8 @@ test('a fresh queued task lists routing and the stop that can park its dispatch'
     assert.equal(view.stop?.evidence, null);
     assert.equal(view.activeRun, null);
     assert.ok(view.verbs.length >= 5);
+    assert.equal(view.verbs.some(verb => verb.verb === 'restart' && verb.available), false,
+      'a fresh queued task already follows ordinary dispatch and does not need restart');
     assert.ok(view.verbs.filter(verb => verb.verb === 'route' && verb.available).length === 3,
       'route is listed once for each role, each prefilled');
     assert.deepEqual(view.verbs.filter(verb => verb.available && verb.verb !== 'route').map(verb => verb.verb), ['stop','set_dependencies'],
@@ -438,6 +440,53 @@ test('a fresh queued task lists routing and the stop that can park its dispatch'
     const stopped = await f.engine.stopTask(taskControlInputSchema.parse({ action: 'stop', taskId: f.taskId, version: f.task().version, reason: 'Park dispatch' }));
     assert.ok(holdsOf(stopped).dispatch);
   } finally { await f.close(); }
+});
+
+test('every available next offer applies on queued and post-move pre-PR task shapes', async () => {
+  const coordinatorProfile = profile('coordinator', 'test/coordinator');
+  const configure = (f: ReturnType<typeof fixture>, shape: 'queued' | 'post_move') => {
+    f.store.setMeta('paused', true);
+    f.engine.profiles = [workerProfile, reviewerProfile, coordinatorProfile];
+    f.store.setMeta('pool', [
+      { profileId: workerProfile.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
+      { profileId: reviewerProfile.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] },
+      { profileId: coordinatorProfile.id, enabled: true, group: 'review', roles: ['coordinator'], weight: 1, scopes: ['general'] },
+    ]);
+    Object.assign(f.adapter, { findAnyOpenBranchPr: async () => [] });
+    if (shape === 'post_move') f.store.update(f.taskId, {
+      phase: 'changes_requested', agentId: null, runId: 'previous-worker-run', workspaceId: 'workspace',
+      directory: '/worktree', profile: workerProfile, workerModel: workerProfile.model,
+      completion: null, prUrl: null, prHead: null,
+    });
+  };
+  const fields = (view: TaskNextVerb) => Object.fromEntries((view.fill ?? []).map(field => [field,
+    field === 'reason' ? 'Apply the action offered by next'
+      : field === 'instruction' ? 'Continue the approved task'
+        : field === 'dependsOn' ? []
+          : field === 'profileId' ? ({ worker: workerProfile.id, reviewer: reviewerProfile.id, coordinator: coordinatorProfile.id }[String(view.args?.role)] ?? '')
+            : 'test value']));
+
+  for (const shape of ['queued', 'post_move'] as const) {
+    const sample = fixture();
+    let offers: number[];
+    try {
+      configure(sample, shape);
+      offers = sample.next().verbs.flatMap((view, index) => view.available ? [index] : []);
+      assert.ok(offers.length > 0, `${shape}: next exposes applicable actions`);
+    } finally { await sample.close(); }
+
+    for (const index of offers) {
+      const f = fixture();
+      try {
+        configure(f, shape);
+        const view = f.next().verbs[index]!;
+        assert.equal(view.available, true, `${shape}: offer ${index} is still available on the matching fixture`);
+        const control = taskControlInputSchema.parse({ ...view.args, ...fields(view), caller: CALLER });
+        await assert.doesNotReject(f.engine.performTaskControl(control),
+          `${shape}: ${view.verb} ${JSON.stringify(view.args)} applies what next offered`);
+      } finally { await f.close(); }
+    }
+  }
 });
 
 test('a held queued task reports a held stop from its fence, not its creation-time dispatch wait', async () => {

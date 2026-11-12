@@ -164,7 +164,7 @@ export function restartShape(task: Task, runs: Run[], role: RestartRole, events:
     // own shape above; every other unreleased run still owns the task.
     if (!task.agentId && !task.agentIntent && !runs.some(run => !run.released)
       && !task.resolution.currentRunId && !task.resolution.recoveryActive
-      && !task.completion && !prIdentity(task) && !task.resumePrNumber) return "pre_dispatch";
+      && !task.completion && !prIdentity(task) && !task.resumePrNumber && task.phase !== "queued") return "pre_dispatch";
     const stoppedRevision = runs.findLast(run => run.role === "revision" && !run.completion && !run.released
       && run.agentId === task.agentId && run.workspaceId === task.workspaceId);
     if (stoppedRevision && (["changes_requested", "needs_attention", "blocked", "error"].includes(task.phase)
