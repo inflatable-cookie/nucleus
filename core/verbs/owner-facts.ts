@@ -2,7 +2,7 @@ import { taskNeverDispatched, liveRun } from "../task-decision-rules";
 import { boardDispatchHoldApplies, BOARD_DISPATCH_HOLD_REASON } from "../../shared/board-dispatch-hold";
 import { supersededWorkerResult } from "../recovery/incident";
 import { holdOwnerOf, taskOwner } from "../../shared/contracts";
-import { holdsOf, incidentBindsCurrentWork, taskNextRunSchema, taskNextStopSchema, taskStopKind, taskStopClassification, taskStopRecord, currentTaskStop, DISPATCH_WAIT_REASON, blockingHoldFence, WORKER_REPLACEMENT_CEILING, type Notice, type Run, type Task, type TaskNext, type TaskNextStop } from "../../shared/contracts";
+import { holdsOf, incidentBindsCurrentWork, taskNextRunSchema, taskNextStopSchema, taskStopKind, taskStopClassification, taskStopRecord, currentTaskStop, DISPATCH_WAIT_REASON, blockingHoldFence, WORKER_REPLACEMENT_CEILING, type Notice, type Profile, type Run, type Task, type TaskNext, type TaskNextStop } from "../../shared/contracts";
 import { type HookRecord } from "../../shared/hooks";
 import type { TaskStopReason } from "../../shared/task-stop";
 import { noActionEscalationAtAcceptedHead } from "../recovery/task-reasons";
@@ -27,6 +27,12 @@ export interface OwnerVerbFacts {
    * An applied verb is not a competing writer against itself; `next` has none.
    */
   operationId?: string | null;
+  /**
+   * The routing profiles the task's own host reports (`Engine.profilesFor`), so
+   * `next`'s routing policy carries the host effects and the selection
+   * explanation that `queue.detail` shows (nucleus#1151). Absent: no snapshot.
+   */
+  hostProfiles?: Profile[];
   /** The engine's authenticated reporting coordinator run, when one is applying this read. */
   reportingRunId?: string | null;
   /**

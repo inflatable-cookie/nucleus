@@ -1067,7 +1067,8 @@ request identities and submitted handoffs are not rewritten.
   default, and Settings → Profiles edits it beside the list. A profile's
   per-host-kind setting maps or excludes it on one host (nucleus#1151); each
   host's routing snapshot carries that host's launch values (the host's own
-  provider key included), and a task's `routingPolicy` lists the enabled pool
+  provider key included), and a task's `routingPolicy` (on `queue.detail` and
+  `next`, both read against the task host's snapshot) lists the enabled pool
   profiles its host rules out or maps (`host.effects`) and how automatic worker
   selection reads now (`selection`: complexity, role and usage offsets, the
   first-attempt step, the demand, the profiles meeting it ordered by recent use

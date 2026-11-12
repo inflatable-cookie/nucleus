@@ -10,6 +10,8 @@ import type { Adapter } from '../core/host';
 import { Store } from '../core/store/store';
 import { RuntimeSettings } from '../core/runtime/settings';
 import { chooseProfile } from '../core/dispatch/routing';
+import { RuntimeBoard, type BoardContext } from '../core/runtime/board';
+import { createTaskDetailCache } from '../core/telemetry/task-detail';
 import { nucleusProfileSchema, profileCompatibility, type NucleusProfile, type ProfileHostSetting } from '../shared/profiles';
 import { poolSchema, submissionSchema, type PoolEntry, type Profile, type Task } from '../shared/contracts';
 import type { HostAgentSpec, HostCatalog } from '../shared/host';
@@ -165,6 +167,14 @@ test('a mapped profile launches on T3 with its mapped values, an excluded one is
       { profileId: 'shape-4', name: 'Claude opus (bypassPermissions)', effect: 'mapped', reason: 'launches as claudeAgent/claude-opus-5-5, mode full-access (mapped: provider, modeId, thinkingOptionId, featureValues)' },
     ]);
     assert.equal(policy.selection?.choice?.profileId, 'shape-4');
+
+    // `next` (CLI and the board's Next view) reads the same host snapshot as queue.detail.
+    const board = new RuntimeBoard({ store, engine, markStoreAccess: () => {},
+      cachedTaskDetail: createTaskDetailCache(store, { profiles: task => engine.profilesFor(task.hostId) }) } as unknown as BoardContext);
+    const next = board.taskNext({ taskId: retained.id });
+    assert.deepEqual(next.routingPolicy?.host, policy.host);
+    assert.equal(next.routingPolicy?.selection?.choice?.profileId, 'shape-4');
+    assert.equal(next.routingPolicy?.selection?.demand, policy.selection?.demand);
 
     // The compatibility read shares the same answers, per host.
     const read = engine.profileCompatibility();
