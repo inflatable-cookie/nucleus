@@ -96,10 +96,17 @@ export async function archiveReplacedReviewer(store: Store, adapter: Adapter, ru
       && !state.permissions && ['idle', 'error', 'closed'].includes(state.status);
   };
   if (removesThreads(adapter)) {
+    // A stop reply may precede its turn becoming idle. Reuse the existing ready
+    // observation marker so the sweep finishes that replacement after the stop;
+    // ready proves that no archive or delete was sent. A prior unknown effect
+    // keeps its own identity and delivery history.
+    if (!store.getMeta<ArchiveEffect>(key))
+      store.putThreadArchiveEffect(key, run.agentId, { status: 'ready', at: now() } satisfies ArchiveEffect);
     try {
       if (!await stoppedAndIdle()) return false;
       // Presentation only: the thread stays visible and settled until closeout.
       await adapter.settleReportedThread?.(run.agentId, run.id).catch(() => undefined);
+      if (store.getMeta<ArchiveEffect>(key)?.status === 'ready') store.deleteMeta(key);
       return true;
     } catch { return false; }
   }
@@ -398,6 +405,12 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
       // Ownership may have changed while the observation was in flight.
       if (store.getMeta('paused') || store.unreleasedRunsForAgent(agentId, task.hostId).length || store.tasks().some(other => other.id !== task.id && (!other.hostId || !task.hostId || other.hostId === task.hostId) && !['done', 'cancelled'].includes(other.phase) && !other.removedAt
         && [other.agentId, other.coordinatorAgentId, other.resolution.reviewerAgentId].includes(agentId))) return;
+      // A ready record has never delivered anything: a stopped-reviewer
+      // observation marker may safely take the terminal role's desired operation.
+      if (effect?.status === 'ready' && (effect.op ?? 'archive') !== op) {
+        effect = { ...effect, op };
+        store.putThreadArchiveEffect(key, agentId, effect);
+      }
       if (!effect || fresh) {
         store.putThreadArchiveEffect(key, agentId, { status: 'intent', at: now(), op } satisfies ArchiveEffect);
         store.event(task.id, 'thread_archive_intent', `terminal task thread: ${op === 'delete' ? 'remove' : 'archive'} ${agentId}`);
@@ -546,10 +559,8 @@ export function finishedThreadCleanupCatchUp(store: Store, hostId: string, remov
  * durable effects. Completion is recorded per task, so a later sweep does
  * nothing; a task that still owes an effect stays selectable until it is done.
  */
-export async function catchUpFinishedTaskThreads(store: Store, adapter: Adapter): Promise<void> {
+export async function catchUpFinishedTaskThreads(store: Store, adapter: Adapter, hostId: string): Promise<void> {
   if (store.getMeta('paused') || !removesThreads(adapter)) return;
-  const hostId = (adapter as Adapter & { hostId?: string }).hostId;
-  if (!hostId) return;
   for (const task of finishedThreadCleanupCatchUp(store, hostId, true)) {
     try {
       await archiveFinishedThreads(store, adapter, task.id);

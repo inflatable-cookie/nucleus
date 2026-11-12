@@ -224,7 +224,7 @@ export class Sweep {
         // its threads their closeout cleanup. One direct query per host; the
         // terminal lane's durable effects and the per-task completion record make
         // it run once (nucleus#1155 brief v3).
-        try { await catchUpFinishedTaskThreads(this.engine.store, this.engine.adapter); }
+        try { await catchUpFinishedTaskThreads(this.engine.store, this.engine.adapter, host); }
         catch { /* the per-thread effects keep for the next pass */ }
         if (this.engine.inventoryHostMatches(host)) inventory = observed;
       });
