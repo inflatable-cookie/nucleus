@@ -99,7 +99,7 @@ export interface Adapter extends RunUsageSource {
   helperPath?: string;
   /** Unix-socket path the helper ticket names; required to re-issue a T3 consult ticket. */
   socketPath?: string;
-  createRun?(task: Task, run: Run, token: string, context?: import('./types').RecoveryDispatchSnapshot | null, ownerContext?: import('./types').OwnerReviewContext | null, guard?: { allowed(): Promise<boolean>; stillAllowed(): boolean }): Promise<{ id: string; workspaceId: string | null }>;
+  createRun?(task: Task, run: Run, token: string, context?: import('./types').RecoveryDispatchSnapshot | null, ownerContext?: import('./types').OwnerReviewContext | null, guard?: { allowed(): Promise<boolean>; stillAllowed(): boolean }, affectedTestsCommand?: string): Promise<{ id: string; workspaceId: string | null }>;
   /** Engine hook for per-step creation timings and the visible wait reason. */
   workspaceCreationProgress?: (taskId: string, step: string, status: "started" | "finished" | "skipped", elapsedMs?: number, outcome?: "ok" | "failed") => void;
   purgeReportingFiles?(taskId:string,runIds:string[]):void;

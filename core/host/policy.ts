@@ -32,9 +32,9 @@ export interface HostPolicyPort extends Required<Pick<Adapter,
   preservedGitIdentity(directory: string): Promise<string | null>;
   inspectRegistration: RegistrationAdapter['inspectRegistration'];
   prepareRegistration(task: Task, token: string): void;
-  createRun(task: Task, run: Run, token: string, context?: RecoveryDispatchSnapshot | null, ownerContext?: OwnerReviewContext | null, guard?: { allowed(): Promise<boolean>; stillAllowed(): boolean }): Promise<{ id: string; workspaceId: string | null }>;
+  createRun(task: Task, run: Run, token: string, context?: RecoveryDispatchSnapshot | null, ownerContext?: OwnerReviewContext | null, guard?: { allowed(): Promise<boolean>; stillAllowed(): boolean }, affectedTestsCommand?: string): Promise<{ id: string; workspaceId: string | null }>;
   guardedNativeAgentCreate(spec: HostAgentSpec, mcp: boolean, retry: boolean): Promise<{ id: string; workspaceId: string | null }>;
-  sendRun(task: Task, run: Run, token: string, context?: RecoveryDispatchSnapshot | null, ownerContext?: OwnerReviewContext | null, guard?: { allowed(): Promise<boolean>; stillAllowed(): boolean }): Promise<void>;
+  sendRun(task: Task, run: Run, token: string, context?: RecoveryDispatchSnapshot | null, ownerContext?: OwnerReviewContext | null, guard?: { allowed(): Promise<boolean>; stillAllowed(): boolean }, affectedTestsCommand?: string): Promise<void>;
   verifyReview(task: Task, run: Run, result: Completion, reviewer?: ReviewerSetting): Promise<number | void>;
   scratchNamespaceFor?: (task: Task) => string;
   runScratch: RunScratchPlacement;

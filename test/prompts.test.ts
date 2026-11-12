@@ -1165,6 +1165,16 @@ test('handoff-mode prompts and reviewer continuations carry the required-proof i
   assert.ok(operatorReviewContinuationPrompt(handoffTask,run,checkpoint,authorization).includes(REQUIRED_PROOF_REVIEWER_NOTE));
 });
 
+test('affected-test prompts are opt-in and use the repository command', () => {
+  const task={id:'task',runId:'initial',title:'Build',originAgentId:'origin',coordinatorAgentId:null,dependsOn:[],branch:'ns-task',baseBranch:'main',repoPath:'/repo',workspaceId:'workspace',directory:'/worktree',handoffPath:'handoff.md',planningCommit:'a'.repeat(40),retiredWorkers:[],skipPRReview:false,prUrl:null,reason:'Review',completion:{status:'ready_for_review',prNumber:1},resolution:{revisionPrRepair:false}} as unknown as Task;
+  const ordinary = [workerPrompt(task,true), runPrompt(task,{id:'run',role:'revision',generation:1,head:'a'.repeat(40)} as Run,'/helper','/ticket',true), runPrompt(task,{id:'run',role:'reviewer',generation:1,head:'a'.repeat(40)} as Run,'/helper','/ticket',true)];
+  for (const prompt of ordinary) assert.doesNotMatch(prompt,/Affected tests:/);
+  const configured = 'effigy test:affected --run';
+  const optedIn = [workerPrompt(task,true,[],null,undefined,undefined,configured), runPrompt(task,{id:'run',role:'revision',generation:1,head:'a'.repeat(40)} as Run,'/helper','/ticket',true,null,null,configured), runPrompt(task,{id:'run',role:'reviewer',generation:1,head:'a'.repeat(40)} as Run,'/helper','/ticket',true,null,null,configured)];
+  for (const prompt of optedIn) assert.match(prompt,/effigy test:affected --run/);
+  assert.match(optedIn[2],/missing or failing affected run is a finding/);
+});
+
 test('recovery coordinator prompt carries the launch snapshot and the one refresh command for the plan', () => {
   const task = { id: 'task', title: 'Recover', phase: 'reviewing', reason: 'Checkpoint 1 awaits continuation', originAgentId: 'origin', repoPath: '/repo', workspaceId: 'workspace', directory: '/worktree', handoffPath: 'handoff.md', planningCommit: 'a'.repeat(40), branch: 'ns-task', baseBranch: 'main', skipPRReview: false, prUrl: 'https://github.com/example/repo/pull/1', resolution: {} } as unknown as Task;
   const run = { id: 'recovery', role: 'recovery', generation: 2, head: 'a'.repeat(40) } as Run;

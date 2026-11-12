@@ -118,7 +118,7 @@ export class WorkerLauncher {
     try {
       const helper = this.adapter.helperPath;
       const ticket = helper && prepared.runId ? runTicketPath({ helperPath: helper }, prepared.runId) : undefined;
-      const agent = await this.adapter.createAgent(prepared, token, workerPrompt(prepared, Boolean(this.adapter.reportingViaMcp), this.store.runs(prepared.id), worktreeLinkRecordFailure, helper, ticket),workerPrompt(prepared,false, this.store.runs(prepared.id), worktreeLinkRecordFailure, helper, ticket));
+      const agent = await this.adapter.createAgent(prepared, token, workerPrompt(prepared, Boolean(this.adapter.reportingViaMcp), this.store.runs(prepared.id), worktreeLinkRecordFailure, helper, ticket, this.store.canonicalRepository(prepared.repoPath, prepared.repository)?.affectedTests?.command),workerPrompt(prepared,false, this.store.runs(prepared.id), worktreeLinkRecordFailure, helper, ticket, this.store.canonicalRepository(prepared.repoPath, prepared.repository)?.affectedTests?.command));
       this.store.update(task.id, { agentId: agent.id }, "agent_created", agent.id);
       if (agent.workspaceId !== task.workspaceId) throw new Error("Worker returned in the wrong workspace; inspect before proceeding");
     } catch (error) {

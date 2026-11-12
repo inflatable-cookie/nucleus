@@ -91,7 +91,7 @@ export class RunLaunchDeliver {
           stillAllowed,
         } : undefined;
         dispatchInvoked = true;
-        await this.adapter.sendRun!(fresh, savedRun, token, null, ownerReviewContext(this.store, fresh, savedRun), sendGuard);
+        await this.adapter.sendRun!(fresh, savedRun, token, null, ownerReviewContext(this.store, fresh, savedRun), sendGuard, this.store.canonicalRepository(fresh.repoPath, fresh.repository)?.affectedTests?.command);
         if (proofExecutor(run.role)) {
           // Task 582: a continued executor turn is still its own run and its
           // own receipt; the retained thread carries no authority or credit
@@ -146,7 +146,7 @@ export class RunLaunchDeliver {
           };
         })() : undefined;
         const created = await this.adapter.createRun!(fresh, savedRun, token, null,
-          ownerReviewContext(this.store, fresh, savedRun), launchGuard); agentId = created.id;
+          ownerReviewContext(this.store, fresh, savedRun), launchGuard, this.store.canonicalRepository(fresh.repoPath, fresh.repository)?.affectedTests?.command); agentId = created.id;
         // Review-entry creation follows a fresh writer-yield, exact local
         // checkout and open-PR-head proof immediately before this native send.
         this.store.putRun({ ...this.store.run(run.id)!, agentId });
