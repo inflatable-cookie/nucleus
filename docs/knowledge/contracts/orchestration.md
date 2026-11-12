@@ -956,6 +956,8 @@ request identities and submitted handoffs are not rewritten.
   board hold clears no task hold and uses the existing dispatch order and capacity
   gates. Each dispatch pass reads this setting once, with no additional task scan.
   Scheduled and manual project QA are unaffected: QA has its own fence.
+- A new store starts paused with an empty worker pool, so nothing dispatches
+  until the operator adds profiles and resumes. Pause survives restarts.
 - Pause stores submissions and defers new dispatch; existing work drains (Tom,
   2026-11-05 and 2026-11-08). Under pause, no new run of any kind
   starts (dispatch, revision, reviewer, coordinator, recovery, proof, or a
@@ -2804,6 +2806,28 @@ movement invalidates source approval and preserves the normal readiness gates.
   turn proof is read after the evidence it settles, so a turn that started
   during pagination still holds. Nucleus never reads provider files to settle a
   call.
+
+### History retention
+
+- A daily pass while unpaused purges each task whose history has passed the
+  4-day expiry window (Tom, 2026-10-20; see [Closeout and
+  outcomes](#closeout-and-outcomes)), deleting its events, runs, receipts,
+  notices and hook records. These defer the purge: unreleased runs; a
+  pending archive intent or a merge without a recorded commit; an unfinished
+  build-output cleanup, workspace retirement or runtime retirement; an
+  external workspace archive in `intent` or `uncertain`; a done task's
+  workspace, closeout workspace or review-source view not yet archived; a
+  notice in `pending`, `intent` or `uncertain`; unsettled hook custody; and
+  an origin that never resolved. Pausing pauses retention.
+  A task whose hook retention is not settled keeps its whole history: hook
+  records carry the only proof of an isolated checkout's ownership.
+- A purge leaves a tombstone naming the task identity, submission identity,
+  input hash, task reference and whether the goal was met, so dependencies
+  still resolve (a purged prerequisite never satisfies a dependent and reads
+  as "history purged") and a repeated submission returns the retained record
+  instead of launching the work again. Outcome rows are permanent and never
+  purged ([Spec 025](../specs/025-outcome-query.md)); usage samples are
+  pruned separately at 14 days ([Spec 059](../specs/059-usage-gauge.md)).
 
 ## Test infrastructure
 
