@@ -20,7 +20,7 @@ import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs'
 function fixture() {
   const f = ownerRevisionFixture();
   let store = f.store;
-  const worker: Profile = { ...f.reviewer, id: 'worker', model: 'worker-model' };
+  const worker: Profile = { ...f.reviewer, id: 'worker', model: 'gpt-6.1-terra' };
   const task = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Ordinary delta review',
     repoPath: f.repo, planningCommit: f.planningCommit, brief: { text: 'Review feature changes.', mediaType: 'text/markdown' }, originAgentId: 'origin' }), 'host', 'Review feature changes.', f.planningCommit);
   store.setMeta('paused', false);
@@ -29,7 +29,7 @@ function fixture() {
     agentId: 'worker', runId: 'worker-run', profile: worker, workerModel: worker.model, workerModels: [worker.model],
     workspaceIntent: true, agentIntent: true, prHead: f.oldHead, prUrl: 'https://github.com/example/repo/pull/41', resumePrNumber: 41,
     completion: { taskId: task.id, runId: 'worker-run', eventId: 'ready', status: 'ready_for_review', summary: 'Ready', prNumber: 41, head: f.oldHead } });
-  f.states.set('worker', { id: 'worker', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '', provider: 'test', model: worker.model });
+  f.states.set('worker', { id: 'worker', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '', provider: worker.provider, model: worker.model });
   const sends: Run[] = [];
   let reviewPublications = 0;
   const make = (f.buildAdapter() as ReturnType<typeof f.buildAdapter> & ResolutionAdapter).createRun;
@@ -76,7 +76,7 @@ function fixture() {
   let { engine, adapter } = f.buildEngine(overrides);
   engine.profiles = [f.reviewer, worker];
   const current = () => store.run(store.task(task.id).resolution.currentRunId!)!;
-  const idle = (run: Run) => f.states.set(run.agentId!, { id: run.agentId!, workspaceId: run.workspaceId, status: 'idle', active: false, permissions: false, error: '', provider: 'test', model: run.profile!.model });
+  const idle = (run: Run) => f.states.set(run.agentId!, { id: run.agentId!, workspaceId: run.workspaceId, status: 'idle', active: false, permissions: false, error: '', provider: run.profile!.provider, model: run.profile!.model });
   const report = async (run: Run, status: 'changes_required' | 'ready_to_merge' | 'blocked', extra = {}) => {
     idle(run);
     const result = await new Reports(engine).report({ taskId: task.id, runId: run.id, eventId: randomUUID(), status,

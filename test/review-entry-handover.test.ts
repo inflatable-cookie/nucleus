@@ -14,6 +14,7 @@ import {digest} from '../core/store/store';
 import {reviewPublicationBody} from '../core/forge/index';
 import {classifyReviewPublication} from '../core/review/review-publication';
 import {ownerRevisionFixture,runGit} from './support/review-entry-fixture';
+import {paseoCatalog} from './support/pool-shapes';
 import {verifyReviewSourceView} from '../core/review/review-source';
 import type {ResolutionAdapter} from '../core/resolution';
 import {ProvenPreSendRefusalError} from '../core/resolution';
@@ -392,7 +393,7 @@ test('reviewer creation uses the task workspace after the origin writer yields',
   const hook={onCreateRun:null as null|(()=>void)};
   const engine=mount(f,{...w.overrides,
     createRun:async(_task:unknown,run:import('../shared/contracts').Run)=>{hook.onCreateRun?.();const id=`review-agent-${run.id}`;
-      f.states.set(id,{id,workspaceId:run.workspaceId,status:'running',active:true,permissions:false,error:'',model:'reviewer-model'});
+      f.states.set(id,{id,workspaceId:run.workspaceId,status:'running',active:true,permissions:false,error:'',model:f.reviewer.model});
       f.creates.push(run);return{id,workspaceId:run.workspaceId};}});
   try{
     const {settled}=await accept(engine,f,'create-custody');
@@ -588,11 +589,10 @@ test('a Queue-held brief handover keeps its exact checked claim across restart a
  * cadence itself.
  */
 function serviceRuntime(f:Fixture,w:ReturnType<typeof writer>,dataDir:string){
-  f.reviewer.provider='codex'; // Runtime refresh reads the canonical stored profile vocabulary.
   const adapter={...f.buildAdapter(),...w.overrides,client:{isConnected:true},
-    catalog:async()=>({providers:[{key:'codex',label:'Codex',available:true,problem:'',models:[{id:'reviewer-model',label:'reviewer-model',aliases:[],thinkingOptions:[],defaultThinkingOptionId:null,modes:[],features:[]}]}]})} as Adapter&ReviewEntryAdapter;
+    catalog:async()=>paseoCatalog()} as Adapter&ReviewEntryAdapter;
   const runtime = new QueueRuntime({dataDir,adapterFactory:()=>adapter,timers:true,sweepIntervalMs:20});
-  runtime.store.setProfiles([{id:'reviewer',name:'Reviewer',provider:'codex',model:'reviewer-model',notes:''}]);
+  runtime.store.setProfiles([{id:f.reviewer.id,name:f.reviewer.name,provider:f.reviewer.provider,model:f.reviewer.model,notes:''}]);
   return runtime;
 }
 // Profiles route from the Queue store (#870): seed the reviewer, then refresh the routed list the bootstrap built without it.
@@ -690,7 +690,7 @@ test('an authenticated reviewer report is accepted only for the clean task works
     const token=f.tokens.get(run.id)!;
     const report={taskId:task.id,runId:run.id,status:'ready_to_merge' as const,head:f.oldHead,summary:'Approved the exact head',reviewText:'The exact task-workspace head is ready.',reviewCommentId:7};
     // The reviewer is idle in the task workspace; the source is checked at callback acceptance.
-    f.states.set(run.agentId!,{id:run.agentId!,workspaceId:run.workspaceId,status:'idle',active:false,permissions:false,error:'',model:'reviewer-model'});
+    f.states.set(run.agentId!,{id:run.agentId!,workspaceId:run.workspaceId,status:'idle',active:false,permissions:false,error:'',model:f.reviewer.model});
     // A dirty task checkout refuses the report before any credit is recorded.
     const mutation=join(task.directory!,'mutation-after-read.txt');
     writeFileSync(mutation,'unreviewed\n');
@@ -726,7 +726,7 @@ test('a report after the declared canonical PR author changed is refused before 
     w.state.active=false;
     await sweepUntil(engine,f,task.id,()=>f.creates.length>0,'the reviewer in its view');
     const run=f.store.run(f.creates[0]!.id)!;const token=f.tokens.get(run.id)!;
-    f.states.set(run.agentId!,{id:run.agentId!,workspaceId:run.workspaceId,status:'idle',active:false,permissions:false,error:'',model:'reviewer-model'});
+    f.states.set(run.agentId!,{id:run.agentId!,workspaceId:run.workspaceId,status:'idle',active:false,permissions:false,error:'',model:f.reviewer.model});
     f.state.prAuthor='someone-else';
     const report={taskId:task.id,runId:run.id,status:'ready_to_merge' as const,head:f.oldHead,summary:'Approved the pinned exact head',reviewCommentId:7};
     await assert.rejects(engine.complete({...report,eventId:'author-changed'},token),/declared GitHub author is no longer/);
@@ -747,7 +747,7 @@ test('a later review round reuses the reviewer thread in the task workspace afte
     await sweepUntil(engine,f,task.id,()=>f.creates.length>0,'the first reviewer in the task workspace');
     const first=f.store.run(f.creates[0]!.id)!;
     f.store.putRun({...f.store.run(first.id)!,released:true,status:'superseded',active:false});
-    f.states.set(first.agentId!,{id:first.agentId!,workspaceId:task.workspaceId!,status:'idle',active:false,permissions:false,error:'',model:'reviewer-model',provider:f.reviewer.provider});
+    f.states.set(first.agentId!,{id:first.agentId!,workspaceId:task.workspaceId!,status:'idle',active:false,permissions:false,error:'',model:f.reviewer.model,provider:f.reviewer.provider});
     f.store.update(task.id,{phase:'awaiting_review',resolution:{...f.store.task(task.id).resolution,currentRunId:null}});
     w.state.active=true;
     await pass(engine);
@@ -780,7 +780,7 @@ test('canonical author drift during the final gate refuses merge intent and merg
     const task=f.store.task(settled.taskId!);w.state.active=false;
     await sweepUntil(engine,f,task.id,()=>f.creates.length>0,'reviewer');
     const run=f.store.run(f.creates[0]!.id)!;
-    f.states.set(run.agentId!,{id:run.agentId!,workspaceId:run.workspaceId,status:'idle',active:false,permissions:false,error:'',model:'reviewer-model'});
+    f.states.set(run.agentId!,{id:run.agentId!,workspaceId:run.workspaceId,status:'idle',active:false,permissions:false,error:'',model:f.reviewer.model});
     await engine.complete({taskId:task.id,runId:run.id,eventId:'approved-before-mechanical',status:'ready_to_merge',head:f.oldHead,
       summary:'Approved source',reviewText:'The exact task-workspace head is ready.',reviewCommentId:7},f.tokens.get(run.id)!);
     await sweepUntil(engine,f,task.id,()=>f.store.task(task.id).phase==='needs_attention','post-verification canonical refusal');
@@ -794,7 +794,7 @@ test('canonical author drift during the final gate refuses merge intent and merg
 
 test('changes requested revise the task workspace and the next review reuses the reviewer thread',async()=>{
   const f=ownerRevisionFixture();const w=writer(f,'elsewhere');const engine=mount(f,w.overrides);
-  const worker={id:'worker',name:'Worker',provider:'test',model:'worker-model',notes:'',available:true,problem:'',supportedThinking:[]} as const;
+  const worker={...f.reviewer,id:'worker',name:'Worker',model:'gpt-6.1-terra'} as const;
   engine.profiles=[f.reviewer,worker as unknown as typeof f.reviewer];
   f.store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:1,scopes:['general']},
     {profileId:'worker',enabled:true,group:'workers',roles:['worker'],weight:1,scopes:['general']}]);
@@ -804,7 +804,7 @@ test('changes requested revise the task workspace and the next review reuses the
     w.state.active=false;
     await sweepUntil(engine,f,task.id,()=>f.creates.length>0,'the first reviewer in its view');
     const first=f.store.run(f.creates[0]!.id)!;
-    f.states.set(first.agentId!,{id:first.agentId!,workspaceId:first.workspaceId,status:'idle',active:false,permissions:false,error:'',model:'reviewer-model',provider:f.reviewer.provider});
+    f.states.set(first.agentId!,{id:first.agentId!,workspaceId:first.workspaceId,status:'idle',active:false,permissions:false,error:'',model:f.reviewer.model,provider:f.reviewer.provider});
     await engine.complete({taskId:task.id,runId:first.id,eventId:'first-findings',status:'changes_required',head:f.oldHead,
       summary:'Correct one concern in the original source',reviewText:'The reviewed head needs one correction.',reviewResponsibility:'author' as const,reviewCommentId:7},f.tokens.get(first.id)!);
     await engine.wake();await engine.wake();
@@ -812,7 +812,7 @@ test('changes requested revise the task workspace and the next review reuses the
     assert.ok(revision,`changes requested launch the ordinary revision worker: ${f.store.task(task.id).reason}`);
     assert.equal(revision!.workspaceId,f.store.task(task.id).workspaceId,'the revision keeps working in the original source workspace');
     const newHead=f.pushRevision('author revision after review findings');
-    f.states.set(revision!.agentId!,{id:revision!.agentId!,workspaceId:revision!.workspaceId,status:'idle',active:false,permissions:false,error:'',model:'worker-model'});
+    f.states.set(revision!.agentId!,{id:revision!.agentId!,workspaceId:revision!.workspaceId,status:'idle',active:false,permissions:false,error:'',model:worker.model});
     await engine.complete({taskId:task.id,runId:revision!.id,eventId:'revision-ready',status:'ready_for_review',head:newHead,prNumber:41,summary:'Corrected the finding'},f.tokens.get(revision!.id)!);
     await engine.wake();await engine.wake();await engine.wake();
     const second=f.store.runs(task.id).filter(run=>run.role==='reviewer').find(run=>run.id!==first.id);

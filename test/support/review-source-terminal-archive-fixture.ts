@@ -22,7 +22,7 @@ export async function fixture(historicalPartial=false,historicalOnly=false,prese
   await admission.wake();
   const created=store.runs(task.id).filter(candidate=>candidate.role==='reviewer').at(-1);
   assert.ok(created,`review-entry admission did not create a reader: phase=${store.task(task.id).phase}; reason=${store.task(task.id).reason}; creates=${f.creates.length}`);
-  f.states.set('review-agent',{id:'review-agent',workspaceId:created.workspaceId,status:'idle',active:false,permissions:false,error:'',model:'reviewer-model'});
+  f.states.set('review-agent',{id:'review-agent',workspaceId:created.workspaceId,status:'idle',active:false,permissions:false,error:'',model:f.reviewer.model});
   if(historicalPartial){
     await new Reports(admission).report({taskId:task.id,runId:created.id,eventId:randomUUID(),status:'review_in_progress',head,
       summary:'Partial reading',checkpoint:{covered:['source'],remaining:['final review']}},f.tokens.get(created.id)!);

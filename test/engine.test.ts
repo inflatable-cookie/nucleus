@@ -22,8 +22,9 @@ import { startCallbacks } from '../service/callbacks/callback';
 import {taskWorkspaceTitle} from '../core/workspaces/workspace-title';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { assertCompleted, cleanupDiagnostic, observeOutcome, type BackgroundOutcome } from './support/background-outcome';
+import { paseoCatalog } from './support/pool-shapes';
 
-const profile: Profile = { id: 'worker', name: 'Worker', provider: 'test', model: 'test', notes: '', available: true, problem: '', supportedThinking: ['low'] };
+const profile: Profile = { id: 'worker', name: 'Worker', provider: 'codex', model: 'gpt-6-luna', notes: '', available: true, problem: '', supportedThinking: ['low'] };
 const derivedQueuedReason = (f: ReturnType<typeof fixture>, task: Task) =>
   queuedReason(f.store, task, taskWaitStateContext(f.store, task, null, candidate => f.engine.resolution.slotAdmissionReason(candidate)));
 const taskSlotLabel = (task: Task) => task.number ? `#${formatTaskNumber(task.number)}` : task.id;
@@ -36,7 +37,7 @@ function fixture() {
   const tokens = new Map<string, string>();
   let observation: Partial<AgentObservation> = { status: 'running', active: true };
   const adapter: Adapter = fakeAdapter({
-    catalog: async () => ({ providers: [{ key: 'test', label: 'test', available: true, problem: '', models: [{ id: 'test', label: 'test', aliases: [], thinkingOptions: [{ id: 'low', label: 'low' }], defaultThinkingOptionId: null, modes: [], features: [] }] }] }), validate: async t => t.planningCommit,
+    catalog: async () => paseoCatalog(), validate: async t => t.planningCommit,
     createWorkspace: async t => { calls.workspaces++; return { id: `ws-${t.id}`, directory: '/fixture' }; },
      verifyWorkspace: async t => t.branch,
     createAgent: async (t, token) => { calls.agents++; tokens.set(t.id, token); return { id: `agent-${t.id}`, workspaceId: t.workspaceId }; },
@@ -734,7 +735,7 @@ test('a responsible worker that names an impediment and changes nothing gets a r
     await f.engine.wakeTask(task.id);
     const current = f.store.task(task.id);
     const record = JSON.parse(f.store.eventsAll(task.id).find(event => event.kind === 'non_delivery')!.detail);
-    assert.deepEqual([record.role, record.provider, record.model], ['worker', 'test', 'test']);
+    assert.deepEqual([record.role, record.provider, record.model], ['worker', 'codex', 'gpt-6-luna']);
     assert.equal(current.phase, 'changes_requested', JSON.stringify({ reason: current.reason, completion: current.completion,
       events: f.store.eventsAll(task.id).map(event => [event.kind, event.detail]) }));
     assert.match(current.reason, /You reported no external blocker and produced no change/);
@@ -1731,7 +1732,7 @@ test('a Paseo restart does not park working tasks, and a parked task with a live
     f.store.setMeta('paused', false);
     const task = f.add();
     // The exhausted-worker sweep only visits tasks with a profile; the live park came from there.
-    const profile = { id: 'author', name: 'author', provider: 'test', model: 'author', notes: '', available: true, problem: '', supportedThinking: [] };
+    const profile = { id: 'author', name: 'author', provider: 'codex', model: 'gpt-6-luna', notes: '', available: true, problem: '', supportedThinking: [] };
     f.store.update(task.id, { phase: 'working', workspaceIntent: true, workspaceId: 'ws-settled', directory: '/fixture', agentId: 'agent-settled', runId: 'run-settled', profile });
     f.adapter.observe = async () => { throw new Error('Transport not connected (status: disconnected)'); };
     await f.engine.wake();

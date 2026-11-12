@@ -1,4 +1,5 @@
 import { fakeAdapter } from './support/fakes';
+import { paseoCatalog } from './support/pool-shapes';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -18,9 +19,9 @@ import {
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
 const CALLER = 'owner-thread';
-const worker: Profile = { id: 'worker', name: 'worker', provider: 'test', model: 'test/worker', notes: '', available: true, problem: '', supportedThinking: [] };
-const reviewer: Profile = { id: 'reviewer', name: 'reviewer', provider: 'test', model: 'test/reviewer', notes: '', available: true, problem: '', supportedThinking: [] };
-const coord: Profile = { id: 'coord', name: 'coord', provider: 'test', model: 'test/coord', notes: '', available: true, problem: '', supportedThinking: [] };
+const worker: Profile = { id: 'worker', name: 'worker', provider: 'codex', model: 'gpt-6-luna', notes: '', available: true, problem: '', supportedThinking: [] };
+const reviewer: Profile = { id: 'reviewer', name: 'reviewer', provider: 'codex', model: 'gpt-6.1-sol', notes: '', available: true, problem: '', supportedThinking: [] };
+const coord: Profile = { id: 'coord', name: 'coord', provider: 'codex', model: 'gpt-6.1-terra', notes: '', available: true, problem: '', supportedThinking: [] };
 const all = [worker, reviewer, coord];
 
 function outsideTicket(key = 'old') {
@@ -106,13 +107,13 @@ function fixture() {
 
   const observations = new Map<string, Observation>();
   const idle = (id: string, model?: string, workspaceId = 'workspace') =>
-    observations.set(id, { id, workspaceId, status: 'idle', active: false, permissions: false, error: '', provider: 'test', model });
+    observations.set(id, { id, workspaceId, status: 'idle', active: false, permissions: false, error: '', provider: 'codex', model });
   idle('worker-agent', worker.model);
   idle('review-agent', reviewer.model);
   const sent: Run[] = [];
   const created: Run[] = [];
   const adapter = fakeAdapter({
-    catalog: async () => ({ providers: [{ key: 'test', label: 'test', available: true, problem: '', models: all.map(p => ({ id: p.model, label: p.model, aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] })) }] }),
+    catalog: async () => paseoCatalog(),
     validate: async () => base,
     verifyWorkspace: async () => {},
     createWorkspace: async () => { throw new Error('fixtures do not create workspaces'); },

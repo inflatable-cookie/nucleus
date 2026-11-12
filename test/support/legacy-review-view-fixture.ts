@@ -24,7 +24,7 @@ export function materializeLegacyView(f:Fixture,store:Fixture['store'],runId:str
     briefDigest:brief?.digest??null,briefVersion:brief?.version??null};
   const saved={...run,workspaceId,reviewSourceView:view};
   store.putRun(saved);
-  if(run.agentId)f.states.set(run.agentId,{id:run.agentId,workspaceId,status:'idle',active:false,permissions:false,error:'',model:'reviewer-model',provider:'test'});
+  if(run.agentId)f.states.set(run.agentId,{id:run.agentId,workspaceId,status:'idle',active:false,permissions:false,error:'',model:f.reviewer.model,provider:f.reviewer.provider});
   const directory=join(f.root,`legacy-review-view-${run.id}`);
   runGit(f.repo,'worktree','add','-b',view.branch,directory,run.head);
   const result={...saved,reviewSourceView:{...view,directory,state:'ready' as const}};
