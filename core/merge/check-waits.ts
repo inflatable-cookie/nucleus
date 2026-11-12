@@ -1,11 +1,13 @@
 import type { Task } from '../../shared/contracts';
-import { isFailedChecksReason, isPendingCheckDeadlineReason, checkHistoryFromStore, requiredCheckPollMetaKey, REQUIRED_CHECK_POLL_INTERVAL_MS, checkPolicyObservationKey, type CheckObservation } from '../forge/index';
+import { isFailedChecksReason, isPendingCheckDeadlineReason, checkHistoryFromStore, requiredCheckPollMetaKey, REQUIRED_CHECK_POLL_INTERVAL_MS, REQUIRED_CHECK_ESCALATION_MS, checkPolicyObservationKey, type CheckObservation } from '../forge/index';
 import { plannerEscalations, type LadderEvent } from '../questions/blocker-ladder';
-import type { CheckObservationFields, MergeGateResult, RequiredChecksResult, Resolution } from '../resolution';
+import type { CheckObservationFields, MergeGateResult, OverdueCheckEvidence, RequiredChecksResult, Resolution } from '../resolution';
 import { now } from '../store/store';
 import { MERGE_GATE_SETTINGS_ATTEMPTS } from '../recovery/task-reasons';
 
 export type CheckWaitsContext = Pick<Resolution, 'adapter' | 'attention' | 'mergeGateEvidence' | 'paused' | 'recordIncidentEvent' | 'refusePreMerge' | 'reviewerSetting' | 'settleAttentionEpisode' | 'store' | 'update' | 'waiting'>;
+
+type RequiredCheckPollState = {head: string; nextAt: number; incidentId?: string | null; overdueCheck?: OverdueCheckEvidence; firstOverdueAt?: number; recoveryRunId?: string | null; attentionRaisedAt?: number | null};
 
 /** Required-check polling and the freshness-checked gate evidence behind it. */
 export class CheckWaits {
@@ -22,7 +24,7 @@ export class CheckWaits {
   settleAttentionEpisode(...args: Parameters<CheckWaitsContext['settleAttentionEpisode']>) { return this.resolution.settleAttentionEpisode(...args); }
 
   /** Shared merge-gate wait: semantic failures return the same PR to its worker; runnerless jobs get one durable same-head rerun; pending checks yield the integration turn and are re-observed on a durable cadence. */
-  async applyMergeGateWait(t: Task, gate: { wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[] }): Promise<boolean> {
+  async applyMergeGateWait(t: Task, gate: { wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[]; overdueCheck?: OverdueCheckEvidence }): Promise<boolean> {
     if (gate.needsRebase) {
       const current = this.store.task(t.id);
       if (current.version !== t.version) return true;
@@ -36,7 +38,7 @@ export class CheckWaits {
       return true;
     }
     if (gate.infrastructure) { await this.holdInfrastructureCancellation(t, gate.wait, gate.infraRunIds ?? []); return true; }
-    if (gate.pendingCheck || gate.overdue) { this.holdPendingCheck(t, gate.wait, Boolean(gate.overdue)); return true; }
+    if (gate.pendingCheck || gate.overdue) { this.holdPendingCheck(t, gate.wait, Boolean(gate.overdue), gate.overdueCheck); return true; }
     // Branch rules, review threads and merge state come from GitHub text: classify it.
     if (gate.wait) { this.waiting(t, gate.wait, 'classify'); return true; }
     this.resolvePassedUnchangedCheckEscalation(this.store.task(t.id));
@@ -57,29 +59,68 @@ export class CheckWaits {
         this.waiting(this.store.task(t.id), 'Required check passed; reacquiring repository integration turn', 'lifecycle');
     }
   }
-  requiredCheckPollState(t: Task): { head: string; nextAt: number; incidentId?: string | null } | null {
+  requiredCheckPollState(t: Task): RequiredCheckPollState | null {
     if (!t.prHead) return null;
-    const state = this.store.getMeta<{ head: string; nextAt: number }>(requiredCheckPollMetaKey(t.id, t.prHead));
+    const state = this.store.getMeta<RequiredCheckPollState>(requiredCheckPollMetaKey(t.id, t.prHead));
     return state?.head === t.prHead && Number.isFinite(state.nextAt) ? state : null;
   }
-  holdPendingCheck(t: Task, wait: string, overdue: boolean) {
+  holdPendingCheck(t: Task, wait: string, overdue: boolean, overdueCheck?: OverdueCheckEvidence) {
     const head = t.prHead;
     if (!head) { this.attention(t, 'Required check wait has no recorded reviewed PR head'); return; }
     const previous = this.requiredCheckPollState(t);
+    const sameOverdueCheck = Boolean(overdueCheck && previous?.overdueCheck?.key === overdueCheck.key);
+    const firstOverdueAt = overdue ? (sameOverdueCheck ? previous?.firstOverdueAt : Date.now()) : undefined;
+    const recoveryRunId = sameOverdueCheck ? previous?.recoveryRunId ?? null : null;
+    const attentionRaisedAt = sameOverdueCheck ? previous?.attentionRaisedAt ?? null : null;
     this.store.transaction(() => {
       const current = this.store.task(t.id);
-      let incidentId = previous?.incidentId ?? null;
+      let incidentId = sameOverdueCheck ? previous?.incidentId ?? null : null;
       if (overdue) {
-        if (!current.resolution.attention) {
+        const waited = firstOverdueAt === undefined ? 0 : Date.now() - firstOverdueAt;
+        const checkStillQueued = overdueCheck?.state === 'QUEUED' || overdueCheck?.state === 'queued';
+        const recoveryRun = recoveryRunId ? this.store.run(recoveryRunId) : null;
+        const recoveryFinished = Boolean(recoveryRunId && recoveryRun?.released);
+        if (recoveryFinished && !checkStillQueued) {
+          this.parkCheckRecovery(current, wait);
+        } else if (recoveryFinished && waited >= REQUIRED_CHECK_ESCALATION_MS && checkStillQueued && !attentionRaisedAt) {
+          this.raiseCheckAttention(current, wait, incidentId);
+          incidentId = this.store.task(t.id).resolution.incident?.id ?? incidentId;
+        } else if (recoveryFinished && !attentionRaisedAt) {
+          this.parkCheckRecovery(current, wait);
+        } else if (!recoveryRunId && !current.resolution.attention && !incidentId) {
           this.attention(current, wait);
           incidentId = this.store.task(t.id).resolution.incident?.id ?? null;
-        }
+        } else if (recoveryFinished && !current.resolution.attention) this.waiting(current, wait, 'lifecycle');
       } else if (!current.resolution.attention) this.waiting(current, wait, 'lifecycle');
       const latest = this.store.task(t.id);
-      this.store.setMeta(requiredCheckPollMetaKey(t.id, head), { head, incidentId, nextAt: Date.now() + REQUIRED_CHECK_POLL_INTERVAL_MS });
+      this.store.setMeta(requiredCheckPollMetaKey(t.id, head), {
+        head, incidentId, nextAt: Date.now() + REQUIRED_CHECK_POLL_INTERVAL_MS,
+        ...(overdueCheck ? {overdueCheck, firstOverdueAt, recoveryRunId, attentionRaisedAt: attentionRaisedAt ?? (recoveryRunId && firstOverdueAt !== undefined && Date.now() - firstOverdueAt >= REQUIRED_CHECK_ESCALATION_MS && (overdueCheck.state === 'QUEUED' || overdueCheck.state === 'queued') ? Date.now() : null)} : {}),
+      });
       if (latest.resolution.integrationTurn && !(latest.resolution.mergeIntent && !latest.resolution.mergedCommit))
         this.update(latest, {}, { reason: wait }, 'integration_turn_yielded_for_check', wait);
     });
+  }
+  /** Re-open the same check incident after its one recovery look, without recording a repeat incident. */
+  private raiseCheckAttention(t: Task, wait: string, incidentId: string | null) {
+    const current = this.store.task(t.id);
+    const incident = incidentId && current.resolution.incident?.id === incidentId ? current.resolution.incident : null;
+    if (incident) {
+      const escalated = {...incident, status: 'escalated' as const, detail: wait.slice(0, 2000), updatedAt: now()};
+      this.update(current, {attention: true, incident: escalated}, {reason: wait}, 'needs_attention', wait);
+      this.recordIncidentEvent(t.id, escalated);
+      return;
+    }
+    this.update(current, {attention: true}, {reason: wait}, 'needs_attention', wait);
+  }
+  /** Leave the failed check visible while closing the one recovery episode that could not start it. */
+  private parkCheckRecovery(t: Task, wait: string) {
+    const current = this.store.task(t.id);
+    if (current.resolution.attention) {
+      this.update(current, {attention: false}, {reason: wait}, 'check_recovery_parked', wait);
+      this.settleAttentionEpisode(t.id, `External required check remains pending: ${wait}`.slice(0, 2000));
+    }
+    this.waiting(this.store.task(t.id), wait, 'lifecycle');
   }
   captureRequiredCheckIncident(t: Task) {
     const state = this.requiredCheckPollState(t), current = this.store.task(t.id);

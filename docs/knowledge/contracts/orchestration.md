@@ -2025,7 +2025,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   a total run count at one head does not distinguish those useful rounds.
 - A pending check is re-observed every minute at the same head and yields the
   integration turn; when checks settle, Nucleus reacquires a turn and reruns every
-  gate. An overdue check raises one attention episode.
+  gate. An overdue check gets one coordinator recovery look per check and head,
+  then remains a visible wait. A queued job still without a runner after an hour
+  raises planner attention once; repeats do not reopen recovery.
 - A QUEUED check stays a pending poll. A CANCELLED check is infrastructure only
   with positive pre-run evidence (empty Actions step list or a
   runner-acquisition annotation); the first proven runnerless cancellation

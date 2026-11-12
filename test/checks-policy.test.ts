@@ -235,7 +235,7 @@ test('required checks still block under an advisory policy: failed, pending, ove
 
   const overdue = await observePolicy([{__typename: 'CheckRun', name: 'build', status: 'IN_PROGRESS', startedAt: '2026-10-05T00:00:00.000Z', detailsUrl: job, checkSuite: {app: {databaseId: actionsApp}}}], {now: Date.parse('2026-10-05T01:00:00.000Z')}, 'required', requirements);
   assert.equal(overdue.overdue, true);
-  assert.match(overdue.wait, /Required check 'build' has been pending past its deadline/);
+  assert.match(overdue.wait, /Required check 'build'.*has been pending past its deadline/);
 
   // A required context nobody reported remains a visible pending requirement with
   // its bounded deadline, never an absent requirement that merges by default.

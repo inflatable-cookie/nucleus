@@ -1,0 +1,1 @@
+A required check that stays queued or running past its deadline gets one recovery look, then remains a visible polling wait. A queued check still waiting after an hour raises planner attention once with its job URL and runner label.
