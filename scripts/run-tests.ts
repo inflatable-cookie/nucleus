@@ -1,6 +1,7 @@
-import { spawnSync } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runnerFlags } from './test-runner-flags.mjs';
@@ -93,11 +94,23 @@ function run() {
     .map(entry => entry.name);
   const { options, requestedFiles } = splitRunnerArgs(process.argv.slice(2));
   const files = selectTestFiles(requestedFiles, availableFiles);
+  const installFiles = files.filter(file => /(?:^|\/)nucleus-install(?:-safety|-release)?\.test\.ts$/.test(file));
+  const installEnv: NodeJS.ProcessEnv = { ...process.env };
+  if (installFiles.length) {
+    // These scenarios need a real installed package, but building the same
+    // runtime in three parallel test processes needlessly competes for CPU.
+    // Build it once per unit invocation; each scenario copies it into its own
+    // fixture before mutation or installation.
+    const cacheRoot = mkdtempSync(resolve(tmpdir(), 'nucleus-install-runtime-'));
+    const cache = resolve(cacheRoot, 'package');
+    execFileSync(process.execPath, ['scripts/build-runtime.mjs', cache], { stdio: 'ignore' });
+    installEnv.NUCLEUS_INSTALL_RUNTIME_CACHE = cache;
+  }
   const table = durationTablePath();
   const result = spawnSync(process.execPath, [
     require.resolve('tsx/cli'),
     ...testRunnerArgs(options, files),
-  ], { stdio: 'inherit', env: { ...process.env, QUEUE_QA_DURATIONS_FILE: table } });
+  ], { stdio: 'inherit', env: { ...installEnv, QUEUE_QA_DURATIONS_FILE: table } });
   flushDurationTable(table);
 
   if (result.error) {
