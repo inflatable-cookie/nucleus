@@ -414,6 +414,14 @@ export class RestartControls {
         return this.store.task(task.id);
       }
       case "pre_dispatch": {
+        // An owner move can leave a pre-PR task in changes_requested without
+        // an author thread. Resume it through the ordinary move-to-work
+        // replacement path so the retained workspace, branch and route are
+        // reused; validation retry is reserved for tasks that have not entered
+        // that author lifecycle.
+        if (!task.agentId && (task.runId || task.phase === "changes_requested")
+          && (task.profile || currentRouteProfile(task, "worker")))
+          return this.engine.moveToWork({ taskId: task.id, version, reason, instruction: input.instruction, caller: input.caller });
         // An initial pre-dispatch task replays admission through the existing
         // validation retry, which verifies any retained workspace. A review
         // entry re-admits from `queued` whatever its attention flag said.

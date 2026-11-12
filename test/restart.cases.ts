@@ -447,6 +447,29 @@ for (const fresh of [false, true]) {
   });
 }
 
+test('restart role=worker resumes a pre-PR changes_requested task after move to work left no worker', async () => {
+  const f = fixture(); try {
+    // This is the post-move state from swallowtail#226: the retained checkout
+    // and route exist, but the worker creation has not happened yet.
+    f.store.update(f.taskId, {
+      phase: 'changes_requested', agentId: null, runId: 'previous-worker-run',
+      workspaceId: 'workspace', directory: '/worktree', profile: f.profiles.worker,
+      completion: null, prUrl: null, prHead: null,
+    });
+    const restart = f.next().verbs.find(verb => verb.verb === 'restart')!;
+    assert.equal(restart.available, true, JSON.stringify(restart));
+    assert.equal((restart.args as Record<string, unknown>).role, 'worker');
+    const task = await f.engine.performTaskControl(taskControlInputSchema.parse({
+      ...restart.args, reason: 'Resume the author after move to work', caller: CALLER,
+    }));
+    assert.equal(task.phase, 'changes_requested');
+    await (f.engine as unknown as { recoverExhaustedWorkers(): Promise<void> }).recoverExhaustedWorkers();
+    assert.ok(f.current().agentId, 'restart starts the author on the retained task');
+    assert.equal(f.current().workspaceId, 'workspace');
+    assert.equal(ownerControlCount(f), 1);
+  } finally { await f.close(); }
+});
+
 for (const fresh of [false, true]) {
   test(`blocked worker with a retained PR: restart resumes the blocked task (fresh=${fresh})`, async () => {
     const f = fixture(); try {
