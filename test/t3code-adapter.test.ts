@@ -152,11 +152,11 @@ test('decoder-formatted defects keep durable diagnostics while remaining unknown
   server.controls.postEffectDefect = true;
   await assert.rejects(host.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', field: 'commandId', reason: 'schema_missing_key' });
+    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', reason: 'schema_missing_key' });
     return true;
   });
   assert.equal(host.state.read().intents['schema-refusal']?.status, 'unknown');
-  assert.deepEqual(host.state.read().intents['schema-refusal']?.diagnostic, { command: 'message.dispatch', field: 'commandId', reason: 'schema_missing_key' });
+  assert.deepEqual(host.state.read().intents['schema-refusal']?.diagnostic, { command: 'message.dispatch', reason: 'schema_missing_key' });
   assert.ok(server.threads.get(created.id)!.messages.some((message: { text: string }) => message.text === 'Synthetic'), 'handler performed the effect before the identical defect');
   const sent = server.commands.length;
   server.controls.postEffectDefect = false;
@@ -164,8 +164,8 @@ test('decoder-formatted defects keep durable diagnostics while remaining unknown
   const reloaded = new T3CodeHost(options); t.after(() => reloaded.close()); await reloaded.connect();
   await assert.rejects(reloaded.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', field: 'commandId', reason: 'schema_missing_key' });
-    assert.match(error.message, /unknown.*not resent.*message.dispatch.*commandId/);
+    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', reason: 'schema_missing_key' });
+    assert.match(error.message, /unknown.*not resent.*message.dispatch/);
     return true;
   });
   assert.equal(server.commands.length, sent);
@@ -176,29 +176,32 @@ test('decoder defects carrying secrets keep neither the value nor the bearer in 
   const created = await host.createAgent(spec());
   server.controls.secretDefect = true;
   // A secret in the decoder's expected-shape position canonicalizes to fixed
-  // wording; only the extracted field name survives beside it.
+  // wording; no location text survives beside it.
   await assert.rejects(host.sendMessage(created.id, { messageId: 'secret-defect', text: 'Synthetic' }), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', field: 'text', reason: 'schema_expected' });
+    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', reason: 'schema_expected' });
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-secret/);
     return true;
   });
   assert.equal(host.state.read().intents['secret-defect']?.status, 'unknown');
   const durable = JSON.stringify(host.state.read().intents['secret-defect']);
   assert.doesNotMatch(durable, /synthetic-secret/);
-  // A secret sitting in the defect's location position retains no field name
-  // at all: only the adapter's own payload field names may be named.
+  // A location that names one of our own payload fields is still remote-chosen
+  // text: nothing is retained, through the durable intent and the attention.
   server.controls.secretDefect = false;
   server.controls.secretLocationDefect = true;
   await assert.rejects(host.sendMessage(created.id, { messageId: 'secret-location', text: 'Synthetic' }), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', reason: 'schema_missing_key' });
+    const diagnostic = (error as HostUnknownDeliveryError).diagnostic;
+    assert.deepEqual(diagnostic, { command: 'message.dispatch', reason: 'schema_missing_key' });
+    assert.equal('field' in diagnostic, false, 'no location is named, even a known field name');
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic_secret/);
     return true;
   });
   const durableLocation = JSON.stringify(host.state.read().intents['secret-location']);
   assert.equal(host.state.read().intents['secret-location']?.status, 'unknown');
   assert.doesNotMatch(durableLocation, /synthetic_secret/);
+  assert.equal(durableLocation.includes('"field"'), false, 'the durable intent carries no location');
 });
 
 test('observations distinguish idle, active run, permissions, archived and explicit deletion', async t => {

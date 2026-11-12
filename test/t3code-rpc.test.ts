@@ -169,15 +169,15 @@ test('all remote Die failures stay unknown even when their text matches the RPC 
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, 'thread.stop');
-    assert.equal(error.field, 'commandId');
-    assert.match(error.message, /command thread\.stop, field commandId/);
+    assert.equal('field' in error, false, 'no remote location is ever named');
+    assert.match(error.message, /command thread\.stop(?!.*field)/);
     return true;
   });
   assert.deepEqual(appliedEffects, ['missing.method', 'orchestration.dispatchCommand']);
   assert.equal(server.frames.filter(frame => frame._tag === 'Request').length, 2);
 });
 
-test('schema diagnostics name only our own payload fields and defect shapes without actual values or foreign locations', async t => {
+test('schema diagnostics keep only the shape name: no location text is ever retained', async t => {
   let calls = 0;
   const server = await fakeServer(t, (request, send) => {
     if (request._tag !== 'Request') return;
@@ -190,30 +190,33 @@ test('schema diagnostics name only our own payload fields and defect shapes with
   for (let i = 0; i < 2; i++) await assert.rejects(client.call('orchestration.dispatchCommand', { type: i ? 'synthetic-bearer prompt secret' : 'message.dispatch' }), error => {
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
-    // Only our own payload field name survives, first segment only; deeper
-    // segments and foreign names are remote text and retain nothing.
-    assert.equal(error.field, i ? undefined : 'modelSelection');
+    // Locations are remote text: nothing from them is named, not even our own
+    // payload field names.
+    assert.equal('field' in error, false);
     assert.equal(error.command, i ? undefined : 'message.dispatch');
     assert.equal(error.reason, i ? 'schema_missing_key' : 'schema_expected');
-    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|got "|options|value/);
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|got "|options|value|modelSelection/);
     return true;
   });
   assert.equal(calls, 2);
 });
 
-test('a secret in a schema location or beyond the first segment retains nothing', async t => {
+test('a schema location retains nothing, whatever it names', async t => {
   let calls = 0;
   const server = await fakeServer(t, (request, send) => {
     if (request._tag !== 'Request') return;
+    // Call 2's location coincides with one of our own payload field names; it
+    // is still remote-chosen text and retains nothing (brief v2).
     const defect = ++calls === 1
       ? 'Missing key\n  at ["synthetic_secret"]'
-      : 'Missing key\n  at ["commandId"]["synthetic_secret"]';
+      : 'Missing key\n  at ["text"]';
     send(failure(request, { _tag: 'Die', defect }));
   });
   const client = await clientFor(t, server);
   for (let i = 0; i < 2; i++) await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'thread.stop' }), error => {
     assert.ok(error instanceof T3RpcError);
-    assert.equal(error.field, i ? 'commandId' : undefined, 'foreign location names nothing; own field names keep their first segment');
+    assert.equal('field' in error, false, 'no remote location is ever named');
+    assert.equal(error.reason, 'schema_missing_key');
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic_secret/);
     return true;
   });
@@ -232,7 +235,7 @@ test('the nightly dispatch union refuses project.create before any handler and t
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, 'project.create');
-    assert.equal(error.field, undefined);
+    assert.equal('field' in error, false);
     assert.equal(error.reason, 'schema_expected');
     assert.doesNotMatch(String(error), /synthetic-project|synthetic-repository|private/);
     return true;
@@ -364,7 +367,7 @@ test('a schema location containing the configured bearer is discarded even when 
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, 'thread.stop');
-    assert.equal(error.field, undefined);
+    assert.equal('field' in error, false);
     assert.ok(!String(error).includes(bearer));
     assert.ok(!JSON.stringify(error).includes(bearer));
     return true;
@@ -386,7 +389,7 @@ test('typed remote command diagnostics accept known commands and reject arbitrar
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, i ? 'thread.stop' : 'thread.archive');
-    assert.equal(error.field, undefined);
+    assert.equal('field' in error, false);
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret/);
     return true;
   });

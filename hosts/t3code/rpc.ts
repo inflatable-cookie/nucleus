@@ -7,18 +7,9 @@ export interface T3ConnectionConfig {
 }
 
 /** Errors deliberately exclude remote error bodies, request data and ticket URLs. */
-/** The adapter's own payload field names: the only remote locations that may be named. */
-const OWN_FIELD_NAMES = new Set([
-  'type', 'commandId', 'threadId', 'messageId', 'requestId', 'projectId', 'title', 'workspaceRoot',
-  'text', 'dispatchMode', 'modelSelection', 'workspaceStrategy', 'initialMessage', 'decision', 'answers',
-]);
-const ownFieldName = (value: unknown): string | undefined =>
-  typeof value === 'string' && OWN_FIELD_NAMES.has(value) ? value : undefined;
-
 export class T3RpcError extends Error {
   readonly command?: string;
-  readonly field?: string;
-  /** The bounded, sanitized why: a whitelisted tag, a defect shape or an HTTP status. */
+  /** The retained why: a known tag, a fixed shape name or an HTTP status. */
   readonly reason?: string;
 
   constructor(
@@ -26,15 +17,13 @@ export class T3RpcError extends Error {
     readonly method?: string,
     readonly remoteTag?: string,
     readonly delivery: 'not_sent' | 'unknown' = 'unknown',
-    diagnostic?: { command?: unknown; field?: unknown; reason?: unknown },
+    diagnostic?: { command?: unknown; reason?: unknown },
   ) {
     const command = safeCommand(diagnostic?.command);
-    const field = ownFieldName(diagnostic?.field);
     const reason = sanitizeHostFailureReason(diagnostic?.reason);
-    super(`T3Code ${code}${method ? `: ${method}` : ''}${remoteTag ? ` (${remoteTag})` : ''}${command ? `, command ${command}` : ''}${field ? `, field ${field}` : ''}${reason ? `, reason ${reason}` : ''}`);
+    super(`T3Code ${code}${method ? `: ${method}` : ''}${remoteTag ? ` (${remoteTag})` : ''}${command ? `, command ${command}` : ''}${reason ? `, reason ${reason}` : ''}`);
     this.name = 'T3RpcError';
     this.command = command;
-    this.field = field;
     this.reason = reason;
   }
 }
@@ -60,30 +49,11 @@ const COMMANDS = new Set([
 const safeCommand = (value: unknown): string | undefined => typeof value === 'string' && COMMANDS.has(value) ? value : undefined;
 
 /**
- * Names only a payload field of our own when the defect's location starts with
- * one of the adapter's own field names. The location is remote text, so it is
- * never copied: any other first segment — an identifier, a scope name, a
- * secret — retains nothing, and segments beyond the first are always dropped.
- */
-function schemaFieldDiagnostic(value: unknown): string | undefined {
-  if (typeof value !== 'string' || value.length > 32_768) return undefined;
-  const lines = value.split('\n');
-  for (let i = 1; i < lines.length; i++) {
-    if (!/^(?:Missing key|Expected [^\n]+)$/.test(lines[i - 1]!)) continue;
-    const location = /^  at ((?:\["[^"]{0,80}"\]|\[\d{1,6}\])+)$/.exec(lines[i]!);
-    if (!location) continue;
-    return ownFieldName(/\["([^"]{1,80})"\]/.exec(location[1]!)?.[1]);
-  }
-  return undefined;
-}
-
-/**
  * The nightly has no authenticated decode-phase tag; remote failure text cannot prove non-delivery.
  * The retained reason is a value-free fact only: the known tag, a fixed
  * failure-shape name from the adapter's own constants, or both. No remote
  * string — bearer, identifier, method, scope name or any part of a defect —
- * is copied into a diagnostic. The field check alone keeps the configured
- * bearer out of a retained location name.
+ * is copied into a diagnostic.
  */
 const DEFECT_SHAPES: readonly { shape: RegExp; name: string }[] = [
   { shape: /^Unknown request tag:/, name: 'unknown_request_tag' },
@@ -101,12 +71,10 @@ function remoteFailure(method: string, cause: unknown, command?: string): Error 
   const reason = cause[0];
   if (reason._tag === 'Die') {
     if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method, undefined, 'unknown', { command, reason: 'unknown_request_tag' });
-    const field = schemaFieldDiagnostic(reason.defect);
     const defect = typeof reason.defect === 'string' ? reason.defect : undefined;
     const shape = defect ? DEFECT_SHAPES.find(entry => entry.shape.test(defect))?.name ?? 'remote_failure' : 'remote_failure';
     return new T3RpcError('remote', method, undefined, 'unknown', {
       command,
-      field,
       reason: shape,
     });
   }

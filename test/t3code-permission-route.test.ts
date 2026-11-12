@@ -269,7 +269,7 @@ test('reported command and field enter the exact owning task attention and survi
   server.controls.postEffectDefect = true;
   await assert.rejects(runtime.answerHostPermission(input), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId', reason: 'schema_missing_key' });
+    assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', reason: 'schema_missing_key' });
     return true;
   });
   const attention = store.task(task.id);
@@ -278,12 +278,12 @@ test('reported command and field enter the exact owning task attention and survi
   assert.equal(attention.resolution.incident?.cause, 'uncertain_delivery');
   assert.match(attention.reason, /delivery is unknown/);
   assert.match(attention.reason, /command runtime-request\.respond/);
-  assert.match(attention.reason, /field commandId/);
-  assert.equal(store.run(run.id)?.released, false);
+    assert.equal(store.run(run.id)?.released, false);
   const deliveryEvents = store.eventsAll(task.id).filter(event => event.kind === 'host_permission_delivery_unknown');
   assert.equal(deliveryEvents.length, 1);
   const evidence = JSON.parse(deliveryEvents[0]!.detail);
-  assert.equal(evidence.command, 'runtime-request.respond'); assert.equal(evidence.field, 'commandId'); assert.equal(evidence.delivery, 'unknown');
+  assert.equal(evidence.command, 'runtime-request.respond'); assert.equal(evidence.delivery, 'unknown');
+  assert.equal('field' in evidence, false, 'no location is named, even a known field name');
   assert.doesNotMatch(JSON.stringify({ reason: attention.reason, evidence, intent: host.state.read().intents[input.intentId]!.diagnostic }), /synthetic-bearer|synthetic-ticket|prompt secret|\n  at/);
   assert.match(attention.reason, /reason schema_missing_key;/);
   for (const item of untouched) assert.deepEqual(store.task(item.id), item.task, 'colliding, foreign, origin-only and terminal tasks are untouched');
@@ -309,7 +309,7 @@ test('reported command and field enter the exact owning task attention and survi
         attention: (current, reason) => engine.withHost(current.hostId, () => engine.resolution.attention(current, reason, 'uncertain_delivery')),
       }), error => {
         assert.ok(error instanceof HostUnknownDeliveryError);
-        assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId', reason: 'schema_missing_key' });
+        assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', reason: 'schema_missing_key' });
         return true;
       });
     }
@@ -347,7 +347,9 @@ test('ownership moving during an uncertain send retains history on the original 
   assert.equal(runtime.store.task(next.id).resolution.attention, false);
   const events = runtime.store.eventsAll(original.id).filter(event => event.kind === 'host_permission_delivery_unknown');
   assert.equal(events.length, 1);
-  assert.equal(JSON.parse(events[0]!.detail).field, 'commandId');
+  const evidence = JSON.parse(events[0]!.detail);
+  assert.equal(evidence.delivery, 'unknown');
+  assert.equal('field' in evidence, false, 'no location is named, even a known field name');
   assert.equal(runtime.store.eventsAll(next.id).some(event => event.kind === 'host_permission_delivery_unknown'), false);
 });
 
