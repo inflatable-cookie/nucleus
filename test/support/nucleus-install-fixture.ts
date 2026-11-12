@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { execFile } from "node:child_process";
@@ -34,10 +34,16 @@ export async function installerFixture() {
   const root = await mkdtemp(join(tmpdir(), "ni-"));
   const env = fixtureEnvironment(root);
   const build = join(root, "package");
-  const receipt = JSON.parse((await exec(process.execPath,
-    ["scripts/build-runtime.mjs", build],
-    { env, timeout: 90_000, maxBuffer: 4 * 1024 * 1024 },
-  )).stdout);
+  let receipt;
+  if (process.env.NUCLEUS_INSTALL_RUNTIME_CACHE) {
+    await cp(process.env.NUCLEUS_INSTALL_RUNTIME_CACHE, build, { recursive: true });
+    receipt = JSON.parse(await readFile(join(build, "build.json"), "utf8"));
+  } else {
+    receipt = JSON.parse((await exec(process.execPath,
+      ["scripts/build-runtime.mjs", build],
+      { env, timeout: 90_000, maxBuffer: 4 * 1024 * 1024 },
+    )).stdout);
+  }
   const home = env.HOME;
   for (const app of [".agents", ".codex", ".claude", ".paseo"]) {
     await mkdir(join(home, app), { recursive: true });
