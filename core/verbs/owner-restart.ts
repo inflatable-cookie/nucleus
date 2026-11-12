@@ -158,10 +158,12 @@ export function restartShape(task: Task, runs: Run[], role: RestartRole, events:
     const stalledStop = task.resolution.stalledTurnStop;
     if (fault?.cause === "stalled_turn" && stalledStop?.status !== "stopped" && stalledStop?.status !== "completed") return "stalled_run";
     if (task.agentIntent && !task.agentId) return "absent_worker";
-    // A settled pre-dispatch task, whatever phase its park left it in, replays
-    // validation; only released recovery history may precede it.
-    if (!task.agentId && !task.runId && !task.resolution.currentRunId && !task.resolution.recoveryActive
-      && runs.every(run => run.released && run.role === "recovery")
+    // A task with no live worker and no PR can always be returned to dispatch,
+    // even when a previous owner move left a historical runId or a nonstandard
+    // phase such as changes_requested. Uncertain worker creation remains its
+    // own shape above; every other unreleased run still owns the task.
+    if (!task.agentId && !task.agentIntent && !runs.some(run => !run.released)
+      && !task.resolution.currentRunId && !task.resolution.recoveryActive
       && !task.completion && !prIdentity(task) && !task.resumePrNumber && task.phase !== "queued") return "pre_dispatch";
     const stoppedRevision = runs.findLast(run => run.role === "revision" && !run.completion && !run.released
       && run.agentId === task.agentId && run.workspaceId === task.workspaceId);

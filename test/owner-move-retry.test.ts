@@ -369,6 +369,36 @@ test('move work refuses a gone author with no route before settling anything', a
   } finally { await f.close(); }
 });
 
+test('move to work starts an author for the pre-PR changes_requested task with no live worker', async () => {
+  const f = fixture(); try {
+    f.store.update(f.taskId, {
+      phase: 'changes_requested', agentId: null, runId: 'previous-worker-run', agentIntent: false,
+      workspaceId: 'workspace', directory: '/worktree', branch: 'ns-work', profile: workerProfile,
+      workerModel: workerProfile.model, completion: null, prUrl: null, prHead: null, resumePrNumber: null,
+    });
+    const work = f.views('move').find(view => view.args?.to === 'work')!;
+    assert.equal(work.available, true, JSON.stringify(work));
+    const moved = await f.engine.performTaskControl(taskControlInputSchema.parse({ ...work.args,
+      reason: 'Return the pre-PR task to its author', instruction: 'Continue on the retained branch', caller: CALLER }));
+    assert.equal(moved.phase, 'changes_requested');
+    assert.equal(moved.replacementProfile?.profileId, workerProfile.id);
+
+    const prompts: string[] = [];
+    Object.assign(f.adapter, {
+      verifyResume: async () => head,
+      verifyWorkspace: async () => {},
+      createAgent: async (task: Task, _token: string, prompt: string) => {
+        prompts.push(prompt);
+        return { id: 'fresh-author', workspaceId: task.workspaceId };
+      },
+    });
+    await (f.engine as unknown as { recoverExhaustedWorkers(): Promise<void> }).recoverExhaustedWorkers();
+    assert.equal(f.task().agentId, 'fresh-author');
+    assert.equal(f.task().workspaceId, 'workspace');
+    assert.match(prompts[0]!, /Continue on the retained branch/);
+  } finally { await f.close(); }
+});
+
 test('move closeout refuses an unmerged PR with nothing settled', async () => {
   const f = fixture(); try {
     dispatched(f);
