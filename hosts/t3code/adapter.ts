@@ -6,6 +6,7 @@ import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMe
 import type { Task, Profile } from '../../shared/contracts';
 import { formatTaskNumber } from '../../shared/contracts';
 import { capPaseoTitle } from '../../shared/paseo-title';
+import { WIRE_LABEL_KEYS } from '../../shared/wire-labels';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
 import { t3codeVocabulary } from './vocabulary';
@@ -391,7 +392,7 @@ export class T3CodeHost implements Host {
     const options = this.modelSelectionOptions(spec.profile, provider.models.find(m => m.slug === spec.profile.model)!);
     const runtimeMode = this.launchRuntimeMode(spec.profile, provider.supportedRuntimeModes);
     const id = identity('thread', attempt.requestId);
-    const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title: this.numberedThreadTitle(spec.taskNumber, attempt.labels.role, spec.title),
+    const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title: this.numberedThreadTitle(spec.taskNumber, attempt.labels[WIRE_LABEL_KEYS.role], spec.title),
       modelSelection: { instanceId: spec.profile.provider, model: spec.profile.model, ...(options.length ? { options } : {}) }, runtimeMode, interactionMode: 'default',
       workspaceStrategy: { type: 'existing_worktree', worktreePath: workspace.directory },
       initialMessage: { messageId: identity('message', attempt.requestId), text: attempt.prompt, attachments: [] } };
@@ -421,24 +422,43 @@ export class T3CodeHost implements Host {
   async setTaskWorkspaceTitle(task: Task, title: string, requestId: string, _uncertain: boolean): Promise<void> {
     title = capPaseoTitle(title);
     const state = this.state.read();
-    const threadId = task.agentId && state.agents[task.agentId]?.labels.task === task.id
+    const taskLabel = WIRE_LABEL_KEYS.task, runLabel = WIRE_LABEL_KEYS.run, roleLabel = WIRE_LABEL_KEYS.role;
+    const taskAgents = Object.entries(state.agents).filter(([, agent]) => agent.labels[taskLabel] === task.id);
+    const threadId = task.agentId && state.agents[task.agentId]?.labels[taskLabel] === task.id
       ? task.agentId
-      : Object.entries(state.agents).find(([, agent]) => agent.labels.task === task.id && agent.labels.role === 'worker')?.[0];
+      : taskAgents.find(([id, agent]) => agent.labels[roleLabel] === 'worker'
+        || agent.labels[roleLabel] === undefined && (id === task.agentId || task.runId !== undefined && agent.labels[runLabel] === task.runId))?.[0];
     if (!threadId) throw Error('Task worker thread is missing');
     const projection = await this.readProjection(threadId);
-    if (projection.thread.archivedAt || projection.thread.deletedAt) return;
     const key = identity('thread-title', canonical({ threadId, requestId }));
-    if (projection.thread.title === title) {
+    if (!projection.thread.archivedAt && !projection.thread.deletedAt && projection.thread.title === title) {
       this.state.update(current => {
         const prior = current.intents[key];
         if (prior?.status === 'unknown') current.intents[key] = { ...prior, status: 'settled', result: { title } };
         if (current.agents[threadId]) current.agents[threadId].title = title;
       });
-      return;
+    } else if (!projection.thread.archivedAt && !projection.thread.deletedAt) {
+      await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId: key, threadId, title }, undefined, undefined,
+        { resendUnknownAfterRead: true });
+      this.state.update(current => { if (current.agents[threadId]) current.agents[threadId].title = title; });
     }
-    await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId: key, threadId, title }, undefined, undefined,
-      { resendUnknownAfterRead: true });
-    this.state.update(current => { if (current.agents[threadId]) current.agents[threadId].title = title; });
+
+    // Task state sync also repairs the number-and-role prefix on existing support
+    // threads. Their current remote title is the source of the task title, so a
+    // restart can safely catch up threads created before numbered titles landed.
+    if (task.number) for (const [supportId, agent] of taskAgents) {
+      const role = agent.labels[roleLabel];
+      if (!role || role === 'worker') continue;
+      const support = await this.readProjection(supportId);
+      if (support.thread.archivedAt || support.thread.deletedAt) continue;
+      const supportTitle = this.numberedThreadTitle(task.number, role, support.thread.title);
+      if (support.thread.title === supportTitle) continue;
+      const supportKey = identity('thread-title', canonical({ threadId: supportId, requestId, title: supportTitle }));
+      await this.effect(supportKey, 'orchestration.dispatchCommand', {
+        type: 'thread.metadata.update', commandId: supportKey, threadId: supportId, title: supportTitle,
+      }, undefined, undefined, { resendUnknownAfterRead: true });
+      this.state.update(current => { if (current.agents[supportId]) current.agents[supportId].title = supportTitle; });
+    }
   }
   /**
    * The profile's `modeId` as the thread's runtime mode. Nucleus profiles name the

@@ -11,6 +11,7 @@ import type { HostAgentSpec } from '../shared/host';
 import type { Profile, Task } from '../shared/contracts';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
 import { capPaseoTitle } from '../shared/paseo-title';
+import { WIRE_LABEL_KEYS, WIRE_PLUGIN_LABEL_KEY, wireLabels } from '../shared/wire-labels';
 import { t3Fake, STAMP, threadProjection } from './support/t3code-fake';
 
 const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
@@ -25,7 +26,7 @@ async function fixture(t: TestContext) {
   await host.connect();
   const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace-intent', directory, project: { projectId: 'synthetic-project' } });
   const spec = (requestId = 'launch-intent', prompt = 'Synthetic prompt', role = 'worker'): HostAgentSpec => ({ workspaceId: workspace.id, profile, title: role === 'worker' ? 'Synthetic role' : `${role}: Synthetic role`, taskNumber: 225, mcpBindingPath: null,
-    attempt: () => ({ requestId, prompt, labels: { task: 'synthetic-task', role }, environment: {} }) });
+    attempt: () => ({ requestId, prompt, labels: wireLabels({ task: 'synthetic-task', run: role === 'worker' ? 'worker-run' : `${role}-run`, ...(role === 'worker' ? {} : { role }) }), environment: {} }) });
   return { root, directory, server, options, host, workspace, spec };
 }
 
@@ -60,7 +61,7 @@ test('create uses an existing canonical worktree and explicit top-level provider
   assert.equal(created.workspaceId, workspace.id);
   for (const field of ['parentThreadId', 'parentRunId', 'delegatedFrom', 'environment', 'mcpServers']) assert.equal(Object.hasOwn(command, field), false, field);
   assert.equal((await host.observe(created.id)).workspaceId, workspace.id);
-  assert.deepEqual(await host.findAgents({ task: 'synthetic-task' }), [created]);
+  assert.deepEqual(await host.findAgents({ [WIRE_LABEL_KEYS.task]: 'synthetic-task' }), [created]);
 });
 
 test('new T3 worker, reviewer and recovery threads use task number and role titles', async t => {
@@ -70,6 +71,27 @@ test('new T3 worker, reviewer and recovery threads use task number and role titl
   await host.createAgent(spec('recovery-title', 'Recovery', 'recovery'));
   assert.deepEqual(server.commands.filter(command => command.method === 'orchestration.launchThread').map(command => command.title), [
     '225: Synthetic role', '225 review: Synthetic role', '225 recovery: Synthetic role',
+  ]);
+});
+
+test('real stored label keys locate a role-less worker and repair existing support titles', async t => {
+  const { host, server, spec } = await fixture(t);
+  const worker = await host.createAgent(spec('worker-run', 'Worker'));
+  const reviewer = await host.createAgent(spec('reviewer-run', 'Review', 'reviewer'));
+  const workerLabels = host.state.read().agents[worker.id]!.labels;
+  assert.deepEqual(workerLabels, { [WIRE_PLUGIN_LABEL_KEY]: 'nucleus', [WIRE_LABEL_KEYS.task]: 'synthetic-task', [WIRE_LABEL_KEYS.run]: 'worker-run' });
+  assert.equal(workerLabels[WIRE_LABEL_KEYS.role], undefined, 'the worker label shape omits nucleus.role');
+  assert.ok(Object.keys(host.state.read().agents[reviewer.id]!.labels).every(key =>
+    key === WIRE_PLUGIN_LABEL_KEY || Object.values(WIRE_LABEL_KEYS).includes(key as typeof WIRE_LABEL_KEYS[keyof typeof WIRE_LABEL_KEYS])),
+  'every created fixture uses the shared wire label keys');
+
+  server.threads.get(reviewer.id)!.thread.title = 'reviewer: Synthetic role';
+  const task = { id: 'synthetic-task', number: 225, title: 'Synthetic role', held: false, hostId: host.hostId,
+    workspaceId: worker.workspaceId, runId: 'worker-run', phase: 'working' } as Task;
+  const title = taskWorkspaceTitle(task);
+  await host.setTaskWorkspaceTitle(task, title, 'real-label-title', false);
+  assert.deepEqual(server.commands.filter(command => command.type === 'thread.metadata.update').map(command => [command.threadId, command.title]), [
+    [worker.id, title], [reviewer.id, '225 review: Synthetic role'],
   ]);
 });
 
@@ -174,7 +196,7 @@ test('durable create replay survives reload and refuses changed payload or label
   assert.deepEqual(await reloaded.createAgent(spec()), first);
   assert.equal(server.commands.length, 1);
   await assert.rejects(reloaded.createAgent(spec('launch-intent', 'Changed prompt')), /payload changed/);
-  const changed = spec(); changed.attempt = () => ({ requestId: 'launch-intent', prompt: 'Synthetic prompt', labels: { task: 'other-task' }, environment: {} });
+  const changed = spec(); changed.attempt = () => ({ requestId: 'launch-intent', prompt: 'Synthetic prompt', labels: wireLabels({ task: 'other-task', run: 'worker-run' }), environment: {} });
   await assert.rejects(reloaded.createAgent(changed), /retained identity changed/);
   assert.equal(server.commands.length, 1);
 });
@@ -504,7 +526,7 @@ test('host identity conflicts and unsupported per-thread bindings refuse before 
   const { host, server, options, workspace, spec, root } = await fixture(t);
   const mcp = spec(); mcp.mcpBindingPath = 'synthetic-binding';
   await assert.rejects(host.createAgent(mcp), /MCP reporting/);
-  const environment = spec(); environment.attempt = () => ({ requestId: 'environment', prompt: 'Synthetic', labels: {}, environment: { SYNTHETIC: 'value' } });
+  const environment = spec(); environment.attempt = () => ({ requestId: 'environment', prompt: 'Synthetic', labels: wireLabels({ task: 'synthetic-task', run: 'worker-run' }), environment: { SYNTHETIC: 'value' } });
   await assert.rejects(host.createAgent(environment), /launch environment/);
   const guarded = spec(); guarded.guard = { async allowed() { return true; }, stillAllowed() { return false; } };
   await assert.rejects(host.createAgent(guarded), /guard changed/);
