@@ -2814,6 +2814,14 @@ movement invalidates source approval and preserves the normal readiness gates.
   turn proof is read after the evidence it settles, so a turn that started
   during pagination still holds. Nucleus never reads provider files to settle a
   call.
+- A participant's non-turn-bound tool keeps a pre-merge lease only for the
+  configured `graceMs` after its first durable hold. Once that grace expires,
+  Nucleus rechecks that the same participant is idle in the same workspace,
+  then uses the host-process reap path and records the stopped processes on the
+  task. While the participant wait is open, the task yields its repository
+  integration turn; after the wait clears it rejoins through the existing FIFO
+  turn mechanism. A live or changed participant is never reaped, and an
+  uncertain merge intent continues to retain its turn.
 
 ### History retention
 
