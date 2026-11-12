@@ -39,10 +39,10 @@ export const VALIDATION_AUTHORITY_RULE = "Validate per the repository's AGENTS.m
  * the commit at the exact head. Full suites and `effigy qa` stay on milestone QA.
  */
 export function affectedRunRule(command: string) {
-  return `Affected tests: after you commit, run \`${command}\` once at that exact head. It selects the test files your change can affect through the import graph and runs them through the unit runner. Report its command and file count as evidence. Fix a failing affected file, and never run the full suite or \`effigy qa\` for it.`;
+  return `Affected tests: after you commit, run \`${command}\` once at that exact head. It selects the test files your change can affect through the import graph and runs them through the unit runner. If an affected file fails, rerun that file alone on \`origin/main\`. If it fails there too, it was already broken: list the file and failing test in your report and PR instead of fixing it. Only failures unique to your branch block review. Report the affected-run command and file count as evidence, and never run the full suite or \`effigy qa\` for it.`;
 }
 export function affectedRunReviewerNote(command: string) {
-  return `Affected tests: judge the author's \`${command}\` at this exact head from its reported command and file count. If that evidence is missing or names another head, run it once yourself. A missing or failing affected run is a finding; anything wider than the affected set never is.`;
+  return `Affected tests: judge the author's \`${command}\` at this exact head from its reported command and file count. If that evidence is missing or names another head, run it once yourself. For each failing affected file, rerun that file alone on \`origin/main\`; if it fails there too, it was already broken, so list the file and failing test in your report rather than requiring a fix. Only failures unique to the branch block review. Anything wider than the affected set never is.`;
 }
 export function operatorValidationBlock(affectedTestsCommand?: string) {
   return `${VALIDATION_RULE_HEADING}\n${VALIDATION_AUTHORITY_RULE}\n${VALIDATION_RUN_RULE}\n${affectedTestsCommand ? `${affectedRunRule(affectedTestsCommand)}\n` : ''}`;

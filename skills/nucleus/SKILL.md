@@ -235,9 +235,12 @@ query the live store, and do not frame that check as awaiting proof.
 
 Before review, each worker and revision also runs the affected test files its
 committed change can reach: `effigy test:affected --run` at the exact head
-(nucleus#1164, Tom 2026-11-12). The reviewer judges the author's reported command
-and file count at that head and reruns it when that evidence is missing. Full
-suites and `effigy qa` stay on milestone QA.
+(nucleus#1164, Tom 2026-11-12). If an affected file fails, rerun it alone on
+`origin/main`. When it fails there too, it was already broken: list the file and
+failing test in the report and PR rather than fixing it. Only failures unique
+to the branch block review, and the reviewer applies the same rule. The reviewer
+judges the author's reported command and file count at that head and reruns it
+when that evidence is missing. Full suites and `effigy qa` stay on milestone QA.
 
 The repository's AGENTS.md Validate section selects which covering checks
 apply; it never waives a proof the brief or handoff names as required, and

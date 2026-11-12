@@ -1172,7 +1172,14 @@ test('affected-test prompts are opt-in and use the repository command', () => {
   const configured = 'effigy test:affected --run';
   const optedIn = [workerPrompt(task,true,[],null,undefined,undefined,configured), runPrompt(task,{id:'run',role:'revision',generation:1,head:'a'.repeat(40)} as Run,'/helper','/ticket',true,null,null,configured), runPrompt(task,{id:'run',role:'reviewer',generation:1,head:'a'.repeat(40)} as Run,'/helper','/ticket',true,null,null,configured)];
   for (const prompt of optedIn) assert.match(prompt,/effigy test:affected --run/);
-  assert.match(optedIn[2],/missing or failing affected run is a finding/);
+  for (const prompt of optedIn) {
+    assert.match(prompt,/rerun that file alone on `origin\/main`/);
+    assert.match(prompt,/it was already broken/);
+    assert.match(prompt,/Only failures unique to your branch block review|Only failures unique to the branch block review/);
+    assert.match(prompt,/list the file and failing test/);
+  }
+  assert.match(optedIn[2],/If that evidence is missing or names another head, run it once yourself/);
+  assert.match(optedIn[2],/Only failures unique to the branch block review/);
 });
 
 test('recovery coordinator prompt carries the launch snapshot and the one refresh command for the plan', () => {
