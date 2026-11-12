@@ -1,4 +1,4 @@
-import type { Task, Run, Profile, PoolEntry, DemandRoleOffsets, RoutePolicy, RoutingPolicy, UsageLevel, UsageView } from "../../shared/contracts";
+import type { Task, Run, Profile, PoolEntry, DemandRoleOffsets, RoutePolicy, RoutingPolicy, UsageLevel, UsageView, HostEffect } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
 import { authorModelKey, queueAuthorModelKey, taskAuthorModelKeys } from "../../shared/authors";
 import {demandRank,workerThinking} from '../../shared/pool';
@@ -319,7 +319,26 @@ export function taskRoutingPolicy(task: Task, pool: readonly PoolEntry[], usage:
       automatic: entry ? automaticSelection(entry, usage.level) : null, gates,
       ...(requested ? { signoff: { status: requested.status, decisionId: requested.decisionId, note: requested.note, ...(requested.grantId ? { grantId: requested.grantId } : {}), ...(requested.endedGrantId ? { endedGrantId: requested.endedGrantId } : {}) } } : {}) };
     return { ...policy, explanation: describeRoutePolicy(policy, usage) };
-  }) };
+  }), ...(task.hostId && profiles.length ? { host: { hostId: task.hostId, effects: hostEffects(pool, profiles) } } : {}) };
+}
+
+/**
+ * Every enabled pool profile the host snapshot rules out or launches with
+ * mapped values (nucleus#1151). Disabled entries are left out: they never
+ * dispatch anywhere, so the host is not why they were passed over.
+ */
+export function hostEffects(pool: readonly PoolEntry[], profiles: readonly Profile[]): HostEffect[] {
+  const effects: HostEffect[] = [];
+  for (const entry of pool) {
+    if (!entry.enabled) continue;
+    const profile = profiles.find(candidate => candidate.id === entry.profileId);
+    if (!profile) continue;
+    if (profile.excluded) effects.push({ profileId: profile.id, name: profile.name, effect: "excluded", reason: profile.problem });
+    else if (!profile.available) effects.push({ profileId: profile.id, name: profile.name, effect: "unavailable", reason: profile.problem });
+    else if (profile.mapped?.length) effects.push({ profileId: profile.id, name: profile.name, effect: "mapped",
+      reason: `launches as ${profile.provider}/${profile.model}${profile.modeId ? `, mode ${profile.modeId}` : ""}${profile.thinkingOptionId ? `, thinking ${profile.thinkingOptionId}` : ""} (mapped: ${profile.mapped.join(", ")})` });
+  }
+  return effects;
 }
 
 export const proofExecutorAgents = (task: Pick<Task, 'proofExecutions'>): string[] =>

@@ -18,7 +18,7 @@ const HOST_CATALOG_META_PREFIX = "hostCatalog:";
 /** Narrow dependencies; construction and lifecycle remain runtime-owned. */
 export interface SettingsContext {
   store: Store;
-  engine: Pick<Engine, "profiles" | "wake" | "resumePausedStops">;
+  engine: Pick<Engine, "profiles" | "wake" | "resumePausedStops"> & Partial<Pick<Engine, "rebuildProfiles" | "profileCompatibility">>;
   decisions: Decisions;
   capacityChanges: CapacityChangeJournal;
   readonly started: Promise<void>;
@@ -53,6 +53,7 @@ export class RuntimeSettings {
     if (profiles.some(profile => profile.id === id)) throw new Error(`Profile ${id} already exists`);
     const profile = nucleusProfileSchema.parse({ ...input, id, model: input.model ?? "", notes: input.notes ?? "" });
     this.context.store.setProfiles([...profiles, profile]);
+    this.profilesChanged();
     return { profile };
   }
 
@@ -70,6 +71,7 @@ export class RuntimeSettings {
     const profile = nucleusProfileSchema.parse(merged);
     const next = [...profiles]; next[index] = profile;
     this.context.store.setProfiles(next);
+    this.profilesChanged();
     return { profile };
   }
 
@@ -78,7 +80,24 @@ export class RuntimeSettings {
     const next = profiles.filter(profile => profile.id !== input.id);
     if (next.length === profiles.length) return { removed: false };
     this.context.store.setProfiles(next);
+    this.profilesChanged();
     return { removed: true };
+  }
+
+  /**
+   * A profile edit, a per-host mapping or exclusion included, reaches selection
+   * at once: the routing snapshots are rebuilt from the catalogs already read,
+   * without a host read, and the board revision moves (nucleus#1151).
+   */
+  private profilesChanged() {
+    this.context.engine.rebuildProfiles?.();
+    this.context.store.advanceRevision();
+  }
+
+  /** Each profile on each registered host: works or not, why, and what it launches with (nucleus#1151). */
+  profileCompatibility() {
+    if (!this.context.engine.profileCompatibility) return { hosts: [], rows: [] };
+    return this.context.engine.profileCompatibility();
   }
 
   /** The host provider key to normalised key map a profile's provider is read through. */
@@ -90,6 +109,7 @@ export class RuntimeSettings {
    */
   profileSetProviders(input: { providers: ProviderMap }) {
     this.context.store.setProviderMap(input.providers);
+    this.profilesChanged();
     return { providers: this.context.store.providerMap() };
   }
 

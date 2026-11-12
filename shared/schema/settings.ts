@@ -159,7 +159,23 @@ export const routePolicySchema = z.object({
 
 export type RoutePolicy = z.infer<typeof routePolicySchema>;
 
-export const routingPolicySchema = z.object({ usage: usageViewSchema, scope: scopeSchema, profiles: z.array(routePolicySchema) }).strict();
+/**
+ * One enabled pool profile the task's host rules out or runs with mapped values
+ * (nucleus#1151), so "why did this get Luna?" has an answer on the task.
+ */
+export const hostEffectSchema = z.object({
+  profileId: z.string(),
+  name: z.string(),
+  effect: z.enum(["excluded", "unavailable", "mapped"]),
+  /** The host's reason for a ruled-out profile, or the mapped fields. */
+  reason: z.string(),
+}).strict();
+export type HostEffect = z.infer<typeof hostEffectSchema>;
+
+export const routingPolicySchema = z.object({ usage: usageViewSchema, scope: scopeSchema, profiles: z.array(routePolicySchema),
+  /** The task's host and the pool profiles it rules out or maps; absent when no host snapshot was read. */
+  host: z.object({ hostId: z.string(), effects: z.array(hostEffectSchema) }).strict().optional(),
+}).strict();
 
 export type RoutingPolicy = z.infer<typeof routingPolicySchema>;
 
@@ -245,6 +261,10 @@ export const profileSchema = z.object({
   modeId: z.string().optional(), thinkingOptionId: z.string().optional(),
   featureValues: z.record(z.string(), z.unknown()).optional(), notes: z.string(),
   available: z.boolean(), problem: z.string(), supportedThinking: z.array(z.string()),
+  /** On a host-bound snapshot: the operator excluded this profile on that host (nucleus#1151). */
+  excluded: z.boolean().optional(),
+  /** On a host-bound snapshot: the fields the operator's per-host mapping replaces. */
+  mapped: z.array(z.string()).optional(),
 });
 
 export type Profile = z.infer<typeof profileSchema>;

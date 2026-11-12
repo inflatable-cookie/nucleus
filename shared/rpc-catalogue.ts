@@ -133,6 +133,7 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
   { name: "profile.remove", contract: contracts.removeNucleusProfile, method: "profileRemove", mutating: true },
   { name: "profile.providers", contract: contracts.readProviderMap, method: "profileProviders", mutating: false },
   { name: "profile.providers.set", contract: contracts.writeProviderMap, method: "profileSetProviders", mutating: true },
+  { name: "profile.compatibility", contract: contracts.readProfileCompatibility, method: "profileCompatibility", mutating: false },
   { name: "host.catalog", contract: contracts.readHostCatalog, method: "hostCatalog", mutating: false },
   { name: "queue.profile", contract: contracts.configureProfile, method: "configureProfile", mutating: true },
   { name: "queue.control", contract: contracts.queueControl, method: "queueControl", mutating: true },
