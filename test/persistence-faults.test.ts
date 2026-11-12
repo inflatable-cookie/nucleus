@@ -316,16 +316,18 @@ test('a deliberate drain is not classified as an executor loss', async () => {
   }
 });
 
-test('a worker that dies during boot rejects start promptly instead of waiting out the boot timeout', async () => {
+test('a worker that dies during boot rejects start without advancing the boot watchdog', async t => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'nsq')));
   const dataDir = join(dir, 'northstar-queue');
   const service = new QueueService({ owner: { dataDir, timers: false }, fixture: 'boot-crash', fixtureState: {}, debug: true });
-  const started = Date.now();
+  // Keep the parent watchdog parked while the real worker fails. The error
+  // must settle boot without a timeout, regardless of host module-load speed.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   try {
     await assert.rejects(service.start(), /Fixture boot crash|exited before publishing/);
-    assert.ok(Date.now() - started < 10_000, `boot settled promptly (took ${Date.now() - started} ms)`);
     assert.ok(service.executor.fault(), 'the boot death is retained');
   } finally {
+    t.mock.timers.reset();
     await service.stop();
     rmSync(dir, { recursive: true, force: true });
   }
