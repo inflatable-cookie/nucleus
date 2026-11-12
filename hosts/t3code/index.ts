@@ -105,6 +105,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     }
     observe(id: string) { return this.native.observe(id); }
     observationInventory(ids: readonly string[]) { return this.native.observationInventory(ids); }
+    taskWorkspaceArchived(id: string) { return this.native.workspaceArchived(id); }
     originAgent(id: string) { return this.native.originAgent(id); }
     listLiveAgents() { return this.native.listLiveAgents(); }
     workspaceAvailable(id: string) { return this.native.workspaceAvailable(id); }

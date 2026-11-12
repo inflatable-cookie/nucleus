@@ -303,6 +303,8 @@ export interface HostObservation {
   active: boolean;
   permissions: boolean;
   error: string;
+  /** The host retired this thread (archived); its terminal status rides `status`. */
+  archived?: boolean;
   model?: string;
   provider?: string;
   modeId?: string | null;

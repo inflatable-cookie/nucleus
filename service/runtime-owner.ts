@@ -527,6 +527,8 @@ export class QueueRuntime {
       }
     };
     this.engine.resolveHostAdapter = id => this.hostRegistry.get(id)?.adapter;
+    // Per-host routing profiles (nucleus#1139): each registered host's own catalog decides its availability.
+    this.engine.hostIds = () => this.hostRegistry.known().map(host => host.id);
     this.engine.inventoryHostMatches = id => this.hostSession?.id === id;
     this.engine.retiredObservationKey = id => id === this.hostRegistry.known()[0]?.id ? 'retiredObservations' : `retiredObservations:${JSON.stringify(id)}`;
     this.engine.canReuseUnqualifiedOriginWorkspace = () => this.hostRegistry.known().length === 1;
@@ -987,7 +989,7 @@ export class QueueRuntime {
     if (this.closing || this.idleShutdownLatched) return false;
     // The legacy primary identity is recorded first; a secondary reconnect
     // remains independent of primary availability after that first bootstrap.
-    if (this.hostRegistry.known().length) void this.t3Host?.ensureConnected().then(() => this.plannerTickets.ensure());
+    if (this.hostRegistry.known().length) void this.t3Host?.ensureConnected().then(() => this.plannerTickets.ensure()).then(() => this.refresh());
     if (this.bootstrapped && this.connected()) {
       await this.plannerTickets.ensure();
       return true;

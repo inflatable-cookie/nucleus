@@ -271,3 +271,40 @@ test('set_routing naming a profile before the catalog loads refuses as retryable
     assert.equal(scoped.complexity,'low');
   }finally{await engine.stop();store.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('nucleus#1139: a task\'s host catalog keeps profiles it cannot run out of selection', async t => {
+  // One profile with a thinking level the T3 catalog does not report, one it does.
+  const luna=profile('luna','luna-model',{thinkingOptionId:'xhigh',supportedThinking:['xhigh']});
+  const sol=profile('sol','sol-model',{thinkingOptionId:'high',supportedThinking:['high']});
+  const all=[luna,sol];
+  const pool=all.map((p,i)=>poolSchema.parse({profileId:p.id,enabled:true,group:`g-${i}`,roles:['worker'],weight:1,scopes:['general','mechanical','complex'],capability:'medium'}));
+  const t3Catalog={providers:[{key:'test',label:'test',available:true,problem:'',models:[
+    {id:'luna-model',label:'Luna',aliases:[],thinkingOptions:[{id:'low',label:'Low'},{id:'high',label:'High'}],defaultThinkingOptionId:null,modes:[],features:[]},
+    {id:'sol-model',label:'Sol',aliases:[],thinkingOptions:[{id:'high',label:'High'}],defaultThinkingOptionId:null,modes:[],features:[]}]}]};
+  const primaryAdapter={profiles:async()=>all,observe:observeIdle('ws','agent'),catalog:async()=>({providers:[]})} as unknown as Adapter;
+  const t3Adapter={profiles:async()=>[],observe:observeIdle('ws','agent'),catalog:async()=>t3Catalog} as unknown as Adapter;
+  const dir=mkdtempSync(join(tmpdir(),'ns-host-routing-')),store=new Store(join(dir,'db'));
+  store.setProfiles([{ id: luna.id, name: luna.id, provider: luna.provider, model: luna.model, thinkingOptionId: 'xhigh', notes: '' },
+    { id: sol.id, name: sol.id, provider: sol.provider, model: sol.model, thinkingOptionId: 'high', notes: '' }]);
+  const engine=new Engine(store,primaryAdapter,0);
+  engine.hostIds=()=>['t3code:env'];
+  engine.resolveHostAdapter=id=>id==='t3code:env'?t3Adapter:primaryAdapter;
+  try{
+    assert.equal(engine.profileCatalogKnownFor('t3code:env'),false,'a secondary host waits for its own catalog');
+    await engine.refresh();
+    assert.equal(engine.profileCatalogKnownFor('t3code:env'),true);
+    assert.equal(engine.profileCatalogKnownFor('paseo-primary'),true,'the primary host reads the primary set');
+    // The task host's snapshot: Luna (xhigh) is unavailable on T3, Sol stays.
+    const onT3=engine.profilesFor('t3code:env');
+    assert.equal(onT3.find(p=>p.id==='luna')?.available,false,'xhigh is not reported by the T3 catalog');
+    assert.deepEqual(onT3.find(p=>p.id==='luna')?.supportedThinking,['low','high']);
+    assert.equal(onT3.find(p=>p.id==='sol')?.available,true);
+    // The primary set is untouched: both profiles available from the empty primary catalog.
+    const onPrimary=engine.profilesFor(undefined);
+    assert.equal(onPrimary.find(p=>p.id==='luna')?.available,false,'the primary catalog offers no providers at all');
+    assert.match(onPrimary.find(p=>p.id==='luna')?.problem ?? '',/Provider test is not available/);
+    const task=taskOf({complexity:'high',thinkingOptionId:'xhigh'});
+    assert.equal(ids(chooseProfile(task,onT3,pool,equalUsage(pool),new Set())),null,'a task pinned to xhigh has no eligible T3 profile');
+    assert.equal(ids(chooseProfile({...task,thinkingOptionId:'high'},onT3,pool,equalUsage(pool),new Set())),'sol','the supported level selects Sol on T3');
+  }finally{await engine.stop();store.close();rmSync(dir,{recursive:true,force:true});}
+});

@@ -192,19 +192,26 @@ export class RunLaunchDeliver {
       // nothing was bound or delivered, so the run settles as refused with a
       // pre-send receipt instead of `uncertain`. The next attempt dispatches
       // the bounded prompt. An ordinary retained round's own pre-send fence
-      // settles the same way.
+      // settles the same way. A proven refusal on any other creation settles
+      // the same: exact-lookup recovery would find nothing and a replacement
+      // creation would refuse identically, so the task stops in attention with
+      // the step that failed named (nucleus#1139).
       const reviewEntryGuarded = role === 'reviewer' && t.reviewEntry;
-      if (isPromptTooLargeError(error) || ((run.ordinaryDetached || reviewEntryGuarded) && (!dispatchInvoked || error instanceof ProvenPreSendRefusalError))) {
+      const creationRefusal = !agentId && dispatchInvoked && !run.ordinaryDetached && !reviewEntryGuarded && error instanceof ProvenPreSendRefusalError;
+      if (isPromptTooLargeError(error) || creationRefusal || ((run.ordinaryDetached || reviewEntryGuarded) && (!dispatchInvoked || error instanceof ProvenPreSendRefusalError))) {
         const tooLarge = isPromptTooLargeError(error);
+        const creationStep = creationRefusal ? (role === 'reviewer' ? 'Reviewer creation' : role === 'revision' ? 'Worker creation' : 'Coordinator creation') : '';
         const reason = tooLarge
           ? `Review prompt refused before send for size: ${redactDiagnostic(error instanceof Error ? error.message : String(error))}`
+          : creationRefusal
+          ? `${creationStep} refused before send: ${(error as ProvenPreSendRefusalError).reason}`
           : `${run.ordinaryDetached ? 'Ordinary review' : 'Review-entry'} reviewer refused before send: ${message(error)}`;
         this.store.transaction(() => {
           this.store.putRun({ ...this.store.run(run.id)!, status: 'superseded', released: true });
           this.store.deleteCredential(run.id);
           const current = this.store.task(t.id);
           if (current.resolution.currentRunId === run.id)
-            this.resolution.update(current, { currentRunId: null, attention: true }, { phase: 'needs_attention', reason }, tooLarge ? 'review_prompt_refused_before_send' : 'ordinary_review_refused_before_send', run.id);
+            this.resolution.update(current, { currentRunId: null, attention: true }, { phase: 'needs_attention', reason }, tooLarge ? 'review_prompt_refused_before_send' : creationRefusal ? 'creation_refused_before_send' : 'ordinary_review_refused_before_send', run.id);
         });
         // The typed refusal carries the pre-send receipt to the operation
         // layer; the ordinary fence already proved its own refusal.

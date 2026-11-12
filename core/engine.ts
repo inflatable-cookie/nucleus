@@ -305,6 +305,7 @@ export class Engine {
   /** The Host contract over this engine's adapter, read at each call (`core/host/host-facade.ts`). */
   get host(): HostFacade { return new HostFacade(this); }
   constructor(readonly store: Store, readonly adapter: Adapter, readonly idleGraceMs = 60000, readonly submissionReady: () => boolean = () => true, retirement?: RuntimeRetirementService, readonly uncertainMergeRetryMs = DEFAULT_UNCERTAIN_MERGE_RETRY_MS, hostRunStateDir?: string) {
+    this.primaryAdapter = adapter;
     this.resolveHostAdapter = () => adapter;
     this.adapter = new Proxy(adapter, {
       get: (fallback, property) => {
@@ -398,7 +399,7 @@ export class Engine {
     this.hooks = new RepositoryHooks(store, { wakeTask: taskId => { void this.cleanContext(() => this.wakeTask(taskId)); },
       retentionGateSettled: (taskId, worktree) => this.lifecycle.retentionReconciledAt(taskId, worktree),
       hostRunStateDir });
-    this.resolution = new Resolution(store, this.adapter, () => this.profiles, () => this.stopped, idleGraceMs, this.hooks, uncertainMergeRetryMs);
+    this.resolution = new Resolution(store, this.adapter, () => this.profilesFor(this.activeHostId), () => this.stopped, idleGraceMs, this.hooks, uncertainMergeRetryMs);
     this.resolution.hostAvailable = (task, run) => this.taskHostAvailable(task) && (!run || run.hostId === task.hostId);
     this.resolution.withHost = (id, fn) => this.withHost(id, fn);
     this.resolution.hostOnline = id => this.hostOnline(id);
@@ -424,7 +425,7 @@ export class Engine {
       if (episode && episode.retryAt <= Date.now() && episode.source === source) this.store.deleteMeta(key);
     };
     this.resolution.turnReleased = repoPath => this.wakeIntegrationSuccessor(repoPath);
-    this.resolution.catalogKnown = () => this.profileCatalogKnown();
+    this.resolution.catalogKnown = () => this.profileCatalogKnownFor(this.activeHostId);
     // Spec 058 (task 523): an operator's answer to Queue's own question applies
     // through the ordinary owner controls, with that answer as the authority.
     this.resolution.applyOperatorControl = (input) =>
@@ -484,6 +485,12 @@ export class Engine {
   set prerequisiteReleaseWork(value: Promise<void> | null) { this.prerequisiteReleases.prerequisiteReleaseWork = value; }
   /** Refresh affected dependents once, then wake each repository once per batch. */
   flushPrerequisiteReleases(): Promise<void> { return this.prerequisiteReleases.flushPrerequisiteReleases(); }
+  /** Registered secondary host ids; the service wires this to the host registry. */
+  hostIds: () => readonly string[] = () => [];
+  /** One routing-profile snapshot per secondary host, built from that host's own catalog (nucleus#1139). */
+  private readonly hostProfiles = new Map<string, Profile[]>();
+  private readonly hostCatalogRefreshed = new Set<string>();
+  private readonly primaryAdapter: Adapter;
   /** Admission evidence attached to this engine's Paseo adapter, when admitted. */
   get admission() { return admissionOf(this.adapter); }
   setSourcePromotionHandler(handler: (payload: unknown, hostId?: string, selection?: import('../shared/operations').QueueOperation['hostSelection']) => Promise<OperationResult>): void { this.operations.setSourcePromotionHandler(handler); }
@@ -494,6 +501,19 @@ export class Engine {
     const catalog = await this.adapter.catalog();
     this.profiles = routingProfiles(this.store.profiles(), catalog, this.store.providerMap());
     this.profileCatalogRefreshed = true;
+    // Each secondary host's availability is its own catalog's answer: a profile
+    // whose thinking level or feature values that host does not report stays
+    // ineligible there, so selection never sends a launch the host must refuse
+    // (nucleus#1139). A failed read keeps the previous snapshot.
+    for (const id of this.hostIds()) {
+      const selected = this.resolveHostAdapter(id);
+      if (!selected || !selected.catalog) continue;
+      // The primary host's catalog is the profile set read above; only a
+      // secondary host reads its own.
+      if (selected === this.primaryAdapter) { this.hostCatalogRefreshed.add(id); continue; }
+      try { this.hostProfiles.set(id, routingProfiles(this.store.profiles(), await selected.catalog(), this.store.providerMap())); this.hostCatalogRefreshed.add(id); }
+      catch { /* keep any previous snapshot; dispatch waits through its own gates */ }
+    }
   }
   private profileCatalogRefreshed = false;
   /**
@@ -504,6 +524,19 @@ export class Engine {
    * after a roll parked "profile Sol oracle is unavailable").
    */
   profileCatalogKnown(): boolean { return this.profileCatalogRefreshed || this.profiles.length > 0; }
+  /** The routing profiles a task's own host reports; a host without a snapshot reads the primary set. */
+  profilesFor(hostId?: string | null): Profile[] { return hostId ? this.hostProfiles.get(hostId) ?? this.profiles : this.profiles; }
+  /**
+   * Dispatch waits until the task's host's catalog is known, not only the primary's.
+   * The primary host's catalog is the primary profile set; only a secondary host
+   * with its own adapter waits for its own snapshot.
+   */
+  profileCatalogKnownFor(hostId?: string | null): boolean {
+    if (!hostId) return this.profileCatalogKnown();
+    const selected = this.resolveHostAdapter(hostId);
+    if (!selected || selected === this.primaryAdapter) return this.profileCatalogKnown();
+    return this.hostCatalogRefreshed.has(hostId);
+  }
   requireProfileCatalog(): void {
     if (!this.profileCatalogKnown()) throw new Error(PROFILE_CATALOG_LOADING_REFUSAL);
   }
