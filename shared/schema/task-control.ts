@@ -870,6 +870,8 @@ export const taskNextSchema = z.object({
   verbs: z.array(taskNextVerbSchema),
   /** Spec 052: the usage policy for the profiles this task's routing names, read fresh. */
   routingPolicy: routingPolicySchema.optional(),
+  /** Durable worker exclusions, lifted by an owner route to the profile. */
+  workerExclusions: taskSchema.shape.workerExclusions.optional(),
   /** Task 645: the durable owner no-automatic-retry rule and the control that recorded it. */
   noAutomaticRetry: z.boolean().optional(),
   noAutomaticRetryProvenance: z.string().nullable().optional(),

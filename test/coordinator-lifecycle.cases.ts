@@ -203,6 +203,17 @@ async function workerErrorEpisode(f: ReturnType<typeof fixture>, runId = 'failed
   return episode;
 }
 
+test('a coordinator actually launched during a worker provider outage is not charged', async () => {
+  const f=fixture(); try {
+    f.store.setAvailability('author',JSON.stringify({group:'author',unavailable:true,reason:'Provider down',retryAt:null}));
+    const run=await workerErrorEpisode(f);
+    const launch=f.events('telemetry_recovery').find(event=>JSON.parse(event.detail).runId===run.id)!;
+    assert.equal(JSON.parse(launch.detail).outage,true);
+    assert.equal(unproductiveCoordinatorRuns(f.store,f.submitted.id),0);
+    assert.equal(f.current().resolution.recoveryAttempts,0);
+  } finally { await f.close(); }
+});
+
 /** The reader's delivered turn runs, as a real Paseo turn does, until the test ends it. */
 function readerRunsDeliveredTurns(f: ReturnType<typeof fixture>) {
   const send = f.adapter.continueReviewer!;

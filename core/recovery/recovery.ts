@@ -781,7 +781,7 @@ export class Recovery {
     const workerGroup=current.profileGroup ?? this.store.pool().find(entry=>entry.profileId===current.profile?.id)?.group;
     const availability=workerGroup ? this.store.db.prepare('SELECT data FROM availability WHERE group_id=?').get(workerGroup) : null;
     const outage=!this.resolution.hostAvailable(current) || Boolean(availability && groupIsUnavailable(JSON.parse(String(availability.data))));
-    this.store.setCredential(run.id,token);this.store.putRun(run);this.store.event(t.id,'telemetry_recovery',JSON.stringify({runId:run.id,targetRole:target,cause:cause(t,this.store.runs(t.id)),work:taskWorkIdentity(current,this.store),outage}));this.save(t,{runId:run.id,agentId,status:'running',...(current.resolution.recovery?.action ? {action:null} : {})});this.resolution.update(t,{recoveryActive:true,recoveryAttempts:t.resolution.recoveryAttempts+1});
+    this.store.setCredential(run.id,token);this.store.putRun(run);this.store.event(t.id,'telemetry_recovery',JSON.stringify({runId:run.id,targetRole:target,cause:cause(t,this.store.runs(t.id)),work:taskWorkIdentity(current,this.store),outage}));this.save(t,{runId:run.id,agentId,status:'running',...(current.resolution.recovery?.action ? {action:null} : {})});this.resolution.update(t,{recoveryActive:true,recoveryAttempts:current.resolution.recoveryAttempts+(outage?0:1)});
     if(group)this.store.chargeAssignment(group,profile!.id);
    });
    if(superseded){this.store.event(t.id,'recovery_superseded','An operator control replaced this recovery before its coordinator run was recorded');return null;}

@@ -175,7 +175,7 @@ test('route to an errored worker profile is honoured on replacement', async () =
     f.store.update(f.task.id,{phase:'working',completion:null});
     f.observations.set('worker',{id:'worker',workspaceId:'workspace',status:'error',active:false,permissions:false,error:'Pi RPC process is closed'});
     const routed=await f.control({role:'worker',profileId:'author',now:true,reason:'Use the same profile'});
-    assert.equal(routed.replacementProfile?.profileId,'author');
+    assert.equal(routed.profileRequests?.worker?.profileId,'author');
     await (f.engine as any).recoverExhaustedWorkers();
     assert.equal(f.current().profile?.id,'author');
     assert.equal(f.current().agentId,'agent-author');

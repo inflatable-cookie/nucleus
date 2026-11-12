@@ -341,6 +341,11 @@ export class TransientResume {
   async resumeTransientWorker(task: Task, state: Awaited<ReturnType<Adapter['observe']>>): Promise<boolean> {
     const runId = task.runId;
     const retry = task.transientProviderRetry?.runId === runId ? task.transientProviderRetry : null;
+    // A closed RPC process cannot accept a continuation. A merely scheduled
+    // retry has sent nothing; an intent or uncertain delivery must still be
+    // reconciled by the existing delivery rules.
+    if (state.status === 'error' && !state.active && !state.activeTurnId && !state.permissions
+      && /\bRPC process is closed\b/i.test(state.error) && (!retry || retry.status === 'waiting')) return false;
     // A deliberate author continuation owns a new authenticated revision ticket.
     // Never revive the initial ticket after a worker restart moved the task to changes_requested.
     const stillInitial = () => {

@@ -138,7 +138,12 @@ export function unproductiveCoordinatorRuns(store: Store, taskId: string): numbe
   let charged = 0;
   for (const run of runs.reverse()) {
     const launch = launched.get(run.id);
-    if (launch?.outage) continue;
+    // An outage launch does not spend the bound, but its work identity still
+    // separates earlier work from the current trailing chain.
+    if (launch?.outage) {
+      if (launch.work !== undefined ? launch.work !== work : run.head !== head) break;
+      continue;
+    }
     if (!launch) {
       // No launch record at all: nothing dates it, so it cannot be shown to predate
       // the current work. Charge it while it stands at this exact head.

@@ -1378,8 +1378,8 @@ test('required worker survives an RPC crash and waits for its provider before sa
 test('provider outage does not promote a fallback above worker demand',async()=>{
  const f=fixture();try{
   const strong={...profile,id:'strong',model:'strong'};f.engine.profiles=[profile,strong];
-  f.store.setMeta('pool',[{profileId:profile.id,enabled:true,group:'test',weight:1,capability:'medium'},
-    {profileId:strong.id,enabled:true,group:'strong',weight:1,capability:'very_high'}]);
+  f.store.setMeta('pool',[{profileId:profile.id,enabled:true,group:'test',weight:1,capability:'medium',roles:['worker'],scopes:['general']},
+    {profileId:strong.id,enabled:true,group:'strong',weight:1,capability:'very_high',roles:['worker'],scopes:['general']}]);
   const task=f.add();f.store.update(task.id,{complexity:'medium',preferredProfileId:profile.id});
   f.store.setMeta('paused',false);await f.engine.wake();const old=f.store.task(task.id);
   f.store.setAvailability('test',JSON.stringify({group:'test',unavailable:true,reason:'Provider down',retryAt:null}));
