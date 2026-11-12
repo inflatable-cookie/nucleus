@@ -111,10 +111,13 @@ export class RouteControls {
 
       const thinking = input.thinkingOptionId ?? (role === "worker" ? honouredWorkerThinking(task, this.store.pool(), this.store.usageLevel()) : "") ?? "";
       this.engine.requireProfileCatalog();
-      const { profile } = validateNamedProfile(profileId, role, task.scope, this.profiles, this.store.pool(), reason, thinking);
+      // The task's own host decides availability: a profile its catalog cannot
+      // run is refused here, before it is ever recorded (nucleus#1139 review).
+      const hostProfiles = this.engine.profilesFor(task.hostId);
+      const { profile } = validateNamedProfile(profileId, role, task.scope, hostProfiles, this.store.pool(), reason, thinking);
       if (thinking && !profile.supportedThinking.includes(thinking))
         throw Error(`Profile ${profileId} does not support thinking option ${thinking}`);
-      this.assertRouteGroupAvailable(profileId, role);
+      this.assertRouteGroupAvailable(profileId, role, task.hostId);
       // Worker selection always drops a profile on the retained reviewer's model
       // (no waiver), so a route it would drop is refused now, not recorded and
       // parked. The `next` route view reads the same rule.
@@ -233,7 +236,7 @@ export class RouteControls {
             const availabilityRow = assignedGroup ? this.store.db.prepare("SELECT data FROM availability WHERE group_id=?").get(assignedGroup) : null;
             const availability = availabilityRow ? JSON.parse(String((availabilityRow as { data: string }).data)) : null;
             const decision = decideWorkerReplacement({ task: current, requestedProfileId: profileId,
-              requestedModel: this.profiles.find(candidate => candidate.id === profileId)?.model ?? null,
+              requestedModel: this.engine.profilesFor(current.hostId).find(candidate => candidate.id === profileId)?.model ?? null,
               currentModel: current.profile?.model ?? null, approved: !unsignedRoute,
               failure: retainedWorkerFailureCause({ task: current, groupUnavailable: availability && groupIsUnavailable(availability)
                 ? { group: assignedGroup!, reason: String(availability.reason ?? '') } : null }),
@@ -348,7 +351,7 @@ export class RouteControls {
    * Refuse a route whose subscription group is unavailable, naming the retry
    * time and the eligible alternatives so the owner can choose another route.
    */
-  assertRouteGroupAvailable(profileId: string, role: RouteRole): void {
+  assertRouteGroupAvailable(profileId: string, role: RouteRole, hostId?: string | null): void {
     const entry = this.store.pool().find(candidate => candidate.profileId === profileId);
     if (!entry) return;
     const row = this.store.db.prepare("SELECT data FROM availability WHERE group_id=?").get(entry.group);
@@ -357,7 +360,7 @@ export class RouteControls {
     if (!groupIsUnavailable(status)) return;
     const alternatives = this.store.pool()
       .filter(candidate => candidate.profileId !== profileId && candidate.enabled
-        && this.profiles.some(profile => profile.id === candidate.profileId && profile.available))
+        && this.engine.profilesFor(hostId).some(profile => profile.id === candidate.profileId && profile.available))
       .map(candidate => candidate.profileId);
     throw Error(`Subscription group ${entry.group} is unavailable: ${status.reason}${status.retryAt ? ` (retry ${status.retryAt})` : ""}`
       + `; eligible ${role} alternatives: ${alternatives.length ? alternatives.join(", ") : "none"}`);
@@ -382,11 +385,11 @@ export class RouteControls {
    * Admission-time independence preflight. Runtime selection still re-checks
    * after the actual author or catalog can change.
    */
-  independentReviewRoutingRefusal(routing:RoutingPreflightInput):string|null{
+  independentReviewRoutingRefusal(routing:RoutingPreflightInput, hostId?: string | null):string|null{
     // An unloaded catalog cannot prove a named profile absent (review #565); routing
     // that names none is unaffected by catalog membership.
     const named=Boolean(routing.preferredProfileId)||Object.values(routing.profileRequests??{}).some(request=>Boolean(request?.profileId));
-    if(named&&!this.engine.profileCatalogKnown())return PROFILE_CATALOG_LOADING_REFUSAL;
-    return independentReviewRoutingConflict({...routing,usage:this.store.usageLevel()},this.profiles,this.store.pool());
+    if(named&&!this.engine.profileCatalogKnownFor(hostId))return PROFILE_CATALOG_LOADING_REFUSAL;
+    return independentReviewRoutingConflict({...routing,usage:this.store.usageLevel()},this.engine.profilesFor(hostId),this.store.pool());
   }
 }

@@ -162,7 +162,12 @@ Closing a task archives the task's project through the `project.update`
 mutation with `archived: true` — the nightly keeps the project's threads and
 files (nucleus#1139, shapes read from the same bundle:
 `ProjectMutation = project.create | project.update | project.delete` in
-`packages/contracts/src/project.ts`). An archived project keeps its repository
+`packages/contracts/src/project.ts`). The project is one registration per
+repository, so while another live task on the same host still works there the
+archive holds — a visible `workspace_cleanup_wait` wait, never a failure — and
+the last closer retires the registration; earlier terminal tasks complete
+their local teardown against whatever state the last closer leaves, including
+the archived one. An archived project keeps its repository
 root, so a later task in the same repository reopens the same registration
 with `archived: false` instead of registering a second project, which the
 nightly refuses for an owned root. Archive observation is a positive native
@@ -215,12 +220,16 @@ At launch the adapter maps the profile's `thinkingOptionId` and feature values
 into `ModelSelection.options` (`[{ id, value }]`;
 `packages/contracts/src/modelSelection.ts`, values `string | boolean`). A
 value the model does not report is refused before send with the option and
-value named — no silent dropping, no nearest-choice guessing. Selection keeps
+value named — no silent dropping, no nearest-value guessing. Selection keeps
 such a profile out of a host-bound task in the first place: the engine keeps a
 routing-profile snapshot per registered host, built from that host's own
-catalog, and dispatch, worker creation and reviewer selection read the task
-host's snapshot, so availability and `supportedThinking` are that host's own
-answer. The launch fence catches catalog drift between refresh and send.
+catalog, and dispatch, worker creation, reviewer selection and the
+`route`/`set_routing` validation read the task host's snapshot, so
+availability — including the configured runtime mode and every feature value —
+and `supportedThinking` are that host's own answer. The launch fence catches
+catalog drift between refresh and send. A secondary host's snapshot is built
+when it comes online, and afterwards on the periodic profile pass, never on an
+unguarded per-tick chain.
 
 A creation refusal that is proven pre-send settles the run refused and the task
 in attention with the step that failed named — `Worker creation refused before

@@ -283,6 +283,9 @@ test('T3 Adapter enables lifecycleDispatch; the Host stays native-only; create w
   const native = createAdapter(Policy, host);
   assert.equal(native.capabilities().lifecycleDispatch, true);
   assert.equal(native.capabilities().supportsCoordinatorRecovery, true);
+  // One project per repository: the closeout archive holds while a live task
+  // shares the repository (nucleus#1139 review).
+  assert.equal(native.capabilities().repositorySharedWorkspaces, true);
   assert.equal(native.reportingViaMcp, false);
   assert.equal(native.supportsCoordinatorRecovery, true);
   assert.throws(() => native.createAgent({} as never, 'unused', 'unused'), /helper path/);

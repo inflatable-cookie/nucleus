@@ -138,10 +138,13 @@ export interface ProfileAvailability {
  * there is no silent fallback: a missing provider or model is a refusal, not a
  * different model (Tom, 2026-11-07: a profile from another host "is unavailable
  * under normal semantics"). `supportedThinking` is the matched model's options,
- * so a picker can offer exactly what this host allows.
+ * so a picker can offer exactly what this host allows. The answer also covers
+ * the configured runtime mode and feature values, so a profile carrying a mode
+ * or feature the host does not report is ineligible there instead of refusing
+ * at launch (nucleus#1139 review).
  */
 export function profileAvailability(
-  profile: Pick<NucleusProfile, "provider" | "model" | "thinkingOptionId">,
+  profile: Pick<NucleusProfile, "provider" | "model" | "thinkingOptionId" | "modeId" | "featureValues">,
   catalog: HostCatalog,
   providerMap: ProviderMap = {},
 ): ProfileAvailability {
@@ -183,6 +186,34 @@ export function profileAvailability(
       problem: "Configured thinking level is not supported",
       supportedThinking,
     };
+  if (profile.modeId && profile.modeId !== "default" && !model.modes.some((mode) => mode.id === profile.modeId))
+    return {
+      available: false,
+      problem: "Configured runtime mode is not supported",
+      supportedThinking,
+    };
+  for (const [option, value] of Object.entries(profile.featureValues ?? {})) {
+    const feature = model.features.find((candidate) => candidate.id === option);
+    if (!feature)
+      return {
+        available: false,
+        problem: `Configured option ${option} is not supported`,
+        supportedThinking,
+      };
+    if (feature.type === "toggle") {
+      if (typeof value !== "boolean")
+        return {
+          available: false,
+          problem: `Configured option ${option} needs a boolean value`,
+          supportedThinking,
+        };
+    } else if (typeof value !== "string" || !feature.options.some((choice) => choice.id === value))
+      return {
+        available: false,
+        problem: `Configured option ${option} does not offer that value`,
+        supportedThinking,
+      };
+  }
   return { available: true, problem: "", supportedThinking };
 }
 

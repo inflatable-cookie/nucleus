@@ -134,6 +134,8 @@ export interface HostCapabilities {
   uiContributions?: boolean;
   lifecycleDispatch?: boolean;
   perThreadEnvironment?: boolean;
+  /** One workspace archive retires the registration every task in the repository shares (T3Code projects). */
+  repositorySharedWorkspaces?: boolean;
 }
 
 /** A workspace the host holds: its identity and the folder it lives in. */

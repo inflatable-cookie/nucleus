@@ -69,15 +69,18 @@ export class SettingsControls {
       // Only a named profile can be falsely called absent before the catalog loads;
       // complexity- or scope-only routing applies on an unrefreshed engine (QA 622c955c).
       if(after.preferredProfileId||Object.values(after.profileRequests).some(request=>Boolean(request?.profileId)))this.engine.requireProfileCatalog();
-      if(after.preferredProfileId)validateNamedProfile(after.preferredProfileId,"worker",after.scope,this.engine.profiles,pool,after.profileRequests.worker?.profileId===after.preferredProfileId?after.profileRequests.worker.reason:"",workerThinking(after));
+      // The task's own host decides availability (nucleus#1139 review): a mode
+      // or feature value this host's catalog does not report refuses here.
+      const hostProfiles=this.engine.profilesFor(task.hostId);
+      if(after.preferredProfileId)validateNamedProfile(after.preferredProfileId,"worker",after.scope,hostProfiles,pool,after.profileRequests.worker?.profileId===after.preferredProfileId?after.profileRequests.worker.reason:"",workerThinking(after));
       for(const role of ["worker","reviewer","coordinator"] as const){
         const request=after.profileRequests[role];
         if(!request)continue;
         const thinking=role==="worker"?workerThinking(after):request.thinkingOptionId??"";
-        const {profile}=validateNamedProfile(request.profileId,role,after.scope,this.engine.profiles,pool,request.reason,thinking);
+        const {profile}=validateNamedProfile(request.profileId,role,after.scope,hostProfiles,pool,request.reason,thinking);
         if(thinking&&!profile.supportedThinking.includes(thinking))throw Error(`Profile ${request.profileId} does not support thinking option ${thinking}`);
       }
-      const routingConflict=this.engine.independentReviewRoutingRefusal({scope:after.scope,preferredProfileId:after.preferredProfileId,requirePreferred:after.requirePreferred,profileRequests:after.profileRequests,skipPRReview:task.skipPRReview,declaredAuthorModels:task.reviewEntry?.authorDeclaration.models});
+      const routingConflict=this.engine.independentReviewRoutingRefusal({scope:after.scope,preferredProfileId:after.preferredProfileId,requirePreferred:after.requirePreferred,profileRequests:after.profileRequests,skipPRReview:task.skipPRReview,declaredAuthorModels:task.reviewEntry?.authorDeclaration.models},task.hostId);
       if(routingConflict)throw Error(routingConflict);
       const unavailable=pool.filter(entry=>[after.preferredProfileId,...Object.values(after.profileRequests).map(request=>request?.profileId)].includes(entry.profileId)).flatMap(entry=>{
         const row=this.store.db.prepare("SELECT data FROM availability WHERE group_id=?").get(entry.group);

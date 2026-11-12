@@ -4,6 +4,7 @@ import { isDispositionActive } from '../../shared/contracts';
 import type { Store } from '../store/store';
 import type { Adapter } from '../host/adapter';
 import { proveWorkspaceEmpty } from '../verbs/disposition';
+import { sharedRepositoryArchiveHold } from './repository-archive-gate';
 import { git } from '../git/index';
 import type { RuntimeRetirementService } from '../runtime/runtime-retirement';
 
@@ -36,6 +37,10 @@ export async function archiveUnusedWorkspace(store: Store, adapter: Adapter, inp
       : 'Unused workspace cleanup requires settled pre-dispatch state unless the workspace was displaced by rebind');
   if (id === task.workspaceId) throw Error('The current task workspace must be retained');
   if (!adapter.archiveTaskWorkspace) throw Error('Workspace cleanup is unavailable');
+  // A duplicate cleanup retires the shared registration every task in the
+  // repository uses, so it waits for the repository to quiesce (nucleus#1139 review).
+  const sharedHold = sharedRepositoryArchiveHold(adapter, store.tasks(), task);
+  if (sharedHold) throw Error(sharedHold);
   const key = `unusedWorkspaceArchive:${task.id}:${id}`;
   const prior = store.getMeta<ArchiveEvidence>(key);
   if (prior?.status === 'archived') return task;

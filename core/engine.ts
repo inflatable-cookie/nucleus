@@ -783,8 +783,8 @@ export class Engine {
   briefStageProfileRefusal(text:string,_scope:Task["scope"]):string|null{
     return this.briefControls.briefStageProfileRefusal(text,_scope);
   }
-  independentReviewRoutingRefusal(routing:RoutingPreflightInput):string|null{
-    return this.routeControls.independentReviewRoutingRefusal(routing);
+  independentReviewRoutingRefusal(routing:RoutingPreflightInput, hostId?: string | null):string|null{
+    return this.routeControls.independentReviewRoutingRefusal(routing, hostId);
   }
   moveToReview(input:{taskId:string;version:number;reason:string;reviewer?:{profileId:string;reason:string};caller?:string;prNumber?:number;fresh?:boolean},operationId?:string): Promise<Task> { return this.moveControls.moveToReview(input, operationId); }
   resumeReleasedPrerequisiteWait(taskId:string): void { return this.moveControls.resumeReleasedPrerequisiteWait(taskId); }

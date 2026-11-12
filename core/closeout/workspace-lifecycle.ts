@@ -1,5 +1,6 @@
 import type { Resolution } from '../resolution';
 import { workspaceDiscardKey, type WorkspaceDiscard } from '../workspaces/orphan-worktree';
+import { sharedRepositoryArchiveHold } from '../workspaces/repository-archive-gate';
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import type { Run } from "../../shared/contracts";
 import {doublingDelay} from '../../shared/backoff';
@@ -292,6 +293,11 @@ export class Lifecycle {
         const hostRun=this.store.hostRunHoldingWorkspace(directory);
         if(hostRun)throw Error(`Waiting: ${hostRunHoldReason(hostRun)}`);
         if(this.store.tasks().some(t=>t.id!==task.id&&t.phase!=='done'&&([t.workspaceId,t.resolution.coordinatorWorkspaceId,t.resolution.closeoutWorkspaceId].includes(id)||this.store.runs(t.id).some(r=>r.workspaceId===id))))throw Error('Workspace is referenced by another task');
+        // A host that retires one shared registration per repository holds the
+        // archive while a live task still works there; the workspace stays
+        // preserved and the next pass retries (nucleus#1139 review).
+        const sharedHold=sharedRepositoryArchiveHold(this.adapter,this.store.tasks(),task);
+        if(sharedHold)throw Error(sharedHold);
         // An interrupted first attempt leaves intent without result, and a
         // workspace removed outside Queue leaves no intent at all. Either way,
         // observe before the pre-archive hooks: they run in the retained
