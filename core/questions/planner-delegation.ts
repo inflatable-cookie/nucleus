@@ -2,7 +2,6 @@ import type { Task } from '../../shared/contracts';
 import { DelegatedHostUnavailable, type PlannerRungName } from './delegation';
 import { DELEGATED_ANSWER_TIMEOUT_MS, nativeDelegationPrompt, type DelegateRole, type DelegationContext } from './question-delegation';
 import type { Resolution } from '../resolution';
-import { retireDeciderThread } from '../workspaces/thread-archive';
 
 /**
  * One planner rung with the message window its question travels on. A task climbs
@@ -136,6 +135,6 @@ export async function delegateQuestion<T>(resolution: Resolution, task: Task, in
     input.onMiss(`decider ${decided.agentId} gave no usable answer`);
     return null;
   } finally {
-    if (!input.retainDecider || !current() || !usable) await retireDeciderThread(resolution.store, resolution.host, resolution.adapter, task, decided.agentId);
+    if (!input.retainDecider || !current() || !usable) await resolution.host.archiveAgent(decided.agentId).catch(() => {});
   }
 }

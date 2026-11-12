@@ -145,6 +145,9 @@ async function progressDispositionStep(store: Store, deps: DispositionDeps, task
       store.putRun({ ...run, released: true, status: "superseded" });
       recordResult(store, taskId, "release_run", run.id, "Turn proved stopped; lease released");
     }
+    // T3 keeps every thread until the task is terminal. The ordinary terminal
+    // lane archives workers and deletes support threads after this completes.
+    if (deps.retainThreadsUntilCloseout?.()) continue;
     try {
       recordIntent(store, taskId, "archive_thread", thread.agentId);
       await deps.archiveAgent(thread.agentId);

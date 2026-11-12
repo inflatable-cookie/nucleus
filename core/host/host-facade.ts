@@ -199,11 +199,11 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     return this.#route(id, (adapter, nativeId) => adapter.archiveAgent(nativeId));
   }
 
-  deleteAgent(id: AgentId, options?: { resendUnknownAfterRead?: boolean }): Promise<void> {
+  deleteAgent(id: AgentId): Promise<void> {
     return this.#route(id, (adapter, nativeId) => {
       const read = adapter.deleteAgent;
       if (!read) return refused('This host cannot remove a thread');
-      return read.call(adapter, nativeId, options);
+      return read.call(adapter, nativeId);
     });
   }
 

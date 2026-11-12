@@ -12,7 +12,7 @@ import { formatAgentId } from '../shared/agent-identity';
 import { fakeAdapter } from './support/fakes';
 import { plannerTicketKey } from '../core/dispatch/participant-tickets';
 import { digest } from '../core/store/store';
-import { t3Fake, STAMP } from './support/t3code-fake';
+import { t3Fake, threadProjection, STAMP } from './support/t3code-fake';
 import { createHost, createAdapter } from '../hosts/t3code';
 import { archiveFinishedThreads } from '../core/workspaces/thread-archive';
 import { HostPolicies } from '../core/host/host-policies';
@@ -647,7 +647,7 @@ test('a removed coordinator thread and a routed coordinator profile each open a 
     // The retained thread was removed (by hand or by a host change): the next
     // attempt selects a fresh coordinator instead of waiting for it.
     endCoordinatorAttempt(f, taskId, removed);
-    f.server.threads.get(removed)!.thread.deletedAt = STAMP;
+    f.server.threads.delete(removed); // no inventory row and no readable projection
     await nextCoordinatorAttempt(f, taskId, () => {
       const bound = f.runtime.store.task(taskId).coordinatorAgentId;
       return Boolean(bound && bound !== removed);
@@ -675,7 +675,7 @@ test('a removed coordinator thread and a routed coordinator profile each open a 
   } finally { await f.close(); }
 });
 
-test('a fresh reviewer restart removes the displaced T3 thread and refuses its late callback (#1155 review)', async t => {
+test('a displaced reviewer stays settled until closeout and its late callback is refused (#1155)', async t => {
   const f = await fixture(t);
   try {
     const { taskId, head, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
@@ -685,13 +685,6 @@ test('a fresh reviewer restart removes the displaced T3 thread and refuses its l
     await f.runtime.taskControl({ action: 'restart', taskId, version: current.version, role: 'reviewer', fresh: true,
       reason: 'Replace the reader', caller: f.planner });
 
-    // The fence is the displaced thread's removal, recorded durably.
-    await driveUntil(f, () => f.server.commands.some(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId),
-      'the displaced reviewer thread is removed', taskId);
-    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === reviewerThreadId), false,
-      'a displaced reader is never archived while the task is open');
-    assert.equal(f.runtime.store.run(reviewerRun.id)?.released, true, 'the displaced run is released after the fence');
-
     // A fresh reviewer reads the same head on its own thread.
     await driveUntil(f, () => {
       const next = f.runtime.store.task(taskId).resolution.reviewerAgentId;
@@ -699,10 +692,79 @@ test('a fresh reviewer restart removes the displaced T3 thread and refuses its l
     }, 'a fresh reviewer launched', taskId);
     const replacement = f.runtime.store.task(taskId).resolution.reviewerAgentId!;
     assert.equal(launchesFor(f, replacement), 1);
+    assert.equal(f.runtime.store.run(reviewerRun.id)?.released, true, 'the displaced run is released');
+
+    // Nothing is archived or removed while the task is open (brief v3): the
+    // displaced thread stays settled and visible.
+    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === reviewerThreadId), false);
+    assert.equal(f.server.commands.some(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId), false);
+    assert.equal(f.server.threads.get(reviewerThreadId)!.thread.settledOverride, 'settled',
+      'the displaced thread is settled, not removed');
 
     // A late callback from the displaced reader is refused, never applied.
     assert.throws(() => f.runtime.engine.complete({ eventId: randomUUID(), taskId, runId: reviewerRun.id,
       status: 'ready_to_merge', summary: 'Late verdict', reviewText: 'The displaced reader approves.', prNumber: 7, head },
       ticketToken(f, reviewerRun)));
+
+    // It is removed at closeout like the rest of the support set, exactly once.
+    const latest = f.runtime.store.task(taskId);
+    f.runtime.store.update(taskId, { phase: 'done', resolution: { ...latest.resolution, mergedCommit: 'd'.repeat(40) } });
+    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId).length, 1,
+      'the displaced thread is removed at closeout');
+    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId).length, 1,
+      'and never twice');
+  } finally { await f.close(); }
+});
+
+test('a task that finished before this rule is cleaned up by the next sweep, exactly once (#1155 catch-up)', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, head, reviewerThreadId, workerThreadId, reviewerRun } = await taskWithReviewer(f);
+    // The task closed out before the closeout-cleanup rule rolled: it is done and
+    // merged, and its threads were never archived or removed.
+    const current = f.runtime.store.task(taskId);
+    const verdict = { taskId, runId: reviewerRun.id, eventId: randomUUID(), status: 'ready_to_merge' as const,
+      head, summary: 'Approved', reviewText: 'The reviewed change meets the brief.' };
+    f.runtime.store.putRun({ ...reviewerRun, status: 'finished', active: false, released: true, completion: verdict });
+    f.runtime.store.update(taskId, { phase: 'done', resolution: { ...current.resolution, currentRunId: null,
+      mergedCommit: head, review: verdict } });
+    assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${taskId}`), undefined);
+    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' || command.type === 'thread.delete'), false,
+      'nothing has cleaned its threads yet');
+
+    // Older completed rows and permanently pending candidates must not hide the
+    // target behind a fixed prefix or a bounded earliest-pending batch.
+    const completed = f.runtime.store.task(taskId);
+    const insert = f.runtime.store.db.prepare('INSERT INTO tasks(id,submission,input_hash,data) VALUES(?,?,?,?)');
+    f.runtime.store.transaction(() => {
+      for (let index = 0; index < 505; index++) {
+        const id = `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+        const agentId = index < 501 ? null : `unowned-history-${index}`;
+        const historical = { ...completed, id, agentId, retiredWorkers: [],
+          coordinatorAgentId: null, resolution: { ...completed.resolution,
+            reviewerAgentId: null, currentRunId: null } };
+        insert.run(id, `synthetic-history-${index}`, digest(id), JSON.stringify(historical));
+        if (index < 250) f.runtime.store.setMeta(`finishedTaskThreadCleanup:${id}`, STAMP);
+        if (agentId) f.server.threads.set(agentId, threadProjection(agentId, f.repo));
+      }
+    });
+
+    // The real safety sweep selects the finished task directly and applies the
+    // closeout rule: the worker archived, the support thread removed.
+    await f.runtime.engine.auditPass(false);
+    assert.ok(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === workerThreadId),
+      'the worker thread is archived');
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId).length, 1,
+      'the reviewer thread is removed once');
+    assert.ok(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${taskId}`), 'completion is recorded per task');
+    for (let index = 501; index < 505; index++)
+      assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:00000000-0000-4000-8000-${String(index).padStart(12, '0')}`),
+        undefined, 'an unowned historical candidate stays pending without starving later tasks');
+
+    const commands = f.server.commands.length;
+    await f.runtime.engine.auditPass(false);
+    assert.equal(f.server.commands.length, commands, 'a later sweep does nothing');
   } finally { await f.close(); }
 });

@@ -262,6 +262,32 @@ test('a moved-on task archives its retired errored agent only once across due sw
   } finally { await f.close(); }
 });
 
+test('a removable host keeps retired errored workers and superseded support threads until closeout (#1155)', async () => {
+  const f = retiredErroredAgentFixture();
+  try {
+    const deleted: string[] = [];
+    f.adapter.deleteAgent = async id => { deleted.push(id); };
+    for (const role of ['reviewer', 'recovery'] as const) {
+      const agentId = `old-${role}`;
+      f.states.set(agentId, { id: agentId, workspaceId: 'workspace', status: 'error', active: false, permissions: false, error: 'Old run failed' });
+      f.store.putRun({ id: `old-${role}-run`, taskId: f.taskId, hostId: 'host', role, generation: 1,
+        head, base, agentId, workspaceId: 'workspace', profile: null, status: 'superseded',
+        createdAt: new Date().toISOString(), lastObservedAt: null, active: false, idleSince: null, completion: null, released: true });
+    }
+
+    await f.engine.archiveRetiredErroredAgents();
+    assert.deepEqual(f.archived, [], 'no thread of the open task is archived');
+    assert.deepEqual(deleted, [], 'no thread of the open task is deleted');
+    assert.ok(f.states.has('old-worker') && f.states.has('old-reviewer') && f.states.has('old-recovery'),
+      'all retired threads remain available until closeout');
+
+    // A host without removal keeps the existing Failed-workspace cleanup.
+    delete f.adapter.deleteAgent;
+    await f.engine.archiveRetiredErroredAgents();
+    assert.deepEqual([...f.archived].sort(), ['old-recovery', 'old-reviewer', 'old-worker']);
+  } finally { await f.close(); }
+});
+
 test('retired archive sweep prunes records for inactive tasks', async () => {
   const f = retiredErroredAgentFixture();
   try {

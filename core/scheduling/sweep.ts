@@ -6,6 +6,7 @@ import type { Task } from "../../shared/contracts";
 import { isDispositionActive } from "../../shared/contracts";
 import type { ReconciliationSweep } from "../../shared/telemetry";
 import type { AgentObservation } from "../host/adapter";
+import { catchUpFinishedTaskThreads } from '../workspaces/thread-archive';
 import { reapHookCheckouts } from "../hooks/hook-cleanup";
 import { removeTaskProofFiles } from "../intake/proof-files";
 import { pruneLiveDataHomeBackupCopies } from "../store/data-home-retention";
@@ -219,6 +220,12 @@ export class Sweep {
         // retried on this host's pass. Presentation only: it never changes a task.
         try { await this.engine.adapter.reconcileSettledThreads?.(); }
         catch { /* the record keeps for the next pass */ }
+        // A task that finished before the thread-cleanup rule rolled still owes
+        // its threads their closeout cleanup. One direct query per host; the
+        // terminal lane's durable effects and the per-task completion record make
+        // it run once (nucleus#1155 brief v3).
+        try { await catchUpFinishedTaskThreads(this.engine.store, this.engine.adapter); }
+        catch { /* the per-thread effects keep for the next pass */ }
         if (this.engine.inventoryHostMatches(host)) inventory = observed;
       });
       this.engine.clearRetiredInvalidations();

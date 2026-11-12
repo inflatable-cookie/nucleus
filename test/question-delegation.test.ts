@@ -13,7 +13,6 @@ import { Store } from '../core/store/store';
 import { submissionSchema } from '../shared/contracts';
 import type { Adapter } from '../core/host/adapter';
 import { HostRegistry, identitySourceHostEvidence, resolveOriginHost } from '../core/host/host-registry';
-import { deciderThreadOwners, recordDeciderThread } from '../core/workspaces/thread-archive';
 
 test('native question on one host reaches its planner on another and waits while either is offline', async () => {
   const store = new Store(':memory:');
@@ -514,25 +513,4 @@ test('a bare Paseo delegated answer resolves despite offline T3, without borrowi
     assert.equal(otherReceipt.answer, 'Continue');
     assert.equal(store.eventsAll('delegation:other-window').some(event => event.kind === 'delegated_answer'), true);
   } finally { await engine.stop(); store.close(); }
-});
-
-test('opening a decider delegation records the thread it created before any answer (#1155 review)', () => {
-  const store = new Store(':memory:');
-  const task = store.insert(submissionSchema.parse({ submissionId: 'decider-ownership', title: 'Decider', repoPath: '/fixture',
-    planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: 'planner' }), 'host-a', 'handoff', 'a'.repeat(40));
-  try {
-    // The durable ownership is written at the same step that opens the delegation
-    // window, so an interruption before the ladder's own retirement still reaches
-    // closeout.
-    store.event('delegation:ns-decider-q1', 'delegated_delivery', JSON.stringify({ taskId: task.id, recipient: 'planner', role: 'planner', prompt: '', deadline: Date.now() + 1000 }));
-    assert.deepEqual(deciderThreadOwners(store, store.task(task.id)), [], 'a planner window records no decider thread');
-    store.event('delegation:ns-decider-q1', 'delegated_delivery', JSON.stringify({ taskId: task.id, recipient: 'decider-thread-1', role: 'decider', prompt: 'Question: Continue?', hostId: 'host-a', deadline: Date.now() + 1000 }));
-    recordDeciderThread(store, store.task(task.id), 'decider-thread-1');
-    assert.deepEqual(deciderThreadOwners(store, store.task(task.id)), ['decider-thread-1']);
-    recordDeciderThread(store, store.task(task.id), 'decider-thread-1');
-    assert.equal(store.eventsAll(task.id).filter(event => event.kind === 'decider_thread_owned').length, 1,
-      'a repeated record is the same intent');
-    // A record naming another host is not this task's thread.
-    assert.deepEqual(deciderThreadOwners(store, { ...store.task(task.id), hostId: 'host-b' }), []);
-  } finally { store.close(); }
 });

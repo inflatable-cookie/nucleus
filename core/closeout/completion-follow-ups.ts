@@ -1,4 +1,3 @@
-import { deciderThreadOwners, terminalThreadCleanup } from '../workspaces/thread-archive';
 import type { Run, Task } from '../../shared/contracts';
 import type { Engine } from '../engine';
 import type { Resolution } from '../resolution';
@@ -145,13 +144,8 @@ export class CompletionFollowUps {
   }
 
   terminalThreadsPending(task: Task, runs: Run[]): boolean {
-    // A merged or completed proof task and a completed cancellation alike owe
-    // their threads the terminal cleanup, so each also owes its retry
-    // (nucleus#1155 review).
-    if (!terminalThreadCleanup(task)) return false;
-    // Deciders own no run, so their recorded identities are read from the task.
-    const ids = new Set([task.agentId, ...task.retiredWorkers.map(worker => worker.agentId), ...runs.map(run => run.agentId),
-      ...deciderThreadOwners(this.store, task)].filter((id): id is string => Boolean(id)));
+    if (task.phase !== "done") return false;
+    const ids = new Set([task.agentId, ...task.retiredWorkers.map(worker => worker.agentId), ...runs.map(run => run.agentId)].filter((id): id is string => Boolean(id)));
     return [...ids].some(id => {
       const key = this.store.threadArchiveKey(id, task.hostId);
       return !key || Boolean(this.store.getMeta<string>(archiveProbeKey(this.store, task.id, id)))

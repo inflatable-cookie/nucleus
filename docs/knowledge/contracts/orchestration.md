@@ -1804,13 +1804,12 @@ reports, grants or spends that history.
   replacement, `restart role=reviewer fresh` or `route role=reviewer now`.
 - A fresh reviewer restart or a reviewer route that replaces the reader fences the
   replaced agent through its host before releasing the run. Saved checkpoints
-  remain history and no longer pin ownership. A stop awaiting inactivity records a
-  ready archive so observation can finish the replacement. An uncertain archive
+  remain history and no longer pin ownership. On Paseo a stop awaiting inactivity
+  records a ready archive so observation can finish the replacement. An uncertain archive
   retains ownership until observation confirms the agent is archived or absent; it
-  is never blindly resent. On a host that can remove a thread the fence is a
-  stopped turn observed idle, with the run released and its credential revoked, and
-  the displaced thread is removed at closeout with the rest of the support set
-  instead of being archived while the task is open (T3 adapter spec, [thread
+  is never blindly resent. On T3 the fence is a stopped turn observed idle,
+  with the displaced run released and its late callbacks refused; the thread
+  stays settled until closeout (T3 adapter spec, [thread
   lifecycle](../specs/t3code-host-adapter.md#thread-lifecycle)).
 - Other replacement paths allow a working reviewer to finish (Tom, 2026-10-19; planner ruling
   2026-11-09 "replaced is not released"): replacing a reviewer marks its run
@@ -2596,24 +2595,27 @@ movement invalidates source approval and preserves the normal readiness gates.
   requires the same identity and workspace, idle or closed state, no active
   turn, permission or live owned tools, and at most three durable retries.
 
-- A task that has ended cleans up its threads before its workspace: a merged task,
-  a completed proof task and a completed cancellation alike (nucleus#1155 review).
-  The worker threads are archived and, on a host that can remove a thread, every
-  support thread (reviewer, recovery coordinator, decider, executor) of the task is
-  removed
-  (`thread.delete`, Tom 2026-11-12; nucleus#1155). Removal loses nothing durable —
-  those runs are released and their verdicts, reports and decisions are already
-  in Nucleus's records and on the PR — and a removed thread is terminal
-  everywhere a thread's liveness is decided, so it never holds the workspace
-  archive. A removal whose reply is lost is checked against the thread's own
-  archived, deleted or absent state before any resend, is retried on the sweep,
-  and never blocks closeout. A decider is not a run, so its owned identity is
-  recorded on the task at the same durable step that opens its delegation window,
-  read from the complete history at closeout (so a long task or an interrupted
-  delegation still removes it), and it too is removed at closeout rather than
-  while the task is open.
-- A host that cannot remove a thread (Paseo) keeps its existing behaviour: a
-  released support thread archives at once, and closeout archives every thread.
+- T3 task threads stay settled while the task is open; none is archived or
+  deleted, including a reviewer or coordinator displaced by replacement or a
+  profile change. Retained reviewers and recovery threads are continued for the
+  next round or fault, unless gone, deleted or assigned a different profile
+  (Tom, 2026-11-12; [T3 thread lifecycle](../specs/t3code-host-adapter.md#thread-lifecycle)).
+- At closeout after a merge, completed proof or completed cancellation, the
+  existing terminal thread lane archives T3 worker threads and deletes the
+  task's reviewer, recovery, coordinator and executor threads. Their runs are
+  released and their verdicts, reports and decisions already live in Nucleus's
+  records and on the PR; decider threads keep their existing lifecycle.
+- Deletion records intent before delivery and confirms `deletedAt` or absence
+  from a complete inventory, including after the final attempt; an archived
+  support thread still owes deletion. Unknown deletion delivery is never resent,
+  and only a proven pre-delivery failure remains retryable through the terminal
+  lane; cleanup failure never blocks task closeout.
+- The host sweep directly queries already-finished T3 tasks with outstanding
+  thread cleanup, rather than using the active-capacity index. It applies those
+  same effects and records completion per task, so confirmed cleanup runs once
+  even for tasks closed before the rule existed.
+- Paseo keeps its existing archive behaviour for released support threads,
+  reviewer replacement and terminal cleanup.
 - A done task's workspace is archived with every thread in it (Tom, 2026-09-27);
   only a running thread (active turn or pending permission) makes it wait. No
   unreleased task run may remain. Uncommitted files, unexpected or unpublished

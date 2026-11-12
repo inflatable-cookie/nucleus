@@ -1,5 +1,4 @@
 import { historicalWireLabel } from "../../shared/wire-labels";
-import { settledThreadStatuses } from "../../shared/host";
 import { existsSync, rmSync } from "node:fs";
 import type { Run, Task } from "../../shared/contracts";
 import type { AgentObservation } from "../host/adapter";
@@ -94,7 +93,7 @@ export class OwnedWorkspaceArchive {
           if(!allowIdleForeignThreads)throw Error('Preserving workspace containing an unrelated thread');
           if(agent.id)foreignAgentIds.push(agent.id);
         }
-        if(agent.activeTurn||agent.pendingPermissions?.length||!settledThreadStatuses.includes(agent.status??''))throw Error('Waiting for workspace threads to become idle');
+        if(agent.activeTurn||agent.pendingPermissions?.length||!['idle','error','closed'].includes(agent.status??''))throw Error('Waiting for workspace threads to become idle');
       }
       // A released pinned view is Queue-owned scratch whose declared participants
       // must still be idle and free of a live owned tool before its checkout goes,
@@ -111,10 +110,10 @@ export class OwnedWorkspaceArchive {
           // Corroboration only: a narrowed inventory that includes archived
           // threads must hold every participant this pass observes in the workspace.
           if(projectKeys&&includeArchived&&!entries.some(entry=>entry.agent.id===agentId))throw Error('Workspace thread inventory is incomplete');
-          if(state.active||state.activeTurnId||state.permissions||!settledThreadStatuses.includes(state.status))throw Error('Waiting for workspace participants to become idle');
+          if(state.active||state.activeTurnId||state.permissions||!['idle','error','closed'].includes(state.status))throw Error('Waiting for workspace participants to become idle');
           // Native closed means session shutdown succeeded. Historical tool labels
           // cannot establish current managed liveness after that terminal boundary.
-          if(state.status==='closed'||state.status==='gone')continue;
+          if(state.status==='closed')continue;
           // Once a task is merged it is free to archive (Tom, 2026-10-19): its
           // threads are owed nothing, so a stray running tool label on an idle
           // participant no longer preserves the workspace.

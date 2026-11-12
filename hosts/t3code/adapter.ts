@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
-import type { Host, HostObservation, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMessage, HostSendGuard, HostAsk, HostWorkspaceRef, HostRetainedAgentRef, HostCatalog, HostTimelinePage, HostThread, NativeDecisionInput, NativeDecisionAnswer } from '../../shared/host';
+import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMessage, HostSendGuard, HostAsk, HostWorkspaceRef, HostRetainedAgentRef, HostCatalog, HostTimelinePage, HostThread, NativeDecisionInput, NativeDecisionAnswer } from '../../shared/host';
 import type { Task, Profile } from '../../shared/contracts';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
@@ -466,26 +466,7 @@ export class T3CodeHost implements Host {
     }));
   }
   async observe(id: string) {
-    this.requireConnection();
-    let detail: Projection;
-    try { detail = await this.readProjection(id); }
-    catch (error) {
-      // A removed thread has no projection at all (the nightly refuses the read
-      // with its typed ThreadNotFoundError). Only that answer, the complete
-      // inventory's own absence and a thread this adapter recorded may describe a
-      // removal; a transport or incomplete read still fails, and an unknown
-      // identity is never invented. The answer is the terminal `gone` state with
-      // the workspace and labels the thread was created with, so closeout's
-      // participant and ownership proofs still read it (nucleus#1155 review).
-      const known = this.state.read().agents[id];
-      if (!(error instanceof T3RpcError) || error.code !== 'remote' || !known) throw error;
-      const found = (await this.inventory()).threads.find(t => t.id === id);
-      if (found) throw error;
-      const gone: HostObservation = { id, workspaceId: known.workspaceId, archived: true, status: 'gone',
-        active: false, permissions: false, error: '', labels: known.labels, pendingPermissionKinds: [] };
-      return gone;
-    }
-    const { thread } = detail;
+    this.requireConnection(); const detail = await this.readProjection(id), { thread } = detail;
     const active = detail.runs.find(r => activeStatuses.has(r.status));
     const pending = detail.runtimeRequests.filter(r => r.status === 'pending');
     const native = (await this.inventory()).threads.find(t => t.id === id);
@@ -576,6 +557,10 @@ export class T3CodeHost implements Host {
     const { threads } = await this.inventory();
     const found = threads.find(t => t.id === id);
     if (!found) return null;
+    // A deleted thread may no longer have a readable projection. The complete
+    // shell inventory's tombstone is already positive proof of the deletion.
+    if (found.deletedAt) return { id, workspaceId: this.workspaceFor(found), title: found.title,
+      archived: !!found.archivedAt, deleted: true };
     const p = await this.readProjection(id);
     return { id, workspaceId: this.workspaceFor(p.thread), title: p.thread.title, archived: !!p.thread.archivedAt,
       deleted: !!p.thread.deletedAt };
@@ -640,15 +625,12 @@ export class T3CodeHost implements Host {
    * without changing a thread that has runs or messages — every thread Nucleus
    * created does — so it would report a removal that never happened.
    *
-   * An unknown outcome is not resent. `resendUnknownAfterRead` repeats the same
-   * recorded command only after the caller re-proved the thread's identity,
-   * idleness and owned tools, which is what the terminal cleanup lane does before
-   * it reissues.
+   * An unknown outcome is never re-sent: the terminal lane reads the thread back
+   * (absent from a complete inventory, or `deletedAt`) before anything else.
    */
-  async deleteAgent(id: string, options: { resendUnknownAfterRead?: boolean } = {}) {
+  async deleteAgent(id: string) {
     const key = identity('delete', id);
-    await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.delete', commandId: key, threadId: id }, undefined, undefined,
-      options.resendUnknownAfterRead ? { resendUnknownAfterRead: true } : {});
+    await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.delete', commandId: key, threadId: id });
   }
   /**
    * Settle a worker thread once Nucleus accepted its handover and moved the task

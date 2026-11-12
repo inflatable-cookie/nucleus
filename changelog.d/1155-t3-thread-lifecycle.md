@@ -1,7 +1,6 @@
-T3 support threads now stay settled and bound while their task is open, so the
-retained reviewer, recovery coordinator and decider threads are continued instead
-of archived and reopened. At closeout — a merge, a completed proof or a completed
-cancellation — the worker thread is archived and every reviewer, recovery,
-coordinator, decider and executor thread of the task is deleted. A displaced
-reader is fenced by its removal, and a removed or routed-away coordinator thread
-is replaced rather than waited for. Paseo keeps its existing archive behaviour.
+T3 task threads now stay settled while the task is open, retaining the reviewer
+and recovery threads for later rounds and faults. At closeout, worker threads are
+archived and reviewer, recovery, coordinator and executor threads are deleted
+through the existing durable cleanup lane. The sweep also catches up tasks that
+finished before this rule existed, once per task. Displaced support threads wait
+until closeout; decider threads and Paseo's archive behaviour are unchanged.

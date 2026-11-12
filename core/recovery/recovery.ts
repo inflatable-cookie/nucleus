@@ -12,6 +12,7 @@ import {dispatchBlocked, DISPATCH_HELD_REASON} from '../dispatch/capacity';
 import {isCloseoutHookHold} from '../hooks/hooks';
 import {automaticIncidentPending} from './incident';
 import type {Engine} from '../engine';
+import type {AgentObservation} from '../host/adapter';
 import type {Resolution} from '../resolution';
 import {isRepositoryContention,repositoryContentionNeedsAttention} from '../scheduling/repository-contention';
 import {collectOwnerVerbFacts,ownerVerb,ownerVerbViews,restartShape} from '../verbs/owner-verbs';
@@ -744,21 +745,29 @@ export class Recovery {
     if([t.agentId,t.resolution.reviewerAgentId].includes(agentId)){this.wait(t,'Recovery coordinator must be separate from the worker and independent reviewer', 'operator_needed');return null;}
     const ownedRuns=this.store.unreleasedRunsForAgent(agentId,t.hostId);
    if(ownedRuns.length){this.wait(t,`Recovery coordinator is busy with unreleased run ${ownedRuns[0]!.id}`, 'route_unavailable');return null;}
-   const state=await this.resolution.onTaskHost(t, () => this.resolution.host.observe(agentId!));
-   if(state.active||state.permissions){this.wait(t,`Recovery coordinator is busy (${state.status})`, 'route_unavailable');return null;}
+   const removable=typeof this.resolution.adapter.deleteAgent==='function';
+   let state:AgentObservation|null=null;
+   try {state=await this.resolution.onTaskHost(t, () => this.resolution.host.observe(agentId!));}
+   catch(error){
+    // A deleted T3 thread has no projection. Only authoritative absence or a
+    // tombstone allows replacement; an unreadable inventory remains unknown.
+    if(!removable||!this.resolution.adapter.originAgent)throw error;
+    const origin=await this.resolution.onTaskHost(t, () => this.resolution.host.originAgent(agentId!));
+    if(origin&&!origin.deleted&&!origin.archived)throw error;
+   }
+   if(state&&(state.active||state.permissions)){this.wait(t,`Recovery coordinator is busy (${state.status})`, 'route_unavailable');return null;}
     // Only a host that can remove a thread keeps its coordinator threads settled
     // between attempts, so only there may a recorded route or a removed/archived
     // thread displace the binding (nucleus#1155). Paseo keeps its existing rule:
     // an assigned coordinator that is not idle waits, and an idle one is resumed.
-    const removable=typeof this.resolution.adapter.deleteAgent==='function';
     const request=t.profileRequests?.coordinator;
     const recordedRoute=removable && (request?.ownerRoute===true ? request.profileId
       : supersedingRouteProfile(request, profile?.id, this.store.pool(), this.store.usageLevel()));
     const superseded=removable&&(Boolean(recordedRoute && (!profile || profile.id!==recordedRoute))
-      ||state.status==='gone'||state.status==='closed');
+      ||!state||state.status==='gone'||state.status==='closed');
     if(superseded){agentId=null;profile=null;group=null;workspaceId=t.workspaceId;}
     else {
-    if(state.status!=='idle'){this.wait(t,`The assigned recovery coordinator is not resumable (${state.status}); waiting for an available coordinator`, 'operator_needed');return null;}
+    if(!state||state.status!=='idle'){this.wait(t,`The assigned recovery coordinator is not resumable (${state?.status??'unknown'}); waiting for an available coordinator`, 'operator_needed');return null;}
     workspaceId=state.workspaceId!;
     }
    }

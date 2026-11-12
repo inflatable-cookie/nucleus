@@ -220,7 +220,7 @@ export interface Adapter extends RunUsageSource {
    * stay settled while it is open and are removed when it ends, and a host
    * without this method keeps today's archive behaviour (Paseo).
    */
-  deleteAgent?(agentId: string, options?: { resendUnknownAfterRead?: boolean }): Promise<void>;
+  deleteAgent?(agentId: string): Promise<void>;
   /**
    * Spec 017: archive one merged review-entry task's Paseo sidebar entry while
    * preserving its external folder. The implementation must refuse before the

@@ -15,6 +15,7 @@ export function productionDeps(options: {
   withHost?<T>(id: string, fn: () => T): T;
   hooks: DispositionDeps["hooks"];
   observe(id: string): Promise<{ active: boolean; permissions: boolean; status: string }>;
+  retainThreadsUntilCloseout?(): boolean;
   archiveAgent(id: string): Promise<void>;
   archiveWorkspace(task: Task, attachedAgentIds: ReadonlySet<string>): Promise<boolean>;
   observeWorkspaceArchived(task: Task): Promise<boolean>;
@@ -39,6 +40,7 @@ export function productionDeps(options: {
         throw error;
       }
     },
+    retainThreadsUntilCloseout: options.retainThreadsUntilCloseout,
     archiveAgent: (id) => options.archiveAgent(id),
     proveWorkspaceEmpty: (task) => proveWorkspaceEmpty(store, task),
     proveRetainedByReplacement: (task, replacement) => proveRetainedByReplacement(task, replacement),

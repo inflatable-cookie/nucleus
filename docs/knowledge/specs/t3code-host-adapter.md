@@ -205,7 +205,7 @@ pretend to be a Paseo workspace.
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
 | Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
-| Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Receipt, then the thread reads gone; the same command id under the same identity is a replay, never a second removal |
+| Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Settle report | `thread.settle` through dispatch for any completed non-worker role | Immediately after the accepted Nucleus receipt; bind `expectedLatestRunId`, keep an uncertain intent and inspect `settledOverride` before retry |
 | Wake settled support thread | `thread.unsettle` through dispatch before a follow-up message | Stable command intent; a retained reviewer is active again for its next round |
 | Archive workspace | `projects.mutate` / `project.update` `archived: true` | The project is retired with threads and files kept; observation reads `archivedAt` from the inventory |
@@ -384,12 +384,11 @@ longer holds the sweep; the task records an `observation_outage` event and its
 lane stays held until the quantum returns (#1148, planner ruling).
 
 Report active run, idle, pending question/permission and archived state from
-positive native facts. A removed thread has no projection at all — the nightly
-refuses that read — so only the complete inventory's own absence may answer it,
-and that answer is the terminal `gone` state with the workspace and labels it was
-recorded with, so closeout's participant and ownership proofs still read it. A thread is gone only after a complete authoritative read
-proves absence/deletion. Partial reads reject or return the contract's unknown
-result. A disconnected thread never becomes idle or gone by timeout. Timeline
+positive native facts. A removed thread has no projection; the origin read uses
+`deletedAt` or absence from a complete authoritative inventory to prove removal.
+It does not invent an observation with remembered workspace or ownership labels.
+Partial reads reject or return the contract's unknown result. A disconnected
+thread never becomes idle or gone by timeout. Timeline
 pages retain gap and coverage facts; a bounded tail is not full history.
 Active and archive snapshots must report the same application-event sequence;
 otherwise their union is refused as incomplete. This includes an unarchive
@@ -416,64 +415,46 @@ expiry is not evidence that the original answer was never delivered.
 
 ## Thread lifecycle
 
-A task's worker thread is its history: at closeout it is archived
-(`thread.archive`) exactly as on Paseo. A task's support threads — reviewer,
-recovery coordinator, decider and proof executor — are removed instead
-(`thread.delete`, nucleus#1155), for a merged task, a completed proof task and a
-completed cancellation alike. A decider is not a run, so its owned identity is
-recorded on the task (`decider_thread_owned`) when the decision ladder creates it
-and the terminal lane removes it like any other support thread. T3 has no plugin surface, so an archived support
-thread stays a row in the operator's sidebar, and a support thread that a later
-review round, recovery episode or proof head needs had to be reopened as a new
-one. Tom's ruling: "keep them settled until the task is done, then archive the
-worker thread and delete the reviewer and recovery threads."
+While a T3 task is open, its worker, reviewer, recovery, coordinator and executor
+threads are never archived or deleted. Released support threads stay settled
+(`thread.settle`, above), and the task keeps its retained reviewer and recovery
+bindings; the next round or fault continues the same thread through the host's
+follow-up helper, which sends `thread.unsettle` before the message. A new thread
+is needed only when the old one is gone or deleted, or the role's selected
+profile changes; displaced threads stay settled until closeout (Tom, 2026-11-12).
 
-While the task is open nothing is archived. A released support thread is settled
-(`thread.settle`, above) and the task keeps its binding to that thread, so the
-next round or recovery attempt continues the same identity: the follow-up's own
-`thread.unsettle` wakes it. A new thread is opened only when the host reports the
-old one archived or gone, or when the role's recorded route names a different
-profile — a different model needs a new thread; a thread displaced that way is
-removed at closeout like the rest.
+A deliberate reviewer replacement stops the turn and observes it idle, then
+releases the displaced run. The existing released-run callback fence refuses a
+late report; it needs no in-flight deletion, archive or separate removal fence.
+The displaced thread stays settled for terminal cleanup. Decider threads keep
+their existing lifecycle and are outside this cleanup rule.
 
-A deliberately replaced reviewer is never archived while the task is open, and an
-idle observation alone is not a fence: the displaced thread could still be
-resumed. Its fence is the removal itself, recorded as the same durable effect
-(after the verb has stopped its turn and proved it idle, and only for an owned
-thread), so the run is released once the host reports the thread gone. A host
-that cannot remove a thread keeps the archive fence it has today, and a late
-callback from a displaced run is governed by the replaced-run rules, unchanged by
-this lifecycle.
+At closeout after a merge, a completed proof task or a completed cancellation,
+archive the worker threads (`thread.archive`) and delete the task's reviewer,
+recovery, coordinator and executor threads (`thread.delete`). Use the existing
+terminal thread archive lane, with its ownership checks, released-run fence,
+observation-first handling and durable effects. Nothing durable lives only in a
+deleted thread: review text, verdicts, recovery reports and decisions are already
+in Nucleus's records and on the pull request before deletion.
 
-The terminal lifecycle covers a merged task, a completed proof task and a
-completed cancellation alike, and a decider's owned identity is recorded when the
-ladder opens its delegation window — with the complete ownership history read at
-closeout, not the recent-events window — so a long task or an interrupted
-delegation still removes it.
+Deletion is the installed nightly's command `{type: "thread.delete", commandId,
+threadId}`. Never send `onlyIfUnused`: that option can return success while
+leaving a thread with runs or messages intact. Record intent before delivery and
+confirm deletion by `deletedAt` or absence from a complete inventory; an archived
+thread still owes deletion. A lost reply remains observation-only, including on
+the final attempt, and never authorizes resending an unknown effect. A failure
+proven to precede delivery stays retryable through the same terminal lane;
+cleanup failure never blocks task closeout.
 
-Removal is the nightly's `thread.delete` command, `{type, commandId, threadId}`.
-`onlyIfUnused` is never sent: with it the nightly answers success without
-changing a thread that has runs or messages — every thread Nucleus created — so it
-would report a removal that never happened. The command cancels the thread's
-active run and pending requests, and the terminal lane only issues it for an owned
-thread whose runs are all released, so no accepted report loses its thread and the
-workspace archive's participant proof still holds. Nothing durable lives only in a
-removed thread: review text, verdicts, recovery reports and decisions are in
-Nucleus's records and on the pull request before the removal.
+Each host sweep directly selects already-finished T3 tasks that still owe a
+thread archive or deletion, including tasks closed before this rule existed.
+The query does not use the active-capacity index. It applies the same terminal
+effects and records completion per task, so later sweeps do nothing once all
+thread effects are confirmed; incomplete effects remain selectable.
 
-Each removal is a durable effect under the same intent rules as an archive: the
-intent is recorded before the send, a lost reply is checked against the thread's
-own `archivedAt`, `deletedAt` or authoritative absence before anything is
-reissued, and a removal that fails is retried on the sweep without blocking
-closeout. Because the nightly's command receipt replays the identical command id,
-the terminal lane's reissue after fresh identity, idleness and owned-tool proof
-(`resendUnknownAfterRead`) is that same command, never a second removal. A removed
-thread reads `gone` and carries `deleted` on its origin record; `gone` is terminal
-wherever a thread's liveness is decided (`settledThreadStatuses` in
-`shared/host.ts`), so a removed support thread never holds its workspace archive.
-
-Paseo keeps today's behaviour: it has no removal, so a support thread there still
-archives as soon as it is released and closeout archives every thread.
+Paseo keeps its existing archive behaviour, including its reviewer-replacement
+fence and support-thread retirement after an episode. This T3 rule changes no
+Paseo lifecycle.
 
 ## Composition and unsupported capabilities
 
