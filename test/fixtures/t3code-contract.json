@@ -3,6 +3,7 @@
   "nightlyVersion": "0.1.6-nightly.20261030.3917",
   "protocol": 2,
   "boundaryDecodeExample": "Missing key\n  at [\"commandId\"]",
+  "dispatchUnknownCommandExample": "Expected union member, got {\"type\":\"project.create\",\"commandId\":\"fixture:create\"}",
   "source": "packages/contracts/src/orchestrationV2.ts",
   "creationFields": {
     "createdBy": ["user", "agent", "system"],
@@ -17,15 +18,15 @@
       "required": ["type", "commandId", "threadId"],
       "optional": []
     },
-    "project.create": {
-      "required": ["type", "commandId", "projectId", "title", "workspaceRoot"],
-      "optional": []
-    },
     "runtime-request.respond": {
       "required": ["type", "commandId", "threadId", "requestId"],
       "optional": ["decision", "feedback", "answers", "attachmentsByQuestionId"],
       "decisions": ["accept", "acceptForSession", "acceptAlways", "decline", "cancel"],
       "answers": "Record<string, unknown>"
+    },
+    "thread.user-input.dismiss": {
+      "required": ["type", "commandId", "threadId", "requestId"],
+      "optional": []
     },
     "message.dispatch": {
       "required": ["type", "createdBy", "creationSource", "commandId", "threadId", "messageId", "text", "attachments", "dispatchMode"],
@@ -39,6 +40,15 @@
     "modelSelectionRequired": ["instanceId", "model"],
     "runtimeModes": ["approval-required", "auto-accept-edits", "auto", "full-access"],
     "interactionModes": ["default", "plan"]
+  },
+  "projectMutation": {
+    "method": "projects.mutate",
+    "sourceBuild": "0.1.10-nightly.20261111.4529",
+    "source": "apps/server/src/project/ProjectMutation.ts + packages/contracts/src/rpc.ts (WsProjectsMutateRpc)",
+    "createRequired": ["type", "commandId", "projectId", "title", "workspaceRoot"],
+    "createOptional": ["createWorkspaceRootIfMissing", "defaultModelSelection", "scripts"],
+    "successFields": ["id", "title", "workspaceRoot", "repositoryIdentity", "defaultModelSelection", "scripts", "createdAt", "updatedAt", "deletedAt"],
+    "errorTags": ["ProjectMutationError", "EnvironmentAuthorizationError"]
   },
   "examples": [
     {

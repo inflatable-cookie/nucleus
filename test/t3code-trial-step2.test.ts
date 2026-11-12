@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { observeIdle } from './support/fakes';
 import { createHost, createAdapter } from '../hosts/t3code';
+import { canonical } from '../hosts/t3code/state';
 import { t3Fake } from './support/t3code-fake';
+import { command, git } from '../core/git/index';
 import { questionRoute } from '../core/questions/question-route';
 import { AGENT_ASK_WAIT_MS } from '../core/questions/agent-ask';
 import { resolveIngressHost } from '../core/host/ingress-host';
@@ -22,7 +25,7 @@ import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { QueueRuntime } from '../service/runtime-owner';
 import { assembleOwnerTaskNext } from '../core/verbs/task-next';
-import { submissionSchema, summarizeTask, taskNextSchema, type Completion, type Profile, type Run, type Task } from '../shared/contracts';
+import { submissionSchema, summarizeTask, taskControlInputSchema, taskNextSchema, type Completion, type Profile, type Run, type Task } from '../shared/contracts';
 import type { Adapter as HostAdapter } from '../core/host/adapter';
 import { Decisions } from '../core/planning/decisions';
 
@@ -733,4 +736,90 @@ test('consult tickets select the recipient by proven host and native identity', 
     const receipt = JSON.parse(accepted.out) as { answer?: string };
     assert.equal(receipt.answer, 'Keep the T3 worker approach.');
   } finally { await engine.stop(); await stop(); store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+/** A real Git fixture with the composed T3 adapter, for core-driven lifecycle proofs. */
+async function ownerRetryFixture(t: TestContext) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 't3-owner-retry-')));
+  const origin = join(root, 'origin.git'), primary = join(root, 'primary'), data = join(root, 'data');
+  await command('git', ['init', '--bare', '--initial-branch=main', origin], root);
+  await command('git', ['init', '--initial-branch=main', primary], root);
+  await git(primary, 'config', 'user.name', 'Queue test');
+  await git(primary, 'config', 'user.email', 'queue@example.invalid');
+  await writeFileSync(join(primary, 'README.md'), 'base\n');
+  await writeFileSync(join(primary, 'handoff.md'), '# handoff\n');
+  await git(primary, 'add', '-A');
+  await git(primary, 'commit', '-m', 'base');
+  const base = await git(primary, 'rev-parse', 'HEAD');
+  const server = await t3Fake(t, primary);
+  server.projects.splice(0);
+  mkdirSync(data, { recursive: true });
+  const host = createHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', probeThreadId: 'synthetic-probe',
+    statePath: join(data, 'hosts', 't3code.json'), timeoutMs: 2_000 });
+  t.after(() => host.close());
+  await host.connect();
+  const adapter = createAdapter(Policy, host, { socketPath: join(data, 'callback.sock'), helperPath: join(data, 'worker-report.mjs') });
+  const store = new Store(join(data, 'queue.sqlite'));
+  const engine = new Engine(store, adapter, 0);
+  const task = store.insert(submissionSchema.parse({
+    submissionId: 't3-owner-retry', title: 'T3 owner retry', repoPath: primary, planningCommit: base,
+    handoffPath: 'handoff.md', originAgentId: 'origin',
+  }), host.hostId, '# handoff', base);
+  await adapter.populateTaskWorktree(store.task(task.id));
+  store.update(task.id, { phase: 'needs_attention', workspaceIntent: true, reason: 'Host delivery is unknown; command was not resent; command project.create' });
+  // The trial machine's wedged intent: an unknown project.create recorded on the
+  // retired dispatch route, with the same deterministic IDs this adapter derives.
+  const repositoryRoot = realpathSync(primary);
+  const digest = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 40);
+  const projectId = `nucleus-project-${digest(canonical([host.hostId, repositoryRoot]))}`;
+  const commandId = `nucleus-project-create-${digest(canonical([host.hostId, repositoryRoot]))}`;
+  return { root, data, server, host, adapter, store, engine, task, repositoryRoot, projectId, commandId,
+    close: async () => { await engine.stop(); store.close(); rmSync(root, { recursive: true, force: true }); } };
+}
+
+const retryWorkspaceCreation = (f: Awaited<ReturnType<typeof ownerRetryFixture>>) => f.engine.performTaskControl(taskControlInputSchema.parse({
+  action: 'retry_effect', taskId: f.task.id, version: f.store.task(f.task.id).version,
+  effect: 'workspace_creation', reason: 'Prove the owner retry reaches the T3 wire',
+}));
+
+test('the owner retry verb resends a lost old-route project registration once through core', async t => {
+  const f = await ownerRetryFixture(t);
+  try {
+    const legacyPayload = canonical({ method: 'orchestration.dispatchCommand',
+      payload: { type: 'project.create', commandId: f.commandId, projectId: f.projectId, title: basename(f.repositoryRoot), workspaceRoot: f.repositoryRoot } });
+    f.host.state.update(state => { state.intents[f.commandId] = { payload: legacyPayload, status: 'unknown', diagnostic: { command: 'project.create' } }; });
+    const retried = await retryWorkspaceCreation(f);
+    assert.equal(retried.phase, 'queued', 'the replayed create returned the task to dispatch');
+    const mutations = f.server.commands.filter(command => command.method === 'projects.mutate');
+    assert.equal(mutations.length, 1, 'the owner retry resends the recorded create exactly once');
+    assert.equal(mutations[0]!.commandId, f.commandId, 'the resend keeps the recorded command id');
+    assert.equal(mutations[0]!.projectId, f.projectId, 'the resend keeps the recorded project id');
+    assert.equal(mutations[0]!.workspaceRoot, f.repositoryRoot);
+    assert.equal(f.server.commands.filter(command => command.method === 'orchestration.dispatchCommand').length, 0,
+      'the retired dispatch route carries nothing');
+    assert.equal(f.server.projects.length, 1, 'the root is registered once, never duplicated');
+    const bound = f.store.task(f.task.id);
+    assert.equal(bound.workspaceIntent, true);
+    assert.match(bound.workspaceId ?? '', /^nucleus-worktree-[a-f0-9]{40}$/);
+    assert.equal(f.host.state.read().intents[f.commandId]?.status, 'settled');
+    assert.equal(Object.values(f.host.state.read().workspaces)[0]?.projectId, f.projectId);
+  } finally { await f.close(); }
+});
+
+test('the owner retry verb adopts a project that landed from the lost create without resending', async t => {
+  const f = await ownerRetryFixture(t);
+  try {
+    const legacyPayload = canonical({ method: 'orchestration.dispatchCommand',
+      payload: { type: 'project.create', commandId: f.commandId, projectId: f.projectId, title: basename(f.repositoryRoot), workspaceRoot: f.repositoryRoot } });
+    f.host.state.update(state => { state.intents[f.commandId] = { payload: legacyPayload, status: 'unknown', diagnostic: { command: 'project.create' } }; });
+    // The lost attempt actually landed: the project exists at the repository root.
+    f.server.projects.push({ id: f.projectId, title: basename(f.repositoryRoot), workspaceRoot: f.repositoryRoot });
+    await retryWorkspaceCreation(f);
+    assert.equal(f.server.commands.filter(command => command.method === 'projects.mutate').length, 0,
+      'the inventory re-read adopts the landed project; nothing is resent');
+    const bound = f.store.task(f.task.id);
+    assert.match(bound.workspaceId ?? '', /^nucleus-worktree-[a-f0-9]{40}$/);
+    assert.equal(Object.values(f.host.state.read().workspaces)[0]?.projectId, f.projectId);
+    assert.equal(f.host.state.read().intents[f.commandId]?.status, 'unknown', 'an adopted create was never sent again');
+  } finally { await f.close(); }
 });

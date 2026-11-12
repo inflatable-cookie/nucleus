@@ -1,3 +1,5 @@
+import { SAFE_REMOTE_TAGS, sanitizeHostFailureReason } from '../../core/host';
+
 export interface T3ConnectionConfig {
   endpoint: string;
   bearer: string;
@@ -7,21 +9,22 @@ export interface T3ConnectionConfig {
 /** Errors deliberately exclude remote error bodies, request data and ticket URLs. */
 export class T3RpcError extends Error {
   readonly command?: string;
-  readonly field?: string;
+  /** The retained why: a known tag, a fixed shape name or an HTTP status. */
+  readonly reason?: string;
 
   constructor(
     readonly code: 'auth' | 'transport' | 'timeout' | 'protocol' | 'remote' | 'unsupported_method',
     readonly method?: string,
     readonly remoteTag?: string,
     readonly delivery: 'not_sent' | 'unknown' = 'unknown',
-    diagnostic?: { command?: unknown; field?: unknown },
+    diagnostic?: { command?: unknown; reason?: unknown },
   ) {
     const command = safeCommand(diagnostic?.command);
-    const field = safeField(diagnostic?.field);
-    super(`T3Code ${code}${method ? `: ${method}` : ''}${remoteTag ? ` (${remoteTag})` : ''}${command ? `, command ${command}` : ''}${field ? `, field ${field}` : ''}`);
+    const reason = sanitizeHostFailureReason(diagnostic?.reason);
+    super(`T3Code ${code}${method ? `: ${method}` : ''}${remoteTag ? ` (${remoteTag})` : ''}${command ? `, command ${command}` : ''}${reason ? `, reason ${reason}` : ''}`);
     this.name = 'T3RpcError';
     this.command = command;
-    this.field = field;
+    this.reason = reason;
   }
 }
 
@@ -37,50 +40,57 @@ type Pending = {
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_STREAM_VALUES = 10_000;
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
-const REMOTE_TAGS = new Set([
-  'EnvironmentAuthorizationError', 'OrchestrationV2DispatchCommandError',
-  'OrchestrationV2GetThreadProjectionError', 'OrchestrationV2GetShellSnapshotError',
-  'OrchestrationV2ThreadLaunchError',
-]);
+const REMOTE_TAGS = new Set(SAFE_REMOTE_TAGS);
 const safeTag = (value: unknown): string | undefined => typeof value === 'string' && REMOTE_TAGS.has(value) ? value : undefined;
 const COMMANDS = new Set([
   'thread.create', 'thread.stop', 'thread.archive', 'message.dispatch', 'project.create',
   'runtime-request.respond', 'thread.user-input.dismiss', 'orchestration.launchThread',
 ]);
 const safeCommand = (value: unknown): string | undefined => typeof value === 'string' && COMMANDS.has(value) ? value : undefined;
-function safeField(value: unknown): string | undefined {
-  if (typeof value !== 'string' || value.length > 128 || !/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d{1,6}\])*$/.test(value)) return undefined;
-  return value.split(/\.|\[/).length <= 8 ? value : undefined;
-}
 
-/** Extract locations only; the formatted expected/actual value is never retained. */
-function schemaFieldDiagnostic(value: unknown): string | undefined {
-  if (typeof value !== 'string' || value.length > 32_768) return undefined;
-  const lines = value.split('\n');
-  for (let i = 1; i < lines.length; i++) {
-    if (!/^(?:Missing key|Expected [^\n]+)$/.test(lines[i - 1]!)) continue;
-    const location = /^  at ((?:\["[A-Za-z_][A-Za-z0-9_]{0,63}"\]|\[\d{1,6}\])+)$/.exec(lines[i]!);
-    if (!location) continue;
-    const parts = [...location[1]!.matchAll(/\["([A-Za-z_][A-Za-z0-9_]{0,63})"\]|\[(\d{1,6})\]/g)];
-    const field = parts.map((part, index) => part[1] === undefined ? `[${part[2]}]` : `${index ? '.' : ''}${part[1]}`).join('');
-    const safe = safeField(field);
-    if (safe) return safe;
-  }
-  return undefined;
-}
-
-/** The nightly has no authenticated decode-phase tag; remote failure text cannot prove non-delivery. */
-function remoteFailure(method: string, cause: unknown, command?: string, bearer?: string): Error {
+/**
+ * The nightly has no authenticated decode-phase tag; remote failure text cannot prove non-delivery.
+ * The retained reason is a value-free fact only: the known tag, a fixed
+ * failure-shape name from the adapter's own constants, or both. No remote
+ * string — bearer, identifier, method, scope name or any part of a defect —
+ * is copied into a diagnostic.
+ */
+const DEFECT_SHAPES: readonly { shape: RegExp; name: string }[] = [
+  { shape: /^Unknown request tag:/, name: 'unknown_request_tag' },
+  { shape: /^Missing key/, name: 'schema_missing_key' },
+  { shape: /^Expected/, name: 'schema_expected' },
+  { shape: /^Failed to encode response for RPC/, name: 'encoder_rejected' },
+];
+const TYPED_SHAPES: readonly { tag: string; shape: RegExp; name: string }[] = [
+  { tag: 'ProjectMutationError', shape: /^Failed to mutate project\.$/, name: 'project_mutation_failed' },
+  { tag: 'ProjectMutationError', shape: /^Project .* is not empty\.$/, name: 'project_not_empty' },
+  { tag: 'EnvironmentAuthorizationError', shape: /^The authenticated token is missing required scope:/, name: 'scope_missing' },
+];
+function remoteFailure(method: string, cause: unknown, command?: string): Error {
   if (!Array.isArray(cause) || cause.length !== 1 || !object(cause[0])) return new T3RpcError('remote', method, undefined, 'unknown', { command });
   const reason = cause[0];
   if (reason._tag === 'Die') {
-    if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method, undefined, 'unknown', { command });
-    const field = schemaFieldDiagnostic(reason.defect);
-    return new T3RpcError('remote', method, undefined, 'unknown', { command, field: field && (!bearer || !field.includes(bearer)) ? field : undefined });
+    if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method, undefined, 'unknown', { command, reason: 'unknown_request_tag' });
+    const defect = typeof reason.defect === 'string' ? reason.defect : undefined;
+    const shape = defect ? DEFECT_SHAPES.find(entry => entry.shape.test(defect))?.name ?? 'remote_failure' : 'remote_failure';
+    return new T3RpcError('remote', method, undefined, 'unknown', {
+      command,
+      reason: shape,
+    });
   }
   const tag = reason._tag === 'Fail' && object(reason.error) ? safeTag(reason.error._tag) : undefined;
+  const message = reason._tag === 'Fail' && object(reason.error) && typeof reason.error.message === 'string' && reason.error.message.length <= 512
+    ? reason.error.message : undefined;
   const reportedCommand = tag === 'OrchestrationV2DispatchCommandError' && object(reason.error) ? safeCommand(reason.error.commandType) : undefined;
-  return new T3RpcError('remote', method, tag, 'unknown', { command: reportedCommand ?? command });
+  // An unknown tag is not a fact we can name; the failure stays unknown with no
+  // reason at all. A known tag keeps the tag, plus the fixed shape name when
+  // the failure matches one.
+  if (!tag) return new T3RpcError('remote', method, undefined, 'unknown', { command: reportedCommand ?? command });
+  const typed = TYPED_SHAPES.find(entry => entry.tag === tag && typeof message === 'string' && entry.shape.test(message));
+  return new T3RpcError('remote', method, tag, 'unknown', {
+    command: reportedCommand ?? command,
+    reason: typed ? `${tag}:${typed.name}` : tag,
+  });
 }
 
 /** Small, non-retrying client for the nightly's Effect RPC JSON transport. */
@@ -126,8 +136,8 @@ export class T3RpcClient {
       const response = await fetch(new URL('/api/auth/websocket-ticket/rpc', this.base), {
         method: 'POST', headers: { Authorization: `Bearer ${this.#bearer}` }, signal: controller.signal,
       });
-      if (response.status === 401 || response.status === 403) throw new T3RpcError('auth', undefined, undefined, 'not_sent');
-      if (!response.ok) throw new T3RpcError('transport', undefined, undefined, 'not_sent');
+      if (response.status === 401 || response.status === 403) throw new T3RpcError('auth', undefined, undefined, 'not_sent', { reason: `HTTP ${response.status}` });
+      if (!response.ok) throw new T3RpcError('transport', undefined, undefined, 'not_sent', { reason: `HTTP ${response.status}` });
       if (!response.body) throw new T3RpcError('protocol', undefined, undefined, 'not_sent');
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];
@@ -253,7 +263,7 @@ export class T3RpcClient {
       return;
     }
     if (frame._tag === 'Exit' && object(frame.exit)) {
-      if (frame.exit._tag === 'Failure') return this.settle(id, remoteFailure(pending.method, frame.exit.cause, pending.command, this.#bearer), true);
+      if (frame.exit._tag === 'Failure') return this.settle(id, remoteFailure(pending.method, frame.exit.cause, pending.command), true);
       if (frame.exit._tag === 'Success') return this.settle(id, pending.accept ? new T3RpcError('protocol', pending.method) : frame.exit.value, Boolean(pending.accept));
     }
     if (frame._tag === 'Interrupt') return this.settle(id, new T3RpcError('transport', pending.method), true);

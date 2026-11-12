@@ -86,12 +86,28 @@ from a handler after an effect, so every remote failure remains unknown delivery
 and is never resent. Only a local refusal before the socket write proves
 non-delivery (planner ruling, 2026-11-11). Sanitized reported command and field
 names remain diagnostic text, never proof of a decoder phase; raw error bodies,
-actual values and credentials are omitted.
-Those names are stored on the durable unknown intent and returned on blocked
-repeats, including after reload. A registered permission failure also records
-them through the owning task's existing attention policy, selected by its exact
-host, agent and workspace identity; standalone native operations retain them in
-the intent ledger without inventing a task owner.
+actual values and credentials are omitted. The recorded diagnostic keeps the
+bounded why behind a remote failure as value-free facts only (planner ruling,
+2026-11-12, after three review rounds): the remote error tag when it is on the
+fixed list of known tags, which known failure shape matched as a fixed name the
+adapter defines (`unknown_request_tag`, `schema_missing_key`, `schema_expected`,
+`encoder_rejected`, `remote_failure`, `project_mutation_failed`,
+`project_not_empty`, `scope_missing`), the ticket exchange's HTTP status, and
+method and command names from the adapter's own constants. No remote string,
+and no part of one, is copied into a diagnostic, intent or attention text. No
+schema-location text is retained at all: even a location naming one of our own
+payload fields is remote-chosen text, so nothing from it survives. The token
+shapes make that structural: reasons admit no spaces, quotes or punctuation
+beyond the tag/shape separator, and delivery classification is unchanged
+(nucleus#1136).
+The manual-fix guidance is Nucleus-authored and names the repository path
+exactly as recorded — whitespace included, untruncated — straight from
+Nucleus's own record; only remote-derived fields are bounded.
+Those names and the reason are stored on the durable unknown intent and returned
+on blocked repeats, including after reload. A registered permission failure also
+records them through the owning task's existing attention policy, selected by
+its exact host, agent and workspace identity; standalone native operations
+retain them in the intent ledger without inventing a task owner.
 
 ## Identity and workspaces
 
@@ -114,15 +130,33 @@ directory, project ID, task/run ownership and native thread ID. Do not recover
 ownership from titles or tags. Discovery uses complete host inventory plus this
 map. An unreadable map or partial inventory is unknown, never an empty result.
 
-When a repository root has no T3 project, `createWorkspace` creates one with the
-supported `project.create` command. Its title is the repository folder name and
-its root is the real repository path; the task worktree is never used as the
-project root. The deterministic project ID, command ID and root are recorded in
-the durable intent before send. Before retrying an unknown create, read the
-complete project inventory again and adopt a project that now exists for that
-root. A build that does not support project creation leaves the task waiting
-with a refusal naming the path and the manual setup steps. Nucleus does not
-rename or remove projects.
+When a repository root has no T3 project, `createWorkspace` registers one with
+the `project.create` mutation through the `projects.mutate` RPC
+(nucleus#1136). The dispatch command union carries only thread-scoped commands:
+a `project.create` sent through `orchestration.dispatchCommand` is refused at
+the nightly's decoder before any handler runs, which is why swallowtail#225's
+creates never reached a span. Route evidence was read from the shipped bundle of
+`0.1.10-nightly.20261111.4529` (app commit `d2c25950b4d9`): `WS_METHODS.projectsMutate`
+is `projects.mutate` (`packages/contracts/src/rpc.ts`), the handler enqueues
+`ws.projects.mutate` → `mutateProjectWithClone` → `projectMutationOperation`
+(`apps/server/src/project/ProjectMutation.ts`), and `ProjectService.create`
+(`apps/server/src/project/ProjectService.ts`) normalizes the root, commits
+through the command receipt ledger under project and workspace locks, and
+returns the full `Project`. The method needs only the operate scope the session
+bearer already holds when no scripts ride the mutation. Its title is the
+repository folder name and its root is the real repository path; the task
+worktree is never used as the project root. The deterministic project ID,
+command ID and root are recorded in the durable intent before send, and the
+returned project must name the recorded project ID. Before retrying an unknown
+create, read the complete project inventory again and adopt a project that now
+exists for that root; a resend keeps the recorded command and project IDs, so
+T3's receipt answers idempotently. An unknown intent recorded on the retired
+dispatch route may resend once on the mutation route with the same IDs
+(nucleus#1136); no other payload change is accepted. When the remote failure
+text names no known registration method, the create stays unknown delivery —
+the same text can come from a handler after an effect — and the task keeps the
+path-and-manual-fix guidance inside that unknown, never a refused mark
+(review ruling, 2026-11-12). Nucleus does not rename or remove projects.
 
 Nucleus prepares and verifies the Git worktree before handing it to T3. Creation
 uses only `existing_worktree`; T3 must confirm it belongs to the selected project.
@@ -135,7 +169,7 @@ pretend to be a Paseo workspace.
 
 | Host operation | T3 RPC or command | Required result |
 | --- | --- | --- |
-| Register project | `orchestration.dispatchCommand` / `project.create` | Deterministic IDs bind the real repository root; reconcile unknown delivery against the complete inventory before retry |
+| Register project | `projects.mutate` / `project.create` mutation | Deterministic IDs bind the real repository root; the receipt ledger answers replays; reconcile unknown delivery against the complete inventory before retry |
 | Create | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt and `existing_worktree` | Top-level thread with the exact project and directory |
 | Follow-up | `orchestration.dispatchCommand` / `message.dispatch` | Stable command and message IDs; receipt records acceptance |
 | Observe | `orchestration.subscribeShell` and `orchestration.subscribeThread` | Fresh complete state, including active run and pending request |

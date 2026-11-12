@@ -169,15 +169,15 @@ test('all remote Die failures stay unknown even when their text matches the RPC 
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, 'thread.stop');
-    assert.equal(error.field, 'commandId');
-    assert.match(error.message, /command thread\.stop, field commandId/);
+    assert.equal('field' in error, false, 'no remote location is ever named');
+    assert.match(error.message, /command thread\.stop(?!.*field)/);
     return true;
   });
   assert.deepEqual(appliedEffects, ['missing.method', 'orchestration.dispatchCommand']);
   assert.equal(server.frames.filter(frame => frame._tag === 'Request').length, 2);
 });
 
-test('schema diagnostics retain bounded field locations without actual values or invalid paths', async t => {
+test('schema diagnostics keep only the shape name: no location text is ever retained', async t => {
   let calls = 0;
   const server = await fakeServer(t, (request, send) => {
     if (request._tag !== 'Request') return;
@@ -190,12 +190,169 @@ test('schema diagnostics retain bounded field locations without actual values or
   for (let i = 0; i < 2; i++) await assert.rejects(client.call('orchestration.dispatchCommand', { type: i ? 'synthetic-bearer prompt secret' : 'message.dispatch' }), error => {
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
-    assert.equal(error.field, i ? undefined : 'modelSelection.options[0].value');
+    // Locations are remote text: nothing from them is named, not even our own
+    // payload field names.
+    assert.equal('field' in error, false);
     assert.equal(error.command, i ? undefined : 'message.dispatch');
-    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|Expected string|got/);
+    assert.equal(error.reason, i ? 'schema_missing_key' : 'schema_expected');
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|got "|options|value|modelSelection/);
     return true;
   });
   assert.equal(calls, 2);
+});
+
+test('a schema location retains nothing, whatever it names', async t => {
+  let calls = 0;
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    // Call 2's location coincides with one of our own payload field names; it
+    // is still remote-chosen text and retains nothing (brief v2).
+    const defect = ++calls === 1
+      ? 'Missing key\n  at ["synthetic_secret"]'
+      : 'Missing key\n  at ["text"]';
+    send(failure(request, { _tag: 'Die', defect }));
+  });
+  const client = await clientFor(t, server);
+  for (let i = 0; i < 2; i++) await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'thread.stop' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal('field' in error, false, 'no remote location is ever named');
+    assert.equal(error.reason, 'schema_missing_key');
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic_secret/);
+    return true;
+  });
+});
+
+test('the nightly dispatch union refuses project.create before any handler and the reason stays bounded', async t => {
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Die',
+      defect: 'Expected union member, got {"type":"project.create","commandId":"stable","projectId":"synthetic-project","title":"synthetic-repository","workspaceRoot":"/private/synthetic/repository"}' }));
+  });
+  const client = await clientFor(t, server);
+  // Swallowtail #225's observed failure: the command never reached a handler, so
+  // delivery stays unknown and the recorded names stay diagnostic text only.
+  await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'project.create', commandId: 'stable',
+    projectId: 'synthetic-project', title: 'synthetic-repository', workspaceRoot: '/private/synthetic/repository' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.delivery, 'unknown');
+    assert.equal(error.command, 'project.create');
+    assert.equal('field' in error, false);
+    assert.equal(error.reason, 'schema_expected');
+    assert.doesNotMatch(String(error), /synthetic-project|synthetic-repository|private/);
+    return true;
+  });
+  // A secret in the decoder's expected-shape position retains only the shape name.
+  const secretServer = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Die', defect: 'Expected synthetic-secret got value' }));
+  });
+  const secretClient = await clientFor(t, secretServer);
+  await assert.rejects(secretClient.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.reason, 'schema_expected');
+    assert.doesNotMatch(String(error), /synthetic-secret/);
+    return true;
+  });
+  // The method-name position of the unknown-tag text retains only the shape name.
+  const methodServer = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Die', defect: 'Unknown request tag: synthetic-secret' }));
+  });
+  const methodClient = await clientFor(t, methodServer);
+  await assert.rejects(methodClient.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.reason, 'unknown_request_tag');
+    assert.doesNotMatch(String(error), /synthetic-secret/);
+    return true;
+  });
+});
+
+test('unquoted Die secrets retain no reason text at all', async t => {
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Die', defect: 'Authentication failed: synthetic-secret' }));
+  });
+  const client = await clientFor(t, server);
+  await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.delivery, 'unknown');
+    assert.equal(error.reason, 'remote_failure', 'an unrecognized remote failure keeps only its shape name');
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-secret|Authentication failed/);
+    return true;
+  });
+});
+
+test('typed project mutation failures retain the fixed wire message and drop arbitrary text to the tag', async t => {
+  let calls = 0;
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Fail', error: {
+      _tag: 'ProjectMutationError', commandId: 'stable',
+      // Call 1 is the handler's own fixed wire message; call 2 carries an
+      // unquoted secret that no template names, so only the tag may survive.
+      message: ++calls === 1 ? 'Failed to mutate project.' : 'Failed for api_key=synthetic-secret' } }));
+  });
+  const client = await clientFor(t, server);
+  for (let i = 0; i < 2; i++) await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable',
+    projectId: 'synthetic-project', title: 'synthetic-repository', workspaceRoot: '/private/synthetic/repository' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.delivery, 'unknown');
+    assert.equal(error.command, 'project.create');
+    assert.equal(error.reason, i === 0 ? 'ProjectMutationError:project_mutation_failed' : 'ProjectMutationError');
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /api_key|synthetic-secret/);
+    return true;
+  });
+  assert.equal(calls, 2);
+});
+
+test('typed variable positions retain the known tag and the fixed shape name only', async t => {
+  let calls = 0;
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    const tag = ++calls === 1 ? 'ProjectMutationError' : 'EnvironmentAuthorizationError';
+    const message = calls === 1 ? 'Project synthetic-secret is not empty.' : 'The authenticated token is missing required scope: synthetic-secret.';
+    send(failure(request, { _tag: 'Fail', error: { _tag: tag, commandId: 'stable', message } }));
+  });
+  const client = await clientFor(t, server);
+  for (let i = 0; i < 2; i++) await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.reason, i === 0
+      ? 'ProjectMutationError:project_not_empty'
+      : 'EnvironmentAuthorizationError:scope_missing');
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-secret/);
+    return true;
+  });
+});
+
+test('reasons stay bounded and nameless for unknown tags, giant defects and value dumps', async t => {
+  let calls = 0;
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    send(failure(request, ++calls === 1
+      ? { _tag: 'Fail', error: { _tag: 'SomethingUnrecognized', detail: 'synthetic-bearer prompt secret' } }
+      : { _tag: 'Die', defect: `Expected ${'{"a":1}, '.repeat(300)}got "${'x'.repeat(500)}"` }));
+  });
+  const client = await clientFor(t, server);
+  await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.reason, undefined, 'an unrecognized tag contributes no reason text');
+    assert.doesNotMatch(String(error), /prompt secret/);
+    return true;
+  });
+  await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable-2' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.reason, 'schema_expected', 'the giant defect retains only its shape name');
+    assert.doesNotMatch(String(error), /xxxxx/);
+    return true;
+  });
+});
+
+async function failingTicketServer(t: TestContext, status: number) {
+  return fakeServer(t, () => assert.fail('no WebSocket request expected'), status);
+}
+
+test('the ticket exchange names its HTTP status in the refusal', async t => {
+  const server = await failingTicketServer(t, 403);
+  const client = new T3RpcClient({ endpoint: server.endpoint, bearer: 'synthetic-bearer' });
+  t.after(() => client.close());
+  await assert.rejects(client.connect(), error => error instanceof T3RpcError && error.code === 'auth' && error.reason === 'HTTP 403'
+    && String(error).includes('reason HTTP 403') && !String(error).includes('synthetic-bearer'));
+  assert.equal(server.upgrades, 0);
 });
 
 test('a schema location containing the configured bearer is discarded even when it is a valid identifier', async t => {
@@ -210,7 +367,7 @@ test('a schema location containing the configured bearer is discarded even when 
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, 'thread.stop');
-    assert.equal(error.field, undefined);
+    assert.equal('field' in error, false);
     assert.ok(!String(error).includes(bearer));
     assert.ok(!JSON.stringify(error).includes(bearer));
     return true;
@@ -232,7 +389,7 @@ test('typed remote command diagnostics accept known commands and reject arbitrar
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, i ? 'thread.stop' : 'thread.archive');
-    assert.equal(error.field, undefined);
+    assert.equal('field' in error, false);
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret/);
     return true;
   });
