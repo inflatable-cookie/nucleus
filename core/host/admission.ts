@@ -545,6 +545,7 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
     const input = args[0] as { workspaceId?: string } | undefined;
     if (input?.workspaceId) admission.invalidateWorkspace(input.workspaceId);
   }));
+  set("reconcileSettledThreads", call("cleanup", "reconcileSettledThreads", () => "reconcileSettledThreads"));
   set("archiveAgent", call("cleanup", "archiveAgent", idKey("archiveAgent"), (args) => {
     if (typeof args[0] === "string") admission.invalidate(args[0]);
   }));

@@ -178,6 +178,28 @@ test('an uncertain settlement is checked against settledOverride before any rese
   assert.equal(reloaded.state.read().intents[server.commands.find(command => command.type === 'thread.settle')!.commandId]?.status, 'settled');
 });
 
+test('an unknown worker handover settle is never resent by either reconciler', async t => {
+  const { host, server, options } = await fixture(t);
+  const projection = server.threads.get('synthetic-probe')!;
+  projection.runs.push({ id: 'nightly-worker-run', status: 'completed', startedAt: STAMP });
+  // The socket dies before the command is applied: the delivery is unknown, and
+  // nothing may turn that one unknown mutation into a second (nucleus#1154).
+  server.controls.disconnectMutation = true;
+  await assert.rejects(host.settleWorkerThread('synthetic-probe', 'nucleus-worker-run'), HostUnknownDeliveryError);
+  assert.equal(projection.thread.settledOverride, null, 'the fake server never applied the settle');
+  assert.equal(server.commands.filter(command => command.type === 'thread.settle').length, 1);
+
+  host.close(); server.controls.disconnectMutation = false;
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close()); await reloaded.connect();
+  const commandId = server.commands.find(command => command.type === 'thread.settle')!.commandId;
+  assert.equal(reloaded.state.read().intents[commandId]?.status, 'unknown', 'the recorded intent stays unknown');
+  await reloaded.reconcileSettledThreads();
+  await reloaded.reconcileReportedSettlements();
+  assert.equal(server.commands.filter(command => command.type === 'thread.settle').length, 1, 'neither reconciler resends an unknown worker settle');
+  assert.equal(projection.thread.settledOverride, null, 'the thread is not settled by a resent command');
+  assert.equal(reloaded.state.read().intents[commandId]?.status, 'unknown');
+});
+
 test('a settled reviewer is explicitly unsettled before a later round message', async t => {
   const { host, server } = await fixture(t);
   const projection = server.threads.get('synthetic-probe')!;

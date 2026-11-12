@@ -121,7 +121,7 @@ export function coordinatorReportMatches(t:Task):boolean{
  const progress=t.resolution.recovery?.progress;
  return Boolean(progress&&progress===taskProgressDigest(t));
 }
-export type RecoveryContext = Pick<Resolution, 'adapter' | 'attention' | 'automaticHookReplayPending' | 'ensureIncident' | 'escalateRefusedCoordinator' | 'extendCallbackReminder' | 'graceMs' | 'host' | 'idle' | 'lease' | 'openReviewContinuationEscalation' | 'recordStop' | 'requiredRouteNote' | 'responsibleBlockerLadder' | 'resumeTransientProviderThread' | 'select' | 'slotAdmissionReason' | 'startsNoRuns' | 'stopped' | 'store' | 'suppressAutomaticRetry' | 'update' | 'usageCeilingNote' | 'validationEvidence' | 'waiting'>;
+export type RecoveryContext = Pick<Resolution, 'adapter' | 'attention' | 'automaticHookReplayPending' | 'ensureIncident' | 'escalateRefusedCoordinator' | 'extendCallbackReminder' | 'graceMs' | 'host' | 'idle' | 'lease' | 'onTaskHost' | 'openReviewContinuationEscalation' | 'recordStop' | 'requiredRouteNote' | 'responsibleBlockerLadder' | 'resumeTransientProviderThread' | 'select' | 'slotAdmissionReason' | 'startsNoRuns' | 'stopped' | 'store' | 'suppressAutomaticRetry' | 'update' | 'usageCeilingNote' | 'validationEvidence' | 'waiting'>;
 
 export class Recovery {
  constructor(readonly resolution:RecoveryContext){}
@@ -315,7 +315,7 @@ export class Recovery {
   if(run.role!=='recovery'||!run.agentId||run.generation!==t.coordinatorGeneration||
    t.coordinatorAgentId!==run.agentId||incident.generation!==run.generation||incident.agentId!==run.agentId)return false;
   let state;
-  try{state=await this.resolution.host.observe(run.agentId);}catch{return false;}
+  try{state=await this.resolution.onTaskHost(run, () => this.resolution.host.observe(run.agentId!));}catch{return false;}
   // The pause can land during the observation: re-check before writing, and
   // again inside the write transaction.
   if(this.resolution.startsNoRuns())return false;
@@ -451,7 +451,7 @@ export class Recovery {
      if(!run.agentId){run={...run,agentId:found[0]!.id,status:'running'};this.store.putRun(run);}
      if(t.coordinatorGeneration===run.generation&&!t.coordinatorAgentId)this.store.update(t.id,{coordinatorAgentId:run.agentId!},'coordinator_assigned',run.agentId!);
     }
-    const state=await this.resolution.host.observe(run.agentId!);if(this.resolution.stopped())return;
+    const state=await this.resolution.onTaskHost(t, () => this.resolution.host.observe(run!.agentId!));if(this.resolution.stopped())return;
     const idle=!state.active&&!state.permissions&&['idle','error','closed'].includes(state.status);
     if(state.workspaceId!==run.workspaceId)throw Error('Recovery coordinator workspace changed');
     // Re-read before writing observation: complete() can land during observe and
@@ -744,7 +744,7 @@ export class Recovery {
     if([t.agentId,t.resolution.reviewerAgentId].includes(agentId)){this.wait(t,'Recovery coordinator must be separate from the worker and independent reviewer', 'operator_needed');return null;}
     const ownedRuns=this.store.unreleasedRunsForAgent(agentId,t.hostId);
    if(ownedRuns.length){this.wait(t,`Recovery coordinator is busy with unreleased run ${ownedRuns[0]!.id}`, 'route_unavailable');return null;}
-   const state=await this.resolution.host.observe(agentId);
+   const state=await this.resolution.onTaskHost(t, () => this.resolution.host.observe(agentId!));
    if(state.active||state.permissions){this.wait(t,`Recovery coordinator is busy (${state.status})`, 'route_unavailable');return null;}
     if(state.status!=='idle'){this.wait(t,`The assigned recovery coordinator is not resumable (${state.status}); waiting for an available coordinator`, 'operator_needed');return null;}
     workspaceId=state.workspaceId!;
@@ -914,7 +914,7 @@ export function recoverySettlementPatch(facts: {
  */
 const recoveryApplicationsInFlight = new Set<string>();
 
-export type RecoverySettlementContext = Pick<Engine, 'coordinatorActionRunId' | 'host' | 'performTaskControl' | 'store'>
+export type RecoverySettlementContext = Pick<Engine, 'coordinatorActionRunId' | 'host' | 'onTaskHost' | 'performTaskControl' | 'store'>
   & { readonly resolution: Pick<Resolution, 'attention' | 'recovery' | 'update'> };
 
 export class RecoverySettlement {
@@ -1008,7 +1008,7 @@ export class RecoverySettlement {
           && revision.workspaceId === current.workspaceId
           ? { id: revision.id, agentId: revision.agentId, workspaceId: revision.workspaceId, revision: true } : null;
       if (worker) {
-        const observed = await this.engine.host.observe(worker.agentId).catch(() => null);
+        const observed = await this.engine.onTaskHost(current, () => this.engine.host.observe(worker.agentId)).catch(() => null);
         const latest = this.store.task(task.id), latestRun = worker.revision ? this.store.run(worker.id) : null;
         if (observed && observed.id === worker.agentId && observed.workspaceId === worker.workspaceId
           && !["closed", "error"].includes(observed.status) && latest.version === current.version

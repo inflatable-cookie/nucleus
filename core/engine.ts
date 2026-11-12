@@ -155,6 +155,32 @@ export class Engine {
   canReuseUnqualifiedOriginWorkspace: () => boolean = () => true;
   identifyOriginHost: (agentId: string, identitySource?: IdentitySource) => Promise<string | undefined> = async () => this.activeHostId ?? this.selectIngressHost();
   withHost<T>(id: string, fn: () => T): T { return this.hostContext.run(id, fn); }
+  /**
+   * Every host call that names a task's or a run's own agent runs on that
+   * owner's host (#1154). A stored agent id is native, so a call made in no
+   * host context unwraps it against the default host — the class #1128 and
+   * #1130 fixed for identity and origin lookups. Reads the owner's recorded
+   * `hostId`, never a caller's claim; an owner with no proven host keeps the
+   * ambient context.
+   */
+  onTaskHost<T>(owner: { hostId?: string | null } | null | undefined, work: () => T): T {
+    const hostId = owner?.hostId;
+    return hostId ? this.withHost(hostId, work) : work();
+  }
+  /**
+   * The host a lane quantum's transport belongs to. A lane runs outside the
+   * caller's async context (`cleanContext`), so the ambient host would be lost
+   * and every agent-naming call inside it would go to the default host. A
+   * task-keyed lane names its task's host outright; any other lane keeps the
+   * host the scheduling call ran on.
+   */
+  private laneHost(key: string): string | undefined {
+    const taskId = /^(?:task|runtime-retirement):(.+)$/.exec(key)?.[1];
+    if (taskId) {
+      try { const hostId = this.store.task(taskId).hostId; if (hostId) return hostId; } catch { /* an unknown key carries no host of its own */ }
+    }
+    return this.activeHostId;
+  }
   /** Registered and connected, independent of the ambient host context; the identity-routing read. */
   hostOnline(id: string): boolean { return Boolean(this.resolveHostAdapter(id)); }
   /** Runtime supplies the authenticated live-host selection at acceptance. */
@@ -439,7 +465,7 @@ export class Engine {
     this.resolution.recovery.setCoordinatorActionHandler((task, run, action) => this.applyCoordinatorAction(task, run, action));
     this.resolution.recovery.setResponsibleFaultHandler((task) => this.settleResponsibleFault(task));
     this.retirement = retirement ?? new RuntimeRetirementService(store);
-    this.lifecycle = new Lifecycle(schedulingEngineContext(this, ['adapter', 'drainCleanup', 'enqueueCleanup', 'hooks', 'host', 'removeSiblings', 'retirement', 'scheduleRetirement', 'scheduleRunBuildOutputs', 'settleObservedIdleRuns', 'settleTerminalIntentRuns', 'settleTerminalRecoveryEpisode', 'stopped', 'store', 'taskHostAvailable', 'withHost'], ['adapter', 'closeoutAuthority', 'hasEarlierIntegrationTurn', 'lease', 'attention', 'environmentDeferred', 'transportDeferred', 'update']));
+    this.lifecycle = new Lifecycle(schedulingEngineContext(this, ['adapter', 'drainCleanup', 'enqueueCleanup', 'hooks', 'host', 'onTaskHost', 'removeSiblings', 'retirement', 'scheduleRetirement', 'scheduleRunBuildOutputs', 'settleObservedIdleRuns', 'settleTerminalIntentRuns', 'settleTerminalRecoveryEpisode', 'stopped', 'store', 'taskHostAvailable', 'withHost'], ['adapter', 'closeoutAuthority', 'hasEarlierIntegrationTurn', 'lease', 'attention', 'environmentDeferred', 'transportDeferred', 'update']));
     this.agentControls = new AgentControls(this);
     this.taskRemoval = new TaskRemoval(this);
     this.workspaceProvisioning = new WorkspaceProvisioning(this);
@@ -452,7 +478,7 @@ export class Engine {
     this.moveControls = new MoveControls(this);
     this.restartControls = new RestartControls(this);
     this.retryEffectControls = new RetryEffectControls(this);
-    this.workerReconcile = new WorkerReconcile(recoveryEngineContext(this, ['acceptWorkerResult', 'adapter', 'admission', 'branchPrLookupDue', 'compareSiblings', 'continuationOwnsReturn', 'hooks', 'host', 'idleGraceMs', 'note', 'reconcileBlockedReturn', 'reconcileBranchPr', 'reconcileObservation', 'reconcileReportingBinding', 'recordObservation', 'reportingBindingRecheckDue', 'stopped', 'store', 'updateAfterOperatorRemap'], ['adoptReplacementPr', 'attention', 'extendCallbackReminder', 'heavyRunAlive', 'identifyOriginHost', 'withHost', 'reconcileStalledTurnStop', 'recovery', 'remindStoppedWorker', 'resolveIncident', 'responsiblePrReportRefused', 'settleAutomaticReplayHold', 'stalls', 'suppressAutomaticRetry', 'update', 'waiting']));
+    this.workerReconcile = new WorkerReconcile(recoveryEngineContext(this, ['acceptWorkerResult', 'adapter', 'admission', 'branchPrLookupDue', 'compareSiblings', 'continuationOwnsReturn', 'hooks', 'host', 'idleGraceMs', 'note', 'reconcileBlockedReturn', 'reconcileBranchPr', 'reconcileObservation', 'reconcileReportingBinding', 'recordObservation', 'reportingBindingRecheckDue', 'stopped', 'store', 'updateAfterOperatorRemap', 'onTaskHost'], ['adoptReplacementPr', 'attention', 'extendCallbackReminder', 'heavyRunAlive', 'identifyOriginHost', 'withHost', 'reconcileStalledTurnStop', 'recovery', 'remindStoppedWorker', 'resolveIncident', 'responsiblePrReportRefused', 'settleAutomaticReplayHold', 'stalls', 'suppressAutomaticRetry', 'update', 'waiting']));
     const engine = this;
     this.callbackIntake = new CallbackIntake({
       get adapter() { return engine.adapter; },
@@ -465,6 +491,7 @@ export class Engine {
       get rejectReviewProgress() { return engine.rejectReviewProgress.bind(engine); },
       get reviewerContinuationInFlight() { return engine.reviewerContinuationInFlight.bind(engine); },
       get reviewContinuationLimit() { return engine.reviewContinuationLimit.bind(engine); },
+      get onTaskHost() { return engine.onTaskHost.bind(engine); },
       get stopped() { return engine.stopped; },
       get store() { return engine.store; },
       get wake() { return engine.wake.bind(engine); },
@@ -474,7 +501,7 @@ export class Engine {
     });
     this.workerFailover = new WorkerFailover(recoveryEngineContext(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'replacementCeilingRefusal', 'retiredObservationKey', 'stopped', 'store', 'taskHostAvailable', 'unavailableGroups', 'withHost'], ['recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
     this.taskControlDispatcher = new TaskControlDispatcher(this);
-    this.recoverySettlement = new RecoverySettlement(recoveryEngineContext(this, ['coordinatorActionRunId', 'host', 'performTaskControl', 'store'], ['attention', 'recovery', 'update']));
+    this.recoverySettlement = new RecoverySettlement(recoveryEngineContext(this, ['coordinatorActionRunId', 'host', 'onTaskHost', 'performTaskControl', 'store'], ['attention', 'recovery', 'update']));
     this.pausedStops = new PausedStops(this);
     this.routeControls = new RouteControls(this);
     this.taskCompletion = new TaskCompletion(this);
@@ -594,7 +621,10 @@ export class Engine {
     });
   }
   /** Schedule one bounded quantum on an exclusive lane key. Same-key work is FIFO. */
-  scheduleLane(key: string, priority: number, work: () => Promise<void> | void): Promise<void> { return this.laneScheduler.scheduleLane(key, priority, work); }
+  scheduleLane(key: string, priority: number, work: () => Promise<void> | void): Promise<void> {
+    const hostId = this.laneHost(key);
+    return this.laneScheduler.scheduleLane(key, priority, hostId ? () => this.withHost(hostId, work) : work);
+  }
   quiesce(exclude?: "audit"): Promise<void> { return this.laneScheduler.quiesce(exclude); }
   private engineBusy(ignoreKey?: string): boolean { return this.laneScheduler.engineBusy(ignoreKey); }
   private pickLaneKey(): string | null { return this.laneScheduler.pickLaneKey(); }
@@ -649,7 +679,10 @@ export class Engine {
    * multi-page drain never re-parses the whole fleet for every page.
    */
   sweepOrder(includeDeferred: boolean): Task[] { return this.sweep.sweepOrder(includeDeferred); }
-  control<T>(operation: () => Promise<T> | T, key: string): Promise<T> { return this.laneScheduler.control(operation, key); }
+  control<T>(operation: () => Promise<T> | T, key: string): Promise<T> {
+    const hostId = this.laneHost(key);
+    return this.laneScheduler.control(hostId ? () => this.withHost(hostId, operation) : operation, key);
+  }
   startOperation(input: { key: string; kind: QueueOperation["kind"]; payload: unknown; taskId?: string; expectedVersion?: number; repoPath?: string; submissionId?: string; hostId?: string; deferSchedule?: boolean }): Promise<OperationAcceptance> { return this.operations.startOperation(input); }
   scheduleAcceptedOperation(operationId: string): void { this.operations.scheduleAcceptedOperation(operationId); }
   startSubmission(submission: Submission, requirePushedPlanning = false): Promise<OperationAcceptance> { return this.operations.startSubmission(submission, requirePushedPlanning); }

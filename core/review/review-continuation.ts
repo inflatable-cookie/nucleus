@@ -24,6 +24,8 @@ import { ProvenPreSendRefusalError } from '../recovery/task-reasons';
 export interface ReviewContinuationContext {
   readonly store: Store;
   readonly adapter: Pick<Adapter, 'verifyPr' | 'verifyPrIdentity' | 'continueReviewer'>;
+  /** The task-owner host binding every agent-naming call reads (#1154). */
+  onTaskHost: <T>(owner: { hostId?: string | null } | null | undefined, work: () => T) => T;
   readonly host: Pick<HostFacade, 'observe'>;
   paused(): boolean;
   ownedToolHold: OwnedTools['ownedToolHold'];
@@ -684,7 +686,7 @@ export class ReviewContinuations {
       if (verified.url !== task.prUrl || verified.head !== run.head || verified.head !== input.head) {
         throw new Error('Open PR, task and reviewer heads do not match; no reviewer delivery was sent');
       }
-      const observed = await this.resolution.host.observe(run.agentId!);
+      const observed = await this.resolution.onTaskHost(task, () => this.resolution.host.observe(run.agentId!));
       recheck();
       this.resolution.assertIdleReviewerObservation(task, run, observed);
       // A stop-backed resume is the one continuation that follows a delivered

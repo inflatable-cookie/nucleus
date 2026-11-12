@@ -20,7 +20,8 @@
     },
     "thread.settle": {
       "required": ["type", "commandId", "threadId"],
-      "optional": ["expectedLatestRunId", "settledAt"]
+      "optional": ["expectedLatestRunId", "settledAt"],
+      "source": "packages/contracts/src/orchestrationV2.ts (thread.settle); a new message.dispatch clears the manual settled marker, so a woken thread is active again"
     },
     "thread.unsettle": {
       "required": ["type", "commandId", "threadId", "reason"],
@@ -131,6 +132,10 @@
     {
       "method": "orchestration.dispatchCommand",
       "payload": { "type": "thread.archive", "commandId": "fixture:archive", "threadId": "fixture-thread" }
+    },
+    {
+      "method": "orchestration.dispatchCommand",
+      "payload": { "type": "thread.settle", "commandId": "fixture:settle", "threadId": "fixture-thread", "expectedLatestRunId": "fixture-run" }
     }
   ]
 }

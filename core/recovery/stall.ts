@@ -91,7 +91,7 @@ export function stalledStopDecision(facts: {
   return { kind: 'inactive', reason: `The operator-authorized stalled ${stop.role} run ${stop.runId} turn ${stop.turnId} is inactive. No authenticated result or review verdict was received, and no replacement turn was started. The owner must choose the next action.` };
 }
 
-export type StallsContext = Pick<Resolution, 'adapter' | 'attention' | 'host' | 'paused' | 'profiles' | 'recordStop' | 'recovery' | 'saveIncident' | 'store' | 'update' | 'waiting'>;
+export type StallsContext = Pick<Resolution, 'adapter' | 'attention' | 'host' | 'onTaskHost' | 'paused' | 'profiles' | 'recordStop' | 'recovery' | 'saveIncident' | 'store' | 'update' | 'waiting'>;
 
 export class Stalls {
   /** Per-agent coalescing for timeline peeks; the cached verdict holds for the window so repeated observations agree. */
@@ -194,7 +194,7 @@ export class Stalls {
     if (lastPeek && Date.now() - lastPeek.at < this.peekTtlMs) return lastPeek.notice;
     let notice: string | null = null;
     try {
-      const timeline = this.resolution.adapter.agentTimeline ? await this.resolution.host.agentTimeline(agentId) : undefined;
+      const timeline = this.resolution.adapter.agentTimeline ? await this.resolution.onTaskHost(t, () => this.resolution.host.agentTimeline(agentId)) : undefined;
       notice = this.shellNoticeText(role, runningShellCommand(timeline ?? null));
     }
     catch { notice = null; }

@@ -124,6 +124,19 @@ host is unknown or offline, and the refusal names that host (nucleus#1128). A
 routed send's optional source from yet another host rides out, the way the
 delegated ask route already dropped it.
 
+A stored task or run `agentId` is native, so it carries no host of its own: every
+host call that names the owner's agent runs inside `Engine.onTaskHost(owner, fn)`
+(fn. `Resolution.onTaskHost`), which reads the owner's recorded `hostId` — never
+a caller's claim (nucleus#1154). That covers the reviewer checkpoint
+auto-continue, worker and revision continuation, planner `tell` delivery, the
+stall and idle checks and the closeout archive. A review, revision or closeout
+pass may only be reached from a lane quantum, and a lane runs outside its
+caller's async context, so the transport context is part of the quantum: a
+`task:<id>` (or `runtime-retirement:<id>`) lane binds that task's host, and any
+other lane keeps the host its scheduling call ran on. Without that, an
+agent-naming call inside the quantum resolved the default host and the review
+answered `Agent was not found` (swallowtail#226).
+
 T3's project and existing Git worktree form its workspace handle. Persist their
 mapping through the service's durable intent boundary, including the canonical
 directory, project ID, task/run ownership and native thread ID. Do not recover
@@ -473,6 +486,29 @@ and post-effect handler defects must both retain unknown delivery. Contract
 fixtures pin the nightly command shapes rather than a server-version allowlist.
 Cross-host cases deliberately reuse native IDs and keep task, run, message and
 question ownership separate.
+
+A T3 worker thread is settled with `thread.settle` once its handover is accepted
+and the task moves to review, guarded by `expectedLatestRunId` so a thread a
+later run already owns is never settled (nucleus#1154). The accepted receipt is
+durable first; the settle is presentation only, so a refused or unknown send
+changes nothing and leaves the thread as it was. The handover's turn may still
+be ending when the report arrives, and a live run is never settled, so the intent
+is recorded in the adapter's own state (`pendingSettles`) and the ordinary host
+sweep retries it once that run has ended, naming it in `expectedLatestRunId`; an
+intent whose run never ends is retired after 24 hours, and one that a later run
+replaced is retired without touching the thread. A revision round wakes the
+worker through the same explicit `thread.unsettle` every follow-up send uses, and
+its next handover settles it again under that run's own command id. A worker
+handover and a support-thread report share the `thread.settle` command and the
+`expectedLatestRunId` guard; only the worker's own handover settles the worker
+thread, and only a support role's report settles its thread. The adapter records
+each worker settle's command id in its state before the send
+(`workerSettles`), because the support report's reconciler checks unknown settle
+intents against a fresh read and may resend them: a worker settle is a separate
+rule — an unknown outcome stays unknown and is never sent again, while only a
+settle that has not been sent is retried from `pendingSettles`. The mark retires
+with its command's outcome, so an unknown worker settle is never picked up by the
+resend path.
 
 One end-to-end test drives an ordinary task's whole lifecycle on the fake
 Nightly transport (nucleus#1139): promotion onto the T3 host, workspace

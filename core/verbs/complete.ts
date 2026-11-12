@@ -114,7 +114,7 @@ export class TaskCompletion {
     const observeIdle = async (label: string) => {
       const observedParticipants = new Map<string, Awaited<ReturnType<Adapter["observe"]>>>();
       for (const [agentId, workspaceId] of participants) {
-        const observed = await this.engine.host.observe(agentId);
+        const observed = await this.engine.onTaskHost(task, () => this.engine.host.observe(agentId));
         ensureCurrent(label);
         if (observed.id !== agentId || observed.workspaceId !== workspaceId || observed.active || observed.permissions
             || !["idle", "error", "closed"].includes(observed.status))

@@ -16,7 +16,7 @@ import { LoginSessionFaultError, isLoginSessionFault } from '../../shared/sessio
 import type { Resolution } from '../resolution';
 import { settlementHeld, startsNoRuns } from '../closeout/queue-drain';
 
-export type ObservationContext = Pick<Resolution, 'adapter' | 'attention' | 'environmentDeferred' | 'extendCallbackReminder' | 'graceMs' | 'heavyRunAlive' | 'host' | 'hostAvailable' | 'inventoryHostMatches' | 'launchingRuns' | 'orphanRuns' | 'paused' | 'reconcileAbsentCreation' | 'reconcileStalledTurnStop' | 'recoverRefusedReviewer' | 'remindStoppedRun' | 'resolveIncident' | 'resumeTransientProviderThread' | 'retainedProfileIssue' | 'stalls' | 'stopped' | 'store' | 'supersedeOrphans' | 'transportDeferred' | 'update' | 'waiting' | 'withHost'>;
+export type ObservationContext = Pick<Resolution, 'adapter' | 'attention' | 'environmentDeferred' | 'extendCallbackReminder' | 'graceMs' | 'heavyRunAlive' | 'host' | 'hostAvailable' | 'inventoryHostMatches' | 'launchingRuns' | 'onTaskHost' | 'orphanRuns' | 'paused' | 'reconcileAbsentCreation' | 'reconcileStalledTurnStop' | 'recoverRefusedReviewer' | 'remindStoppedRun' | 'resolveIncident' | 'resumeTransientProviderThread' | 'retainedProfileIssue' | 'stalls' | 'stopped' | 'store' | 'supersedeOrphans' | 'transportDeferred' | 'update' | 'waiting' | 'withHost'>;
 
 export class Observation {
   constructor(readonly resolution: ObservationContext) {}
@@ -103,7 +103,7 @@ export class Observation {
         if (await releaseUnreachableRun(this.store, this.adapter, run, () => settlementHeld(this.store, this.resolution.stopped()))) continue;
         // Checkpoint delivery can occur after the pass's inventory was read.
         // Its new turn needs a narrow read started against the delivered state.
-        const state = (reviewInProgress(run) ? null : inventory?.get(run.agentId!)) ?? await this.resolution.host.observe(run.agentId!);
+        const state = (reviewInProgress(run) ? null : inventory?.get(run.agentId!)) ?? await this.resolution.onTaskHost(run, () => this.resolution.host.observe(run.agentId!));
         if (this.resolution.stopped()) return;
         const latest = this.store.run(run.id);
         if (!latest || JSON.stringify(latest) !== JSON.stringify(run)) continue;

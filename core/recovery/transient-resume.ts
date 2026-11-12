@@ -42,7 +42,7 @@ export function transientWaitingDecision(beforeRetryAt: boolean, resumes: number
 }
 
 /** Same-thread provider retry for a retained run and for the initial worker, with its rate-limit failover. */
-export type TransientResumeContext = Pick<Resolution, 'adapter' | 'attention' | 'graceMs' | 'host' | 'openPlannerEscalation' | 'paused' | 'profiles' | 'store' | 'update' | 'waiting'>;
+export type TransientResumeContext = Pick<Resolution, 'adapter' | 'attention' | 'graceMs' | 'host' | 'onTaskHost' | 'openPlannerEscalation' | 'paused' | 'profiles' | 'store' | 'update' | 'waiting'>;
 
 export class TransientResume {
   constructor(readonly resolution: TransientResumeContext) {}
@@ -302,7 +302,7 @@ export class TransientResume {
     const prompt = `Nucleus transient provider continuation for task ${task.id}, run ${run.id}, exact head ${run.head}. Continue where you left off; report via your existing authenticated callback for this same run. Do not start a new run or change the requested head.`;
     try {
       if (!stillCurrent()) throw new Error('Retained run changed before the continuation was sent');
-      await this.adapter.continueRun!(run, messageId, prompt);
+      await this.resolution.onTaskHost(run, () => this.adapter.continueRun!(run, messageId, prompt));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       if (error instanceof ProvenPreSendRefusalError) {
@@ -316,7 +316,7 @@ export class TransientResume {
       return true;
     }
     let postSend: Awaited<ReturnType<Adapter['observe']>> | null = null;
-    try { postSend = await this.resolution.host.observe(run.agentId!); } catch { /* the accepted message is recorded; a later observation decides progress */ }
+    try { postSend = await this.resolution.onTaskHost(run, () => this.resolution.host.observe(run.agentId!)); } catch { /* the accepted message is recorded; a later observation decides progress */ }
     if (postSend?.status === 'error' && !active(postSend) && !postSend.permissions) {
       const reason = `agent_errored: retained ${run.role} thread returned to error immediately after same-thread continuation: ${(postSend.error || state.error || 'no error detail').slice(0, 400)}`;
       const failed = { ...intent, status: 'exhausted' as const, retryAt: null, error: reason.slice(0, 2000), resumedAt: now(), observedUpdatedAt: postSend.updatedAt ?? null, sawProgress: false };
@@ -503,7 +503,7 @@ export class TransientResume {
     const prompt = `Nucleus transient provider continuation for task ${task.id}, worker run ${runId}, planning head ${task.planningBase}. Continue where you left off; report via your existing authenticated callback for this same run. Do not start a new run or change the requested head or task branch.`;
     try {
       if (!stillInitial()) return false;
-      await this.adapter.continueWorker!(task, intentId, prompt);
+      await this.resolution.onTaskHost(task, () => this.adapter.continueWorker!(task, intentId, prompt));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       if (error instanceof ProvenPreSendRefusalError) {
@@ -520,7 +520,7 @@ export class TransientResume {
       return true;
     }
     let postSend: Awaited<ReturnType<Adapter['observe']>> | null = null;
-    try { postSend = await this.resolution.host.observe(task.agentId); } catch { /* use the pre-send observation as a conservative baseline */ }
+    try { postSend = await this.resolution.onTaskHost(task, () => this.resolution.host.observe(task.agentId!)); } catch { /* use the pre-send observation as a conservative baseline */ }
     if (postSend?.status === 'error' && !active(postSend) && !postSend.permissions) {
       const reason = `agent_errored: retained worker returned to error immediately after same-thread continuation: ${(postSend.error || state.error || 'no error detail').slice(0, 400)}`;
       save({ ...intent, status: 'exhausted', retryAt: null, error: reason.slice(0, 2000), resumedAt: now(), observedUpdatedAt: postSend.updatedAt ?? null, sawProgress: false });

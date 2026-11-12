@@ -75,7 +75,7 @@ export interface LifecycleAdapter {
   /** Read-only observation of whether Paseo still lists the workspace; used to reconcile a recorded archive intent. */
   taskWorkspaceArchived?(id:string):Promise<boolean>;
 }
-export type LifecycleContext = Pick<Engine, 'adapter' | 'drainCleanup' | 'enqueueCleanup' | 'hooks' | 'host' | 'removeSiblings' | 'retirement' | 'scheduleRetirement' | 'scheduleRunBuildOutputs' | 'settleObservedIdleRuns' | 'settleTerminalIntentRuns' | 'settleTerminalRecoveryEpisode' | 'stopped' | 'store' | 'taskHostAvailable' | 'withHost'> & { readonly resolution: Pick<Resolution, 'adapter' | 'closeoutAuthority' | 'hasEarlierIntegrationTurn' | 'lease' | 'attention' | 'environmentDeferred' | 'transportDeferred' | 'update'> };
+export type LifecycleContext = Pick<Engine, 'adapter' | 'drainCleanup' | 'enqueueCleanup' | 'hooks' | 'host' | 'onTaskHost' | 'removeSiblings' | 'retirement' | 'scheduleRetirement' | 'scheduleRunBuildOutputs' | 'settleObservedIdleRuns' | 'settleTerminalIntentRuns' | 'settleTerminalRecoveryEpisode' | 'stopped' | 'store' | 'taskHostAvailable' | 'withHost'> & { readonly resolution: Pick<Resolution, 'adapter' | 'closeoutAuthority' | 'hasEarlierIntegrationTurn' | 'lease' | 'attention' | 'environmentDeferred' | 'transportDeferred' | 'update'> };
 
 export class Lifecycle {
   private readonly closeoutRecovery: CloseoutRecovery;
@@ -83,6 +83,7 @@ export class Lifecycle {
     this.closeoutRecovery = new CloseoutRecovery({
       get adapter() { return engine.adapter; },
       get host() { return engine.host; },
+      get onTaskHost() { return engine.onTaskHost.bind(engine); },
       get resolution() { return closeoutContext(engine.resolution, ['adapter', 'closeoutAuthority', 'hasEarlierIntegrationTurn', 'lease', 'update']); },
       get stopped() { return engine.stopped; },
       get store() { return engine.store; },

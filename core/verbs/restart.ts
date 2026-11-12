@@ -346,7 +346,7 @@ export class RestartControls {
       const unobserved = workerRestartRefusal(collectOwnerVerbFacts(this.store, task), shape);
       if (unobserved) throw new RestartRefusal(unobserved);
       let observed: AgentObservation;
-      try { observed = await this.engine.host.observe(task.agentId!); }
+      try { observed = await this.engine.onTaskHost(task, () => this.engine.host.observe(task.agentId!)); }
       catch { throw new RestartRefusal("The retained worker cannot be observed; restore observation before restarting. No continuation was sent"); }
       const latest = this.store.task(task.id);
       this.engine.requireOwnerControlCurrent(latest, task.version, "Task changed during restart verification; read next again before restarting");
@@ -398,7 +398,7 @@ export class RestartControls {
           throw new RestartRefusal("The owner stop no longer names the retained initial worker run");
         if (!this.adapter.notify) throw new RestartRefusal("Retained-thread instruction delivery is unavailable");
         let observed: AgentObservation;
-        try { observed = await this.engine.host.observe(task.agentId); }
+        try { observed = await this.engine.onTaskHost(task, () => this.engine.host.observe(task.agentId!)); }
         catch { throw new RestartRefusal("The retained worker cannot be observed; restore observation before restarting"); }
         if (observed.id !== task.agentId || observed.workspaceId !== task.workspaceId || observed.permissions
           || observed.active || observed.activeTurnId || !["idle", "error", "closed"].includes(observed.status))
@@ -472,7 +472,7 @@ export class RestartControls {
             await this.adapter.verifyResume(current);
           }
           let observed: AgentObservation;
-          try { observed = await this.engine.host.observe(current.agentId); }
+          try { observed = await this.engine.onTaskHost(current, () => this.engine.host.observe(current.agentId!)); }
           catch { throw new RestartRefusal("The retained worker cannot be observed; restore observation before restarting. No continuation was sent"); }
           // Run rows and effect records can change without a task-version bump.
           // Recheck them after all awaits, before any settlement or authorization.
@@ -505,7 +505,7 @@ export class RestartControls {
           else this.resolution.prepareRetry(resumeTask, resumeChoice !== "review", resumeChoice === "review" ? undefined : instruction, true, false, !hasPr, undefined, undefined, settling);
           return async () => {
             if (fresh) await this.adapter.verifyResume!(this.store.task(task.id));
-            const afterCancel = await this.engine.host.observe(current.agentId!);
+            const afterCancel = await this.engine.onTaskHost(current, () => this.engine.host.observe(current.agentId!));
             this.engine.assertUnchangedBeforeCancel(task.id, version, runsBefore);
             const afterRefusal = workerRestartRefusal(collectOwnerVerbFacts(this.store, this.store.task(task.id)), shape, afterCancel);
             if (afterRefusal) throw new RestartRefusal(afterRefusal);
@@ -759,7 +759,7 @@ export class RestartControls {
       const previous=task.resolution.stalledTurnStop;
       if(previous&&previous.runId!==input.runId)throw Error('A different stalled-turn stop is still recorded; settle it before targeting another run');
       if(previous&&['stopped','completed'].includes(previous.status))throw Error(`This stalled run is already ${previous.status}; no second stop will be sent`);
-      const observed=await this.engine.host.observe(assigned.agentId);
+      const observed=await this.engine.onTaskHost(task, () => this.engine.host.observe(assigned.agentId));
       if(this.engine.stopped||this.store.getMeta('paused'))throw Error('Nucleus paused during stalled-turn observation; no stop was sent');
       task=this.store.task(input.taskId);
       this.engine.requireOwnerControlCurrent(task,input.version,'Task changed during stalled-turn observation; no stop was sent');
@@ -814,7 +814,7 @@ export class RestartControls {
         }
         throw Error(reason);
       };
-      const beforeStop=await this.engine.host.observe(assigned.agentId);
+      const beforeStop=await this.engine.onTaskHost(task, () => this.engine.host.observe(assigned.agentId));
       if(this.engine.stopped||this.store.getMeta('paused'))throw Error('Nucleus paused during final stalled-turn proof; no stop was sent');
       const latestBeforeStop=this.store.task(input.taskId);
       if(latestBeforeStop.version!==task.version||dispatchBlocked(latestBeforeStop))
@@ -834,7 +834,7 @@ export class RestartControls {
       if(beforeStop.activeTurnId!==intent.turnId)
         return abandonUnsent(`active turn changed from ${intent.turnId} to ${beforeStop.activeTurnId??'unknown'}`);
       try{
-        await this.engine.host.stopAgentTurn(assigned.agentId);
+        await this.engine.onTaskHost(task, () => this.engine.host.stopAgentTurn(assigned.agentId));
       }catch(error){
         const message=error instanceof Error?error.message:String(error);
         const latest=this.store.task(input.taskId),latestRun=assigned.run?this.store.run(assigned.run.id):null;

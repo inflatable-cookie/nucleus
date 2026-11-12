@@ -79,7 +79,7 @@ export function completionRefusal(input: Completion, run: Run, task: Task, revis
  * methods delegate here. `store`, `adapter` and `resolution` read the engine
  * per call: tests replace the adapter.
  */
-export type CallbackIntakeContext = Pick<Engine, 'adapter' | 'cleanContext' | 'completeCheckpoint' | 'completeReviewProgress' | 'control' | 'host' | 'rejectCheckpoint' | 'rejectReviewProgress' | 'reviewContinuationLimit' | 'reviewerContinuationInFlight' | 'stopped' | 'store' | 'wake' | 'wakeTask' | 'withHost'> & { readonly resolution: Pick<Resolution, 'attention' | 'complete' | 'settleCompletedExecutorBlocker'> };
+export type CallbackIntakeContext = Pick<Engine, 'adapter' | 'cleanContext' | 'completeCheckpoint' | 'completeReviewProgress' | 'control' | 'host' | 'rejectCheckpoint' | 'rejectReviewProgress' | 'reviewContinuationLimit' | 'reviewerContinuationInFlight' | 'onTaskHost' | 'stopped' | 'store' | 'wake' | 'wakeTask' | 'withHost'> & { readonly resolution: Pick<Resolution, 'attention' | 'complete' | 'settleCompletedExecutorBlocker'> };
 
 export class CallbackIntake {
   constructor(readonly engine: CallbackIntakeContext) {}
@@ -94,6 +94,32 @@ export class CallbackIntake {
     if (!run || run.taskId !== taskId || run.role !== 'reviewer') return false;
     return Boolean(run.reviewDeliveries?.some(delivery => delivery.status === 'reserved' || delivery.status === 'uncertain'));
   }
+  /**
+   * Settle the worker's own thread once its handover is accepted (Tom,
+   * 2026-11-12): the receipt is durable first, the effect runs on the worker's
+   * host, and a refusal or unknown outcome changes nothing — the thread keeps its
+   * state until a message wakes it or its next handover settles it again. Only
+   * the worker's own handover settles: a reviewer, coordinator or executor
+   * thread has its own lifecycle.
+   */
+  private async settleHandedOverWorker(taskId: string, sourceRun: Run | null | undefined, status: Completion['status']): Promise<void> {
+    if (status !== 'ready_for_review' && status !== 'report_ready') return;
+    if (sourceRun && sourceRun.role !== 'revision') return;
+    let task: Task;
+    try { task = this.store.task(taskId); } catch { return; }
+    const agentId = sourceRun?.agentId ?? task.agentId;
+    const runId = sourceRun?.id ?? task.runId;
+    const hostId = sourceRun?.hostId ?? task.hostId;
+    if (!agentId || !runId || !hostId) return;
+    try {
+      // The presence check reads the adapter the task's own host serves: the
+      // default host's adapter never names this thread.
+      await this.engine.onTaskHost({ hostId }, async () => {
+        const settle = this.adapter.settleWorkerThread;
+        if (settle) await settle.call(this.adapter, agentId, runId);
+      });
+    } catch { /* presentation only; the thread keeps its state and its next handover settles again */ }
+  }
   async complete(input: Completion, token: string) {
     const sourceRun=this.store.run(input.runId);
     this.store.authenticate(input.runId, token);
@@ -101,7 +127,7 @@ export class CallbackIntake {
     if (sourceRun ? sourceRun.taskId !== identityTask.id : identityTask.runId !== input.runId)
       throw new Error('Stale report: task and run identity do not match');
     const priorReceipt = this.store.receipt(proofFilesRemoved(input), token);
-    if (priorReceipt) { await this.settleReportedThread(sourceRun); return priorReceipt; }
+    if (priorReceipt) { await this.settleHandedOverWorker(input.taskId, sourceRun, input.status); await this.settleReportedThread(sourceRun); return priorReceipt; }
     let verifiedPr: { url: string; head: string } | null = null;
     if (!sourceRun || sourceRun.role === 'revision') {
       const branches = `${input.headline ?? ''} ${input.summary}`.match(/\bns-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi) ?? [];
@@ -149,6 +175,7 @@ export class CallbackIntake {
         }
       }
       const receipt = this.resolution.complete(input, token, startEvidence);
+      await this.settleHandedOverWorker(input.taskId, sourceRun, input.status);
       await this.settleReportedThread(sourceRun);
       await this.resolution.settleCompletedExecutorBlocker(input);
       void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
@@ -268,6 +295,7 @@ export class CallbackIntake {
       this.store.event(task.id, 'non_delivery_reset', `${input.runId}: ${input.status}`);
     if (unfinished && !unfinishedContinuationEvents(events).some(item => item.runId === input.runId))
       this.store.event(task.id, 'unfinished_continuation', JSON.stringify(unfinished));
+    await this.settleHandedOverWorker(input.taskId, this.store.run(input.runId) ?? null, input.status);
     void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId)); return response;
   }
   /** The accepted receipt is durable before the best-effort host presentation effect. */

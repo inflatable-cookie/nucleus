@@ -185,7 +185,7 @@ export class Resolution {
 
   readonly orphanRunsOwner = new OrphanRuns(schedulingContext(this, ['store']));
 
-  readonly progressContinuation = new ProgressContinuation(schedulingContext(this, ['adapter', 'host', 'ownedToolHold', 'progressEffectsPending', 'startsNoRuns', 'store']));
+  readonly progressContinuation = new ProgressContinuation(schedulingContext(this, ['adapter', 'host', 'onTaskHost', 'ownedToolHold', 'progressEffectsPending', 'startsNoRuns', 'store']));
 
   readonly schedulingLifecycle = new SchedulingLifecycle(schedulingContext(this, ['acceptedPrWorkspaceMayApply', 'adapter', 'advanceAttempt', 'advanceChangesRequested', 'advanceClosing', 'advanceCompletedRun', 'advanceMerging', 'advancePhase', 'advanceSkippedReview', 'advanceSyncing', 'attentionReplayApplies', 'attentionUnknownEscalation', 'blockerLadderApplies', 'blockerLadderStep', 'hooks', 'hostAvailable', 'launch', 'operatorReturn', 'pauseForPrerequisiteWait', 'paused', 'reapplyPendingReview', 'reconcileAcceptedPrWorkspace', 'recordStoredResult', 'recovery', 'reobservePendingChecks', 'replayHeldAttention', 'restoreRecordedMergePhase', 'settleAdvanceFailure', 'settleSourceApprovalProof', 'settleUnchangedCheckGate', 'sourceApprovalWaitApplies', 'startsNoRuns', 'stopped', 'store', 'supersedeEarlierRecovery', 'unchangedCheckGateApplies', 'update', 'verification', 'waiting']));
 
@@ -234,6 +234,7 @@ export class Resolution {
       get store() { return resolution.store; },
       get adapter() { return resolution.adapter; },
       get host() { return resolution.host; },
+      onTaskHost: <T>(owner: { hostId?: string | null } | null | undefined, work: () => T): T => resolution.onTaskHost(owner, work),
       stopResumeState: (...args: Parameters<Resolution['stopResumeState']>) => resolution.stopResumeState(...args),
       reconcileReviewDelivery: (...args: Parameters<Resolution['reconcileReviewDelivery']>) => resolution.reconcileReviewDelivery(...args),
       reviewContinuationGate: (...args: Parameters<Resolution['reviewContinuationGate']>) => resolution.reviewContinuationGate(...args),
@@ -266,9 +267,9 @@ export class Resolution {
     resolvePassedUnchangedCheckEscalation: (...args) => owner.resolvePassedUnchangedCheckEscalation(...args),
   }))(this));
   readonly origins = new OriginRouting(this);
-  readonly recovery = new Recovery(recoveryContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'idle', 'lease', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
+  readonly recovery = new Recovery(recoveryContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'idle', 'lease', 'onTaskHost', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
   readonly checkpoints = new Checkpoints(intakeContext(this, ['adapter', 'attention', 'hostAvailable', 'paused', 'store', 'withHost']));
-  readonly stalls = new Stalls(recoveryContext(this, ['adapter', 'attention', 'host', 'paused', 'profiles', 'recordStop', 'recovery', 'saveIncident', 'store', 'update', 'waiting']));
+  readonly stalls = new Stalls(recoveryContext(this, ['adapter', 'attention', 'host', 'onTaskHost', 'paused', 'profiles', 'recordStop', 'recovery', 'saveIncident', 'store', 'update', 'waiting']));
   readonly ownedTools = new OwnedTools(this);
   readonly holds = new Holds(((owner: Resolution): HoldsContext => ({
     reviewRequired: (...args) => owner.reviewRequired(...args),
@@ -279,7 +280,7 @@ export class Resolution {
   readonly selection = new RoleSelection(this);
   readonly providerRefusals = new ProviderRefusals(recoveryContext(this, ['adapter', 'applyReviewerRefusal', 'attention', 'clearUnverifiableRefusalWait', 'host', 'observeStoppedReviewer', 'paused', 'recordRefusalBlocked', 'recordUnverifiableRefusalRead', 'refusalExclusions', 'refusalGap', 'select', 'stopped', 'store', 'unverifiableRefusalReads', 'update', 'usageCeilingNote', 'verifyRefusedRevision', 'waiting']));
   readonly validation = new ValidationEvidence(this);
-  readonly callbackReminders = new CallbackReminders(intakeContext(this, ['adapter', 'attention', 'ensureIncident', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'saveIncident', 'store', 'validationEvidence', 'waiting']));
+  readonly callbackReminders = new CallbackReminders(intakeContext(this, ['adapter', 'attention', 'ensureIncident', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'onTaskHost', 'saveIncident', 'store', 'validationEvidence', 'waiting']));
   readonly checkWaits = new CheckWaits(((owner: Resolution): CheckWaitsContext => ({
     get adapter() { return owner.adapter; },
     attention: (...args) => owner.attention(...args),
@@ -364,7 +365,7 @@ export class Resolution {
     waiting: (...args) => owner.waiting(...args),
   }))(this));
   readonly absentRestarts = new AbsentRestarts(recoveryContext(this, ['adapter', 'attention', 'ensureIncident', 'graceMs', 'paused', 'recordIncidentEvent', 'resolveIncident', 'resumeWorkerContinuation', 'settleVerbFences', 'store', 'update']));
-  readonly observation = new Observation(recoveryContext(this, ['adapter', 'attention', 'environmentDeferred', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'hostAvailable', 'inventoryHostMatches', 'launchingRuns', 'orphanRuns', 'paused', 'reconcileAbsentCreation', 'reconcileStalledTurnStop', 'recoverRefusedReviewer', 'remindStoppedRun', 'resolveIncident', 'resumeTransientProviderThread', 'retainedProfileIssue', 'stalls', 'stopped', 'store', 'supersedeOrphans', 'transportDeferred', 'update', 'waiting', 'withHost']));
+  readonly observation = new Observation(recoveryContext(this, ['adapter', 'attention', 'environmentDeferred', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'hostAvailable', 'inventoryHostMatches', 'launchingRuns', 'onTaskHost', 'orphanRuns', 'paused', 'reconcileAbsentCreation', 'reconcileStalledTurnStop', 'recoverRefusedReviewer', 'remindStoppedRun', 'resolveIncident', 'resumeTransientProviderThread', 'retainedProfileIssue', 'stalls', 'stopped', 'store', 'supersedeOrphans', 'transportDeferred', 'update', 'waiting', 'withHost']));
   readonly delegation = new Delegation(this);
   readonly questions = new Questions(this);
   readonly proofAutorun = new ProofAutorun(this);
@@ -374,7 +375,7 @@ export class Resolution {
   readonly reviewContinuations = new ReviewContinuations(this.reviewContinuationContext());
   readonly agentMessages = new AgentMessages(this);
   readonly agentAsks = new AgentAsks(this);
-  readonly transientResume = new TransientResume(recoveryContext(this, ['adapter', 'attention', 'graceMs', 'host', 'openPlannerEscalation', 'paused', 'profiles', 'store', 'update', 'waiting']));
+  readonly transientResume = new TransientResume(recoveryContext(this, ['adapter', 'attention', 'graceMs', 'host', 'onTaskHost', 'openPlannerEscalation', 'paused', 'profiles', 'store', 'update', 'waiting']));
   readonly notices = new Notices(this);
   readonly slotAdmission = new SlotAdmission(this);
   readonly taskStops = new TaskStops(recoveryContext(this, ['ensureIncident', 'recordIncidentEvent', 'saveIncident', 'settleAttentionEpisode', 'stopped', 'store', 'update', 'waiting']));
@@ -432,6 +433,11 @@ export class Resolution {
   readonly adapter: Adapter & Partial<ResolutionAdapter>;
   hostAvailable: (task: Task, run?: Run) => boolean = () => true;
   withHost: <T>(id: string, fn: () => T) => T = (_id, fn) => fn();
+  /** The task-owner host binding every agent-naming call reads (#1154); same rule as `Engine.onTaskHost`. */
+  onTaskHost<T>(owner: { hostId?: string | null } | null | undefined, work: () => T): T {
+    const hostId = owner?.hostId;
+    return hostId ? this.withHost(hostId, work) : work();
+  }
   /** Registered and connected, independent of the ambient host context; serves the facade's cross-host routing. */
   hostOnline: (id: string) => boolean = () => true;
   inventoryHostMatches: (id: string) => boolean = () => true;
