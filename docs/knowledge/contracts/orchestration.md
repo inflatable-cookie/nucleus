@@ -2295,7 +2295,8 @@ movement invalidates source approval and preserves the normal readiness gates.
   dispatch hold (which blocks every run the task could start), or a sweep
   `observation_outage` on its lane — and closes it when the task can make progress
   again. An outage pause opens on the first observation, while the lane is still
-  wedged, and only that quantum's own return closes it. Closed pauses are durable, recorded
+  wedged, is dated from that observation, and only that quantum's own return closes
+  it, so a return that beats every sweep visit still books the whole outage. Closed pauses are durable, recorded
   as `budget_clock_paused`/`budget_clock_resumed` (and `observation_resumed`) events,
   reported as `wallMs.pausedMs` on the detail and named on the budget's time bar, and
   subtracted from the wall figure, so a defect never spends a task's budget. A budget

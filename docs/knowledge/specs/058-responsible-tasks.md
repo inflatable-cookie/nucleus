@@ -383,8 +383,9 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
   parked the task in attention (`worker_creation_refused_before_send` and the
   reviewer-launch equivalents, held until an owner resume resolves the episode), a
   dispatch hold, or a sweep `observation_outage` on its lane. An outage pause opens on
-  the first observation, while the lane is still wedged, and only that quantum's own
-  return closes it. The interval closes when the task can make progress again, and its
+  the first observation, while the lane is still wedged, is dated from that
+  observation, and only that quantum's own return closes it — so a return that beats
+  every sweep visit still books the whole outage. The interval closes when the task can make progress again, and its
   time is subtracted from the wall figure. The paused
   total is reported as `wallMs.pausedMs` on the detail and named on the budget's time
   bar, and the transitions are durable `budget_clock_paused` / `budget_clock_resumed`

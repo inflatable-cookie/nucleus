@@ -45,9 +45,10 @@ export class TaskStops {
    * events for the board's telemetry; the budget read subtracts them.
    *
    * A wedged or failed sweep is one cause: the sweep records `observation_outage`
-   * when a task quantum overruns its bound, and the pause opens on the first
-   * observation — while the lane is still wedged, so the board can see it. Only
-   * `options.returned` (the wedged quantum's own finish) closes it, with
+   * when a task quantum overruns its bound. An interval opened for an outage is
+   * dated from that observation, not from the visit that noticed it, so the whole
+   * outage is discounted whether a sweep visit or the returned quantum gets there
+   * first. Only `options.returned` (the wedged quantum's own finish) closes it, with
    * `observation_resumed`: a sweep visiting a still-running lane never claims it
    * returned.
    */
@@ -69,6 +70,7 @@ export class TaskStops {
     const refusalAt = events.findLastIndex(event => (NUCLEUS_HELD_REFUSAL_EVENTS as readonly string[]).includes(event.kind));
     const presendRefusal = refusalAt >= 0 && refusalAt > events.findLastIndex(event => event.kind === 'attention_episode_resolved')
       && current.resolution.attention === true && /refused before send/i.test(current.reason);
+    const closingOutage = Boolean(outage) && Boolean(options.returned);
     const held = terminal ? null : nucleusHeldReason({
       stopReason: current.resolution.stop?.reason ?? null,
       dispatchHeld: Boolean(holdsOf(current).dispatch),
@@ -77,29 +79,37 @@ export class TaskStops {
       presendRefusal,
       // While the lane is wedged only the outage may hold it; the returned quantum
       // has to be able to close the interval.
-      observationOutage: Boolean(outage) && !options.returned,
+      observationOutage: Boolean(outage) && !closingOutage,
     });
+    const opening = !clock.since && Boolean(held);
     const running = Boolean(clock.since);
-    const closingOutage = Boolean(outage) && Boolean(options.returned);
     // Nothing to close and nothing to open: the usual pass writes nothing.
     if (running && held && !closingOutage) return current;
     if (!running && !held && !closingOutage) return current;
-    const starts = clock.since
-      ? [Date.parse(clock.since)].filter(started => Number.isFinite(started) && started <= at)
-      : [];
+    // A segment closes when its cause ends or when its outage returns. Its start is
+    // the open `since`, and for an outage the observation itself — so an interval
+    // opened for an outage is dated from the observation, and a return that beats
+    // every visit still books the outage time.
+    const starts = [clock.since, outage]
+      .map(value => (value ? Date.parse(value) : Number.NaN))
+      .filter(started => Number.isFinite(started) && started <= at);
     const pausedTo = starts.length ? Math.min(...starts) : at;
-    const next: BudgetClock = {
-      pausedMs: clock.pausedMs + Math.max(0, at - pausedTo),
-      pauses: clock.pauses + (starts.length ? 1 : 0),
-      since: held ? new Date(at).toISOString() : null,
-      reason: held,
-    };
-    const detail = held
+    const next: BudgetClock = opening
+      // An interval that starts now books nothing yet; an outage one is dated from
+      // the observation that caused it, so the read discounts it immediately.
+      ? { ...clock, since: new Date(starts.length ? pausedTo : at).toISOString(), reason: held }
+      : {
+          pausedMs: clock.pausedMs + Math.max(0, at - pausedTo),
+          pauses: clock.pauses + (starts.length ? 1 : 0),
+          since: held ? new Date(at).toISOString() : null,
+          reason: held,
+        };
+    const detail = opening
       ? `${held}; the wall-time budget stops until the task can make progress again`
       : `the task can make progress again; ${Math.round(next.pausedMs / 60_000)} minutes of wall time stayed off its budget`;
     return this.store.transaction(() => {
       const updated = this.store.update(current.id, { resolution: { ...current.resolution, budgetClock: next } },
-        held ? 'budget_clock_paused' : 'budget_clock_resumed', detail);
+        opening ? 'budget_clock_paused' : 'budget_clock_resumed', detail);
       if (closingOutage) this.store.event(current.id, 'observation_resumed', `the task quantum returned after ${outage}; its lane moves again`);
       return updated;
     });

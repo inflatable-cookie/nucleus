@@ -120,7 +120,8 @@ test('a Nucleus-fault wait and an observation outage do not spend the wall-time 
 
     // A wedged sweep: the sweep records the outage when a quantum overruns its
     // bound, and the pause opens on that first observation — while the lane is
-    // still wedged, so the board shows the pause instead of a rising clock.
+    // still wedged, so the board shows the pause instead of a rising clock. It is
+    // dated from the observation, so no outage time depends on when a visit lands.
     const outageAt = iso(Date.now() - 40 * MINUTE);
     f.store.event(f.submitted.id, 'observation_outage', 'Task quantum did not return within 120 s');
     const events = f.store.eventsAll(f.submitted.id);
@@ -129,15 +130,14 @@ test('a Nucleus-fault wait and an observation outage do not spend the wall-time 
     f.engine.resolution.settleBudgetClock(f.current());
     const open = f.current().resolution.budgetClock!;
     assert.equal(open.reason, 'the sweep could not observe this task (an observation outage)');
-    assert.ok(open.since, 'the pause is open while the lane is still wedged');
+    assert.equal(open.since, outageAt, 'the pause is dated from the outage, not from the visit');
     assert.equal(f.events('budget_clock_paused').length, 2, 'the pause is visible in telemetry when it opens');
     assert.equal(f.events('observation_resumed').length, 0, 'a visiting sweep does not claim the lane returned');
-    // Twenty minutes into the open outage the budget charges none of it, across
-    // further sweep visits that keep the interval open.
-    f.store.update(f.current().id, { resolution: { ...f.current().resolution,
-      budgetClock: { ...open, since: iso(Date.now() - 20 * MINUTE) } } });
+    // While the lane is still wedged the budget charges none of the outage, and
+    // further sweep visits keep the same interval open.
     f.engine.resolution.settleBudgetClock(f.current());
-    assert.equal(f.current().resolution.budgetClock!.reason, open.reason, 'a later visit keeps the same pause');
+    assert.equal(f.current().resolution.budgetClock!.since, outageAt, 'a later visit keeps the same pause');
+    assert.equal(f.events('budget_clock_paused').length, 2, 'a later visit writes no new pause');
     const whileWedged = taskBudget(f.current(), f.store.runs(f.submitted.id), Date.now());
     assert.ok(whileWedged.wallMs.used < 30 * MINUTE, `used ${whileWedged.wallMs.used} ms while the lane is wedged`);
     assert.ok(whileWedged.wallMs.pausedMs > 90 * MINUTE, `paused ${whileWedged.wallMs.pausedMs} ms`);
@@ -146,11 +146,35 @@ test('a Nucleus-fault wait and an observation outage do not spend the wall-time 
     assert.ok(f.events('observation_resumed').length > 0, 'the returned lane closes its outage interval');
     assert.equal(f.current().resolution.budgetClock!.since, null);
     const clock = f.current().resolution.budgetClock!;
-    assert.ok(Math.abs(clock.pausedMs - 100 * MINUTE) < 2 * MINUTE, `paused ${clock.pausedMs} ms`);
+    assert.ok(Math.abs(clock.pausedMs - 120 * MINUTE) < 2 * MINUTE, `paused ${clock.pausedMs} ms`);
     const budget = taskBudget(f.current(), f.store.runs(f.submitted.id), Date.now());
     assert.equal(budget.exhausted, null, `used ${budget.wallMs.used} ms of ${budget.wallMs.limit}`);
     assert.ok(budget.wallMs.used < 20 * MINUTE);
     assert.ok(clock.pausedMs > before, 'the outage time is booked, not lost');
+  } finally { await f.close(); }
+});
+
+test('an outage that returns before any sweep visit still books the outage time', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    const start = Date.now() - 60 * MINUTE;
+    f.store.update(f.submitted.id, { budgetSince: iso(start) });
+    // The quantum overran its bound and returned before the next sweep visit could
+    // open the interval: the return path alone has to account for the outage.
+    const outageAt = iso(Date.now() - 30 * MINUTE);
+    f.store.event(f.submitted.id, 'observation_outage', 'Task quantum did not return within 120 s');
+    const events = f.store.eventsAll(f.submitted.id);
+    f.store.db.prepare('UPDATE events SET at=? WHERE id=?').run(outageAt, events.findLast(event => event.kind === 'observation_outage')!.id);
+    f.engine.resolution.settleBudgetClock(f.current(), { returned: true });
+    const clock = f.current().resolution.budgetClock!;
+    assert.equal(clock.since, null);
+    assert.ok(Math.abs(clock.pausedMs - 30 * MINUTE) < MINUTE, `paused ${clock.pausedMs} ms`);
+    assert.equal(clock.pauses, 1);
+    assert.equal(f.events('budget_clock_paused').length, 0, 'the interval was never opened before the return');
+    assert.equal(f.events('observation_resumed').length, 1, 'the return closes the outage it observed');
+    const budget = taskBudget(f.current(), f.store.runs(f.submitted.id), Date.now());
+    assert.ok(Math.abs(budget.wallMs.used - 30 * MINUTE) < MINUTE, `used ${budget.wallMs.used} ms`);
+    assert.ok(Math.abs(budget.wallMs.pausedMs - 30 * MINUTE) < MINUTE);
   } finally { await f.close(); }
 });
 
