@@ -175,7 +175,10 @@ return class PaseoAdapter extends Policy {
       };
     });
     if (options.cwd) await this.listCatalogFeatures(providers, options.cwd);
-    return { providers };
+    // Without a working directory this read carries no feature answer: mark it
+    // deferred so availability judges feature values only against an
+    // authoritative one (nucleus#1139 review).
+    return options.cwd ? { providers } : { providers, featuresDeferred: true };
   }
   /**
    * Feature controls are per provider and model and need a project directory. A

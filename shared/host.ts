@@ -25,7 +25,9 @@ export interface Host {
    *
    * Feature values depend on the host's project context (Paseo resolves them
    * per working directory), so a host reports none when the caller supplies no
-   * `cwd`. Availability never needs them.
+   * `cwd` and marks the read `featuresDeferred`: availability judges feature
+   * values only against an authoritative answer, never against a deferred one
+   * (nucleus#1139 review).
    */
   catalog(options?: HostCatalogOptions): Promise<HostCatalog>;
   /** The host's own profile list, read once into Nucleus's store (Spec 052). Optional: a host without one has no method. */
@@ -518,7 +520,13 @@ export const hostProviderSchema = z
 export type HostProvider = z.infer<typeof hostProviderSchema>;
 
 export const hostCatalogSchema = z
-  .object({ providers: z.array(hostProviderSchema) })
+  .object({ providers: z.array(hostProviderSchema),
+    /**
+     * This read carries no feature answer: the host resolves feature values per
+     * project context and the caller supplied none. Availability must not judge
+     * feature values against it — unknown, never negative (nucleus#1139 review).
+     */
+    featuresDeferred: z.boolean().optional() })
   .strict();
 export type HostCatalog = z.infer<typeof hostCatalogSchema>;
 

@@ -192,28 +192,32 @@ export function profileAvailability(
       problem: "Configured runtime mode is not supported",
       supportedThinking,
     };
-  for (const [option, value] of Object.entries(profile.featureValues ?? {})) {
-    const feature = model.features.find((candidate) => candidate.id === option);
-    if (!feature)
-      return {
-        available: false,
-        problem: `Configured option ${option} is not supported`,
-        supportedThinking,
-      };
-    if (feature.type === "toggle") {
-      if (typeof value !== "boolean")
+  // A deferred read answers nothing about feature values: unknown, never
+  // negative. The launch context resolves them with the real project
+  // directory, and a host that always answers (T3Code) never defers.
+  if (catalog.featuresDeferred !== true)
+    for (const [option, value] of Object.entries(profile.featureValues ?? {})) {
+      const feature = model.features.find((candidate) => candidate.id === option);
+      if (!feature)
         return {
           available: false,
-          problem: `Configured option ${option} needs a boolean value`,
+          problem: `Configured option ${option} is not supported`,
           supportedThinking,
         };
-    } else if (typeof value !== "string" || !feature.options.some((choice) => choice.id === value))
-      return {
-        available: false,
-        problem: `Configured option ${option} does not offer that value`,
-        supportedThinking,
-      };
-  }
+      if (feature.type === "toggle") {
+        if (typeof value !== "boolean")
+          return {
+            available: false,
+            problem: `Configured option ${option} needs a boolean value`,
+            supportedThinking,
+          };
+      } else if (typeof value !== "string" || !feature.options.some((choice) => choice.id === value))
+        return {
+          available: false,
+          problem: `Configured option ${option} does not offer that value`,
+          supportedThinking,
+        };
+    }
   return { available: true, problem: "", supportedThinking };
 }
 

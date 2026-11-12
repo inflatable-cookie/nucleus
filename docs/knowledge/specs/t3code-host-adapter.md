@@ -226,8 +226,11 @@ routing-profile snapshot per registered host, built from that host's own
 catalog, and dispatch, worker creation, reviewer selection and the
 `route`/`set_routing` validation read the task host's snapshot, so
 availability — including the configured runtime mode and every feature value —
-and `supportedThinking` are that host's own answer. The launch fence catches
-catalog drift between refresh and send. A secondary host's snapshot is built
+and `supportedThinking` are that host's own answer. T3Code answers feature
+values without a project context, so its answer is always authoritative; a
+host that resolves features per directory (Paseo) marks a read made without
+one `featuresDeferred`, and availability treats that as unknown, never
+negative. The launch fence catches catalog drift between refresh and send. A secondary host's snapshot is built
 when it comes online, and afterwards on the periodic profile pass, never on an
 unguarded per-tick chain.
 

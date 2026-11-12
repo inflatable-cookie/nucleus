@@ -321,3 +321,17 @@ test("nucleus#1139 review: availability answers the configured runtime mode and 
   assert.equal(profileAvailability(nucleusProfileSchema.parse({ ...base, featureValues: { fast: "yes" } }), catalog).problem,
     "Configured option fast needs a boolean value");
 });
+
+test("nucleus#1139 review: a deferred feature answer is unknown, never negative", () => {
+  const providers = [{
+    key: "openai", label: "OpenAI", available: true, problem: "",
+    models: [{ id: "gpt-5", label: "GPT-5", aliases: [], thinkingOptions: [{ id: "high", label: "High" }], defaultThinkingOptionId: null, modes: [], features: [] }],
+  }];
+  const profile = nucleusProfileSchema.parse({ id: "sol", name: "Sol", provider: "openai", model: "gpt-5", featureValues: { fast: true }, notes: "" });
+  // The no-cwd read defers the feature answer: the profile stays available.
+  assert.deepEqual(profileAvailability(profile, hostCatalogSchema.parse({ featuresDeferred: true, providers })),
+    { available: true, problem: "", supportedThinking: ["high"] });
+  // The same answer without the deferral is a negative: the option is refused.
+  assert.equal(profileAvailability(profile, hostCatalogSchema.parse({ providers })).problem,
+    "Configured option fast is not supported");
+});

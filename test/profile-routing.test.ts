@@ -15,8 +15,11 @@ const hostProfiles = [
   { id: 'sol', name: 'Sol', provider: 'openai', model: 'gpt-5', modeId: 'agent', thinkingOptionId: 'high', featureValues: { fast: true }, notes: 'primary' },
   { id: 'mini', name: 'Mini', provider: 'openai', model: 'gpt-5-mini', notes: '' },
 ];
-const catalog: HostCatalog = { providers: [{ key: 'openai', label: 'OpenAI', available: true, problem: '', models: [
-  { id: 'gpt-5', label: 'GPT-5', aliases: [], thinkingOptions: [{ id: 'high', label: 'High' }], defaultThinkingOptionId: null, modes: [], features: [] },
+// A faithful no-cwd Paseo read: modes are always reported (the daemon snapshot
+// carries them), and feature values are deferred because they need a project
+// directory (nucleus#1139 review).
+const catalog: HostCatalog = { featuresDeferred: true, providers: [{ key: 'openai', label: 'OpenAI', available: true, problem: '', models: [
+  { id: 'gpt-5', label: 'GPT-5', aliases: [], thinkingOptions: [{ id: 'high', label: 'High' }], defaultThinkingOptionId: null, modes: [{ id: 'agent', label: 'Agent' }], features: [] },
   { id: 'gpt-5-mini', label: 'Mini', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] },
 ] }] };
 
