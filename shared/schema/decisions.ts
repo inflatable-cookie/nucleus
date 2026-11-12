@@ -86,6 +86,37 @@ export const decisionStateFilterSchema = decisionStateSchema.optional();
 
 export const decisionChoiceSchema = z.object({ label: z.string().trim().min(1).max(120), consequence: z.string().trim().max(240).regex(/^[^\r\n]*$/) }).strict();
 
+/** The longest question text a board decision view carries. Longer material belongs in `details`. */
+export const DECISION_QUESTION_MAX = 4000;
+
+/** Marks a question the view clipped to the limit; the full text lives in the decision's details. */
+export const DECISION_QUESTION_CLIP_MARKER = "\u2026[question clipped to 4000 characters; see details]";
+
+/**
+ * Keep one question producer inside the view limit: short text passes through
+ * unchanged, and over-long text is cut at a word boundary with a marker that
+ * points at the details. Every decision question producer uses this instead
+ * of a bare slice, so no producer breaks a board read with a too_big refusal.
+ */
+export function clipDecisionQuestion(question: string, max: number = DECISION_QUESTION_MAX): string {
+  if (question.length <= max) return question;
+  const room = Math.max(0, max - DECISION_QUESTION_CLIP_MARKER.length);
+  const head = question.slice(0, room);
+  const boundary = head.lastIndexOf(" ");
+  const cut = (boundary > room / 2 ? head.slice(0, boundary) : head).trimEnd();
+  return `${cut}${DECISION_QUESTION_CLIP_MARKER}`;
+}
+
+/**
+ * Stored decision rows predate the view limit or bypassed it. Reads parse them
+ * leniently and the view clips the question with a marker, so one over-long
+ * stored record never breaks a whole read. Writes keep the strict schema, so
+ * new rows always fit the view and stored rows are never rewritten by a read.
+ */
+export const storedDecisionSchema = decisionSchema.extend({
+  question: z.string().trim().min(1),
+});
+
 export const decisionDraftShape = {
   question: z.string().trim().min(1).max(4000),
   headline: z.string().trim().min(1).max(140).regex(/^[^\r\n]*$/).optional(),

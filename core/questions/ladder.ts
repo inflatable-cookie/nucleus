@@ -4,7 +4,7 @@ import { blockingRecoveryEffects } from '../recovery/recovery-effects';
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { proofOnlyReceiptAwaitingReview, proofWaitApplies } from '../qa/proof-execution';
 import { openProofOnlyGo } from '../qa/proof-only-go';
-import { taskControlInputSchema, taskOwner, type Completion, type DecisionView, type Task, type TaskControlInput, isDispositionActive } from '../../shared/contracts';
+import { clipDecisionQuestion, taskControlInputSchema, taskOwner, type Completion, type DecisionView, type Task, type TaskControlInput, isDispositionActive } from '../../shared/contracts';
 import { digest } from '../store/store';
 import { taskStopVerbsFor, type TaskStopVerb } from '../../shared/task-stop';
 import { Decisions } from '../planning/decisions';
@@ -321,7 +321,7 @@ export class Ladder {
     if (events.some(event => event.kind === 'automatic_retry_suppressed' && event.detail.startsWith(`${cause}:`))) return true;
     const kept = evidence.slice(0, 3000);
     this.store.event(t.id, 'automatic_retry_suppressed', `${cause}: kept evidence: ${kept}`);
-    const question = `The owner forbids automatic retry at ${site}. Preserve the completed result and decide the next existing owner action. Evidence: ${kept}`.slice(0, 4000);
+    const question = clipDecisionQuestion(`The owner forbids automatic retry at ${site}. Preserve the completed result and decide the next existing owner action. Evidence: ${kept}`);
     this.resolution.openPlannerEscalation(this.store.task(t.id), { cause, runId, question,
       payload: { cause, runId, site, evidence: kept, question } });
     return true;
@@ -597,6 +597,8 @@ export class Ladder {
     const payloadEvent = events.find(event => event.kind === 'planner_escalation_payload' && event.detail.startsWith(`${id}:`));
     let question = `The blocker escalation ${id} on "${t.title}" needs the operator.`;
     try { if (payloadEvent) question = (JSON.parse(payloadEvent.detail.slice(payloadEvent.detail.indexOf(':') + 1)) as { question?: string }).question ?? question; } catch { /* unreadable payload keeps the plain question */ }
+    // A delegated payload's question is unbounded; the view limit still holds.
+    question = clipDecisionQuestion(question);
     this.store.event(t.id, 'planner_escalation_decision', `${id}: the ${who} said it cannot decide: ${reason.slice(0, 300)}`.slice(0, 4000));
     const view = new Decisions(this.store).add({
       question, headline: `Blocker escalation on ${t.reference ?? t.id} needs the operator`,

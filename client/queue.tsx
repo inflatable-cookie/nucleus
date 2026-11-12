@@ -13,7 +13,7 @@ import { hiddenQueuedByProject } from "../shared/queued-more";
 import { planSaveInput } from "../shared/planning-tab";
 import { activeSelection, effectiveSelection, scopeContains } from "../shared/project-scope";
 import { navigationViews, openTaskCount, workspaceNavigationViews, type SettingsTarget } from "../shared/queue-navigation";
-import { errorText } from "./error-text";
+import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
 import { UsagePage } from "./usage";
 import { QaRunsTab, liveHostRun, type RunAccounting } from "./qa-runs-tab";
@@ -164,13 +164,19 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard }: Board
   const laneName = (key: string) => (state?.lanes ?? []).find(lane => lane.key === key)?.title ?? key;
   const task = detailQuery.data?.task;
   const inset=compact?16:24;
-  const readError = stateQuery.error ||
-    detailQuery.error ||
-    leadsQuery.error ||
-    decisionsQuery.error ||
-    planQuery.error ||
-    documentQuery.error ||
-    state?.error;
+  // The first failed board read, in plain words: which read failed and why.
+  // A raw schema dump never reaches the header (nucleus#1141).
+  const failedRead = ([
+    ["Board state", stateQuery.error],
+    ["Task detail", detailQuery.error],
+    ["Leads", leadsQuery.error],
+    ["Decisions", decisionsQuery.error],
+    ["Plans", planQuery.error],
+    ["Lane document", documentQuery.error],
+  ] as Array<[string, unknown]>).find(([, failure]) => failure != null);
+  const readError = failedRead ? readErrorText(failedRead[0], failedRead[1])
+    : state?.error ? storedBoardErrorText(state.error)
+    : null;
   // Every popover on the board renders in this host's layer, above the columns (Tom, 2026-11-08).
   return (
     <PopoverHost>

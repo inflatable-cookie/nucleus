@@ -880,7 +880,7 @@ export class Resolution {
    * or a decider, answers once the thread presents the question. Proof-only release GO, the one
    * operator-only kind Nucleus raises, goes straight to the board and never comes here.
    */
-  raiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, signal: AbortSignal): Promise<string> { return this.questions.raiseDecision(task, decision, signal); }
+  raiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal): Promise<string> { return this.questions.raiseDecision(task, decision, signal); }
   /**
    * Spec 058 (task 550): raise one Queue question on a thread with no native
    * question surface. It goes to the planner, then a decider, and a routing miss
@@ -893,14 +893,14 @@ export class Resolution {
    * caller's settlement path (the recorded answer and the question's controls)
    * runs unchanged.
    */
-  raiseAskDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, signal: AbortSignal): Promise<string> { return this.questions.raiseAskDecision(task, decision, signal); }
+  raiseAskDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal): Promise<string> { return this.questions.raiseAskDecision(task, decision, signal); }
   /**
    * The durable join key plus one best-effort prompt, so the task's own thread can
    * collect the answer in turn by calling `nucleus_ask` with the exact content.
    */
-  deliverQueueAsk(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }): Promise<void> { return this.questions.deliverQueueAsk(task, decision); }
+  deliverQueueAsk(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }): Promise<void> { return this.questions.deliverQueueAsk(task, decision); }
   /** The Spec 032 decision a Queue-raised ask-mode question answers through; created once, linked durably. */
-  ensureQueueRaiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, why: string): void { return this.questions.ensureQueueRaiseDecision(task, decision, why); }
+  ensureQueueRaiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, why: string): void { return this.questions.ensureQueueRaiseDecision(task, decision, why); }
   /** Settle an ask-mode Queue raise with the answer; the caller's own settlement path records and applies it. */
   resolveQueueRaise(questionId: string, answer: string, answeredBy?: string): void { return this.questions.resolveQueueRaise(questionId, answer, answeredBy); }
   /**
@@ -959,7 +959,7 @@ export class Resolution {
    * with `delegated` authority. A lost delegate observation is recorded as unknown and never re-asked.
    * Returns whether a usable answer was produced and delivered.
    */
-  delegateDecision(taskId: string, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] },
+  delegateDecision(taskId: string, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; fullQuestion?: string | null },
     request: { requestId: string; header: string } | null, signal: AbortSignal,
     deliver: (task: Task, answer: string) => Promise<void>): Promise<boolean> { return this.questions.delegateDecision(taskId, decision, request, signal, deliver); }
 

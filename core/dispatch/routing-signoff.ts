@@ -10,7 +10,7 @@
 import { requestOnly, USAGE_LABELS, withinUsage } from "../../shared/pool";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import type { DecisionView, Profile, Task } from "../../shared/contracts";
-import { taskOwner } from "../../shared/contracts";
+import { clipDecisionQuestion, taskOwner } from "../../shared/contracts";
 import type { Decisions } from "../planning/decisions";
 import type { Store } from "../store/store";
 import { now } from "../store/store";
@@ -175,7 +175,7 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
       askedBy: !request.requestedBy || request.requestedBy === task.originAgentId ? taskOwner(task) : request.requestedBy,
       project: origin ? { origin, path: task.repoPath } : null,
       tasks: [task.id],
-      question: `${reference} ${role}: use ${name}? It ${why}.`.slice(0, 4000),
+      question: clipDecisionQuestion(`${reference} ${role}: use ${name}? It ${why}.`),
       context: [`Task: ${task.title}`, `Requested by ${request.requestedBy ?? taskOwner(task)}: ${request.reason}`, "",
         `Until you answer, the ${role} runs on automatic selection within the usage level, and an approval applies from that role's next run. Only an answer on the board signs this off.`].join("\n").slice(0, 20000),
       options: [approve, SIGNOFF_DECLINE, ...choices.keys()],
