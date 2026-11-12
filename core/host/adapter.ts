@@ -114,6 +114,8 @@ export interface Adapter extends RunUsageSource {
   settleReportedThread?(agentId: string, runId: string): Promise<void>;
   /** Retry durable, uncertain report-settlement intents during the host sweep. */
   reconcileReportedSettlements?(): Promise<void>;
+  /** Reconcile native thread titles from task identity during the ordinary host sweep. */
+  reconcileThreadTitles?(tasks: readonly Task[]): Promise<void>;
   runTemporaryDirectory?(runId: string, task?: Task): string;
   workspaceAvailable?(id:string):Promise<boolean>;
   profiles?(): Promise<Profile[]>;
