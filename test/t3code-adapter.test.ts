@@ -242,6 +242,8 @@ test('an unknown worker handover settle is never resent by either reconciler', a
   assert.equal(reloaded.state.read().intents[commandId]?.status, 'unknown', 'the recorded intent stays unknown');
   await reloaded.reconcileSettledThreads();
   await reloaded.reconcileReportedSettlements();
+  await assert.rejects(reloaded.settleWorkerThread('synthetic-probe', 'nucleus-worker-run'), HostUnknownDeliveryError,
+    'the sweep can record the unresolved failure without authorizing a resend');
   assert.equal(server.commands.filter(command => command.type === 'thread.settle').length, 1, 'neither reconciler resends an unknown worker settle');
   assert.equal(projection.thread.settledOverride, null, 'the thread is not settled by a resent command');
   assert.equal(reloaded.state.read().intents[commandId]?.status, 'unknown');

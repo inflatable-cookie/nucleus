@@ -240,15 +240,20 @@ shape used for report settlement as:
 ```
 
 After Nucleus accepts a completion from any support role, T3 settles that
-thread using the latest completed native run ID. Workers are unchanged. A new
-review message first sends `thread.unsettle` with `reason: "user"`; T3 does not
-clear a manual settled override on `message.dispatch`. Unknown settlement
-delivery is recorded. On the next host sweep, Nucleus reads the thread's
-`settledOverride` first: `settled` proves success, a changed or active latest
-run retires the old intent without touching the new run, and only the same
-completed latest run permits replay of the identical command. Settlement
-failure never blocks the task report. Existing closeout and retention paths
-still decide when threads are archived.
+thread using the latest completed native run ID. The host sweep enforces the
+same rule for every T3-bound task, so recorded-completion releases and other
+finish paths settle support threads even when no callback report arrived. It
+settles a worker thread after the task has moved to review, and keeps it active
+while the task is still in work. Each pass reads the T3 projection first; a
+live native run is never settled, and the command's `expectedLatestRunId` keeps
+a later run from being settled by an older completion. Failed settlements
+record a task event and are reconciled on a later pass. Unknown delivery is
+retried only after the projection proves the same run is still the latest and
+unsettled; worker handover unknown delivery remains unknown and is never
+resent. A new review message first sends `thread.unsettle` with
+`reason: "user"`; T3 does not clear a manual settled override on
+`message.dispatch`. Existing closeout and retention paths still decide when
+threads are archived.
 
 ### Model options
 
@@ -501,25 +506,19 @@ question ownership separate.
 A T3 worker thread is settled with `thread.settle` once its handover is accepted
 and the task moves to review, guarded by `expectedLatestRunId` so a thread a
 later run already owns is never settled (nucleus#1154). The accepted receipt is
-durable first; the settle is presentation only, so a refused or unknown send
-changes nothing and leaves the thread as it was. The handover's turn may still
+durable first; the settle is presentation only. The handover's turn may still
 be ending when the report arrives, and a live run is never settled, so the intent
 is recorded in the adapter's own state (`pendingSettles`) and the ordinary host
 sweep retries it once that run has ended, naming it in `expectedLatestRunId`; an
 intent whose run never ends is retired after 24 hours, and one that a later run
 replaced is retired without touching the thread. A revision round wakes the
 worker through the same explicit `thread.unsettle` every follow-up send uses, and
-its next handover settles it again under that run's own command id. A worker
-handover and a support-thread report share the `thread.settle` command and the
-`expectedLatestRunId` guard; only the worker's own handover settles the worker
-thread, and only a support role's report settles its thread. The adapter records
-each worker settle's command id in its state before the send
-(`workerSettles`), because the support report's reconciler checks unknown settle
-intents against a fresh read and may resend them: a worker settle is a separate
-rule — an unknown outcome stays unknown and is never sent again, while only a
-settle that has not been sent is retried from `pendingSettles`. The mark retires
-with its command's outcome, so an unknown worker settle is never picked up by the
-resend path.
+its next handover settles it again under that run's own command id. A proven
+pre-send refusal can retry under a new command ID. Worker unknown delivery stays
+unknown and is never resent, while an unrecorded settle is retried from
+`pendingSettles`. The adapter records each worker settle's command id before the
+send (`workerSettles`) so the support reconciler cannot resend a worker's
+unknown mutation.
 
 One end-to-end test drives an ordinary task's whole lifecycle on the fake
 Nightly transport (nucleus#1139): promotion onto the T3 host, workspace

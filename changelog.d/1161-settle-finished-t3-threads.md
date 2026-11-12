@@ -1,0 +1,1 @@
+The host sweep settles finished T3 support threads and handed-over worker threads, including runs released without a callback report. Failed settles are recorded on the task and reconciled on a later sweep.
