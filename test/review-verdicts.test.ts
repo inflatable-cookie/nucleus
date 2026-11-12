@@ -533,14 +533,23 @@ test('an insufficient changes_required verdict at the revision budget waits on t
   } finally { await f.close(); }
 });
 
-test('old pending publication continuations park until an explicit operator revision', async () => {
+test('old pending publication continuations proceed once their named run is gone', async () => {
   const f = engineFixture(); try {
     f.store.update(f.task.id, { phase: 'changes_requested', resolution: { ...f.current().resolution, currentRunId: null, pendingRevisionCause: 'continuation' } });
     await f.advance(); await f.advance();
-    assert.equal(f.store.runs(f.task.id).length, 0);
-    assert.equal(f.current().resolution.pendingRevisionCause, 'continuation');
+    // nucleus#1106: a recorded continuation cause with no current, unreleased
+    // reviewer run cannot hold a checkpoint wait, so the recorded cause alone
+    // never parks the task — the pending revision relaunches.
+    const runs = f.store.runs(f.task.id);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]!.role, 'revision');
+    assert.equal(runs[0]!.revisionCause, 'continuation');
+    assert.equal(f.current().resolution.currentRunId, runs[0]!.id);
+    assert.equal(f.current().resolution.pendingRevisionCause, null);
+    assert.match(f.current().reason, /proceeds to its next step/);
+    // The relaunched continuation owns the work while it runs, so a retry still
+    // waits for the explicit operator revision.
     assert.throws(() => f.engine.resolution.retry(f.current(), true, 'Resume publication', false), /continues the same reviewer from it once its turn ends/);
-    assert.match(f.current().reason, /continues the same reviewer from it once its turn ends/);
   } finally { await f.close(); }
 });
 

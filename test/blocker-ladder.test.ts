@@ -266,7 +266,7 @@ test("worker and revision prompts name the ladder and the reviewer ask target", 
       "the worker prompt names the ladder",
     );
     assert.match(worker, /Blocker ladder \(Spec 058\)/);
-    assert.match(worker, /target: "reviewer"/);
+    assert.match(worker, /to: "reviewer"/, "the ladder names the ask verb's reviewer recipient (task 1108 renamed target to to)");
     const revision = runPrompt(
       responsible,
       runOf(responsible, "revision"),

@@ -22,47 +22,96 @@ function registerPlanner(f: ReturnType<typeof fixture>) {
   });
 }
 
-for (const target of [undefined, "planner"] as const) {
-  test(`worker process ask ${target ?? "without target"} reaches the retained reviewer, never the planner`, async () => {
-    const f = fixture({
-      delegates: { planner: "Answer: planner should not receive this" },
-    });
-    registerPlanner(f);
-    let consults = 0;
-    (f.adapter as any).askReviewer = async () => {
-      consults++;
-      return "Run the bounded diagnostic yourself.";
-    };
-    try {
-      await f.reviews(1);
-      await f.engine.wake();
-      const run = f.run();
-      const input = {
-        eventId: randomUUID(),
-        taskId: f.submitted.id,
-        runId: run.id,
-        question: "How can I diagnose this gate?",
-        choices: [],
-        target,
-      };
-      const receipt = await f.engine.resolution.agentAsk(
-        input,
-        f.tokens.get(run.id)!,
-      );
-      assert.equal(receipt.status, "answered");
-      assert.match(
-        receipt.status === "answered" ? receipt.answeredBy : "",
-        /^reviewer /,
-      );
-      assert.equal(consults, 1);
-      assert.equal(f.delegated.planner.length, 0);
-      await f.engine.resolution.agentAsk(input, f.tokens.get(run.id)!);
-      assert.equal(consults, 1);
-    } finally {
-      await f.close();
-    }
+test('worker process ask without target reaches the retained reviewer, never the planner', async () => {
+  const f = fixture({
+    delegates: { planner: "Answer: planner should not receive this" },
   });
-}
+  registerPlanner(f);
+  let consults = 0;
+  (f.adapter as any).askReviewer = async () => {
+    consults++;
+    return "Run the bounded diagnostic yourself.";
+  };
+  try {
+    await f.reviews(1);
+    await f.engine.wake();
+    const run = f.run();
+    const input = {
+      eventId: randomUUID(),
+      taskId: f.submitted.id,
+      runId: run.id,
+      question: "How can I diagnose this gate?",
+      choices: [],
+    };
+    const receipt = await f.engine.resolution.agentAsk(
+      input,
+      f.tokens.get(run.id)!,
+    );
+    assert.equal(receipt.status, "answered");
+    assert.match(
+      receipt.status === "answered" ? receipt.answeredBy : "",
+      /^reviewer /,
+    );
+    assert.equal(consults, 1);
+    assert.equal(f.delegated.planner.length, 0);
+    await f.engine.resolution.agentAsk(input, f.tokens.get(run.id)!);
+    assert.equal(consults, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+// Task 1108 named recipients address their own rung: `ask to: "planner"` starts
+// on this task's planner ladder without the reviewer rung. The unnamed ask above
+// keeps the reviewer-first rung (Spec 058 Slice 17).
+test('worker process ask to the planner takes the planner ladder; the retained reviewer is not consulted', async () => {
+  const f = fixture({
+    delegates: { planner: "Answer: the planner answers a named planner ask" },
+  });
+  registerPlanner(f);
+  let consults = 0;
+  (f.adapter as any).askReviewer = async () => {
+    consults++;
+    return "Run the bounded diagnostic yourself.";
+  };
+  try {
+    await f.reviews(1);
+    await f.engine.wake();
+    const run = f.run();
+    const input = {
+      eventId: randomUUID(),
+      taskId: f.submitted.id,
+      runId: run.id,
+      question: "How can I diagnose this gate?",
+      choices: [],
+      target: "planner" as const,
+    };
+    const receipt = await f.engine.resolution.agentAsk(
+      input,
+      f.tokens.get(run.id)!,
+    );
+    assert.equal(receipt.status, "answered");
+    assert.match(
+      receipt.status === "answered" ? receipt.answeredBy : "",
+      /^planner /,
+    );
+    assert.equal(consults, 0, "the named planner ask skips the reviewer rung");
+    assert.equal(f.delegated.planner.length, 1);
+    assert.equal(
+      f.store
+        .eventsAll(f.submitted.id)
+        .filter((event) => event.kind === "agent_ask_answered").length,
+      1,
+      "the planner answer is recorded once",
+    );
+    // An identical re-ask collects the recorded answer without delegating again.
+    await f.engine.resolution.agentAsk(input, f.tokens.get(run.id)!);
+    assert.equal(consults, 0);
+    assert.equal(f.delegated.planner.length, 1);
+  } finally {
+    await f.close();
+  }
+});
 
 test("the skill question.answer command reaches the planner once, and the worker joins the recorded answer", async () => {
   const f = fixture({

@@ -148,7 +148,16 @@ test("hostRunReady settles once the host-run socket accepts, before the first bo
   const socketPath = hostRunSocketPath(hostRunStateDir);
   assert.equal(existsSync(socketPath), false, "constructor does not wait for the bind");
   await runtime.hostRunReady;
-  assert.equal(await hostRunSocketAnswers(socketPath, 200), true, "the endpoint is bound when hostRunReady settles");
+  // The bind's own sequence answers the staged socket, swaps it onto the live
+  // path and verifies the inode before hostRunReady settles, so the serving
+  // state is the bind's own proof. A budgeted re-probe here measured board-load
+  // scheduler starvation instead of the bind (2026-11-11 milestone QA, #1135):
+  // a 200 ms budget loses to any long synchronous section that starts between
+  // connect() and its callback. Prove the bind the runtime holds, then accept
+  // one client without a budget — the file's own bound is the failure bound.
+  const endpoint = (runtime as unknown as { hostRunEndpoint: { serving(): boolean } | null }).hostRunEndpoint;
+  assert.ok(endpoint?.serving(), "the endpoint serves the socket when hostRunReady settles");
+  assert.equal(await connectOnce(socketPath), true, "the endpoint is bound when hostRunReady settles");
   const board = runtime.uiSnapshot();
   assert.ok("tasks" in board && Array.isArray(board.tasks));
 });
