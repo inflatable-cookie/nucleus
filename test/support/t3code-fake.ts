@@ -20,11 +20,13 @@ export function threadProjection(id: string, directory: string): Value {
 export async function t3Fake(t: TestContext, directory: string) {
   const requests: Value[] = [];
   const commands: Value[] = [];
+  const projectRows: Value[] = [{ id: 'synthetic-project', title: 'Synthetic project', workspaceRoot: directory }];
   const threads = new Map<string, Value>([['synthetic-probe', threadProjection('synthetic-probe', directory)]]);
   const controls = { environmentId: 'synthetic-environment', version: 'nightly-synthetic-unseen', protocol: 2,
     synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
     snapshotSequence: 1, threadCoverage: {} as Record<string, unknown>, beforeArchiveRead: (() => {}) as () => void,
-    disconnectMutation: false, disconnectAfterEffect: false, refuseMutation: false, postEffectDefect: false, mutationObserver: (() => {}) as () => void };
+    disconnectMutation: false, disconnectAfterEffect: false, refuseMutation: false, postEffectDefect: false,
+    unsupportedProjectCreate: false, mutationObserver: (() => {}) as () => void };
   const sockets = new Set<Socket>();
   const server = createServer((request, response) => {
     assert.equal(request.url, '/api/auth/websocket-ticket/rpc');
@@ -41,7 +43,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     if (controls.shellMissingField) delete value[controls.shellMissingField];
     return value;
   };
-  const projects = () => [{ id: 'synthetic-project', title: 'Synthetic project', workspaceRoot: directory }];
+  const projects = () => projectRows;
   server.on('upgrade', (request, rawSocket) => {
     const socket = rawSocket as Socket;
     sockets.add(socket); socket.on('close', () => sockets.delete(socket));
@@ -107,6 +109,12 @@ export async function t3Fake(t: TestContext, directory: string) {
           commands.push({ method: request.tag, ...payload }); controls.mutationObserver();
           if (controls.refuseMutation) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });
           if (controls.disconnectMutation) return socket.destroy();
+          if (payload.type === 'project.create') {
+            if (controls.unsupportedProjectCreate) return failure({ _tag: 'Die', defect: 'Unknown request tag: orchestration.dispatchCommand' });
+            projectRows.push({ id: payload.projectId, title: payload.title, workspaceRoot: payload.workspaceRoot });
+            if (controls.disconnectAfterEffect) return socket.destroy();
+            return success({ sequence: 1 });
+          }
           const p = threads.get(payload.threadId)!;
           switch (payload.type) {
             case 'message.dispatch': p.messages.push({ id: payload.messageId, role: 'user', text: payload.text }); break;
@@ -152,5 +160,5 @@ export async function t3Fake(t: TestContext, directory: string) {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   });
   const address = server.address(); assert.ok(address && typeof address !== 'string');
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests };
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, projects: projectRows };
 }

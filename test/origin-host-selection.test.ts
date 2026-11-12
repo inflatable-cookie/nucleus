@@ -40,20 +40,29 @@ test('a host that authoritatively has no such thread is not-mine, and one mine w
 });
 
 test('two hosts claiming one identity is a refusal', async () => {
-  const { registry, lookup } = fixture([['paseo:alpha', { knows: ['planner'] }], ['t3code:nightly', { knows: ['planner'] }]]);
+  const { registry, lookup } = fixture([['paseo:alpha', { knows: ['planner'] }], ['paseo:beta', { knows: ['planner'] }]]);
   assert.equal(await resolveOriginHost(registry, 'planner', lookup), undefined);
 });
 
 test('an unknown read with no other evidence is a refusal', async () => {
-  const { registry, lookup } = fixture([['paseo:alpha', { knows: ['planner'] }], ['t3code:nightly', { answer: 'unknown' }]]);
+  const { registry, lookup } = fixture([['paseo:alpha', { knows: ['planner'] }], ['paseo:beta', { answer: 'unknown' }]]);
   assert.equal(await resolveOriginHost(registry, 'planner', lookup), undefined);
-  const failed = fixture([['paseo:alpha', { knows: ['planner'] }], ['t3code:nightly', { fail: true }]]);
+  const failed = fixture([['paseo:alpha', { knows: ['planner'] }], ['paseo:beta', { fail: true }]]);
   assert.equal(await resolveOriginHost(failed.registry, 'planner', failed.lookup), undefined);
 });
 
-test('an offline host with no evidence leaves the origin unknown', async () => {
+test('a bare legacy Paseo origin resolves despite an unrelated offline T3 host', async () => {
   const { registry, lookup, sessions } = fixture([['paseo:alpha', { knows: ['planner'] }], ['t3code:nightly', { knows: [] }]]);
   registry.disconnect('t3code:nightly', sessions.get('t3code:nightly')!);
+  assert.equal(await resolveOriginHost(registry, 'planner', lookup), 'paseo:alpha');
+  const multiplePaseo = fixture([['paseo:alpha', { knows: ['planner'] }], ['paseo:beta', { knows: [] }]]);
+  multiplePaseo.registry.disconnect('paseo:beta', multiplePaseo.sessions.get('paseo:beta')!);
+  assert.equal(await resolveOriginHost(multiplePaseo.registry, 'planner', multiplePaseo.lookup), undefined,
+    'an offline second Paseo host still leaves the legacy identity ambiguous');
+});
+
+test('a bare legacy identity never resolves to a T3 host', async () => {
+  const { registry, lookup } = fixture([['t3code:nightly', { knows: ['planner'] }]]);
   assert.equal(await resolveOriginHost(registry, 'planner', lookup), undefined);
 });
 
@@ -63,14 +72,14 @@ test('an offline host that is not the claimant does not block a caller-named hos
   assert.equal(await resolveOriginHost(registry, 'planner', lookup, paseoIdentity), 'paseo:alpha');
   // Evidence naming the offline host contradicts the claimant, so it decides nothing in its favour.
   assert.equal(await resolveOriginHost(registry, 'planner', lookup, { hostId: 't3code:nightly', source: 'caller identity source t3code' }), undefined);
-  // Stale evidence about a host this registry never knew decides nothing either.
-  assert.equal(await resolveOriginHost(registry, 'planner', lookup, { hostId: 'paseo:gone', source: 'stale' }), undefined);
+  // Stale evidence about a host this registry never knew has no effect.
+  assert.equal(await resolveOriginHost(registry, 'planner', lookup, { hostId: 'paseo:gone', source: 'stale' }), 'paseo:alpha');
 });
 
 test('caller evidence never lets a second claimant or a wrong host through', async () => {
-  const both = fixture([['paseo:alpha', { knows: ['planner'] }], ['t3code:nightly', { knows: ['planner'] }]]);
+  const both = fixture([['paseo:alpha', { knows: ['planner'] }], ['paseo:beta', { knows: ['planner'] }]]);
   assert.equal(await resolveOriginHost(both.registry, 'planner', both.lookup, paseoIdentity), undefined);
-  const undecided = fixture([['paseo:alpha', { knows: ['other'] }], ['t3code:nightly', { knows: ['planner'] }]]);
+  const undecided = fixture([['paseo:alpha', { knows: ['other'] }], ['paseo:beta', { knows: ['planner'] }]]);
   assert.equal(await resolveOriginHost(undecided.registry, 'planner', undecided.lookup, paseoIdentity), undefined);
 });
 
@@ -99,11 +108,11 @@ test('evidence matches the same thread in bare and qualified form, never a diffe
   assert.equal(identitySourceHostEvidence('planner', { agent: 'nucleus-agent:v1:[', hostId: 'paseo:alpha' }, known), undefined);
 });
 
-test('a bare recorded origin resolves through the qualified caller while an offline T3 host is registered', async () => {
+test('a bare recorded origin resolves on Paseo with or without caller evidence while T3 is offline', async () => {
   const { registry, lookup, sessions } = fixture([['paseo:alpha', { knows: ['planner'] }], ['t3code:nightly', { knows: [] }]]);
   registry.disconnect('t3code:nightly', sessions.get('t3code:nightly')!);
   const qualified = formatAgentId('paseo:alpha', 'planner');
   const evidence = identitySourceHostEvidence('planner', { agent: qualified, hostId: 'paseo:alpha' }, registry.known().map(entry => entry.id));
   assert.equal(await resolveOriginHost(registry, 'planner', lookup, evidence), 'paseo:alpha');
-  assert.equal(await resolveOriginHost(registry, 'planner', lookup), undefined);
+  assert.equal(await resolveOriginHost(registry, 'planner', lookup), 'paseo:alpha');
 });

@@ -1,0 +1,1 @@
+Lead and brief checks now look up origin agents and completion recipients on their own hosts, including legacy Paseo IDs. T3Code automatically registers a missing repository project; unsupported builds identify the folder and manual setup steps as workspace creation.

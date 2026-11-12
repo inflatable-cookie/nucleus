@@ -482,14 +482,13 @@ test('delegate receipt surfaces share last-field parsing while keeping their all
   assert.equal(parseNativeDelegatedReply(`Answer: Continue\nReason: ${'a'.repeat(700)}`)?.reason.length, 500);
 });
 
-test('a delegated answer resolves through the origin lookup, and an offline host does not block a caller-named host', async () => {
+test('a bare Paseo delegated answer resolves despite offline T3, without borrowing evidence from another identity', async () => {
   const store = new Store(':memory:');
   const task = store.insert(submissionSchema.parse({ submissionId: 'offline-host-answer', title: 'Offline host', repoPath: '/fixture',
     planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: 'planner' }), 'paseo:alpha', 'handoff', 'a'.repeat(40));
   const engine = new Engine(store, {} as Adapter, 0);
-  // The live Paseo host answers with positive knowledge of the planner; the
-  // registered T3 host is offline and never asked. The whole resolution runs
-  // through the real resolver, so the offline host's effect on it is the real one.
+  // The live Paseo host answers with positive knowledge of the planner. The
+  // registered T3 host is offline and is not a candidate for a bare ID.
   let known: ReadonlyArray<{ id: string; endpoint: string }> = [];
   const registry = new HostRegistry<{ knows: boolean }>({ read: () => known, write: value => { known = value; }, transaction: fn => fn() });
   known = [{ id: 'paseo:alpha', endpoint: 'paseo-endpoint' }, { id: 't3code:nightly', endpoint: 't3-endpoint' }];
@@ -504,16 +503,14 @@ test('a delegated answer resolves through the origin lookup, and an offline host
   const input = { questionId: 'offline-window', answer: 'Continue', reason: 'Within scope' };
   try {
     engine.resolution.openDelegatedQuestion(task, input.questionId, 'planner', 'Question: Continue?', 10_000, 'planner', 'paseo:alpha');
-    await assert.rejects(engine.resolution.answerDelegatedQuestionFromHost(input, 'planner'), /unavailable or ambiguous/);
-    assert.equal(store.eventsAll('delegation:offline-window').some(event => event.kind === 'delegated_answer'), false);
-    // The answering thread's own identity source names its host, so the offline
-    // host that has no part in this answer cannot block it.
-    const receipt = await engine.resolution.answerDelegatedQuestionFromHost(input, 'planner',
-      { agent: 'planner', hostId: 'paseo:alpha' });
+    const receipt = await engine.resolution.answerDelegatedQuestionFromHost(input, 'planner');
     assert.equal(receipt.answer, 'Continue');
-    // Evidence about a different identity decides nothing.
+    assert.equal(store.eventsAll('delegation:offline-window').some(event => event.kind === 'delegated_answer'), true);
+    // Evidence about a different identity does not change the bare ID's Paseo routing.
     engine.resolution.openDelegatedQuestion(task, 'other-window', 'planner', 'Question: Continue?', 10_000, 'planner', 'paseo:alpha');
-    await assert.rejects(engine.resolution.answerDelegatedQuestionFromHost({ ...input, questionId: 'other-window' }, 'planner',
-      { agent: 'someone-else', hostId: 'paseo:alpha' }), /unavailable or ambiguous/);
+    const otherReceipt = await engine.resolution.answerDelegatedQuestionFromHost({ ...input, questionId: 'other-window' }, 'planner',
+      { agent: 'someone-else', hostId: 'paseo:alpha' });
+    assert.equal(otherReceipt.answer, 'Continue');
+    assert.equal(store.eventsAll('delegation:other-window').some(event => event.kind === 'delegated_answer'), true);
   } finally { await engine.stop(); store.close(); }
 });

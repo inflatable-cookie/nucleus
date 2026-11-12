@@ -44,7 +44,7 @@ const REMOTE_TAGS = new Set([
 ]);
 const safeTag = (value: unknown): string | undefined => typeof value === 'string' && REMOTE_TAGS.has(value) ? value : undefined;
 const COMMANDS = new Set([
-  'thread.create', 'thread.stop', 'thread.archive', 'message.dispatch',
+  'thread.create', 'thread.stop', 'thread.archive', 'message.dispatch', 'project.create',
   'runtime-request.respond', 'thread.user-input.dismiss', 'orchestration.launchThread',
 ]);
 const safeCommand = (value: unknown): string | undefined => typeof value === 'string' && COMMANDS.has(value) ? value : undefined;

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { z } from 'zod';
 import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMessage, HostSendGuard, HostAsk, HostWorkspaceRef, HostRetainedAgentRef, HostCatalog, HostTimelinePage, HostThread, NativeDecisionInput, NativeDecisionAnswer } from '../../shared/host';
 import type { Task, Profile } from '../../shared/contracts';
@@ -134,9 +135,22 @@ export class T3CodeHost implements Host {
   async profiles(): Promise<Profile[]> { return []; }
   async createWorkspace(spec: HostWorkspaceSpec) {
     this.requireConnection();
-    const directory = await realpath(spec.directory), inventory = await this.inventory();
-    const selected = inventory.projects.find(p => spec.project.projectId ? p.id === spec.project.projectId : p.workspaceRoot === directory);
-    if (!selected) throw new ProvenPreSendRefusalError('T3Code project is not registered');
+    const directory = await realpath(spec.directory);
+    const repositoryRoot = spec.project.workspaceRoot ? await realpath(spec.project.workspaceRoot) : undefined;
+    const inventory = await this.inventory();
+    let selected = repositoryRoot
+      ? inventory.projects.find(p => p.workspaceRoot === repositoryRoot)
+      : inventory.projects.find(p => spec.project.projectId ? p.id === spec.project.projectId : p.workspaceRoot === directory);
+    if (!selected && repositoryRoot) {
+      const projectId = identity('project', canonical([this.hostId, repositoryRoot]));
+      const commandId = identity('project-create', canonical([this.hostId, repositoryRoot]));
+      await this.effect(commandId, 'orchestration.dispatchCommand', {
+        type: 'project.create', commandId, projectId, title: basename(repositoryRoot), workspaceRoot: repositoryRoot,
+      }, undefined, undefined, { resendUnknownAfterInventory: true,
+        unsupportedMethodMessage: `T3Code cannot create a project for ${repositoryRoot}; add that folder as a project in T3Code, then restart the task` });
+      selected = { id: projectId, title: basename(repositoryRoot), workspaceRoot: repositoryRoot };
+    }
+    if (!selected) throw new ProvenPreSendRefusalError(`T3Code has no project for ${repositoryRoot ?? directory}; add that folder as a project in T3Code, then restart the task`);
     const id = identity('worktree', canonical([selected.id, directory]));
     this.state.update(state => {
       const old = state.workspaces[id];
@@ -145,7 +159,10 @@ export class T3CodeHost implements Host {
     });
     return { id, directory };
   }
-  async repositoryProject(root: string) { return { projectId: (await this.inventory()).projects.find(p => p.workspaceRoot === root)?.id }; }
+  async repositoryProject(root: string) {
+    const workspaceRoot = await realpath(root);
+    return { projectId: (await this.inventory()).projects.find(p => p.workspaceRoot === workspaceRoot)?.id, workspaceRoot };
+  }
   async findWorkspaces(task: Task) { return Object.values(this.state.read().workspaces).filter(w => w.directory === task.directory).map(w => ({ id: w.id, directory: w.directory })); }
   async workspaceAvailable(id: string) { const w = this.state.read().workspaces[id]; return !!w && (await this.inventory()).projects.some(p => p.id === w.projectId); }
   workspaceIdAccepted(id: unknown) { return typeof id === 'string' && /^nucleus-worktree-[a-f0-9]{40}$/.test(id); }
@@ -169,7 +186,10 @@ export class T3CodeHost implements Host {
   }
   async activeThreads() { return (await this.activeAndArchivedThreads()).filter(t => !t.archived && t.status !== 'gone'); }
   private async effect(key: string, method: string, payload: unknown, beforeSend?: () => void,
-    response?: { binding: ResponseBinding; prepare(): Promise<unknown> }): Promise<unknown> {
+    response?: { binding: ResponseBinding; prepare(): Promise<unknown> }, options: {
+      resendUnknownAfterInventory?: boolean;
+      unsupportedMethodMessage?: string;
+    } = {}): Promise<unknown> {
     if (!response) this.requireConnection();
     let encoded = canonical({ method, payload });
     const reserved = this.state.update(state => {
@@ -178,7 +198,8 @@ export class T3CodeHost implements Host {
       if (possibleWrites.length > 1) throw new HostUnknownDeliveryError(possibleWrites.find(([, intent]) => intent.diagnostic)?.[1].diagnostic);
       const [boundKey, old] = possibleWrites[0] ?? matches.find(([id]) => id === key) ?? [key, state.intents[key]];
       // Inspect the original outcome before payload checks or native status reads.
-      if (old?.status === 'unknown' || old?.status === 'refused' && matches.length && !old.response) throw new HostUnknownDeliveryError(old.diagnostic);
+      if (old?.status === 'unknown' && !options.resendUnknownAfterInventory || old?.status === 'refused' && matches.length && !old.response)
+        throw new HostUnknownDeliveryError(old.diagnostic);
       if (old && matches.length) {
         const wire = JSON.parse(old.payload).payload;
         const legacyInput = canonical({ type: wire.type, response: wire.type === 'runtime-request.respond'
@@ -199,7 +220,7 @@ export class T3CodeHost implements Host {
     key = reserved.key; const prior = reserved.prior;
     if (prior?.status === 'settled') return prior.result;
     if (prior?.status === 'refused') throw new ProvenPreSendRefusalError('T3Code command was refused; no retry');
-    if (prior) throw new HostUnknownDeliveryError(prior.diagnostic);
+    if (prior && !(prior.status === 'unknown' && options.resendUnknownAfterInventory)) throw new HostUnknownDeliveryError(prior.diagnostic);
     let wrote = false;
     try {
       if (response) {
@@ -214,6 +235,8 @@ export class T3CodeHost implements Host {
       return result;
     } catch (error) {
       const refusal = error instanceof ProvenPreSendRefusalError ? error
+        : options.unsupportedMethodMessage && error instanceof T3RpcError && error.code === 'unsupported_method'
+          ? new ProvenPreSendRefusalError(options.unsupportedMethodMessage)
         : !wrote || error instanceof T3RpcError && error.delivery === 'not_sent'
           ? new ProvenPreSendRefusalError(error instanceof T3RpcError ? error.message : 'T3Code send fence refused before delivery') : null;
       if (refusal) this.state.update(state => { state.intents[key] = { ...state.intents[key], payload: encoded, status: 'refused' }; });

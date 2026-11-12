@@ -197,6 +197,8 @@ export type HostWorkspaceCatalog =
 /** A host project, as the host reports it; `projectId` is absent when the lookup found none. */
 export interface HostProjectRef {
   projectId?: string;
+  /** Canonical repository root, when the core knows it; hosts may provision this project. */
+  workspaceRoot?: string;
 }
 
 /** The registration of one folder as a host workspace. Core supplies the folder, identity and project; the host supplies the native call. */

@@ -197,7 +197,7 @@ export class WorkspaceLifecycle {
     const registered = await this.creationStep(task, "path_registration_check", () => this.samePathRegistration(task, state.directory));
     if (registered) return registered.reuse;
     const project = await this.creationStep(task, "repository_project_lookup", () => this.repositoryProject(task));
-    const workspace = await this.creationStep(task, "paseo_workspace_create", () => this.host.workspaceHost.createWorkspace({ title: capPaseoTitle(taskWorkspaceTitle(task)), requestId: `ns-workspace-${task.id}`,
+    const workspace = await this.creationStep(task, "workspace_creation", () => this.host.workspaceHost.createWorkspace({ title: capPaseoTitle(taskWorkspaceTitle(task)), requestId: `ns-workspace-${task.id}`,
       directory: state.directory, project }));
     if (!workspace.directory) throw new Error("Workspace returned no directory");
     return { id: workspace.id, directory: workspace.directory };

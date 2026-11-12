@@ -351,7 +351,12 @@ test('host identity conflicts and unsupported per-thread bindings refuse before 
   await assert.rejects(host.raiseDecision('synthetic-probe', workspace.id, { id: 'decision', question: 'Synthetic', options: [], signal: new AbortController().signal }), /decisions/);
   assert.equal(server.commands.length, 0);
   const absent = join(root, 'missing'); mkdirSync(absent);
-  await assert.rejects(host.createWorkspace({ title: 'Unknown project', requestId: 'unknown', directory: absent, project: { projectId: 'absent-project' } }), /project is not registered/);
+  await assert.rejects(host.createWorkspace({ title: 'Unknown project', requestId: 'unknown', directory: absent, project: { projectId: 'absent-project' } }), error => {
+    assert.match(String(error), /T3Code has no project for/);
+    assert.ok(String(error).includes(absent), 'the refusal names the repository path');
+    assert.match(String(error), /add that folder as a project in T3Code, then restart the task/);
+    return true;
+  });
   host.close(); server.controls.environmentId = 'different-environment';
   const changed = new T3CodeHost(options); t.after(() => changed.close());
   await assert.rejects(changed.connect(), /environmentId changed/);
@@ -374,4 +379,62 @@ test('the origin read answers authoritative absence, and only an unread inventor
   // A read that cannot run at all is a failed read, never authoritatively absent.
   host.close();
   await assert.rejects(host.originAgent(created.id), /authenticated host connection/);
+});
+
+test('workspace creation registers a missing repository project once and binds its existing worktree', async t => {
+  const { host, server, root } = await fixture(t);
+  server.projects.splice(0);
+  const repository = join(root, 'repository');
+  const worktree = join(root, 'worktree');
+  mkdirSync(repository); mkdirSync(worktree);
+  const project = await host.repositoryProject(repository);
+  assert.equal(project.workspaceRoot, await realpath(repository));
+  const workspace = await host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-create', directory: worktree, project });
+  const creation = server.commands.find(command => command.type === 'project.create');
+  assert.ok(creation, 'project.create was sent');
+  assert.equal(creation!.workspaceRoot, await realpath(repository));
+  assert.equal(creation!.title, 'repository');
+  assert.equal(server.projects.length, 1);
+  assert.equal(server.projects[0]!.id, creation!.projectId);
+  const workspaceRef = host.workspaceRef(workspace.id);
+  assert.equal(await workspaceRef.refresh(), true);
+  assert.equal(workspaceRef.current()?.projectId, creation!.projectId);
+  await host.createWorkspace({ title: 'Retry', requestId: 'workspace-create-again', directory: worktree, project });
+  assert.equal(server.commands.filter(command => command.type === 'project.create').length, 1, 'the same root is not duplicated');
+});
+
+test('unknown project creation delivery is reconciled from inventory before retry', async t => {
+  const { host, server, options, root } = await fixture(t);
+  server.projects.splice(0);
+  const repository = join(root, 'repository');
+  const worktree = join(root, 'worktree');
+  mkdirSync(repository); mkdirSync(worktree);
+  const project = await host.repositoryProject(repository);
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-lost', directory: worktree, project }), /unknown/i);
+  assert.equal(server.commands.filter(command => command.type === 'project.create').length, 1);
+  host.close();
+  server.controls.disconnectAfterEffect = false;
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close());
+  await reloaded.connect();
+  const workspace = await reloaded.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-lost', directory: worktree, project });
+  const workspaceRef = reloaded.workspaceRef(workspace.id);
+  await workspaceRef.refresh();
+  assert.equal(workspaceRef.current()?.projectId, server.projects[0]!.id);
+  assert.equal(server.commands.filter(command => command.type === 'project.create').length, 1, 'inventory adoption avoids a second create');
+});
+
+test('an unsupported T3 project-create command names the manual project setup', async t => {
+  const { host, server, root } = await fixture(t);
+  server.projects.splice(0);
+  const repository = join(root, 'repository');
+  const worktree = join(root, 'worktree');
+  mkdirSync(repository); mkdirSync(worktree);
+  const project = await host.repositoryProject(repository);
+  server.controls.unsupportedProjectCreate = true;
+  await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-unsupported', directory: worktree, project }), error => {
+    assert.ok(String(error).includes(project.workspaceRoot!));
+    assert.match(String(error), /add that folder as a project in T3Code, then restart the task/);
+    return true;
+  });
 });

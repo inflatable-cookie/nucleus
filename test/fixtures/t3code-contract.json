@@ -17,6 +17,10 @@
       "required": ["type", "commandId", "threadId"],
       "optional": []
     },
+    "project.create": {
+      "required": ["type", "commandId", "projectId", "title", "workspaceRoot"],
+      "optional": []
+    },
     "runtime-request.respond": {
       "required": ["type", "commandId", "threadId", "requestId"],
       "optional": ["decision", "feedback", "answers", "attachmentsByQuestionId"],

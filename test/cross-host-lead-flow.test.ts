@@ -102,7 +102,11 @@ async function fixture(): Promise<Fixture> {
       return Promise.resolve({ id: `t3-agent-${task.id}`, workspaceId: task.workspaceId ?? null });
     },
     observe: async (id: string) => ({ id, workspaceId: `t3-ws-${id}`, status: 'idle', active: false, permissions: false, error: '' }),
-    originAgent: async (id: string) => ({ id, workspaceId: 't3-ws', title: 'Thread', archived: false as const }),
+    originAgent: async (id: string) => {
+      if (id === 'planner') return null;
+      t3Record.origins.push(id);
+      return { id, workspaceId: 't3-ws', title: 'Thread', archived: false as const };
+    },
     notify: async (id: string, messageId: string, text: string) => { t3Record.notifications.push({ id, text, messageId }); },
     archiveAgent: async () => {},
     findOpenBranchPr: async () => [],
@@ -215,6 +219,32 @@ test('a paseo planner submits a lead for a t3code repository, the task dispatche
       `no completion notice went to the T3 host: ${JSON.stringify(f.t3.notifications)}`);
     assert.ok(f.paseo.notifications.every(notification => !notification.text.includes('Your Nucleus question')),
       'the worker answer went back to the T3 worker, not to the planner thread');
+
+    // A legacy bare author still resolves to Paseo during a T3 lead check.
+    const t3Recipient = formatAgentId(t3Host, 'observer');
+    const legacyBody = leadBody.replace('Cross-host lead', 'Legacy author lead')
+      .replace('  notifyOriginOnCloseout: true', `  notifyOriginOnCloseout: true\n  completionNotificationAgentIds: ['${t3Recipient}']`);
+    const legacy = leadSubmit.output.parse(await f.runtime.submitLead({
+      repository: { origin: f.repo, path: f.repo }, title: 'Legacy author lead',
+      body: legacyBody, baseBranch: 'main', lanes: [], tags: [],
+      agent: 'planner', note: 'Tom authorized this fixture',
+    }));
+    assert.ok('taskId' in legacy, JSON.stringify(legacy));
+    const legacyTask = f.runtime.store.task(legacy.taskId);
+    const legacyLead = f.runtime.store.leads().find(candidate => candidate.title === 'Legacy author lead');
+    assert.equal(legacyLead?.check?.ok, true, legacyLead?.check?.message);
+    assert.equal(legacyTask.hostId, t3Host);
+    assert.equal(legacyTask.originAgentId, 'planner');
+    assert.equal(legacyTask.originHostId, paseoHost);
+    assert.ok(f.t3.origins.includes('observer'), 'the T3 completion recipient was looked up on its own host');
+    await f.runtime.engine.dispatchTask(legacyTask.id, false);
+    await waitUntil(() => f.runtime.store.task(legacyTask.id).agentId?.startsWith('t3-agent-') === true, 'legacy author task dispatched on T3');
+    f.runtime.store.update(legacyTask.id, { phase: 'done', reason: 'Legacy fixture complete' }, 'task_completed', 'The legacy cross-host fixture completed');
+    await f.runtime.engine.resolution.deliverNotices();
+    await waitUntil(() => f.paseo.notifications.some(notification => notification.text.includes('Nucleus completion') && notification.text.includes('Legacy author lead')),
+      'the closeout notice reached the bare-ID Paseo author');
+    await waitUntil(() => f.t3.notifications.some(notification => notification.text.includes('Nucleus completion') && notification.text.includes('Legacy author lead')),
+      'the completion notice reached its T3 recipient');
   } finally { await f.close(); }
 });
 
