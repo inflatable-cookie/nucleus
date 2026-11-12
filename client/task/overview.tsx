@@ -8,10 +8,11 @@ import { type TaskControlInput, type TaskNext, type UiQueueState } from "../../s
 import { TaskSummaryBlock, type TaskDetailTab } from "./parts";
 import { NORMAL_USAGE, NextSection } from "./next-section";
 import type { TaskDetailRead, TaskQaRun } from "./task-dialog";
+import { space, type as typeScale } from "../design";
 
 /** The Overview's summary: the task's current wait, holds, review and checks. Stays mounted so tab switches keep its place. */
 export function OverviewSummary({ task, detailTab, nextQuery, detailQuery, qaRun: taskQaRun, c }: { task: TaskDetailRead["task"]; detailTab: TaskDetailTab; nextQuery: UseQueryResult<TaskNext>; detailQuery: UseQueryResult<TaskDetailRead>; qaRun: TaskQaRun | undefined; c: Colors }) {
-  return <View style={{ gap: 12, display: detailTab === "overview" ? "flex" : "none" }}>
+  return <View style={{ gap: space.sm, display: detailTab === "overview" ? "flex" : "none" }}>
     <TaskSummaryBlock
       task={task}
       next={nextQuery.data ?? null}
@@ -29,7 +30,7 @@ export function OverviewSummary({ task, detailTab, nextQuery, detailQuery, qaRun
 export function OverviewNext({ task, detailTab, nextQuery, state, busy, pendingOperation, c }: { task: TaskDetailRead["task"]; detailTab: TaskDetailTab; nextQuery: UseQueryResult<TaskNext>; state: UiQueueState | undefined; busy: boolean; pendingOperation: boolean; c: Colors }) {
   const queryClient = useQueryClient();
   const setTask = useRpc(api.taskControl);
-  return <View style={{ gap: 12, display: detailTab === "overview" ? "flex" : "none" }}>
+  return <View style={{ gap: space.sm, display: detailTab === "overview" ? "flex" : "none" }}>
     <NextSection
       key={task.id}
       c={c}
@@ -69,8 +70,8 @@ export function OverviewNext({ task, detailTab, nextQuery, state, busy, pendingO
       }}
     />
     {task.proofReceiptAcceptance && <DetailSection title="Receipt accepted" c={c}>
-      <Text selectable style={{ ...muted(c), fontSize: 12 }}>Operator {task.proofReceiptAcceptance.acceptedBy} accepted receipt {task.proofReceiptAcceptance.runId} as release evidence: {task.proofReceiptAcceptance.reason}</Text>
-      <Text selectable style={{ ...muted(c), fontSize: 12 }}>Original failed qualification and reviewer verdict: {task.proofReceiptAcceptance.originalResult.evidence}</Text>
+      <Text selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Operator {task.proofReceiptAcceptance.acceptedBy} accepted receipt {task.proofReceiptAcceptance.runId} as release evidence: {task.proofReceiptAcceptance.reason}</Text>
+      <Text selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Original failed qualification and reviewer verdict: {task.proofReceiptAcceptance.originalResult.evidence}</Text>
     </DetailSection>}
   </View>;
 }

@@ -8,6 +8,7 @@ import { choiceTag, NORMAL_USAGE, SelectedProfilePolicy } from "./next-section";
 import { useTaskDraft, type TaskDrafts } from "./drafts";
 import type { BoardAct } from "./parts";
 import type { TaskDetailRead } from "./task-dialog";
+import { space } from "../design";
 
 export function TechnicalRouting({ task, state, drafts, busy, act, c }: {
   task: TaskDetailRead["task"];
@@ -78,7 +79,7 @@ export function TechnicalRouting({ task, state, drafts, busy, act, c }: {
           }}
         />
         {routingOpen && (
-          <View style={{ gap: 8 }}>
+          <View style={{ gap: space.xs }}>
             <View style={row}>
               <Text style={muted(c)}>Scope</Text>
               {(
@@ -199,7 +200,7 @@ export function TechnicalRouting({ task, state, drafts, busy, act, c }: {
             {(
               ["worker", "reviewer", "coordinator"] as const
             ).map((role) => (
-              <View key={role} style={{ gap: 5 }}>
+              <View key={role} style={{ gap: space.xxs }}>
                 <Field
                   c={c}
                   label={`${role} request profile ID (blank clears)`}

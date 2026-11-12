@@ -11,6 +11,7 @@ import { projectName } from "./text";
 import { RecordChips } from "./badges";
 import { BoardCard, QaRunCard, TaskCard, DecisionCard, HoldPromptCard, LaneDrainCard } from "./cards";
 import type { BoardAct } from "./use-board-data";
+import { space, type as typeScale, radius } from "../design";
 
 function newQaRequestId() { return `board-qa-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`; }
 type Project = UiQueueState["projects"][number];
@@ -82,18 +83,18 @@ export function PipelineBoard({ c, state, stateError, compact, inset, panelWidth
   const { queueRepo, setQueueRepo, queueOffset, setQueueOffset, queuedPage, triageTag, setTriageTag, triageShown, setTriageShown, pipelineAreaHeight, setPipelineAreaHeight, pipelineHeaderHeight, setPipelineHeaderHeight } = view;
   const pipelineHorizontal = React.useRef<ScrollView | null>(null);
   const hiddenQueued = queuedHidden.reduce((sum, item) => sum + item.hidden, 0);
-const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style={{ gap: 6 }}>
+const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style={{ gap: space.xs }}>
   <BoardCard label={`${item.hidden} more queued in ${projectName(item)}`} selected={queueRepo === item.repoPath} c={c}
     onPress={() => { setQueueRepo(queueRepo === item.repoPath ? null : item.repoPath); setQueueOffset(0); }}
-    eyebrow={<><Icon name="Folder" size={12} color={c.foregroundMuted}/><Text numberOfLines={1} ellipsizeMode="tail" style={{ color: c.foregroundMuted, fontSize: 12, flexShrink: 1 }}>{projectName(item)}</Text></>}
+    eyebrow={<><Icon name="Folder" size={12} color={c.foregroundMuted}/><Text numberOfLines={1} ellipsizeMode="tail" style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{projectName(item)}</Text></>}
     title={`…and ${item.hidden} more`} />
-  {queueRepo === item.repoPath && <View style={{ gap: 5 }}>
+  {queueRepo === item.repoPath && <View style={{ gap: space.xxs }}>
     {queuedPage.isLoading && <Text style={{ color: c.foregroundMuted }}>Loading queued tasks…</Text>}
     {queuedPage.error && <Text style={{ color: c.foreground }}>Could not load queued tasks. Try again.</Text>}
     {(queuedPage.data?.tasks ?? []).filter(page => !state?.tasks.some(task => task.id === page.id)).map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`Open ${item.title}`} onPress={() => onOpenQueuedTask(item.id)}>
                 <Text numberOfLines={1} style={{ color: c.foreground }}>{item.reference ?? ''} {item.title} · {item.reason}</Text>
               </Pressable>)}
-    <View style={{ ...row, gap: 6 }}>
+    <View style={{ ...row, gap: space.xs }}>
       <Button small c={c} text="Previous" disabled={queueOffset === 0} onPress={() => setQueueOffset(Math.max(0, queueOffset - 25))} />
       <Button small c={c} text="Next" disabled={queuedPage.data?.nextOffset == null} onPress={() => setQueueOffset(queuedPage.data!.nextOffset!)} />
     </View>
@@ -162,7 +163,7 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
           style={{ flex: 1, minHeight: compact ? 300 : 0 }}
           contentContainerStyle={{ paddingHorizontal: inset }}
         >
-          <View style={{ gap: 10, paddingBottom: 12 }}>
+          <View style={{ gap: space.sm, paddingBottom: space.sm }}>
             <View style={{ backgroundColor: c.surface0, zIndex: 3 }}>
               <View
                 onLayout={(event) =>
@@ -171,7 +172,7 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                 style={{
                   flexDirection: "row",
                   gap: pipelineGap,
-                  paddingVertical: 6,
+                  paddingVertical: space.xs,
                 }}
               >
                 {pipelineColumns.map((name) => {
@@ -185,14 +186,14 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                       width: pipelineWidths[name],
                       flexDirection: "row",
                       alignItems: "center",
-                      gap: 6,
+                      gap: space.xs,
                     }}
                   >
                     <Text
                       style={{
                         color: c.foreground,
                         fontWeight: "600",
-                        fontSize: 12,
+                        fontSize: typeScale.metadata.fontSize,
                       }}
                     >
                       {name}
@@ -201,15 +202,15 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                       style={{
                         minWidth: 20,
                         height: 18,
-                        paddingHorizontal: 6,
-                        borderRadius: 9,
+                        paddingHorizontal: space.xs,
+                        borderRadius: radius.control,
                         alignItems: "center",
                         justifyContent: "center",
                         backgroundColor: c.surface2,
                       }}
                     >
                       <Text
-                        style={{ color: c.foregroundMuted, fontSize: 11 }}
+                        style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}
                       >
                         {boardRead === "loaded" ? pipelineTotals[name] : boardRead === "failed" ? "—" : "…"}
                       </Text>
@@ -242,7 +243,7 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                           const triageMore = triage && triage.hidden > 0 ? <BoardCard label={`Show ${triage.hidden} more in Triage`} selected={false} c={c}
                             onPress={() => setTriageShown(triageShown + triagePageSize)}
                             eyebrow={null}
-                            title={<Text numberOfLines={1} style={{ color: c.foreground, fontWeight: "600", fontSize: 13 }}>{`…and ${triage.hidden} more`}</Text>} /> : null;
+                            title={<Text numberOfLines={1} style={{ color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize }}>{`…and ${triage.hidden} more`}</Text>} /> : null;
                           const more = name === 'Queued' ? queuedMoreCards : triageMore;
                           const cards = visible.map((card) => {
                             if (card.kind === "decision")
@@ -361,7 +362,7 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                                   ellipsizeMode="tail"
                                   style={{
                                     ...muted(c),
-                                    fontSize: 11,
+                                    fontSize: typeScale.metadata.fontSize,
                                     flexShrink: 1,
                                   }}
                                 >
@@ -375,8 +376,8 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                                 style={{
                                   color: c.foreground,
                                   fontWeight: "600",
-                                  fontSize: 13,
-                                  lineHeight: 17,
+                                  fontSize: typeScale.body.fontSize,
+                                  lineHeight: typeScale.metadata.lineHeight,
                                 }}
                               >
                                 {text}
@@ -388,8 +389,8 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                                 ellipsizeMode="tail"
                                 style={{
                                   color: c.foregroundMuted,
-                                  fontSize: 12,
-                                  lineHeight: 16,
+                                  fontSize: typeScale.metadata.fontSize,
+                                  lineHeight: typeScale.metadata.lineHeight,
                                 }}
                               >
                                 {text}
@@ -435,14 +436,14 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                                         repo.origin,
                                     ))].join(", "),
                                 )}
-                                title={<Text numberOfLines={1} style={{ color: c.foreground, fontWeight: "600", fontSize: 13, lineHeight: 17 }}>{card.value.title}</Text>}
+                                title={<Text numberOfLines={1} style={{ color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize, lineHeight: typeScale.body.lineHeight }}>{card.value.title}</Text>}
                                 chips={
                                   <RecordChips
                                     c={c}
                                     chips={[triageKind(card.value) === "papercut" ? api.RESERVED_LEAD_TAGS.papercut : "Lead"]}
                                   />
                                 }
-                                snippet={<Text numberOfLines={1} ellipsizeMode="tail" style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 16 }}>{triageState(card.value)}</Text>}
+                                snippet={<Text numberOfLines={1} ellipsizeMode="tail" style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{triageState(card.value)}</Text>}
                                 selected={
                                   selectedLeadId === card.id ||
                                   openPapercutId === card.id
@@ -461,7 +462,7 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                               key={name}
                               style={{
                                 width: pipelineWidths[name],
-                                gap: 6,
+                                gap: space.xs,
                               }}
                             >
                               <ScrollView
@@ -476,7 +477,7 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                                     },
                                   ),
                                 }}
-                                contentContainerStyle={{ gap: 6 }}
+                                contentContainerStyle={{ gap: space.xs }}
                               >
                                 {cards}
                                 {more}

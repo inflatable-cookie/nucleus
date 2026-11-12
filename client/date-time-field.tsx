@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import { Button, muted, row, type Colors } from "./controls";
-import { roles, touchSlop, type } from "./design";
+import { roles, touchSlop, type, space, radius, overlay } from "./design";
 import { useFocusVisible } from "./focus-modality";
 import { DAY_MS, MINUTES, MONTH_NAMES, WEEKDAYS, formatLocalDateTime, monthGrid, pad, withDay, withMinute } from "../shared/date-time";
 
@@ -19,11 +19,11 @@ export function DateTimeField({ c, label, value, onChange, disabled = false, emp
   c: Colors; label: string; value: string | null; onChange: (iso: string | null) => void; disabled?: boolean; emptyText?: string; now?: () => number;
 }) {
   const [open, setOpen] = useState(false);
-  return <View style={{ gap: 6, minWidth: 0 }}>
+  return <View style={{ gap: space.xs, minWidth: 0 }}>
     <Text style={muted(c)}>{label}</Text>
     <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${value ? formatLocalDateTime(value) : emptyText}`} disabled={disabled} onPress={() => setOpen(true)}
-      style={{ backgroundColor: c.surface1, borderColor: c.border, borderWidth: 1, borderRadius: 7, padding: 11, minHeight: 44, justifyContent: "center", opacity: disabled ? 0.45 : 1 }}>
-      <Text style={{ color: value ? c.foreground : c.foregroundMuted, fontSize: 16 }}>{value ? formatLocalDateTime(value) : emptyText}</Text>
+      style={{ backgroundColor: c.surface1, borderColor: c.border, borderWidth: 1, borderRadius: radius.control, padding: space.sm, minHeight: 44, justifyContent: "center", opacity: disabled ? 0.45 : 1 }}>
+      <Text style={{ color: value ? c.foreground : c.foregroundMuted, fontSize: type.section.fontSize }}>{value ? formatLocalDateTime(value) : emptyText}</Text>
     </Pressable>
     {open && <DateTimePickerModal c={c} label={label} value={value} now={now} onCancel={() => setOpen(false)} onDone={iso => { setOpen(false); onChange(iso); }} />}
   </View>;
@@ -68,9 +68,9 @@ function DateTimePickerModal({ c, label, value, now, onCancel, onDone }: { c: Co
   const step = (delta: number) => setShown(s => { const m = s.month + delta; return { year: s.year + Math.floor(m / 12), month: ((m % 12) + 12) % 12 }; });
   const inPast = draft.getTime() <= now();
   return <Modal visible transparent animationType="fade" onRequestClose={onCancel}>
-    <View style={{ flex: 1, justifyContent: "center", padding: 24, backgroundColor: "rgba(0,0,0,0.68)" }}>
-      <View accessibilityViewIsModal accessibilityLabel={`Pick ${label}`} style={{ maxWidth: 420, width: "100%", alignSelf: "center", gap: 12, padding: 18, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1 }}>
-        <Text accessibilityRole="header" style={{ color: c.foreground, fontSize: 16, fontWeight: "600" }}>{label}</Text>
+    <View style={{ flex: 1, justifyContent: "center", padding: space.lg, backgroundColor: overlay.scrim }}>
+      <View accessibilityViewIsModal accessibilityLabel={`Pick ${label}`} style={{ maxWidth: 420, width: "100%", alignSelf: "center", gap: space.sm, padding: space.md, borderRadius: radius.panel, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1 }}>
+        <Text accessibilityRole="header" style={{ color: c.foreground, fontSize: type.section.fontSize, fontWeight: "600" }}>{label}</Text>
         <View style={row}>
           <Button small c={c} text="In 1 day" onPress={() => preset(1)} />
           <Button small c={c} text="In 3 days" onPress={() => preset(3)} />
@@ -81,15 +81,15 @@ function DateTimePickerModal({ c, label, value, now, onCancel, onDone }: { c: Co
           <Text style={{ color: c.foreground, fontWeight: "600" }}>{MONTH_NAMES[shown.month]} {shown.year}</Text>
           <Button small c={c} text="›" label="Next month" onPress={() => step(1)} />
         </View>
-        <View style={{ gap: 4 }}>
-          <View style={{ flexDirection: "row" }}>{WEEKDAYS.map(day => <Text key={day} style={{ ...muted(c), flex: 1, textAlign: "center", fontSize: 11 }}>{day}</Text>)}</View>
+        <View style={{ gap: space.xxs }}>
+          <View style={{ flexDirection: "row" }}>{WEEKDAYS.map(day => <Text key={day} style={{ ...muted(c), flex: 1, textAlign: "center", fontSize: type.metadata.fontSize }}>{day}</Text>)}</View>
           {monthGrid(shown.year, shown.month).map((week, w) => <View key={w} style={{ flexDirection: "row" }}>{week.map((day, i) => {
             if (day === null) return <View key={i} style={{ flex: 1, height: 34 }} />;
             const past = new Date(shown.year, shown.month, day).getTime() < today.getTime();
             const selected = draft.getFullYear() === shown.year && draft.getMonth() === shown.month && draft.getDate() === day;
             return <Pressable key={i} accessibilityRole="button" accessibilityLabel={`${day} ${MONTH_NAMES[shown.month]} ${shown.year}`} accessibilityState={{ selected, disabled: past }} disabled={past}
               onPress={() => setDay(shown.year, shown.month, day)}
-              style={{ flex: 1, height: 34, margin: 1, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: selected ? c.accent : "transparent", opacity: past ? 0.35 : 1 }}>
+              style={{ flex: 1, height: 34, margin: space.xxs / 2, borderRadius: radius.control, alignItems: "center", justifyContent: "center", backgroundColor: selected ? c.accent : "transparent", opacity: past ? 0.35 : 1 }}>
               <Text style={{ color: selected ? c.accentForeground : c.foreground }}>{day}</Text>
             </Pressable>;
           })}</View>)}
@@ -97,7 +97,7 @@ function DateTimePickerModal({ c, label, value, now, onCancel, onDone }: { c: Co
         <View style={{ ...row, justifyContent: "space-between" }}>
           <View style={row}>
             <Button small c={c} text="−" label="Earlier hour" onPress={() => shift(-60 * 60_000)} />
-            <Text accessibilityLabel={`Hour ${pad(draft.getHours())}`} style={{ color: c.foreground, fontSize: 16, minWidth: 28, textAlign: "center" }}>{pad(draft.getHours())}</Text>
+            <Text accessibilityLabel={`Hour ${pad(draft.getHours())}`} style={{ color: c.foreground, fontSize: type.section.fontSize, minWidth: 28, textAlign: "center" }}>{pad(draft.getHours())}</Text>
             <Button small c={c} text="+" label="Later hour" onPress={() => shift(60 * 60_000)} />
           </View>
           <View style={row}>{MINUTES.map(m => <Button key={m} small c={c} text={`:${pad(m)}`} label={`Minute ${pad(m)}`} selected={draft.getMinutes() === m} onPress={() => setMinute(m)} />)}</View>

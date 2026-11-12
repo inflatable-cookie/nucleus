@@ -8,6 +8,7 @@ import type { Run, Task, TaskDetail, TaskNext } from "../../shared/contracts";
 import { decisionAge } from "../../shared/pipeline-board";
 import { budgetBars, budgetNeedsAttention, checkTicks, latestTaskReport, taskHoldRows, taskOverviewWait, taskReviewProgress, type CheckTick, type LatestReport } from "../../shared/task-detail-summary";
 import type { TaskBudgetView } from "../../shared/task-budget";
+import { radius, space, type as typeScale } from "../design";
 
 /**
  * Task 538 (papercut 90104e7f): one collapsed group in the task detail. The
@@ -15,23 +16,23 @@ import type { TaskBudgetView } from "../../shared/task-budget";
  * one press away and nothing is deleted.
  */
 export function CollapsibleSection({ title, hint, open, onToggle, c, children }: { title: string; hint?: string; open: boolean; onToggle: () => void; c: Colors; children: React.ReactNode }) {
-  return <View style={{ borderRadius: 9, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1, overflow: "hidden" }}>
-    <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 12 }}>
+  return <View style={{ borderRadius: radius.control, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1, overflow: "hidden" }}>
+    <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: space.sm }}>
       <Disclosure c={c} label={title} accessibilityLabel={`${title}, ${open ? "expanded" : "collapsed"}`} expanded={open} onToggle={onToggle} />
-      {hint && <Text numberOfLines={1} style={{ ...muted(c), fontSize: 11, flexShrink: 1 }}>{hint}</Text>}
+      {hint && <Text numberOfLines={1} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{hint}</Text>}
     </View>
-    {open && <View style={{ gap: 12, paddingHorizontal: 12, paddingBottom: 12 }}>{children}</View>}
+    {open && <View style={{ gap: space.sm, paddingHorizontal: space.sm, paddingBottom: space.sm }}>{children}</View>}
   </View>;
 }
 /** Spec 058's budget as two bars: tokens and wall time against their limits. */
 function BudgetBars({ budget, c }: { budget: TaskBudgetView; c: Colors }) {
-  return <View style={{ gap: 6 }}>{budgetBars(budget).map(bar => <View key={bar.key} style={{ gap: 3 }}>
-    <View style={{ ...row, flexWrap: "nowrap", justifyContent: "space-between", gap: 10 }}>
-      <Text style={{ ...muted(c), fontSize: 11 }}>{bar.label}</Text>
-      <Text accessibilityLabel={`${bar.label} budget ${bar.text}`} style={{ color: bar.ratio >= 1 ? c.statusWarning : c.foregroundMuted, fontSize: 11 }}>{bar.text}</Text>
+  return <View style={{ gap: space.xs }}>{budgetBars(budget).map(bar => <View key={bar.key} style={{ gap: space.xxs }}>
+    <View style={{ ...row, flexWrap: "nowrap", justifyContent: "space-between", gap: space.sm }}>
+      <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{bar.label}</Text>
+      <Text accessibilityLabel={`${bar.label} budget ${bar.text}`} style={{ color: bar.ratio >= 1 ? c.statusWarning : c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>{bar.text}</Text>
     </View>
-    <View style={{ height: 5, borderRadius: 3, backgroundColor: c.surface2, overflow: "hidden" }}>
-      <View style={{ width: `${Math.round(bar.ratio * 100)}%`, height: 5, borderRadius: 3, backgroundColor: bar.ratio >= 1 ? c.statusWarning : c.accent }} />
+    <View style={{ height: 5, borderRadius: radius.control, backgroundColor: c.surface2, overflow: "hidden" }}>
+      <View style={{ width: `${Math.round(bar.ratio * 100)}%`, height: 5, borderRadius: radius.control, backgroundColor: bar.ratio >= 1 ? c.statusWarning : c.accent }} />
     </View>
   </View>)}</View>;
 }
@@ -39,8 +40,8 @@ function BudgetBars({ budget, c }: { budget: TaskBudgetView; c: Colors }) {
 const tickMark: Record<CheckTick["state"], string> = { pass: "✓", fail: "✗", pending: "·", info: "·" };
 function CheckTickRow({ ticks, c }: { ticks: CheckTick[]; c: Colors }) {
   if (!ticks.length) return null;
-  return <View style={{ ...row, gap: 14, flexWrap: "wrap" }}>{ticks.map(tick =>
-    <Text key={tick.label} accessibilityLabel={`${tick.label}: ${tick.state}`} style={{ color: tick.state === "fail" ? c.statusWarning : tick.state === "pass" ? c.foreground : c.foregroundMuted, fontSize: 12 }}>
+  return <View style={{ ...row, gap: space.md, flexWrap: "wrap" }}>{ticks.map(tick =>
+    <Text key={tick.label} accessibilityLabel={`${tick.label}: ${tick.state}`} style={{ color: tick.state === "fail" ? c.statusWarning : tick.state === "pass" ? c.foreground : c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>
       {tickMark[tick.state]} {tick.label}
     </Text>)}</View>;
 }
@@ -48,15 +49,15 @@ function CheckTickRow({ ticks, c }: { ticks: CheckTick[]; c: Colors }) {
 function LatestReportRow({ report, c }: { report: LatestReport; c: Colors }) {
   const [open, setOpen] = useState(false);
   const more = report.fullText.trim() !== report.headline.trim();
-  return <View style={{ gap: 4 }}>
-    <Text accessibilityLabel={`Latest report: ${report.headline}`} style={{ color: c.foreground, fontWeight: "600", fontSize: 13, lineHeight: 18 }}>{report.headline}</Text>
-    <View style={{ ...row, gap: 10, flexWrap: "wrap" }}>
-      <Text style={{ ...muted(c), fontSize: 11 }}>{report.role}{report.author ? ` · ${report.author}` : ""}{report.at ? ` · ${decisionAge(report.at)}` : ""}</Text>
+  return <View style={{ gap: space.xxs }}>
+    <Text accessibilityLabel={`Latest report: ${report.headline}`} style={{ color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize, lineHeight: typeScale.body.lineHeight }}>{report.headline}</Text>
+    <View style={{ ...row, gap: space.sm, flexWrap: "wrap" }}>
+      <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{report.role}{report.author ? ` · ${report.author}` : ""}{report.at ? ` · ${decisionAge(report.at)}` : ""}</Text>
       {more && <Pressable accessibilityRole="button" accessibilityLabel={open ? "Hide full report" : "Read full report"} onPress={() => setOpen(!open)} style={{ minHeight: 24, justifyContent: "center" }}>
-        <Text style={{ color: c.accent, fontSize: 11, fontWeight: "600" }}>{open ? "Hide full" : "Read full"}</Text>
+        <Text style={{ color: c.accent, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>{open ? "Hide full" : "Read full"}</Text>
       </Pressable>}
     </View>
-    {open && <Text selectable style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 17 }}>{report.fullText}</Text>}
+    {open && <Text selectable style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{report.fullText}</Text>}
   </View>;
 }
 /**
@@ -79,29 +80,29 @@ export function TaskSummaryBlock({ task, next, runs, qaRun, c }: { task: TaskDet
     verdict: next?.outcome.accepted && next.outcome.accepted.currentHead && !next.outcome.accepted.superseded ? next.outcome.accepted.status : null,
   });
   return <DetailSection c={c}>
-    <View style={{ gap: 4 }}>
-      <Text accessibilityLabel={`Wait: ${wait.state}; owner ${wait.owner || "none"}; next ${wait.nextAction || "none"}`} style={{ color: c.foreground, fontSize: 14, fontWeight: "600", lineHeight: 20 }}>{wait.state}</Text>
-      {Boolean(wait.actor) && <Text accessibilityLabel={`Working: ${wait.actor}`} style={{ ...muted(c), fontSize: 12, lineHeight: 17 }}>{wait.actor}</Text>}
-      {Boolean(wait.owner) && <Text accessibilityLabel={`Owner: ${wait.owner}`} style={{ ...muted(c), fontSize: 12, lineHeight: 17 }}>Owner · {wait.owner}</Text>}
-      {Boolean(wait.nextAction) && <Text accessibilityLabel={`Next action: ${wait.nextAction}`} style={{ color: c.foreground, fontSize: 12, lineHeight: 17 }}>Next · {wait.nextAction}</Text>}
+    <View style={{ gap: space.xxs }}>
+      <Text accessibilityLabel={`Wait: ${wait.state}; owner ${wait.owner || "none"}; next ${wait.nextAction || "none"}`} style={{ color: c.foreground, fontSize: typeScale.body.fontSize, fontWeight: "600", lineHeight: typeScale.body.lineHeight }}>{wait.state}</Text>
+      {Boolean(wait.actor) && <Text accessibilityLabel={`Working: ${wait.actor}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{wait.actor}</Text>}
+      {Boolean(wait.owner) && <Text accessibilityLabel={`Owner: ${wait.owner}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>Owner · {wait.owner}</Text>}
+      {Boolean(wait.nextAction) && <Text accessibilityLabel={`Next action: ${wait.nextAction}`} style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>Next · {wait.nextAction}</Text>}
       {Boolean(wait.detail) && (wait.stop
-        ? <Text accessibilityLabel={`Stop: ${wait.stop.kind}; ${wait.stop.reason}; ${wait.stop.detail}`} selectable style={{ ...muted(c), fontSize: 12, lineHeight: 17 }}>
+        ? <Text accessibilityLabel={`Stop: ${wait.stop.kind}; ${wait.stop.reason}; ${wait.stop.detail}`} selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>
           {wait.detail} · {decisionAge(wait.stop.since)}
         </Text>
-        : <Text selectable style={{ ...muted(c), fontSize: 12, lineHeight: 17 }}>{wait.detail}</Text>)}
+        : <Text selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{wait.detail}</Text>)}
     </View>
     {holds.map(hold =>
-      <Text key={hold.kind} accessibilityLabel={`${hold.kind} hold: ${hold.holder}, ${hold.reason}`} style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 17 }}>
+      <Text key={hold.kind} accessibilityLabel={`${hold.kind} hold: ${hold.holder}, ${hold.reason}`} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>
         {hold.kind === "dispatch" ? "Dispatch" : "Merge"} held by {hold.holder} · {hold.reason} · {hold.since ? decisionAge(hold.since) : "age not recorded"}
       </Text>)}
     {task.budget && budgetNeedsAttention(task.budget) && <BudgetBars budget={task.budget} c={c} />}
-    {(progress.round || progress.verdict) && <View style={{ gap: 2 }}>
-      {progress.round && <Text style={{ color: c.foreground, fontSize: 12, fontWeight: "600" }}>{progress.round}</Text>}
-      {progress.verdict && <Text accessibilityLabel={`Latest verdict: ${progress.verdict}`} style={{ ...muted(c), fontSize: 12 }}>{progress.verdict}</Text>}
+    {(progress.round || progress.verdict) && <View style={{ gap: space.xxs / 2 }}>
+      {progress.round && <Text style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>{progress.round}</Text>}
+      {progress.verdict && <Text accessibilityLabel={`Latest verdict: ${progress.verdict}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{progress.verdict}</Text>}
     </View>}
     <CheckTickRow ticks={ticks} c={c} />
-    {report && <View style={{ gap: 5, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 9 }}>
-      <Text style={{ ...muted(c), fontSize: 10, textTransform: "uppercase" }}>Latest</Text>
+    {report && <View style={{ gap: space.xxs, borderTopWidth: 1, borderTopColor: c.border, paddingTop: space.xs }}>
+      <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, textTransform: "uppercase" }}>Latest</Text>
       <LatestReportRow report={report} c={c} />
     </View>}
   </DetailSection>;
@@ -125,9 +126,9 @@ export function PendingQuestions({ agentId, hostId, runs, onAnswered, c }: { age
     return native === agentId ? "worker" : "thread";
   };
   return <DetailSection title="Waiting for your answer" c={c}>
-    <Text style={{ ...muted(c), fontSize: 12 }}>Answer here or in the question pill on the thread; both resolve the same native question.</Text>
-    {requests.map(({ agentId: askerId, request }) => <View key={`${askerId}:${request.id}`} style={{ gap: 6 }}>
-      <Text style={{ ...muted(c), fontSize: 11 }}>{asker(askerId)} asked</Text>
+    <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Answer here or in the question pill on the thread; both resolve the same native question.</Text>
+    {requests.map(({ agentId: askerId, request }) => <View key={`${askerId}:${request.id}`} style={{ gap: space.xs }}>
+      <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{asker(askerId)} asked</Text>
       <NativeQuestionAnswer agentId={askerId} request={request} onAnswered={onAnswered} c={c} />
     </View>)}
   </DetailSection>;
@@ -192,17 +193,17 @@ export function EventRow({ event, c }: { event: { id?: number; taskId?: string; 
   const actor = eventActor(event.detail);
   const when = new Date(event.at).toLocaleString();
   const long = event.detail.length > 180;
-  return <View accessibilityLabel={`${kind}, actor ${actor}, ${when}`} style={{ gap: 3, borderBottomColor: c.border, borderBottomWidth: 1, paddingBottom: 8 }}>
-    <Text style={{ color: c.foreground, fontSize: 13, fontWeight: "600" }}>{kind}</Text>
-    <Text style={{ ...muted(c), fontSize: 11 }}>{actor} · {when}</Text>
-    <Text selectable style={{ color: c.foreground, fontSize: 12 }}>{long ? `${event.detail.slice(0, 180)}…` : event.detail || kind}</Text>
+  return <View accessibilityLabel={`${kind}, actor ${actor}, ${when}`} style={{ gap: space.xxs, borderBottomColor: c.border, borderBottomWidth: 1, paddingBottom: space.xs }}>
+    <Text style={{ color: c.foreground, fontSize: typeScale.body.fontSize, fontWeight: "600" }}>{kind}</Text>
+    <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{actor} · {when}</Text>
+    <Text selectable style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}>{long ? `${event.detail.slice(0, 180)}…` : event.detail || kind}</Text>
     <RawRecords label={`Original event${event.id === undefined ? "" : ` ${event.id}`}`} c={c}>
-      <Text selectable accessibilityLabel="Original event kind" style={{ color: c.foreground, fontSize: 12 }}>{event.kind}</Text>
-      <Text selectable accessibilityLabel="Original event actor" style={{ color: c.foreground, fontSize: 12 }}>Actor · {actor}</Text>
-      <Text selectable accessibilityLabel="Original event time" style={{ color: c.foreground, fontSize: 12 }}>{event.at}</Text>
-      {event.id !== undefined && <Text selectable accessibilityLabel="Original event ID" style={{ color: c.foreground, fontSize: 12 }}>Event ID · {event.id}</Text>}
-      {event.taskId && <Text selectable accessibilityLabel="Original event task ID" style={{ color: c.foreground, fontSize: 12 }}>Task ID · {event.taskId}</Text>}
-      <Text selectable accessibilityLabel="Complete original event detail" style={{ color: c.foreground, fontSize: 12 }}>{event.detail || "No detail recorded"}</Text>
+      <Text selectable accessibilityLabel="Original event kind" style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}>{event.kind}</Text>
+      <Text selectable accessibilityLabel="Original event actor" style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}>Actor · {actor}</Text>
+      <Text selectable accessibilityLabel="Original event time" style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}>{event.at}</Text>
+      {event.id !== undefined && <Text selectable accessibilityLabel="Original event ID" style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}>Event ID · {event.id}</Text>}
+      {event.taskId && <Text selectable accessibilityLabel="Original event task ID" style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}>Task ID · {event.taskId}</Text>}
+      <Text selectable accessibilityLabel="Complete original event detail" style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}>{event.detail || "No detail recorded"}</Text>
     </RawRecords>
   </View>;
 }
@@ -214,12 +215,12 @@ const taskDetailTabLabels: ReadonlyArray<readonly [TaskDetailTab, string]> = [
 
 export function TaskDetailTabs({ tab, onSelect, needsAttention, compact, c }: { tab: TaskDetailTab; onSelect: (tab: TaskDetailTab) => void; needsAttention: boolean; compact: boolean; c: Colors }) {
   return <View accessibilityRole="tablist" accessibilityLabel="Task detail sections"
-    style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, borderBottomWidth: 1, borderBottomColor: c.border, paddingHorizontal: compact ? 12 : 16, paddingVertical: 8 }}>
+    style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs, borderBottomWidth: 1, borderBottomColor: c.border, paddingHorizontal: compact ? space.sm : space.md, paddingVertical: space.xs }}>
     {taskDetailTabLabels.map(([value, label]) => <Pressable key={value} accessibilityRole="tab"
       accessibilityLabel={label} accessibilityState={{ selected: tab === value }} onPress={() => onSelect(value)}
-      style={{ minHeight: 44, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 7, borderWidth: 1, borderColor: tab === value ? c.accent : c.border, backgroundColor: tab === value ? c.surface2 : c.surface1 }}>
-      <Text style={{ color: tab === value ? c.foreground : c.foregroundMuted, fontSize: 12, fontWeight: tab === value ? "600" : "400" }}>{label}</Text>
-      {value === "overview" && needsAttention && <Text style={{ color: c.statusWarning, fontSize: 10, fontWeight: "600" }}>Needs attention</Text>}
+      style={{ minHeight: 44, flexDirection: "row", alignItems: "center", gap: space.xs, paddingHorizontal: space.sm, paddingVertical: space.xs, borderRadius: radius.control, borderWidth: 1, borderColor: tab === value ? c.accent : c.border, backgroundColor: tab === value ? c.surface2 : c.surface1 }}>
+      <Text style={{ color: tab === value ? c.foreground : c.foregroundMuted, fontSize: typeScale.metadata.fontSize, fontWeight: tab === value ? "600" : "400" }}>{label}</Text>
+      {value === "overview" && needsAttention && <Text style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>Needs attention</Text>}
     </Pressable>)}
   </View>;
 }
@@ -235,7 +236,7 @@ export function TechnicalActivityEvents({ events, c }: { events: Array<{ id: num
 /** One run: its role, state and result, with its thread when the host can open it. */
 export function RunRow({ run, c, openThread }: { run: Run; c: Colors; openThread?: () => void }) {
   return <View style={{ ...row, justifyContent: "space-between" }}>
-    <Text selectable style={{ ...muted(c), fontSize: 12, flexShrink: 1 }}>
+    <Text selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>
       {run.role} · {run.status} · {run.profile?.name ?? "Assigned thread"} · {run.completion?.status ?? (run.idleSince && !run.released ? "Missing result" : "Awaiting result")}
     </Text>
     {openThread && <Button small c={c} text="Open thread" label={`Open ${run.role} thread`} onPress={openThread} />}
@@ -249,14 +250,14 @@ export function MessageRow({ message, taskId, c }: { message: api.AgentMessageRe
   const statusColor = message.status === "delivered" ? c.statusSuccess : message.status === "expired" ? c.statusDanger : c.statusWarning;
   const deliveryLabel = message.status === "delivered" ? "Delivered" : message.status === "expired" ? "Not delivered · expired before delivery" : message.status === "uncertain" ? "Delivery unknown · awaiting review" : "Queued · waiting for the recipient\u2019s next turn";
   return (
-    <View style={{ gap: 3, borderBottomColor: c.border, borderBottomWidth: 1, paddingBottom: 8 }}>
-      <Text style={{ ...muted(c), fontSize: 11 }}>
+    <View style={{ gap: space.xxs, borderBottomColor: c.border, borderBottomWidth: 1, paddingBottom: space.xs }}>
+      <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
         {new Date(message.createdAt).toLocaleString()} · {sent ? "sent to" : "received from"} {counterpart} ({sent ? message.toRole : message.fromRole}){message.fromProject ? ` · ${message.fromProject}` : ""}
       </Text>
-      <Text accessibilityLabel={`Delivery ${deliveryLabel}`} style={{ ...muted(c), fontSize: 11, color: statusColor }}>
+      <Text accessibilityLabel={`Delivery ${deliveryLabel}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, color: statusColor }}>
         {deliveryLabel}{message.error ? ` · last note: ${message.error}` : ""}
       </Text>
-      <Text selectable style={{ color: c.foreground, fontSize: 12 }}>{message.text}</Text>
+      <Text selectable style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}>{message.text}</Text>
     </View>
   );
 }
@@ -264,15 +265,15 @@ export function MessageRow({ message, taskId, c }: { message: api.AgentMessageRe
 /** Raw records behind one labelled disclosure: collapsed until asked for, never deleted. */
 export function RawRecords({ label, c, children }: { label: string; c: Colors; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
-  return <View style={{ gap: 8 }}>
+  return <View style={{ gap: space.xs }}>
     <Disclosure c={c} label={label} expanded={open} onToggle={() => setOpen(value => !value)} />
     {open && children}
   </View>;
 }
 
 export function DetailField({ label, value, c, compact }: { label: string; value: string; c: Colors; compact: boolean }) {
-  return <View style={{ gap: 2, minWidth: 0, flexGrow: 1, flexBasis: compact ? "100%" : 250 }}><Text style={{ ...muted(c), fontSize: 11 }}>{label}</Text>
-    <Text selectable style={{ color: c.foreground, fontSize: 12 }}>{value}</Text></View>;
+  return <View style={{ gap: space.xxs / 2, minWidth: 0, flexGrow: 1, flexBasis: compact ? "100%" : 250 }}><Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{label}</Text>
+    <Text selectable style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}>{value}</Text></View>;
 }
 /** A record dialog's last action result. */
 export type RecordNoticeValue = { kind: "ok" | "error"; text: string };
@@ -281,7 +282,7 @@ export type BoardAct = (fn: () => Promise<unknown>, into?: "board" | "record") =
 export function RecordNotice({ notice, c }: { notice: RecordNoticeValue | null; c: Colors }) {
   if (!notice) return null;
   return <Text accessibilityRole={notice.kind === "error" ? "alert" : undefined} accessibilityLabel={notice.kind === "error" ? "Record action error" : "Record action result"}
-    style={{ color: notice.kind === "error" ? c.statusDanger : c.foreground, fontSize: 12 }}>{notice.text}</Text>;
+    style={{ color: notice.kind === "error" ? c.statusDanger : c.foreground, fontSize: typeScale.metadata.fontSize }}>{notice.text}</Text>;
 }
 /** One-line truth for the task identity row: the recorded owner acceptance beside the reviewer verdict it kept. */
 function ownerAcceptanceLabel(record: NonNullable<Task["resolution"]["ownerAcceptances"]>[number]): string {

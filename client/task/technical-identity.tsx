@@ -5,6 +5,7 @@ import type { TaskNext, UiQueueState } from "../../shared/contracts";
 import { taskIdentityFields, RawRecords, DetailField } from "./parts";
 import { VerbReference, RoutingPolicyLines } from "./next-section";
 import type { TaskDetailRead } from "./task-dialog";
+import { type as typeScale, space } from "../design";
 
 export function TechnicalIdentity({ task, detailQuery, nextQuery, state, compact, c }: {
   task: TaskDetailRead["task"];
@@ -16,21 +17,21 @@ export function TechnicalIdentity({ task, detailQuery, nextQuery, state, compact
 }) {
   const taskSummaryStop = state?.tasks.find(item => item.id === task.id)?.stopRecord;
   return <>
-    {nextQuery.data?.workerDemandStep && <Text accessibilityLabel={`Worker demand ${nextQuery.data.workerDemandStep}`} style={{ ...muted(c), fontSize: 12 }}>Worker demand · {nextQuery.data.workerDemandStep}</Text>}
+    {nextQuery.data?.workerDemandStep && <Text accessibilityLabel={`Worker demand ${nextQuery.data.workerDemandStep}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Worker demand · {nextQuery.data.workerDemandStep}</Text>}
     {nextQuery.data && <RoutingPolicyLines policy={nextQuery.data.routingPolicy} c={c} />}
     {nextQuery.data && <VerbReference verbs={nextQuery.data.verbs} c={c} />}
     {taskSummaryStop && <DetailSection title="Stop details" c={c}>
-      <Text accessibilityLabel={`Stop category ${taskSummaryStop.reason}`} selectable style={{ ...muted(c), fontSize: 12 }}>Stop category · {taskSummaryStop.reason}</Text>
-      {taskSummaryStop.suggestedVerbs.length > 0 && <Text accessibilityLabel={`Suggested owner verbs ${taskSummaryStop.suggestedVerbs.join(", ")}`} selectable style={{ ...muted(c), fontSize: 12 }}>Suggested owner verbs · {taskSummaryStop.suggestedVerbs.join(", ")}</Text>}
+      <Text accessibilityLabel={`Stop category ${taskSummaryStop.reason}`} selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Stop category · {taskSummaryStop.reason}</Text>
+      {taskSummaryStop.suggestedVerbs.length > 0 && <Text accessibilityLabel={`Suggested owner verbs ${taskSummaryStop.suggestedVerbs.join(", ")}`} selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Suggested owner verbs · {taskSummaryStop.suggestedVerbs.join(", ")}</Text>}
     </DetailSection>}
     <DetailSection title="Task identity" c={c}>
-      <View style={{ ...row, alignItems: "flex-start", gap: 14 }}>
+      <View style={{ ...row, alignItems: "flex-start", gap: space.md }}>
         {taskIdentityFields(task).filter((field) => !field.raw).map((field) => (
           <DetailField key={field.label} label={field.label} value={field.value} c={c} compact={compact} />
         ))}
       </View>
       <RawRecords label="Raw IDs and records" c={c}>
-        <View style={{ ...row, alignItems: "flex-start", gap: 14 }}>
+        <View style={{ ...row, alignItems: "flex-start", gap: space.md }}>
           {taskIdentityFields(task).filter((field) => field.raw).map((field) => (
             <DetailField key={field.label} label={field.label} value={field.value} c={c} compact={compact} />
           ))}
@@ -43,7 +44,7 @@ export function TechnicalIdentity({ task, detailQuery, nextQuery, state, compact
           .length > 0 && (
           <Text
             selectable
-            style={{ ...muted(c), fontSize: 12 }}
+            style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
           >
             Automatic exact-identity replays{" "}
             {
@@ -59,8 +60,8 @@ export function TechnicalIdentity({ task, detailQuery, nextQuery, state, compact
           <View
             key={hook.id}
             style={{
-              gap: 4,
-              paddingBottom: 8,
+              gap: space.xxs,
+              paddingBottom: space.xs,
               borderBottomWidth: 1,
               borderBottomColor: c.border,
             }}
@@ -74,7 +75,7 @@ export function TechnicalIdentity({ task, detailQuery, nextQuery, state, compact
                 ].includes(hook.state)
                   ? c.statusWarning
                   : c.foreground,
-                fontSize: 13,
+                fontSize: typeScale.body.fontSize,
                 fontWeight: "600",
               }}
             >
@@ -142,7 +143,7 @@ export function TechnicalIdentity({ task, detailQuery, nextQuery, state, compact
                   color: hook.error
                     ? c.statusWarning
                     : c.foregroundMuted,
-                  fontSize: 12,
+                  fontSize: typeScale.metadata.fontSize,
                 }}
               >
                 {hook.error || hook.summary}

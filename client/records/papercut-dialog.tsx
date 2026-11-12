@@ -8,6 +8,7 @@ import { type CapabilityLevel, type Papercut } from "../../shared/contracts";
 import { operationStateLabel } from "../../shared/operations";
 import { DetailField, RecordNotice, type BoardAct, type RecordNoticeValue } from "../task/parts";
 import { ModalAction, RecordModal } from "./record-modal";
+import { type as typeScale, space } from "../design";
 
 const papercutPromoteReason = (cut: Papercut) => cut.state === "open" ? undefined : cut.state === "promoted" ? "Already promoted" : "Papercut is closed";
 const papercutCloseReason = (cut: Papercut) => cut.state === "closed" ? "Already closed" : undefined;
@@ -36,7 +37,7 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
       onClose={onClose}
       eyebrow={
         papercutDetail ? (
-          <Text style={{ ...muted(c), fontSize: 12 }}>
+          <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
             {papercutDetail.state} · {papercutDetail.repository.origin}
           </Text>
         ) : undefined
@@ -48,7 +49,7 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
       {papercutDetailQuery.error && (
         <Text
           accessibilityRole="alert"
-          style={{ color: c.statusDanger, fontSize: 12 }}
+          style={{ color: c.statusDanger, fontSize: typeScale.metadata.fontSize }}
         >
           {String(papercutDetailQuery.error)}
         </Text>
@@ -150,8 +151,8 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
                   selectable
                   style={{
                     color: c.foreground,
-                    fontSize: 13,
-                    lineHeight: 19,
+                    fontSize: typeScale.body.fontSize,
+                    lineHeight: typeScale.body.lineHeight,
                   }}
                 >
                   {papercutDetail.happened}
@@ -162,8 +163,8 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
                   selectable
                   style={{
                     color: c.foreground,
-                    fontSize: 13,
-                    lineHeight: 19,
+                    fontSize: typeScale.body.fontSize,
+                    lineHeight: typeScale.body.lineHeight,
                   }}
                 >
                   {papercutDetail.impact || "None"}
@@ -174,8 +175,8 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
                   selectable
                   style={{
                     color: c.foreground,
-                    fontSize: 13,
-                    lineHeight: 19,
+                    fontSize: typeScale.body.fontSize,
+                    lineHeight: typeScale.body.lineHeight,
                   }}
                 >
                   {papercutDetail.fix || "None"}
@@ -183,7 +184,7 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
               </DetailSection>
               <DetailSection c={c}>
                 <View
-                  style={{ ...row, alignItems: "flex-start", gap: 14 }}
+                  style={{ ...row, alignItems: "flex-start", gap: space.md }}
                 >
                   <DetailField
                     label="Area"
@@ -271,8 +272,8 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
                   />
                 </View>
                 {papercutDetail.state === "open" && (
-                  <View style={{ gap: 6, paddingTop: 4 }}>
-                    <Text style={{ ...muted(c), fontSize: 11 }}>
+                  <View style={{ gap: space.xs, paddingTop: space.xxs }}>
+                    <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
                       Complexity for the promoted task (sets how capable
                       a model each run needs)
                     </Text>
@@ -299,8 +300,8 @@ export function PapercutDialog({ id: openPapercutId, compact, busy, act, recordN
                     </View>
                   </View>
                 )}
-                <View style={{ gap: 6, paddingTop: 4 }}>
-                  <Text style={{ ...muted(c), fontSize: 11 }}>
+                <View style={{ gap: space.xs, paddingTop: space.xxs }}>
+                  <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
                     Close note
                   </Text>
                   <TextInput

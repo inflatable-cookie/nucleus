@@ -8,6 +8,7 @@ import { Text, View } from "react-native";
 import { Button, muted, row, type Colors } from "./controls";
 import { qaFenceText } from "../shared/qa-fence";
 import type { QaFence, QaInventoryItem } from "../shared/contracts";
+import { space, type as typeScale } from "./design";
 
 /** The current time, re-read every 15 s so the countdown moves between board refreshes. */
 function useNow(intervalMs = 15_000): number {
@@ -23,16 +24,16 @@ export function QaFenceNotice({ fence, inventory, onClear, busy = false, c }: {
 }) {
   const now = useNow();
   if (Date.parse(fence.until) <= now) return null;
-  return <View accessibilityLabel="QA admission fence" style={{ gap: 6 }}>
+  return <View accessibilityLabel="QA admission fence" style={{ gap: space.xs }}>
     <View style={{ ...row, flexWrap: "wrap" }}>
-      <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: 12, flexShrink: 1 }}>{qaFenceText(fence, now)}</Text>
+      <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{qaFenceText(fence, now)}</Text>
       {onClear && <Button small c={c} text="Clear fence" label="Clear the QA admission fence" disabled={busy} onPress={onClear} />}
     </View>
-    {inventory && <View accessibilityLabel="Unsettled QA inventory" style={{ gap: 2 }}>
-      <Text style={{ ...muted(c), fontSize: 12 }}>{inventory.length
+    {inventory && <View accessibilityLabel="Unsettled QA inventory" style={{ gap: space.xxs / 2 }}>
+      <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{inventory.length
         ? `${inventory.length} unsettled QA item${inventory.length === 1 ? "" : "s"}. Swap a shared tool only once this list is empty.`
         : "No QA is unsettled."} The fence covers project QA only, not task validation or Effigy client runs.</Text>
-      {inventory.map(item => <Text key={`${item.kind}:${item.id}`} style={{ ...muted(c), fontSize: 12 }}>
+      {inventory.map(item => <Text key={`${item.kind}:${item.id}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
         {KIND_LABELS[item.kind]} {item.id.slice(0, 12)} · {item.repository || "unknown repository"} · {item.state} · {item.detail}</Text>)}
     </View>}
   </View>;

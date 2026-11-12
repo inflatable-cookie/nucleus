@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Pressable, View, type ViewStyle } from "react-native";
 import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { touchSlop, type Colors } from "../../../client/design";
+import { touchSlop, type Colors, space } from "../../../client/design";
 import {
   PressureRing,
   USAGE_REFRESH_MS,
@@ -144,7 +144,7 @@ export function UsageRings({
   return (
     <View
       accessibilityLabel="Nucleus subscription usage"
-      style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+      style={{ flexDirection: "row", alignItems: "center", gap: space.xxs }}
     >
       {subscriptions.map((subscription) => (
         <UsageRailRing

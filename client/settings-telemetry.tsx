@@ -3,7 +3,7 @@ import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc, Icon } from "./shell";
 import { Button, DetailSection, Disclosure, DropdownSelect, FieldCaption, LabelHelp, controlFrame, controlText, muted, row, type Colors } from "./controls";
-import { control, space } from "./design";
+import { control, space, radius, type as typeScale, overlay } from "./design";
 import * as api from "../shared/contracts";
 import { formatTelemetryDuration, STAGE_META, type TelemetrySnapshot } from "../shared/telemetry";
 import { Metric } from "./telemetry-parts";
@@ -13,12 +13,12 @@ function ProjectFilter({ projects, value, onChange, c }: { projects: { path: str
   return <View style={{ minWidth: 210, maxWidth: "100%", position: "relative", zIndex: open ? 20 : 0 }}>
     <Pressable accessibilityRole="button" accessibilityLabel={`Project filter, ${label}`} accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)}
       style={{ ...controlFrame(c, { focused: open }), flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.xs }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 7, minWidth: 0 }}><Icon name="Folder" size={14} color={value ? c.accent : c.foregroundMuted} />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs, minWidth: 0 }}><Icon name="Folder" size={14} color={value ? c.accent : c.foregroundMuted} />
         <Text numberOfLines={1} style={{ ...controlText(c), flexShrink: 1 }}>{label}</Text></View>
       <Icon name={open ? "ChevronUp" : "ChevronDown"} size={14} color={c.foregroundMuted} />
     </Pressable>
-    {open && <ScrollView accessibilityRole="menu" nestedScrollEnabled style={{ position: "absolute", top: control.height + space.xxs, left: 0, right: 0, maxHeight: 320, borderWidth: 1, borderColor: c.border, borderRadius: 7, backgroundColor: c.surface1,
-      shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
+    {open && <ScrollView accessibilityRole="menu" nestedScrollEnabled style={{ position: "absolute", top: control.height + space.xxs, left: 0, right: 0, maxHeight: 320, borderWidth: 1, borderColor: c.border, borderRadius: radius.control, backgroundColor: c.surface1,
+      shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
       {[{ path: "", name: "All projects" }, ...projects].map(project => <Pressable key={project.path || "all"} accessibilityRole="menuitem" accessibilityLabel={`Project: ${project.name}`} accessibilityState={{ selected: value === project.path }}
         onPress={() => { onChange(project.path); setOpen(false); }} style={{ minHeight: control.height, flexDirection: "row", alignItems: "center", gap: space.xs, paddingHorizontal: control.paddingX, backgroundColor: value === project.path ? c.surface2 : c.surface1 }}>
         <Icon name={value === project.path ? "Check" : "Folder"} size={14} color={value === project.path ? c.accent : c.foregroundMuted} />
@@ -29,16 +29,16 @@ function ProjectFilter({ projects, value, onChange, c }: { projects: { path: str
 }
 function HeadlineMetric({label,category,c}:{label:string;category:{taskCount:number;factCount:number;rate:number|null};c:Colors}) {
   const share=category.rate===null?"—":`${Math.round(category.rate*100)}%`;
-  return <View style={{gap:2,minWidth:140}}><Text style={{...muted(c),fontSize:10,textTransform:"uppercase"}}>{label}</Text>
-    <Text style={{color:c.foreground,fontSize:15,fontWeight:"600"}}>{share} <Text style={{...muted(c),fontSize:11}}>· {category.taskCount} {category.taskCount===1?"task":"tasks"}</Text></Text>
-    <Text style={{...muted(c),fontSize:10}}>{category.factCount} {category.factCount===1?"fact":"facts"}</Text></View>;
+  return <View style={{gap:space.xxs / 2,minWidth:140}}><Text style={{...muted(c),fontSize:typeScale.metadata.fontSize,textTransform:"uppercase"}}>{label}</Text>
+    <Text style={{color:c.foreground,fontSize:typeScale.section.fontSize,fontWeight:"600"}}>{share} <Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>· {category.taskCount} {category.taskCount===1?"task":"tasks"}</Text></Text>
+    <Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>{category.factCount} {category.factCount===1?"fact":"facts"}</Text></View>;
 }
 function ReviewerCalibrationSection({group,c}:{group:TelemetrySnapshot["groups"][number];c:Colors}) {
   const calibration=group.reviewerCalibration;
   const rate=(value:number|null)=>value===null?"—":`${Math.round(value*100)}%`;
-  return <View accessibilityLabel={`Reviewer calibration for ${group.label}`} style={{gap:6}}>
+  return <View accessibilityLabel={`Reviewer calibration for ${group.label}`} style={{gap:space.xs}}>
     <LabelHelp c={c} label="Reviewer calibration" text="Evidence, not quality scores. Reviewer dimensions stay separate from worker routing." />
-    <View style={{...row,gap:20,alignItems:"flex-start"}}>
+    <View style={{...row,gap:space.lg,alignItems:"flex-start"}}>
       <Metric c={c} label="Verdicts" value={`${calibration.verdicts}`} mutedValue={calibration.verdicts===0}/>
       <Metric c={c} label="Approved / changes" value={`${calibration.approved} / ${calibration.changesRequired}`}/>
       <Metric c={c} label="Revision returns" value={`${calibration.revisionRounds} · ${rate(calibration.revisionReturnRate)}`}/>
@@ -47,8 +47,8 @@ function ReviewerCalibrationSection({group,c}:{group:TelemetrySnapshot["groups"]
       <Metric c={c} label="Post-merge incidents" value={`${calibration.postMergeIncidents}`} mutedValue={calibration.postMergeIncidents===0}/>
     </View>
     <LabelHelp c={c} label={`${calibration.postMergeIncidents} post-merge incidents`} text={`${calibration.postMergeSemanticIncidents} semantic · ${calibration.postMergeOperationalIncidents} operational. Rates count distinct exact-head verdicts and rounds only, so they stay at or under one verdict; ${calibration.partialVerdicts} of ${calibration.verdicts} verdicts lack the exact-head or reviewer edge and stay out of the denominators${calibration.partialRevisionRounds?` · ${calibration.partialRevisionRounds} revision rounds reconstruct partially`:""}. A round resolves only when the next recorded verdict is an accepted re-review.`} />
-    {calibration.reviewers.map(reviewer=><Text key={reviewer.key} style={{...muted(c),fontSize:11}}>Reviewer · {reviewer.label} · {reviewer.provider??"unknown provider"}{reviewer.model?` / ${reviewer.model}`:""}{reviewer.profileGroup?` / ${reviewer.profileGroup}`:""} · verdicts {reviewer.verdicts} ({reviewer.approved} approved, {reviewer.changesRequired} changes required) · revision rounds {reviewer.revisionRounds} · resolved {reviewer.resolvedRounds} · refusals {reviewer.preMergeRefusals} · post-merge incidents {reviewer.postMergeIncidents}</Text>)}
-    {calibration.omittedReviewers > 0 && <Text style={{...muted(c),fontSize:11}}>{calibration.omittedReviewers} reviewer rows omitted; filter to inspect a reviewer.</Text>}
+    {calibration.reviewers.map(reviewer=><Text key={reviewer.key} style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>Reviewer · {reviewer.label} · {reviewer.provider??"unknown provider"}{reviewer.model?` / ${reviewer.model}`:""}{reviewer.profileGroup?` / ${reviewer.profileGroup}`:""} · verdicts {reviewer.verdicts} ({reviewer.approved} approved, {reviewer.changesRequired} changes required) · revision rounds {reviewer.revisionRounds} · resolved {reviewer.resolvedRounds} · refusals {reviewer.preMergeRefusals} · post-merge incidents {reviewer.postMergeIncidents}</Text>)}
+    {calibration.omittedReviewers > 0 && <Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>{calibration.omittedReviewers} reviewer rows omitted; filter to inspect a reviewer.</Text>}
   </View>;
 }
 
@@ -57,15 +57,15 @@ function TaskControlSection({controls,c}:{controls:TelemetrySnapshot["controls"]
   const rate=(value:number|null)=>value===null?"—":`${Math.round(value*100)}%`;
   const total=(side:typeof controls.owner)=>side.applied+side.refused;
   return <DetailSection title="Task controls" c={c}>
-    <View accessibilityLabel="Task control outcomes" style={{...row,gap:20,alignItems:"flex-start"}}>
+    <View accessibilityLabel="Task control outcomes" style={{...row,gap:space.lg,alignItems:"flex-start"}}>
       <Metric c={c} label="Owner applied / refused" value={`${controls.owner.applied} / ${controls.owner.refused}`} mutedValue={total(controls.owner)===0}/>
       <Metric c={c} label="Owner refusal rate" value={rate(controls.owner.refusalRate)}/>
       <Metric c={c} label="Coordinator applied / refused" value={`${controls.coordinator.applied} / ${controls.coordinator.refused}`} mutedValue={total(controls.coordinator)===0}/>
       <Metric c={c} label="Coordinator refusal rate" value={rate(controls.coordinator.refusalRate)}/>
     </View>
     <LabelHelp c={c} label={`Last ${controls.windowDays} day${controls.windowDays===1?"":"s"}`} text="Every owner control and coordinator action. Outcomes are kept 30 days. Target: coordinator refusals under 10%." />
-    {controls.byAction.length>0&&<Text style={{...muted(c),fontSize:11}}>{controls.byAction.map(item=>`${item.source==="owner"?"Owner":"Coordinator"} ${item.action.replaceAll("_"," ")} ${item.applied}/${item.refused}`).join(" · ")}</Text>}
-    {controls.topRefusals.map(item=><Text key={`${item.source}-${item.action}-${item.reason}`} selectable style={{...muted(c),fontSize:11}}>Refused · {item.source} · {item.action.replaceAll("_"," ")} · {item.count} · {item.reason}</Text>)}
+    {controls.byAction.length>0&&<Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>{controls.byAction.map(item=>`${item.source==="owner"?"Owner":"Coordinator"} ${item.action.replaceAll("_"," ")} ${item.applied}/${item.refused}`).join(" · ")}</Text>}
+    {controls.topRefusals.map(item=><Text key={`${item.source}-${item.action}-${item.reason}`} selectable style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>Refused · {item.source} · {item.action.replaceAll("_"," ")} · {item.count} · {item.reason}</Text>)}
   </DetailSection>;
 }
 
@@ -89,11 +89,11 @@ function TelemetryPanel({data,c,compact,repoPath,setRepoPath,window,setWindow,gr
   const reviewerProviderOptions=[{value:"",label:"All reviewer providers"},...(data?.reviewerProviders??[]).map(value=>({value,label:value}))];
   const reviewerProfileOptions=[{value:"",label:"All reviewer profiles"},...(data?.reviewerProfiles??[]).map(value=>({value,label:value}))];
   const reviewerProfileGroupOptions=[{value:"",label:"All reviewer groups"},...(data?.reviewerProfileGroups??[]).map(value=>({value,label:value}))];
-  return <ScrollView style={{flex:1,minHeight:0}} contentContainerStyle={{gap:12,paddingBottom:20}}>
+  return <ScrollView style={{flex:1,minHeight:0}} contentContainerStyle={{gap:space.sm,paddingBottom:space.lg}}>
     <View style={{...row,alignItems:"flex-start"}}><ProjectFilter projects={projects} value={repoPath} onChange={setRepoPath} c={c}/>
       <View style={{...row,flex:1}}>{(["24h","7d","30d","90d","all"] as const).map(value=><Button key={value} small c={c} text={value} selected={window===value} onPress={()=>setWindow(value)}/>)}</View></View>
     <Disclosure c={c} label="More filters" expanded={advanced} onToggle={() => setAdvanced(!advanced)} />
-    {advanced && <View style={{...row,alignItems:"flex-start",gap:12,zIndex:10}}>
+    {advanced && <View style={{...row,alignItems:"flex-start",gap:space.sm,zIndex:10}}>
       <DropdownSelect c={c} label="Group results" value={groupBy} options={groupOptions} onChange={value=>setGroupBy(value as typeof groupBy)} minWidth={180}/>
       <DropdownSelect c={c} label="Scope" value={scope} options={scopeOptions} onChange={setScope}/>
       <DropdownSelect c={c} label="Worker profile group" value={profileGroup} options={profileGroupOptions} onChange={setProfileGroup} minWidth={190}/>
@@ -106,33 +106,33 @@ function TelemetryPanel({data,c,compact,repoPath,setRepoPath,window,setWindow,gr
       <View style={{gap:space.xxs,minWidth:260}}><FieldCaption c={c} text="Cohort created after"/><TextInput accessibilityLabel="Cohort created after" value={createdAfter} onChangeText={setCreatedAfter} placeholder="ISO timestamp with timezone" placeholderTextColor={c.foregroundMuted} autoCapitalize="none" autoCorrect={false} style={{...controlFrame(c,{invalid:Boolean(createdAfter)&&Number.isNaN(Date.parse(createdAfter))}),...controlText(c)}}/></View>
     </View>}
     {createdAfter && Number.isNaN(Date.parse(createdAfter)) && <Text accessibilityRole="alert" style={{color:c.statusWarning}}>Enter a valid date and time for the cohort filter.</Text>}
-    <Text style={{...muted(c),fontSize:12}}>{data ? `${data.matchingTasks} matching tasks` : "Loading telemetry…"}</Text>
+    <Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>{data ? `${data.matchingTasks} matching tasks` : "Loading telemetry…"}</Text>
     {data && <Disclosure c={c} label="Task control history and refusal reasons" expanded={controlsOpen} onToggle={() => setControlsOpen(!controlsOpen)} />}
     {data && controlsOpen && <TaskControlSection controls={data.controls} c={c}/>}
-    {data && (data.omittedGroups > 0 || data.truncatedDimensions.length > 0) && <Text style={{...muted(c),fontSize:12}}>Showing up to 100 groups and filter values. {data.omittedGroups} groups omitted; filter by repository or use a narrower window for detail.</Text>}
+    {data && (data.omittedGroups > 0 || data.truncatedDimensions.length > 0) && <Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>Showing up to 100 groups and filter values. {data.omittedGroups} groups omitted; filter by repository or use a narrower window for detail.</Text>}
     {data?.groups.map(group=><DetailSection key={group.key} title={group.label} c={c}>
-      <View style={{...row,gap:20,alignItems:"flex-start"}}>
+      <View style={{...row,gap:space.lg,alignItems:"flex-start"}}>
         <Metric c={c} label="Tasks" value={String(group.taskCount)}/>
         <Metric c={c} label="Finished" value={group.completionRate===null?"Not available":`${Math.round(group.completionRate*100)}%`}/>
         <Metric c={c} label="Needed help" value={group.interventionRate===null?"Not available":`${Math.round(group.interventionRate*100)}%`}/>
       </View>
       <Disclosure c={c} label="Technical detail" expanded={technical} onToggle={() => setTechnical(!technical)} />
       {technical && <>
-      <View style={{...row,gap:20,alignItems:"flex-start"}}>
+      <View style={{...row,gap:space.lg,alignItems:"flex-start"}}>
       <Metric c={c} label="Tasks" value={String(group.taskCount)}/><Metric c={c} label="Completed" value={group.completionRate===null?"—":`${Math.round(group.completionRate*100)}%`}/><Metric c={c} label="Intervention" value={group.interventionRate===null?"—":`${Math.round(group.interventionRate*100)}%`}/>
       <Metric c={c} label="Total p50 / p95" value={group.total.p50Ms===null?"—":`${formatTelemetryDuration(group.total.p50Ms)} / ${formatTelemetryDuration(group.total.p95Ms??0)}`}/><Metric c={c} label="Wait p50 / p95" value={group.waiting.p50Ms===null?"—":`${formatTelemetryDuration(group.waiting.p50Ms)} / ${formatTelemetryDuration(group.waiting.p95Ms??0)}`}/><Metric c={c} label="Active p50 / p95" value={group.active.p50Ms===null?"—":`${formatTelemetryDuration(group.active.p50Ms)} / ${formatTelemetryDuration(group.active.p95Ms??0)}`}/></View>
-      <View accessibilityLabel={`Headline categories for ${group.label}`} style={{...row,gap:20,alignItems:"flex-start"}}>
+      <View accessibilityLabel={`Headline categories for ${group.label}`} style={{...row,gap:space.lg,alignItems:"flex-start"}}>
         <HeadlineMetric c={c} label="Delivery exceptions" category={group.headline.deliveryExceptions}/>
         <HeadlineMetric c={c} label="Semantic review" category={group.headline.semanticReview}/>
         <HeadlineMetric c={c} label="Operator administration" category={group.headline.operatorAdministration}/></View>
       <LabelHelp c={c} label="Headline categories" text="Each counts tasks with at least one fact of that class; a task may appear in more than one. Raw counters and the legacy intervention rate still include every overlapping fact." />
-      <Text style={{...muted(c),fontSize:11}}>{group.evidence === "exact" ? "Exact transition evidence" : `${group.total.partialCount}/${group.total.count} tasks use partial historical reconstruction`}</Text>
-      <View style={{gap:5}}>{group.stages.map(stage=><View key={stage.stage} style={{...row,flexWrap:"nowrap",justifyContent:"space-between",paddingVertical:4,borderBottomWidth:1,borderBottomColor:c.border}}><Text style={{color:c.foreground,fontSize:12,flex:1}}>{STAGE_META[stage.stage].label}{stage.supplemental?" · nested":""}</Text><Text style={{...muted(c),fontSize:11}}>{stage.count} · p50 {stage.p50Ms===null?"—":formatTelemetryDuration(stage.p50Ms)} · p95 {stage.p95Ms===null?"—":formatTelemetryDuration(stage.p95Ms)}{stage.partialCount?` · ${stage.partialCount} partial`:""}</Text></View>)}</View>
-      <Text style={{...muted(c),fontSize:12}}>Recoveries {group.interventions.recoveryRuns} · hook retries {group.interventions.hookRetries} · hook holds {group.interventions.hookHolds} · automatic hook replays {group.interventions.automaticHookReplays} · prospective-merge hooks {group.interventions.prospectiveMergeHooks} · stale candidates {group.interventions.staleCandidateRebuilds} · review revisions {group.interventions.revisions} · administrative revisions {group.interventions.administrativeRevisions} · replacements {group.interventions.replacements} · escalations {group.interventions.escalations}</Text>
-      <Text style={{...muted(c),fontSize:12}}>Closeout authority · repository hook {group.closeoutAuthorities.repositoryHook} · agent {group.closeoutAuthorities.agent} · pending {group.closeoutAuthorities.pending} · unavailable history {group.closeoutAuthorities.none}</Text>
-      {group.qaAdmission.validations>0&&<View accessibilityLabel={`Nucleus scheduler validation telemetry for ${group.label}`} style={{gap:5}}>
-        <Text style={{color:c.foreground,fontSize:12,fontWeight:'600'}}>Nucleus scheduler validation telemetry · {group.qaAdmission.validations} validation{group.qaAdmission.validations===1?"":"s"}</Text>
-        <View style={{...row,gap:20,alignItems:"flex-start"}}>
+      <Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>{group.evidence === "exact" ? "Exact transition evidence" : `${group.total.partialCount}/${group.total.count} tasks use partial historical reconstruction`}</Text>
+      <View style={{gap:space.xxs}}>{group.stages.map(stage=><View key={stage.stage} style={{...row,flexWrap:"nowrap",justifyContent:"space-between",paddingVertical:space.xxs,borderBottomWidth:1,borderBottomColor:c.border}}><Text style={{color:c.foreground,fontSize:typeScale.metadata.fontSize,flex:1}}>{STAGE_META[stage.stage].label}{stage.supplemental?" · nested":""}</Text><Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>{stage.count} · p50 {stage.p50Ms===null?"—":formatTelemetryDuration(stage.p50Ms)} · p95 {stage.p95Ms===null?"—":formatTelemetryDuration(stage.p95Ms)}{stage.partialCount?` · ${stage.partialCount} partial`:""}</Text></View>)}</View>
+      <Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>Recoveries {group.interventions.recoveryRuns} · hook retries {group.interventions.hookRetries} · hook holds {group.interventions.hookHolds} · automatic hook replays {group.interventions.automaticHookReplays} · prospective-merge hooks {group.interventions.prospectiveMergeHooks} · stale candidates {group.interventions.staleCandidateRebuilds} · review revisions {group.interventions.revisions} · administrative revisions {group.interventions.administrativeRevisions} · replacements {group.interventions.replacements} · escalations {group.interventions.escalations}</Text>
+      <Text style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>Closeout authority · repository hook {group.closeoutAuthorities.repositoryHook} · agent {group.closeoutAuthorities.agent} · pending {group.closeoutAuthorities.pending} · unavailable history {group.closeoutAuthorities.none}</Text>
+      {group.qaAdmission.validations>0&&<View accessibilityLabel={`Nucleus scheduler validation telemetry for ${group.label}`} style={{gap:space.xxs}}>
+        <Text style={{color:c.foreground,fontSize:typeScale.metadata.fontSize,fontWeight:'600'}}>Nucleus scheduler validation telemetry · {group.qaAdmission.validations} validation{group.qaAdmission.validations===1?"":"s"}</Text>
+        <View style={{...row,gap:space.lg,alignItems:"flex-start"}}>
           <Metric c={c} label="queue wait p50 / p95" value={group.qaAdmission.queueWaitMs.p50Ms===null?"—":`${formatTelemetryDuration(group.qaAdmission.queueWaitMs.p50Ms)} / ${formatTelemetryDuration(group.qaAdmission.queueWaitMs.p95Ms??0)}`}/>
           <Metric c={c} label="Wall p50 / p95" value={group.qaAdmission.wallMs.p50Ms===null?"—":`${formatTelemetryDuration(group.qaAdmission.wallMs.p50Ms)} / ${formatTelemetryDuration(group.qaAdmission.wallMs.p95Ms??0)}`}/>
           <Metric c={c} label="CPU p50" value={group.qaAdmission.cpuMs.p50Ms===null?"—":formatTelemetryDuration(group.qaAdmission.cpuMs.p50Ms)}/>
@@ -141,8 +141,8 @@ function TelemetryPanel({data,c,compact,repoPath,setRepoPath,window,setWindow,gr
       </View>}
       <ReviewerCalibrationSection group={group} c={c}/>
       <LabelHelp c={c} label={`Shadow review ${data?.shadowPlan.enabled?"on":"off"}`} text={`Experiment, non-authoritative and read-only: one shadow per sampled task, daily cap ${data?.shadowPlan.dailyCap??5}, sample rate at most ${Math.round((data?.shadowPlan.maxSampleRate??0.1)*100)}%. Enabling needs a separate operator decision.`} />
-      {group.interventions.recoveries.map(item=><Text key={`${item.targetRole}-${item.provider}-${item.profileGroup}-${item.status}-${item.cause}`} style={{...muted(c),fontSize:11}}>Recovery · {item.targetRole} · {item.provider??"unknown provider"}{item.profileGroup?` / ${item.profileGroup}`:""} · {item.status} · {item.cause.replaceAll("_"," ")} · {item.count}</Text>)}
-      {group.interventions.incidents.map(item=><Text key={`${item.role}-${item.provider}-${item.profileGroup}-${item.cause}`} style={{...muted(c),fontSize:11}}>Incident · {item.role} · {item.provider??"unknown provider"}{item.profileGroup?` / ${item.profileGroup}`:""} · {item.cause.replaceAll("_"," ")} · {item.count}</Text>)}
+      {group.interventions.recoveries.map(item=><Text key={`${item.targetRole}-${item.provider}-${item.profileGroup}-${item.status}-${item.cause}`} style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>Recovery · {item.targetRole} · {item.provider??"unknown provider"}{item.profileGroup?` / ${item.profileGroup}`:""} · {item.status} · {item.cause.replaceAll("_"," ")} · {item.count}</Text>)}
+      {group.interventions.incidents.map(item=><Text key={`${item.role}-${item.provider}-${item.profileGroup}-${item.cause}`} style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>Incident · {item.role} · {item.provider??"unknown provider"}{item.profileGroup?` / ${item.profileGroup}`:""} · {item.cause.replaceAll("_"," ")} · {item.count}</Text>)}
       </>}
     </DetailSection>)}
     {data&&!data.groups.length&&<Text style={muted(c)}>No task activity matches these filters.</Text>}
@@ -224,9 +224,9 @@ export function SettingsTelemetry({c, compact}: {c: Colors; compact: boolean}) {
     enabled: true,
     refetchInterval: false,
   });
-  if (telemetryQuery.error && !telemetryQuery.data) return <View style={{gap: 8}}><Text accessibilityRole="alert" style={{color:c.statusDanger}}>Could not load telemetry: {String(telemetryQuery.error)}</Text><Button small c={c} text="Retry" label="Retry loading telemetry" onPress={() => void telemetryQuery.refetch()} /></View>;
+  if (telemetryQuery.error && !telemetryQuery.data) return <View style={{gap: space.xs}}><Text accessibilityRole="alert" style={{color:c.statusDanger}}>Could not load telemetry: {String(telemetryQuery.error)}</Text><Button small c={c} text="Retry" label="Retry loading telemetry" onPress={() => void telemetryQuery.refetch()} /></View>;
   return <View style={{flex:1, minHeight:0}}>
-    {telemetryQuery.error && <View style={{gap:8}}><Text accessibilityRole="alert" style={{color:c.statusWarning}}>Telemetry refresh failed; showing the last result: {String(telemetryQuery.error)}</Text><Button small c={c} text="Retry" label="Retry refreshing telemetry" onPress={() => void telemetryQuery.refetch()} /></View>}
+    {telemetryQuery.error && <View style={{gap:space.xs}}><Text accessibilityRole="alert" style={{color:c.statusWarning}}>Telemetry refresh failed; showing the last result: {String(telemetryQuery.error)}</Text><Button small c={c} text="Retry" label="Retry refreshing telemetry" onPress={() => void telemetryQuery.refetch()} /></View>}
         <TelemetryPanel
           data={telemetryQuery.data}
           c={c}

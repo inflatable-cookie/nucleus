@@ -1,11 +1,12 @@
 import React from "react";
 import { Text, View } from "react-native";
 import { Button, Dialog, muted, type Colors } from "../controls";
+import { space, type as typeScale } from "../design";
 
 export function ModalAction({ text, reason, busy, disabled, danger, onPress, c }: { text: string; reason?: string; busy: boolean; disabled?: boolean; danger?: boolean; onPress: () => void; c: Colors }) {
-  return <View style={{ gap: 4 }}>
+  return <View style={{ gap: space.xxs }}>
     <Button small c={c} text={text} danger={danger} disabled={busy || disabled || Boolean(reason)} onPress={onPress} />
-    {reason ? <Text style={{ ...muted(c), fontSize: 11 }}>{reason}</Text> : null}
+    {reason ? <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{reason}</Text> : null}
   </View>;
 }
 export function RecordModal({ label, title, eyebrow, compact, c, onClose, children }: { label: string; title: string; eyebrow?: React.ReactNode; compact: boolean; c: Colors; onClose: () => void; children: React.ReactNode }) {

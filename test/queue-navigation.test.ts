@@ -23,7 +23,7 @@ test("navigation exposes Tasks, Planning, QA runs and Usage; the Lanes destinati
 
 test('Tasks shows the Pipeline with no Lanes switch; no Lanes tab remains', () => {
   assert.doesNotMatch(ui, /LanesSwitch/);
-  assert.match(ui, /tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: 12, zIndex: 0 \}\}>\s*<PipelineBoard /);
+  assert.match(ui, /tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space.sm, zIndex: 0 \}\}>\s*<PipelineBoard /);
   assert.doesNotMatch(ui, /tab === "lanes"/);
   assert.doesNotMatch(ui, /accessibilityLabel="Board mode"/);
   assert.doesNotMatch(ui, /text="Status"/);

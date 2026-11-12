@@ -6,14 +6,15 @@ import { Button, DetailSection, Field, muted, type Colors } from "../controls";
 import * as api from "../../shared/contracts";
 import { lowValueActivityKinds, EventRow, TechnicalActivityEvents, MessageRow, type BoardAct } from "./parts";
 import type { TaskDetailRead } from "./task-dialog";
+import { space, type as typeScale } from "../design";
 
 /** The Messages tab: messages between this task and related workers or reviewers. */
 export function MessagesTab({ task, detailQuery, c }: { task: TaskDetailRead["task"]; detailQuery: UseQueryResult<TaskDetailRead>; c: Colors }) {
-  return <View style={{ gap: 12 }}>
+  return <View style={{ gap: space.sm }}>
     <DetailSection c={c}>
       {(detailQuery.data?.messages.length ?? 0) >= 50 && <Text style={muted(c)}>Showing the newest 50 messages, newest first.</Text>}
       {(detailQuery.data?.messages ?? []).length === 0 && (
-        <Text style={{...muted(c), fontSize: 12}}>No messages yet. Messages between this task and related workers or reviewers appear here. They carry information only and never change a task.</Text>
+        <Text style={{...muted(c), fontSize: typeScale.metadata.fontSize}}>No messages yet. Messages between this task and related workers or reviewers appear here. They carry information only and never change a task.</Text>
       )}
       {detailQuery.data?.messages.map((message) => (
         <MessageRow key={message.id} message={message} taskId={task.id} c={c} />
@@ -26,7 +27,7 @@ export function MessagesTab({ task, detailQuery, c }: { task: TaskDetailRead["ta
 export function ActivityTab({ task, drafts, detailQuery, busy, act, c }: { task: TaskDetailRead["task"]; detailQuery: UseQueryResult<TaskDetailRead>; busy: boolean; act: BoardAct; drafts: TaskDrafts; c: Colors }) {
   const setTask = useRpc(api.taskControl);
   const [coordinationNote, setCoordinationNote] = useTaskDraft(drafts, "coordinationNote", "");
-  return <View style={{ gap: 12 }}>
+  return <View style={{ gap: space.sm }}>
     <DetailSection title="Recorded events" c={c}>
       {detailQuery.data?.events.length === 0 && <Text style={muted(c)}>No events recorded for this task yet.</Text>}
       {Boolean(detailQuery.data?.events.length) && (detailQuery.data?.events ?? []).every(event => lowValueActivityKinds.has(event.kind) || event.kind.endsWith("_duration")) && <Text style={muted(c)}>No human events in this window. Technical records are available below.</Text>}

@@ -121,7 +121,7 @@ export function BackupsPanel({ c, list, loading, loadError, health, inset, backU
     {helpOpen && <HelpPopover c={c} anchor={anchor} label="Backups" text={help} />}
     {newestAt && <Text accessibilityLabel="Backup summary" style={muted(c)}>{`Newest verified ${formatAge(ageMs)} · ${due}`}</Text>}
     {problem && <View style={{ ...row, flexWrap: "nowrap", alignItems: "flex-start" }}>
-      <View style={{ paddingTop: 2 }}><Icon name="TriangleAlert" size={16} color={r.warning} /></View>
+      <View style={{ paddingTop: space.xxs / 2 }}><Icon name="TriangleAlert" size={16} color={r.warning} /></View>
       <Text accessibilityRole="alert" selectable style={{ color: r.warning, fontSize: type.body.fontSize, lineHeight: type.body.lineHeight, flex: 1, minWidth: 0 }}>{problem}</Text>
     </View>}
     {!list && loading && <Text style={muted(c)}>Loading snapshots…</Text>}
@@ -162,7 +162,7 @@ function SnapshotLine({ c, item, now, wide, first }: { c: Colors; item: Snapshot
 /** A small neutral label; `strong` lifts it to the foreground so a manual snapshot reads apart from the tiers. */
 function Chip({ c, text, strong = false }: { c: Colors; text: string; strong?: boolean }) {
   const r = roles(c);
-  return <View style={{ paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, borderWidth: 1, borderColor: strong ? r.muted : r.border }}>
+  return <View style={{ paddingHorizontal: space.xs, paddingVertical: space.xxs / 2, borderRadius: radius.control, borderWidth: 1, borderColor: strong ? r.muted : r.border }}>
     <Text numberOfLines={1} style={{ color: strong ? r.foreground : r.muted, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>{text}</Text>
   </View>;
 }

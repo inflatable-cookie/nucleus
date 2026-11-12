@@ -9,6 +9,7 @@ import { decisionProjectLabel } from "../../shared/decision-project";
 import { decisionChoicePresentation } from "../board/cards";
 import { CollapsibleSection, RecordNotice, type BoardAct, type RecordNoticeValue } from "../task/parts";
 import { RecordModal } from "./record-modal";
+import { type as typeScale, space, radius } from "../design";
 
 /**
  * The decision dialog (Spec 032). It owns its answer, withdraw reason, pending option and
@@ -37,7 +38,7 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
       onClose={onClose}
       eyebrow={
         decisionDetail ? (
-          <Text style={{ ...muted(c), fontSize: 12 }}>
+          <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
             {decisionDetail.status}
             {decisionDetail.stale ? " · stale" : ""} ·{" "}
             {decisionProjectLabel(decisionDetail)} · asked by{" "}
@@ -53,7 +54,7 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
       {decisionDetailQuery.error && (
         <Text
           accessibilityRole="alert"
-          style={{ color: c.statusDanger, fontSize: 12 }}
+          style={{ color: c.statusDanger, fontSize: typeScale.metadata.fontSize }}
         >
           {String(decisionDetailQuery.error)}
         </Text>
@@ -64,7 +65,7 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
           {decisionDetail.stale && decisionDetail.status === "open" && (
             <Text
               accessibilityRole="alert"
-              style={{ color: c.statusWarning, fontSize: 12 }}
+              style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}
             >
               Stale: every linked task, lead and papercut has finished.
               The decision is never closed automatically; the asker or
@@ -76,8 +77,8 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
               selectable
               style={{
                 color: c.foreground,
-                fontSize: 13,
-                lineHeight: 19,
+                fontSize: typeScale.body.fontSize,
+                lineHeight: typeScale.body.lineHeight,
               }}
             >
               {decisionDetail.headline ?? decisionDetail.question}
@@ -89,8 +90,8 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
                 selectable
                 style={{
                   color: c.foreground,
-                  fontSize: 13,
-                  lineHeight: 19,
+                  fontSize: typeScale.body.fontSize,
+                  lineHeight: typeScale.body.lineHeight,
                 }}
               >
                 {decisionDetailsContent}
@@ -99,7 +100,7 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
           )}
           {(decisionDetailPresentation?.choices.length ?? 0) > 0 && (
             <DetailSection title="Choices" c={c}>
-              <View style={{ gap: 6 }}>
+              <View style={{ gap: space.xs }}>
                 {decisionDetailPresentation!.choices.map(choice => (
                   <Pressable key={choice.label} accessibilityRole="button"
                     accessibilityLabel={`Use option: ${choice.label}${choice.label === decisionDetailPresentation!.recommended ? ", recommended" : ""}`}
@@ -107,10 +108,10 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
                       if (decisionAnswerText.trim() && decisionAnswerText !== choice.label) setPendingDecisionOption(choice.label);
                       else setDecisionAnswerText(choice.label);
                     }}
-                    style={{ paddingHorizontal: 9, paddingVertical: 7, borderRadius: 8, borderWidth: 1,
+                    style={{ paddingHorizontal: space.xs, paddingVertical: space.xs, borderRadius: radius.card, borderWidth: 1,
                       borderColor: choice.label === decisionDetailPresentation!.recommended ? c.accent : c.border,
                       backgroundColor: c.surface2 }}>
-                    <Text style={{ color: c.foreground, fontSize: 12, lineHeight: 17 }}>
+                    <Text style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>
                       {choice.label === decisionDetailPresentation!.recommended ? "★ Recommended · " : ""}{choice.label}{choice.consequence ? ` — ${choice.consequence}` : ""}
                     </Text>
                   </Pressable>
@@ -128,13 +129,13 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
             </DetailSection>
           )}
           {(decisionDetail.overtakenBy?.length ?? 0) > 0 && (
-            <View style={{ gap: 6, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: c.statusWarning, backgroundColor: c.surface1 }}>
-              <Text style={{ color: c.statusWarning, fontWeight: "600", fontSize: 13 }}>Probably overtaken</Text>
+            <View style={{ gap: space.xs, padding: space.sm, borderRadius: radius.card, borderWidth: 1, borderColor: c.statusWarning, backgroundColor: c.surface1 }}>
+              <Text style={{ color: c.statusWarning, fontWeight: "600", fontSize: typeScale.body.fontSize }}>Probably overtaken</Text>
               {decisionDetail.overtakenBy!.map(ref => <Pressable key={`${ref.kind}:${ref.id}:${ref.sourceId ?? ""}`}
                 accessibilityRole="link"
                 accessibilityLabel={`View citing ${ref.kind === "brief_amendment" ? "brief amendment" : ref.kind === "planner_answer" ? "planner answer" : "answer"}: ${ref.label}`}
                 onPress={() => { if (ref.kind === "decision_answer") onOpenDecision(ref.id); else onOpenTask(ref.id); }}>
-                <Text style={{ color: c.accent, fontSize: 12, lineHeight: 18 }}>{ref.label}{ref.sourceId ? ` · ${ref.sourceId}` : ` · ${ref.id}`}</Text>
+                <Text style={{ color: c.accent, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{ref.label}{ref.sourceId ? ` · ${ref.sourceId}` : ` · ${ref.id}`}</Text>
               </Pressable>)}
               <Button small c={c} text="Withdraw as overtaken" disabled={busy} onPress={() => { const ref = decisionDetail.overtakenBy!.at(-1)!; void act(async () => {
                 await withdrawDecision({ id: decisionDetail.id, version: decisionDetail.version, reason: `Withdrawn after ${ref.label}`, withdrawnBy: "operator (board)" });
@@ -152,7 +153,7 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
               <Text
                 key={`task-${id}`}
                 selectable
-                style={{ ...muted(c), fontSize: 12 }}
+                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
               >
                 Task · {id}
               </Text>
@@ -161,7 +162,7 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
               <Text
                 key={`lead-${id}`}
                 selectable
-                style={{ ...muted(c), fontSize: 12 }}
+                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
               >
                 Lead · {id}
               </Text>
@@ -170,7 +171,7 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
               <Text
                 key={`cut-${id}`}
                 selectable
-                style={{ ...muted(c), fontSize: 12 }}
+                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
               >
                 Papercut · {id}
               </Text>
@@ -193,13 +194,13 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
                     selectable
                     style={{
                       color: c.foreground,
-                      fontSize: 13,
-                      lineHeight: 19,
+                      fontSize: typeScale.body.fontSize,
+                      lineHeight: typeScale.body.lineHeight,
                     }}
                   >
                     {decisionDetail.answer.text}
                   </Text>
-                  <Text style={{ ...muted(c), fontSize: 12 }}>
+                  <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
                     {decisionDetail.answer.answeredBy} ·{" "}
                     {new Date(
                       decisionDetail.answer.answeredAt,
@@ -216,13 +217,13 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
                     selectable
                     style={{
                       color: c.foreground,
-                      fontSize: 13,
-                      lineHeight: 19,
+                      fontSize: typeScale.body.fontSize,
+                      lineHeight: typeScale.body.lineHeight,
                     }}
                   >
                     {decisionDetail.withdrawal.reason}
                   </Text>
-                  <Text style={{ ...muted(c), fontSize: 12 }}>
+                  <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
                     {decisionDetail.withdrawal.withdrawnBy} ·{" "}
                     {new Date(
                       decisionDetail.withdrawal.withdrawnAt,
@@ -231,7 +232,7 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
                 </>
               )}
               {decisionDetail.supersededBy && (
-                <Text style={{ ...muted(c), fontSize: 12 }}>
+                <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
                   Replaced by {decisionDetail.supersededBy}
                 </Text>
               )}
@@ -253,8 +254,8 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
                   backgroundColor: c.surface0,
                   borderColor: c.border,
                   borderWidth: 1,
-                  borderRadius: 7,
-                  padding: 8,
+                  borderRadius: radius.control,
+                  padding: space.xs,
                 }}
               />
               <Button
@@ -278,11 +279,11 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
                   }, "record")
                 }
               />
-              <Text style={{ ...muted(c), fontSize: 11 }}>
+              <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
                 Answering carries operator authority and notifies the
                 asking agent's thread once per answer.
               </Text>
-              <Text style={{ ...muted(c), fontSize: 11 }}>
+              <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
                 Withdraw reason
               </Text>
               <TextInput

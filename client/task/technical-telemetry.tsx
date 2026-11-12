@@ -5,6 +5,7 @@ import { formatTelemetryDuration } from "../../shared/telemetry";
 import { ProjectQaFailures, ProjectQaLogWriteErrors, ProjectQaSteps } from "../planning-panel";
 import { ProjectValidationSection, CompactTelemetrySummary } from "../telemetry-parts";
 import type { TaskDetailRead, TaskQaRun } from "./task-dialog";
+import { type as typeScale } from "../design";
 
 export function TechnicalTelemetry({ task, detailQuery, taskQaRun, c }: {
   task: TaskDetailRead["task"];
@@ -24,7 +25,7 @@ export function TechnicalTelemetry({ task, detailQuery, taskQaRun, c }: {
     )}
     {taskQaRun && (
       <DetailSection title="Milestone QA" c={c}>
-        <Text style={{ color: c.foreground, fontSize: 12 }}>
+        <Text style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}>
           {taskQaRun.state}
           {taskQaRun.exitCode !== null
             ? ` · exit ${taskQaRun.exitCode}`
@@ -41,7 +42,7 @@ export function TechnicalTelemetry({ task, detailQuery, taskQaRun, c }: {
               ? " · waiting for QA capacity"
               : ""}
         </Text>
-        <Text style={{ ...muted(c), fontSize: 12 }}>
+        <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
           Base {taskQaRun.base.slice(0, 12)} ·{" "}
           {taskQaRun.stages && taskQaRun.stages.length > 1
             ? taskQaRun.stages
@@ -69,7 +70,7 @@ export function TechnicalTelemetry({ task, detailQuery, taskQaRun, c }: {
           <Text
             selectable
             accessibilityLabel="Milestone QA output tail"
-            style={{ ...muted(c), fontSize: 11 }}
+            style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
           >
             {taskQaRun.outputTail}
           </Text>
