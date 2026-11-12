@@ -1358,6 +1358,37 @@ test('exhausted worker is replaced once in the same workspace and stale callback
   await f.engine.wake();assert.equal(replacements,1);
  }finally{await f.close()}
 });
+test('required worker survives an RPC crash and waits for its provider before same-profile replacement',async()=>{
+ const f=fixture();try{
+  const task=f.add();f.store.update(task.id,{profileRequests:{worker:{profileId:profile.id,reason:'Required worker',required:true}}});
+  f.store.setMeta('paused',false);await f.engine.wake();const old=f.store.task(task.id);
+  f.store.setAvailability('test',JSON.stringify({group:'test',unavailable:true,reason:'Provider down',retryAt:null}));
+  f.adapter.verifyResume=async()=>{};
+  f.adapter.observe=async id=>({id,workspaceId:old.workspaceId,status:'error',active:false,permissions:false,error:'Pi RPC process is closed'});
+  f.adapter.createAgent=async t=>({id:'replacement',workspaceId:t.workspaceId});
+  await (f.engine as any).recoverExhaustedWorkers();
+  assert.equal(f.store.task(task.id).agentId,old.agentId);
+  assert.equal(f.store.task(task.id).resolution.stop?.reason,'provider_unavailable');
+  f.store.setAvailability('test',JSON.stringify({group:'test',unavailable:false,reason:'',retryAt:null}));
+  await (f.engine as any).recoverExhaustedWorkers();
+  assert.equal(f.store.task(task.id).agentId,'replacement');
+  assert.equal(f.store.task(task.id).profile?.id,profile.id);
+ }finally{await f.close()}
+});
+test('provider outage does not promote a fallback above worker demand',async()=>{
+ const f=fixture();try{
+  const strong={...profile,id:'strong',model:'strong'};f.engine.profiles=[profile,strong];
+  f.store.setMeta('pool',[{profileId:profile.id,enabled:true,group:'test',weight:1,capability:'medium'},
+    {profileId:strong.id,enabled:true,group:'strong',weight:1,capability:'very_high'}]);
+  const task=f.add();f.store.update(task.id,{complexity:'medium',preferredProfileId:profile.id});
+  f.store.setMeta('paused',false);await f.engine.wake();const old=f.store.task(task.id);
+  f.store.setAvailability('test',JSON.stringify({group:'test',unavailable:true,reason:'Provider down',retryAt:null}));
+  f.adapter.observe=async id=>({id,workspaceId:old.workspaceId,status:'error',active:false,permissions:false,error:'Pi RPC process is closed'});
+  await (f.engine as any).recoverExhaustedWorkers();
+  assert.equal(f.store.task(task.id).agentId,old.agentId);
+  assert.equal(f.store.task(task.id).resolution.stop?.reason,'provider_unavailable');
+ }finally{await f.close()}
+});
 test('a stopped callback-free worker fails over when its subscription group is operator-disabled',async()=>{
  const f=fixture();try{
   const second={...profile,id:'second',model:'second'};f.engine.profiles=[profile,second];

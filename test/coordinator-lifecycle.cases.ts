@@ -174,6 +174,17 @@ async function settle(f: ReturnType<typeof fixture>, passes = 2) {
   for (let pass = 0; pass < passes; pass++) { await f.engine.wake(); await f.engine.quiesce(); }
 }
 
+test('coordinator launches recorded during an outage do not spend the recovery bound', async () => {
+  const f=fixture(); try {
+    f.legacyRun(1);
+    f.legacyRun(2);
+    f.store.event(f.submitted.id,'telemetry_recovery',JSON.stringify({runId:'legacy-2',outage:true,work:taskWorkIdentity(f.current(),f.store)}));
+    assert.equal(unproductiveCoordinatorRuns(f.store,f.submitted.id),1);
+    f.legacyRun(3);
+    assert.equal(unproductiveCoordinatorRuns(f.store,f.submitted.id),2,'an outage does not reset earlier charged launches');
+  } finally { await f.close(); }
+});
+
 /**
  * A retained worker error on the PR: a stop the task's coordinator is asked
  * about. A reviewer checkpoint no longer is one, because Queue continues it

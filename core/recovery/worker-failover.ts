@@ -3,7 +3,8 @@ import type { Profile, Task } from "../../shared/contracts";
 import { formatAgentId } from '../../shared/agent-identity';
 import { WORKER_REPLACEMENT_CEILING, workerExclusionFor, workerProfileIsExcluded } from "../../shared/contracts";
 import { isTransportFailure } from "../../shared/transport";
-import { groupIsUnavailable, honouredWorkerThinking } from "../../shared/pool";
+import { demandRank, groupIsUnavailable, honouredWorkerThinking } from "../../shared/pool";
+import { runDemand } from "../../shared/demand";
 import { occupiesSlot } from "../dispatch/capacity";
 import type { Engine } from "../engine";
 import { isQuotaExhaustion, isRateLimitError, providerRetryAt, rateLimitCooldownData } from "./exhaustion";
@@ -121,18 +122,31 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
   const catalog = decideWorkerFailover({ stage: 'catalog', known: facts.catalogKnown() });
   if (catalog.kind !== 'continue') return catalog;
   const unavailable = facts.unavailableGroups();
-  const replacingErroredWorker=erroredWithoutTurn;
   const replacingStoppedRevision=task.failoverReason.startsWith(OPERATOR_STOPPED_REVISION_REMAP_REASON);
   const replacingStoppedWorker=task.failoverReason.startsWith(OPERATOR_STOPPED_WORKER_REMAP_REASON);
   const replacingRetainedWorker=task.failoverReason.startsWith(OPERATOR_RETAINED_WORKER_REPLACEMENT_REASON);
   const replacingReassignedWorker=task.failoverReason.startsWith(OPERATOR_ROLE_REASSIGNMENT_REASON);
-  const profiles = facts.profiles.filter(p=>!workerProfileIsExcluded(task,p.id)&&(!replacingErroredWorker&&!replacingStoppedRevision&&!replacingStoppedWorker&&!replacingRetainedWorker&&!replacingReassignedWorker||p.id!==task.profile?.id)&&!reviewerFiltersWorker(task.resolution.reviewerProfile, p));
   const requested=task.replacementProfile;
+  // An errored process is not evidence against its profile. Profile failures
+  // are represented by the durable exclusions that an owner can inspect/lift.
+  const profiles = facts.profiles.filter(p=>!workerProfileIsExcluded(task,p.id)
+    && (!(replacingStoppedRevision||replacingStoppedWorker||replacingRetainedWorker||replacingReassignedWorker)
+      || p.id!==task.profile?.id || requested?.profileId===p.id || erroredWithoutTurn)
+    && !reviewerFiltersWorker(task.resolution.reviewerProfile, p));
   // The replaced worker request keeps the worker's effective thinking level (review #547).
   // A pin on the worker's own requested profile keeps that request (its owner reason and thinking level).
   const ownRequest=requested&&task.profileRequests?.worker?.profileId===requested.profileId?task.profileRequests.worker:undefined;
   const replacementTask=requested?{...task,thinkingOptionId:honouredWorkerThinking(task,store.pool(),store.usageLevel()),preferredProfileId:requested.profileId,requirePreferred:true,profileRequests:{...task.profileRequests,worker:ownRequest?{...ownRequest,required:true}:{profileId:requested.profileId,reason:requested.reason,required:true}}}:task;
-  const selected = chooseProfile(replacementTask,profiles,store.pool(),store.counts(),unavailable,'worker',store.recentCounts(),store.usageLevel(), store.demandRoleOffsets());
+  const pool=store.pool();
+  const assignedGroup=task.profileGroup ?? pool.find(entry=>entry.profileId===task.profile?.id)?.group;
+  const outage=Boolean(assignedGroup && unavailable.has(assignedGroup));
+  const demand=runDemand(task.complexity,'worker',store.usageLevel(),store.demandRoleOffsets());
+  // An outage alone must not promote work to a stronger fallback. An explicit
+  // request is already subject to the normal route/sign-off rules.
+  const explicitlyRequested=requested?.profileId ?? task.profileRequests?.worker?.profileId;
+  const selectionPool=outage
+    ? pool.filter(entry=>entry.profileId===explicitlyRequested || demandRank(entry.capability ?? 'medium')<=demandRank(demand)) : pool;
+  const selected = chooseProfile(replacementTask,profiles,selectionPool,store.counts(),unavailable,'worker',store.recentCounts(),store.usageLevel(), store.demandRoleOffsets());
   if (!selected) {
     // Spec 036 durable continuation (also papercut bdd9307a): an
     // operator-accepted instruction is never dropped silently. When the
@@ -141,7 +155,7 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
     // recorded refused with the specific reason and the task parks in
     // needs_attention. Automatic exhaustion failover keeps retrying; an
     // operator decision parks visibly instead.
-    if (replacingRetainedWorker||replacingReassignedWorker) {
+    if ((replacingRetainedWorker||replacingReassignedWorker) && !outage) {
       const availability=store.db.prepare("SELECT data FROM availability").all().map(row=>{const entry=JSON.parse(String(row.data));return{group:String(entry.group),unavailable:groupIsUnavailable(entry),reason:String(entry.reason??''),retryAt:(entry.retryAt??null) as string|null};});
       const excludedProfiles=task.workerExclusions.filter(exclusion=>exclusion.profileId).map(exclusion=>exclusion.profileId);
       const cause=`${eligibilityReasons(replacementTask,profiles,store.pool(),availability,store.usageLevel(),facts.profiles)}${excludedProfiles.length?`; excluded profiles: ${[...new Set(excludedProfiles)].join(', ')}`:''}`;
@@ -150,7 +164,7 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
     // Type the stop from the eligibility result. Blocked only by an
     // unavailable group, failover owns the wait and retries each sweep;
     // otherwise only a routing change helps, so the owner verbs apply.
-    if(chooseProfile(replacementTask,profiles,store.pool(),store.counts(),new Set(),'worker',store.recentCounts(),store.usageLevel(), store.demandRoleOffsets())){
+    if(chooseProfile(replacementTask,profiles,pool,store.counts(),new Set(),'worker',store.recentCounts(),store.usageLevel(), store.demandRoleOffsets())){
       return decideWorkerFailover({ stage: 'unselected', instruction: false, alternate: true, cause: '' }) as WorkerFailoverDecision;
     }
     const availability=store.db.prepare("SELECT data FROM availability").all().map(row=>JSON.parse(String(row.data)));

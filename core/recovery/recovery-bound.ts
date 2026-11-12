@@ -36,13 +36,13 @@ export function taskWorkIdentity(t: Task, store: Pick<Store, 'runs'>): string {
 }
 
 /** Where each launched coordinator run recorded the work identity it was asked about, and where that launch sits in the event history. */
-const coordinatorLaunches = (store: Pick<Store, 'eventsAll'>, taskId: string): Map<string, { work: string | undefined; eventId: number }> => {
-  const launched = new Map<string, { work: string | undefined; eventId: number }>();
+const coordinatorLaunches = (store: Pick<Store, 'eventsAll'>, taskId: string): Map<string, { work: string | undefined; eventId: number; outage: boolean }> => {
+  const launched = new Map<string, { work: string | undefined; eventId: number; outage: boolean }>();
   for (const event of store.eventsAll(taskId)) {
     if (event.kind !== 'telemetry_recovery') continue;
     try {
-      const detail = JSON.parse(event.detail) as { runId?: string; work?: string };
-      if (detail.runId) launched.set(detail.runId, { work: typeof detail.work === 'string' ? detail.work : undefined, eventId: event.id });
+      const detail = JSON.parse(event.detail) as { runId?: string; work?: string; outage?: boolean };
+      if (detail.runId) launched.set(detail.runId, { work: typeof detail.work === 'string' ? detail.work : undefined, eventId: event.id, outage: detail.outage === true });
     } catch { /* a legacy launch detail names no work identity; its run is charged only at this head */ }
   }
   return launched;
@@ -138,6 +138,7 @@ export function unproductiveCoordinatorRuns(store: Store, taskId: string): numbe
   let charged = 0;
   for (const run of runs.reverse()) {
     const launch = launched.get(run.id);
+    if (launch?.outage) continue;
     if (!launch) {
       // No launch record at all: nothing dates it, so it cannot be shown to predate
       // the current work. Charge it while it stands at this exact head.

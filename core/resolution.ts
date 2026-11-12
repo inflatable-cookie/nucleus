@@ -268,7 +268,7 @@ export class Resolution {
     resolvePassedUnchangedCheckEscalation: (...args) => owner.resolvePassedUnchangedCheckEscalation(...args),
   }))(this));
   readonly origins = new OriginRouting(this);
-  readonly recovery = new Recovery(recoveryContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'idle', 'lease', 'onTaskHost', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
+  readonly recovery = new Recovery(recoveryContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'hostAvailable', 'idle', 'lease', 'onTaskHost', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
   readonly checkpoints = new Checkpoints(intakeContext(this, ['adapter', 'attention', 'hostAvailable', 'paused', 'store', 'withHost']));
   readonly stalls = new Stalls(recoveryContext(this, ['adapter', 'attention', 'host', 'onTaskHost', 'paused', 'profiles', 'recordStop', 'recovery', 'saveIncident', 'store', 'update', 'waiting']));
   readonly ownedTools = new OwnedTools(this);
