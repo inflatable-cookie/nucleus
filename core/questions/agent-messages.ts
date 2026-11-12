@@ -33,6 +33,8 @@ export const AGENT_MESSAGE_MAX_CHARS = 4000;
  */
 export const AGENT_MESSAGE_RATE_LIMIT = 20;
 export const AGENT_MESSAGE_RATE_WINDOW_MS = 3600_000;
+/** Keep tell responsive while allowing very fast host deliveries to be acknowledged inline. */
+export const AGENT_MESSAGE_INLINE_DELIVERY_MS = 2_000;
 
 export const AGENT_MESSAGE_ROLES = ["worker", "reviewer"] as const;
 /** Every role a message row can carry: a task's worker or reviewer, a planner ladder, or a named project agent. */
@@ -65,10 +67,10 @@ export const agentMessageSchema = z
 export type AgentMessageRequest = z.infer<typeof agentMessageSchema>;
 
 export type AgentMessageReceipt =
-  | { status: "delivered"; messageId: string; to: string; role: AgentMessageRole }
-  | { status: "queued"; messageId: string; to: string; role: AgentMessageRole; detail: string }
-  | { status: "uncertain"; messageId: string; to: string; role: AgentMessageRole; detail: string }
-  | { status: "expired"; messageId: string; to: string; role: AgentMessageRole; detail: string }
+  | { status: "delivered"; messageId: string; to: string; role: AgentMessageRole; recordedAt: string; deliveredAt: string }
+  | { status: "queued"; messageId: string; to: string; role: AgentMessageRole; recordedAt: string; detail: string }
+  | { status: "uncertain"; messageId: string; to: string; role: AgentMessageRole; recordedAt: string; detail: string }
+  | { status: "expired"; messageId: string; to: string; role: AgentMessageRole; recordedAt: string; detail: string }
   | { status: "duplicate"; messageId: string; detail: string };
 
 /** A planner or named-agent endpoint's store key, shared by its messages' `toTaskId` and its project's events. */
@@ -284,10 +286,40 @@ export class AgentMessages {
       store.event(toTaskId, "agent_message_received", `${record.id}: from ${sender.reference ?? sender.taskId} (${sender.role}); ${statusLine}`);
     });
     if (recipient.kind === "task") {
-      if (!identity!.live) return { status: "queued", messageId: record.id, to: label, role: recipient.role, detail: `${identity!.wait.charAt(0).toUpperCase()}${identity!.wait.slice(1)}; Nucleus will deliver it when the ${recipient.role}'s next turn starts.` };
-      return await this.deliverAgentMessage(store.task(recipient.task.id), record);
+      if (!identity!.live) return { status: "queued", messageId: record.id, to: label, role: recipient.role, recordedAt: record.createdAt, detail: `${identity!.wait.charAt(0).toUpperCase()}${identity!.wait.slice(1)}; Nucleus will deliver it when the ${recipient.role}'s next turn starts.` };
+      return await this.deliverWithinInlineWindow(record, label, recipient.role,
+        () => this.deliverAgentMessage(store.task(recipient.task.id), record));
     }
-    return await this.deliverThreadMessage(record);
+    return await this.deliverWithinInlineWindow(record, label, toRole,
+      () => this.deliverThreadMessage(record));
+  }
+
+  /** Start delivery now, but return the durable receipt after a short inline window. */
+  private async deliverWithinInlineWindow(
+    record: AgentMessageRecord,
+    label: string,
+    role: AgentMessageRole,
+    deliver: () => Promise<AgentMessageReceipt>,
+  ): Promise<AgentMessageReceipt> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const delivery = Promise.resolve().then(deliver);
+    const timeout = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), AGENT_MESSAGE_INLINE_DELIVERY_MS);
+      timer.unref?.();
+    });
+    try {
+      const receipt = await Promise.race([delivery, timeout]);
+      return receipt ?? {
+        status: "queued",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        detail: "Message recorded; delivery is still in progress. Retry the identical tell JSON to read its outcome; it will not be sent twice.",
+      };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /** Resolve a `tell` recipient from a task id, a `repo#number` reference, a bare number or `#number`. */
@@ -322,7 +354,7 @@ export class AgentMessages {
     const label = this.taskLabel(recipient);
     const role = record.toRole as "worker" | "reviewer";
     if (record.status !== "queued") return this.messageReceipt(recipient, role, record);
-    if (record.deliveryIntentAt && record.deliveryIntentState !== "refused") return { status: "uncertain", messageId: record.id, to: label, role, detail: "Delivery outcome is unknown; the recorded intent will not be resent." };
+    if (record.deliveryIntentAt && record.deliveryIntentState !== "refused") return { status: "uncertain", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "Delivery outcome is unknown; the recorded intent will not be resent." };
     let identity = this.messageRecipientIdentity(recipient, role);
     if (identity.live && identity.agentId && await this.resolution.plannerThreadGone(identity.agentId))
       identity = { ...identity, live: false, wait: "its thread is archived or gone" };
@@ -333,15 +365,15 @@ export class AgentMessages {
         store.event(record.fromTaskId, "agent_message_expired", `${record.id}: to ${label} (${role}); the recipient finished before delivery`);
         store.event(recipient.id, "agent_message_expired", `${record.id}: from ${record.fromReference ?? record.fromTaskId} (${record.fromRole}); the task finished before delivery`);
       });
-      return { status: "expired", messageId: record.id, to: label, role, detail: "The recipient task finished before delivery; the message expired." };
+      return { status: "expired", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "The recipient task finished before delivery; the message expired." };
     }
-    if (!identity.live || !identity.agentId) return { status: "queued", messageId: record.id, to: label, role, detail: `${identity.wait.charAt(0).toUpperCase()}${identity.wait.slice(1)}; Nucleus will deliver it when the ${role}'s next turn starts.` };
+    if (!identity.live || !identity.agentId) return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: `${identity.wait.charAt(0).toUpperCase()}${identity.wait.slice(1)}; Nucleus will deliver it when the ${role}'s next turn starts.` };
     const hostId = recipient.hostId;
-    if (record.toHostId && record.toHostId !== hostId) return { status: "queued", messageId: record.id, to: label, role, detail: "Waiting for the recorded recipient host." };
+    if (record.toHostId && record.toHostId !== hostId) return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "Waiting for the recorded recipient host." };
     if (!hostId || !this.resolution.withHost(hostId, () => this.resolution.hostAvailable(recipient)))
-      return { status: "queued", messageId: record.id, to: label, role, detail: hostId ? `Waiting for host ${hostId}.` : "Waiting for a proven recipient host." };
-    if (!this.resolution.withHost(hostId, () => this.adapter.notify)) return { status: "queued", messageId: record.id, to: label, role, detail: "The recipient host cannot deliver messages." };
-    if (this.deliveringMessages.has(record.id)) return { status: "queued", messageId: record.id, to: label, role, detail: "A delivery is already in flight." };
+      return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: hostId ? `Waiting for host ${hostId}.` : "Waiting for a proven recipient host." };
+    if (!this.resolution.withHost(hostId, () => this.adapter.notify)) return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "The recipient host cannot deliver messages." };
+    if (this.deliveringMessages.has(record.id)) return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "A delivery is already in flight." };
     this.deliveringMessages.add(record.id);
     const intent = { ...record, status: "uncertain" as const, deliveryIntentAt: now(), deliveryHostId: hostId, deliveryIntentState: "intent" as const };
     try {
@@ -356,7 +388,7 @@ export class AgentMessages {
         store.event(record.fromTaskId, "agent_message_delivered", `${record.id}: to ${label} (${role}); delivered`);
         store.event(recipient.id, "agent_message_delivered", `${record.id}: from ${record.fromReference ?? record.fromTaskId} (${record.fromRole}); delivered`);
       });
-      return { status: "delivered", messageId: record.id, to: label, role };
+      return { status: "delivered", messageId: record.id, to: label, role, recordedAt: record.createdAt, deliveredAt: delivered.deliveredAt! };
     } catch (error) {
       return this.failedSend(intent, label, role, error);
     } finally { this.deliveringMessages.delete(record.id); }
@@ -375,8 +407,8 @@ export class AgentMessages {
     const label = current.toReference ?? `project ${current.toProjectKey}`;
     const role = current.toRole;
     if (current.status !== "queued") return this.receiptOf(current, label);
-    if (current.deliveryIntentAt && current.deliveryIntentState !== "refused") return { status: "uncertain", messageId: current.id, to: label, role, detail: "Delivery outcome is unknown; the recorded intent will not be resent." };
-    if (this.deliveringMessages.has(current.id)) return { status: "queued", messageId: current.id, to: label, role, detail: "A delivery is already in flight." };
+    if (current.deliveryIntentAt && current.deliveryIntentState !== "refused") return { status: "uncertain", messageId: current.id, to: label, role, recordedAt: current.createdAt, detail: "Delivery outcome is unknown; the recorded intent will not be resent." };
+    if (this.deliveringMessages.has(current.id)) return { status: "queued", messageId: current.id, to: label, role, recordedAt: current.createdAt, detail: "A delivery is already in flight." };
     let candidates: Array<{ agentId: string; hostId?: string }>;
     try { candidates = await this.threadCandidates(current); }
     catch (error) {
@@ -387,9 +419,9 @@ export class AgentMessages {
           store.event(current.fromTaskId, "agent_message_expired", `${current.id}: to ${label} (${role}); ${detail}`);
           store.event(current.toTaskId, "agent_message_expired", `${current.id}: from ${current.fromReference ?? current.fromTaskId} (${current.fromRole}); ${detail}`);
         });
-        return { status: "expired", messageId: current.id, to: label, role, detail: `${detail}.` };
+        return { status: "expired", messageId: current.id, to: label, role, recordedAt: current.createdAt, detail: `${detail}.` };
       }
-      return { status: "queued", messageId: current.id, to: label, role, detail: error instanceof Error ? error.message : String(error) };
+      return { status: "queued", messageId: current.id, to: label, role, recordedAt: current.createdAt, detail: error instanceof Error ? error.message : String(error) };
     }
     for (const candidate of candidates) {
       const hostId = await this.liveThreadHost(candidate.agentId, candidate.hostId);
@@ -399,7 +431,7 @@ export class AgentMessages {
     const detail = current.toRole === "agent"
       ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
       : `No live planner for project ${current.toProjectKey}; the message waits in its inbox for the next live planner.`;
-    return { status: "queued", messageId: current.id, to: label, role, detail };
+    return { status: "queued", messageId: current.id, to: label, role, recordedAt: current.createdAt, detail };
   }
 
   /** The threads a planner or agent message may reach, in order; each is re-read at delivery, never trusted from the record. */
@@ -448,7 +480,7 @@ export class AgentMessages {
         store.event(record.fromTaskId, "agent_message_delivered", `${record.id}: to ${label} (${record.toRole}); delivered`);
         store.event(record.toTaskId, "agent_message_delivered", `${record.id}: from ${record.fromReference ?? record.fromTaskId} (${record.fromRole}); delivered`);
       });
-      return { status: "delivered", messageId: record.id, to: label, role: record.toRole };
+      return { status: "delivered", messageId: record.id, to: label, role: record.toRole, recordedAt: record.createdAt, deliveredAt: delivered.deliveredAt! };
     } catch (error) {
       return this.failedSend(intent, label, record.toRole, error);
     } finally { this.deliveringMessages.delete(record.id); }
@@ -461,7 +493,7 @@ export class AgentMessages {
     if (!this.stopped()) this.store.putMessage(refused
       ? { ...intent, status: "queued", deliveryIntentState: "refused", error: `delivery refused before send: ${detail}`.slice(0, 1000) }
       : { ...intent, error: `delivery outcome unknown: ${detail}`.slice(0, 1000) });
-    return { status: refused ? "queued" : "uncertain", messageId: intent.id, to: label, role, detail: refused ? `Delivery was refused before send (${detail}); it remains queued.` : `Delivery outcome is unknown (${detail}); the recorded intent will not be resent.` };
+    return { status: refused ? "queued" : "uncertain", messageId: intent.id, to: label, role, recordedAt: intent.createdAt, detail: refused ? `Delivery was refused before send (${detail}); it remains queued.` : `Delivery outcome is unknown (${detail}); the recorded intent will not be resent.` };
   }
 
   messageReceipt(recipient: Task, role: AgentMessageRole, record: AgentMessageRecord): AgentMessageReceipt {
@@ -469,10 +501,10 @@ export class AgentMessages {
   }
   /** The receipt a recorded message reports, for any recipient kind. */
   private receiptOf(record: AgentMessageRecord, label: string, role: AgentMessageRole = record.toRole): AgentMessageReceipt {
-    if (record.status === "delivered") return { status: "delivered", messageId: record.id, to: label, role };
-    if (record.status === "expired") return { status: "expired", messageId: record.id, to: label, role, detail: record.error || "The recipient finished before delivery; the message expired." };
-    if (record.deliveryIntentAt && record.deliveryIntentState !== "refused") return { status: "uncertain", messageId: record.id, to: label, role, detail: "Delivery outcome is unknown; the recorded intent will not be resent." };
-    return { status: "queued", messageId: record.id, to: label, role, detail: `${record.error ? `${record.error}; r` : "R"}etained queued for the ${role}'s next turn.` };
+    if (record.status === "delivered") return { status: "delivered", messageId: record.id, to: label, role, recordedAt: record.createdAt, deliveredAt: record.deliveredAt ?? record.createdAt };
+    if (record.status === "expired") return { status: "expired", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: record.error || "The recipient finished before delivery; the message expired." };
+    if (record.deliveryIntentAt && record.deliveryIntentState !== "refused") return { status: "uncertain", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "Delivery outcome is unknown; the recorded intent will not be resent." };
+    return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: `${record.error ? `${record.error}; r` : "R"}etained queued for the ${role}'s next turn.` };
   }
   taskLabel(task: Task): string { return task.reference ?? (task.number ? `#${formatTaskNumber(task.number)}` : task.id); }
   /**

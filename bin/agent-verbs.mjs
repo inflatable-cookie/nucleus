@@ -14,7 +14,7 @@ const ASK_CALLBACK_TIMEOUT_MS = 150_000;
 const TELL_CALLBACK_TIMEOUT_MS = 45_000;
 const VERBS = Object.freeze({
   ask: { route: '/ask', timeoutMs: ASK_CALLBACK_TIMEOUT_MS, timeoutMessage: 'Callback timed out; retry the same JSON to collect the question. Never re-ask as a new question.' },
-  tell: { route: '/message', timeoutMs: TELL_CALLBACK_TIMEOUT_MS, timeoutMessage: 'Message timed out; retry the same JSON' },
+  tell: { route: '/message', timeoutMs: TELL_CALLBACK_TIMEOUT_MS, timeoutMessage: 'Tell callback timed out; retrying the identical JSON returns the recorded outcome and never sends the message twice.' },
 });
 
 /** The run ticket this process was launched with, read only after the resolver accepted it. */

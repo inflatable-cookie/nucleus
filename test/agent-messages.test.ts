@@ -293,8 +293,10 @@ test("a worker message reaches a live recipient's thread labelled with the sende
     );
     const receipt = JSON.parse(
       String((result.content as { text: string }[])[0].text),
-    ) as { status: string; messageId: string; to: string; role: string };
+    ) as { status: string; messageId: string; to: string; role: string; recordedAt: string };
     assert.equal(receipt.status, "delivered");
+    assert.ok(receipt.recordedAt);
+    assert.ok(f.store.message(receipt.messageId)?.deliveredAt);
     assert.equal(receipt.to, f.recipient.reference);
     assert.equal(receipt.role, "worker");
     assert.equal(f.notified.length, 1);
@@ -338,6 +340,28 @@ test("a worker message reaches a live recipient's thread labelled with the sende
   } finally {
     await f.close();
   }
+});
+
+test("an uncertain tell retry returns the recorded outcome without a second send", async () => {
+  const f = await messageFixture();
+  try {
+    const resolution = f.engine.resolution as unknown as { adapter: Adapter };
+    resolution.adapter = {
+      ...resolution.adapter,
+      notify: async () => { throw new Error("host connection dropped after send began"); },
+    };
+    const args = { to: f.recipient.reference, text: "Check the recorded result." };
+    const first = await f.send(args);
+    const receipt = JSON.parse(String((first.content as { text: string }[])[0]!.text)) as { status: string; messageId: string; recordedAt: string };
+    assert.equal(receipt.status, "uncertain");
+    assert.ok(receipt.recordedAt);
+    const retry = await f.send(args);
+    const retryReceipt = JSON.parse(String((retry.content as { text: string }[])[0]!.text)) as { status: string; messageId: string };
+    assert.equal(retryReceipt.status, "uncertain");
+    assert.equal(retryReceipt.messageId, receipt.messageId);
+    assert.equal(f.store.messages(f.recipient.id).length, 1);
+    assert.equal(f.notified.length, 0);
+  } finally { await f.close(); }
 });
 
 test("a message to a recipient between runs is queued and delivered at its next turn", async () => {
