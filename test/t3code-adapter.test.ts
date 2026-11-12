@@ -78,13 +78,11 @@ test('worker thread titles use the shared task state title once per change', asy
   const created = await host.createAgent(spec('rename-title'));
   const task = { id: 'synthetic-task', number: 225, title: 'Synthetic role', held: false, hostId: host.hostId,
     workspaceId: created.workspaceId, agentId: created.id, phase: 'working' } as Task;
-  const titles = [
-    taskWorkspaceTitle(task),
-    taskWorkspaceTitle({ ...task, phase: 'awaiting_review' }),
-    taskWorkspaceTitle({ ...task, phase: 'merging' }),
-  ];
-  for (const title of titles) await host.setTaskWorkspaceTitle(task, title, `request-${title}`, false);
-  await host.setTaskWorkspaceTitle({ ...task, phase: 'merging' }, titles[2]!, `request-${titles[2]}`, false);
+  const states = ['working', 'awaiting_review', 'merging', 'working', 'awaiting_review', 'working'] as const;
+  const titles = states.map(phase => taskWorkspaceTitle({ ...task, phase }));
+  for (const [index, phase] of states.entries())
+    await host.setTaskWorkspaceTitle({ ...task, phase }, titles[index]!, `request-${index + 1}`, false);
+  await host.setTaskWorkspaceTitle(task, titles.at(-1)!, `request-${states.length}`, false);
   assert.deepEqual(server.commands.filter(command => command.type === 'thread.metadata.update').map(command => command.title), titles);
   const longTitle = taskWorkspaceTitle({ ...task, title: 'Long task '.repeat(100) });
   await host.setTaskWorkspaceTitle(task, longTitle, 'long-title', false);

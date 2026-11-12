@@ -198,9 +198,10 @@ Core derives the worker thread title with `taskWorkspaceTitle`, the same
 projection and cap used for Paseo workspace titles. It sends the current title through
 `thread.metadata.update`; support threads keep their task-number and role title.
 The core title projection coalesces queued changes and records failed writes on
-the task for sweep retry. Before retrying an uncertain T3 update, the adapter
-reads the thread title and settles the write if the desired title is already
-present.
+the task for sweep retry. Each title-change request has its own durable command
+identity, so returning to a prior state still updates the thread. Before
+retrying an uncertain T3 update, the adapter reads the thread title and settles
+the write if the desired title is already present.
 
 ## Operations and delivery
 

@@ -416,7 +416,7 @@ export class T3CodeHost implements Host {
     return capPaseoTitle(`${formatTaskNumber(taskNumber)}${titleRole ? ` ${titleRole}` : ''}: ${taskTitle}`);
   }
   /** The core title projection supplies the same phase-derived title used by Paseo. */
-  async setTaskWorkspaceTitle(task: Task, title: string, _requestId: string, _uncertain: boolean): Promise<void> {
+  async setTaskWorkspaceTitle(task: Task, title: string, requestId: string, _uncertain: boolean): Promise<void> {
     title = capPaseoTitle(title);
     const state = this.state.read();
     const threadId = task.agentId && state.agents[task.agentId]?.labels.task === task.id
@@ -425,7 +425,7 @@ export class T3CodeHost implements Host {
     if (!threadId) throw Error('Task worker thread is missing');
     const projection = await this.readProjection(threadId);
     if (projection.thread.archivedAt || projection.thread.deletedAt) return;
-    const key = identity('thread-title', canonical({ threadId, title }));
+    const key = identity('thread-title', canonical({ threadId, requestId }));
     if (projection.thread.title === title) {
       this.state.update(current => {
         const prior = current.intents[key];
