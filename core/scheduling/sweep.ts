@@ -28,7 +28,7 @@ const DEFERRED_SWEEP_EVERY = 5;
 const MAX_SWEEP_WINDOWS = 400;
 type DrainWaiter = { resolve: () => void; reject: (error: Error) => void };
 
-export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'inventoryHostMatches' | 'lastHookCleanupAt' | 'lifecycle' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepDeferred' | 'sweepDeferredCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'sweepTicks' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions'> };
+export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'inventoryHostMatches' | 'lastHookCleanupAt' | 'lifecycle' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepDeferred' | 'sweepDeferredCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'sweepTicks' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions' | 'settleBudgetClock'> };
 
 export class Sweep {
   /**
@@ -287,6 +287,10 @@ export class Sweep {
           visited.add(candidate.id);
           const task = this.engine.store.task(candidate.id);
           if (["done", "cancelled"].includes(task.phase)) continue;
+          // Spec 058 budgets (nucleus#1153): the wall clock pauses while the host, a
+          // workspace or a dispatch hold keeps the task from progress — including a
+          // task whose quantum this sweep cannot start at all.
+          this.engine.resolution.settleBudgetClock(task);
           reconciled.add(task.id);
           if (releasedTasks.has(task.id)) continue; // The release already queued this task.
           pending.push(boundQuantum(this.engine.scheduleTaskQuantum(task.id), () => this.recordQuantumOutage(task.id)));
@@ -325,6 +329,7 @@ export class Sweep {
           if (this.engine.stopped) return { fault: null, covered: false, visited };
           const task = this.engine.store.task(candidate.id);
           if (["done", "cancelled"].includes(task.phase)) continue;
+          this.engine.resolution.settleBudgetClock(task);
           reconciled.add(task.id);
           if (!releasedTasks.has(task.id)) await boundQuantum(this.engine.scheduleTaskQuantum(task.id), () => this.recordQuantumOutage(task.id));
         }

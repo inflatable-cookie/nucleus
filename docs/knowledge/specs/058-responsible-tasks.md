@@ -363,10 +363,30 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
   reached, so a run in flight finishes and nothing new starts. The task stops with
   `budget` as its stop reason and the detail names the limit. That detail is fixed for
   the pause, so waiting does not rewrite the stop.
+- **Always asks, always names its exit** (nucleus#1153). The pause asks its question
+  from the task's own pass, in every phase, as well as from the sweep's question step,
+  and the stop lists `extend_budget` in `suggestedVerbs` whatever the phase. A task
+  host that is offline (or a run carrying another host's identity) never silences it:
+  the question is recorded on the board instead, with the reason it is not on the
+  thread. Two T3 tasks sat 90 minutes at `awaiting_review` with `Budget reached`,
+  empty `suggestedVerbs` and no question at all.
 - **One question per pause.** The pause raises the same native operator question as
   the stops above, on the task's own thread, with the used and limit figures. The
   durable intent is the fence, so an interrupted observation is `operator_question_unknown`
   and is never resent. Only one open question per task.
+- **Wall time is the task's own work** (nucleus#1153). Each task quantum settles a
+  durable pause interval (`resolution.budgetClock`) while the task waits on a
+  Nucleus-side cause: a recorded `external_unavailable`, `workspace_unavailable`,
+  `route_unavailable` or `provider_unavailable` stop (a host-adapter refusal before a
+  send, a missing workspace, no runnable profile, a provider outage), an unresolved
+  `workspace_state` or `uncertain_delivery` incident (a pre-send refusal or a delivery
+  whose outcome is unknown), a dispatch hold, or a sweep `observation_outage` on its
+  lane. The interval closes when the task can make progress again, and its time is
+  subtracted from the wall figure. The paused
+  total is reported as `wallMs.pausedMs` on the detail and named on the budget's time
+  bar, and the transitions are durable `budget_clock_paused` / `budget_clock_resumed`
+  events. A budget pause, a merge hold, capacity queueing and the task's own
+  validation keep charging: they are the task's work or its own answer to give.
 - **Holds.** A dispatch hold suppresses the question because it blocks runs. A merge
   hold does not: it does not block runs and cannot leave a budget pause without an
   answer.

@@ -2280,7 +2280,24 @@ movement invalidates source approval and preserves the normal readiness gates.
   (one default increment), change the approach (the answer is the worker's next
   instruction, with the same increment) or stop and keep the work (owner `stop`).
   An interrupted observation is `operator_question_unknown` and is never resent. A
+  budget stop always names `extend_budget` in its `suggestedVerbs`, and its question
+  is raised from the task's own pass as well as the sweep's question step: a phase
+  that records the pause, a task host that is offline (the question then goes to the
+  board), or a support step that failed earlier in that sweep cannot leave it silent
+  (nucleus#1153).
   Every task is subject to the responsible budget.
+- Wall time charges the task's own work (nucleus#1153). Each task quantum settles
+  `resolution.budgetClock`: it opens an interval while the task waits on a
+  Nucleus-side cause — a recorded `external_unavailable`, `workspace_unavailable`,
+  `route_unavailable` or `provider_unavailable` stop, an unresolved
+  `workspace_state`/`uncertain_delivery` incident (a host-adapter pre-send refusal or
+  a delivery of unknown outcome), a dispatch hold (which blocks every run the task
+  could start), or a sweep `observation_outage` on its lane — and closes it when the
+  task can make progress again. Closed pauses are durable, recorded
+  as `budget_clock_paused`/`budget_clock_resumed` (and `observation_resumed`) events,
+  reported as `wallMs.pausedMs` on the detail and named on the budget's time bar, and
+  subtracted from the wall figure, so a defect never spends a task's budget. A budget
+  pause, a merge hold, capacity queueing and the task's own validation keep charging.
 - Any thread registers itself with `task.register` (Spec 058 slice 4): the worker
   is the calling thread, bound to its own live worktree, always responsible, with
   no planner, owner or coordinator. Identity comes from the authenticated thread,
