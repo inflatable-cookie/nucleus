@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { PoolEntry } from "../../shared/contracts";
+import type { PoolEntry, Profile } from "../../shared/contracts";
 import { availabilitySchema,demandRoleOffsetsSchema,poolSchema,routingGrantSchema,usageSettingSchema,type DemandRoleOffsets,type RoutingGrant,type RoutingPolicy,type Task,type UsageLevel,type UsageSetting,type UsageView } from "../../shared/contracts";
 import { DEMAND_ROLE_OFFSETS } from "../../shared/demand";
 import { nucleusProfileSchema,profileImportRecordSchema,providerMapSchema,type NucleusProfile,type ProfileImportRecord,type ProviderMap } from "../../shared/profiles";
@@ -75,9 +75,14 @@ export class StoreConfig {
     return next;
   }
 
-  /** Spec 052 diagnostics: the usage policy for the profiles this task's routing names, from fresh usage. */
-  routingPolicy(task: Task, at = Date.now()): RoutingPolicy {
-    return taskRoutingPolicy(task, this.pool(), this.usageView(at), this.availability(), at);
+  /**
+   * Spec 052 diagnostics: the usage policy for the profiles this task's routing
+   * names, from fresh usage. A caller that knows the task's host passes that
+   * host's routing profiles, so an ineligible-on-that-host profile carries its
+   * reason (nucleus#1143).
+   */
+  routingPolicy(task: Task, at = Date.now(), profiles: readonly Profile[] = []): RoutingPolicy {
+    return taskRoutingPolicy(task, this.pool(), this.usageView(at), this.availability(), at, profiles);
   }
 
   /** Spec 053: the host-wide role offsets, defaulting to worker 0, reviewer 0, coordinator −2. */

@@ -290,7 +290,7 @@ export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[]
  * task's own requests, preference and recorded runs, never the whole pool.
  * Read-only: no selection, gate or setting depends on it.
  */
-export function taskRoutingPolicy(task: Task, pool: readonly PoolEntry[], usage: UsageView, availability: readonly { group: string; unavailable: boolean; reason: string; retryAt: string | null }[], at = Date.now()): RoutingPolicy {
+export function taskRoutingPolicy(task: Task, pool: readonly PoolEntry[], usage: UsageView, availability: readonly { group: string; unavailable: boolean; reason: string; retryAt: string | null }[], at = Date.now(), profiles: readonly Profile[] = []): RoutingPolicy {
   const named: Array<{ role: Role; profileId: string; source: RoutePolicy["source"] }> = [];
   const add = (role: Role, profileId: string | null | undefined, source: RoutePolicy["source"]) => {
     if (profileId && !named.some(item => item.role === role && item.profileId === profileId)) named.push({ role, profileId, source });
@@ -304,8 +304,14 @@ export function taskRoutingPolicy(task: Task, pool: readonly PoolEntry[], usage:
   return { usage, scope: task.scope, profiles: named.map(({ role, profileId, source }) => {
     const entry = pool.find(item => item.profileId === profileId);
     const group = entry && availability.find(item => item.group === entry.group && groupIsUnavailable(item, at));
+    // The task host's own catalog is the availability answer when the caller
+    // passes it: a profile that host cannot run — an unreported runtime mode is
+    // the T3Code case (nucleus#1143) — is ineligible there with its reason
+    // named, so the board shows why instead of the launch refusing it.
+    const profile = entry && profiles.length ? profiles.find(candidate => candidate.id === profileId) : undefined;
     const gates = !entry ? ["not in the pool"] : [
       ...(!entry.enabled ? ["disabled in the pool"] : []),
+      ...(profile && !profile.available ? [`unavailable on this host: ${profile.problem}`] : []),
       ...(group ? [`group ${entry.group} unavailable${group.retryAt ? ` until ${group.retryAt}` : ""}`] : []),
     ];
     const requested = source === "request" ? task.profileRequests?.[role]?.signoff : undefined;

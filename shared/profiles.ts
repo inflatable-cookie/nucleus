@@ -189,7 +189,12 @@ export function profileAvailability(
   if (profile.modeId && profile.modeId !== "default" && !model.modes.some((mode) => mode.id === profile.modeId))
     return {
       available: false,
-      problem: "Configured runtime mode is not supported",
+      // Name the mode and the host's own list: a profile T3Code cannot run is
+      // ineligible with its reason visible, never silently changed at launch
+      // (nucleus#1143).
+      problem: `Configured runtime mode ${profile.modeId} is not one of this host's modes${
+        model.modes.length ? ` (${model.modes.map((mode) => mode.id).join(", ")})` : ""
+      }`,
       supportedThinking,
     };
   // A deferred read answers nothing about feature values: unknown, never

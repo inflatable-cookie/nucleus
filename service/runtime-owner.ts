@@ -553,7 +553,7 @@ export class QueueRuntime {
       const result = this.store.rekeyRepository(input);
       return { taskId: null, taskVersion: null, phase: null, number: null, reference: result.receipt.id };
     });
-    this.cachedTaskDetail = createTaskDetailCache(this.store, { slotAdmissionReason: task => this.engine.resolution.slotAdmissionReason(task, true), externalWait: task => this.engine.queuedExternalWait(task) });
+    this.cachedTaskDetail = createTaskDetailCache(this.store, { slotAdmissionReason: task => this.engine.resolution.slotAdmissionReason(task, true), externalWait: task => this.engine.queuedExternalWait(task), profiles: task => this.engine.profilesFor(task.hostId) });
     this.cachedTelemetrySnapshot = createTelemetrySnapshotCache(this.store);
     this.cachedUiSnapshotFacts = createUiSnapshotFactsCache(this.store, (tasks, runs) => this.engine.resolution.slotAdmissionReader(tasks, runs, true), () => this.hostRuns.liveRuns(),
       (nowMs) => this.store.qaBoardRuns(new Date(nowMs - QA_BOARD_PASS_FADE_MS).toISOString()), task => this.engine.queuedExternalWait(task), () => this.engine.queuedWaitSignature(), () => this.hostSession?.id || this.hostRegistry.known()[0]?.id || "unknown");
