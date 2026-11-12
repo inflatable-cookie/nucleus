@@ -214,6 +214,18 @@ test('a coordinator actually launched during a worker provider outage is not cha
   } finally { await f.close(); }
 });
 
+test('a coordinator launched during a catalog provider outage is not charged', async () => {
+  const f=fixture(); try {
+    f.store.update(f.submitted.id,{profile:{...worker,provider:'pi'}});
+    (f.engine as any).hostCatalogs.set('\u0000primary',{catalog:{providers:[{key:'pi',label:'Pi',available:false,problem:'Provider offline',models:[]}]},readAt:new Date().toISOString()});
+    const run=await workerErrorEpisode(f);
+    const launch=f.events('telemetry_recovery').find(event=>JSON.parse(event.detail).runId===run.id)!;
+    assert.equal(JSON.parse(launch.detail).outage,true);
+    assert.equal(unproductiveCoordinatorRuns(f.store,f.submitted.id),0);
+    assert.equal(f.current().resolution.recoveryAttempts,0);
+  } finally { await f.close(); }
+});
+
 /** The reader's delivered turn runs, as a real Paseo turn does, until the test ends it. */
 function readerRunsDeliveredTurns(f: ReturnType<typeof fixture>) {
   const send = f.adapter.continueReviewer!;

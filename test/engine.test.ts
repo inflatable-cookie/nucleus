@@ -1375,6 +1375,58 @@ test('required worker survives an RPC crash and waits for its provider before sa
   assert.equal(f.store.task(task.id).profile?.id,profile.id);
  }finally{await f.close()}
 });
+test('catalog provider outage waits for required worker and does not promote fallback',async()=>{
+ const f=fixture();try{
+  const pi={...profile,provider:'pi'}, strong={...profile,id:'strong',provider:'codex',model:'strong'};
+  f.store.setProfiles([pi,strong].map(({id,name,provider,model,notes})=>({id,name,provider,model,notes})));
+  f.store.setMeta('pool',[{profileId:pi.id,enabled:true,group:'test',weight:1,capability:'medium',roles:['worker'],scopes:['general']},
+    {profileId:strong.id,enabled:true,group:'strong',weight:1,capability:'very_high',roles:['worker'],scopes:['general']}]);
+  const model=(id:string)=>({id,label:id,aliases:[],thinkingOptions:[{id:'low',label:'low'}],defaultThinkingOptionId:null,modes:[],features:[]});
+  let available=true;
+  f.adapter.catalog=async()=>({providers:[{key:'pi',label:'Pi',available,problem:'Provider offline',models:[model('test')]},
+    {key:'codex',label:'Codex',available:true,problem:'',models:[model('strong')]}]});
+  await f.engine.refresh();
+  const task=f.add();f.store.update(task.id,{complexity:'medium',profileRequests:{worker:{profileId:pi.id,reason:'Required',required:true}}});
+  f.store.setMeta('paused',false);await f.engine.wake();const old=f.store.task(task.id);
+  available=false;await f.engine.refresh();
+  f.adapter.verifyResume=async()=>{};
+  f.adapter.observe=async id=>({id,workspaceId:old.workspaceId,status:'error',active:false,permissions:false,error:'Pi RPC process is closed'});
+  f.adapter.createAgent=async t=>({id:'replacement',workspaceId:t.workspaceId});
+  await (f.engine as any).recoverExhaustedWorkers();
+  assert.equal(f.store.task(task.id).agentId,old.agentId);
+  assert.equal(f.store.task(task.id).resolution.stop?.reason,'provider_unavailable');
+  available=true;await f.engine.refresh();await (f.engine as any).recoverExhaustedWorkers();
+  assert.equal(f.store.task(task.id).agentId,'replacement');
+  assert.equal(f.store.task(task.id).profile?.id,pi.id);
+ }finally{await f.close()}
+});
+
+test('catalog provider outage prevents a stronger fallback',async()=>{
+ const f=fixture();try{
+  const pi={...profile,provider:'pi'}, strong={...profile,id:'strong',provider:'codex',model:'strong'};
+  f.store.setProfiles([pi,strong].map(({id,name,provider,model,notes})=>({id,name,provider,model,notes})));
+  f.store.setMeta('pool',[{profileId:pi.id,enabled:true,group:'test',weight:1,capability:'medium',roles:['worker'],scopes:['general']},
+    {profileId:strong.id,enabled:true,group:'strong',weight:1,capability:'very_high',roles:['worker'],scopes:['general']}]);
+  const model=(id:string)=>({id,label:id,aliases:[],thinkingOptions:[{id:'low',label:'low'}],defaultThinkingOptionId:null,modes:[],features:[]});
+  let available=true;
+  f.adapter.catalog=async()=>({providers:[{key:'pi',label:'Pi',available,problem:'Provider offline',models:[model('test')]},
+    {key:'codex',label:'Codex',available:true,problem:'',models:[model('strong')]}]});
+  await f.engine.refresh();
+  const task=f.add();f.store.update(task.id,{complexity:'medium',preferredProfileId:pi.id});
+  f.store.setMeta('paused',false);await f.engine.wake();const old=f.store.task(task.id);
+  available=false;await f.engine.refresh();
+  f.adapter.verifyResume=async()=>{};
+  f.adapter.observe=async id=>({id,workspaceId:old.workspaceId,status:'error',active:false,permissions:false,error:'Pi RPC process is closed'});
+  f.adapter.createAgent=async t=>({id:'replacement',workspaceId:t.workspaceId});
+  await (f.engine as any).recoverExhaustedWorkers();
+  assert.equal(f.store.task(task.id).agentId,old.agentId);
+  assert.equal(f.store.task(task.id).resolution.stop?.reason,'provider_unavailable');
+  available=true;await f.engine.refresh();await (f.engine as any).recoverExhaustedWorkers();
+  assert.equal(f.store.task(task.id).agentId,'replacement');
+  assert.equal(f.store.task(task.id).profile?.id,pi.id);
+ }finally{await f.close()}
+});
+
 test('provider outage does not promote a fallback above worker demand',async()=>{
  const f=fixture();try{
   const strong={...profile,id:'strong',model:'strong'};f.engine.profiles=[profile,strong];
