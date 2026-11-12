@@ -26,6 +26,8 @@ export async function t3Fake(t: TestContext, directory: string) {
   const controls = { environmentId: 'synthetic-environment', version: 'nightly-synthetic-unseen', protocol: 2,
     synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
     snapshotSequence: 1, threadCoverage: {} as Record<string, unknown>, beforeArchiveRead: (() => {}) as () => void,
+    /** The next N thread reads end with an Interrupt frame instead of a snapshot (a stream cut mid-turn). */
+    interruptThreadReads: 0,
     disconnectMutation: false, disconnectAfterEffect: false, refuseMutation: false, postEffectDefect: false,
     unsupportedProjectCreate: false, projectMutationFailure: false, projectMutationSecretFailure: false, projectMutationIdSecretFailure: false, secretDefect: false, secretLocationDefect: false, mutationObserver: (() => {}) as () => void,
     /** Replaces the single synthetic provider in `server.getConfig` when set (nightly provider shapes). */
@@ -112,6 +114,7 @@ export async function t3Fake(t: TestContext, directory: string) {
         case 'orchestration.subscribeThread': {
           const p = threads.get(payload.threadId);
           if (!p) return failure({ _tag: 'Fail', error: { _tag: 'ThreadNotFoundError' } });
+          if (controls.interruptThreadReads > 0) { controls.interruptThreadReads--; return send({ _tag: 'Interrupt', requestId: request.id }); }
           return stream([{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, projection: p, ...(controls.incompleteThread ? { hasMoreHistory: true } : {}), ...controls.threadCoverage }, ...marker()]);
         }
         case 'orchestration.launchThread': {
@@ -242,5 +245,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   });
   const address = server.address(); assert.ok(address && typeof address !== 'string');
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, projects: projectRows };
+  /** Drops every live WebSocket, as a T3 restart or network reset does. */
+  const dropSockets = () => { for (const socket of sockets) socket.destroy(); };
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, projects: projectRows, dropSockets };
 }
