@@ -68,8 +68,15 @@ export class CheckWaits {
     const head = t.prHead;
     if (!head) { this.attention(t, 'Required check wait has no recorded reviewed PR head'); return; }
     const previous = this.requiredCheckPollState(t);
-    const sameOverdueCheck = Boolean(overdueCheck && previous?.overdueCheck?.key === overdueCheck.key);
-    const firstOverdueAt = overdue ? (sameOverdueCheck ? previous?.firstOverdueAt : Date.now()) : undefined;
+    // A check that was classified as overdue can briefly come back from a
+    // later gate read as the generic "PR checks are pending" (the provider's
+    // status/elapsed fields are not stable between reads). Keep its one
+    // recovery and escalation budget while that same-head wait is active.
+    const sameOverdueCheck = Boolean(previous?.overdueCheck && (!overdueCheck || previous.overdueCheck.key === overdueCheck.key));
+    const retainedOverdueCheck = overdueCheck ?? (sameOverdueCheck ? previous?.overdueCheck : undefined);
+    const firstOverdueAt = overdue
+      ? (sameOverdueCheck ? previous?.firstOverdueAt : Date.now())
+      : (sameOverdueCheck ? previous?.firstOverdueAt : undefined);
     const recoveryRunId = sameOverdueCheck ? previous?.recoveryRunId ?? null : null;
     const attentionRaisedAt = sameOverdueCheck ? previous?.attentionRaisedAt ?? null : null;
     this.store.transaction(() => {
@@ -91,11 +98,15 @@ export class CheckWaits {
           this.attention(current, wait);
           incidentId = this.store.task(t.id).resolution.incident?.id ?? null;
         } else if (recoveryFinished && !current.resolution.attention) this.waiting(current, wait, 'lifecycle');
-      } else if (!current.resolution.attention) this.waiting(current, wait, 'lifecycle');
+      } else if (current.resolution.attention) {
+        // A still-running check owns this state. A recovery or a previous
+        // wording of the same check must not leave operator_needed behind.
+        this.parkCheckRecovery(current, wait);
+      } else this.waiting(current, wait, 'lifecycle');
       const latest = this.store.task(t.id);
       this.store.setMeta(requiredCheckPollMetaKey(t.id, head), {
         head, incidentId, nextAt: Date.now() + REQUIRED_CHECK_POLL_INTERVAL_MS,
-        ...(overdueCheck ? {overdueCheck, firstOverdueAt, recoveryRunId, attentionRaisedAt: attentionRaisedAt ?? (recoveryRunId && firstOverdueAt !== undefined && Date.now() - firstOverdueAt >= REQUIRED_CHECK_ESCALATION_MS && (overdueCheck.state === 'QUEUED' || overdueCheck.state === 'queued') ? Date.now() : null)} : {}),
+        ...(retainedOverdueCheck ? {overdueCheck: retainedOverdueCheck, firstOverdueAt, recoveryRunId, attentionRaisedAt: attentionRaisedAt ?? (recoveryRunId && firstOverdueAt !== undefined && Date.now() - firstOverdueAt >= REQUIRED_CHECK_ESCALATION_MS && (retainedOverdueCheck.state === 'QUEUED' || retainedOverdueCheck.state === 'queued') ? Date.now() : null)} : {}),
       });
       if (latest.resolution.integrationTurn && !(latest.resolution.mergeIntent && !latest.resolution.mergedCommit))
         this.update(latest, {}, { reason: wait }, 'integration_turn_yielded_for_check', wait);
