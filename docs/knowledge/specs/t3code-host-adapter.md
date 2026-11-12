@@ -194,6 +194,14 @@ archive is a catalog operation, not evidence that a folder was removed. Native
 workspace operations without an equivalent must explicitly refuse rather than
 pretend to be a Paseo workspace.
 
+Core derives the worker thread title with `taskWorkspaceTitle`, the same
+projection and cap used for Paseo workspace titles. It sends the current title through
+`thread.metadata.update`; support threads keep their task-number and role title.
+The core title projection coalesces queued changes and records failed writes on
+the task for sweep retry. Before retrying an uncertain T3 update, the adapter
+reads the thread title and settles the write if the desired title is already
+present.
+
 ## Operations and delivery
 
 | Host operation | T3 RPC or command | Required result |

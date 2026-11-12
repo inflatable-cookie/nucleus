@@ -415,36 +415,28 @@ export class T3CodeHost implements Host {
     const titleRole = runRole === 'reviewer' ? 'review' : runRole;
     return capPaseoTitle(`${formatTaskNumber(taskNumber)}${titleRole ? ` ${titleRole}` : ''}: ${taskTitle}`);
   }
-  /** Rename known live task threads. Unknown updates are read back before a same-id retry. */
-  async reconcileThreadTitles(tasks: readonly Task[]): Promise<void> {
-    const byId = new Map(tasks.map(task => [task.id, task]));
-    const candidates = Object.entries(this.state.read().agents).flatMap(([threadId, agent]) => {
-      const task = agent.labels.task ? byId.get(agent.labels.task) : undefined;
-      if (!task) return [];
-      const title = this.numberedThreadTitle(task.number, agent.labels.role, agent.labels.role && agent.labels.role !== 'worker' ? `${agent.labels.role}: ${task.title}` : task.title);
-      return agent.title === title ? [] : [{ threadId, agent, task, title }];
-    });
-    if (!candidates.length) return;
-    const threads = await this.inventory();
-    const live = new Map(threads.threads.filter(thread => !thread.archivedAt && !thread.deletedAt).map(thread => [thread.id, thread]));
-    for (const { threadId, agent, title } of candidates) {
-      const thread = live.get(threadId);
-      if (!thread) continue;
-      if (thread.title === title) {
-        const key = identity('thread-title', canonical({ threadId, title }));
-        const prior = this.state.read().intents[key];
-        this.state.update(state => {
-          if (prior?.status === 'unknown') state.intents[key] = { ...prior, status: 'settled', result: { title } };
-          if (state.agents[threadId]) state.agents[threadId].title = title;
-        });
-        continue;
-      }
-      const key = identity('thread-title', canonical({ threadId, title }));
-      const commandId = key;
-      await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId, threadId, title }, undefined, undefined,
-        { resendUnknownAfterRead: true });
-      this.state.update(state => { if (state.agents[threadId]) state.agents[threadId].title = title; });
+  /** The core title projection supplies the same phase-derived title used by Paseo. */
+  async setTaskWorkspaceTitle(task: Task, title: string, _requestId: string, _uncertain: boolean): Promise<void> {
+    title = capPaseoTitle(title);
+    const state = this.state.read();
+    const threadId = task.agentId && state.agents[task.agentId]?.labels.task === task.id
+      ? task.agentId
+      : Object.entries(state.agents).find(([, agent]) => agent.labels.task === task.id && agent.labels.role === 'worker')?.[0];
+    if (!threadId) throw Error('Task worker thread is missing');
+    const projection = await this.readProjection(threadId);
+    if (projection.thread.archivedAt || projection.thread.deletedAt) return;
+    const key = identity('thread-title', canonical({ threadId, title }));
+    if (projection.thread.title === title) {
+      this.state.update(current => {
+        const prior = current.intents[key];
+        if (prior?.status === 'unknown') current.intents[key] = { ...prior, status: 'settled', result: { title } };
+        if (current.agents[threadId]) current.agents[threadId].title = title;
+      });
+      return;
     }
+    await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId: key, threadId, title }, undefined, undefined,
+      { resendUnknownAfterRead: true });
+    this.state.update(current => { if (current.agents[threadId]) current.agents[threadId].title = title; });
   }
   /**
    * The profile's `modeId` as the thread's runtime mode. Nucleus profiles name the

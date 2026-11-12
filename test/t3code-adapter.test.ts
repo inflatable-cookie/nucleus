@@ -9,6 +9,8 @@ import { ProvenPreSendRefusalError, HostUnknownDeliveryError } from '../core/hos
 import { isTransportFailure } from '../shared/transport';
 import type { HostAgentSpec } from '../shared/host';
 import type { Profile, Task } from '../shared/contracts';
+import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
+import { capPaseoTitle } from '../shared/paseo-title';
 import { t3Fake, STAMP, threadProjection } from './support/t3code-fake';
 
 const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
@@ -71,27 +73,40 @@ test('new T3 worker, reviewer and recovery threads use task number and role titl
   ]);
 });
 
-test('live T3 threads are renamed once; an unknown update is read before the same intent is resent', async t => {
+test('worker thread titles use the shared task state title once per change', async t => {
   const { host, server, options, spec } = await fixture(t);
   const created = await host.createAgent(spec('rename-title'));
-  host.state.update(state => { delete state.agents[created.id]!.title; });
-  server.threads.get(created.id)!.thread.title = 'Synthetic role';
-  const tasks = [{ id: 'synthetic-task', number: 225, title: 'Synthetic role' }] as Task[];
-  server.controls.disconnectMutation = true;
-  await assert.rejects(host.reconcileThreadTitles(tasks));
-  const first = server.commands.find(command => command.type === 'thread.metadata.update')!;
-  assert.equal(first.title, '225: Synthetic role');
-  assert.equal(server.commands.filter(command => command.type === 'thread.metadata.update').length, 1);
+  const task = { id: 'synthetic-task', number: 225, title: 'Synthetic role', held: false, hostId: host.hostId,
+    workspaceId: created.workspaceId, agentId: created.id, phase: 'working' } as Task;
+  const titles = [
+    taskWorkspaceTitle(task),
+    taskWorkspaceTitle({ ...task, phase: 'awaiting_review' }),
+    taskWorkspaceTitle({ ...task, phase: 'merging' }),
+  ];
+  for (const title of titles) await host.setTaskWorkspaceTitle(task, title, `request-${title}`, false);
+  await host.setTaskWorkspaceTitle({ ...task, phase: 'merging' }, titles[2]!, `request-${titles[2]}`, false);
+  assert.deepEqual(server.commands.filter(command => command.type === 'thread.metadata.update').map(command => command.title), titles);
+  const longTitle = taskWorkspaceTitle({ ...task, title: 'Long task '.repeat(100) });
+  await host.setTaskWorkspaceTitle(task, longTitle, 'long-title', false);
+  assert.equal(server.commands.filter(command => command.type === 'thread.metadata.update').at(-1)?.title, capPaseoTitle(longTitle));
+});
+
+test('an uncertain worker title write is read before retry and is not resent when already applied', async t => {
+  const { host, server, options, spec } = await fixture(t);
+  const created = await host.createAgent(spec('rename-title'));
+  const task = { id: 'synthetic-task', number: 225, title: 'Synthetic role', held: false, hostId: host.hostId,
+    workspaceId: created.workspaceId, agentId: created.id, phase: 'working' } as Task;
+  const title = taskWorkspaceTitle(task);
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(host.setTaskWorkspaceTitle(task, title, 'title-request', false));
+  assert.equal(server.threads.get(created.id)!.thread.title, title, 'the server applied the title before the reply was lost');
   host.close();
-  server.controls.disconnectMutation = false;
+  server.controls.disconnectAfterEffect = false;
   const reloaded = new T3CodeHost(options); t.after(() => reloaded.close());
   await reloaded.connect();
-  await reloaded.reconcileThreadTitles(tasks);
-  assert.equal(server.commands.filter(command => command.type === 'thread.metadata.update').length, 2, 'one same-id resend follows a read proving the title was not applied');
-  const retry = server.commands.filter(command => command.type === 'thread.metadata.update')[1]!;
-  assert.equal(retry.commandId, first.commandId);
-  await reloaded.reconcileThreadTitles(tasks);
-  assert.equal(server.commands.filter(command => command.type === 'thread.metadata.update').length, 2, 'the title is durable after the first successful update');
+  await reloaded.setTaskWorkspaceTitle(task, title, 'title-request', true);
+  assert.equal(server.commands.filter(command => command.type === 'thread.metadata.update').length, 1,
+    'a read confirming the current title settles the unknown write without resending');
 });
 
 test('connect refuses incompatible protocol and missing probe coverage without a canary mutation', async t => {
