@@ -27,6 +27,7 @@ export function routePatch(f: {
   const {current, role, profileId, reason, replaceLive, live, currentRun, hasUnreleasedRun, requests, includeThinking, thinking, lifted, continuation, replacementRefusal, waitingOnRole} = f;
   const patch: Record<string, unknown> = { profileRequests: requests,
     ...(includeThinking ? { thinkingOptionId: thinking } : {}), ...(lifted ? { workerExclusions: lifted } : {}) };
+  const rerouteActivity = reason.startsWith('Rerouted to ') ? reason.split(':', 1)[0] : null;
   const currentRunLive = liveRun(currentRun);
   if (role === 'worker') {
     const ownsWorkerSlot = !currentRunLive || currentRun!.role === 'revision';
@@ -44,7 +45,7 @@ export function routePatch(f: {
         recoveryAttempts: 0, recovery: null, stalledTurnStop: null, pendingWorkerInstruction: continuation, prePrResumeInstruction: null };
       if (['working', 'needs_attention', 'changes_requested', 'blocked', 'error'].includes(current.phase)) {
         patch.phase = 'changes_requested';
-        patch.reason = `Owner routed the worker profile; selecting the next worker run on ${profileId}`;
+        patch.reason = rerouteActivity ?? `Owner routed the worker profile; selecting the next worker run on ${profileId}`;
       }
     }
   } else if (role === 'reviewer') {
@@ -54,7 +55,7 @@ export function routePatch(f: {
       const acceptedReview = isAcceptedReview(current.resolution.review) && current.resolution.review!.head === current.prHead;
       if (current.phase === 'reviewing' || waitingOnRole) {
         patch.phase = 'awaiting_review';
-        patch.reason = `Owner routed the reviewer profile; selecting the next reviewer on ${profileId}`;
+        patch.reason = rerouteActivity ?? `Owner routed the reviewer profile; selecting the next reviewer on ${profileId}`;
       }
       patch.resolution = { ...current.resolution, currentRunId: null, reviewerAgentId: null, reviewerProfile: null,
         integrationTurn: null, attention: false, ...(acceptedReview ? {} : { review: null }) };
@@ -64,7 +65,7 @@ export function routePatch(f: {
     if ((replaceLive || (!live && !hasUnreleasedRun)) && ownsCoordinatorSlot) {
       patch.coordinatorAgentId = '';
       patch.coordinatorGeneration = current.coordinatorGeneration + 1;
-      patch.reason = `Owner routed the coordinator profile; the next coordinator run uses ${profileId}`;
+      patch.reason = rerouteActivity ?? `Owner routed the coordinator profile; the next coordinator run uses ${profileId}`;
       if (replaceLive) patch.resolution = { ...current.resolution, currentRunId: null, attention: false };
     }
   }
