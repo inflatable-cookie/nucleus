@@ -486,6 +486,38 @@ test('an approved pending worker request routes the live automatic run now and k
   } finally { await f.close(); }
 });
 
+test('approval reroutes and stops a live initial worker turn through route now', async () => {
+  const f = fixture(); try {
+    const nova = f.engine.profiles.find(p => p.id === 'nova')!;
+    f.store.update(f.task.id, { phase: 'working', completion: null,
+      profileRequests: { worker: { profileId: 'nova', reason: 'Frontier analysis', required: true } },
+      resolution: { ...f.current().resolution, currentRunId: null } });
+    f.observations.set('worker', { id: 'worker', workspaceId: 'workspace', status: 'running', active: true,
+      permissions: false, error: '', activeTurnId: 'initial-turn' });
+    reconcileRoutingSignoffs(f.store, new Decisions(f.store), f.task.id, f.engine.profiles);
+    const pending = f.current().profileRequests!.worker!.signoff!;
+    const decision = f.engine.signoffDecisions.get({ id: pending.decisionId! });
+    f.engine.signoffDecisions.answer({ id: decision.id, version: decision.version, answer: signoffApprove(nova.name),
+      answeredBy: 'operator (board)', relayed: false, note: '' });
+
+    await f.engine.taskQuantumOwner.taskQuantum(f.task.id);
+    const routed = f.current();
+    assert.deepEqual(f.stops, ['worker'], 'approval uses the same live-turn stop as an owner route now');
+    assert.equal(routed.replacementProfile?.profileId, 'nova');
+    assert.equal(routed.workspaceId, 'workspace');
+    assert.equal(routed.branch, f.task.branch);
+    assert.equal(routed.reason, `Rerouted to nova after approval ${decision.id}`);
+    const event = f.events('route_changed').at(-1)!;
+    assert.match(event.detail, new RegExp(`Rerouted to nova after approval ${decision.id}`));
+    assert.equal(f.events('routing_signoff_live_route_refused').length, 0);
+
+    await f.engine.wake();
+    assert.equal(f.current().profile?.id, 'nova', 'the replacement starts on the approved profile');
+    assert.equal(f.current().workspaceId, 'workspace', 'the existing workspace is retained');
+    assert.equal(f.current().branch, f.task.branch, 'the existing branch is retained');
+  } finally { await f.close(); }
+});
+
 test('an approval after worker handoff sets its next route without interrupting the reviewer', async () => {
   const f = fixture(); try {
     const nova = f.engine.profiles.find(p => p.id === 'nova')!;

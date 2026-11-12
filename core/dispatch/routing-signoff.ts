@@ -15,7 +15,7 @@ import type { Decisions } from "../planning/decisions";
 import type { Store } from "../store/store";
 import { now } from "../store/store";
 import { coveringGrant, grantSignoff, reconcileRoutingGrants } from "./routing-grants";
-import { liveRun } from "../task-decision-rules";
+import { liveRun, liveRunForRole } from "../task-decision-rules";
 
 const ROLES = ["worker", "reviewer", "coordinator"] as const;
 type Role = (typeof ROLES)[number];
@@ -146,10 +146,12 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
       if (result.signoff.status === "approved" && signoff.decisionId) {
         const currentRun = task.resolution.currentRunId ? store.run(task.resolution.currentRunId) : null;
         const expectedRole = role === "worker" ? "revision" : role === "reviewer" ? "reviewer" : null;
-        const live = liveRun(currentRun) && currentRun.role === expectedRole ? currentRun : null;
-        const selectedProfileId = live?.profile?.id ?? (role === "worker" && !currentRun ? task.profile?.id : null);
+        const live = role === "worker"
+          ? liveRunForRole(task, store.runs(task.id), role)
+          : liveRun(currentRun) && currentRun.role === expectedRole ? { run: currentRun } : null;
+        const selectedProfileId = live?.run?.profile?.id ?? (role === "worker" && live?.run === null ? task.profile?.id : null);
         approvedRoutes.push({ role, profileId: next.profileId, decisionId: signoff.decisionId,
-          reason: `Approved routing decision ${signoff.decisionId}: ${request.reason}`.slice(0, 4000),
+          reason: `Rerouted to ${next.profileId} after approval ${signoff.decisionId}: ${request.reason}`.slice(0, 4000),
           now: Boolean(live && selectedProfileId && selectedProfileId !== next.profileId) });
       }
       continue;
